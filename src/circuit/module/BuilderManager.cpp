@@ -58,6 +58,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, buildIterator(0)
 		, prioRepairRange(0.f)
 		, prioRepairShare(0.f)
+		, isPrioRepairSafe(false)
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CBuilderManager::Init, this));
 
@@ -151,6 +152,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	const Json::Value& pull = root["retreat"]["repair_pull"];
 	prioRepairRange = pull.get((unsigned)0, 0.f).asFloat();
 	prioRepairShare = pull.get((unsigned)1, 0.34f).asFloat();
+	isPrioRepairSafe = root["retreat"].get("repair_safe", false).asBool();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
@@ -668,7 +670,9 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 			continue;
 		}
 		const float sqDist = pos.SqDistance2D(worker->GetPos(frame));
-		if ((sqDist < minSqDist) && terrainMgr->CanReachAt(worker, pos, worker->GetCircuitDef()->GetBuildDistance())) {
+		if ((sqDist < minSqDist) && terrainMgr->CanReachAt(worker, pos, worker->GetCircuitDef()->GetBuildDistance())
+			&& !IsUnsafePrioRepair(task, worker, pos))
+		{
 			minSqDist = sqDist;
 			bestWorker = worker;
 		}
@@ -676,6 +680,18 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 	if (bestWorker != nullptr) {
 		AssignTask(bestWorker, task);
 	}
+}
+
+bool CBuilderManager::IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit* unit, const AIFloat3& pos) const
+{
+	if (!isPrioRepairSafe || (task->GetBuildType() != IBuilderTask::BuildType::REPAIR)) {
+		return false;
+	}
+	// Same rule as regular builder tasks: threat beyond the builder's strength in enemy-held area
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	threatMap->SetThreatType(unit);
+	return (threatMap->GetThreatAt(pos) > threatMap->GetUnitThreat(unit))
+		&& (circuit->GetInflMap()->GetInfluenceAt(pos) < -INFL_EPS);
 }
 
 IBuilderTask* CBuilderManager::EnqueueReclaim(IBuilderTask::Priority priority,
@@ -1017,8 +1033,10 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 			AIFloat3 buildPos = utils::is_valid(bp) ? bp : pos;
 
 			if (candidate->GetPriority() == IBuilderTask::Priority::NOW) {
-				// Disregard safety
-				if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())) {  // ensure that path always exists
+				// Disregard safety (unless configured for priority repair)
+				if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
+					|| IsUnsafePrioRepair(candidate, unit, buildPos))
+				{
 					continue;
 				}
 
@@ -1125,8 +1143,10 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 			AIFloat3 buildPos = utils::is_valid(bp) ? bp : pos;
 
 			if (candidate->GetPriority() == IBuilderTask::Priority::NOW) {
-				// Disregard safety
-				if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())) {  // ensure that path always exists
+				// Disregard safety (unless configured for priority repair)
+				if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
+					|| IsUnsafePrioRepair(candidate, unit, buildPos))
+				{
 					continue;
 				}
 

@@ -25,6 +25,7 @@
 	"fighter": [0.45, 1.0],  // [<default>, <UnitDef modifier>] for all not-builder units
 	"shield": [0.25, 0.275],  // [<empty>, <full>] shield power
 	"wait_timeout": 60,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
+	"repair_safe": false,  // true = builders skip priority repair (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs
 	"repair_pull": [1500, 0.34]  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
 },
 
