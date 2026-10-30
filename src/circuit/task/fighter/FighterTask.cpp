@@ -110,13 +110,13 @@ void IFighterTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	if (unit->HasShield()) {
 		const float minShield = circuit->GetSetupManager()->GetEmptyShield();
 		if ((healthPerc > cdef->GetRetreat()) && unit->IsShieldCharged(minShield)) {
-			if (cdef->IsRoleHeavy() && (healthPerc < 0.9f)) {
+			if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
 				circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
 			}
 			return;
 		}
 	} else if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
-		if (cdef->IsRoleHeavy() && (healthPerc < 0.9f)) {
+		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
 			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
 		}
 		return;

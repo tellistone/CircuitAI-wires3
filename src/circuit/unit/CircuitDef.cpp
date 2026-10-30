@@ -44,6 +44,7 @@ CCircuitDef::AttrName CCircuitDef::attrNames = {
 	{"anti_stat", CCircuitDef::AttrType::ANTI_STAT},
 	{"rearm",     CCircuitDef::AttrType::REARM},
 	{"no_dgun",   CCircuitDef::AttrType::NO_DGUN},
+	{"prio_repair", CCircuitDef::AttrType::PRIO_REPAIR},
 };
 CCircuitDef::FireName CCircuitDef::fireNames = {
 	{"hold",   CCircuitDef::FireType::HOLD},
