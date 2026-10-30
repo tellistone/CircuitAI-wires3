@@ -94,6 +94,9 @@ public:
 	IBuilderTask* EnqueueRepair(IBuilderTask::Priority priority,
 								CCircuitUnit* target,
 								int timeout = ASSIGN_TIMEOUT);
+private:
+	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);
+public:
 	IBuilderTask* EnqueueReclaim(IBuilderTask::Priority priority,
 								 const springai::AIFloat3& position,
 								 float cost,
@@ -172,6 +175,8 @@ private:
 	unsigned int buildIterator;
 
 	std::set<CCircuitUnit*> workers;
+	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
+	float prioRepairShare;  // max share of workers that can be on NOW repair at once
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner
 
 	CCircuitDef* terraDef;

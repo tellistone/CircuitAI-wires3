@@ -56,6 +56,8 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, buildTasksCount(0)
 		, buildPower(.0f)
 		, buildIterator(0)
+		, prioRepairRange(0.f)
+		, prioRepairShare(0.f)
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CBuilderManager::Init, this));
 
@@ -146,6 +148,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	const Json::Value& retreat = root["retreat"]["builder"];
 	const float builderRet = retreat.get((unsigned)0, 0.8f).asFloat();
 	const float retMod = retreat.get((unsigned)1, 1.0f).asFloat();
+	const Json::Value& pull = root["retreat"]["repair_pull"];
+	prioRepairRange = pull.get((unsigned)0, 0.f).asFloat();
+	prioRepairShare = pull.get((unsigned)1, 0.34f).asFloat();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
@@ -603,16 +608,74 @@ IBuilderTask* CBuilderManager::EnqueueRepair(IBuilderTask::Priority priority,
 											 CCircuitUnit* target,
 											 int timeout)
 {
+	CBRepairTask* task;
 	auto it = repairedUnits.find(target->GetId());
 	if (it != repairedUnits.end()) {
-		return it->second;
+		task = it->second;
+		if (static_cast<int>(priority) > static_cast<int>(task->GetPriority())) {
+			task->SetPriority(priority);  // upgrade, e.g. HIGH left over from retreat
+		}
+	} else {
+		task = new CBRepairTask(this, priority, target, timeout);
+		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::REPAIR)].insert(task);
+		buildTasksCount++;
+		buildUpdates.push_back(task);
+		repairedUnits[target->GetId()] = task;
 	}
-	CBRepairTask* task = new CBRepairTask(this, priority, target, timeout);
-	buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::REPAIR)].insert(task);
-	buildTasksCount++;
-	buildUpdates.push_back(task);
-	repairedUnits[target->GetId()] = task;
+	if ((task->GetPriority() == IBuilderTask::Priority::NOW) && task->GetAssignees().empty()) {
+		PullRepairer(task, target);
+	}
 	return task;
+}
+
+void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
+{
+	if (prioRepairRange <= 0.f) {
+		return;
+	}
+	// Do not strip the whole economy in a big fight
+	unsigned prioCount = 0;
+	for (CCircuitUnit* worker : workers) {
+		IUnitTask* curTask = worker->GetTask();
+		if ((curTask->GetType() == IUnitTask::Type::BUILDER)
+			&& (static_cast<IBuilderTask*>(curTask)->GetBuildType() == IBuilderTask::BuildType::REPAIR)
+			&& (curTask->GetPriority() == IBuilderTask::Priority::NOW))
+		{
+			++prioCount;
+		}
+	}
+	if (prioCount + 1 > std::max(1.f, workers.size() * prioRepairShare)) {
+		return;
+	}
+
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = target->GetPos(frame);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CCircuitUnit* bestWorker = nullptr;
+	float minSqDist = SQUARE(prioRepairRange);
+	for (CCircuitUnit* worker : workers) {
+		IUnitTask* curTask = worker->GetTask();
+		if ((worker == target)
+			|| ((curTask->GetType() != IUnitTask::Type::BUILDER) && (curTask->GetType() != IUnitTask::Type::IDLE))
+			|| !task->CanAssignTo(worker))
+		{
+			continue;
+		}
+		if ((curTask->GetType() == IUnitTask::Type::BUILDER)
+			&& ((curTask->GetPriority() == IBuilderTask::Priority::NOW)  // already on urgent work
+				|| (static_cast<IBuilderTask*>(curTask)->GetBuildType() == IBuilderTask::BuildType::REPAIR)))  // keep repairs stable
+		{
+			continue;
+		}
+		const float sqDist = pos.SqDistance2D(worker->GetPos(frame));
+		if ((sqDist < minSqDist) && terrainMgr->CanReachAt(worker, pos, worker->GetCircuitDef()->GetBuildDistance())) {
+			minSqDist = sqDist;
+			bestWorker = worker;
+		}
+	}
+	if (bestWorker != nullptr) {
+		AssignTask(bestWorker, task);
+	}
 }
 
 IBuilderTask* CBuilderManager::EnqueueReclaim(IBuilderTask::Priority priority,

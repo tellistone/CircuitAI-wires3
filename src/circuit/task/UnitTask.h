@@ -64,6 +64,7 @@ public:
 
 	const std::set<CCircuitUnit*>& GetAssignees() const { return units; }
 	Priority GetPriority() const { return priority; }
+	void SetPriority(Priority value) { priority = value; }
 	Type GetType() const { return type; }
 	ITaskManager* GetManager() const { return manager; }
 
