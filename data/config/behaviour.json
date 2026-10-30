@@ -23,7 +23,8 @@
 "retreat": {
 	"builder": [0.70, 1.0],  // [<default>, <UnitDef modifier>] for all builders
 	"fighter": [0.45, 1.0],  // [<default>, <UnitDef modifier>] for all not-builder units
-	"shield": [0.25, 0.275]  // [<empty>, <full>] shield power
+	"shield": [0.25, 0.275],  // [<empty>, <full>] shield power
+	"wait_timeout": 60  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
 },
 
 "defence": {
