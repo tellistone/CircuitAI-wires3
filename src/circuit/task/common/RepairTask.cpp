@@ -33,7 +33,8 @@ IRepairTask::~IRepairTask()
 
 bool IRepairTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	return unit->GetCircuitDef()->IsAbleToRepair() && (target != nullptr) && (cost > buildPower * MIN_BUILD_SEC);
+	return unit->GetCircuitDef()->IsAbleToRepair() && (target != nullptr) && (unit->GetId() != targetId)  // no self-repair
+		&& (cost > buildPower * MIN_BUILD_SEC);
 }
 
 void IRepairTask::RemoveAssignee(CCircuitUnit* unit)
@@ -164,7 +165,9 @@ CAllyUnit* IRepairTask::FindUnitToAssist(CCircuitUnit* unit)
 	circuit->UpdateFriendlyUnits();
 	auto units = circuit->GetCallback()->GetFriendlyUnitsIn(pos, radius);
 	for (Unit* u : units) {
-		if ((u != nullptr) && (u->GetHealth() < u->GetMaxHealth()) && (u->GetVel().SqLength2D() <= maxSpeed)) {
+		if ((u != nullptr) && (u->GetUnitId() != unit->GetId())
+			&& (u->GetHealth() < u->GetMaxHealth()) && (u->GetVel().SqLength2D() <= maxSpeed))
+		{
 			target = circuit->GetFriendlyUnit(u);
 			if (target != nullptr) {
 				break;
