@@ -160,7 +160,7 @@ void IFighterTask::SetTarget(CEnemyInfo* enemy)
 	target = enemy;
 }
 
-void IFighterTask::Attack(const int frame)
+void IFighterTask::Attack(const int frame, const bool isDirect)
 {
 	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
 	const bool isRepeatAttack = (frame >= attackFrame + FRAMES_PER_SEC * 3);
@@ -175,7 +175,11 @@ void IFighterTask::Attack(const int frame)
 			|| (unit->GetTarget() != target)
 			|| (unit->GetTargetTile() != targetTile))
 		{
-			unit->Attack(target->GetPos(), target, targetTile, frame + FRAMES_PER_SEC * 60);
+			if (isDirect) {
+				unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);
+			} else {
+				unit->Attack(target->GetPos(), target, targetTile, frame + FRAMES_PER_SEC * 60);
+			}
 		}
 	}
 }

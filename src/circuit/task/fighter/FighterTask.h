@@ -45,7 +45,10 @@ public:
 
 protected:
 	void SetTarget(CEnemyInfo* enemy);
-	void Attack(const int frame);
+	// isDirect: Attack the target first instead of fight-moving to it.
+	// The engine still lets weapons shoot other units while the ordered target can't be hit (out of range),
+	// but switches to the ordered target as soon as it can.
+	void Attack(const int frame, const bool isDirect = false);
 
 	FightType fightType;
 	springai::AIFloat3 position;  // attack/scout position

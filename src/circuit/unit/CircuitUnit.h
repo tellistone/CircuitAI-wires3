@@ -126,6 +126,7 @@ public:
 	void CmdTerraform(std::vector<float>&& params);
 
 	void Attack(CEnemyInfo* enemy, int timeout);
+	void Attack(CEnemyInfo* enemy, int tile, int timeout);  // direct Attack first, no fight-move on the way
 	void Attack(const springai::AIFloat3& position, int timeout);
 	void Attack(const springai::AIFloat3& position, CEnemyInfo* enemy, int timeout);
 	void Attack(const springai::AIFloat3& position, CEnemyInfo* enemy, int tile, int timeout);
