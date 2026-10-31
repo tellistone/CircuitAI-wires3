@@ -351,6 +351,7 @@ void CMilitaryManager::ReadConfig()
 	const float threatCd = guardCfg.get("threat_cooldown", 10.f).asFloat();
 	guard.threatCooldown = (threatCd < 0.f) ? -1 : int(threatCd * FRAMES_PER_SEC);
 	guard.threatRatio = std::max(0.f, guardCfg.get("threat_ratio", 0.f).asFloat());
+	guard.maxActive = std::max(0, guardCfg.get("max_active", 0).asInt());
 	guard.roleMask = 0;
 	const Json::Value& guardRoles = guardCfg["roles"];
 	if (guardRoles.isNull()) {  // legacy behaviour
@@ -1117,6 +1118,20 @@ bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
 	const CCircuitDef::RoleM mask = CCircuitDef::GetMask(mainRole)
 			| CCircuitDef::GetMask(circuit->GetBindedRole(mainRole));
 	return (guard.roleMask & mask) != 0;
+}
+
+bool CMilitaryManager::IsGuardCapReached() const
+{
+	if (guard.maxActive == 0) {
+		return false;
+	}
+	unsigned int filled = 0;
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
+		if (!t->GetAssignees().empty()) {
+			++filled;
+		}
+	}
+	return filled >= guard.maxActive;
 }
 
 IFighterTask* CMilitaryManager::FindGuardTask(CCircuitUnit* unit) const

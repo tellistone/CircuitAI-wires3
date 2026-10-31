@@ -44,7 +44,8 @@ bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
 	if (!units.empty() || !IsActive()) {
 		return false;
 	}
-	return static_cast<CMilitaryManager*>(manager)->IsGuardRole(unit->GetCircuitDef());
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	return militaryMgr->IsGuardRole(unit->GetCircuitDef()) && !militaryMgr->IsGuardCapReached();
 }
 
 void CFGuardTask::Start(CCircuitUnit* unit)
@@ -152,7 +153,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 {
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	const CMilitaryManager::SGuardCfg& cfg = militaryMgr->GetGuardCfg();
-	if (cfg.pullRange <= 0.f) {
+	if ((cfg.pullRange <= 0.f) || militaryMgr->IsGuardCapReached()) {
 		return;
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
