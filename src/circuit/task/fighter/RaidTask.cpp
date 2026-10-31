@@ -549,23 +549,37 @@ bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe)
 
 void CRaidTask::PullBackEndangered(int frame)
 {
-	// Units in danger that didn't make the whole group flee: send them back to the leader,
-	// unless the leader is in danger too (then there is no safer spot nearby)
-	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)
-		|| (std::find(endangered.begin(), endangered.end(), leader) != endangered.end()))
-	{
+	// Units in danger that didn't make the whole group flee: send them to the strength-weighted centre
+	// of the units that are safe. Works when the leader itself is the one in danger (the group follows
+	// the leader's path, so a stuck leader would otherwise keep everyone heading into the danger).
+	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {
 		return;
 	}
+	AIFloat3 safePos(ZeroVector);
+	float safePower = 0.f;
+	for (CCircuitUnit* unit : units) {
+		if (std::find(endangered.begin(), endangered.end(), unit) != endangered.end()) {
+			continue;
+		}
+		const float power = std::max(GetUnitPower(unit), 1e-3f);
+		safePos += unit->GetPos(frame) * power;
+		safePower += power;
+	}
+	if (safePower <= 0.f) {
+		return;  // nobody is safe (cloaked-only remainder etc.): nothing to fall back to
+	}
+	safePos /= safePower;
+	CTerrainManager::CorrectPosition(safePos);
 	pullFrame = frame;
+
 	CCircuitAI* circuit = manager->GetCircuit();
-	const AIFloat3& leaderPos = leader->GetPos(frame);
 	for (CCircuitUnit* unit : endangered) {
 		if (unit->Blocker() != nullptr) {
 			continue;
 		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
 		TRY_UNIT(circuit, unit,
-			unit->CmdMoveTo(leaderPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdMoveTo(safePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
 		)
 	}
