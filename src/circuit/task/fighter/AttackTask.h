@@ -27,6 +27,8 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 
 private:
+	ISquadTask* GetAttackMergeTask();
+	void AbsorbWeakerTasks();
 	void FindTarget();
 	void ApplyTargetPath(const CQueryPathSingle* query);
 	void FallbackFrontPos();

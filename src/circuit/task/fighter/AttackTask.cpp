@@ -15,6 +15,7 @@
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathSingle.h"
 #include "terrain/path/QueryPathMulti.h"
+#include "terrain/path/QueryLineMap.h"
 #include "unit/action/FightAction.h"
 #include "unit/action/MoveAction.h"
 #include "unit/action/SupportAction.h"
@@ -128,7 +129,7 @@ void CAttackTask::Update()
 	/*
 	 * Merge tasks if possible
 	 */
-	ISquadTask* task = GetMergeTask();
+	ISquadTask* task = GetAttackMergeTask();
 	if (task != nullptr) {
 		task->Merge(this);
 		units.clear();
@@ -136,6 +137,7 @@ void CAttackTask::Update()
 		manager->AbortTask(this);
 		return;
 	}
+	AbsorbWeakerTasks();
 
 	/*
 	 * Regroup if required
@@ -215,6 +217,65 @@ void CAttackTask::Update()
 			this->ApplyTargetPath(static_cast<const CQueryPathSingle*>(query));
 		}
 	});
+}
+
+ISquadTask* CAttackTask::GetAttackMergeTask()
+{
+	// Groups under quota.attack look for a group to join every 4 updates, others every 32.
+	// Unlike other squads, an attack group may merge while its leader stands on enemy-held ground;
+	// the straight line between the leaders must still be safe (CheckMergeTask).
+	const int interval = (attackPower < minPower) ? 4 : 32;
+	return (updCount % interval == 1) ? CheckMergeTask() : nullptr;
+}
+
+void CAttackTask::AbsorbWeakerTasks()
+{
+	// A group at or above quota.attack pulls in weaker attack groups near it, every 8 updates.
+	// Same rules as joining (CanAssignTo: speed within 1.5x, leaders within 1000 elmos, movement type;
+	// reachable; safe straight line; under 60 s of travel), seen from the weaker group's side.
+	if ((attackPower < minPower) || (updCount % 8 != 5)) {
+		return;
+	}
+
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = leader->GetPos(frame);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+
+	static std::vector<CAttackTask*> weaklings;  // NOTE: micro-opt
+	const std::set<IFighterTask*>& tasks = static_cast<CMilitaryManager*>(manager)->GetTasks(fightType);
+	for (IFighterTask* t : tasks) {
+		CAttackTask* candy = static_cast<CAttackTask*>(t);
+		CCircuitUnit* candyLeader = candy->GetLeader();
+		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
+			|| (candy->GetAttackPower() >= attackPower)
+			|| !CanAssignTo(candyLeader))
+		{
+			continue;
+		}
+		const AIFloat3& candyPos = candyLeader->GetPos(frame);
+		if (!terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)) {
+			continue;
+		}
+		if (candyPos.SqDistance2D(pos) >= SQUARE(MAX_TRAVEL_SEC * candy->lowestSpeed)) {
+			continue;
+		}
+		std::shared_ptr<CQueryLineMap> query = std::static_pointer_cast<CQueryLineMap>(
+				pathfinder->CreateLineMapQuery(candyLeader, circuit->GetThreatMap(), frame));
+		if (!query->IsSafeLine(candyPos, pos)) {
+			continue;
+		}
+		weaklings.push_back(candy);
+	}
+
+	// Merge after the loop: aborting a task removes it from the set being iterated
+	for (CAttackTask* candy : weaklings) {
+		Merge(candy);
+		candy->units.clear();
+		manager->AbortTask(candy);
+	}
+	weaklings.clear();
 }
 
 void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
