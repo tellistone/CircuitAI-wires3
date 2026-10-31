@@ -11,6 +11,7 @@
 #include "task/fighter/FighterTask.h"
 #include "unit/CoreUnit.h"
 
+#include <memory>
 #include <unordered_map>
 
 namespace circuit {
@@ -47,7 +48,16 @@ private:
 	springai::AIFloat3 PickScoutPosition(CCircuitUnit* unit, float safeThreat);
 	void RunScoutQuery(CCircuitUnit* unit, bool isCapped, int attempt);
 
-	std::unordered_map<ICoreUnit::Id, int> badTargets;  // enemy id -> frame until which it is skipped
+	void ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath, ICoreUnit::Id pathTargetId, bool isCapped);
+	bool NeedRepath(CCircuitUnit* unit, ICoreUnit::Id targetId) const;
+	bool IsPathUnsafe(CCircuitUnit* unit) const;
+
+	std::unordered_map<ICoreUnit::Id, int> badTargets;
+	int lastPathFrame = -1;  // when the current travel path was applied
+	ICoreUnit::Id lastPathTargetId = -1;  // target the current travel path leads to (-1: none)
+	bool isPathCapped = false;  // current travel path avoids tiles above safe threat
+	int lastAttackFrame = -1;
+	ICoreUnit::Id lastAttackId = -1;  // enemy id -> frame until which it is skipped
 };
 
 } // namespace circuit

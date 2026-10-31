@@ -130,18 +130,26 @@ void CScoutTask::Execute(CCircuitUnit* unit, bool isUpdating)
 		if ((pos.SqDistance2D(position) <= SQUARE(fireRange))
 			&& (threatMap->GetThreatAt(unit, pos) < GetSafeThreat(unit)))
 		{
+			const bool wasTravel = unit->GetTravelAct()->IsActive();
 			unit->GetTravelAct()->StateWait();
-			AttackTarget(unit, pos, frame);
+			// Re-issue only when something changed: avoids command spam at the faster update rate
+			if (wasTravel || (lastAttackId != target->GetId()) || (frame >= lastAttackFrame + FRAMES_PER_SEC)) {
+				lastAttackId = target->GetId();
+				lastAttackFrame = frame;
+				AttackTarget(unit, pos, frame);
+			}
 			return;
 		}
-		if (!IsQueryReady(unit)) {
+		lastAttackId = -1;
+		if (!IsQueryReady(unit) || !NeedRepath(unit, target->GetId())) {
 			return;
 		}
 		ApproachTarget(unit, pos, fireRange, isUpdating);
 		return;
 	}
 
-	if (!IsQueryReady(unit)) {
+	lastAttackId = -1;
+	if (!IsQueryReady(unit) || !NeedRepath(unit, -1)) {
 		return;
 	}
 
@@ -303,8 +311,7 @@ void CScoutTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating)
 
 	if (!pPath->posPath.empty()) {
 		position = pPath->posPath.back();
-		unit->GetTravelAct()->SetPath(pPath);
-		unit->GetTravelAct()->StateActivate();
+		ActivatePath(unit, pPath, -1, (GetPathThreatCap(unit) < std::numeric_limits<float>::max()));
 	} else {
 		FallbackScout(unit, isUpdating);
 	}
@@ -356,8 +363,7 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, in
 
 	if (pPath->path.size() > 2) {
 //		position = path.back();
-		unit->GetTravelAct()->SetPath(pPath);
-		unit->GetTravelAct()->StateActivate();
+		ActivatePath(unit, pPath, -1, isCapped && (GetPathThreatCap(unit) < std::numeric_limits<float>::max()));
 		return;
 	}
 
@@ -451,8 +457,7 @@ void CScoutTask::ApplyApproachPath(const CQueryPathSingle* query, ICoreUnit::Id 
 	CCircuitUnit* unit = query->GetUnit();
 
 	if (!pPath->posPath.empty()) {
-		unit->GetTravelAct()->SetPath(pPath);
-		unit->GetTravelAct()->StateActivate();
+		ActivatePath(unit, pPath, targetId, (GetPathThreatCap(unit) < std::numeric_limits<float>::max()));
 		return;
 	}
 
@@ -493,6 +498,55 @@ AIFloat3 CScoutTask::PickScoutPosition(CCircuitUnit* unit, float safeThreat)
 	}
 	// Nothing safe found: head home
 	return terrainMgr->GetMovePosition(unit->GetArea(), circuit->GetSetupManager()->GetBasePos());
+}
+
+void CScoutTask::ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath, ICoreUnit::Id pathTargetId, bool isCapped)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	ITravelAction* travelAct = unit->GetTravelAct();
+	travelAct->SetPath(pPath);
+	travelAct->StateActivate();
+	lastPathFrame = circuit->GetLastFrame();
+	lastPathTargetId = pathTargetId;
+	isPathCapped = isCapped;
+	// Unit actions are only updated every ACTION_UPDATE_RATE frames (staggered) and move actions
+	// at most once per second, so a new path could take ~2s to reach the unit. Issue it now.
+	travelAct->ResetUpdateTimer();
+	unit->Update(circuit);
+}
+
+bool CScoutTask::NeedRepath(CCircuitUnit* unit, ICoreUnit::Id targetId) const
+{
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	return !unit->GetTravelAct()->IsActive()
+		|| (targetId != lastPathTargetId)
+		|| (frame >= lastPathFrame + FRAMES_PER_SEC)
+		// An uncapped (least-threat) path crosses danger on purpose: don't re-plan it on every update
+		|| (isPathCapped && IsPathUnsafe(unit));
+}
+
+bool CScoutTask::IsPathUnsafe(CCircuitUnit* unit) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	const float safeThreat = GetSafeThreat(unit);
+	if (threatMap->GetThreatAt(unit, pos) >= safeThreat) {
+		return true;
+	}
+	const std::shared_ptr<PathInfo>& pPath = unit->GetTravelAct()->GetPath();
+	if (pPath == nullptr) {
+		return false;
+	}
+	// Check the stretch of path the scout will cover in the next ~2s
+	const float lookAhead = std::max(unit->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
+	const float sqLookAhead = SQUARE(lookAhead);
+	for (const AIFloat3& p : pPath->posPath) {
+		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(unit, p) >= safeThreat)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 } // namespace circuit
