@@ -82,6 +82,7 @@ public:
 		float safeEnemy;  // ... and enemy influence <= this
 		int safeFrames;  // builder must stay safe this long before its guard leaves
 		float pullRange;  // empty active slot pulls the nearest eligible unit within this range, <= 0 = no pull
+		float threatRatio;  // ... only when threat at the guard > this * guard's own threat (0 = any threat)
 		int threatCooldown;  // guard in enemy threat is cancelled and the slot closes for this long, < 0 = never cancel
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }

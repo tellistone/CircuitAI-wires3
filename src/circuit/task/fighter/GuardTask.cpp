@@ -139,7 +139,9 @@ void CFGuardTask::CheckThreat()
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
-		if (threatMap->GetThreatAt(unit, unit->GetPos(frame)) > THREAT_MIN) {
+		// Light threat (below threat_ratio x the guard's own threat) doesn't count: the guard holds
+		const float maxThreat = std::max(THREAT_MIN, cfg.threatRatio * threatMap->GetUnitThreat(unit));
+		if (threatMap->GetThreatAt(unit, unit->GetPos(frame)) > maxThreat) {
 			cooldownUntil = frame + cfg.threatCooldown;
 			return;
 		}

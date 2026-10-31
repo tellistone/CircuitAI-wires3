@@ -350,6 +350,7 @@ void CMilitaryManager::ReadConfig()
 	guard.pullRange = guardCfg.get("pull_range", 800.f).asFloat();
 	const float threatCd = guardCfg.get("threat_cooldown", 10.f).asFloat();
 	guard.threatCooldown = (threatCd < 0.f) ? -1 : int(threatCd * FRAMES_PER_SEC);
+	guard.threatRatio = std::max(0.f, guardCfg.get("threat_ratio", 0.f).asFloat());
 	guard.roleMask = 0;
 	const Json::Value& guardRoles = guardCfg["roles"];
 	if (guardRoles.isNull()) {  // legacy behaviour

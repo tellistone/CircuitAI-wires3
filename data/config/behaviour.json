@@ -49,7 +49,8 @@
 	"safe": [20.0, 0.01],  // [ally, enemy]: guard leaves while its builder stands where allied influence (guards excluded, same units as quota.attack) >= ally and enemy influence <= enemy; ally <= 0 = never safe. The guard also leaves while the builder retreats
 	"safe_time": 5.0,  // seconds the builder must stay safe before its guard leaves (stops a passing army from sending the guard away)
 	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (idle, raid or defend task; never scouts, attack squads, retreating or guarding units; must reach the builder); 0 = only units asking for a new task fill it
-	"threat_cooldown": 10.0  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
+	"threat_cooldown": 10.0,  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
+	"threat_ratio": 1.0  // ... but only if enemy threat at the guard > this * the guard's own threat; lower values cancel on lighter threat, 0 = any threat
 },
 
 "defence": {
