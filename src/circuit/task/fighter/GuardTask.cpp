@@ -51,9 +51,7 @@ bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	if (!militaryMgr->IsGuardRole(unit->GetCircuitDef()) || militaryMgr->IsGuardBanned(unit)
-		|| militaryMgr->IsGuardCapReached(unit->GetCircuitDef()))
-	{
+	if (!militaryMgr->IsGuardRole(unit->GetCircuitDef()) || militaryMgr->IsGuardBanned(unit)) {
 		return false;
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -68,7 +66,9 @@ bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	// Don't send a unit (e.g. one just released by another slot's threat exit) to a builder under heavy threat
+	// The cap check is O(army) and runs once per slot on every MakeTask, so it comes after the cheap checks
 	return !IsOverThreat(unit, vipPos)
+			&& !militaryMgr->IsGuardCapReached(unit->GetCircuitDef())
 			&& circuit->GetTerrainManager()->CanReachAt(unit, vipPos, unit->GetCircuitDef()->GetMaxRange());
 }
 
@@ -116,7 +116,7 @@ void CFGuardTask::Update()
 		decltype(units) tmpUnits = units;
 		for (CCircuitUnit* unit : tmpUnits) {
 			if (!terrainMgr->CanReachAt(unit, vipPos, unit->GetCircuitDef()->GetMaxRange())) {
-				DebugLog(vip, "builder unreachable");
+				DebugLog(vip, "vip unreachable");
 				ReleaseUnit(unit);
 			}
 		}
@@ -192,7 +192,9 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	}
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	const AIFloat3& pos = vip->GetPos(circuit->GetLastFrame());
-	float allyInfl = inflMap->GetAllyInflAt(pos);
+	// An armed vip (a "guarded" artillery, an armed commander) counts in the map too: take it out,
+	// or it would call its own spot safe
+	float allyInfl = inflMap->GetAllyInflAt(pos) - inflMap->GetMobileArmedInflAt(vip, pos);
 	for (CCircuitUnit* unit : units) {
 		allyInfl -= inflMap->GetMobileArmedInflAt(unit, pos);  // the guard's real share, not its full power
 	}
@@ -206,7 +208,7 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	if (isSafe) {
 		const AIFloat3 dest = GetVipDestination(vip);
 		if (utils::is_valid(dest)) {
-			float destAlly = inflMap->GetAllyInflAt(dest);
+			float destAlly = inflMap->GetAllyInflAt(dest) - inflMap->GetMobileArmedInflAt(vip, dest);
 			for (CCircuitUnit* unit : units) {
 				destAlly -= inflMap->GetMobileArmedInflAt(unit, dest);
 			}
@@ -229,6 +231,19 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 AIFloat3 CFGuardTask::GetVipDestination(CCircuitUnit* vip) const
 {
 	IUnitTask* task = vip->GetTask();
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)) {
+		// A "guarded" army unit: its squad's attack/defend point, so artillery gathering at base
+		// for an attack keeps its slot open and takes a guard along.
+		// Fighter tasks also put the enemy they are shooting at in position (ArtilleryTask does it
+		// without SetTarget). A point within weapon range is a target, not a destination: ignore it,
+		// or artillery shelling from inside the turret bubble would never count as safe.
+		const AIFloat3& dest = static_cast<IFighterTask*>(task)->GetPosition();  // -RgtVector when unset
+		const AIFloat3& vipPos = vip->GetPos(manager->GetCircuit()->GetLastFrame());
+		if (utils::is_valid(dest) && (vipPos.SqDistance2D(dest) <= SQUARE(vip->GetCircuitDef()->GetMaxRange()))) {
+			return -RgtVector;
+		}
+		return dest;
+	}
 	if ((task == nullptr) || (task->GetType() != IUnitTask::Type::BUILDER)) {
 		return -RgtVector;
 	}
@@ -332,7 +347,7 @@ void CFGuardTask::DebugLog(CCircuitUnit* vip, const char* event) const
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	circuit->LOG("GUARD %s | builder %i %s | guard %s | ally %.2f enemy %.2f | safe %i (for %.1fs) retreat %i cooldown %.1fs",
+	circuit->LOG("GUARD %s | vip %i %s | guard %s | ally %.2f enemy %.2f | safe %i (for %.1fs) retreat %i cooldown %.1fs",
 			event, vip->GetId(), vip->GetCircuitDef()->GetDef()->GetName(),
 			units.empty() ? "none" : (*units.begin())->GetCircuitDef()->GetDef()->GetName(),
 			lastAlly, lastEnemy, isVipSafe, (safeSince < 0) ? 0.f : float(frame - safeSince) / FRAMES_PER_SEC,
