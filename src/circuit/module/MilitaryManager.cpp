@@ -1087,7 +1087,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 				danger += d.threat * (1.f - 0.5f * sqrtf(sqDist) / d.range);  // same falloff as the threat map
 			}
 		}
-		if (danger >= safeThreat) {
+		if (danger >= safeThreat / GetThrDistMod(IFighterTask::FightType::SCOUT, spot)) {  // thr_mod.distance.scout at the spot
 			continue;
 		}
 

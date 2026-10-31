@@ -149,9 +149,9 @@ void IFighterTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	RemoveAssignee(unit);
 }
 
-float IFighterTask::GetPowerModAt(const AIFloat3& pos) const
+float IFighterTask::GetThrDistModAt(const AIFloat3& pos) const
 {
-	return powerMod / manager->GetCircuit()->GetMilitaryManager()->GetThrDistMod(fightType, pos);
+	return manager->GetCircuit()->GetMilitaryManager()->GetThrDistMod(fightType, pos);
 }
 
 void IFighterTask::SetTarget(CEnemyInfo* enemy)

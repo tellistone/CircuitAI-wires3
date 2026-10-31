@@ -253,7 +253,7 @@ void CAttackTask::FindTarget()
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
 	const float maxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
-	const float maxPower = attackPower * GetPowerModAt(pos);  // incl. thr_mod.distance curve
+	const float maxPower = attackPower * powerMod;  // divided by the thr_mod.distance curve at each enemy's spot
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
@@ -273,7 +273,7 @@ void CAttackTask::FindTarget()
 		const AIFloat3& ePos = enemy->GetPos();
 		const float sqBEDist = ePos.SqDistance2D(basePos);  // Base to Enemy distance
 		const float scale = std::min(sqBEDist / sqOBDist, 1.f);
-		if ((maxPower <= threatMap->GetThreatAt(ePos) * scale)
+		if ((maxPower / GetThrDistModAt(ePos) <= threatMap->GetThreatAt(ePos) * scale)
 			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange))
 		{
 			continue;

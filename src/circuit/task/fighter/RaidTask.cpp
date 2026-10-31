@@ -233,7 +233,7 @@ void CRaidTask::Update()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, threatMap, frame,
-			startPos, pathRange, !urgentPositions.empty() ? urgentPositions : enemyPositions, GetHitTest(), GetSafeThreat());
+			startPos, pathRange, !urgentPositions.empty() ? urgentPositions : enemyPositions, GetHitTest(), GetSafeThreat() / GetThrDistModAt(startPos));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -321,7 +321,8 @@ bool CRaidTask::FindTarget()
 		}
 
 		const float sqEBDist = basePos.SqDistance2D(ePos);
-		float checkPower = maxPower;
+		const float distMod = GetThrDistModAt(ePos);  // thr_mod.distance curve at the enemy's spot
+		float checkPower = maxPower / distMod;
 		float checkSpeed = maxSpeed;
 		if (sqEBDist < sqBaseRange) {
 			checkPower *= circuit->GetMilitaryManager()->GetBaseThrBonus(sqEBDist);  // quota.thr_mod.base_bonus near base
@@ -368,7 +369,7 @@ bool CRaidTask::FindTarget()
 		}
 
 		float sqDist = pos.SqDistance2D(ePos);
-		if ((minPower > power) && (minSqDist > sqDist)) {
+		if ((minPower / distMod > power) && (minSqDist > sqDist)) {
 			if (enemy->IsInRadarOrLOS()) {
 				if (((targetCat & noChaseCat) == 0) && !enemy->IsBeingBuilt()) {
 					if (isBuilder) {
@@ -431,7 +432,7 @@ void CRaidTask::FallbackRaid()
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const AIFloat3& pos = leader->GetPos(frame);
 	const AIFloat3& threatPos = leader->GetTravelAct()->IsActive() ? position : pos;
-	if (GetSafeThreat() <= threatMap->GetThreatAt(leader, threatPos)) {
+	if (GetSafeThreat() / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos)) {
 		position = circuit->GetMilitaryManager()->GetRaidPosition(leader);
 	}
 
@@ -484,8 +485,7 @@ float CRaidTask::GetSafeThreat() const
 		power += GetUnitPower(unit);
 	}
 	// Courage also depends on how far from home the group is (quota.thr_mod.distance)
-	const float mod = (leader != nullptr) ? GetPowerModAt(leader->GetPos(manager->GetCircuit()->GetLastFrame())) : powerMod;
-	return std::max(power, THREAT_MIN) * mod;
+	return std::max(power, THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
 }
 
 float CRaidTask::GetUnitPower(CCircuitUnit* unit) const
@@ -495,11 +495,11 @@ float CRaidTask::GetUnitPower(CCircuitUnit* unit) const
 
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 {
-	// Same allowance as FindTarget near our base (quota.thr_mod.base_bonus at the base centre)
+	// Same allowances as FindTarget: near-base bonus and the distance curve at this spot
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float sqDist = basePos.SqDistance2D(pos);
-	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist);
+	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist) / GetThrDistModAt(pos);
 }
 
 bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe)

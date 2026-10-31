@@ -180,7 +180,8 @@ AIFloat3 CBombTask::FindTarget(CCircuitUnit* unit, CEnemyInfo* lastTarget, const
 	const bool isAntiStatic = cdef->IsAttrAntiStat();
 	const bool notAW = !cdef->HasAntiWater();
 	const float scale = (cdef->GetMinRange() > 300.0f) ? 4.0f : 1.0f;
-	const float maxPower = threatMap->GetUnitThreat(unit) * scale * GetPowerModAt(pos);  // incl. thr_mod.distance curve
+	// Bombers strike far from where they decide: the thr_mod.distance curve is read at each target's spot
+	const float basePower = threatMap->GetUnitThreat(unit) * scale * powerMod;
 //	const float maxAltitude = cdef->GetAltitude();
 	const float speed = cdef->GetSpeed() / 1.75f;
 	const int canTargetCat = cdef->GetTargetCategory();
@@ -214,6 +215,7 @@ AIFloat3 CBombTask::FindTarget(CCircuitUnit* unit, CEnemyInfo* lastTarget, const
 		}
 		const AIFloat3& ePos = enemy->GetPos();
 		float power = threatMap->GetThreatAt(ePos) - enemy->GetThreat();
+		const float maxPower = basePower / GetThrDistModAt(ePos);
 		if ((maxPower <= power) ||
 			(notAW && (ePos.y < -SQUARE_SIZE * 5)))
 		{
