@@ -26,6 +26,7 @@ public:
 
 	void SetPath(const std::shared_ptr<PathInfo>& pPath, float speed = NO_SPEED_LIMIT);
 	const std::shared_ptr<PathInfo>& GetPath() const { return pPath; }
+	void ResetUpdateTimer() { lastFrame = -1; }  // next Update issues commands at once
 
 protected:
 	int CalcSpeedStep(float& stepSpeed);
