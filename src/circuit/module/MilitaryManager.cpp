@@ -332,6 +332,7 @@ void CMilitaryManager::ReadConfig()
 	scoutSpot.staleTime = qspot.get("stale_time", 90.f).asFloat() * FRAMES_PER_SEC;
 	scoutSpot.claimTime = qspot.get("claim_time", 20.f).asFloat() * FRAMES_PER_SEC;
 	scoutSpot.rangeMult = qspot.get("static_range_mult", 1.f).asFloat();
+	scoutSpot.homeRatio = qspot.get("home_ratio", 0.5f).asFloat();
 	const Json::Value& qraid = quotas["raid"];
 	raid.min = qraid.get((unsigned)0, 3.f).asFloat();
 	raid.avg = qraid.get((unsigned)1, 5.f).asFloat();
@@ -477,6 +478,7 @@ void CMilitaryManager::Init()
 	}
 	scoutSeen.assign(spots.size(), -1);
 	scoutClaim.assign(spots.size(), -1);
+	scoutClaimUnit.assign(spots.size(), -1);
 
 	raidPath.reserve(clusters.size());
 	for (unsigned i = 0; i < clusters.size(); ++i) {
@@ -941,6 +943,20 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 	const CMetalData::Metals& spots = metalMgr->GetSpots();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
+	if (scoutSeen.size() != spots.size()) {
+		scoutSeen.assign(spots.size(), -1);
+		scoutClaim.assign(spots.size(), -1);
+		scoutClaimUnit.assign(spots.size(), -1);
+	}
+	// A scout holds one claim: release its previous spot so re-picks don't reserve spots for nobody
+	const ICoreUnit::Id unitId = unit->GetId();
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		if (scoutClaimUnit[i] == unitId) {
+			scoutClaim[i] = -1;
+			scoutClaimUnit[i] = -1;
+		}
+	}
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float mapDiag = std::max(sqrtf(SQUARE(terrainMgr->GetTerrainWidth()) + SQUARE(terrainMgr->GetTerrainHeight())), 1.f);
 
 	// Danger at a destination comes from known static defences only: mobile units will have moved by the
@@ -1007,7 +1023,11 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 		for (const AIFloat3& a : anchors) {
 			minSqAnchor = std::min(minSqAnchor, a.SqDistance2D(spot));
 		}
-		const float enemyTerm = 1.f - std::min(sqrtf(minSqAnchor) / mapDiag, 1.f);
+		const float anchorDist = sqrtf(minSqAnchor);
+		if (basePos.distance2D(spot) < scoutSpot.homeRatio * anchorDist) {
+			continue;  // our side of the map: much nearer our base than any sign of the enemy
+		}
+		const float enemyTerm = 1.f - std::min(anchorDist / mapDiag, 1.f);
 		const float staleTerm = (scoutSeen[i] < 0) ? 1.f
 				: std::min(float(frame - scoutSeen[i]) / std::max(scoutSpot.staleTime, 1), 1.f);
 		const float travelTerm = pos.distance2D(spot) / mapDiag;
@@ -1031,6 +1051,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 		return -RgtVector;
 	}
 	scoutClaim[bestIdx] = frame;
+	scoutClaimUnit[bestIdx] = unitId;
 	return spots[bestIdx].position;
 }
 

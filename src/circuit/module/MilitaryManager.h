@@ -154,6 +154,7 @@ private:
 	unsigned int scoutIdx;
 	std::vector<int> scoutSeen;   // per spot: last frame it was in our LOS (-1 never)
 	std::vector<int> scoutClaim;  // per spot: last frame a scout picked it (-1 never)
+	std::vector<int> scoutClaimUnit;  // per spot: id of the scout that picked it
 	struct SScoutSpot {
 		float enemy;      // weight: closeness to enemy
 		float stale;      // weight: time since last seen
@@ -161,6 +162,7 @@ private:
 		int staleTime;    // frames until a seen spot is fully stale again
 		int claimTime;    // frames a picked spot is reserved for its scout
 		float rangeMult;  // static enemy weapon range multiplier for danger
+		float homeRatio;  // skip spots nearer to our base than this fraction of their distance to the enemy
 	} scoutSpot;
 
 	struct SRaidPoint {
