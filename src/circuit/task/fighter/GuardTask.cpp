@@ -133,15 +133,21 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 	CCircuitUnit* best = nullptr;
 	float minSqDist = SQUARE(cfg.pullRange);
 	for (CCircuitUnit* unit : militaryMgr->GetArmy()) {
-		// Only units the AI controls and that are free or on a regular fight task: not retreating, not guarding
+		// Only units the AI controls that are idle or on a raid/defend task. Never:
+		//   retreating or player-controlled (not FIGHTER/IDLE), already guarding,
+		//   scouting (keeps the scout quota), or in an attack squad (AttackTask disbands below its min power)
 		IUnitTask* curTask = unit->GetTask();
 		if ((curTask == nullptr)
 			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))
-			|| ((curTask->GetType() == IUnitTask::Type::FIGHTER)
-				&& (static_cast<IFighterTask*>(curTask)->GetFightType() == FightType::GUARD))
 			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef()))
 		{
 			continue;
+		}
+		if (curTask->GetType() == IUnitTask::Type::FIGHTER) {
+			const FightType ft = static_cast<IFighterTask*>(curTask)->GetFightType();
+			if ((ft == FightType::GUARD) || (ft == FightType::SCOUT) || (ft == FightType::ATTACK)) {
+				continue;
+			}
 		}
 		const float sqDist = pos.SqDistance2D(unit->GetPos(frame));
 		if ((sqDist < minSqDist) && terrainMgr->CanReachAt(unit, pos, unit->GetCircuitDef()->GetMaxRange())) {
