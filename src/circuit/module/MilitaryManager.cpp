@@ -1141,7 +1141,8 @@ bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
 			}
 		}
 	}
-	return guarding >= std::ceil(guard.maxShare * total);
+	// -1e-3: 0.3f * 10 is 3.0000001f in float, which would ceil to 4
+	return guarding >= std::ceil(guard.maxShare * total - 1e-3f);
 }
 
 IFighterTask* CMilitaryManager::FindGuardTask(CCircuitUnit* unit) const

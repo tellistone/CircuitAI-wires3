@@ -36,6 +36,7 @@ public:
 private:
 	void CheckVip(CCircuitUnit* vip);
 	void CheckThreat();
+	bool IsOverThreat(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	void Release();
 	void Pull(CCircuitUnit* vip);
 

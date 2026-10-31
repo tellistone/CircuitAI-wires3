@@ -45,7 +45,12 @@ bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	return militaryMgr->IsGuardRole(unit->GetCircuitDef()) && !militaryMgr->IsGuardCapReached(unit->GetCircuitDef());
+	if (!militaryMgr->IsGuardRole(unit->GetCircuitDef()) || militaryMgr->IsGuardCapReached(unit->GetCircuitDef())) {
+		return false;
+	}
+	// Don't send a unit (e.g. one just released by another slot's threat exit) to a builder under heavy threat
+	CCircuitUnit* vip = manager->GetCircuit()->GetTeamUnit(vipId);
+	return (vip == nullptr) || !IsOverThreat(unit, vip->GetPos(manager->GetCircuit()->GetLastFrame()));
 }
 
 void CFGuardTask::Start(CCircuitUnit* unit)
@@ -136,17 +141,25 @@ void CFGuardTask::CheckThreat()
 	if ((cfg.threatCooldown < 0) || units.empty()) {
 		return;
 	}
-	CCircuitAI* circuit = manager->GetCircuit();
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	const int frame = circuit->GetLastFrame();
+	const int frame = manager->GetCircuit()->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
-		// Light threat (below threat_ratio x the guard's own threat) doesn't count: the guard holds
-		const float maxThreat = std::max(THREAT_MIN, cfg.threatRatio * threatMap->GetUnitThreat(unit));
-		if (threatMap->GetThreatAt(unit, unit->GetPos(frame)) > maxThreat) {
+		if (IsOverThreat(unit, unit->GetPos(frame))) {
 			cooldownUntil = frame + cfg.threatCooldown;
 			return;
 		}
 	}
+}
+
+bool CFGuardTask::IsOverThreat(CCircuitUnit* unit, const AIFloat3& pos) const
+{
+	// Light threat (below threat_ratio x the unit's own threat) doesn't count: the guard holds
+	const CMilitaryManager::SGuardCfg& cfg = static_cast<CMilitaryManager*>(manager)->GetGuardCfg();
+	if (cfg.threatCooldown < 0) {
+		return false;
+	}
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	const float maxThreat = std::max(THREAT_MIN, cfg.threatRatio * threatMap->GetUnitThreat(unit));
+	return threatMap->GetThreatAt(unit, pos) > maxThreat;
 }
 
 void CFGuardTask::Pull(CCircuitUnit* vip)
@@ -169,8 +182,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		IUnitTask* curTask = unit->GetTask();
 		if ((curTask == nullptr)
 			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))
-			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef())
-			|| militaryMgr->IsGuardCapReached(unit->GetCircuitDef()))
+			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef()))
 		{
 			continue;
 		}
@@ -180,8 +192,18 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 				continue;
 			}
 		}
-		const float sqDist = pos.SqDistance2D(unit->GetPos(frame));
-		if ((sqDist < minSqDist) && terrainMgr->CanReachAt(unit, pos, unit->GetCircuitDef()->GetMaxRange())) {
+		const AIFloat3& unitPos = unit->GetPos(frame);
+		const float sqDist = pos.SqDistance2D(unitPos);
+		if (sqDist >= minSqDist) {
+			continue;
+		}
+		// Don't pull a unit the threat exit would cancel right away or on arrival (avoids a cooldown ping-pong)
+		if (IsOverThreat(unit, pos) || IsOverThreat(unit, unitPos)) {
+			continue;
+		}
+		if (!militaryMgr->IsGuardCapReached(unit->GetCircuitDef())  // O(army): checked last, on nearby candidates only
+			&& terrainMgr->CanReachAt(unit, pos, unit->GetCircuitDef()->GetMaxRange()))
+		{
 			minSqDist = sqDist;
 			best = unit;
 		}
