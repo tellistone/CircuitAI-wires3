@@ -18,6 +18,10 @@ public:
 	virtual ~CAttackTask();
 
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;
+	// CanAssignTo without the 1000-elmo distance limit: speed, movement type, not a worse mover
+	bool IsCompatible(CCircuitUnit* unit) const;
+	// Walk to this army and merge into it instead of hunting targets alone
+	void SetReinforce(CAttackTask* squad) { reinforce = squad; }
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
 
@@ -28,6 +32,10 @@ public:
 
 private:
 	ISquadTask* GetAttackMergeTask();
+	CAttackTask* GetReinforceSquad();
+	void Reinforce(const int frame);
+	void ApplyReinforcePath(const CQueryPathSingle* query);
+	void ConvertToGather();
 	void AbsorbWeakerTasks();
 	void FindTarget();
 	void ApplyTargetPath(const CQueryPathSingle* query);
@@ -38,6 +46,7 @@ private:
 	void Fallback();
 
 	float minPower;
+	CAttackTask* reinforce;  // army to join; validated through CMilitaryManager::GetTasks before use
 };
 
 } // namespace circuit

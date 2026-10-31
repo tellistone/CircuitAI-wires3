@@ -21,6 +21,7 @@ namespace circuit {
 class CGameTask;
 class CBDefenceTask;
 class CRetreatTask;
+class CAttackTask;
 
 class CMilitaryManager: public IUnitModule {
 public:
@@ -49,6 +50,12 @@ public:
 	IFighterTask* EnqueueDefend(IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType check, IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
+	// Power an attack-bound group gathers at base before it leaves: max(quota.attack, enemy threat / allies)
+	float GetAttackGatherPower() const;
+	// Nearest attack army (power >= quota.attack) that this unit's group may join and can reach; nullptr if none
+	CAttackTask* FindReinforceSquad(CCircuitUnit* unit) const;
+	// New attack task that walks to FindReinforceSquad(unit) and merges into it; nullptr if there is none
+	IFighterTask* EnqueueReinforce(CCircuitUnit* unit);
 	CRetreatTask* EnqueueRetreat();
 private:
 	void DequeueTask(IUnitTask* task, bool done = false);

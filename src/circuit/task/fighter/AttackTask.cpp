@@ -35,6 +35,7 @@ using namespace springai;
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
+		, reinforce(nullptr)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -50,6 +51,17 @@ bool CAttackTask::CanAssignTo(CCircuitUnit* unit) const
 {
 	assert(leader != nullptr);
 
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
+		return false;
+	}
+	return IsCompatible(unit);
+}
+
+bool CAttackTask::IsCompatible(CCircuitUnit* unit) const
+{
+	assert(leader != nullptr);
+
 	float speedLeader = leader->GetCircuitDef()->GetSpeed();
 	float speedUnit = unit->GetCircuitDef()->GetSpeed();
 	if (speedLeader > speedUnit) {
@@ -59,10 +71,6 @@ bool CAttackTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
-		return false;
-	}
 	// The joining group's leader must not move worse than ours (smaller terrain area). Otherwise it
 	// would take the lead (ISquadTask::FindLeader) and drag the group back to it, or, if kept out of
 	// the lead, get stranded on routes only our leader can take.
@@ -184,6 +192,18 @@ void CAttackTask::Update()
 		}
 	}
 
+	/*
+	 * Reinforce: a group under quota.attack walks to its army instead of hunting targets alone
+	 */
+	if (reinforce != nullptr) {
+		if (attackPower >= minPower) {
+			reinforce = nullptr;  // grown into an army itself (merges on the way)
+		} else {
+			Reinforce(frame);
+			return;
+		}
+	}
+
 	const AIFloat3& startPos = leader->GetPos(frame);
 	if (circuit->GetInflMap()->GetInfluenceAt(startPos) < -INFL_EPS) {
 		SetTarget(nullptr);
@@ -285,6 +305,82 @@ void CAttackTask::AbsorbWeakerTasks()
 		manager->AbortTask(candy);
 	}
 	weaklings.clear();
+}
+
+CAttackTask* CAttackTask::GetReinforceSquad()
+{
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	// NOTE: the army may be deleted already, do not dereference before lookup
+	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(fightType);
+	if ((tasks.find(static_cast<IFighterTask*>(reinforce)) != tasks.end()) && !reinforce->IsDead()
+		&& (reinforce->GetLeader() != nullptr) && (reinforce->GetAttackPower() >= minPower))
+	{
+		return reinforce;
+	}
+	// Army gone or shrunk: pick the nearest other one (excludes this task, its power is under quota.attack)
+	reinforce = militaryMgr->FindReinforceSquad(leader);
+	return reinforce;
+}
+
+void CAttackTask::Reinforce(const int frame)
+{
+	SetTarget(nullptr);
+	state = State::ROAM;
+
+	CAttackTask* squad = GetReinforceSquad();
+	if (squad == nullptr) {
+		ConvertToGather();
+		return;
+	}
+	if (!IsQueryReady(leader)) {
+		return;
+	}
+
+	// Threat-aware path to the army's leader, no threat cap. Merging takes over within 1000 elmos
+	// (CheckMergeTask every 4 updates from our side, AbsorbWeakerTasks every 8 from the army's side).
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& startPos = leader->GetPos(frame);
+	position = squad->GetLeaderPos(frame);
+	const float pathRange = DEFAULT_SLACK * 4;
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			leader, circuit->GetThreatMap(), frame,
+			startPos, position, pathRange);
+	pathQueries[leader] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyReinforcePath(static_cast<const CQueryPathSingle*>(query));
+		}
+	});
+}
+
+void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query)
+{
+	pPath = query->GetPathInfo();
+
+	if (!pPath->path.empty()) {
+		if (pPath->path.size() > 2) {
+			ActivePath(lowestSpeed);
+		}
+	} else {
+		Fallback();  // Fight-move straight to the army
+	}
+}
+
+void CAttackTask::ConvertToGather()
+{
+	// No army to join: go back to gathering at base (CDefendTask) instead of fighting alone.
+	// NOTE: moving the first unit out aborts this task (power < quota.attack); nothing may touch
+	//       members after the loop.
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	IFighterTask* task = militaryMgr->EnqueueDefend(FightType::ATTACK, militaryMgr->GetAttackGatherPower());
+	decltype(units) tmpUnits = units;
+	for (CCircuitUnit* unit : tmpUnits) {
+		manager->AssignTask(unit, task);
+	}
 }
 
 void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
