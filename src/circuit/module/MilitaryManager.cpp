@@ -1147,6 +1147,22 @@ bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
 	return guarding >= std::ceil(guard.maxShare * total - 1e-3f);
 }
 
+void CMilitaryManager::BanGuard(CCircuitUnit* unit, int frames)
+{
+	const int frame = circuit->GetLastFrame();
+	// Drop expired entries (and dead units) so the map stays small
+	for (auto it = guardBanUntil.begin(); it != guardBanUntil.end();) {
+		it = (it->second <= frame) ? guardBanUntil.erase(it) : std::next(it);
+	}
+	guardBanUntil[unit->GetId()] = frame + frames;
+}
+
+bool CMilitaryManager::IsGuardBanned(CCircuitUnit* unit) const
+{
+	auto it = guardBanUntil.find(unit->GetId());
+	return (it != guardBanUntil.end()) && (circuit->GetLastFrame() < it->second);
+}
+
 IFighterTask* CMilitaryManager::FindGuardTask(CCircuitUnit* unit) const
 {
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {

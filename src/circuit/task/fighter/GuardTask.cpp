@@ -51,7 +51,9 @@ bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	if (!militaryMgr->IsGuardRole(unit->GetCircuitDef()) || militaryMgr->IsGuardCapReached(unit->GetCircuitDef())) {
+	if (!militaryMgr->IsGuardRole(unit->GetCircuitDef()) || militaryMgr->IsGuardBanned(unit)
+		|| militaryMgr->IsGuardCapReached(unit->GetCircuitDef()))
+	{
 		return false;
 	}
 	// Don't send a unit (e.g. one just released by another slot's threat exit) to a builder under heavy threat
@@ -119,7 +121,11 @@ void CFGuardTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	// nor MakeTask hands this slot straight back
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	cooldownUntil = std::max(cooldownUntil, frame + std::max(0, cfg.threatCooldown));
+	// threat_cooldown -1 only turns off the threat exit; damage still needs a cooldown, or the slot
+	// would pull the same unit straight back on its next update
+	const int cooldown = (cfg.threatCooldown >= 0) ? cfg.threatCooldown : FRAMES_PER_SEC * 10;
+	cooldownUntil = std::max(cooldownUntil, frame + cooldown);
+	militaryMgr->BanGuard(unit, cooldown);  // and it shouldn't hop to the next builder's slot
 	CCircuitUnit* vip = circuit->GetTeamUnit(vipId);
 	if (vip != nullptr) {
 		DebugLog(vip, "guard damaged");
@@ -220,6 +226,10 @@ void CFGuardTask::CheckThreat()
 	for (CCircuitUnit* unit : units) {
 		if (IsOverThreat(unit, unit->GetPos(frame))) {
 			cooldownUntil = frame + cfg.threatCooldown;
+			CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+			for (CCircuitUnit* u : units) {
+				militaryMgr->BanGuard(u, cfg.threatCooldown);
+			}
 			return;
 		}
 	}
@@ -257,7 +267,8 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		IUnitTask* curTask = unit->GetTask();
 		if ((curTask == nullptr)
 			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))
-			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef()))
+			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef())
+			|| militaryMgr->IsGuardBanned(unit))
 		{
 			continue;
 		}

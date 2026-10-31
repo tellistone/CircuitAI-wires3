@@ -91,6 +91,9 @@ public:
 	const SGuardCfg& GetGuardCfg() const { return guard; }
 	bool IsGuardRole(CCircuitDef* cdef) const;
 	bool IsGuardCapReached(CCircuitDef* cdef) const;
+	// A guard released by damage or threat can't take any guard slot until the ban ends
+	void BanGuard(CCircuitUnit* unit, int frames);
+	bool IsGuardBanned(CCircuitUnit* unit) const;
 
 	const std::set<CCircuitUnit*>& GetRoleUnits(CCircuitDef::RoleT type) const {
 		return roleInfos[type].units;
@@ -176,6 +179,7 @@ private:
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
 	SGuardCfg guard;
+	std::map<int, int> guardBanUntil;  // unit id -> frame
 
 	struct SRaidQuota {
 		float min;

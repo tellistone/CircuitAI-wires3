@@ -52,7 +52,7 @@
 	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (idle, raid or defend task; never scouts, attack squads, retreating or guarding units; must reach the builder); 0 = only units asking for a new task fill it
 	"threat_cooldown": 10.0,  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
 	"threat_ratio": 1.0,  // ... but only if enemy threat at the guard > this * the guard's own threat; lower values cancel on lighter threat, 0 = any threat
-	"damage_exit": true,  // a guard that takes damage is released at once, and its builder gets no guard for threat_cooldown seconds (0 if threat_cooldown is -1)
+	"damage_exit": true,  // a guard that takes damage is released at once, and its builder gets no guard for threat_cooldown seconds (10 if threat_cooldown is -1). A guard released by damage or threat can't guard any builder for that long
 	"debug": false  // true = write guard events and a status line per slot every 10 s to infolog.txt (lines start with "GUARD")
 },
 
