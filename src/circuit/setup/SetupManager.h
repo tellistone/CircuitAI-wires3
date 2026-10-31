@@ -72,6 +72,7 @@ public:
 	void ReadConfig();
 	float GetEmptyShield() const { return emptyShield; }
 	float GetFullShield() const { return fullShield; }
+	int GetRetreatWait() const { return retreatWait; }
 
 	bool HasModules(const CCircuitDef* cdef, unsigned level) const;
 	const std::vector<float>& GetModules(const CCircuitDef* cdef, unsigned level) const;
@@ -107,6 +108,7 @@ private:
 
 	float emptyShield;
 	float fullShield;
+	int retreatWait;  // frames a retreated unit waits for repair at haven, 0 = no limit
 
 	std::string commPrefix;
 	std::string commSuffix;

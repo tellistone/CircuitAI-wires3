@@ -94,6 +94,24 @@ public:
 	IBuilderTask* EnqueueRepair(IBuilderTask::Priority priority,
 								CCircuitUnit* target,
 								int timeout = ASSIGN_TIMEOUT);
+	bool IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit* unit, const springai::AIFloat3& pos) const;
+	bool IsRepairAssigned(ICoreUnit::Id unitId) const;
+	float GetPrioRepairLeash() const { return prioRepairLeash; }
+	void OnPrioRepairLeash(ICoreUnit::Id unitId);  // target drove off mid-repair: hold off new priority jobs
+
+	struct SEscort {
+		float minPower;  // min attack power of a group to get escort builder, 0 = disabled
+		float share;  // max share of workers on escort duty
+		float behind;  // distance behind group leader (towards base)
+		float follow;  // distance from escort point at which builder catches up along threat-aware path
+		float range;  // max distance from a builder to the group when assigning
+		bool isComm;  // allow commander to escort
+		int maxPriority;  // highest priority of a job a builder can be taken off (NOW never)
+	};
+	const SEscort& GetEscortCfg() const { return escort; }
+private:
+	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);
+public:
 	IBuilderTask* EnqueueReclaim(IBuilderTask::Priority priority,
 								 const springai::AIFloat3& position,
 								 float cost,
@@ -155,6 +173,7 @@ private:
 	void Watchdog();
 	void UpdateIdle();
 	void UpdateBuild();
+	void UpdateEscort();
 
 	Handlers2 createdHandler;
 	Handlers1 finishedHandler;
@@ -172,6 +191,15 @@ private:
 	unsigned int buildIterator;
 
 	std::set<CCircuitUnit*> workers;
+	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
+	float prioRepairShare;  // max share of workers that can be on NOW repair at once
+	bool isPrioRepairSafe;  // apply builder threat check to NOW repair of mobile units
+	bool isPrioRepairSafeStatic;  // same for static units
+	float prioRepairLeash;  // cancel started priority repair if target gets this far beyond build range, 0 = off
+	int prioRepairCooldown;  // frames without new priority repair job after leash break
+	std::map<ICoreUnit::Id, int> leashUntil;  // unitId: frame until which priority repair is held off
+	SEscort escort;
+	std::set<IUnitTask*> escortTasks;
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner
 
 	CCircuitDef* terraDef;

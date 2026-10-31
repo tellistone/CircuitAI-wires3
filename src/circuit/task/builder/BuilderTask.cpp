@@ -268,6 +268,9 @@ void IBuilderTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float healthPerc = unit->GetHealthPercent();
 	if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
+		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
+			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
+		}
 		return;
 	}
 
@@ -447,7 +450,13 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	// TODO: Check IsForceUpdate, shield charge and retreat
 
 	const AIFloat3& endPos = GetPosition();
-	if (!circuit->GetTerrainManager()->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())) {
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	// Priority repair targets are usually in combat: apply the same safety rule as task selection
+	const bool isReachable = ((priority == Priority::NOW) && (buildType == BuildType::REPAIR))
+			? terrainMgr->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
+				&& !circuit->GetBuilderManager()->IsUnsafePrioRepair(this, unit, endPos)
+			: terrainMgr->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
+	if (!isReachable) {
 		manager->AbortTask(this);
 		return;
 	}

@@ -46,6 +46,7 @@ private:
 	void ApplyCostMap(const CQueryCostMap* query, CCircuitUnit* newRep);
 
 	CCircuitUnit* repairer;
+	int regroupFrame;  // when unit arrived at haven
 	std::shared_ptr<IPathQuery> costQuery;  // owner
 };
 

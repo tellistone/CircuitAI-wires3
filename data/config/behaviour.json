@@ -23,7 +23,24 @@
 "retreat": {
 	"builder": [0.70, 1.0],  // [<default>, <UnitDef modifier>] for all builders
 	"fighter": [0.45, 1.0],  // [<default>, <UnitDef modifier>] for all not-builder units
-	"shield": [0.25, 0.275]  // [<empty>, <full>] shield power
+	"shield": [0.25, 0.275],  // [<empty>, <full>] shield power
+	"wait_timeout": 60,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
+	"repair_safe": false,  // true = builders skip priority repair of mobile units (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs
+	"repair_safe_static": false,  // same as repair_safe, for static units with prio_repair
+	"repair_pull": [1500, 0.34],  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
+	"repair_leash": [300, 20]  // [<distance>, <cooldown sec>]: cancel a started priority repair if the unit drives this far beyond build range, then no new priority repair for it during cooldown, distance 0 = disabled
+},
+
+// Builder that follows a strong attack group: patrols behind it (auto repair/reclaim like fight) while the group
+// holds or advances, plain moves while it falls back towards base, threat-aware path when it lags behind
+"escort": {
+	"min_power": 60.0,  // min attack power of a group to get and keep an escort builder (compare quota.attack), 0 = disabled
+	"share": 0.2,  // max share of builders on escort duty (rounded down: 4 builders * 0.2 = 0 escorts)
+	"behind": 150.0,  // distance behind the group leader, towards base
+	"follow": 600.0,  // if further than this from its spot, builder catches up along a threat-aware path
+	"range": 600.0,  // only builders within this distance of any group member are picked
+	"comm": false,  // allow commander as escort
+	"take_from": "high"  // highest job priority a builder can be taken off for escort: "idle" (idle builders only), "low", "normal" or "high" (urgent jobs never)
 },
 
 "defence": {
@@ -56,6 +73,7 @@
 		// "dg_cost" - DGun by metal cost instead of by threat
 		// "anti_stat" - only static targets
 		// "no_dgun" - do not use DGun
+		// "prio_repair" - when damaged above retreat threshold, builders rush to repair it (like "heavy" main role); on statics: below 90% health; commanders always have it
 //		"attribute": ["boost", "no_strafe"],
 
 		// Fire state (open by default)

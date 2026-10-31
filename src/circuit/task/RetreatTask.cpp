@@ -30,6 +30,7 @@ using namespace springai;
 CRetreatTask::CRetreatTask(ITaskManager* mgr, int timeout)
 		: IUnitTask(mgr, Priority::NORMAL, Type::RETREAT, timeout)
 		, repairer(nullptr)
+		, regroupFrame(-1)
 {
 }
 
@@ -150,14 +151,25 @@ void CRetreatTask::Update()
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	bool isExecute = (++updCount % 2 == 0);
+	const int waitTimeout = circuit->GetSetupManager()->GetRetreatWait();
 	auto assignees = units;
 	for (CCircuitUnit* unit : assignees) {
 		const float healthPerc = unit->GetHealthPercent();
 		bool isRepaired = unit->HasShield()
 				? (healthPerc > 0.98f) && unit->IsShieldCharged(circuit->GetSetupManager()->GetFullShield())
 				: healthPerc > 0.98f;
+		// Waited at haven too long without a repairer: return to duty.
+		// A builder working on it restarts the wait, so the timeout never cuts a repair short.
+		bool isWaitOver = false;
+		if ((waitTimeout > 0) && (State::REGROUP == state) && (repairer == nullptr) && !unit->GetCircuitDef()->IsPlane()) {
+			if (circuit->GetBuilderManager()->IsRepairAssigned(unit->GetId())) {
+				regroupFrame = frame;
+			} else {
+				isWaitOver = (frame - regroupFrame >= waitTimeout);
+			}
+		}
 
-		if (isRepaired && !unit->IsDisarmed(frame)) {
+		if ((isRepaired || isWaitOver) && !unit->IsDisarmed(frame)) {
 			RemoveAssignee(unit);
 		} else if (unit->IsForceUpdate(frame) || isExecute) {
 			Start(unit);
@@ -243,6 +255,9 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 
 		if (unit->GetTravelAct() != nullptr) {
 			unit->GetTravelAct()->StateFinish();
+		}
+		if (State::REGROUP != state) {
+			regroupFrame = frame;
 		}
 		state = State::REGROUP;
 	}

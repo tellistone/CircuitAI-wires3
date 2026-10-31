@@ -44,6 +44,7 @@ CCircuitDef::AttrName CCircuitDef::attrNames = {
 	{"anti_stat", CCircuitDef::AttrType::ANTI_STAT},
 	{"rearm",     CCircuitDef::AttrType::REARM},
 	{"no_dgun",   CCircuitDef::AttrType::NO_DGUN},
+	{"prio_repair", CCircuitDef::AttrType::PRIO_REPAIR},
 };
 CCircuitDef::FireName CCircuitDef::fireNames = {
 	{"hold",   CCircuitDef::FireType::HOLD},
@@ -199,6 +200,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	if (customParams.find("level") != customParams.end()) {
 		isDynamic = customParams.find("dynamic_comm") != customParams.end();
 		AddRole(ROLE_TYPE(COMM));
+		AddAttribute(AttrType::PRIO_REPAIR);  // commanders get priority repair by default
 	}
 
 	it = customParams.find("midposoffset");
