@@ -190,7 +190,8 @@ void CRaidTask::Update()
 				}
 			}
 		} else {
-			Attack(frame);
+			// Direct Attack keeps FindTarget's priority (e.g. turret over nearby solars); a fight-move would shoot whatever comes first
+			Attack(frame, true);
 		}
 		return;
 	}

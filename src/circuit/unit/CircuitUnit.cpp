@@ -345,6 +345,12 @@ void CCircuitUnit::Attack(CEnemyInfo* enemy, int timeout)
 	)
 }
 
+void CCircuitUnit::Attack(CEnemyInfo* enemy, int tile, int timeout)
+{
+	targetTile = tile;
+	Attack(enemy, timeout);
+}
+
 void CCircuitUnit::Attack(const AIFloat3& position, int timeout)
 {
 	const AIFloat3& pos = utils::get_radial_pos(position, SQUARE_SIZE * 8);
