@@ -5,12 +5,31 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ## Unreleased
 
+### Added
+
+- **Configurable builder guards** (`guard` block in `behaviour.json`, [#3](https://github.com/tellistone/CircuitAI-wires3/pull/3)).
+  Early unarmed builders get a guard slot that one combat unit fills.
+  - `roles` (default `["raider", "riot"]`): main roles that may guard. Before, only raiders and riots could, and that was hardcoded.
+  - `max_workers` (default 3): a builder gets a slot if the worker count, commander included, is below this when it
+    finishes. Before, this was a hardcoded 3. 0 turns guards off.
+  - `max_active` (default 0 = no limit): the most builders that have a guard at once.
+  - `pull_range` (default 800): an empty slot pulls the nearest eligible unit within this distance. Eligible means idle
+    or on a raid or defend task, never a scout or a member of an attack squad. Before, a slot only filled when a unit
+    asked for a new task.
+- **Guard exit conditions.** The guard goes back to normal duty when:
+  - its builder retreats;
+  - its builder has been safe for `safe_time` seconds (default 5). Safe means allied influence, minus the guard
+    itself, is at least `safe[0]` and enemy influence is at most `safe[1]`;
+  - it stands in enemy threat above `threat_ratio` times its own threat. The builder then gets no guard for
+    `threat_cooldown` seconds (default 10, -1 turns this off).
+
 ### Fixed
 
 - The `retreat.repair_pull` share cap now also applies when idle builders choose their next job. Before, it only
   limited builders pulled off other work. Urgent jobs outrank everything in job selection, so every idle builder
   took a priority repair whenever there were enough of them, and other work such as metal extractors stalled.
   The cap now applies even when the pull is turned off (`range` 0).
+- A guard slot that cancelled itself left a stale entry behind in the guard list.
 
 ## 2026-10-31: Priority repair and escort builders ([#1](https://github.com/tellistone/CircuitAI-wires3/pull/1))
 
