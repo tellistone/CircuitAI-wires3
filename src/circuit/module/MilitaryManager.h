@@ -67,6 +67,8 @@ public:
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	// Best scouting spot by score (near enemy, unseen, not stale-visited, not defended by known static enemies)
 	springai::AIFloat3 PickScoutSpot(CCircuitUnit* unit, float safeThreat);
+	// A scout gave up on this spot (danger at it or no safe route): no scout picks it for a while
+	void BlockScoutSpot(const springai::AIFloat3& spot, int frames);
 	springai::AIFloat3 GetRaidPosition(CCircuitUnit* unit);
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillAttackSafePos(CCircuitUnit* unit, F3Vec& outPositions);
@@ -155,6 +157,7 @@ private:
 	std::vector<int> scoutSeen;   // per spot: last frame it was in our LOS (-1 never)
 	std::vector<int> scoutClaim;  // per spot: last frame a scout picked it (-1 never)
 	std::vector<int> scoutClaimUnit;  // per spot: id of the scout that picked it
+	std::vector<int> scoutBlocked;  // per spot: frame until which no scout picks it
 	struct SScoutSpot {
 		float enemy;      // weight: closeness to enemy
 		float stale;      // weight: time since last seen

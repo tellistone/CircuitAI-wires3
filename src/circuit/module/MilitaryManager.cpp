@@ -479,6 +479,7 @@ void CMilitaryManager::Init()
 	scoutSeen.assign(spots.size(), -1);
 	scoutClaim.assign(spots.size(), -1);
 	scoutClaimUnit.assign(spots.size(), -1);
+	scoutBlocked.assign(spots.size(), -1);
 
 	raidPath.reserve(clusters.size());
 	for (unsigned i = 0; i < clusters.size(); ++i) {
@@ -947,6 +948,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 		scoutSeen.assign(spots.size(), -1);
 		scoutClaim.assign(spots.size(), -1);
 		scoutClaimUnit.assign(spots.size(), -1);
+		scoutBlocked.assign(spots.size(), -1);
 	}
 	// A scout holds one claim: release its previous spot so re-picks don't reserve spots for nobody
 	const ICoreUnit::Id unitId = unit->GetId();
@@ -1005,7 +1007,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 			scoutSeen[i] = frame;
 			continue;  // already watched
 		}
-		if (metalMgr->IsMexInFinished(i) || !terrainMgr->CanMoveToPos(area, spot)) {
+		if ((frame < scoutBlocked[i]) || metalMgr->IsMexInFinished(i) || !terrainMgr->CanMoveToPos(area, spot)) {
 			continue;  // our territory, or unreachable
 		}
 		float danger = 0.f;
@@ -1053,6 +1055,20 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 	scoutClaim[bestIdx] = frame;
 	scoutClaimUnit[bestIdx] = unitId;
 	return spots[bestIdx].position;
+}
+
+void CMilitaryManager::BlockScoutSpot(const AIFloat3& spot, int frames)
+{
+	const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
+	if (scoutBlocked.size() != spots.size()) {
+		return;
+	}
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		if ((spots[i].position.x == spot.x) && (spots[i].position.z == spot.z)) {
+			scoutBlocked[i] = circuit->GetLastFrame() + frames;
+			return;
+		}
+	}
 }
 
 AIFloat3 CMilitaryManager::GetRaidPosition(CCircuitUnit* unit)
