@@ -305,7 +305,7 @@ bool CAntiHeavyTask::FindTarget()
 	const bool isAntiStatic = cdef->IsAttrAntiStat();
 	const bool notAA = !cdef->HasAntiAir();
 	const int canTargetCat = cdef->GetTargetCategory();
-	const float maxPower = attackPower * powerMod;
+	const float maxPower = attackPower * GetPowerModAt(pos);  // incl. thr_mod.distance curve
 	const float weaponRange = cdef->GetMaxRange();
 	const float range = std::max(highestRange, threatMap->GetSquareSize() * 2.0f);
 	const float losSqDist = SQUARE(range);

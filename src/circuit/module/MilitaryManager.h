@@ -132,8 +132,8 @@ public:
 	}
 
 	float GetRaidFleeShare() const { return raidFleeShare; }
-	// Multiplier on thr_mod by distance from our base (quota.thr_mod.distance curve); 1 if not configured
-	float GetThrDistMod(const springai::AIFloat3& pos) const;
+	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
+	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
 	// Courage bonus inside the base defence radius: quota.thr_mod.base_bonus at the base centre, falling to 1 at the radius edge
 	float GetBaseThrBonus(float sqDistToBase) const;
 
@@ -218,8 +218,9 @@ private:
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;
-	std::vector<std::pair<float, float>> thrDistCurve;
-	float baseThrBonus;  // [fraction of map diagonal, thr_mod multiplier], sorted
+	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
+	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
+	float baseThrBonus;  // quota.thr_mod.base_bonus
 	struct SThreatQuota {
 		float min;
 		float len;

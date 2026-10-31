@@ -378,19 +378,36 @@ void CMilitaryManager::ReadConfig()
 		return mod;
 	};
 	baseThrBonus = std::max(qthrMod.get("base_bonus", 2.f).asFloat(), 0.f);
-	thrDistCurve.clear();
+	thrDistCurves.assign(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_), ThrDistCurve());
 	const Json::Value& qthrDist = qthrMod["distance"];
-	if (qthrDist.isArray()) {
-		for (const Json::Value& pt : qthrDist) {
-			if (!pt.isArray() || (pt.size() < 2) || (pt[1].asFloat() <= 0.f)) {
-				circuit->LOG("CONFIG %s: quota.thr_mod.distance points must be [<map fraction>, <multiplier > 0>]", cfgName.c_str());
+	if (qthrDist.isObject()) {
+		static const std::map<std::string, IFighterTask::FightType> distTasks = {
+			{"scout",  IFighterTask::FightType::SCOUT},
+			{"raid",   IFighterTask::FightType::RAID},
+			{"defend", IFighterTask::FightType::DEFEND},
+			{"attack", IFighterTask::FightType::ATTACK},
+			{"aa",     IFighterTask::FightType::AA},
+			{"ah",     IFighterTask::FightType::AH},
+			{"bomber", IFighterTask::FightType::BOMB},
+		};
+		for (const std::string& taskName : qthrDist.getMemberNames()) {
+			auto it = distTasks.find(taskName);
+			if (it == distTasks.end()) {
+				circuit->LOG("CONFIG %s: quota.thr_mod.distance has unknown task '%s' (scout, raid, defend, attack, aa, ah, bomber)", cfgName.c_str(), taskName.c_str());
 				continue;
 			}
-			thrDistCurve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+			ThrDistCurve& curve = thrDistCurves[static_cast<IFighterTask::FT>(it->second)];
+			for (const Json::Value& pt : qthrDist[taskName]) {
+				if (!pt.isArray() || (pt.size() < 2) || (pt[1].asFloat() <= 0.f)) {
+					circuit->LOG("CONFIG %s: quota.thr_mod.distance.%s points must be [<map fraction>, <multiplier > 0>]", cfgName.c_str(), taskName.c_str());
+					continue;
+				}
+				curve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+			}
+			std::sort(curve.begin(), curve.end());
 		}
-		std::sort(thrDistCurve.begin(), thrDistCurve.end());
 	} else if (!qthrDist.isNull()) {
-		circuit->LOG("CONFIG %s: quota.thr_mod.distance must be a list of [<map fraction>, <multiplier>]", cfgName.c_str());
+		circuit->LOG("CONFIG %s: quota.thr_mod.distance must be an object of task curves, e.g. {\"raid\": [[0.1, 0.5], [0.9, 2.0]]}", cfgName.c_str());
 	}
 	raidMod = readThrMod("raid", attackMod);
 	scoutMod = readThrMod("scout", attackMod);
@@ -1133,8 +1150,9 @@ float CMilitaryManager::GetBaseThrBonus(float sqDistToBase) const
 	return 1.f + (baseThrBonus - 1.f) * (1.f - sqrtf(sqDistToBase) / baseRange);
 }
 
-float CMilitaryManager::GetThrDistMod(const AIFloat3& pos) const
+float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloat3& pos) const
 {
+	const ThrDistCurve& thrDistCurve = thrDistCurves[static_cast<IFighterTask::FT>(type)];
 	if (thrDistCurve.empty()) {
 		return 1.f;
 	}

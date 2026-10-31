@@ -45,6 +45,8 @@ public:
 
 protected:
 	void SetTarget(CEnemyInfo* enemy);
+	// powerMod adjusted by the task's distance-from-base curve (quota.thr_mod.distance.<task>) at pos
+	float GetPowerModAt(const springai::AIFloat3& pos) const;
 	// isDirect: Attack the target first instead of fight-moving to it.
 	// The engine still lets weapons shoot other units while the ordered target can't be hit (out of range),
 	// but switches to the ordered target as soon as it can.

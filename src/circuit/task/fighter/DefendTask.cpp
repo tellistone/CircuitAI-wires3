@@ -214,7 +214,7 @@ bool CDefendTask::FindTarget()
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
-	const float maxPower = attackPower * powerMod;
+	const float maxPower = attackPower * GetPowerModAt(pos);  // incl. thr_mod.distance curve
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();

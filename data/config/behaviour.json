@@ -11,7 +11,12 @@
 		"raid": [0.45, 0.45],  // same for raid task (raider groups): target choice, escape and path threat; missing = use "attack"
 		"scout": [0.45, 0.45],  // same for scout task; missing = use "attack"
 		"base_bonus": 2.0,  // raid and defence groups inside the base defence radius accept up to this x threat at the base centre, falling to 1 at the radius edge; 1 = off; multiplies with "distance"
-		"distance": [[0.1, 0.5], [0.9, 2.0]],  // raid and scout: multiply their thr_mod by distance from our base as a fraction of the map diagonal; [<fraction>, <multiplier>] points, linear between, flat beyond the ends; higher = more cautious; missing = 1
+		// Per task: multiply its thr_mod by distance from our base as a fraction of the map diagonal (higher = more cautious).
+		// [<fraction>, <multiplier>] points, linear between, flat beyond the ends; tasks: scout, raid, defend, attack, aa, ah, bomber; missing task = 1
+		"distance": {
+			"raid":  [[0.1, 0.5], [0.9, 2.0]],
+			"scout": [[0.1, 0.5], [0.9, 2.0]]
+		},
 		"defence": [0.80, 0.80],  // [<min>, <max>] enemy threat modifier for group size calculation of defence task
 		"mobile": 1.075,  // initial modifier for power of attack group based on mobile enemy threat
 		"static": 4.25,  // initial modifier for power of attack group based on static enemy threat

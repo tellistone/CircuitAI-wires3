@@ -406,8 +406,7 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, in
 float CScoutTask::GetSafeThreat(CCircuitUnit* unit) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	const float distMod = circuit->GetMilitaryManager()->GetThrDistMod(unit->GetPos(circuit->GetLastFrame()));
-	return std::max(circuit->GetThreatMap()->GetUnitThreat(unit), THREAT_MIN) * powerMod / distMod;
+	return std::max(circuit->GetThreatMap()->GetUnitThreat(unit), THREAT_MIN) * GetPowerModAt(unit->GetPos(circuit->GetLastFrame()));
 }
 
 float CScoutTask::GetPathThreatCap(CCircuitUnit* unit) const

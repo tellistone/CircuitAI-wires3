@@ -266,7 +266,7 @@ void CAntiAirTask::FindTarget()
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
-	const float maxPower = attackPower * powerMod;
+	const float maxPower = attackPower * GetPowerModAt(pos);  // incl. thr_mod.distance curve
 
 	CEnemyInfo* bestTarget = nullptr;
 	float minSqDist = std::numeric_limits<float>::max();
