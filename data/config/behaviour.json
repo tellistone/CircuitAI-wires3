@@ -88,7 +88,7 @@
 		// "anti_stat" - only static targets
 		// "no_dgun" - do not use DGun
 		// "prio_repair" - when damaged above retreat threshold, builders rush to repair it (like "heavy" main role); on statics: below 90% health; commanders always have it
-		// "guarded" - gets a guard slot like an early builder (see "guard" block); never guards others; flying units excluded
+		// "guarded" - gets a guard slot like an early builder (see "guard" block); never guards others; flying units and static defences excluded
 //		"attribute": ["boost", "no_strafe"],
 
 		// Fire state (open by default)

@@ -192,7 +192,9 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	}
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	const AIFloat3& pos = vip->GetPos(circuit->GetLastFrame());
-	float allyInfl = inflMap->GetAllyInflAt(pos);
+	// An armed vip (a "guarded" artillery, an armed commander) counts in the map too: take it out,
+	// or it would call its own spot safe
+	float allyInfl = inflMap->GetAllyInflAt(pos) - inflMap->GetMobileArmedInflAt(vip, pos);
 	for (CCircuitUnit* unit : units) {
 		allyInfl -= inflMap->GetMobileArmedInflAt(unit, pos);  // the guard's real share, not its full power
 	}
@@ -206,7 +208,7 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	if (isSafe) {
 		const AIFloat3 dest = GetVipDestination(vip);
 		if (utils::is_valid(dest)) {
-			float destAlly = inflMap->GetAllyInflAt(dest);
+			float destAlly = inflMap->GetAllyInflAt(dest) - inflMap->GetMobileArmedInflAt(vip, dest);
 			for (CCircuitUnit* unit : units) {
 				destAlly -= inflMap->GetMobileArmedInflAt(unit, dest);
 			}

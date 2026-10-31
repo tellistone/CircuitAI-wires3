@@ -1294,6 +1294,9 @@ bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
 	const CCircuitDef::RoleT role = circuit->GetBindedRole(cdef->GetMainRole());
 	unsigned int total = 0;
 	for (CCircuitUnit* u : army) {
+		if (u->GetCircuitDef()->IsAttrGuarded()) {  // can never guard, so not part of the share
+			continue;
+		}
 		if (circuit->GetBindedRole(u->GetCircuitDef()->GetMainRole()) == role) {
 			++total;
 		}

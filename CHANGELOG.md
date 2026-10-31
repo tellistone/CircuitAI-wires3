@@ -9,7 +9,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
-  slot whatever `max_workers` says. Guarded units never guard others, and flying units get no slot.
+  slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.
+  The safe check leaves out the guarded unit's own influence, so an armed unit can't call its own spot safe.
 - **Configurable builder guards** (`guard` block in `behaviour.json`, [#3](https://github.com/tellistone/CircuitAI-wires3/pull/3)).
   Early unarmed builders get a guard slot that one combat unit fills.
   - `roles` (default `["raider", "riot"]`): main roles that may guard. Before, only raiders and riots could, and that was hardcoded.

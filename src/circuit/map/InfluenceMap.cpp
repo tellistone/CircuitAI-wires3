@@ -231,6 +231,10 @@ int CInfluenceMap::Pos2Index(const AIFloat3& pos) const
 
 float CInfluenceMap::GetMobileArmedInflAt(CAllyUnit* u, const AIFloat3& position) const
 {
+	// Mirror Apply(): only mobile attackers go through AddMobileArmed
+	if (!u->GetCircuitDef()->IsAttacker() || !u->GetCircuitDef()->IsMobile()) {
+		return 0.f;
+	}
 	int ux, uz, px, pz;
 	PosToXZ(u->GetPos(manager->GetCircuit()->GetLastFrame()), ux, uz);
 	PosToXZ(position, px, pz);
