@@ -65,6 +65,10 @@ public:
 	void AbortDefence(const CBDefenceTask* task);
 	bool HasDefence(int cluster);
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
+	// Best scouting spot by score (near enemy, unseen, not stale-visited, not defended by known static enemies)
+	springai::AIFloat3 PickScoutSpot(CCircuitUnit* unit, float safeThreat);
+	// A scout gave up on this spot (danger at it or no safe route): no scout picks it for a while
+	void BlockScoutSpot(const springai::AIFloat3& spot, int frames);
 	springai::AIFloat3 GetRaidPosition(CCircuitUnit* unit);
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillAttackSafePos(CCircuitUnit* unit, F3Vec& outPositions);
@@ -150,6 +154,19 @@ private:
 
 	std::vector<unsigned int> scoutPath;  // list of spot ids
 	unsigned int scoutIdx;
+	std::vector<int> scoutSeen;   // per spot: last frame it was in our LOS (-1 never)
+	std::vector<int> scoutClaim;  // per spot: last frame a scout picked it (-1 never)
+	std::vector<int> scoutClaimUnit;  // per spot: id of the scout that picked it
+	std::vector<int> scoutBlocked;  // per spot: frame until which no scout picks it
+	struct SScoutSpot {
+		float enemy;      // weight: closeness to enemy
+		float stale;      // weight: time since last seen
+		float travel;     // weight (penalty): distance from the scout
+		int staleTime;    // frames until a seen spot is fully stale again
+		int claimTime;    // frames a picked spot is reserved for its scout
+		float rangeMult;  // static enemy weapon range multiplier for danger
+		float homeRatio;  // skip spots nearer to our base than this fraction of their distance to the enemy
+	} scoutSpot;
 
 	struct SRaidPoint {
 		unsigned int idx;

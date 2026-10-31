@@ -10,6 +10,7 @@
 #include "module/EconomyManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
+#include "map/MapManager.h"
 #include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
 #include "setup/DefenceMatrix.h"
@@ -33,6 +34,7 @@
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathMulti.h"
 #include "unit/enemy/EnemyUnit.h"
+#include "unit/enemy/EnemyManager.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
@@ -40,6 +42,8 @@
 
 #include "spring/SpringCallback.h"
 #include "spring/SpringMap.h"
+
+#include <limits>
 
 #include "AISCommands.h"
 #include "Command.h"
@@ -321,6 +325,14 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& quotas = root["quota"];
 	maxScouts = quotas.get("scout", 3).asUInt();
+	const Json::Value& qspot = quotas["scout_spot"];
+	scoutSpot.enemy = qspot.get("enemy", 1.f).asFloat();
+	scoutSpot.stale = qspot.get("stale", 1.f).asFloat();
+	scoutSpot.travel = qspot.get("travel", 0.5f).asFloat();
+	scoutSpot.staleTime = qspot.get("stale_time", 90.f).asFloat() * FRAMES_PER_SEC;
+	scoutSpot.claimTime = qspot.get("claim_time", 20.f).asFloat() * FRAMES_PER_SEC;
+	scoutSpot.rangeMult = qspot.get("static_range_mult", 1.f).asFloat();
+	scoutSpot.homeRatio = qspot.get("home_ratio", 0.5f).asFloat();
 	const Json::Value& qraid = quotas["raid"];
 	raid.min = qraid.get((unsigned)0, 3.f).asFloat();
 	raid.avg = qraid.get((unsigned)1, 5.f).asFloat();
@@ -464,6 +476,10 @@ void CMilitaryManager::Init()
 	for (unsigned i = 0; i < spots.size(); ++i) {
 		scoutPath.push_back(i);
 	}
+	scoutSeen.assign(spots.size(), -1);
+	scoutClaim.assign(spots.size(), -1);
+	scoutClaimUnit.assign(spots.size(), -1);
+	scoutBlocked.assign(spots.size(), -1);
 
 	raidPath.reserve(clusters.size());
 	for (unsigned i = 0; i < clusters.size(); ++i) {
@@ -915,6 +931,144 @@ AIFloat3 CMilitaryManager::GetScoutPosition(CCircuitUnit* unit)
 	}
 //	++scoutIdx %= scoutPath.size();
 	return -RgtVector;
+}
+
+AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
+{
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	CMapManager* mapMgr = circuit->GetMapManager();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	STerrainMapArea* area = unit->GetArea();
+	const CMetalData::Metals& spots = metalMgr->GetSpots();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	if (scoutSeen.size() != spots.size()) {
+		scoutSeen.assign(spots.size(), -1);
+		scoutClaim.assign(spots.size(), -1);
+		scoutClaimUnit.assign(spots.size(), -1);
+		scoutBlocked.assign(spots.size(), -1);
+	}
+	// A scout holds one claim: release its previous spot so re-picks don't reserve spots for nobody
+	const ICoreUnit::Id unitId = unit->GetId();
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		if (scoutClaimUnit[i] == unitId) {
+			scoutClaim[i] = -1;
+			scoutClaimUnit[i] = -1;
+		}
+	}
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float mapDiag = std::max(sqrtf(SQUARE(terrainMgr->GetTerrainWidth()) + SQUARE(terrainMgr->GetTerrainHeight())), 1.f);
+
+	// Danger at a destination comes from known static defences only: mobile units will have moved by the
+	// time the scout arrives, and the route/own-spot checks in ScoutTask handle them on the way.
+	const bool isAir = cdef->IsAbleToFly();
+	const bool isAmph = !isAir && cdef->IsAmphibious();
+	struct SDefence { AIFloat3 pos; float sqRange; float range; float threat; };
+	std::vector<SDefence> defences;
+	// Points that mark where the enemy is: known enemy buildings and enemy groups
+	std::vector<AIFloat3> anchors;
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		CEnemyInfo* enemy = kv.second;
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		if (enemy->IsHidden() || (edef == nullptr) || edef->IsMobile()) {
+			continue;
+		}
+		anchors.push_back(enemy->GetPos());
+		const float threat = enemy->GetThreat();
+		const CEnemyUnit* data = enemy->GetData();
+		const int rangeSq = isAir ? data->GetRange(CCircuitDef::ThreatType::AIR)
+				: isAmph ? std::max(data->GetRange(CCircuitDef::ThreatType::LAND), data->GetRange(CCircuitDef::ThreatType::WATER))
+				: data->GetRange(CCircuitDef::ThreatType::LAND);
+		const float range = rangeSq * threatMap->GetSquareSize() * scoutSpot.rangeMult;
+		if ((threat > 0.f) && (range > 0.f) && !enemy->IsBeingBuilt()) {
+			defences.push_back({enemy->GetPos(), SQUARE(range), range, threat});
+		}
+	}
+	for (const CEnemyManager::SEnemyGroup& group : circuit->GetEnemyManager()->GetEnemyGroups()) {
+		if (!group.units.empty()) {
+			anchors.push_back(group.pos);
+		}
+	}
+	if (anchors.empty()) {
+		// Nothing known yet: guess the enemy start is our start mirrored through the map centre
+		const AIFloat3& start = circuit->GetSetupManager()->GetStartPos();
+		anchors.push_back(AIFloat3(terrainMgr->GetTerrainWidth() - start.x, start.y, terrainMgr->GetTerrainHeight() - start.z));
+	}
+
+	int bestIdx = -1;
+	float bestScore = -std::numeric_limits<float>::max();
+	int bestClaimedIdx = -1;
+	float bestClaimedScore = -std::numeric_limits<float>::max();
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		const AIFloat3& spot = spots[i].position;
+		if (mapMgr->IsInLOS(spot)) {
+			scoutSeen[i] = frame;
+			continue;  // already watched
+		}
+		if ((frame < scoutBlocked[i]) || metalMgr->IsMexInFinished(i) || !terrainMgr->CanMoveToPos(area, spot)) {
+			continue;  // our territory, or unreachable
+		}
+		float danger = 0.f;
+		for (const SDefence& d : defences) {
+			const float sqDist = d.pos.SqDistance2D(spot);
+			if (sqDist < d.sqRange) {
+				danger += d.threat * (1.f - 0.5f * sqrtf(sqDist) / d.range);  // same falloff as the threat map
+			}
+		}
+		if (danger >= safeThreat) {
+			continue;
+		}
+
+		float minSqAnchor = std::numeric_limits<float>::max();
+		for (const AIFloat3& a : anchors) {
+			minSqAnchor = std::min(minSqAnchor, a.SqDistance2D(spot));
+		}
+		const float anchorDist = sqrtf(minSqAnchor);
+		if (basePos.distance2D(spot) < scoutSpot.homeRatio * anchorDist) {
+			continue;  // our side of the map: much nearer our base than any sign of the enemy
+		}
+		const float enemyTerm = 1.f - std::min(anchorDist / mapDiag, 1.f);
+		const float staleTerm = (scoutSeen[i] < 0) ? 1.f
+				: std::min(float(frame - scoutSeen[i]) / std::max(scoutSpot.staleTime, 1), 1.f);
+		const float travelTerm = pos.distance2D(spot) / mapDiag;
+		const float score = scoutSpot.enemy * enemyTerm + scoutSpot.stale * staleTerm - scoutSpot.travel * travelTerm;
+
+		const bool isClaimed = (scoutClaim[i] >= 0) && (frame < scoutClaim[i] + scoutSpot.claimTime);
+		if (isClaimed) {
+			if (bestClaimedScore < score) {
+				bestClaimedScore = score;
+				bestClaimedIdx = i;
+			}
+		} else if (bestScore < score) {
+			bestScore = score;
+			bestIdx = i;
+		}
+	}
+	if (bestIdx < 0) {
+		bestIdx = bestClaimedIdx;  // every safe spot is taken: share one
+	}
+	if (bestIdx < 0) {
+		return -RgtVector;
+	}
+	scoutClaim[bestIdx] = frame;
+	scoutClaimUnit[bestIdx] = unitId;
+	return spots[bestIdx].position;
+}
+
+void CMilitaryManager::BlockScoutSpot(const AIFloat3& spot, int frames)
+{
+	const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
+	if (scoutBlocked.size() != spots.size()) {
+		return;
+	}
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		if ((spots[i].position.x == spot.x) && (spots[i].position.z == spot.z)) {
+			scoutBlocked[i] = circuit->GetLastFrame() + frames;
+			return;
+		}
+	}
 }
 
 AIFloat3 CMilitaryManager::GetRaidPosition(CCircuitUnit* unit)
@@ -1449,7 +1603,17 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	};
 	IFighterTask* task = nullptr;
 	CCircuitDef* cdef = unit->GetCircuitDef();
-	if (cdef->IsRoleSupport()) {
+	auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
+	// Any main role with the scout attribute (scout as a secondary role) fills the scout quota first.
+	// Units whose main role already leads to scouting keep their own path below.
+	if (cdef->IsRoleScout() && ((it == types.end()) || (it->second != IFighterTask::FightType::SCOUT))
+		&& (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts))
+	{
+		task = EnqueueTask(IFighterTask::FightType::SCOUT);
+	}
+	if (task != nullptr) {
+		// scout picked above
+	} else if (cdef->IsRoleSupport()) {
 		if (/*cdef->IsAttacker() && */GetTasks(IFighterTask::FightType::ATTACK).empty() && GetTasks(IFighterTask::FightType::DEFEND).empty()) {
 			task = EnqueueDefend(IFighterTask::FightType::ATTACK,
 								 IFighterTask::FightType::SUPPORT, minAttackers);
@@ -1457,18 +1621,10 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 			task = EnqueueTask(IFighterTask::FightType::SUPPORT);
 		}
 	} else {
-		auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
-		// Raiders that can scout fill scout quota first, then any configured role may take a free guard slot
-		if ((it != types.end()) && (it->second == IFighterTask::FightType::RAID)
-			&& cdef->IsRoleScout() && (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts))
-		{
-			task = EnqueueTask(IFighterTask::FightType::SCOUT);
-		}
-		if (task == nullptr) {
-			task = FindGuardTask(unit);
-		}
+		// Any configured role may take a free guard slot
+		task = FindGuardTask(unit);
 		if (task != nullptr) {
-			// scout or guard picked above
+			// guard picked above
 		} else if (it != types.end()) {
 			switch (it->second) {
 				case IFighterTask::FightType::RAID: {
