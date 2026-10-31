@@ -462,7 +462,7 @@ void CScoutTask::ApplyApproachPath(const CQueryPathSingle* query, ICoreUnit::Id 
 	}
 
 	// No safe way to get this target: skip it for a while and scout instead
-	badTargets[targetId] = manager->GetCircuit()->GetLastFrame() + FRAMES_PER_SEC * 10;
+	badTargets[targetId] = manager->GetCircuit()->GetLastFrame() + FRAMES_PER_SEC * 3;
 	if ((target != nullptr) && (target->GetId() == targetId)) {
 		SetTarget(nullptr);
 	}
