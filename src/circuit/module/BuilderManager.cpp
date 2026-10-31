@@ -94,9 +94,10 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 
 		CMilitaryManager* militaryMgr = this->circuit->GetMilitaryManager();
 		// Flying builders get no slot: ground guards can't follow them, and they dodge danger by flying
-		if ((workers.size() < militaryMgr->GetGuardCfg().maxWorkers) && !unit->GetCircuitDef()->IsAttacker()
-			&& !unit->GetCircuitDef()->IsAbleToFly())
-		{
+		// "guarded" attribute gives any builder a slot, whatever max_workers says
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		const bool isEarly = (workers.size() < militaryMgr->GetGuardCfg().maxWorkers) && !cdef->IsAttacker();
+		if ((isEarly || cdef->IsAttrGuarded()) && !cdef->IsAbleToFly()) {
 			militaryMgr->AddGuardTask(unit);
 		}
 	};
