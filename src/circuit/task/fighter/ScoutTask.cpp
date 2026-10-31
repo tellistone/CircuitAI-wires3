@@ -81,7 +81,9 @@ void CScoutTask::Update()
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 
-	if ((++updCount % 2 == 0) && (frame >= lastTouched + FRAMES_PER_SEC)) {
+	// Re-decide on every update (was every 2nd update and at most once per second).
+	// Floor at the threat map refresh rate: re-deciding faster would only reuse the same threat data.
+	if (frame >= lastTouched + THREAT_UPDATE_RATE) {
 		lastTouched = frame;
 		for (CCircuitUnit* unit : units) {
 			Execute(unit, true);
