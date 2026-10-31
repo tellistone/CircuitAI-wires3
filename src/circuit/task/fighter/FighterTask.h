@@ -45,7 +45,9 @@ public:
 
 protected:
 	void SetTarget(CEnemyInfo* enemy);
-	// isDirect: Attack the target first instead of fight-moving to it (no shooting other units on the way)
+	// isDirect: Attack the target first instead of fight-moving to it.
+	// The engine still lets weapons shoot other units while the ordered target can't be hit (out of range),
+	// but switches to the ordered target as soon as it can.
 	void Attack(const int frame, const bool isDirect = false);
 
 	FightType fightType;
