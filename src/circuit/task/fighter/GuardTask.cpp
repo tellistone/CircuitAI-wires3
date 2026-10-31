@@ -9,6 +9,7 @@
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
+#include "task/builder/BuilderTask.h"
 #include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
@@ -143,7 +144,22 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	const int frame = circuit->GetLastFrame();
 	lastAlly = allyInfl;
 	lastEnemy = inflMap->GetEnemyInflAt(pos);
-	if ((allyInfl >= cfg.safeAlly) && (lastEnemy <= cfg.safeEnemy)) {
+	bool isSafe = (allyInfl >= cfg.safeAlly) && (lastEnemy <= cfg.safeEnemy);
+
+	// The builder's job destination must be safe too: a builder at base that just took a far mex
+	// keeps its slot open, so a guard can join (pull reaches units gathering at base) before it leaves
+	if (isSafe) {
+		const AIFloat3 dest = GetVipDestination(vip);
+		if (utils::is_valid(dest)) {
+			float destAlly = inflMap->GetAllyInflAt(dest);
+			for (CCircuitUnit* unit : units) {
+				destAlly -= unit->GetCircuitDef()->GetPower();
+			}
+			isSafe = (destAlly >= cfg.safeAlly) && (inflMap->GetEnemyInflAt(dest) <= cfg.safeEnemy);
+		}
+	}
+
+	if (isSafe) {
 		if (safeSince < 0) {
 			safeSince = frame;
 		}
@@ -153,6 +169,19 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 		safeSince = -1;
 		isVipSafe = false;
 	}
+}
+
+AIFloat3 CFGuardTask::GetVipDestination(CCircuitUnit* vip) const
+{
+	IUnitTask* task = vip->GetTask();
+	if ((task == nullptr) || (task->GetType() != IUnitTask::Type::BUILDER)) {
+		return -RgtVector;
+	}
+	IBuilderTask* bt = static_cast<IBuilderTask*>(task);
+	if (bt->GetTarget() != nullptr) {  // repair, or assisting an existing structure
+		return bt->GetTarget()->GetPos(manager->GetCircuit()->GetLastFrame());
+	}
+	return bt->GetPosition();  // -RgtVector when the job has no location
 }
 
 void CFGuardTask::CheckThreat()

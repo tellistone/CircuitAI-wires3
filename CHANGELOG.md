@@ -21,7 +21,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Guard exit conditions.** The guard goes back to normal duty when:
   - its builder retreats;
   - its builder has been safe for `safe_time` seconds (default 5). Safe means allied influence, minus the guard
-    itself, is at least `safe[0]` and enemy influence is at most `safe[1]`;
+    itself, is at least `safe[0]` and enemy influence is at most `safe[1]`, both where the builder stands and
+    where its current job is;
   - it stands in enemy threat above `threat_ratio` times its own threat. The builder then gets no guard for
     `threat_cooldown` seconds (default 10, -1 turns this off).
 
