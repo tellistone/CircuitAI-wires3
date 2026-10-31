@@ -3,6 +3,15 @@
 Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upstream
 [rlcevg/CircuitAI](https://github.com/rlcevg/CircuitAI) `zk` (last upstream commit: `e51ba92` "Fix indentation", 2026-06-04).
 
+## Unreleased
+
+### Fixed
+
+- The `retreat.repair_pull` share cap now also applies when idle builders choose their next job. Before, it only
+  limited builders pulled off other work. Urgent jobs outrank everything in job selection, so every idle builder
+  took a priority repair whenever there were enough of them, and other work such as metal extractors stalled.
+  The cap now applies even when the pull is turned off (`range` 0).
+
 ## 2026-10-31: Priority repair and escort builders ([#1](https://github.com/tellistone/CircuitAI-wires3/pull/1))
 
 ### Added
