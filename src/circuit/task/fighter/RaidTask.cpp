@@ -438,8 +438,22 @@ void CRaidTask::FallbackRaid()
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const AIFloat3& pos = leader->GetPos(frame);
 	const AIFloat3& threatPos = leader->GetTravelAct()->IsActive() ? position : pos;
-	if (GetSafeThreat() / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos)) {
-		position = circuit->GetMilitaryManager()->GetRaidPosition(leader);
+	const float safeThreat = GetSafeThreat();
+	if (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos)) {
+		// Try a few candidates and keep the first one that passes the same check. Taking the next spot
+		// unchecked made raids hop to a new (often equally dangerous, far = strict curve) spot every update.
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		AIFloat3 candidate = -RgtVector;
+		for (int i = 0; i < 8; ++i) {
+			candidate = militaryMgr->GetRaidPosition(leader);
+			if (!utils::is_valid(candidate)
+				|| (safeThreat / GetThrDistModAt(candidate) > threatMap->GetThreatAt(leader, candidate)))
+			{
+				break;
+			}
+			candidate = -RgtVector;  // all tried spots dangerous: fall through to a random point
+		}
+		position = candidate;
 	}
 
 	if (!utils::is_valid(position)) {
