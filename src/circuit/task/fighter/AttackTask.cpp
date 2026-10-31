@@ -230,9 +230,10 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 
 void CAttackTask::AbsorbWeakerTasks()
 {
-	// A group at or above quota.attack pulls in weaker attack groups near it, every 8 updates.
+	// A group at or above quota.attack pulls in attack groups under quota.attack near it, every 8 updates.
 	// Same rules as joining (CanAssignTo: speed within 1.5x, leaders within 1000 elmos, movement type;
-	// reachable; safe straight line; under 60 s of travel), seen from the weaker group's side.
+	// reachable; safe straight line), seen from the small group's side, but at most 30 s of travel so
+	// absorbed units arrive well inside the 60 s regroup "stuck" limit. The big group keeps its leader.
 	if ((attackPower < minPower) || (updCount % 8 != 5)) {
 		return;
 	}
@@ -249,7 +250,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		CAttackTask* candy = static_cast<CAttackTask*>(t);
 		CCircuitUnit* candyLeader = candy->GetLeader();
 		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
-			|| (candy->GetAttackPower() >= attackPower)
+			|| (candy->GetAttackPower() >= minPower)
 			|| !CanAssignTo(candyLeader))
 		{
 			continue;
@@ -258,7 +259,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		if (!terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)) {
 			continue;
 		}
-		if (candyPos.SqDistance2D(pos) >= SQUARE(MAX_TRAVEL_SEC * candy->lowestSpeed)) {
+		if (candyPos.SqDistance2D(pos) >= SQUARE(MAX_TRAVEL_SEC / 2 * candy->lowestSpeed)) {
 			continue;
 		}
 		std::shared_ptr<CQueryLineMap> query = std::static_pointer_cast<CQueryLineMap>(
@@ -270,8 +271,10 @@ void CAttackTask::AbsorbWeakerTasks()
 	}
 
 	// Merge after the loop: aborting a task removes it from the set being iterated
+	CCircuitUnit* bigLeader = leader;
 	for (CAttackTask* candy : weaklings) {
 		Merge(candy);
+		leader = bigLeader;  // Merge may pick an absorbed unit as leader and drag the group back to it
 		candy->units.clear();
 		manager->AbortTask(candy);
 	}
