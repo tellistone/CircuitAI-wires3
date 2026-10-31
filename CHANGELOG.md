@@ -12,7 +12,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - `roles` (default `["raider", "riot"]`): main roles that may guard. Before, only raiders and riots could, and that was hardcoded.
   - `max_workers` (default 3): a builder gets a slot if the worker count, commander included, is below this when it
     finishes. Before, this was a hardcoded 3. 0 turns guards off.
-  - `max_active` (default 0 = no limit): the most builders that have a guard at once.
+  - `max_share` (default 1.0 = no limit): the most of each role's units that can guard at once, counted by
+    acting main role. For example, 0.3 means 30% of raiders and 30% of riots, rounded up so a single unit of a role
+    can still guard.
   - `pull_range` (default 800): an empty slot pulls the nearest eligible unit within this distance. Eligible means idle
     or on a raid or defend task, never a scout or a member of an attack squad. Before, a slot only filled when a unit
     asked for a new task.

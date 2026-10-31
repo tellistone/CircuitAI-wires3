@@ -83,12 +83,12 @@ public:
 		int safeFrames;  // builder must stay safe this long before its guard leaves
 		float pullRange;  // empty active slot pulls the nearest eligible unit within this range, <= 0 = no pull
 		float threatRatio;  // ... only when threat at the guard > this * guard's own threat (0 = any threat)
-		unsigned int maxActive;  // max guard slots filled at once, 0 = no limit
+		float maxShare;  // max share of a role's units (by acting main role) on guard duty at once, rounded up; >= 1 = no limit
 		int threatCooldown;  // guard in enemy threat is cancelled and the slot closes for this long, < 0 = never cancel
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }
 	bool IsGuardRole(CCircuitDef* cdef) const;
-	bool IsGuardCapReached() const;
+	bool IsGuardCapReached(CCircuitDef* cdef) const;
 
 	const std::set<CCircuitUnit*>& GetRoleUnits(CCircuitDef::RoleT type) const {
 		return roleInfos[type].units;

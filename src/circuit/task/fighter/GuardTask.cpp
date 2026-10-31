@@ -45,7 +45,7 @@ bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	return militaryMgr->IsGuardRole(unit->GetCircuitDef()) && !militaryMgr->IsGuardCapReached();
+	return militaryMgr->IsGuardRole(unit->GetCircuitDef()) && !militaryMgr->IsGuardCapReached(unit->GetCircuitDef());
 }
 
 void CFGuardTask::Start(CCircuitUnit* unit)
@@ -153,7 +153,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 {
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	const CMilitaryManager::SGuardCfg& cfg = militaryMgr->GetGuardCfg();
-	if ((cfg.pullRange <= 0.f) || militaryMgr->IsGuardCapReached()) {
+	if (cfg.pullRange <= 0.f) {
 		return;
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -169,7 +169,8 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		IUnitTask* curTask = unit->GetTask();
 		if ((curTask == nullptr)
 			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))
-			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef()))
+			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef())
+			|| militaryMgr->IsGuardCapReached(unit->GetCircuitDef()))
 		{
 			continue;
 		}

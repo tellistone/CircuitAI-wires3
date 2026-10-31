@@ -46,7 +46,7 @@
 "guard": {
 	"roles": ["raider", "riot"],  // main roles that may take a builder's guard slot; a custom role ("bullshit_raider") matches only itself, a base role ("raider") also matches roles bound to it; [] = nobody guards
 	"max_workers": 3,  // an unarmed builder gets a guard slot if, once it is finished, the worker count (commander included) is below this; 0 = off
-	"max_active": 0,  // max builders that have a guard at the same time (filled slots); 0 = no limit
+	"max_share": 1.0,  // max share of each role's units guarding at once, per acting main role (0.3 = 30% of raiders and 30% of riots), rounded up so 1 unit of a role may guard; 1.0 = no limit, 0 = none
 	"safe": [20.0, 0.01],  // [ally, enemy]: guard leaves while its builder stands where allied influence (guards excluded, same units as quota.attack) >= ally and enemy influence <= enemy; ally <= 0 = never safe. The guard also leaves while the builder retreats
 	"safe_time": 5.0,  // seconds the builder must stay safe before its guard leaves (stops a passing army from sending the guard away)
 	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (idle, raid or defend task; never scouts, attack squads, retreating or guarding units; must reach the builder); 0 = only units asking for a new task fill it

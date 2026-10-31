@@ -351,7 +351,7 @@ void CMilitaryManager::ReadConfig()
 	const float threatCd = guardCfg.get("threat_cooldown", 10.f).asFloat();
 	guard.threatCooldown = (threatCd < 0.f) ? -1 : int(threatCd * FRAMES_PER_SEC);
 	guard.threatRatio = std::max(0.f, guardCfg.get("threat_ratio", 0.f).asFloat());
-	guard.maxActive = std::max(0, guardCfg.get("max_active", 0).asInt());
+	guard.maxShare = std::max(0.f, guardCfg.get("max_share", 1.f).asFloat());
 	guard.roleMask = 0;
 	const Json::Value& guardRoles = guardCfg["roles"];
 	if (guardRoles.isNull()) {  // legacy behaviour
@@ -1120,18 +1120,28 @@ bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
 	return (guard.roleMask & mask) != 0;
 }
 
-bool CMilitaryManager::IsGuardCapReached() const
+bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
 {
-	if (guard.maxActive == 0) {
+	if (guard.maxShare >= 1.f) {
 		return false;
 	}
-	unsigned int filled = 0;
-	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
-		if (!t->GetAssignees().empty()) {
-			++filled;
+	// Per role: e.g. 0.3 = at most 30% of raiders and 30% of riots guard at once (rounded up, so 1 raider may guard)
+	const CCircuitDef::RoleT role = circuit->GetBindedRole(cdef->GetMainRole());
+	unsigned int total = 0;
+	for (CCircuitUnit* u : army) {
+		if (circuit->GetBindedRole(u->GetCircuitDef()->GetMainRole()) == role) {
+			++total;
 		}
 	}
-	return filled >= guard.maxActive;
+	unsigned int guarding = 0;
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
+		for (CCircuitUnit* u : t->GetAssignees()) {
+			if (circuit->GetBindedRole(u->GetCircuitDef()->GetMainRole()) == role) {
+				++guarding;
+			}
+		}
+	}
+	return guarding >= std::ceil(guard.maxShare * total);
 }
 
 IFighterTask* CMilitaryManager::FindGuardTask(CCircuitUnit* unit) const
