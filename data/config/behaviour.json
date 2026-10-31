@@ -3,6 +3,7 @@
 "quota": {
 	"scout": 1,  // max scout units out of raiders
 	"raid": [7.0, 42.0],  // [<min>, <avg>] power of raider squad
+	"raid_target_roles": ["builder", "comm"],  // enemy roles raid groups attack first (plus types with the "raid_target" attribute); [] = attribute only
 	"attack": 20.0,  // min power of attack group
 	"thr_mod": {
 		"attack": [0.45, 0.45],  // [<min>, <max>] enemy threat modifier for target selection of attack task
@@ -87,6 +88,7 @@
 		// "anti_stat" - only static targets
 		// "no_dgun" - do not use DGun
 		// "prio_repair" - when damaged above retreat threshold, builders rush to repair it (like "heavy" main role); on statics: below 90% health; commanders always have it
+		// "raid_target" - raid groups attack this enemy type first, nearest one wins (in addition to quota.raid_target_roles)
 //		"attribute": ["boost", "no_strafe"],
 
 		// Fire state (open by default)

@@ -125,6 +125,12 @@ public:
 	float GetCommDefRadBegin() const { return defence->GetCommRadBegin(); }
 	float GetCommDefRad(float baseDist) const { return defence->GetCommRad(baseDist); }
 
+	// Raid groups attack these first (nearest wins): enemy types with the "raid_target" attribute,
+	// or whose roles are in quota.raid_target_roles (default: builder, comm)
+	bool IsRaidPreferred(const CCircuitDef* edef) const {
+		return edef->IsAttrRaidTarget() || edef->IsEnemyRoleAny(raidTargetRoles);
+	}
+
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
 
@@ -204,6 +210,7 @@ private:
 	} raid;
 	unsigned int maxScouts;
 	float minAttackers;
+	CCircuitDef::RoleM raidTargetRoles;
 	struct SThreatQuota {
 		float min;
 		float len;

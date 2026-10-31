@@ -337,6 +337,21 @@ void CMilitaryManager::ReadConfig()
 	raid.min = qraid.get((unsigned)0, 3.f).asFloat();
 	raid.avg = qraid.get((unsigned)1, 5.f).asFloat();
 	minAttackers = quotas.get("attack", 8.f).asFloat();
+	const Json::Value& raidTargets = quotas["raid_target_roles"];
+	if (raidTargets.isNull()) {  // legacy: constructors and commanders
+		raidTargetRoles = CCircuitDef::RoleMask::BUILDER | CCircuitDef::RoleMask::COMM;
+	} else {
+		raidTargetRoles = 0;
+		for (const Json::Value& rt : raidTargets) {
+			const std::string& roleName = rt.asString();
+			auto it = roleNames.find(roleName);
+			if (it == roleNames.end()) {
+				circuit->LOG("CONFIG %s: quota.raid_target_roles has unknown role '%s'", cfgName.c_str(), roleName.c_str());
+				continue;
+			}
+			raidTargetRoles |= CCircuitDef::GetMask(it->second.type);
+		}
+	}
 	const Json::Value& qthrMod = quotas["thr_mod"];
 	const Json::Value& qthrAtk = qthrMod["attack"];
 	attackMod.min = qthrAtk.get((unsigned)0, 1.f).asFloat();

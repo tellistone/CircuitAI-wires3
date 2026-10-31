@@ -295,6 +295,7 @@ bool CRaidTask::FindTarget()
 	const bool isDefender = basePos.SqDistance2D(pos) < sqBaseRange;
 
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	CEnemyInfo* bestTarget = nullptr;
 	CEnemyInfo* worstTarget = nullptr;
 	urgentPositions.clear();
@@ -352,7 +353,7 @@ bool CRaidTask::FindTarget()
 				continue;
 			}
 			defThreat = edef->GetPower();
-			isBuilder = edef->IsEnemyRoleAny(CCircuitDef::RoleMask::BUILDER | CCircuitDef::RoleMask::COMM);
+			isBuilder = militaryMgr->IsRaidPreferred(edef);  // configurable preferred target
 		} else {
 			if (notAW && (ePos.y < -SQUARE_SIZE * 5)) {
 				continue;
