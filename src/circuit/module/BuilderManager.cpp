@@ -59,6 +59,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, prioRepairRange(0.f)
 		, prioRepairShare(0.f)
 		, isPrioRepairSafe(false)
+		, isPrioRepairSafeStatic(false)
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CBuilderManager::Init, this));
 
@@ -124,7 +125,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	 * building handlers
 	 */
 	auto buildingDamagedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
-		EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
+		const bool isPrio = unit->GetCircuitDef()->IsAttrPrioRepair()
+				&& (unit->GetHealthPercent() < 0.9f) && !unit->GetUnit()->IsBeingBuilt();
+		EnqueueRepair(isPrio ? IBuilderTask::Priority::NOW : IBuilderTask::Priority::HIGH, unit);
 	};
 	auto buildingDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
 		int frame = this->circuit->GetLastFrame();
@@ -153,6 +156,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	prioRepairRange = pull.get((unsigned)0, 0.f).asFloat();
 	prioRepairShare = pull.get((unsigned)1, 0.34f).asFloat();
 	isPrioRepairSafe = root["retreat"].get("repair_safe", false).asBool();
+	isPrioRepairSafeStatic = root["retreat"].get("repair_safe_static", false).asBool();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
@@ -684,7 +688,12 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 
 bool CBuilderManager::IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit* unit, const AIFloat3& pos) const
 {
-	if (!isPrioRepairSafe || (task->GetBuildType() != IBuilderTask::BuildType::REPAIR)) {
+	if (task->GetBuildType() != IBuilderTask::BuildType::REPAIR) {
+		return false;
+	}
+	CCircuitUnit* target = task->GetTarget();
+	const bool isStatic = (target != nullptr) && !target->GetCircuitDef()->IsMobile();
+	if (!(isStatic ? isPrioRepairSafeStatic : isPrioRepairSafe)) {
 		return false;
 	}
 	// Same rule as regular builder tasks: threat beyond the builder's strength in enemy-held area

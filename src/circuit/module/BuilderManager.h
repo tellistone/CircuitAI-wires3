@@ -178,7 +178,8 @@ private:
 	std::set<CCircuitUnit*> workers;
 	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
-	bool isPrioRepairSafe;  // apply builder threat check to NOW repair
+	bool isPrioRepairSafe;  // apply builder threat check to NOW repair of mobile units
+	bool isPrioRepairSafeStatic;  // same for static units
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner
 
 	CCircuitDef* terraDef;
