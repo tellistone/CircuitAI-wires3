@@ -352,6 +352,7 @@ void CMilitaryManager::ReadConfig()
 	guard.threatCooldown = (threatCd < 0.f) ? -1 : int(threatCd * FRAMES_PER_SEC);
 	guard.threatRatio = std::max(0.f, guardCfg.get("threat_ratio", 0.f).asFloat());
 	guard.maxShare = std::max(0.f, guardCfg.get("max_share", 1.f).asFloat());
+	guard.isDamageExit = guardCfg.get("damage_exit", true).asBool();
 	guard.isDebug = guardCfg.get("debug", false).asBool();
 	guard.roleMask = 0;
 	const Json::Value& guardRoles = guardCfg["roles"];

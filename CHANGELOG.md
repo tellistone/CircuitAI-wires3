@@ -25,6 +25,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     where its current job is;
   - it stands in enemy threat above `threat_ratio` times its own threat. The builder then gets no guard for
     `threat_cooldown` seconds (default 10, -1 turns this off).
+- **Guard damage exit** (`guard.damage_exit`, default `true`). A guard that takes damage is released at once, and its
+  builder gets no guard for `threat_cooldown` seconds.
 
 ### Fixed
 
@@ -33,6 +35,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   took a priority repair whenever there were enough of them, and other work such as metal extractors stalled.
   The cap now applies even when the pull is turned off (`range` 0).
 - A guard slot that cancelled itself left a stale entry behind in the guard list.
+- The guard safe check subtracted the guard's full power from the allied influence at the builder. It now subtracts
+  only what the guard actually adds there, so builders next to turrets count as safe as intended.
 
 ## 2026-10-31: Priority repair and escort builders ([#1](https://github.com/tellistone/CircuitAI-wires3/pull/1))
 

@@ -29,6 +29,7 @@ public:
 	virtual void Update() override;
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
+	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 	bool IsActive() const;
 	bool IsVipSafe() const { return isVipSafe; }
@@ -39,6 +40,7 @@ private:
 	springai::AIFloat3 GetVipDestination(CCircuitUnit* vip) const;
 	bool IsOverThreat(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	void Release();
+	void ReleaseUnit(CCircuitUnit* unit);
 	void DebugLog(CCircuitUnit* vip, const char* event) const;
 	void Pull(CCircuitUnit* vip);
 

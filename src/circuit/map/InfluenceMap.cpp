@@ -229,6 +229,19 @@ int CInfluenceMap::Pos2Index(const AIFloat3& pos) const
 	return int(pos.z / squareSize) * width + int(pos.x / squareSize);
 }
 
+float CInfluenceMap::GetMobileArmedInflAt(CAllyUnit* u, const AIFloat3& position) const
+{
+	int ux, uz, px, pz;
+	PosToXZ(u->GetPos(manager->GetCircuit()->GetLastFrame()), ux, uz);
+	PosToXZ(position, px, pz);
+	const int range = GetUnitRange(u);
+	if (range <= 0) {
+		return 0.f;
+	}
+	const float len = sqrtf(SQUARE(ux - px) + SQUARE(uz - pz));
+	return (len > range) ? 0.f : u->GetCircuitDef()->GetPower() * (1.0f - len / range);
+}
+
 int CInfluenceMap::GetUnitRange(CAllyUnit* u) const
 {
 	const CCircuitDef* cdef = u->GetCircuitDef();

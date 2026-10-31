@@ -107,6 +107,30 @@ void CFGuardTask::Update()
 	}
 }
 
+void CFGuardTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
+{
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	const CMilitaryManager::SGuardCfg& cfg = militaryMgr->GetGuardCfg();
+	if (!cfg.isDamageExit) {
+		IFighterTask::OnUnitDamaged(unit, attacker);
+		return;
+	}
+	// Exit 4: a damaged guard drops the job at once. Close the slot first so neither the retreat logic
+	// nor MakeTask hands this slot straight back
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	cooldownUntil = std::max(cooldownUntil, frame + std::max(0, cfg.threatCooldown));
+	CCircuitUnit* vip = circuit->GetTeamUnit(vipId);
+	if (vip != nullptr) {
+		DebugLog(vip, "guard damaged");
+	}
+
+	IFighterTask::OnUnitDamaged(unit, attacker);  // may send it to retreat
+	if (unit->GetTask() == this) {
+		ReleaseUnit(unit);
+	}
+}
+
 void CFGuardTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -129,7 +153,7 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	isVipRetreat = (vip->GetTask() != nullptr) && (vip->GetTask()->GetType() == IUnitTask::Type::RETREAT);
 
 	// Exit 2: the builder stands inside the allied threat bubble.
-	// The guard's own power is subtracted, so the guard can't make the spot look safe by itself.
+	// The guard's own contribution is subtracted, so the guard can't make the spot look safe by itself.
 	if (cfg.safeAlly <= 0.f) {
 		isVipSafe = false;
 		safeSince = -1;
@@ -139,7 +163,7 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	const AIFloat3& pos = vip->GetPos(circuit->GetLastFrame());
 	float allyInfl = inflMap->GetAllyInflAt(pos);
 	for (CCircuitUnit* unit : units) {
-		allyInfl -= unit->GetCircuitDef()->GetPower();
+		allyInfl -= inflMap->GetMobileArmedInflAt(unit, pos);  // the guard's real share, not its full power
 	}
 	const int frame = circuit->GetLastFrame();
 	lastAlly = allyInfl;
@@ -153,7 +177,7 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 		if (utils::is_valid(dest)) {
 			float destAlly = inflMap->GetAllyInflAt(dest);
 			for (CCircuitUnit* unit : units) {
-				destAlly -= unit->GetCircuitDef()->GetPower();
+				destAlly -= inflMap->GetMobileArmedInflAt(unit, dest);
 			}
 			isSafe = (destAlly >= cfg.safeAlly) && (inflMap->GetEnemyInflAt(dest) <= cfg.safeEnemy);
 		}
@@ -280,22 +304,26 @@ void CFGuardTask::DebugLog(CCircuitUnit* vip, const char* event) const
 
 void CFGuardTask::Release()
 {
-	CCircuitAI* circuit = manager->GetCircuit();
-	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	decltype(units) tmpUnits = units;
 	for (CCircuitUnit* unit : tmpUnits) {
-		// Drop the engine Guard order: some new tasks (e.g. a fresh raid) issue no command in Start,
-		// and the unit would keep guarding until that task's first update
-		TRY_UNIT(circuit, unit,
-			unit->GetUnit()->Stop();
-		)
-		// IsActive() is false here, so MakeTask won't hand this slot back
-		IUnitTask* task = militaryMgr->MakeTask(unit);
-		if (task != nullptr) {
-			manager->AssignTask(unit, task);
-		} else {
-			RemoveAssignee(unit);  // falls back to idle task, re-tasked on its next update
-		}
+		ReleaseUnit(unit);
+	}
+}
+
+void CFGuardTask::ReleaseUnit(CCircuitUnit* unit)
+{
+	// IsActive() is false here, so MakeTask won't hand this slot back
+	CCircuitAI* circuit = manager->GetCircuit();
+	// Drop the engine Guard order: some new tasks (e.g. a fresh raid) issue no command in Start,
+	// and the unit would keep guarding until that task's first update
+	TRY_UNIT(circuit, unit,
+		unit->GetUnit()->Stop();
+	)
+	IUnitTask* task = static_cast<CMilitaryManager*>(manager)->MakeTask(unit);
+	if (task != nullptr) {
+		manager->AssignTask(unit, task);
+	} else {
+		RemoveAssignee(unit);  // falls back to idle task, re-tasked on its next update
 	}
 }
 

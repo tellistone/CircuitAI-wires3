@@ -44,6 +44,8 @@ public:
 	float GetAllyInflAt(const springai::AIFloat3& position) const;
 	float GetAllyDefendInflAt(const springai::AIFloat3& position) const;
 	float GetInfluenceAt(const springai::AIFloat3& position) const;
+	// What one mobile armed ally adds to allyInfl at position, by the same formula as AddMobileArmed
+	float GetMobileArmedInflAt(CAllyUnit* u, const springai::AIFloat3& position) const;
 
 	int Pos2Index(const springai::AIFloat3& pos) const;
 
