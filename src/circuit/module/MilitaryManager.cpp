@@ -367,9 +367,6 @@ void CMilitaryManager::ReadConfig()
 		}
 	}
 	const Json::Value& qthrMod = quotas["thr_mod"];
-	const Json::Value& qthrAtk = qthrMod["attack"];
-	attackMod.min = qthrAtk.get((unsigned)0, 1.f).asFloat();
-	attackMod.len = qthrAtk.get((unsigned)1, 1.f).asFloat() - attackMod.min;
 	// Raid and scout tasks have their own [min, max]; missing = same as "attack" (old behaviour)
 	auto readThrMod = [this, &qthrMod, &cfgName](const char* name, const SThreatQuota& fallback) {
 		const Json::Value& q = qthrMod[name];
@@ -380,7 +377,7 @@ void CMilitaryManager::ReadConfig()
 		const Json::Value& q0 = q.get((unsigned)0, Json::Value());
 		const Json::Value& q1 = q.get((unsigned)1, q0);
 		if (!q.isArray() || !q0.isNumeric() || !q1.isNumeric() || (q0.asFloat() <= 0.f) || (q1.asFloat() <= 0.f)) {
-			circuit->LOG("CONFIG %s: quota.thr_mod.%s must be [<min > 0>, <max > 0>], using thr_mod.attack", cfgName.c_str(), name);
+			circuit->LOG("CONFIG %s: quota.thr_mod.%s must be [<min > 0>, <max > 0>], using [%.2f, %.2f]", cfgName.c_str(), name, fallback.min, fallback.min + fallback.len);
 			return fallback;
 		}
 		SThreatQuota mod;
@@ -389,6 +386,10 @@ void CMilitaryManager::ReadConfig()
 		return mod;
 	};
 	const Json::Value& qbaseBonus = qthrMod.get("base_bonus", 2.f);
+	SThreatQuota defaultMod;
+	defaultMod.min = 1.f;
+	defaultMod.len = 0.f;
+	attackMod = readThrMod("attack", defaultMod);
 	baseThrBonus = qbaseBonus.isNumeric() ? qbaseBonus.asFloat() : 2.f;
 	if (!qbaseBonus.isNumeric() || (baseThrBonus <= 0.f)) {
 		// 0 would make nothing near the base centre engageable
@@ -433,9 +434,7 @@ void CMilitaryManager::ReadConfig()
 	}
 	raidMod = readThrMod("raid", attackMod);
 	scoutMod = readThrMod("scout", attackMod);
-	const Json::Value& qthrDef = qthrMod["defence"];
-	defenceMod.min = qthrDef.get((unsigned)0, 1.f).asFloat();
-	defenceMod.len = qthrDef.get((unsigned)1, 1.f).asFloat() - defenceMod.min;
+	defenceMod = readThrMod("defence", defaultMod);
 
 	const Json::Value& guardCfg = root["guard"];
 	guard.maxWorkers = std::max(0, guardCfg.get("max_workers", 3).asInt());
