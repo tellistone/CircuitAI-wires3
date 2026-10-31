@@ -1603,7 +1603,17 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	};
 	IFighterTask* task = nullptr;
 	CCircuitDef* cdef = unit->GetCircuitDef();
-	if (cdef->IsRoleSupport()) {
+	auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
+	// Any main role with the scout attribute (scout as a secondary role) fills the scout quota first.
+	// Units whose main role already leads to scouting keep their own path below.
+	if (cdef->IsRoleScout() && ((it == types.end()) || (it->second != IFighterTask::FightType::SCOUT))
+		&& (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts))
+	{
+		task = EnqueueTask(IFighterTask::FightType::SCOUT);
+	}
+	if (task != nullptr) {
+		// scout picked above
+	} else if (cdef->IsRoleSupport()) {
 		if (/*cdef->IsAttacker() && */GetTasks(IFighterTask::FightType::ATTACK).empty() && GetTasks(IFighterTask::FightType::DEFEND).empty()) {
 			task = EnqueueDefend(IFighterTask::FightType::ATTACK,
 								 IFighterTask::FightType::SUPPORT, minAttackers);
@@ -1611,18 +1621,10 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 			task = EnqueueTask(IFighterTask::FightType::SUPPORT);
 		}
 	} else {
-		auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
-		// Raiders that can scout fill scout quota first, then any configured role may take a free guard slot
-		if ((it != types.end()) && (it->second == IFighterTask::FightType::RAID)
-			&& cdef->IsRoleScout() && (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts))
-		{
-			task = EnqueueTask(IFighterTask::FightType::SCOUT);
-		}
-		if (task == nullptr) {
-			task = FindGuardTask(unit);
-		}
+		// Any configured role may take a free guard slot
+		task = FindGuardTask(unit);
 		if (task != nullptr) {
-			// scout or guard picked above
+			// guard picked above
 		} else if (it != types.end()) {
 			switch (it->second) {
 				case IFighterTask::FightType::RAID: {
