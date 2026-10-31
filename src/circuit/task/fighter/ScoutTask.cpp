@@ -328,6 +328,10 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 	// NOTE: Use max(unit_threat, THREAT_MIN) for no-weapon scouts
 	const bool proceed = isUpdating && utils::is_valid(position) && (threatMap->GetThreatAt(unit, threatPos) < safeThreat);
 	if (!proceed) {
+		if (isUpdating && utils::is_valid(position)) {
+			// Destination turned dangerous (e.g. an army sits there): don't re-pick it straight away
+			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
+		}
 		position = PickScoutPosition(unit, safeThreat);
 	}
 
@@ -375,11 +379,16 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, in
 	if (pPath->path.empty() && isCapped && (GetPathThreatCap(unit) < std::numeric_limits<float>::max())) {
 		// No route that stays out of danger
 		if (attempt < 2) {
-			// Try another scouting spot (PickScoutPosition advances to the next spot)
+			// Try another scouting spot; keep scouts off this one for a while
+			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
 			position = PickScoutPosition(unit, safeThreat);
 			RunScoutQuery(unit, true, attempt + 1);
 		} else {
-			// Every route crosses some danger, or we are standing in it: least-threat route to the (safe) destination
+			// Every route crosses some danger, or we are standing in it: least-threat route to a destination
+			// that is safe right now, mobile enemies included (spot picking ignores them); else go home
+			if (!utils::is_valid(position) || (threatMap->GetThreatAt(unit, position) >= safeThreat)) {
+				position = circuit->GetTerrainManager()->GetMovePosition(unit->GetArea(), circuit->GetSetupManager()->GetBasePos());
+			}
 			RunScoutQuery(unit, false, attempt + 1);
 		}
 		return;
@@ -476,24 +485,19 @@ AIFloat3 CScoutTask::PickScoutPosition(CCircuitUnit* unit, float safeThreat)
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 
-	// Next scouting spots (mex spots that are not ours), skipping defended ones
-	for (int i = 0; i < 8; ++i) {
-		const AIFloat3 spot = militaryMgr->GetScoutPosition(unit);
-		if (!utils::is_valid(spot)) {
-			break;
-		}
-		if (threatMap->GetThreatAt(unit, spot) < safeThreat) {
-			return spot;
-		}
+	// Best-scored mex spot: near the enemy, unseen for longest, not defended by known static enemies
+	const AIFloat3 spot = militaryMgr->PickScoutSpot(unit, safeThreat);
+	if (utils::is_valid(spot)) {
+		return spot;
 	}
 	// Random safe spot
 	for (int i = 0; i < 4; ++i) {
 		float x = rand() % terrainMgr->GetTerrainWidth();
 		float z = rand() % terrainMgr->GetTerrainHeight();
-		AIFloat3 spot(x, circuit->GetMap()->GetElevationAt(x, z), z);
-		spot = terrainMgr->GetMovePosition(unit->GetArea(), spot);
-		if (utils::is_valid(spot) && (threatMap->GetThreatAt(unit, spot) < safeThreat)) {
-			return spot;
+		AIFloat3 rndPos(x, circuit->GetMap()->GetElevationAt(x, z), z);
+		rndPos = terrainMgr->GetMovePosition(unit->GetArea(), rndPos);
+		if (utils::is_valid(rndPos) && (threatMap->GetThreatAt(unit, rndPos) < safeThreat)) {
+			return rndPos;
 		}
 	}
 	// Nothing safe found: head home
