@@ -1403,7 +1403,7 @@ void CBuilderManager::UpdateEscort()
 		// Nearest builder that is not busy with urgent or escort work
 		const AIFloat3& pos = leader->GetPos(frame);
 		CCircuitUnit* bestWorker = nullptr;
-		float minSqDist = SQUARE(escort.range);  // catch-up is a plain move: keep the trip short
+		float minSqDist = SQUARE(escort.range);
 		for (CCircuitUnit* worker : workers) {
 			IUnitTask* curTask = worker->GetTask();
 			if ((!escort.isComm && worker->GetCircuitDef()->IsRoleComm())

@@ -12,6 +12,9 @@
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
+#include "terrain/path/PathFinder.h"
+#include "terrain/path/QueryPathSingle.h"
+#include "map/ThreatMap.h"
 #include "unit/action/TravelAction.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -29,6 +32,7 @@ CBEscortTask::CBEscortTask(ITaskManager* mgr, ISquadTask* squad)
 		, fightType(static_cast<int>(squad->GetFightType()))
 		, orderPos(-RgtVector)
 		, isFightOrder(false)
+		, isArrived(false)
 {
 }
 
@@ -60,10 +64,8 @@ void CBEscortTask::RemoveAssignee(CCircuitUnit* unit)
 
 void CBEscortTask::Start(CCircuitUnit* unit)
 {
-	// Orders are given directly, not by travel action
-	if (unit->GetTravelAct() != nullptr) {
-		unit->GetTravelAct()->StateFinish();
-	}
+	// Near the group orders are given directly; travel action is used only for threat-aware catch-up
+	unit->GetTravelAct()->StateFinish();
 	Follow(unit, true);
 }
 
@@ -73,9 +75,11 @@ void CBEscortTask::Update()
 		manager->AbortTask(this);
 		return;
 	}
+	const bool isForce = isArrived;
+	isArrived = false;
 	auto assignees = units;  // Follow may abort the task
 	for (CCircuitUnit* unit : assignees) {
-		Follow(unit, false);
+		Follow(unit, isForce);
 		if (isDead) {
 			break;
 		}
@@ -98,6 +102,12 @@ void CBEscortTask::OnUnitIdle(CCircuitUnit* unit)
 		return;
 	}
 	Follow(unit, true);
+}
+
+void CBEscortTask::OnTravelEnd(CCircuitUnit* unit)
+{
+	// NOTE: do not issue orders or touch unit actions here, switch to patrol on next Update
+	isArrived = true;
 }
 
 bool CBEscortTask::IsSquadAlive() const
@@ -147,6 +157,24 @@ void CBEscortTask::Follow(CCircuitUnit* unit, bool isForce)
 	const bool isLagging = sqDist > SQUARE(escort.follow);
 	const bool isFight = !isFallback && !isLagging;
 
+	ITravelAction* travelAct = unit->GetTravelAct();
+	if (isLagging) {
+		// Catch-up can cross the map: follow a threat-aware path like other builder jobs
+		if (!isForce && !isFightOrder && !travelAct->IsFinished() && utils::is_valid(orderPos)
+			&& (orderPos.SqDistance2D(pos) < SQUARE(escort.follow * 0.5f)))
+		{
+			return;  // already travelling to roughly the same spot
+		}
+		orderPos = pos;
+		isFightOrder = false;
+		TravelTo(unit, pos);
+		return;
+	}
+	if (!travelAct->IsFinished()) {
+		travelAct->StateFinish();  // caught up: hand over to direct orders
+		isForce = true;
+	}
+
 	// Re-issuing the order would interrupt current repair: only do it if it changed noticeably
 	if (!isForce && (isFight == isFightOrder) && utils::is_valid(orderPos)
 		&& (orderPos.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 24)))
@@ -168,6 +196,48 @@ void CBEscortTask::Follow(CCircuitUnit* unit, bool isForce)
 		}
 		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
 	)
+}
+
+void CBEscortTask::TravelTo(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	if (!IsQueryReady(unit)) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	circuit->GetThreatMap()->SetThreatType(unit);
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			unit, circuit->GetThreatMap(), frame,
+			unit->GetPos(frame), pos, unit->GetCircuitDef()->GetBuildDistance());
+	pathQueries[unit] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyEscortPath(static_cast<const CQueryPathSingle*>(query));
+		}
+	});
+}
+
+void CBEscortTask::ApplyEscortPath(const CQueryPathSingle* query)
+{
+	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
+	CCircuitUnit* unit = query->GetUnit();
+
+	if (pPath->path.size() > 2) {
+		unit->GetTravelAct()->SetPath(pPath);
+		unit->GetTravelAct()->StateActivate();
+	} else {
+		// Too short for a path: plain move, next Update switches to patrol once close
+		unit->GetTravelAct()->StateFinish();
+		const AIFloat3& endPos = query->GetEndPos();
+		TRY_UNIT(manager->GetCircuit(), unit,
+			unit->CmdMoveTo(endPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, manager->GetCircuit()->GetLastFrame() + FRAMES_PER_SEC * 60);
+			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+		)
+	}
 }
 
 } // namespace circuit

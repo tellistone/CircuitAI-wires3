@@ -33,17 +33,21 @@ public:
 
 public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
+	virtual void OnTravelEnd(CCircuitUnit* unit) override;
 
 	ISquadTask* GetSquad() const { return squad; }
 
 private:
 	bool IsSquadAlive() const;
 	void Follow(CCircuitUnit* unit, bool isForce);
+	void TravelTo(CCircuitUnit* unit, const springai::AIFloat3& pos);
+	void ApplyEscortPath(const CQueryPathSingle* query);
 
 	ISquadTask* squad;  // validated against MilitaryManager tasks before use
 	int fightType;
 	springai::AIFloat3 orderPos;
 	bool isFightOrder;
+	bool isArrived;  // threat-aware catch-up path finished
 };
 
 } // namespace circuit
