@@ -333,6 +333,42 @@ void CMilitaryManager::ReadConfig()
 	defenceMod.min = qthrDef.get((unsigned)0, 1.f).asFloat();
 	defenceMod.len = qthrDef.get((unsigned)1, 1.f).asFloat() - defenceMod.min;
 
+	const Json::Value& guardCfg = root["guard"];
+	guard.maxWorkers = std::max(0, guardCfg.get("max_workers", 3).asInt());
+	const Json::Value& guardSafe = guardCfg["safe"];
+	if (guardSafe.isArray()) {
+		guard.safeAlly = guardSafe.get((unsigned)0, 20.f).asFloat();
+		guard.safeEnemy = guardSafe.get((unsigned)1, INFL_EPS).asFloat();
+	} else {
+		if (!guardSafe.isNull()) {
+			circuit->LOG("CONFIG %s: guard.safe must be [ally, enemy], using defaults", cfgName.c_str());
+		}
+		guard.safeAlly = 20.f;
+		guard.safeEnemy = INFL_EPS;
+	}
+	guard.safeFrames = std::max(0.f, guardCfg.get("safe_time", 5.f).asFloat()) * FRAMES_PER_SEC;
+	guard.pullRange = guardCfg.get("pull_range", 800.f).asFloat();
+	const float threatCd = guardCfg.get("threat_cooldown", 10.f).asFloat();
+	guard.threatCooldown = (threatCd < 0.f) ? -1 : int(threatCd * FRAMES_PER_SEC);
+	guard.threatRatio = std::max(0.f, guardCfg.get("threat_ratio", 0.f).asFloat());
+	guard.maxShare = std::max(0.f, guardCfg.get("max_share", 1.f).asFloat());
+	guard.isDebug = guardCfg.get("debug", false).asBool();
+	guard.roleMask = 0;
+	const Json::Value& guardRoles = guardCfg["roles"];
+	if (guardRoles.isNull()) {  // legacy behaviour
+		guard.roleMask = CCircuitDef::RoleMask::RAIDER | CCircuitDef::RoleMask::RIOT;
+	} else {
+		for (const Json::Value& gr : guardRoles) {
+			const std::string& roleName = gr.asString();
+			auto it = roleNames.find(roleName);
+			if (it == roleNames.end()) {
+				circuit->LOG("CONFIG %s: guard.roles has unknown role '%s'", cfgName.c_str(), roleName.c_str());
+				continue;
+			}
+			guard.roleMask |= CCircuitDef::GetMask(it->second.type);
+		}
+	}
+
 	const Json::Value& porc = root["porcupine"];
 	const Json::Value& defs = porc["unit"];
 	defenderDefs.reserve(defs.size());
@@ -618,6 +654,12 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 		case IUnitTask::Type::FIGHTER: {
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
+			if (taskF->GetFightType() == IFighterTask::FightType::GUARD) {
+				// A guard slot can abort itself (builder gone): drop its builder entry so nothing points at a dead task
+				for (auto it = guardTasks.begin(); it != guardTasks.end();) {
+					it = (it->second == taskF) ? guardTasks.erase(it) : std::next(it);
+				}
+			}
 		} break;
 		default: break;
 	}
@@ -1058,8 +1100,9 @@ bool CMilitaryManager::DelGuardTask(CCircuitUnit* unit)
 		return false;
 	}
 
-	AbortTask(it->second);
-	guardTasks.erase(it);
+	IFighterTask* task = it->second;
+	guardTasks.erase(it);  // erase first: DequeueTask also scrubs guardTasks
+	AbortTask(task);
 	return true;
 }
 
@@ -1067,6 +1110,50 @@ IFighterTask* CMilitaryManager::GetGuardTask(CCircuitUnit* unit) const
 {
 	auto it = guardTasks.find(unit);
 	return (it != guardTasks.end()) ? it->second : nullptr;
+}
+
+bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
+{
+	// Match the main role by its own name ("bullshit_raider") or by the role it acts as ("raider")
+	const CCircuitDef::RoleT mainRole = cdef->GetMainRole();
+	const CCircuitDef::RoleM mask = CCircuitDef::GetMask(mainRole)
+			| CCircuitDef::GetMask(circuit->GetBindedRole(mainRole));
+	return (guard.roleMask & mask) != 0;
+}
+
+bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
+{
+	if (guard.maxShare >= 1.f) {
+		return false;
+	}
+	// Per role: e.g. 0.3 = at most 30% of raiders and 30% of riots guard at once (rounded up, so 1 raider may guard)
+	const CCircuitDef::RoleT role = circuit->GetBindedRole(cdef->GetMainRole());
+	unsigned int total = 0;
+	for (CCircuitUnit* u : army) {
+		if (circuit->GetBindedRole(u->GetCircuitDef()->GetMainRole()) == role) {
+			++total;
+		}
+	}
+	unsigned int guarding = 0;
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
+		for (CCircuitUnit* u : t->GetAssignees()) {
+			if (circuit->GetBindedRole(u->GetCircuitDef()->GetMainRole()) == role) {
+				++guarding;
+			}
+		}
+	}
+	// -1e-3: 0.3f * 10 is 3.0000001f in float, which would ceil to 4
+	return guarding >= std::ceil(guard.maxShare * total - 1e-3f);
+}
+
+IFighterTask* CMilitaryManager::FindGuardTask(CCircuitUnit* unit) const
+{
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
+		if (t->CanAssignTo(unit)) {
+			return t;
+		}
+	}
+	return nullptr;
 }
 
 void CMilitaryManager::AddResponse(CCircuitUnit* unit)
@@ -1343,24 +1430,22 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		}
 	} else {
 		auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
-		if (it != types.end()) {
+		// Raiders that can scout fill scout quota first, then any configured role may take a free guard slot
+		if ((it != types.end()) && (it->second == IFighterTask::FightType::RAID)
+			&& cdef->IsRoleScout() && (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts))
+		{
+			task = EnqueueTask(IFighterTask::FightType::SCOUT);
+		}
+		if (task == nullptr) {
+			task = FindGuardTask(unit);
+		}
+		if (task != nullptr) {
+			// scout or guard picked above
+		} else if (it != types.end()) {
 			switch (it->second) {
 				case IFighterTask::FightType::RAID: {
-					if (cdef->IsRoleScout() && (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts)) {
-						task = EnqueueTask(IFighterTask::FightType::SCOUT);
-					} else {
-						const std::set<IFighterTask*>& guards = GetTasks(IFighterTask::FightType::GUARD);
-						for (IFighterTask* t : guards) {
-							if (t->GetAssignees().empty()) {
-								task = t;
-								break;
-							}
-						}
-						if (task == nullptr) {
-							if (GetTasks(IFighterTask::FightType::RAID).empty()) {
-								task = EnqueueDefend(IFighterTask::FightType::RAID, raid.min);
-							}
-						}
+					if (GetTasks(IFighterTask::FightType::RAID).empty()) {
+						task = EnqueueDefend(IFighterTask::FightType::RAID, raid.min);
 					}
 				} break;
 				case IFighterTask::FightType::AH: {
@@ -1369,17 +1454,8 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 					}
 				} break;
 				case IFighterTask::FightType::DEFEND: {
-					const std::set<IFighterTask*>& guards = GetTasks(IFighterTask::FightType::GUARD);
-					for (IFighterTask* t : guards) {
-						if (t->GetAssignees().empty()) {
-							task = t;
-							break;
-						}
-					}
-					if (task == nullptr) {
-						const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
-						task = EnqueueDefend(IFighterTask::FightType::ATTACK, power);
-					}
+					const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
+					task = EnqueueDefend(IFighterTask::FightType::ATTACK, power);
 				} break;
 				default: break;
 			}

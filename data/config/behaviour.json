@@ -43,6 +43,18 @@
 	"take_from": "high"  // highest job priority a builder can be taken off for escort: "idle" (idle builders only), "low", "normal" or "high" (urgent jobs never)
 },
 
+"guard": {
+	"roles": ["raider", "riot"],  // main roles that may take a builder's guard slot; a custom role ("bullshit_raider") matches only itself, a base role ("raider") also matches roles bound to it; [] = nobody guards
+	"max_workers": 3,  // an unarmed builder gets a guard slot if, once it is finished, the worker count (commander included) is below this; 0 = off
+	"max_share": 1.0,  // max share of each role's units guarding at once, per acting main role (0.3 = 30% of raiders and 30% of riots), rounded up so 1 unit of a role may guard; 1.0 = no limit, 0 = none
+	"safe": [20.0, 0.01],  // [ally, enemy]: the guard leaves while its builder stands where allied influence >= ally (here 20.0) and enemy influence <= enemy (here 0.01). The guard's own strength isn't counted. Influence is in the same strength units as quota.attack. Both the builder's position and its current job's location (e.g. the mex it is walking to) must be safe. ally <= 0 = never safe. The guard also leaves while the builder retreats
+	"safe_time": 5.0,  // seconds the builder must stay safe before its guard leaves (stops a passing army from sending the guard away)
+	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (idle, raid or defend task; never scouts, attack squads, retreating or guarding units; must reach the builder); 0 = only units asking for a new task fill it
+	"threat_cooldown": 10.0,  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
+	"threat_ratio": 1.0,  // ... but only if enemy threat at the guard > this * the guard's own threat; lower values cancel on lighter threat, 0 = any threat
+	"debug": false  // true = write guard events and a status line per slot every 10 s to infolog.txt (lines start with "GUARD")
+},
+
 "defence": {
 	"infl_rad": 4,  // influenece cell radius for defendAlly map
 	"base_rad": [1000.0, 2000.0],  // defend if enemy within clamp(distance(lane_pos, base_pos), 1000, 2000) radius

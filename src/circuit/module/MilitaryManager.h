@@ -75,12 +75,29 @@ public:
 	bool DelGuardTask(CCircuitUnit* unit);
 	IFighterTask* GetGuardTask(CCircuitUnit* unit) const;
 
+	struct SGuardCfg {
+		CCircuitDef::RoleM roleMask;  // main roles that may guard a builder (behaviour.json guard.roles)
+		unsigned int maxWorkers;  // guard slot for an unarmed builder while worker count < this, 0 = off
+		float safeAlly;  // builder is safe (guard leaves) if allied influence minus guards >= this, <= 0 = never safe
+		float safeEnemy;  // ... and enemy influence <= this
+		int safeFrames;  // builder must stay safe this long before its guard leaves
+		float pullRange;  // empty active slot pulls the nearest eligible unit within this range, <= 0 = no pull
+		float threatRatio;  // ... only when threat at the guard > this * guard's own threat (0 = any threat)
+		float maxShare;  // max share of a role's units (by acting main role) on guard duty at once, rounded up; >= 1 = no limit
+		int threatCooldown;
+		bool isDebug;  // log guard slot events and a 10 s status line per slot to infolog  // guard in enemy threat is cancelled and the slot closes for this long, < 0 = never cancel
+	};
+	const SGuardCfg& GetGuardCfg() const { return guard; }
+	bool IsGuardRole(CCircuitDef* cdef) const;
+	bool IsGuardCapReached(CCircuitDef* cdef) const;
+
 	const std::set<CCircuitUnit*>& GetRoleUnits(CCircuitDef::RoleT type) const {
 		return roleInfos[type].units;
 	}
 	void AddResponse(CCircuitUnit* unit);
 	void DelResponse(CCircuitUnit* unit);
 	float GetArmyCost() const { return armyCost; }
+	const std::set<CCircuitUnit*>& GetArmy() const { return army; }
 	float RoleProbability(const CCircuitDef* cdef) const;
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
@@ -105,6 +122,7 @@ public:
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
+	IFighterTask* FindGuardTask(CCircuitUnit* unit) const;
 
 	void Watchdog();
 	void UpdateIdle();
@@ -156,6 +174,7 @@ private:
 	float armyCost;
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
+	SGuardCfg guard;
 
 	struct SRaidQuota {
 		float min;
