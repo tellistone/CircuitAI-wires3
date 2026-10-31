@@ -38,7 +38,8 @@
 	"behind": 150.0,  // distance behind the group leader, towards base
 	"follow": 600.0,  // if further than this from its spot, builder catches up along a threat-aware path
 	"range": 600.0,  // only builders within this distance of any group member are picked
-	"comm": false  // allow commander as escort
+	"comm": false,  // allow commander as escort
+	"take_from": "high"  // highest job priority a builder can be taken off for escort: "idle" (idle builders only), "low", "normal" or "high" (urgent jobs never)
 },
 
 "defence": {

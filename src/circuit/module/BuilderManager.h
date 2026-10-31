@@ -101,9 +101,10 @@ public:
 		float minPower;  // min attack power of a group to get escort builder, 0 = disabled
 		float share;  // max share of workers on escort duty
 		float behind;  // distance behind group leader (towards base)
-		float follow;  // distance from escort point at which builder catches up with plain move
+		float follow;  // distance from escort point at which builder catches up along threat-aware path
 		float range;  // max distance from a builder to the group when assigning
 		bool isComm;  // allow commander to escort
+		int maxPriority;  // highest priority of a job a builder can be taken off (NOW never)
 	};
 	const SEscort& GetEscortCfg() const { return escort; }
 private:

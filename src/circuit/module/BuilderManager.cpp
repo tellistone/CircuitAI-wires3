@@ -62,7 +62,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, prioRepairShare(0.f)
 		, isPrioRepairSafe(false)
 		, isPrioRepairSafeStatic(false)
-		, escort({0.f, 0.f, 0.f, 0.f, 0.f, false})
+		, escort({0.f, 0.f, 0.f, 0.f, 0.f, false, static_cast<int>(IBuilderTask::Priority::HIGH)})
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CBuilderManager::Init, this));
 
@@ -167,6 +167,13 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	escort.follow = escortCfg.get("follow", 600.f).asFloat();
 	escort.range = escortCfg.get("range", 600.f).asFloat();
 	escort.isComm = escortCfg.get("comm", false).asBool();
+	{
+		const std::string takeFrom = escortCfg.get("take_from", "high").asString();
+		escort.maxPriority = (takeFrom == "idle") ? -1
+				: (takeFrom == "low") ? static_cast<int>(IBuilderTask::Priority::LOW)
+				: (takeFrom == "normal") ? static_cast<int>(IBuilderTask::Priority::NORMAL)
+				: static_cast<int>(IBuilderTask::Priority::HIGH);
+	}
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
@@ -1422,6 +1429,7 @@ void CBuilderManager::UpdateEscort()
 			if (curTask->GetType() == IUnitTask::Type::BUILDER) {
 				IBuilderTask* taskB = static_cast<IBuilderTask*>(curTask);
 				if ((curTask->GetPriority() == IBuilderTask::Priority::NOW)
+					|| (static_cast<int>(curTask->GetPriority()) > escort.maxPriority)
 					|| (taskB->GetBuildType() == IBuilderTask::BuildType::REPAIR)
 					|| (taskB->GetBuildType() == IBuilderTask::BuildType::GUARD))
 				{
