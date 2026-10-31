@@ -131,6 +131,8 @@ public:
 		return edef->IsAttrRaidTarget() || edef->IsEnemyRoleAny(raidTargetRoles);
 	}
 
+	float GetRaidFleeShare() const { return raidFleeShare; }
+
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
 
@@ -211,6 +213,7 @@ private:
 	unsigned int maxScouts;
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
+	float raidFleeShare;
 	struct SThreatQuota {
 		float min;
 		float len;

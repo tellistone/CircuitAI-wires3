@@ -4,6 +4,7 @@
 	"scout": 1,  // max scout units out of raiders
 	"raid": [7.0, 42.0],  // [<min>, <avg>] power of raider squad
 	"raid_target_roles": ["builder", "commander"],  // enemy roles raid groups attack first (plus types with the "raid_target" attribute); [] = attribute only
+	"raid_flee_share": 0.5,  // raid group flees when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
 	"attack": 20.0,  // min power of attack group
 	"thr_mod": {
 		"attack": [0.45, 0.45],  // [<min>, <max>] enemy threat modifier for target selection of attack task

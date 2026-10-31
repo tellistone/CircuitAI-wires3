@@ -25,6 +25,8 @@
 
 #include "spring/SpringMap.h"
 
+#include <algorithm>
+
 #include "AISCommands.h"
 
 namespace circuit {
@@ -36,6 +38,7 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, maxPower(maxPower)
 		, fleeFrame(0)
 		, fleePathFrame(0)
+		, pullFrame(0)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -130,6 +133,7 @@ void CRaidTask::Update()
 	if (IsInDanger(frame, isPathUnsafe) && Flee(frame)) {
 		return;
 	}
+	PullBackEndangered(frame);
 	if (frame < fleeFrame) {
 		return;  // keep running along the escape path for a moment instead of turning straight back
 	}
@@ -477,9 +481,14 @@ float CRaidTask::GetSafeThreat() const
 	// Like attackPower (def power incl. pwr_mod) but scaled by current health, times the task's powerMod
 	float power = 0.f;
 	for (CCircuitUnit* unit : units) {
-		power += unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+		power += GetUnitPower(unit);
 	}
 	return std::max(power, THREAT_MIN) * powerMod;
+}
+
+float CRaidTask::GetUnitPower(CCircuitUnit* unit) const
+{
+	return unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
 }
 
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
@@ -492,19 +501,30 @@ float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 	return (sqDist < SQUARE(baseRange)) ? safeThreat * (2.0f - sqrtf(sqDist) / baseRange) : safeThreat;
 }
 
-bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe) const
+bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe)
 {
 	isPathUnsafe = false;
+	endangered.clear();
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
 	const float safeThreat = GetSafeThreat();
+	float totalPower = 0.f;
+	float dangerPower = 0.f;
 	for (CCircuitUnit* unit : units) {
+		const float power = GetUnitPower(unit);
+		totalPower += power;
 		if (unit->GetUnit()->IsCloaked()) {
 			continue;  // unseen: enemies in range can't shoot it
 		}
 		const AIFloat3& pos = unit->GetPos(frame);
 		if (threatMap->GetThreatAt(unit, pos) >= GetSafeThreatAt(pos, safeThreat)) {
-			return true;
+			endangered.push_back(unit);
+			dangerPower += power;
 		}
+	}
+	// Flee only when the units in danger hold at least quota.raid_flee_share of the group's current strength
+	const float fleeShare = static_cast<CMilitaryManager*>(manager)->GetRaidFleeShare();
+	if (!endangered.empty() && (dangerPower >= fleeShare * totalPower)) {
+		return true;
 	}
 
 	if (!leader->GetTravelAct()->IsActive() || leader->GetUnit()->IsCloaked()) {
@@ -525,6 +545,30 @@ bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe) const
 		}
 	}
 	return false;
+}
+
+void CRaidTask::PullBackEndangered(int frame)
+{
+	// Units in danger that didn't make the whole group flee: send them back to the leader,
+	// unless the leader is in danger too (then there is no safer spot nearby)
+	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)
+		|| (std::find(endangered.begin(), endangered.end(), leader) != endangered.end()))
+	{
+		return;
+	}
+	pullFrame = frame;
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	for (CCircuitUnit* unit : endangered) {
+		if (unit->Blocker() != nullptr) {
+			continue;
+		}
+		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
+		TRY_UNIT(circuit, unit,
+			unit->CmdMoveTo(leaderPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+		)
+	}
 }
 
 bool CRaidTask::Flee(int frame)

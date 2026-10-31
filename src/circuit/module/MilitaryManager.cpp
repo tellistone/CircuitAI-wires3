@@ -337,6 +337,7 @@ void CMilitaryManager::ReadConfig()
 	raid.min = qraid.get((unsigned)0, 3.f).asFloat();
 	raid.avg = qraid.get((unsigned)1, 5.f).asFloat();
 	minAttackers = quotas.get("attack", 8.f).asFloat();
+	raidFleeShare = utils::clamp(quotas.get("raid_flee_share", 0.5f).asFloat(), 0.f, 1.f);
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
 		if (!raidTargets.isNull()) {

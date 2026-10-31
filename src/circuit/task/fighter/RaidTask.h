@@ -35,13 +35,17 @@ private:
 	// Escape: current group strength vs threat where the units are and just ahead on the path
 	float GetSafeThreat() const;
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
-	bool IsInDanger(int frame, bool& isPathUnsafe) const;
+	bool IsInDanger(int frame, bool& isPathUnsafe);  // fills 'endangered'
+	float GetUnitPower(CCircuitUnit* unit) const;
+	void PullBackEndangered(int frame);
 	bool Flee(int frame);  // false: nowhere better to go (already home), fight instead
 	void ApplyFleePath(const CQueryPathSingle* query);
 
 	float maxPower;
 	int fleeFrame;  // keep running until this frame
 	int fleePathFrame;  // last escape path request
+	int pullFrame;  // last pull-back of endangered stragglers
+	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
 };
 
 } // namespace circuit
