@@ -24,7 +24,7 @@ public:
 	using EnemyUnits = std::unordered_map<ICoreUnit::Id, CEnemyUnit*>;
 	using EnemyFakes = std::set<CEnemyFake*>;
 	struct SEnemyGroup {
-		SEnemyGroup(const springai::AIFloat3& p) : pos(p), cost(0.f), threat(0.f) {
+		SEnemyGroup(const springai::AIFloat3& p) : pos(p), cost(0.f), threat(0.f), sizeThreat(0.f) {
 			roleCosts.fill(0.f);
 		}
 		std::vector<ICoreUnit::Id> units;
@@ -32,6 +32,7 @@ public:
 		std::array<float, CMaskHandler::GetMaxMasks()> roleCosts;
 		float cost;
 		float threat;  // thr_mod applied
+		float sizeThreat;  // quota.group_size applied (no thr_mod): army size needed to face this group
 	};
 
 	CEnemyManager(CCircuitAI* circuit);
@@ -76,12 +77,16 @@ public:
 	float GetMobileThreat() const { return mobileThreat; }
 	float GetStaticThreat() const { return staticThreat; }
 	float GetEnemyThreat() const { return mobileThreat + staticThreat; }
+	// Enemy threat weighted by quota.group_size, for sizing our groups; independent of thr_mod
+	float GetEnemySizeThreat() const { return sizeMobileThreat + sizeStaticThreat; }
 	bool IsAirValid() const { return GetEnemyThreat(ROLE_TYPE(AA)) <= maxAAThreat; }
 	bool IsEnemyNear(const springai::AIFloat3& pos, float maxThreat);
 
 	const std::vector<SEnemyGroup>& GetEnemyGroups() const { return enemyGroups; }
 	const springai::AIFloat3& GetEnemyPos() const { return enemyPos; }
 	float GetMaxGroupThreat() const { return enemyGroups[maxThreatGroupIdx].threat; }
+	// Largest enemy group by quota.group_size weighted threat (not thr_mod)
+	float GetMaxGroupSizeThreat() const { return enemyGroups[maxSizeGroupIdx].sizeThreat; }
 	float GetEnemyMobileCost() const { return enemyMobileCost; }
 
 	void UpdateAreaUsers(CCircuitAI* ai);
@@ -96,6 +101,7 @@ private:
 		std::vector<SEnemyGroup> enemyGroups;
 		springai::AIFloat3 enemyPos;
 		int maxThreatGroupIdx;
+		int maxSizeGroupIdx;
 	};
 
 	void Prepare(SGroupData& groupData);
@@ -124,15 +130,22 @@ private:
 	std::vector<SEnemyGroup>& enemyGroups;
 	springai::AIFloat3 enemyPos;
 	int maxThreatGroupIdx;
+	int maxSizeGroupIdx;
 	bool isUpdating;
 
 	float enemyMobileCost;
 	float mobileThreat;  // thr_mod.mobile applied
 	float staticThreat;  // thr_mod.static applied
+	float sizeMobileThreat;  // quota.group_size.mobile applied
+	float sizeStaticThreat;  // quota.group_size.static applied
 	struct SInitThreatMod {
 		float inMobile;
 		float inStatic;
 	} initThrMod;
+	struct SGroupSizeMod {
+		float mobile;
+		float stat;
+	} groupSizeMod;  // quota.group_size
 	float maxAAThreat;
 	struct SEnemyInfo {
 		float cost;

@@ -26,7 +26,7 @@ public:
 	virtual void Update() override;
 
 	void SetPosition(const springai::AIFloat3& pos) { position = pos; }
-	void SetMaxPower(float power) { maxPower = power * powerMod; }
+	void SetMaxPower(float power) { maxPower = power; }  // group size, independent of thr_mod
 //	void SetWantedTarget(CEnemyInfo* enemy) { SetTarget(enemy); }
 
 	FightType GetPromote() const { return promote; }

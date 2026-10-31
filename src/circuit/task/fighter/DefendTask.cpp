@@ -37,7 +37,7 @@ CDefendTask::CDefendTask(ITaskManager* mgr, const AIFloat3& position,
 		: ISquadTask(mgr, FightType::DEFEND, powerMod)
 		, check(check)
 		, promote(promote)
-		, maxPower(maxPower * powerMod)
+		, maxPower(maxPower)  // group size: not scaled by thr_mod.defence (powerMod only sets target boldness)
 {
 	this->position = position;
 }
