@@ -95,6 +95,7 @@ public:
 								CCircuitUnit* target,
 								int timeout = ASSIGN_TIMEOUT);
 	bool IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit* unit, const springai::AIFloat3& pos) const;
+	bool IsRepairAssigned(ICoreUnit::Id unitId) const;
 
 	struct SEscort {
 		float minPower;  // min attack power of a group to get escort builder, 0 = disabled

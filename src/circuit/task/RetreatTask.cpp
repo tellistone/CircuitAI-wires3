@@ -158,9 +158,16 @@ void CRetreatTask::Update()
 		bool isRepaired = unit->HasShield()
 				? (healthPerc > 0.98f) && unit->IsShieldCharged(circuit->GetSetupManager()->GetFullShield())
 				: healthPerc > 0.98f;
-		// Waited at haven too long without a repairer: return to duty
-		bool isWaitOver = (waitTimeout > 0) && (State::REGROUP == state) && (repairer == nullptr)
-				&& !unit->GetCircuitDef()->IsPlane() && (frame - regroupFrame >= waitTimeout);
+		// Waited at haven too long without a repairer: return to duty.
+		// A builder working on it restarts the wait, so the timeout never cuts a repair short.
+		bool isWaitOver = false;
+		if ((waitTimeout > 0) && (State::REGROUP == state) && (repairer == nullptr) && !unit->GetCircuitDef()->IsPlane()) {
+			if (circuit->GetBuilderManager()->IsRepairAssigned(unit->GetId())) {
+				regroupFrame = frame;
+			} else {
+				isWaitOver = (frame - regroupFrame >= waitTimeout);
+			}
+		}
 
 		if ((isRepaired || isWaitOver) && !unit->IsDisarmed(frame)) {
 			RemoveAssignee(unit);

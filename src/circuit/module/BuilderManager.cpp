@@ -700,6 +700,12 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 	}
 }
 
+bool CBuilderManager::IsRepairAssigned(ICoreUnit::Id unitId) const
+{
+	auto it = repairedUnits.find(unitId);
+	return (it != repairedUnits.end()) && !it->second->GetAssignees().empty();
+}
+
 bool CBuilderManager::IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit* unit, const AIFloat3& pos) const
 {
 	if (task->GetBuildType() != IBuilderTask::BuildType::REPAIR) {
