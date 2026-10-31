@@ -333,6 +333,27 @@ void CMilitaryManager::ReadConfig()
 	defenceMod.min = qthrDef.get((unsigned)0, 1.f).asFloat();
 	defenceMod.len = qthrDef.get((unsigned)1, 1.f).asFloat() - defenceMod.min;
 
+	const Json::Value& guardCfg = root["guard"];
+	guard.maxWorkers = guardCfg.get("max_workers", 3).asUInt();
+	const Json::Value& guardSafe = guardCfg["safe"];
+	guard.safeAlly = guardSafe.get((unsigned)0, 20.f).asFloat();
+	guard.safeEnemy = guardSafe.get((unsigned)1, INFL_EPS).asFloat();
+	guard.roleMask = 0;
+	const Json::Value& guardRoles = guardCfg["roles"];
+	if (guardRoles.isNull()) {  // legacy behaviour
+		guard.roleMask = CCircuitDef::RoleMask::RAIDER | CCircuitDef::RoleMask::RIOT;
+	} else {
+		for (const Json::Value& gr : guardRoles) {
+			const std::string& roleName = gr.asString();
+			auto it = roleNames.find(roleName);
+			if (it == roleNames.end()) {
+				circuit->LOG("CONFIG %s: guard.roles has unknown role '%s'", cfgName.c_str(), roleName.c_str());
+				continue;
+			}
+			guard.roleMask |= CCircuitDef::GetMask(it->second.type);
+		}
+	}
+
 	const Json::Value& porc = root["porcupine"];
 	const Json::Value& defs = porc["unit"];
 	defenderDefs.reserve(defs.size());
@@ -1069,6 +1090,25 @@ IFighterTask* CMilitaryManager::GetGuardTask(CCircuitUnit* unit) const
 	return (it != guardTasks.end()) ? it->second : nullptr;
 }
 
+bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
+{
+	// Match the main role by its own name ("bullshit_raider") or by the role it acts as ("raider")
+	const CCircuitDef::RoleT mainRole = cdef->GetMainRole();
+	const CCircuitDef::RoleM mask = CCircuitDef::GetMask(mainRole)
+			| CCircuitDef::GetMask(circuit->GetBindedRole(mainRole));
+	return (guard.roleMask & mask) != 0;
+}
+
+IFighterTask* CMilitaryManager::FindGuardTask(CCircuitUnit* unit) const
+{
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
+		if (t->CanAssignTo(unit)) {
+			return t;
+		}
+	}
+	return nullptr;
+}
+
 void CMilitaryManager::AddResponse(CCircuitUnit* unit)
 {
 	const CCircuitDef* cdef = unit->GetCircuitDef();
@@ -1343,24 +1383,22 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		}
 	} else {
 		auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
-		if (it != types.end()) {
+		// Raiders that can scout fill scout quota first, then any configured role may take a free guard slot
+		if ((it != types.end()) && (it->second == IFighterTask::FightType::RAID)
+			&& cdef->IsRoleScout() && (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts))
+		{
+			task = EnqueueTask(IFighterTask::FightType::SCOUT);
+		}
+		if (task == nullptr) {
+			task = FindGuardTask(unit);
+		}
+		if (task != nullptr) {
+			// scout or guard picked above
+		} else if (it != types.end()) {
 			switch (it->second) {
 				case IFighterTask::FightType::RAID: {
-					if (cdef->IsRoleScout() && (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts)) {
-						task = EnqueueTask(IFighterTask::FightType::SCOUT);
-					} else {
-						const std::set<IFighterTask*>& guards = GetTasks(IFighterTask::FightType::GUARD);
-						for (IFighterTask* t : guards) {
-							if (t->GetAssignees().empty()) {
-								task = t;
-								break;
-							}
-						}
-						if (task == nullptr) {
-							if (GetTasks(IFighterTask::FightType::RAID).empty()) {
-								task = EnqueueDefend(IFighterTask::FightType::RAID, raid.min);
-							}
-						}
+					if (GetTasks(IFighterTask::FightType::RAID).empty()) {
+						task = EnqueueDefend(IFighterTask::FightType::RAID, raid.min);
 					}
 				} break;
 				case IFighterTask::FightType::AH: {
@@ -1369,17 +1407,8 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 					}
 				} break;
 				case IFighterTask::FightType::DEFEND: {
-					const std::set<IFighterTask*>& guards = GetTasks(IFighterTask::FightType::GUARD);
-					for (IFighterTask* t : guards) {
-						if (t->GetAssignees().empty()) {
-							task = t;
-							break;
-						}
-					}
-					if (task == nullptr) {
-						const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
-						task = EnqueueDefend(IFighterTask::FightType::ATTACK, power);
-					}
+					const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
+					task = EnqueueDefend(IFighterTask::FightType::ATTACK, power);
 				} break;
 				default: break;
 			}

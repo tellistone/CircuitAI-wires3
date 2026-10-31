@@ -92,8 +92,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 
 		AddBuildList(unit);
 
-		if (workers.size() < 3 && !unit->GetCircuitDef()->IsAttacker()) {
-			this->circuit->GetMilitaryManager()->AddGuardTask(unit);
+		CMilitaryManager* militaryMgr = this->circuit->GetMilitaryManager();
+		if ((workers.size() < militaryMgr->GetGuardCfg().maxWorkers) && !unit->GetCircuitDef()->IsAttacker()) {
+			militaryMgr->AddGuardTask(unit);
 		}
 	};
 	auto workerIdleHandler = [this](CCircuitUnit* unit) {

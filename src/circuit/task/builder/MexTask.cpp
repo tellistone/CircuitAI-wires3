@@ -6,6 +6,7 @@
  */
 
 #include "task/builder/MexTask.h"
+#include "task/fighter/GuardTask.h"
 #include "task/TaskManager.h"
 #include "map/ThreatMap.h"
 #include "module/EconomyManager.h"
@@ -51,8 +52,10 @@ bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 	if ((cluster < 0) || militaryMgr->HasDefence(cluster)) {
 		return true;
 	}
-	IUnitTask* guard = militaryMgr->GetGuardTask(unit);
-	return ((guard != nullptr) && !guard->GetAssignees().empty()) || (circuit->GetLastFrame() > FRAMES_PER_SEC * 60 * 5);
+	CFGuardTask* guard = static_cast<CFGuardTask*>(militaryMgr->GetGuardTask(unit));
+	// Guarded, or guard released because the builder is in a safe spot (next idle guard-role unit refills the slot once it leaves)
+	return ((guard != nullptr) && (!guard->GetAssignees().empty() || guard->IsVipSafe()))
+			|| (circuit->GetLastFrame() > FRAMES_PER_SEC * 60 * 5);
 }
 
 void CBMexTask::Cancel()

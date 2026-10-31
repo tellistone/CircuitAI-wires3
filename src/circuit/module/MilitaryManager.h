@@ -75,6 +75,15 @@ public:
 	bool DelGuardTask(CCircuitUnit* unit);
 	IFighterTask* GetGuardTask(CCircuitUnit* unit) const;
 
+	struct SGuardCfg {
+		CCircuitDef::RoleM roleMask;  // main roles that may guard a builder (behaviour.json guard.roles)
+		unsigned int maxWorkers;  // guard slot for an unarmed builder while worker count < this, 0 = off
+		float safeAlly;  // builder is safe (guard leaves) if allied influence minus guards >= this, <= 0 = never safe
+		float safeEnemy;  // ... and enemy influence <= this
+	};
+	const SGuardCfg& GetGuardCfg() const { return guard; }
+	bool IsGuardRole(CCircuitDef* cdef) const;
+
 	const std::set<CCircuitUnit*>& GetRoleUnits(CCircuitDef::RoleT type) const {
 		return roleInfos[type].units;
 	}
@@ -105,6 +114,7 @@ public:
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
+	IFighterTask* FindGuardTask(CCircuitUnit* unit) const;
 
 	void Watchdog();
 	void UpdateIdle();
@@ -156,6 +166,7 @@ private:
 	float armyCost;
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
+	SGuardCfg guard;
 
 	struct SRaidQuota {
 		float min;

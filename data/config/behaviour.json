@@ -43,6 +43,12 @@
 	"take_from": "high"  // highest job priority a builder can be taken off for escort: "idle" (idle builders only), "low", "normal" or "high" (urgent jobs never)
 },
 
+"guard": {
+	"roles": ["raider", "riot"],  // main roles that may take a builder's guard slot; a custom role ("bullshit_raider") matches only itself, a base role ("raider") also matches roles bound to it; [] = nobody guards
+	"max_workers": 3,  // an unarmed builder gets a guard slot if, once it is finished, the worker count (commander included) is below this; 0 = off
+	"safe": [20.0, 0.01]  // [ally, enemy]: guard leaves while its builder stands where allied influence (guards excluded, same units as quota.attack) >= ally and enemy influence <= enemy; ally <= 0 = never safe. The guard also leaves while the builder retreats
+},
+
 "defence": {
 	"infl_rad": 4,  // influenece cell radius for defendAlly map
 	"base_rad": [1000.0, 2000.0],  // defend if enemy within clamp(distance(lane_pos, base_pos), 1000, 2000) radius
