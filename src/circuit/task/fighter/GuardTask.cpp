@@ -56,9 +56,20 @@ bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
 	{
 		return false;
 	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	CCircuitUnit* vip = circuit->GetTeamUnit(vipId);
+	if (vip == nullptr) {
+		return false;
+	}
+	const AIFloat3& vipPos = vip->GetPos(circuit->GetLastFrame());
+	// pull_range limits assignment too, so a fresh unit isn't sent across the map
+	const float range = militaryMgr->GetGuardCfg().pullRange;
+	if ((range > 0.f) && (vipPos.SqDistance2D(unit->GetPos(circuit->GetLastFrame())) > SQUARE(range))) {
+		return false;
+	}
 	// Don't send a unit (e.g. one just released by another slot's threat exit) to a builder under heavy threat
-	CCircuitUnit* vip = manager->GetCircuit()->GetTeamUnit(vipId);
-	return (vip == nullptr) || !IsOverThreat(unit, vip->GetPos(manager->GetCircuit()->GetLastFrame()));
+	return !IsOverThreat(unit, vipPos)
+			&& circuit->GetTerrainManager()->CanReachAt(unit, vipPos, unit->GetCircuitDef()->GetMaxRange());
 }
 
 void CFGuardTask::Start(CCircuitUnit* unit)
@@ -81,7 +92,9 @@ void CFGuardTask::Update()
 
 	CCircuitUnit* vip = manager->GetCircuit()->GetTeamUnit(vipId);
 	if (vip == nullptr) {
-		return;  // builder's destroyed handler removes the slot
+		// Normally the builder's destroyed handler removes the slot first; if not, don't leave guards stuck
+		manager->AbortTask(this);
+		return;
 	}
 	CheckVip(vip);
 	const int prevCooldown = cooldownUntil;
@@ -268,6 +281,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		if ((curTask == nullptr)
 			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))
 			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef())
+			|| unit->GetCircuitDef()->IsRoleSupport()  // support units never take guard slots via MakeTask either
 			|| militaryMgr->IsGuardBanned(unit))
 		{
 			continue;

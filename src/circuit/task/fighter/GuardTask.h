@@ -33,6 +33,7 @@ public:
 
 	bool IsActive() const;
 	bool IsVipSafe() const { return isVipSafe; }
+	ICoreUnit::Id GetVipId() const { return vipId; }
 
 private:
 	void CheckVip(CCircuitUnit* vip);

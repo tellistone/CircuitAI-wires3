@@ -1165,12 +1165,23 @@ bool CMilitaryManager::IsGuardBanned(CCircuitUnit* unit) const
 
 IFighterTask* CMilitaryManager::FindGuardTask(CCircuitUnit* unit) const
 {
+	// Nearest eligible slot, not the first one in the set (which is ordered by pointer)
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	IFighterTask* best = nullptr;
+	float minSqDist = std::numeric_limits<float>::max();
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
-		if (t->CanAssignTo(unit)) {
-			return t;
+		if (!t->CanAssignTo(unit)) {
+			continue;
+		}
+		CCircuitUnit* vip = circuit->GetTeamUnit(static_cast<CFGuardTask*>(t)->GetVipId());
+		const float sqDist = (vip != nullptr) ? pos.SqDistance2D(vip->GetPos(frame)) : minSqDist;
+		if ((best == nullptr) || (sqDist < minSqDist)) {
+			minSqDist = sqDist;
+			best = t;
 		}
 	}
-	return nullptr;
+	return best;
 }
 
 void CMilitaryManager::AddResponse(CCircuitUnit* unit)
