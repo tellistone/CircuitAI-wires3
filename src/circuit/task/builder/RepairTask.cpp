@@ -54,6 +54,11 @@ bool CBRepairTask::IsLeashBroken()
 	if (leash <= 0.f) {
 		return false;
 	}
+	// A retreating unit is heading home to be repaired: keep following it
+	CCircuitUnit* teamUnit = manager->GetCircuit()->GetTeamUnit(targetId);
+	if ((teamUnit != nullptr) && (teamUnit->GetTask()->GetType() == IUnitTask::Type::RETREAT)) {
+		return false;
+	}
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	const AIFloat3& targetPos = target->GetPos(frame);
 	for (CCircuitUnit* unit : units) {

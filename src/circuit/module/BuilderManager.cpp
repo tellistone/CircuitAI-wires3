@@ -178,6 +178,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 				: (takeFrom == "low") ? static_cast<int>(IBuilderTask::Priority::LOW)
 				: (takeFrom == "normal") ? static_cast<int>(IBuilderTask::Priority::NORMAL)
 				: static_cast<int>(IBuilderTask::Priority::HIGH);
+		if ((takeFrom != "idle") && (takeFrom != "low") && (takeFrom != "normal") && (takeFrom != "high")) {
+			circuit->LOG("CONFIG escort.take_from: unknown value '%s', using 'high'", takeFrom.c_str());
+		}
 	}
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
