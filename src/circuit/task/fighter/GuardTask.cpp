@@ -8,6 +8,7 @@
 #include "task/fighter/GuardTask.h"
 #include "map/InfluenceMap.h"
 #include "module/MilitaryManager.h"
+#include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -22,6 +23,7 @@ CFGuardTask::CFGuardTask(ITaskManager* mgr, CCircuitUnit* vip, float maxPower)
 		, maxPower(maxPower)
 		, isVipRetreat(false)
 		, isVipSafe(false)
+		, safeSince(-1)
 {
 }
 
@@ -61,8 +63,12 @@ void CFGuardTask::Update()
 		return;  // builder's destroyed handler removes the slot
 	}
 	CheckVip(vip);
-	if (!IsActive() && !units.empty()) {
-		Release();
+	if (!IsActive()) {
+		if (!units.empty()) {
+			Release();
+		}
+	} else if (units.empty()) {
+		Pull(vip);
 	}
 }
 
@@ -91,6 +97,7 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	// The guard's own power is subtracted, so the guard can't make the spot look safe by itself.
 	if (cfg.safeAlly <= 0.f) {
 		isVipSafe = false;
+		safeSince = -1;
 		return;
 	}
 	CInfluenceMap* inflMap = circuit->GetInflMap();
@@ -99,7 +106,52 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	for (CCircuitUnit* unit : units) {
 		allyInfl -= unit->GetCircuitDef()->GetPower();
 	}
-	isVipSafe = (allyInfl >= cfg.safeAlly) && (inflMap->GetEnemyInflAt(pos) <= cfg.safeEnemy);
+	const int frame = circuit->GetLastFrame();
+	if ((allyInfl >= cfg.safeAlly) && (inflMap->GetEnemyInflAt(pos) <= cfg.safeEnemy)) {
+		if (safeSince < 0) {
+			safeSince = frame;
+		}
+		// Debounce: an army walking past shouldn't send the guard away
+		isVipSafe = (frame - safeSince >= cfg.safeFrames);
+	} else {
+		safeSince = -1;
+		isVipSafe = false;
+	}
+}
+
+void CFGuardTask::Pull(CCircuitUnit* vip)
+{
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	const CMilitaryManager::SGuardCfg& cfg = militaryMgr->GetGuardCfg();
+	if (cfg.pullRange <= 0.f) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = vip->GetPos(frame);
+	CCircuitUnit* best = nullptr;
+	float minSqDist = SQUARE(cfg.pullRange);
+	for (CCircuitUnit* unit : militaryMgr->GetArmy()) {
+		// Only units the AI controls and that are free or on a regular fight task: not retreating, not guarding
+		IUnitTask* curTask = unit->GetTask();
+		if ((curTask == nullptr)
+			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))
+			|| ((curTask->GetType() == IUnitTask::Type::FIGHTER)
+				&& (static_cast<IFighterTask*>(curTask)->GetFightType() == FightType::GUARD))
+			|| !militaryMgr->IsGuardRole(unit->GetCircuitDef()))
+		{
+			continue;
+		}
+		const float sqDist = pos.SqDistance2D(unit->GetPos(frame));
+		if ((sqDist < minSqDist) && terrainMgr->CanReachAt(unit, pos, unit->GetCircuitDef()->GetMaxRange())) {
+			minSqDist = sqDist;
+			best = unit;
+		}
+	}
+	if (best != nullptr) {
+		manager->AssignTask(best, this);
+	}
 }
 
 void CFGuardTask::Release()

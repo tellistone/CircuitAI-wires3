@@ -36,11 +36,13 @@ public:
 private:
 	void CheckVip(CCircuitUnit* vip);
 	void Release();
+	void Pull(CCircuitUnit* vip);
 
 	ICoreUnit::Id vipId;
 	float maxPower;
 	bool isVipRetreat;
 	bool isVipSafe;
+	int safeSince;  // frame the builder became safe, -1 = not safe
 };
 
 } // namespace circuit

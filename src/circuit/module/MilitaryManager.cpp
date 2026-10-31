@@ -334,10 +334,20 @@ void CMilitaryManager::ReadConfig()
 	defenceMod.len = qthrDef.get((unsigned)1, 1.f).asFloat() - defenceMod.min;
 
 	const Json::Value& guardCfg = root["guard"];
-	guard.maxWorkers = guardCfg.get("max_workers", 3).asUInt();
+	guard.maxWorkers = std::max(0, guardCfg.get("max_workers", 3).asInt());
 	const Json::Value& guardSafe = guardCfg["safe"];
-	guard.safeAlly = guardSafe.get((unsigned)0, 20.f).asFloat();
-	guard.safeEnemy = guardSafe.get((unsigned)1, INFL_EPS).asFloat();
+	if (guardSafe.isArray()) {
+		guard.safeAlly = guardSafe.get((unsigned)0, 20.f).asFloat();
+		guard.safeEnemy = guardSafe.get((unsigned)1, INFL_EPS).asFloat();
+	} else {
+		if (!guardSafe.isNull()) {
+			circuit->LOG("CONFIG %s: guard.safe must be [ally, enemy], using defaults", cfgName.c_str());
+		}
+		guard.safeAlly = 20.f;
+		guard.safeEnemy = INFL_EPS;
+	}
+	guard.safeFrames = std::max(0.f, guardCfg.get("safe_time", 5.f).asFloat()) * FRAMES_PER_SEC;
+	guard.pullRange = guardCfg.get("pull_range", 800.f).asFloat();
 	guard.roleMask = 0;
 	const Json::Value& guardRoles = guardCfg["roles"];
 	if (guardRoles.isNull()) {  // legacy behaviour
@@ -639,6 +649,12 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 		case IUnitTask::Type::FIGHTER: {
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
+			if (taskF->GetFightType() == IFighterTask::FightType::GUARD) {
+				// A guard slot can abort itself (builder gone): drop its builder entry so nothing points at a dead task
+				for (auto it = guardTasks.begin(); it != guardTasks.end();) {
+					it = (it->second == taskF) ? guardTasks.erase(it) : std::next(it);
+				}
+			}
 		} break;
 		default: break;
 	}
@@ -1079,8 +1095,9 @@ bool CMilitaryManager::DelGuardTask(CCircuitUnit* unit)
 		return false;
 	}
 
-	AbortTask(it->second);
-	guardTasks.erase(it);
+	IFighterTask* task = it->second;
+	guardTasks.erase(it);  // erase first: DequeueTask also scrubs guardTasks
+	AbortTask(task);
 	return true;
 }
 

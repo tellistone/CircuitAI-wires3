@@ -80,6 +80,8 @@ public:
 		unsigned int maxWorkers;  // guard slot for an unarmed builder while worker count < this, 0 = off
 		float safeAlly;  // builder is safe (guard leaves) if allied influence minus guards >= this, <= 0 = never safe
 		float safeEnemy;  // ... and enemy influence <= this
+		int safeFrames;  // builder must stay safe this long before its guard leaves
+		float pullRange;  // empty active slot pulls the nearest eligible unit within this range, <= 0 = no pull
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }
 	bool IsGuardRole(CCircuitDef* cdef) const;
@@ -90,6 +92,7 @@ public:
 	void AddResponse(CCircuitUnit* unit);
 	void DelResponse(CCircuitUnit* unit);
 	float GetArmyCost() const { return armyCost; }
+	const std::set<CCircuitUnit*>& GetArmy() const { return army; }
 	float RoleProbability(const CCircuitDef* cdef) const;
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
