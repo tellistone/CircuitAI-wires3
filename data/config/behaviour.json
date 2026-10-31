@@ -44,6 +44,7 @@
 },
 
 "guard": {
+	// units with "attribute": ["guarded"] (e.g. artillery) also get a guard slot that follows all the rules below
 	"roles": ["raider", "riot"],  // main roles that may take a builder's guard slot; a custom role ("bullshit_raider") matches only itself, a base role ("raider") also matches roles bound to it; [] = nobody guards
 	"max_workers": 3,  // an unarmed builder gets a guard slot if, once it is finished, the worker count (commander included) is below this; 0 = off
 	"max_share": 1.0,  // max share of each role's units guarding at once, per acting main role (0.3 = 30% of raiders and 30% of riots), rounded up so 1 unit of a role may guard; 1.0 = no limit, 0 = none
@@ -87,6 +88,7 @@
 		// "anti_stat" - only static targets
 		// "no_dgun" - do not use DGun
 		// "prio_repair" - when damaged above retreat threshold, builders rush to repair it (like "heavy" main role); on statics: below 90% health; commanders always have it
+		// "guarded" - gets a guard slot like an early builder (see "guard" block); never guards others; flying units excluded
 //		"attribute": ["boost", "no_strafe"],
 
 		// Fire state (open by default)

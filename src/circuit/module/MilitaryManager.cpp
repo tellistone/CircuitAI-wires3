@@ -102,6 +102,11 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		army.insert(unit);
 		AddArmyCost(unit);
 
+		// "guarded" attribute: this unit gets a guard slot like an early builder
+		if (unit->GetCircuitDef()->IsAttrGuarded() && !unit->GetCircuitDef()->IsAbleToFly()) {
+			AddGuardTask(unit);
+		}
+
 		TRY_UNIT(this->circuit, unit,
 			if (unit->GetCircuitDef()->IsAbleToFly()) {
 				if (unit->GetCircuitDef()->IsAttrNoStrafe()) {
@@ -127,6 +132,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		unit->GetTask()->OnUnitDamaged(unit, attacker);
 	};
 	auto attackerDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
+		DelGuardTask(unit);  // its own guard slot, if it has the "guarded" attribute
 		IUnitTask* task = unit->GetTask();
 		task->OnUnitDestroyed(unit, attacker);  // can change task
 		unit->GetTask()->RemoveAssignee(unit);  // Remove unit from IdleTask
@@ -1269,6 +1275,9 @@ IFighterTask* CMilitaryManager::GetGuardTask(CCircuitUnit* unit) const
 
 bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
 {
+	if (cdef->IsAttrGuarded()) {  // guarded units are protected, never protectors
+		return false;
+	}
 	// Match the main role by its own name ("bullshit_raider") or by the role it acts as ("raider")
 	const CCircuitDef::RoleT mainRole = cdef->GetMainRole();
 	const CCircuitDef::RoleM mask = CCircuitDef::GetMask(mainRole)
