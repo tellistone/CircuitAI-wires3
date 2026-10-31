@@ -38,6 +38,7 @@ private:
 	void CheckThreat();
 	bool IsOverThreat(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	void Release();
+	void DebugLog(CCircuitUnit* vip, const char* event) const;
 	void Pull(CCircuitUnit* vip);
 
 	ICoreUnit::Id vipId;
@@ -45,7 +46,10 @@ private:
 	bool isVipRetreat;
 	bool isVipSafe;
 	int safeSince;  // frame the builder became safe, -1 = not safe
-	int cooldownUntil;  // guard was released under enemy threat: slot stays closed until this frame
+	int cooldownUntil;
+	float lastAlly;  // allied influence at the builder, guards excluded (last check)
+	float lastEnemy;  // enemy influence at the builder (last check)
+	int nextDebugFrame;  // guard was released under enemy threat: slot stays closed until this frame
 };
 
 } // namespace circuit

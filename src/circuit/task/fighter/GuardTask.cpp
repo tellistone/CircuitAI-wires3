@@ -14,6 +14,8 @@
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
+#include "Log.h"
+
 namespace circuit {
 
 using namespace springai;
@@ -26,6 +28,9 @@ CFGuardTask::CFGuardTask(ITaskManager* mgr, CCircuitUnit* vip, float maxPower)
 		, isVipSafe(false)
 		, safeSince(-1)
 		, cooldownUntil(-1)
+		, lastAlly(0.f)
+		, lastEnemy(0.f)
+		, nextDebugFrame(0)
 {
 }
 
@@ -76,13 +81,28 @@ void CFGuardTask::Update()
 		return;  // builder's destroyed handler removes the slot
 	}
 	CheckVip(vip);
+	const int prevCooldown = cooldownUntil;
 	CheckThreat();
 	if (!IsActive()) {
 		if (!units.empty()) {
+			const char* reason = isVipRetreat ? "builder retreating"
+					: isVipSafe ? "builder safe"
+					: (cooldownUntil != prevCooldown) ? "guard in enemy threat"
+					: "cooldown";
+			DebugLog(vip, reason);
 			Release();
 		}
 	} else if (units.empty()) {
 		Pull(vip);
+		if (!units.empty()) {
+			DebugLog(vip, "pulled guard");
+		}
+	}
+
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	if (frame >= nextDebugFrame) {
+		nextDebugFrame = frame + FRAMES_PER_SEC * 10;
+		DebugLog(vip, "status");
 	}
 }
 
@@ -121,7 +141,9 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 		allyInfl -= unit->GetCircuitDef()->GetPower();
 	}
 	const int frame = circuit->GetLastFrame();
-	if ((allyInfl >= cfg.safeAlly) && (inflMap->GetEnemyInflAt(pos) <= cfg.safeEnemy)) {
+	lastAlly = allyInfl;
+	lastEnemy = inflMap->GetEnemyInflAt(pos);
+	if ((allyInfl >= cfg.safeAlly) && (lastEnemy <= cfg.safeEnemy)) {
 		if (safeSince < 0) {
 			safeSince = frame;
 		}
@@ -213,11 +235,31 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 	}
 }
 
+void CFGuardTask::DebugLog(CCircuitUnit* vip, const char* event) const
+{
+	if (!static_cast<CMilitaryManager*>(manager)->GetGuardCfg().isDebug) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	circuit->LOG("GUARD %s | builder %i %s | guard %s | ally %.2f enemy %.2f | safe %i (for %.1fs) retreat %i cooldown %.1fs",
+			event, vip->GetId(), vip->GetCircuitDef()->GetDef()->GetName(),
+			units.empty() ? "none" : (*units.begin())->GetCircuitDef()->GetDef()->GetName(),
+			lastAlly, lastEnemy, isVipSafe, (safeSince < 0) ? 0.f : float(frame - safeSince) / FRAMES_PER_SEC,
+			isVipRetreat, std::max(0.f, float(cooldownUntil - frame) / FRAMES_PER_SEC));
+}
+
 void CFGuardTask::Release()
 {
+	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	decltype(units) tmpUnits = units;
 	for (CCircuitUnit* unit : tmpUnits) {
+		// Drop the engine Guard order: some new tasks (e.g. a fresh raid) issue no command in Start,
+		// and the unit would keep guarding until that task's first update
+		TRY_UNIT(circuit, unit,
+			unit->GetUnit()->Stop();
+		)
 		// IsActive() is false here, so MakeTask won't hand this slot back
 		IUnitTask* task = militaryMgr->MakeTask(unit);
 		if (task != nullptr) {
