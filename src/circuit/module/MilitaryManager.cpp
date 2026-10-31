@@ -343,7 +343,11 @@ void CMilitaryManager::ReadConfig()
 	raid.min = qraid.get((unsigned)0, 3.f).asFloat();
 	raid.avg = qraid.get((unsigned)1, 5.f).asFloat();
 	minAttackers = quotas.get("attack", 8.f).asFloat();
-	raidFleeShare = utils::clamp(quotas.get("raid_flee_share", 0.5f).asFloat(), 0.f, 1.f);
+	const Json::Value& qfleeShare = quotas.get("raid_flee_share", 0.5f);
+	if (!qfleeShare.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.raid_flee_share must be a number 0..1, using 0.5", cfgName.c_str());
+	}
+	raidFleeShare = utils::clamp(qfleeShare.isNumeric() ? qfleeShare.asFloat() : 0.5f, 0.f, 1.f);
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
 		if (!raidTargets.isNull()) {
@@ -353,9 +357,9 @@ void CMilitaryManager::ReadConfig()
 	} else {
 		raidTargetRoles = 0;
 		for (const Json::Value& rt : raidTargets) {
-			const std::string& roleName = rt.asString();
+			const std::string roleName = rt.isString() ? rt.asString() : rt.toStyledString();
 			auto it = roleNames.find(roleName);
-			if (it == roleNames.end()) {
+			if (!rt.isString() || (it == roleNames.end())) {
 				circuit->LOG("CONFIG %s: quota.raid_target_roles has unknown role '%s'", cfgName.c_str(), roleName.c_str());
 				continue;
 			}
@@ -367,17 +371,30 @@ void CMilitaryManager::ReadConfig()
 	attackMod.min = qthrAtk.get((unsigned)0, 1.f).asFloat();
 	attackMod.len = qthrAtk.get((unsigned)1, 1.f).asFloat() - attackMod.min;
 	// Raid and scout tasks have their own [min, max]; missing = same as "attack" (old behaviour)
-	auto readThrMod = [&qthrMod](const char* name, const SThreatQuota& fallback) {
+	auto readThrMod = [this, &qthrMod, &cfgName](const char* name, const SThreatQuota& fallback) {
 		const Json::Value& q = qthrMod[name];
-		if (!q.isArray()) {
+		if (q.isNull()) {
+			return fallback;
+		}
+		// Non-numbers would throw (AI fails to load) and values <= 0 give an infinite/negative powerMod
+		const Json::Value& q0 = q.get((unsigned)0, Json::Value());
+		const Json::Value& q1 = q.get((unsigned)1, q0);
+		if (!q.isArray() || !q0.isNumeric() || !q1.isNumeric() || (q0.asFloat() <= 0.f) || (q1.asFloat() <= 0.f)) {
+			circuit->LOG("CONFIG %s: quota.thr_mod.%s must be [<min > 0>, <max > 0>], using thr_mod.attack", cfgName.c_str(), name);
 			return fallback;
 		}
 		SThreatQuota mod;
-		mod.min = q.get((unsigned)0, fallback.min).asFloat();
-		mod.len = q.get((unsigned)1, mod.min).asFloat() - mod.min;
+		mod.min = q0.asFloat();
+		mod.len = q1.asFloat() - mod.min;
 		return mod;
 	};
-	baseThrBonus = std::max(qthrMod.get("base_bonus", 2.f).asFloat(), 0.f);
+	const Json::Value& qbaseBonus = qthrMod.get("base_bonus", 2.f);
+	baseThrBonus = qbaseBonus.isNumeric() ? qbaseBonus.asFloat() : 2.f;
+	if (!qbaseBonus.isNumeric() || (baseThrBonus <= 0.f)) {
+		// 0 would make nothing near the base centre engageable
+		circuit->LOG("CONFIG %s: quota.thr_mod.base_bonus must be a number > 0, using 2.0", cfgName.c_str());
+		baseThrBonus = 2.f;
+	}
 	thrDistCurves.assign(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_), ThrDistCurve());
 	const Json::Value& qthrDist = qthrMod["distance"];
 	if (qthrDist.isObject()) {
@@ -397,8 +414,13 @@ void CMilitaryManager::ReadConfig()
 				continue;
 			}
 			ThrDistCurve& curve = thrDistCurves[static_cast<IFighterTask::FT>(it->second)];
-			for (const Json::Value& pt : qthrDist[taskName]) {
-				if (!pt.isArray() || (pt.size() < 2) || (pt[1].asFloat() <= 0.f)) {
+			const Json::Value& qcurve = qthrDist[taskName];
+			if (!qcurve.isArray()) {
+				circuit->LOG("CONFIG %s: quota.thr_mod.distance.%s must be a list of [<map fraction>, <multiplier>] points", cfgName.c_str(), taskName.c_str());
+				continue;
+			}
+			for (const Json::Value& pt : qcurve) {
+				if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() <= 0.f)) {
 					circuit->LOG("CONFIG %s: quota.thr_mod.distance.%s points must be [<map fraction>, <multiplier > 0>]", cfgName.c_str(), taskName.c_str());
 					continue;
 				}
