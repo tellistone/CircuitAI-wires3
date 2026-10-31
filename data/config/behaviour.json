@@ -27,7 +27,8 @@
 	"wait_timeout": 60,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
 	"repair_safe": false,  // true = builders skip priority repair of mobile units (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs
 	"repair_safe_static": false,  // same as repair_safe, for static units with prio_repair
-	"repair_pull": [1500, 0.34]  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
+	"repair_pull": [1500, 0.34],  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
+	"repair_leash": [300, 20]  // [<distance>, <cooldown sec>]: cancel a started priority repair if the unit drives this far beyond build range, then no new priority repair for it during cooldown, distance 0 = disabled
 },
 
 // Builder that follows a strong attack group: patrols behind it (auto repair/reclaim like fight) while the group

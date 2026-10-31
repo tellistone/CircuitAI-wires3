@@ -96,6 +96,8 @@ public:
 								int timeout = ASSIGN_TIMEOUT);
 	bool IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	bool IsRepairAssigned(ICoreUnit::Id unitId) const;
+	float GetPrioRepairLeash() const { return prioRepairLeash; }
+	void OnPrioRepairLeash(ICoreUnit::Id unitId);  // target drove off mid-repair: hold off new priority jobs
 
 	struct SEscort {
 		float minPower;  // min attack power of a group to get escort builder, 0 = disabled
@@ -193,6 +195,9 @@ private:
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
 	bool isPrioRepairSafe;  // apply builder threat check to NOW repair of mobile units
 	bool isPrioRepairSafeStatic;  // same for static units
+	float prioRepairLeash;  // cancel started priority repair if target gets this far beyond build range, 0 = off
+	int prioRepairCooldown;  // frames without new priority repair job after leash break
+	std::map<ICoreUnit::Id, int> leashUntil;  // unitId: frame until which priority repair is held off
 	SEscort escort;
 	std::set<IUnitTask*> escortTasks;
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner

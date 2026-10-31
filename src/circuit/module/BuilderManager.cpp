@@ -62,6 +62,8 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, prioRepairShare(0.f)
 		, isPrioRepairSafe(false)
 		, isPrioRepairSafeStatic(false)
+		, prioRepairLeash(0.f)
+		, prioRepairCooldown(0)
 		, escort({0.f, 0.f, 0.f, 0.f, 0.f, false, static_cast<int>(IBuilderTask::Priority::HIGH)})
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CBuilderManager::Init, this));
@@ -160,6 +162,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	prioRepairShare = pull.get((unsigned)1, 0.34f).asFloat();
 	isPrioRepairSafe = root["retreat"].get("repair_safe", false).asBool();
 	isPrioRepairSafeStatic = root["retreat"].get("repair_safe_static", false).asBool();
+	const Json::Value& leash = root["retreat"]["repair_leash"];
+	prioRepairLeash = leash.get((unsigned)0, 0.f).asFloat();
+	prioRepairCooldown = leash.get((unsigned)1, 20.f).asFloat() * FRAMES_PER_SEC;
 	const Json::Value& escortCfg = root["escort"];
 	escort.minPower = escortCfg.get("min_power", 0.f).asFloat();
 	escort.share = escortCfg.get("share", 0.2f).asFloat();
@@ -635,6 +640,17 @@ IBuilderTask* CBuilderManager::EnqueueRepair(IBuilderTask::Priority priority,
 											 CCircuitUnit* target,
 											 int timeout)
 {
+	if (priority == IBuilderTask::Priority::NOW) {
+		auto itl = leashUntil.find(target->GetId());
+		if (itl != leashUntil.end()) {
+			if (circuit->GetLastFrame() < itl->second) {
+				// Unit drove off mid-repair recently: don't send another builder chasing it
+				auto it = repairedUnits.find(target->GetId());
+				return (it != repairedUnits.end()) ? it->second : nullptr;
+			}
+			leashUntil.erase(itl);
+		}
+	}
 	CBRepairTask* task;
 	auto it = repairedUnits.find(target->GetId());
 	if (it != repairedUnits.end()) {
@@ -705,6 +721,11 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 	if (bestWorker != nullptr) {
 		AssignTask(bestWorker, task);
 	}
+}
+
+void CBuilderManager::OnPrioRepairLeash(ICoreUnit::Id unitId)
+{
+	leashUntil[unitId] = circuit->GetLastFrame() + prioRepairCooldown;
 }
 
 bool CBuilderManager::IsRepairAssigned(ICoreUnit::Id unitId) const
