@@ -73,8 +73,12 @@ void CBEscortTask::Update()
 		manager->AbortTask(this);
 		return;
 	}
-	for (CCircuitUnit* unit : units) {
+	auto assignees = units;  // Follow may abort the task
+	for (CCircuitUnit* unit : assignees) {
 		Follow(unit, false);
+		if (isDead) {
+			break;
+		}
 	}
 }
 
@@ -124,6 +128,15 @@ void CBEscortTask::Follow(CCircuitUnit* unit, bool isForce)
 		pos += dir * (std::min(escort.behind, baseDist) / baseDist);
 	}
 	CTerrainManager::CorrectPosition(pos);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
+	if (!terrainMgr->CanReachAt(unit, pos, buildDist)) {
+		pos = leaderPos;
+		if (!terrainMgr->CanReachAt(unit, pos, buildDist)) {
+			manager->AbortTask(this);  // group went where builder can't follow (water, cliffs)
+			return;
+		}
+	}
 
 	// Group falls back if it moves towards the base, unless it is fighting
 	const AIFloat3 vel = leader->GetUnit()->GetVel();

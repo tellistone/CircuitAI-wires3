@@ -101,6 +101,7 @@ public:
 		float share;  // max share of workers on escort duty
 		float behind;  // distance behind group leader (towards base)
 		float follow;  // distance from escort point at which builder catches up with plain move
+		float range;  // max distance from a builder to the group when assigning
 		bool isComm;  // allow commander to escort
 	};
 	const SEscort& GetEscortCfg() const { return escort; }

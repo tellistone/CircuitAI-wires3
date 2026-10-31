@@ -62,7 +62,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, prioRepairShare(0.f)
 		, isPrioRepairSafe(false)
 		, isPrioRepairSafeStatic(false)
-		, escort({0.f, 0.f, 0.f, 0.f, false})
+		, escort({0.f, 0.f, 0.f, 0.f, 0.f, false})
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CBuilderManager::Init, this));
 
@@ -165,6 +165,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	escort.share = escortCfg.get("share", 0.2f).asFloat();
 	escort.behind = escortCfg.get("behind", 150.f).asFloat();
 	escort.follow = escortCfg.get("follow", 600.f).asFloat();
+	escort.range = escortCfg.get("range", 2000.f).asFloat();
 	escort.isComm = escortCfg.get("comm", false).asBool();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -1402,7 +1403,7 @@ void CBuilderManager::UpdateEscort()
 		// Nearest builder that is not busy with urgent or escort work
 		const AIFloat3& pos = leader->GetPos(frame);
 		CCircuitUnit* bestWorker = nullptr;
-		float minSqDist = std::numeric_limits<float>::max();
+		float minSqDist = SQUARE(escort.range);  // catch-up is a plain move: keep the trip short
 		for (CCircuitUnit* worker : workers) {
 			IUnitTask* curTask = worker->GetTask();
 			if ((!escort.isComm && worker->GetCircuitDef()->IsRoleComm())
@@ -1427,7 +1428,7 @@ void CBuilderManager::UpdateEscort()
 			}
 		}
 		if (bestWorker == nullptr) {
-			return;
+			continue;
 		}
 
 		CBEscortTask* task = new CBEscortTask(this, squad);
