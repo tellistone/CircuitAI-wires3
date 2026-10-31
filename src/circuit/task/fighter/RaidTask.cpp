@@ -324,7 +324,7 @@ bool CRaidTask::FindTarget()
 		float checkPower = maxPower;
 		float checkSpeed = maxSpeed;
 		if (sqEBDist < sqBaseRange) {
-			checkPower *= 2.0f - 1.0f / baseRange * sqrtf(sqEBDist);  // 200% near base
+			checkPower *= circuit->GetMilitaryManager()->GetBaseThrBonus(sqEBDist);  // quota.thr_mod.base_bonus near base
 			checkSpeed *= 2.f;
 		}
 		const float power = threatMap->GetThreatAt(ePos);
@@ -497,12 +497,11 @@ float CRaidTask::GetUnitPower(CCircuitUnit* unit) const
 
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 {
-	// Same allowance as FindTarget near our base: up to 200% at the base centre
+	// Same allowance as FindTarget near our base (quota.thr_mod.base_bonus at the base centre)
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();
 	const float sqDist = basePos.SqDistance2D(pos);
-	return (sqDist < SQUARE(baseRange)) ? safeThreat * (2.0f - sqrtf(sqDist) / baseRange) : safeThreat;
+	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist);
 }
 
 bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe)

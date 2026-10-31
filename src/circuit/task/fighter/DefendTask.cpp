@@ -246,7 +246,7 @@ bool CDefendTask::FindTarget()
 		const float sqEBDist = basePos.SqDistance2D(ePos);
 		float checkPower = maxPower;
 		if (sqEBDist < sqBaseRange) {
-			checkPower *= 2.0f - 1.0f / baseRange * sqrtf(sqEBDist);  // 200% near base
+			checkPower *= circuit->GetMilitaryManager()->GetBaseThrBonus(sqEBDist);  // quota.thr_mod.base_bonus near base
 		}
 		if (checkPower <= threatMap->GetThreatAt(ePos)) {
 			continue;

@@ -377,6 +377,7 @@ void CMilitaryManager::ReadConfig()
 		mod.len = q.get((unsigned)1, mod.min).asFloat() - mod.min;
 		return mod;
 	};
+	baseThrBonus = std::max(qthrMod.get("base_bonus", 2.f).asFloat(), 0.f);
 	thrDistCurve.clear();
 	const Json::Value& qthrDist = qthrMod["distance"];
 	if (qthrDist.isArray()) {
@@ -1121,6 +1122,15 @@ void CMilitaryManager::BlockScoutSpot(const AIFloat3& spot, int frames)
 			return;
 		}
 	}
+}
+
+float CMilitaryManager::GetBaseThrBonus(float sqDistToBase) const
+{
+	const float baseRange = GetBaseDefRange();
+	if ((baseRange <= 0.f) || (sqDistToBase >= SQUARE(baseRange))) {
+		return 1.f;
+	}
+	return 1.f + (baseThrBonus - 1.f) * (1.f - sqrtf(sqDistToBase) / baseRange);
 }
 
 float CMilitaryManager::GetThrDistMod(const AIFloat3& pos) const
