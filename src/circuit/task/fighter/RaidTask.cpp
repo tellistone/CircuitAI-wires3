@@ -483,7 +483,11 @@ float CRaidTask::GetSafeThreat() const
 	for (CCircuitUnit* unit : units) {
 		power += GetUnitPower(unit);
 	}
-	return std::max(power, THREAT_MIN) * powerMod;
+	// Courage also depends on how far from home the group is (quota.thr_mod.distance)
+	const float distMod = (leader != nullptr)
+		? static_cast<CMilitaryManager*>(manager)->GetThrDistMod(leader->GetPos(manager->GetCircuit()->GetLastFrame()))
+		: 1.f;
+	return std::max(power, THREAT_MIN) * powerMod / distMod;
 }
 
 float CRaidTask::GetUnitPower(CCircuitUnit* unit) const

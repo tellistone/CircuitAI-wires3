@@ -189,7 +189,7 @@ bool CScoutTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
 	const float speed = SQUARE(cdef->GetSpeed() * 0.8f / FRAMES_PER_SEC);
-	const float maxPower = threatMap->GetUnitThreat(unit) * powerMod;
+	const float maxPower = GetSafeThreat(unit);  // incl. distance-from-home modifier
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
@@ -405,7 +405,9 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, in
 
 float CScoutTask::GetSafeThreat(CCircuitUnit* unit) const
 {
-	return std::max(manager->GetCircuit()->GetThreatMap()->GetUnitThreat(unit), THREAT_MIN) * powerMod;
+	CCircuitAI* circuit = manager->GetCircuit();
+	const float distMod = circuit->GetMilitaryManager()->GetThrDistMod(unit->GetPos(circuit->GetLastFrame()));
+	return std::max(circuit->GetThreatMap()->GetUnitThreat(unit), THREAT_MIN) * powerMod / distMod;
 }
 
 float CScoutTask::GetPathThreatCap(CCircuitUnit* unit) const

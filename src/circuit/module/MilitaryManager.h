@@ -132,6 +132,8 @@ public:
 	}
 
 	float GetRaidFleeShare() const { return raidFleeShare; }
+	// Multiplier on thr_mod by distance from our base (quota.thr_mod.distance curve); 1 if not configured
+	float GetThrDistMod(const springai::AIFloat3& pos) const;
 
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
@@ -214,6 +216,7 @@ private:
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;
+	std::vector<std::pair<float, float>> thrDistCurve;  // [fraction of map diagonal, thr_mod multiplier], sorted
 	struct SThreatQuota {
 		float min;
 		float len;

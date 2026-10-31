@@ -377,6 +377,20 @@ void CMilitaryManager::ReadConfig()
 		mod.len = q.get((unsigned)1, mod.min).asFloat() - mod.min;
 		return mod;
 	};
+	thrDistCurve.clear();
+	const Json::Value& qthrDist = qthrMod["distance"];
+	if (qthrDist.isArray()) {
+		for (const Json::Value& pt : qthrDist) {
+			if (!pt.isArray() || (pt.size() < 2) || (pt[1].asFloat() <= 0.f)) {
+				circuit->LOG("CONFIG %s: quota.thr_mod.distance points must be [<map fraction>, <multiplier > 0>]", cfgName.c_str());
+				continue;
+			}
+			thrDistCurve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+		}
+		std::sort(thrDistCurve.begin(), thrDistCurve.end());
+	} else if (!qthrDist.isNull()) {
+		circuit->LOG("CONFIG %s: quota.thr_mod.distance must be a list of [<map fraction>, <multiplier>]", cfgName.c_str());
+	}
 	raidMod = readThrMod("raid", attackMod);
 	scoutMod = readThrMod("scout", attackMod);
 	const Json::Value& qthrDef = qthrMod["defence"];
@@ -1107,6 +1121,32 @@ void CMilitaryManager::BlockScoutSpot(const AIFloat3& spot, int frames)
 			return;
 		}
 	}
+}
+
+float CMilitaryManager::GetThrDistMod(const AIFloat3& pos) const
+{
+	if (thrDistCurve.empty()) {
+		return 1.f;
+	}
+	const float width = CTerrainManager::GetTerrainWidth();
+	const float height = CTerrainManager::GetTerrainHeight();
+	const float diagonal = sqrtf(width * width + height * height);
+	const float frac = circuit->GetSetupManager()->GetBasePos().distance2D(pos) / diagonal;
+	if (frac <= thrDistCurve.front().first) {
+		return thrDistCurve.front().second;
+	}
+	if (frac >= thrDistCurve.back().first) {
+		return thrDistCurve.back().second;
+	}
+	for (size_t i = 1; i < thrDistCurve.size(); ++i) {
+		const auto& b = thrDistCurve[i];
+		if (frac <= b.first) {
+			const auto& a = thrDistCurve[i - 1];
+			const float t = (b.first > a.first) ? (frac - a.first) / (b.first - a.first) : 1.f;
+			return a.second + (b.second - a.second) * t;
+		}
+	}
+	return thrDistCurve.back().second;
 }
 
 AIFloat3 CMilitaryManager::GetRaidPosition(CCircuitUnit* unit)
