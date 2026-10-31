@@ -233,8 +233,16 @@ AIFloat3 CFGuardTask::GetVipDestination(CCircuitUnit* vip) const
 	IUnitTask* task = vip->GetTask();
 	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)) {
 		// A "guarded" army unit: its squad's attack/defend point, so artillery gathering at base
-		// for an attack keeps its slot open and takes a guard along
-		return static_cast<IFighterTask*>(task)->GetPosition();  // -RgtVector when unset
+		// for an attack keeps its slot open and takes a guard along.
+		// Fighter tasks also put the enemy they are shooting at in position (ArtilleryTask does it
+		// without SetTarget). A point within weapon range is a target, not a destination: ignore it,
+		// or artillery shelling from inside the turret bubble would never count as safe.
+		const AIFloat3& dest = static_cast<IFighterTask*>(task)->GetPosition();  // -RgtVector when unset
+		const AIFloat3& vipPos = vip->GetPos(manager->GetCircuit()->GetLastFrame());
+		if (utils::is_valid(dest) && (vipPos.SqDistance2D(dest) <= SQUARE(vip->GetCircuitDef()->GetMaxRange()))) {
+			return -RgtVector;
+		}
+		return dest;
 	}
 	if ((task == nullptr) || (task->GetType() != IUnitTask::Type::BUILDER)) {
 		return -RgtVector;
