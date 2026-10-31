@@ -108,7 +108,19 @@ void CFGuardTask::Update()
 			DebugLog(vip, reason);
 			Release();
 		}
-	} else if (units.empty()) {
+	} else if (!units.empty()) {
+		// The builder may have moved where the guard can't follow (water, cliffs): free the guard, no ban
+		CCircuitAI* circuit = manager->GetCircuit();
+		const AIFloat3& vipPos = vip->GetPos(circuit->GetLastFrame());
+		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+		decltype(units) tmpUnits = units;
+		for (CCircuitUnit* unit : tmpUnits) {
+			if (!terrainMgr->CanReachAt(unit, vipPos, unit->GetCircuitDef()->GetMaxRange())) {
+				DebugLog(vip, "builder unreachable");
+				ReleaseUnit(unit);
+			}
+		}
+	} else {
 		Pull(vip);
 		if (!units.empty()) {
 			DebugLog(vip, "pulled guard");
