@@ -675,23 +675,30 @@ IBuilderTask* CBuilderManager::EnqueueRepair(IBuilderTask::Priority priority,
 	return task;
 }
 
-void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
+bool CBuilderManager::IsPrioRepairFull(const CCircuitUnit* unit) const
 {
-	if (prioRepairRange <= 0.f) {
-		return;
-	}
-	// Do not strip the whole economy in a big fight
+	// Builders on priority repair, not counting the asking unit (it would only switch jobs)
 	unsigned prioCount = 0;
 	for (CCircuitUnit* worker : workers) {
 		IUnitTask* curTask = worker->GetTask();
-		if ((curTask->GetType() == IUnitTask::Type::BUILDER)
+		if ((worker != unit)
+			&& (curTask->GetType() == IUnitTask::Type::BUILDER)
 			&& (static_cast<IBuilderTask*>(curTask)->GetBuildType() == IBuilderTask::BuildType::REPAIR)
 			&& (curTask->GetPriority() == IBuilderTask::Priority::NOW))
 		{
 			++prioCount;
 		}
 	}
-	if (prioCount + 1 > std::max(1.f, workers.size() * prioRepairShare)) {
+	return prioCount + 1 > std::max(1.f, workers.size() * prioRepairShare);
+}
+
+void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
+{
+	if (prioRepairRange <= 0.f) {
+		return;
+	}
+	// Do not strip the whole economy in a big fight
+	if (IsPrioRepairFull(nullptr)) {
 		return;
 	}
 
@@ -1080,8 +1087,15 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	const int buildDistance = std::max<int>(cdef->GetBuildDistance(), pathfinder->GetSquareSize());
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	float metric = std::numeric_limits<float>::max();
+	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
+	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
 		for (const IBuilderTask* candidate : tasks) {
+			if (isPrioRepairFull && (candidate->GetPriority() == IBuilderTask::Priority::NOW)
+				&& (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
+			{
+				continue;
+			}
 			if (!candidate->CanAssignTo(unit)
 				|| (isNotReady
 					&& (candidate->GetBuildDef() != nullptr)
@@ -1189,8 +1203,15 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	const float maxThreat = threatMap->GetUnitThreat(unit);
 	const int buildDistance = std::max<int>(cdef->GetBuildDistance(), pathfinder->GetSquareSize());
 	float metric = std::numeric_limits<float>::max();
+	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
+	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
 		for (const IBuilderTask* candidate : tasks) {
+			if (isPrioRepairFull && (candidate->GetPriority() == IBuilderTask::Priority::NOW)
+				&& (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
+			{
+				continue;
+			}
 			if (!candidate->CanAssignTo(unit)
 				|| (isNotReady
 					&& (candidate->GetPriority() != IBuilderTask::Priority::NOW)

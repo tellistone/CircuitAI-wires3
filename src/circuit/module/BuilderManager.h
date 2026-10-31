@@ -111,6 +111,7 @@ public:
 	const SEscort& GetEscortCfg() const { return escort; }
 private:
 	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);
+	bool IsPrioRepairFull(const CCircuitUnit* unit) const;
 public:
 	IBuilderTask* EnqueueReclaim(IBuilderTask::Priority priority,
 								 const springai::AIFloat3& position,
