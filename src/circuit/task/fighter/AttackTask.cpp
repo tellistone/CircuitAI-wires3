@@ -63,6 +63,14 @@ bool CAttackTask::CanAssignTo(CCircuitUnit* unit) const
 	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
 		return false;
 	}
+	// The joining group's leader must not move worse than ours (smaller terrain area). Otherwise it
+	// would take the lead (ISquadTask::FindLeader) and drag the group back to it, or, if kept out of
+	// the lead, get stranded on routes only our leader can take.
+	const STerrainMapArea* ourArea = leader->GetArea();
+	const STerrainMapArea* newArea = unit->GetArea();
+	if ((newArea != nullptr) && ((ourArea == nullptr) || (newArea->percentOfMap < ourArea->percentOfMap))) {
+		return false;
+	}
 	if (unit->GetCircuitDef()->IsAmphibious()
 		&& (leader->GetCircuitDef()->IsAmphibious()
 			|| leader->GetCircuitDef()->IsLander()
@@ -231,9 +239,9 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 void CAttackTask::AbsorbWeakerTasks()
 {
 	// A group at or above quota.attack pulls in attack groups under quota.attack near it, every 8 updates.
-	// Same rules as joining (CanAssignTo: speed within 1.5x, leaders within 1000 elmos, movement type;
-	// reachable; safe straight line), seen from the small group's side, but at most 30 s of travel so
-	// absorbed units arrive well inside the 60 s regroup "stuck" limit. The big group keeps its leader.
+	// Same rules as joining (CanAssignTo: speed within 1.5x, leaders within 1000 elmos, movement type,
+	// never a worse mover than our leader; reachable; safe straight line), seen from the small group's side,
+	// but at most 30 s of travel so absorbed units arrive well inside the 60 s regroup "stuck" limit.
 	if ((attackPower < minPower) || (updCount % 8 != 5)) {
 		return;
 	}
@@ -271,10 +279,8 @@ void CAttackTask::AbsorbWeakerTasks()
 	}
 
 	// Merge after the loop: aborting a task removes it from the set being iterated
-	CCircuitUnit* bigLeader = leader;
 	for (CAttackTask* candy : weaklings) {
-		Merge(candy);
-		leader = bigLeader;  // Merge may pick an absorbed unit as leader and drag the group back to it
+		Merge(candy);  // CanAssignTo ruled out units that would take the lead
 		candy->units.clear();
 		manager->AbortTask(candy);
 	}
