@@ -27,6 +27,20 @@ CBRepairTask::~CBRepairTask()
 {
 }
 
+void CBRepairTask::Update()
+{
+	if (units.empty()) {
+		// Unit healed on its own while nobody was assigned: drop the job
+		CCircuitAI* circuit = manager->GetCircuit();
+		CAllyUnit* repTarget = (target != nullptr) ? target : circuit->GetFriendlyUnit(targetId);
+		if ((repTarget == nullptr) || (repTarget->GetUnit()->GetHealth() >= repTarget->GetUnit()->GetMaxHealth())) {
+			manager->DoneTask(this);
+			return;
+		}
+	}
+	IRepairTask::Update();
+}
+
 void CBRepairTask::Start(CCircuitUnit* unit)
 {
 	IRepairTask::Start(unit);
