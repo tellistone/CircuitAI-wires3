@@ -73,7 +73,7 @@
 		// "dg_cost" - DGun by metal cost instead of by threat
 		// "anti_stat" - only static targets
 		// "no_dgun" - do not use DGun
-		// "prio_repair" - when damaged above retreat threshold, builders rush to repair it (like "heavy" main role); on statics: below 90% health
+		// "prio_repair" - when damaged above retreat threshold, builders rush to repair it (like "heavy" main role); on statics: below 90% health; commanders always have it
 //		"attribute": ["boost", "no_strafe"],
 
 		// Fire state (open by default)

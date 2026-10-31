@@ -200,6 +200,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	if (customParams.find("level") != customParams.end()) {
 		isDynamic = customParams.find("dynamic_comm") != customParams.end();
 		AddRole(ROLE_TYPE(COMM));
+		AddAttribute(AttrType::PRIO_REPAIR);  // commanders get priority repair by default
 	}
 
 	it = customParams.find("midposoffset");

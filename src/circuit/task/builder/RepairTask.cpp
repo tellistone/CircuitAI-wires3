@@ -104,6 +104,9 @@ void CBRepairTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float healthPerc = unit->GetHealthPercent();
 	if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
+		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
+			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
+		}
 		return;
 	}
 
