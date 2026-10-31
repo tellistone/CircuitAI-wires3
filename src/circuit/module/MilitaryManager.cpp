@@ -343,13 +343,98 @@ void CMilitaryManager::ReadConfig()
 	raid.min = qraid.get((unsigned)0, 3.f).asFloat();
 	raid.avg = qraid.get((unsigned)1, 5.f).asFloat();
 	minAttackers = quotas.get("attack", 8.f).asFloat();
+	const Json::Value& qfleeShare = quotas.get("raid_flee_share", 0.5f);
+	if (!qfleeShare.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.raid_flee_share must be a number 0..1, using 0.5", cfgName.c_str());
+	}
+	raidFleeShare = utils::clamp(qfleeShare.isNumeric() ? qfleeShare.asFloat() : 0.5f, 0.f, 1.f);
+	const Json::Value& raidTargets = quotas["raid_target_roles"];
+	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
+		if (!raidTargets.isNull()) {
+			circuit->LOG("CONFIG %s: quota.raid_target_roles must be a list of roles, using [\"builder\", \"commander\"]", cfgName.c_str());
+		}
+		raidTargetRoles = CCircuitDef::RoleMask::BUILDER | CCircuitDef::RoleMask::COMM;
+	} else {
+		raidTargetRoles = 0;
+		for (const Json::Value& rt : raidTargets) {
+			const std::string roleName = rt.isString() ? rt.asString() : rt.toStyledString();
+			auto it = roleNames.find(roleName);
+			if (!rt.isString() || (it == roleNames.end())) {
+				circuit->LOG("CONFIG %s: quota.raid_target_roles has unknown role '%s'", cfgName.c_str(), roleName.c_str());
+				continue;
+			}
+			raidTargetRoles |= CCircuitDef::GetMask(it->second.type);
+		}
+	}
 	const Json::Value& qthrMod = quotas["thr_mod"];
-	const Json::Value& qthrAtk = qthrMod["attack"];
-	attackMod.min = qthrAtk.get((unsigned)0, 1.f).asFloat();
-	attackMod.len = qthrAtk.get((unsigned)1, 1.f).asFloat() - attackMod.min;
-	const Json::Value& qthrDef = qthrMod["defence"];
-	defenceMod.min = qthrDef.get((unsigned)0, 1.f).asFloat();
-	defenceMod.len = qthrDef.get((unsigned)1, 1.f).asFloat() - defenceMod.min;
+	// Raid and scout tasks have their own [min, max]; missing = same as "attack" (old behaviour)
+	auto readThrMod = [this, &qthrMod, &cfgName](const char* name, const SThreatQuota& fallback) {
+		const Json::Value& q = qthrMod[name];
+		if (q.isNull()) {
+			return fallback;
+		}
+		// Non-numbers would throw (AI fails to load) and values <= 0 give an infinite/negative powerMod
+		const Json::Value& q0 = q.get((unsigned)0, Json::Value());
+		const Json::Value& q1 = q.get((unsigned)1, q0);
+		if (!q.isArray() || !q0.isNumeric() || !q1.isNumeric() || (q0.asFloat() <= 0.f) || (q1.asFloat() <= 0.f)) {
+			circuit->LOG("CONFIG %s: quota.thr_mod.%s must be [<min > 0>, <max > 0>], using [%.2f, %.2f]", cfgName.c_str(), name, fallback.min, fallback.min + fallback.len);
+			return fallback;
+		}
+		SThreatQuota mod;
+		mod.min = q0.asFloat();
+		mod.len = q1.asFloat() - mod.min;
+		return mod;
+	};
+	const Json::Value& qbaseBonus = qthrMod.get("base_bonus", 2.f);
+	SThreatQuota defaultMod;
+	defaultMod.min = 1.f;
+	defaultMod.len = 0.f;
+	attackMod = readThrMod("attack", defaultMod);
+	baseThrBonus = qbaseBonus.isNumeric() ? qbaseBonus.asFloat() : 2.f;
+	if (!qbaseBonus.isNumeric() || (baseThrBonus <= 0.f)) {
+		// 0 would make nothing near the base centre engageable
+		circuit->LOG("CONFIG %s: quota.thr_mod.base_bonus must be a number > 0, using 2.0", cfgName.c_str());
+		baseThrBonus = 2.f;
+	}
+	thrDistCurves.assign(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_), ThrDistCurve());
+	const Json::Value& qthrDist = qthrMod["distance"];
+	if (qthrDist.isObject()) {
+		static const std::map<std::string, IFighterTask::FightType> distTasks = {
+			{"scout",  IFighterTask::FightType::SCOUT},
+			{"raid",   IFighterTask::FightType::RAID},
+			{"defend", IFighterTask::FightType::DEFEND},
+			{"attack", IFighterTask::FightType::ATTACK},
+			{"aa",     IFighterTask::FightType::AA},
+			{"ah",     IFighterTask::FightType::AH},
+			{"bomber", IFighterTask::FightType::BOMB},
+		};
+		for (const std::string& taskName : qthrDist.getMemberNames()) {
+			auto it = distTasks.find(taskName);
+			if (it == distTasks.end()) {
+				circuit->LOG("CONFIG %s: quota.thr_mod.distance has unknown task '%s' (scout, raid, defend, attack, aa, ah, bomber)", cfgName.c_str(), taskName.c_str());
+				continue;
+			}
+			ThrDistCurve& curve = thrDistCurves[static_cast<IFighterTask::FT>(it->second)];
+			const Json::Value& qcurve = qthrDist[taskName];
+			if (!qcurve.isArray()) {
+				circuit->LOG("CONFIG %s: quota.thr_mod.distance.%s must be a list of [<map fraction>, <multiplier>] points", cfgName.c_str(), taskName.c_str());
+				continue;
+			}
+			for (const Json::Value& pt : qcurve) {
+				if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() <= 0.f)) {
+					circuit->LOG("CONFIG %s: quota.thr_mod.distance.%s points must be [<map fraction>, <multiplier > 0>]", cfgName.c_str(), taskName.c_str());
+					continue;
+				}
+				curve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+			}
+			std::sort(curve.begin(), curve.end());
+		}
+	} else if (!qthrDist.isNull()) {
+		circuit->LOG("CONFIG %s: quota.thr_mod.distance must be an object of task curves, e.g. {\"raid\": [[0.1, 0.5], [0.9, 2.0]]}", cfgName.c_str());
+	}
+	raidMod = readThrMod("raid", attackMod);
+	scoutMod = readThrMod("scout", attackMod);
+	defenceMod = readThrMod("defence", defaultMod);
 
 	const Json::Value& guardCfg = root["guard"];
 	guard.maxWorkers = std::max(0, guardCfg.get("max_workers", 3).asInt());
@@ -589,12 +674,12 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 			break;
 		}
 		case IFighterTask::FightType::SCOUT: {
-			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
+			const float mod = (float)rand() / RAND_MAX * scoutMod.len + scoutMod.min;
 			task = new CScoutTask(this, 0.75f / mod);
 			break;
 		}
 		case IFighterTask::FightType::RAID: {
-			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
+			const float mod = (float)rand() / RAND_MAX * raidMod.len + raidMod.min;
 			task = new CRaidTask(this, raid.avg, 0.75f / mod);
 			break;
 		}
@@ -1023,7 +1108,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 				danger += d.threat * (1.f - 0.5f * sqrtf(sqDist) / d.range);  // same falloff as the threat map
 			}
 		}
-		if (danger >= safeThreat) {
+		if (danger >= safeThreat / GetThrDistMod(IFighterTask::FightType::SCOUT, spot)) {  // thr_mod.distance.scout at the spot
 			continue;
 		}
 
@@ -1075,6 +1160,42 @@ void CMilitaryManager::BlockScoutSpot(const AIFloat3& spot, int frames)
 			return;
 		}
 	}
+}
+
+float CMilitaryManager::GetBaseThrBonus(float sqDistToBase) const
+{
+	const float baseRange = GetBaseDefRange();
+	if ((baseRange <= 0.f) || (sqDistToBase >= SQUARE(baseRange))) {
+		return 1.f;
+	}
+	return 1.f + (baseThrBonus - 1.f) * (1.f - sqrtf(sqDistToBase) / baseRange);
+}
+
+float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloat3& pos) const
+{
+	const ThrDistCurve& thrDistCurve = thrDistCurves[static_cast<IFighterTask::FT>(type)];
+	if (thrDistCurve.empty()) {
+		return 1.f;
+	}
+	const float width = CTerrainManager::GetTerrainWidth();
+	const float height = CTerrainManager::GetTerrainHeight();
+	const float diagonal = sqrtf(width * width + height * height);
+	const float frac = circuit->GetSetupManager()->GetBasePos().distance2D(pos) / diagonal;
+	if (frac <= thrDistCurve.front().first) {
+		return thrDistCurve.front().second;
+	}
+	if (frac >= thrDistCurve.back().first) {
+		return thrDistCurve.back().second;
+	}
+	for (size_t i = 1; i < thrDistCurve.size(); ++i) {
+		const auto& b = thrDistCurve[i];
+		if (frac <= b.first) {
+			const auto& a = thrDistCurve[i - 1];
+			const float t = (b.first > a.first) ? (frac - a.first) / (b.first - a.first) : 1.f;
+			return a.second + (b.second - a.second) * t;
+		}
+	}
+	return thrDistCurve.back().second;
 }
 
 AIFloat3 CMilitaryManager::GetRaidPosition(CCircuitUnit* unit)

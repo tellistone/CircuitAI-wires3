@@ -214,7 +214,7 @@ bool CDefendTask::FindTarget()
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
-	const float maxPower = attackPower * powerMod;
+	const float maxPower = attackPower * powerMod;  // divided by the thr_mod.distance curve at each enemy's spot
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
@@ -244,9 +244,9 @@ bool CDefendTask::FindTarget()
 		}
 
 		const float sqEBDist = basePos.SqDistance2D(ePos);
-		float checkPower = maxPower;
+		float checkPower = maxPower / GetThrDistModAt(ePos);
 		if (sqEBDist < sqBaseRange) {
-			checkPower *= 2.0f - 1.0f / baseRange * sqrtf(sqEBDist);  // 200% near base
+			checkPower *= circuit->GetMilitaryManager()->GetBaseThrBonus(sqEBDist);  // quota.thr_mod.base_bonus near base
 		}
 		if (checkPower <= threatMap->GetThreatAt(ePos)) {
 			continue;

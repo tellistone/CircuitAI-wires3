@@ -74,12 +74,13 @@ public:
 		MELEE = 0, BOOST, NO_JUMP, NO_STRAFE,
 		STOCK, SIEGE, RET_HOLD, RET_FIGHT,
 		JUMP, DG_COST, DG_STILL, ANTI_STAT,
-		REARM, NO_DGUN, PRIO_REPAIR, GUARDED, _SIZE_};
+		REARM, NO_DGUN, PRIO_REPAIR, GUARDED, RAID_TARGET, _SIZE_};
 	enum AttrMask: RoleM {
 		MELEE = 0x00000001, BOOST   = 0x00000002, NO_JUMP  = 0x00000004, NO_STRAFE = 0x00000008,
 		STOCK = 0x00000010, SIEGE   = 0x00000020, RET_HOLD = 0x00000040, RET_FIGHT = 0x00000080,
 		JUMP  = 0x00000100, DG_COST = 0x00000200, DG_STILL = 0x00000400, ANTI_STAT = 0x00000800,
-		REARM = 0x00001000, NO_DGUN = 0x00002000, PRIO_REPAIR = 0x00004000, GUARDED = 0x00008000};
+		REARM = 0x00001000, NO_DGUN = 0x00002000, PRIO_REPAIR = 0x00004000, GUARDED = 0x00008000,
+		RAID_TARGET = 0x00010000};
 	using AttrT = std::underlying_type<AttrType>::type;
 	using AttrM = std::underlying_type<AttrMask>::type;
 
@@ -158,6 +159,7 @@ public:
 	bool IsAttrNoDGun()   const { return attr & AttrMask::NO_DGUN; }
 	bool IsAttrPrioRepair() const { return attr & AttrMask::PRIO_REPAIR; }
 	bool IsAttrGuarded()    const { return attr & AttrMask::GUARDED; }
+	bool IsAttrRaidTarget() const { return attr & AttrMask::RAID_TARGET; }
 
 	bool IsHoldFire()   const { return fireState == FireType::HOLD; }
 	bool IsReturnFire() const { return fireState == FireType::RETURN; }

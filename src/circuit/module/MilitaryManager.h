@@ -125,6 +125,18 @@ public:
 	float GetCommDefRadBegin() const { return defence->GetCommRadBegin(); }
 	float GetCommDefRad(float baseDist) const { return defence->GetCommRad(baseDist); }
 
+	// Raid groups attack these first (nearest wins): enemy types with the "raid_target" attribute,
+	// or whose roles are in quota.raid_target_roles (default: builder, commander)
+	bool IsRaidPreferred(const CCircuitDef* edef) const {
+		return edef->IsAttrRaidTarget() || edef->IsEnemyRoleAny(raidTargetRoles);
+	}
+
+	float GetRaidFleeShare() const { return raidFleeShare; }
+	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
+	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
+	// Courage bonus inside the base defence radius: quota.thr_mod.base_bonus at the base centre, falling to 1 at the radius edge
+	float GetBaseThrBonus(float sqDistToBase) const;
+
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
 
@@ -204,10 +216,15 @@ private:
 	} raid;
 	unsigned int maxScouts;
 	float minAttackers;
+	CCircuitDef::RoleM raidTargetRoles;
+	float raidFleeShare;
+	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
+	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
+	float baseThrBonus;  // quota.thr_mod.base_bonus
 	struct SThreatQuota {
 		float min;
 		float len;
-	} attackMod, defenceMod;
+	} attackMod, defenceMod, raidMod, scoutMod;
 
 	std::vector<CCircuitDef*> defenderDefs;
 	std::vector<CCircuitDef*> landDefenders;

@@ -305,7 +305,7 @@ bool CAntiHeavyTask::FindTarget()
 	const bool isAntiStatic = cdef->IsAttrAntiStat();
 	const bool notAA = !cdef->HasAntiAir();
 	const int canTargetCat = cdef->GetTargetCategory();
-	const float maxPower = attackPower * powerMod;
+	const float maxPower = attackPower * powerMod;  // divided by the thr_mod.distance curve at each enemy's spot
 	const float weaponRange = cdef->GetMaxRange();
 	const float range = std::max(highestRange, threatMap->GetSquareSize() * 2.0f);
 	const float losSqDist = SQUARE(range);
@@ -321,7 +321,7 @@ bool CAntiHeavyTask::FindTarget()
 			continue;
 		}
 		const AIFloat3& ePos = enemy->GetPos();
-		if ((maxPower <= threatMap->GetThreatAt(ePos) - enemy->GetThreat())
+		if ((maxPower / GetThrDistModAt(ePos) <= threatMap->GetThreatAt(ePos) - enemy->GetThreat())
 			|| !terrainMgr->CanMoveToPos(area, ePos))
 		{
 			continue;
