@@ -476,24 +476,19 @@ AIFloat3 CScoutTask::PickScoutPosition(CCircuitUnit* unit, float safeThreat)
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 
-	// Next scouting spots (mex spots that are not ours), skipping defended ones
-	for (int i = 0; i < 8; ++i) {
-		const AIFloat3 spot = militaryMgr->GetScoutPosition(unit);
-		if (!utils::is_valid(spot)) {
-			break;
-		}
-		if (threatMap->GetThreatAt(unit, spot) < safeThreat) {
-			return spot;
-		}
+	// Best-scored mex spot: near the enemy, unseen for longest, not defended by known static enemies
+	const AIFloat3 spot = militaryMgr->PickScoutSpot(unit, safeThreat);
+	if (utils::is_valid(spot)) {
+		return spot;
 	}
 	// Random safe spot
 	for (int i = 0; i < 4; ++i) {
 		float x = rand() % terrainMgr->GetTerrainWidth();
 		float z = rand() % terrainMgr->GetTerrainHeight();
-		AIFloat3 spot(x, circuit->GetMap()->GetElevationAt(x, z), z);
-		spot = terrainMgr->GetMovePosition(unit->GetArea(), spot);
-		if (utils::is_valid(spot) && (threatMap->GetThreatAt(unit, spot) < safeThreat)) {
-			return spot;
+		AIFloat3 rndPos(x, circuit->GetMap()->GetElevationAt(x, z), z);
+		rndPos = terrainMgr->GetMovePosition(unit->GetArea(), rndPos);
+		if (utils::is_valid(rndPos) && (threatMap->GetThreatAt(unit, rndPos) < safeThreat)) {
+			return rndPos;
 		}
 	}
 	// Nothing safe found: head home
