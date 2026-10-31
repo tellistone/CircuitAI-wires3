@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_GUARDTASK_H_
 
 #include "task/fighter/FighterTask.h"
+#include "unit/CircuitUnit.h"
 
 namespace circuit {
 
