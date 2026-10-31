@@ -85,11 +85,15 @@ public:
 		float threatRatio;  // ... only when threat at the guard > this * guard's own threat (0 = any threat)
 		float maxShare;  // max share of a role's units (by acting main role) on guard duty at once, rounded up; >= 1 = no limit
 		int threatCooldown;
+		bool isDamageExit;  // a guard that takes damage is released at once and the slot cools down (threat_cooldown)
 		bool isDebug;  // log guard slot events and a 10 s status line per slot to infolog  // guard in enemy threat is cancelled and the slot closes for this long, < 0 = never cancel
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }
 	bool IsGuardRole(CCircuitDef* cdef) const;
 	bool IsGuardCapReached(CCircuitDef* cdef) const;
+	// A guard released by damage or threat can't take any guard slot until the ban ends
+	void BanGuard(CCircuitUnit* unit, int frames);
+	bool IsGuardBanned(CCircuitUnit* unit) const;
 
 	const std::set<CCircuitUnit*>& GetRoleUnits(CCircuitDef::RoleT type) const {
 		return roleInfos[type].units;
@@ -175,6 +179,7 @@ private:
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
 	SGuardCfg guard;
+	std::map<int, int> guardBanUntil;  // unit id -> frame
 
 	struct SRaidQuota {
 		float min;

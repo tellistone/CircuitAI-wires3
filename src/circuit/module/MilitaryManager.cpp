@@ -352,6 +352,7 @@ void CMilitaryManager::ReadConfig()
 	guard.threatCooldown = (threatCd < 0.f) ? -1 : int(threatCd * FRAMES_PER_SEC);
 	guard.threatRatio = std::max(0.f, guardCfg.get("threat_ratio", 0.f).asFloat());
 	guard.maxShare = std::max(0.f, guardCfg.get("max_share", 1.f).asFloat());
+	guard.isDamageExit = guardCfg.get("damage_exit", true).asBool();
 	guard.isDebug = guardCfg.get("debug", false).asBool();
 	guard.roleMask = 0;
 	const Json::Value& guardRoles = guardCfg["roles"];
@@ -1146,14 +1147,41 @@ bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
 	return guarding >= std::ceil(guard.maxShare * total - 1e-3f);
 }
 
+void CMilitaryManager::BanGuard(CCircuitUnit* unit, int frames)
+{
+	const int frame = circuit->GetLastFrame();
+	// Drop expired entries (and dead units) so the map stays small
+	for (auto it = guardBanUntil.begin(); it != guardBanUntil.end();) {
+		it = (it->second <= frame) ? guardBanUntil.erase(it) : std::next(it);
+	}
+	guardBanUntil[unit->GetId()] = frame + frames;
+}
+
+bool CMilitaryManager::IsGuardBanned(CCircuitUnit* unit) const
+{
+	auto it = guardBanUntil.find(unit->GetId());
+	return (it != guardBanUntil.end()) && (circuit->GetLastFrame() < it->second);
+}
+
 IFighterTask* CMilitaryManager::FindGuardTask(CCircuitUnit* unit) const
 {
+	// Nearest eligible slot, not the first one in the set (which is ordered by pointer)
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	IFighterTask* best = nullptr;
+	float minSqDist = std::numeric_limits<float>::max();
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
-		if (t->CanAssignTo(unit)) {
-			return t;
+		if (!t->CanAssignTo(unit)) {
+			continue;
+		}
+		CCircuitUnit* vip = circuit->GetTeamUnit(static_cast<CFGuardTask*>(t)->GetVipId());
+		const float sqDist = (vip != nullptr) ? pos.SqDistance2D(vip->GetPos(frame)) : minSqDist;
+		if ((best == nullptr) || (sqDist < minSqDist)) {
+			minSqDist = sqDist;
+			best = t;
 		}
 	}
-	return nullptr;
+	return best;
 }
 
 void CMilitaryManager::AddResponse(CCircuitUnit* unit)

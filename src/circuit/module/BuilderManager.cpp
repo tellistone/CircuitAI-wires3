@@ -93,7 +93,10 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		AddBuildList(unit);
 
 		CMilitaryManager* militaryMgr = this->circuit->GetMilitaryManager();
-		if ((workers.size() < militaryMgr->GetGuardCfg().maxWorkers) && !unit->GetCircuitDef()->IsAttacker()) {
+		// Flying builders get no slot: ground guards can't follow them, and they dodge danger by flying
+		if ((workers.size() < militaryMgr->GetGuardCfg().maxWorkers) && !unit->GetCircuitDef()->IsAttacker()
+			&& !unit->GetCircuitDef()->IsAbleToFly())
+		{
 			militaryMgr->AddGuardTask(unit);
 		}
 	};
