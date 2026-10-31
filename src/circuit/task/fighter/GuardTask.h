@@ -30,11 +30,12 @@ public:
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 
-	bool IsActive() const { return !isVipRetreat && !isVipSafe; }
+	bool IsActive() const;
 	bool IsVipSafe() const { return isVipSafe; }
 
 private:
 	void CheckVip(CCircuitUnit* vip);
+	void CheckThreat();
 	void Release();
 	void Pull(CCircuitUnit* vip);
 
@@ -43,6 +44,7 @@ private:
 	bool isVipRetreat;
 	bool isVipSafe;
 	int safeSince;  // frame the builder became safe, -1 = not safe
+	int cooldownUntil;  // guard was released under enemy threat: slot stays closed until this frame
 };
 
 } // namespace circuit

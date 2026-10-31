@@ -7,6 +7,7 @@
 
 #include "task/fighter/GuardTask.h"
 #include "map/InfluenceMap.h"
+#include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
 #include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
@@ -24,11 +25,17 @@ CFGuardTask::CFGuardTask(ITaskManager* mgr, CCircuitUnit* vip, float maxPower)
 		, isVipRetreat(false)
 		, isVipSafe(false)
 		, safeSince(-1)
+		, cooldownUntil(-1)
 {
 }
 
 CFGuardTask::~CFGuardTask()
 {
+}
+
+bool CFGuardTask::IsActive() const
+{
+	return !isVipRetreat && !isVipSafe && (manager->GetCircuit()->GetLastFrame() >= cooldownUntil);
 }
 
 bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
@@ -63,6 +70,7 @@ void CFGuardTask::Update()
 		return;  // builder's destroyed handler removes the slot
 	}
 	CheckVip(vip);
+	CheckThreat();
 	if (!IsActive()) {
 		if (!units.empty()) {
 			Release();
@@ -116,6 +124,25 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	} else {
 		safeSince = -1;
 		isVipSafe = false;
+	}
+}
+
+void CFGuardTask::CheckThreat()
+{
+	// Exit 3: a guard stands in enemy threat. Cancel the guard and keep this builder's slot closed for a while,
+	// so the guard (or the next pulled unit) isn't fed into the same fight
+	const CMilitaryManager::SGuardCfg& cfg = static_cast<CMilitaryManager*>(manager)->GetGuardCfg();
+	if ((cfg.threatCooldown < 0) || units.empty()) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const int frame = circuit->GetLastFrame();
+	for (CCircuitUnit* unit : units) {
+		if (threatMap->GetThreatAt(unit, unit->GetPos(frame)) > THREAT_MIN) {
+			cooldownUntil = frame + cfg.threatCooldown;
+			return;
+		}
 	}
 }
 
