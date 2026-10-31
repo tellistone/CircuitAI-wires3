@@ -276,9 +276,9 @@ bool CRaidTask::FindTarget()
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
 	const float maxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
-	// Current health, same measure as the escape check; for 10s after an escape demand a 25% margin,
+	// Current health, same measure as the escape check; for 4s after an escape demand a 25% margin,
 	// so the group doesn't pick a target at the edge of the danger it just left and bounce back and forth
-	const bool isCautious = (circuit->GetLastFrame() < fleeFrame + FRAMES_PER_SEC * 10);
+	const bool isCautious = (circuit->GetLastFrame() < fleeFrame + FRAMES_PER_SEC * 4);
 	const float maxPower = GetSafeThreat() * (isCautious ? 0.75f : 1.f);
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
