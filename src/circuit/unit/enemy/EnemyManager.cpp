@@ -35,13 +35,10 @@ CEnemyManager::CEnemyManager(CCircuitAI* circuit)
 		, pGroupData(&groupData0)
 		, enemyGroups(groupData0.enemyGroups)
 		, maxThreatGroupIdx(0)
-		, maxSizeGroupIdx(0)
 		, isUpdating(false)
 		, enemyMobileCost(0.f)
 		, mobileThreat(0.f)
 		, staticThreat(0.f)
-		, sizeMobileThreat(0.f)
-		, sizeStaticThreat(0.f)
 		, isAreaUpdated(true)
 {
 	enemyInfos.fill({0.f, 0.f});
@@ -329,11 +326,9 @@ void CEnemyManager::AddEnemyCost(const CEnemyUnit* e)
 	}
 	if (cdef->IsMobile()) {
 		mobileThreat += cdef->GetThreat() * initThrMod.inMobile;
-		sizeMobileThreat += cdef->GetThreat() * groupSizeMod.mobile;
 		enemyMobileCost += e->GetCost();
 	} else {
 		staticThreat += cdef->GetThreat() * initThrMod.inStatic;
-		sizeStaticThreat += cdef->GetThreat() * groupSizeMod.stat;
 	}
 }
 
@@ -352,11 +347,9 @@ void CEnemyManager::DelEnemyCost(const CEnemyUnit* e)
 	}
 	if (cdef->IsMobile()) {
 		mobileThreat = std::max(mobileThreat - cdef->GetThreat() * initThrMod.inMobile, 0.f);
-		sizeMobileThreat = std::max(sizeMobileThreat - cdef->GetThreat() * groupSizeMod.mobile, 0.f);
 		enemyMobileCost = std::max(enemyMobileCost - e->GetCost(), 0.f);
 	} else {
 		staticThreat = std::max(staticThreat - cdef->GetThreat() * initThrMod.inStatic, 0.f);
-		sizeStaticThreat = std::max(sizeStaticThreat - cdef->GetThreat() * groupSizeMod.stat, 0.f);
 	}
 }
 
@@ -409,27 +402,6 @@ void CEnemyManager::ReadConfig()
 	initThrMod.inMobile = qthrMod.get("mobile", 1.f).asFloat();
 	initThrMod.inStatic = qthrMod.get("static", 0.f).asFloat();
 	maxAAThreat = quotas.get("aa_threat", 42.f).asFloat();
-
-	// Army size, kept apart from thr_mod: weight of enemy mobile / static threat when sizing our groups
-	groupSizeMod.mobile = 1.f;
-	groupSizeMod.stat = 0.f;
-	const Json::Value& qsize = quotas["group_size"];
-	if (qsize.isObject()) {
-		const Json::Value& qm = qsize["mobile"];
-		const Json::Value& qs = qsize["static"];
-		if (qm.isNumeric() && (qm.asFloat() >= 0.f)) {
-			groupSizeMod.mobile = qm.asFloat();
-		} else if (!qm.isNull()) {
-			circuit->LOG("CONFIG: quota.group_size.mobile must be a number >= 0, using 1.0");
-		}
-		if (qs.isNumeric() && (qs.asFloat() >= 0.f)) {
-			groupSizeMod.stat = qs.asFloat();
-		} else if (!qs.isNull()) {
-			circuit->LOG("CONFIG: quota.group_size.static must be a number >= 0, using 0.0");
-		}
-	} else if (!qsize.isNull()) {
-		circuit->LOG("CONFIG: quota.group_size must be {\"mobile\": <x>, \"static\": <y>}, using mobile 1.0, static 0.0");
-	}
 }
 
 /*
@@ -495,7 +467,6 @@ void CEnemyManager::KMeansIteration()
 		std::fill(eg.roleCosts.begin(), eg.roleCosts.end(), 0.f);
 		eg.cost = 0.f;
 		eg.threat = 0.f;
-		eg.sizeThreat = 0.f;
 	}
 
 	{
@@ -519,10 +490,8 @@ void CEnemyManager::KMeansIteration()
 						eg.cost += enemy.cost;
 					}
 					eg.threat += enemy.threat * (enemy.cdef->IsMobile() ? initThrMod.inMobile : initThrMod.inStatic);
-					eg.sizeThreat += enemy.threat * (enemy.cdef->IsMobile() ? groupSizeMod.mobile : groupSizeMod.stat);
 				} else {
 					eg.threat += enemy.threat;
-					eg.sizeThreat += enemy.threat;
 				}
 			}
 		}
@@ -531,7 +500,6 @@ void CEnemyManager::KMeansIteration()
 	// do a check and see if there are any empty means and set the height
 	groupData.enemyPos = ZeroVector;
 	groupData.maxThreatGroupIdx = 0;
-	groupData.maxSizeGroupIdx = 0;
 	for (int i = 0; i < newK; i++) {
 		// if a newmean is unchanged, set it to the new means pos instead of (0, 0, 0)
 		if (newMeans[i].pos == ZeroVector) {
@@ -543,9 +511,6 @@ void CEnemyManager::KMeansIteration()
 		groupData.enemyPos += newMeans[i].pos;
 		if (newMeans[groupData.maxThreatGroupIdx].threat < newMeans[i].threat) {
 			groupData.maxThreatGroupIdx = i;
-		}
-		if (newMeans[groupData.maxSizeGroupIdx].sizeThreat < newMeans[i].sizeThreat) {
-			groupData.maxSizeGroupIdx = i;
 		}
 	}
 	groupData.enemyPos /= newK;
@@ -578,7 +543,6 @@ void CEnemyManager::SwapBuffers()
 	enemyGroups.swap(groupData.enemyGroups);
 	enemyPos = groupData.enemyPos;
 	maxThreatGroupIdx = groupData.maxThreatGroupIdx;
-	maxSizeGroupIdx = groupData.maxSizeGroupIdx;
 }
 
 } // namespace circuit

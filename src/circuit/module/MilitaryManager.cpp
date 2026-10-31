@@ -1631,7 +1631,7 @@ void CMilitaryManager::UpdateDefenceTasks()
 //		if (groupIdx >= 0) {
 //			dt->SetMaxPower(std::max(minAttackers, enemyGroups[groupIdx].threat));
 //		}
-		dt->SetMaxPower(std::max(minAttackers, circuit->GetEnemyManager()->GetMaxGroupSizeThreat()));  // quota.group_size, no thr_mod
+		dt->SetMaxPower(std::max(minAttackers, circuit->GetEnemyManager()->GetMaxGroupThreat()));
 	}
 
 	/*
@@ -1771,7 +1771,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 					}
 				} break;
 				case IFighterTask::FightType::DEFEND: {
-					const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemySizeThreat() / circuit->GetAllyTeam()->GetAliveSize());
+					const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
 					task = EnqueueDefend(IFighterTask::FightType::ATTACK, power);
 				} break;
 				default: break;
@@ -1781,7 +1781,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 			}
 		} else {
 			const bool isDefend = GetTasks(IFighterTask::FightType::ATTACK).empty();
-			const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemySizeThreat() / circuit->GetAllyTeam()->GetAliveSize());
+			const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
 			task = isDefend ? EnqueueDefend(IFighterTask::FightType::ATTACK, power)
 							: EnqueueTask(IFighterTask::FightType::ATTACK);
 		}
