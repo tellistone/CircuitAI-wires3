@@ -9,6 +9,7 @@
 #include "task/TaskManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
+#include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
@@ -33,6 +34,8 @@ using namespace springai;
 CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		: ISquadTask(mgr, FightType::RAID, powerMod)
 		, maxPower(maxPower)
+		, fleeFrame(0)
+		, fleePathFrame(0)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -117,6 +120,20 @@ void CRaidTask::Update()
 		return;
 	}
 
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+
+	/*
+	 * Escape: checked on every update (not just every decision), also while engaging or regrouping
+	 */
+	bool isPathUnsafe = false;
+	if (IsInDanger(frame, isPathUnsafe) && Flee(frame)) {
+		return;
+	}
+	if (frame < fleeFrame) {
+		return;  // keep running along the escape path for a moment instead of turning straight back
+	}
+
 	/*
 	 * Regroup if required
 	 */
@@ -124,13 +141,12 @@ void CRaidTask::Update()
 	bool mustRegroup = IsMustRegroup();
 	if (State::REGROUP == state) {
 		if (mustRegroup) {
-			CCircuitAI* circuit = manager->GetCircuit();
-			int frame = circuit->GetLastFrame() + FRAMES_PER_SEC * 60;
+			const int timeout = frame + FRAMES_PER_SEC * 60;
 			for (CCircuitUnit* unit : units) {
 				const AIFloat3& pos = utils::get_radial_pos(groupPos, SQUARE_SIZE * 8);
 				TRY_UNIT(circuit, unit,
-					unit->CmdMoveTo(groupPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame);
-					unit->GetUnit()->PatrolTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, frame);
+					unit->CmdMoveTo(groupPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+					unit->GetUnit()->PatrolTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
 				)
 				unit->GetTravelAct()->StateWait();
 			}
@@ -138,9 +154,9 @@ void CRaidTask::Update()
 		return;
 	}
 
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	bool isExecute = (updCount % 2 == 0) && (frame >= lastTouched + FRAMES_PER_SEC);
+	// Decide about once a second (was every 2nd update and at least 1s), sooner when the path ahead turned dangerous
+	bool isExecute = (frame >= lastTouched + FRAMES_PER_SEC)
+		|| (isPathUnsafe && (frame >= lastTouched + FRAMES_PER_SEC / 2));
 	if (!isExecute) {
 		for (CCircuitUnit* unit : units) {
 			isExecute |= unit->IsForceUpdate(frame);
@@ -190,7 +206,8 @@ void CRaidTask::Update()
 				}
 			}
 		} else {
-			Attack(frame);
+			// Direct Attack keeps FindTarget's priority (e.g. turret over nearby solars); a fight-move would shoot whatever comes first
+			Attack(frame, true);
 		}
 		return;
 	}
@@ -212,7 +229,7 @@ void CRaidTask::Update()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, threatMap, frame,
-			startPos, pathRange, !urgentPositions.empty() ? urgentPositions : enemyPositions, GetHitTest(), attackPower);
+			startPos, pathRange, !urgentPositions.empty() ? urgentPositions : enemyPositions, GetHitTest(), GetSafeThreat());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -259,7 +276,10 @@ bool CRaidTask::FindTarget()
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
 	const float maxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
-	const float maxPower = attackPower * powerMod;
+	// Current health, same measure as the escape check; for 4s after an escape demand a 25% margin,
+	// so the group doesn't pick a target at the edge of the danger it just left and bounce back and forth
+	const bool isCautious = (circuit->GetLastFrame() < fleeFrame + FRAMES_PER_SEC * 4);
+	const float maxPower = GetSafeThreat() * (isCautious ? 0.75f : 1.f);
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
@@ -406,7 +426,7 @@ void CRaidTask::FallbackRaid()
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const AIFloat3& pos = leader->GetPos(frame);
 	const AIFloat3& threatPos = leader->GetTravelAct()->IsActive() ? position : pos;
-	if (attackPower * powerMod <= threatMap->GetThreatAt(leader, threatPos)) {
+	if (GetSafeThreat() <= threatMap->GetThreatAt(leader, threatPos)) {
 		position = circuit->GetMilitaryManager()->GetRaidPosition(leader);
 	}
 
@@ -449,6 +469,123 @@ void CRaidTask::ApplyRaidPath(const CQueryPathSingle* query)
 		)
 		unit->GetTravelAct()->StateWait();
 	}
+}
+
+float CRaidTask::GetSafeThreat() const
+{
+	// Like attackPower (def power incl. pwr_mod) but scaled by current health, times the task's powerMod
+	float power = 0.f;
+	for (CCircuitUnit* unit : units) {
+		power += unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+	}
+	return std::max(power, THREAT_MIN) * powerMod;
+}
+
+float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
+{
+	// Same allowance as FindTarget near our base: up to 200% at the base centre
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();
+	const float sqDist = basePos.SqDistance2D(pos);
+	return (sqDist < SQUARE(baseRange)) ? safeThreat * (2.0f - sqrtf(sqDist) / baseRange) : safeThreat;
+}
+
+bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe) const
+{
+	isPathUnsafe = false;
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	const float safeThreat = GetSafeThreat();
+	for (CCircuitUnit* unit : units) {
+		if (unit->GetUnit()->IsCloaked()) {
+			continue;  // unseen: enemies in range can't shoot it
+		}
+		const AIFloat3& pos = unit->GetPos(frame);
+		if (threatMap->GetThreatAt(unit, pos) >= GetSafeThreatAt(pos, safeThreat)) {
+			return true;
+		}
+	}
+
+	if (!leader->GetTravelAct()->IsActive() || leader->GetUnit()->IsCloaked()) {
+		return false;
+	}
+	const std::shared_ptr<PathInfo>& path = leader->GetTravelAct()->GetPath();
+	if (path == nullptr) {
+		return false;
+	}
+	// The stretch of path the group covers in the next ~2s
+	const AIFloat3& pos = leader->GetPos(frame);
+	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
+	const float sqLookAhead = SQUARE(lookAhead);
+	for (const AIFloat3& p : path->posPath) {
+		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetSafeThreatAt(p, safeThreat))) {
+			isPathUnsafe = true;
+			break;
+		}
+	}
+	return false;
+}
+
+bool CRaidTask::Flee(int frame)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	AIFloat3 dest = circuit->GetFactoryManager()->GetClosestHaven(leader);
+	if (!utils::is_valid(dest)) {
+		dest = circuit->GetSetupManager()->GetBasePos();
+	}
+	if (leader->GetPos(frame).SqDistance2D(dest) < SQUARE(400.f)) {
+		fleeFrame = 0;
+		return false;  // danger at home: running gets us nowhere
+	}
+
+	SetTarget(nullptr);
+	state = State::ROAM;
+	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
+	fleeFrame = frame + FRAMES_PER_SEC * 2;
+	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
+		return true;  // escape path is fresh
+	}
+	fleePathFrame = frame;
+	lastTouched = frame;
+
+	// Break off at once; the threat-aware path replaces this when it is ready
+	if (!wasFleeing) {
+		for (CCircuitUnit* unit : units) {
+			if (unit->Blocker() != nullptr) {
+				continue;
+			}
+			unit->GetTravelAct()->StateWait();
+			TRY_UNIT(circuit, unit,
+				unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+				unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+			)
+		}
+	}
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			leader, circuit->GetThreatMap(), frame,
+			leader->GetPos(frame), dest, pathfinder->GetSquareSize());  // threat as cost, no cap: least-threat way out
+	pathQueries[leader] = query;  // supersedes any pending target/raid path
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
+		}
+	});
+	return true;
+}
+
+void CRaidTask::ApplyFleePath(const CQueryPathSingle* query)
+{
+	// Keep the raid destination in 'position': once the escape ends, FallbackRaid re-checks it
+	// (and picks another if it is dangerous) instead of the group walking all the way home
+	pPath = query->GetPathInfo();
+	if (pPath->posPath.empty()) {
+		return;  // keep the straight move from Flee()
+	}
+	ActivePath();
 }
 
 } // namespace circuit
