@@ -126,7 +126,7 @@ public:
 	float GetCommDefRad(float baseDist) const { return defence->GetCommRad(baseDist); }
 
 	// Raid groups attack these first (nearest wins): enemy types with the "raid_target" attribute,
-	// or whose roles are in quota.raid_target_roles (default: builder, comm)
+	// or whose roles are in quota.raid_target_roles (default: builder, commander)
 	bool IsRaidPreferred(const CCircuitDef* edef) const {
 		return edef->IsAttrRaidTarget() || edef->IsEnemyRoleAny(raidTargetRoles);
 	}

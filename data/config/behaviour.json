@@ -3,7 +3,7 @@
 "quota": {
 	"scout": 1,  // max scout units out of raiders
 	"raid": [7.0, 42.0],  // [<min>, <avg>] power of raider squad
-	"raid_target_roles": ["builder", "comm"],  // enemy roles raid groups attack first (plus types with the "raid_target" attribute); [] = attribute only
+	"raid_target_roles": ["builder", "commander"],  // enemy roles raid groups attack first (plus types with the "raid_target" attribute); [] = attribute only
 	"attack": 20.0,  // min power of attack group
 	"thr_mod": {
 		"attack": [0.45, 0.45],  // [<min>, <max>] enemy threat modifier for target selection of attack task

@@ -338,7 +338,10 @@ void CMilitaryManager::ReadConfig()
 	raid.avg = qraid.get((unsigned)1, 5.f).asFloat();
 	minAttackers = quotas.get("attack", 8.f).asFloat();
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
-	if (raidTargets.isNull()) {  // legacy: constructors and commanders
+	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
+		if (!raidTargets.isNull()) {
+			circuit->LOG("CONFIG %s: quota.raid_target_roles must be a list of roles, using [\"builder\", \"commander\"]", cfgName.c_str());
+		}
 		raidTargetRoles = CCircuitDef::RoleMask::BUILDER | CCircuitDef::RoleMask::COMM;
 	} else {
 		raidTargetRoles = 0;
