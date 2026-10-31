@@ -9,6 +9,10 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_SCOUTTASK_H_
 
 #include "task/fighter/FighterTask.h"
+#include "unit/CoreUnit.h"
+
+#include <memory>
+#include <unordered_map>
 
 namespace circuit {
 
@@ -33,7 +37,27 @@ private:
 	bool FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);
 	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackScout(CCircuitUnit* unit, bool isUpdating);
-	void ApplyScoutPath(const CQueryPathSingle* query);
+	void ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, int attempt);
+
+	// Threat-awareness helpers
+	float GetSafeThreat(CCircuitUnit* unit) const;  // threat above this is too dangerous for the scout
+	float GetPathThreatCap(CCircuitUnit* unit) const;  // hard threat cap for path queries
+	void AttackTarget(CCircuitUnit* unit, const springai::AIFloat3& firePos, int frame);
+	void ApproachTarget(CCircuitUnit* unit, const springai::AIFloat3& pos, float fireRange, bool isUpdating);
+	void ApplyApproachPath(const CQueryPathSingle* query, ICoreUnit::Id targetId, bool isUpdating);
+	springai::AIFloat3 PickScoutPosition(CCircuitUnit* unit, float safeThreat);
+	void RunScoutQuery(CCircuitUnit* unit, bool isCapped, int attempt);
+
+	void ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath, ICoreUnit::Id pathTargetId, bool isCapped);
+	bool NeedRepath(CCircuitUnit* unit, ICoreUnit::Id targetId) const;
+	bool IsPathUnsafe(CCircuitUnit* unit) const;
+
+	std::unordered_map<ICoreUnit::Id, int> badTargets;
+	int lastPathFrame = -1;  // when the current travel path was applied
+	ICoreUnit::Id lastPathTargetId = -1;  // target the current travel path leads to (-1: none)
+	bool isPathCapped = false;  // current travel path avoids tiles above safe threat
+	int lastAttackFrame = -1;
+	ICoreUnit::Id lastAttackId = -1;  // enemy id -> frame until which it is skipped
 };
 
 } // namespace circuit
