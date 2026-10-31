@@ -8,6 +8,8 @@
 	"attack": 20.0,  // min power of attack group
 	"thr_mod": {
 		"attack": [0.45, 0.45],  // [<min>, <max>] enemy threat modifier for target selection of attack task
+		"raid": [0.45, 0.45],  // same for raid task (raider groups): target choice, escape and path threat; missing = use "attack"
+		"scout": [0.45, 0.45],  // same for scout task; missing = use "attack"
 		"defence": [0.80, 0.80],  // [<min>, <max>] enemy threat modifier for group size calculation of defence task
 		"mobile": 1.075,  // initial modifier for power of attack group based on mobile enemy threat
 		"static": 4.25,  // initial modifier for power of attack group based on static enemy threat

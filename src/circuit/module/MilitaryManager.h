@@ -217,7 +217,7 @@ private:
 	struct SThreatQuota {
 		float min;
 		float len;
-	} attackMod, defenceMod;
+	} attackMod, defenceMod, raidMod, scoutMod;
 
 	std::vector<CCircuitDef*> defenderDefs;
 	std::vector<CCircuitDef*> landDefenders;

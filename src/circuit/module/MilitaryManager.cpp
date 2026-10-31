@@ -366,6 +366,19 @@ void CMilitaryManager::ReadConfig()
 	const Json::Value& qthrAtk = qthrMod["attack"];
 	attackMod.min = qthrAtk.get((unsigned)0, 1.f).asFloat();
 	attackMod.len = qthrAtk.get((unsigned)1, 1.f).asFloat() - attackMod.min;
+	// Raid and scout tasks have their own [min, max]; missing = same as "attack" (old behaviour)
+	auto readThrMod = [&qthrMod](const char* name, const SThreatQuota& fallback) {
+		const Json::Value& q = qthrMod[name];
+		if (!q.isArray()) {
+			return fallback;
+		}
+		SThreatQuota mod;
+		mod.min = q.get((unsigned)0, fallback.min).asFloat();
+		mod.len = q.get((unsigned)1, mod.min).asFloat() - mod.min;
+		return mod;
+	};
+	raidMod = readThrMod("raid", attackMod);
+	scoutMod = readThrMod("scout", attackMod);
 	const Json::Value& qthrDef = qthrMod["defence"];
 	defenceMod.min = qthrDef.get((unsigned)0, 1.f).asFloat();
 	defenceMod.len = qthrDef.get((unsigned)1, 1.f).asFloat() - defenceMod.min;
@@ -608,12 +621,12 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 			break;
 		}
 		case IFighterTask::FightType::SCOUT: {
-			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
+			const float mod = (float)rand() / RAND_MAX * scoutMod.len + scoutMod.min;
 			task = new CScoutTask(this, 0.75f / mod);
 			break;
 		}
 		case IFighterTask::FightType::RAID: {
-			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
+			const float mod = (float)rand() / RAND_MAX * raidMod.len + raidMod.min;
 			task = new CRaidTask(this, raid.avg, 0.75f / mod);
 			break;
 		}
