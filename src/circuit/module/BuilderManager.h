@@ -95,6 +95,15 @@ public:
 								CCircuitUnit* target,
 								int timeout = ASSIGN_TIMEOUT);
 	bool IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit* unit, const springai::AIFloat3& pos) const;
+
+	struct SEscort {
+		float minPower;  // min attack power of a group to get escort builder, 0 = disabled
+		float share;  // max share of workers on escort duty
+		float behind;  // distance behind group leader (towards base)
+		float follow;  // distance from escort point at which builder catches up with plain move
+		bool isComm;  // allow commander to escort
+	};
+	const SEscort& GetEscortCfg() const { return escort; }
 private:
 	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);
 public:
@@ -159,6 +168,7 @@ private:
 	void Watchdog();
 	void UpdateIdle();
 	void UpdateBuild();
+	void UpdateEscort();
 
 	Handlers2 createdHandler;
 	Handlers1 finishedHandler;
@@ -180,6 +190,8 @@ private:
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
 	bool isPrioRepairSafe;  // apply builder threat check to NOW repair of mobile units
 	bool isPrioRepairSafeStatic;  // same for static units
+	SEscort escort;
+	std::set<IUnitTask*> escortTasks;
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner
 
 	CCircuitDef* terraDef;
