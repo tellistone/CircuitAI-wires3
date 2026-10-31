@@ -31,13 +31,13 @@
 },
 
 // Builder that follows a strong attack group: patrols behind it (auto repair/reclaim like fight) while the group
-// holds or advances, plain moves while it falls back towards base or when the builder lags behind
+// holds or advances, plain moves while it falls back towards base, threat-aware path when it lags behind
 "escort": {
-	"min_power": 60.0,  // min attack power of a group to get an escort builder (compare quota.attack), 0 = disabled
+	"min_power": 60.0,  // min attack power of a group to get and keep an escort builder (compare quota.attack), 0 = disabled
 	"share": 0.2,  // max share of builders on escort duty (rounded down: 4 builders * 0.2 = 0 escorts)
 	"behind": 150.0,  // distance behind the group leader, towards base
-	"follow": 600.0,  // if further than this from its spot, builder catches up with plain move
-	"range": 2000.0,  // only builders within this distance of the group are picked (catch-up uses a threat-aware path)
+	"follow": 600.0,  // if further than this from its spot, builder catches up along a threat-aware path
+	"range": 600.0,  // only builders within this distance of any group member are picked
 	"comm": false  // allow commander as escort
 },
 

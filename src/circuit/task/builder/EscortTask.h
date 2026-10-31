@@ -38,7 +38,7 @@ public:
 	ISquadTask* GetSquad() const { return squad; }
 
 private:
-	bool IsSquadAlive() const;
+	bool IsSquadValid() const;
 	void Follow(CCircuitUnit* unit, bool isForce);
 	void TravelTo(CCircuitUnit* unit, const springai::AIFloat3& pos);
 	void ApplyEscortPath(const CQueryPathSingle* query);
@@ -48,6 +48,7 @@ private:
 	springai::AIFloat3 orderPos;
 	bool isFightOrder;
 	bool isArrived;  // threat-aware catch-up path finished
+	bool isTraveling;  // catch-up path is active
 };
 
 } // namespace circuit

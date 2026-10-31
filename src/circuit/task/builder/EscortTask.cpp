@@ -33,6 +33,7 @@ CBEscortTask::CBEscortTask(ITaskManager* mgr, ISquadTask* squad)
 		, orderPos(-RgtVector)
 		, isFightOrder(false)
 		, isArrived(false)
+		, isTraveling(false)
 {
 }
 
@@ -71,7 +72,7 @@ void CBEscortTask::Start(CCircuitUnit* unit)
 
 void CBEscortTask::Update()
 {
-	if (!IsSquadAlive()) {
+	if (!IsSquadValid()) {
 		manager->AbortTask(this);
 		return;
 	}
@@ -97,7 +98,7 @@ void CBEscortTask::Stop(bool done)
 
 void CBEscortTask::OnUnitIdle(CCircuitUnit* unit)
 {
-	if (!IsSquadAlive()) {
+	if (!IsSquadValid()) {
 		manager->AbortTask(this);
 		return;
 	}
@@ -106,17 +107,27 @@ void CBEscortTask::OnUnitIdle(CCircuitUnit* unit)
 
 void CBEscortTask::OnTravelEnd(CCircuitUnit* unit)
 {
-	// NOTE: do not issue orders or touch unit actions here, switch to patrol on next Update
-	isArrived = true;
+	// NOTE: do not issue orders or touch unit actions here, switch to patrol on next Update.
+	//       Only for a finished catch-up path, not for every StateFinish() of the action.
+	if (isTraveling) {
+		isTraveling = false;
+		isArrived = true;
+	}
 }
 
-bool CBEscortTask::IsSquadAlive() const
+bool CBEscortTask::IsSquadValid() const
 {
 	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
 	// NOTE: squad may be deleted already, do not dereference before lookup
 	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(static_cast<IFighterTask::FightType>(fightType));
-	return (tasks.find(static_cast<IFighterTask*>(squad)) != tasks.end())
-		&& !squad->IsDead() && (squad->GetLeader() != nullptr);
+	if ((tasks.find(static_cast<IFighterTask*>(squad)) == tasks.end())
+		|| squad->IsDead() || (squad->GetLeader() == nullptr))
+	{
+		return false;
+	}
+	// Group got too weak to be worth an escort
+	const CBuilderManager::SEscort& escort = static_cast<CBuilderManager*>(manager)->GetEscortCfg();
+	return squad->GetAttackPower() >= escort.minPower;
 }
 
 void CBEscortTask::Follow(CCircuitUnit* unit, bool isForce)
@@ -171,6 +182,7 @@ void CBEscortTask::Follow(CCircuitUnit* unit, bool isForce)
 		return;
 	}
 	if (!travelAct->IsFinished()) {
+		isTraveling = false;
 		travelAct->StateFinish();  // caught up: hand over to direct orders
 		isForce = true;
 	}
@@ -229,6 +241,7 @@ void CBEscortTask::ApplyEscortPath(const CQueryPathSingle* query)
 	if (pPath->path.size() > 2) {
 		unit->GetTravelAct()->SetPath(pPath);
 		unit->GetTravelAct()->StateActivate();
+		isTraveling = true;
 	} else {
 		// Too short for a path: plain move, next Update switches to patrol once close
 		unit->GetTravelAct()->StateFinish();

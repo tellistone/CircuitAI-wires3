@@ -165,7 +165,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	escort.share = escortCfg.get("share", 0.2f).asFloat();
 	escort.behind = escortCfg.get("behind", 150.f).asFloat();
 	escort.follow = escortCfg.get("follow", 600.f).asFloat();
-	escort.range = escortCfg.get("range", 2000.f).asFloat();
+	escort.range = escortCfg.get("range", 600.f).asFloat();
 	escort.isComm = escortCfg.get("comm", false).asBool();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -1400,8 +1400,9 @@ void CBuilderManager::UpdateEscort()
 			continue;
 		}
 
-		// Nearest builder that is not busy with urgent or escort work
+		// Nearest builder that is not busy with urgent or escort work, within range of any group member
 		const AIFloat3& pos = leader->GetPos(frame);
+		const std::set<CCircuitUnit*>& members = squad->GetAssignees();
 		CCircuitUnit* bestWorker = nullptr;
 		float minSqDist = SQUARE(escort.range);
 		for (CCircuitUnit* worker : workers) {
@@ -1421,7 +1422,11 @@ void CBuilderManager::UpdateEscort()
 					continue;
 				}
 			}
-			const float sqDist = pos.SqDistance2D(worker->GetPos(frame));
+			const AIFloat3& workerPos = worker->GetPos(frame);
+			float sqDist = pos.SqDistance2D(workerPos);
+			for (CCircuitUnit* member : members) {
+				sqDist = std::min(sqDist, member->GetPos(frame).SqDistance2D(workerPos));
+			}
 			if ((sqDist < minSqDist) && terrainMgr->CanReachAt(worker, pos, worker->GetCircuitDef()->GetBuildDistance())) {
 				minSqDist = sqDist;
 				bestWorker = worker;
