@@ -230,10 +230,16 @@ void CRaidTask::Update()
 	const AIFloat3& startPos = leader->GetPos(frame);
 	const float pathRange = std::max(std::min(cdef->GetMaxRange(), cdef->GetLosRadius()), (float)threatMap->GetSquareSize());
 
+	// Uniform cap along the path: the strictest thr_mod.distance value of start and goals
+	const F3Vec& goals = !urgentPositions.empty() ? urgentPositions : enemyPositions;
+	float pathMod = GetThrDistModAt(startPos);
+	for (const AIFloat3& g : goals) {
+		pathMod = std::max(pathMod, GetThrDistModAt(g));
+	}
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, threatMap, frame,
-			startPos, pathRange, !urgentPositions.empty() ? urgentPositions : enemyPositions, GetHitTest(), GetSafeThreat() / GetThrDistModAt(startPos));
+			startPos, pathRange, goals, GetHitTest(), GetSafeThreat() / pathMod);
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 

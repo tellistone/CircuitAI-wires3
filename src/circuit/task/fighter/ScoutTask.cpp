@@ -163,10 +163,14 @@ void CScoutTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	const float range = std::max(unit->GetUnit()->GetMaxRange() + threatMap->GetSquareSize() * 2,
 								 /*unit->IsUnderWater(frame) ? cdef->GetSonarRadius() : */cdef->GetLosRadius());
 
+	float goalMod = 1.f;
+	for (const AIFloat3& ePos : enemyPositions) {
+		goalMod = std::max(goalMod, GetThrDistModAt(ePos));
+	}
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			unit, threatMap, frame,
-			pos, range * 0.5f, enemyPositions, nullptr, GetPathThreatCap(unit));
+			pos, range * 0.5f, enemyPositions, nullptr, GetPathThreatCap(unit, goalMod));
 	pathQueries[unit] = query;
 	query->HoldTask(this);
 
@@ -349,7 +353,7 @@ void CScoutTask::RunScoutQuery(CCircuitUnit* unit, bool isCapped, int attempt)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			unit, threatMap, frame,
 			pos, position, pathfinder->GetSquareSize(), nullptr,
-			isCapped ? GetPathThreatCap(unit) : std::numeric_limits<float>::max());
+			isCapped ? GetPathThreatCap(unit, GetThrDistModAt(position)) : std::numeric_limits<float>::max());
 	pathQueries[unit] = query;
 	query->HoldTask(this);
 
@@ -409,14 +413,16 @@ float CScoutTask::GetSafeThreat(CCircuitUnit* unit) const
 	return std::max(manager->GetCircuit()->GetThreatMap()->GetUnitThreat(unit), THREAT_MIN) * powerMod;
 }
 
-float CScoutTask::GetPathThreatCap(CCircuitUnit* unit) const
+float CScoutTask::GetPathThreatCap(CCircuitUnit* unit, float goalMod) const
 {
 	// NOTE: The pathfinder uses the decloak-range array for cloaked units, which is a different scale
 	if (unit->GetUnit()->IsCloaked()) {
 		return std::numeric_limits<float>::max();
 	}
+	// The cap is uniform along the path: use the stricter of start and goal, so a path planned near home
+	// doesn't get the bold near-home cap all the way into enemy land (and then trip the look-ahead check)
 	CCircuitAI* circuit = manager->GetCircuit();
-	return GetSafeThreat(unit) / GetThrDistModAt(unit->GetPos(circuit->GetLastFrame()));
+	return GetSafeThreat(unit) / std::max(GetThrDistModAt(unit->GetPos(circuit->GetLastFrame())), goalMod);
 }
 
 void CScoutTask::AttackTarget(CCircuitUnit* unit, const AIFloat3& firePos, int frame)
@@ -450,7 +456,7 @@ void CScoutTask::ApproachTarget(CCircuitUnit* unit, const AIFloat3& pos, float f
 	const float pathRange = std::max(fireRange * 0.9f, (float)pathfinder->GetSquareSize());
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			unit, threatMap, frame,
-			pos, position, pathRange, nullptr, GetPathThreatCap(unit));
+			pos, position, pathRange, nullptr, GetPathThreatCap(unit, GetThrDistModAt(position)));
 	pathQueries[unit] = query;
 	query->HoldTask(this);
 

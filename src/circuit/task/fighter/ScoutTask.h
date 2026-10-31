@@ -41,7 +41,8 @@ private:
 
 	// Threat-awareness helpers
 	float GetSafeThreat(CCircuitUnit* unit) const;  // threat above this is too dangerous for the scout
-	float GetPathThreatCap(CCircuitUnit* unit) const;  // hard threat cap for path queries
+	// Hard threat cap for path queries; goalMod = thr_mod.distance multiplier at the goal (the stricter of start and goal is used)
+	float GetPathThreatCap(CCircuitUnit* unit, float goalMod = 1.f) const;
 	void AttackTarget(CCircuitUnit* unit, const springai::AIFloat3& firePos, int frame);
 	void ApproachTarget(CCircuitUnit* unit, const springai::AIFloat3& pos, float fireRange, bool isUpdating);
 	void ApplyApproachPath(const CQueryPathSingle* query, ICoreUnit::Id targetId, bool isUpdating);
