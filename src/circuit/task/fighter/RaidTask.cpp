@@ -276,7 +276,10 @@ bool CRaidTask::FindTarget()
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
 	const float maxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
-	const float maxPower = GetSafeThreat();  // current health, same measure as the escape check
+	// Current health, same measure as the escape check; for 10s after an escape demand a 25% margin,
+	// so the group doesn't pick a target at the edge of the danger it just left and bounce back and forth
+	const bool isCautious = (circuit->GetLastFrame() < fleeFrame + FRAMES_PER_SEC * 10);
+	const float maxPower = GetSafeThreat() * (isCautious ? 0.75f : 1.f);
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
@@ -494,13 +497,16 @@ bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe) const
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
 	const float safeThreat = GetSafeThreat();
 	for (CCircuitUnit* unit : units) {
+		if (unit->GetUnit()->IsCloaked()) {
+			continue;  // unseen: enemies in range can't shoot it
+		}
 		const AIFloat3& pos = unit->GetPos(frame);
 		if (threatMap->GetThreatAt(unit, pos) >= GetSafeThreatAt(pos, safeThreat)) {
 			return true;
 		}
 	}
 
-	if (!leader->GetTravelAct()->IsActive()) {
+	if (!leader->GetTravelAct()->IsActive() || leader->GetUnit()->IsCloaked()) {
 		return false;
 	}
 	const std::shared_ptr<PathInfo>& path = leader->GetTravelAct()->GetPath();
@@ -563,18 +569,19 @@ bool CRaidTask::Flee(int frame)
 	pathQueries[leader] = query;  // supersedes any pending target/raid path
 	query->HoldTask(this);
 
-	pathfinder->RunQuery(query, [this, dest](const IPathQuery* query) {
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
-			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query), dest);
+			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
 		}
 	});
 	return true;
 }
 
-void CRaidTask::ApplyFleePath(const CQueryPathSingle* query, const AIFloat3& dest)
+void CRaidTask::ApplyFleePath(const CQueryPathSingle* query)
 {
+	// Keep the raid destination in 'position': once the escape ends, FallbackRaid re-checks it
+	// (and picks another if it is dangerous) instead of the group walking all the way home
 	pPath = query->GetPathInfo();
-	position = dest;
 	if (pPath->posPath.empty()) {
 		return;  // keep the straight move from Flee()
 	}

@@ -37,7 +37,7 @@ private:
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
 	bool IsInDanger(int frame, bool& isPathUnsafe) const;
 	bool Flee(int frame);  // false: nowhere better to go (already home), fight instead
-	void ApplyFleePath(const CQueryPathSingle* query, const springai::AIFloat3& dest);
+	void ApplyFleePath(const CQueryPathSingle* query);
 
 	float maxPower;
 	int fleeFrame;  // keep running until this frame
