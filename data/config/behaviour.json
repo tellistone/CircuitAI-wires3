@@ -57,6 +57,16 @@
 	"take_from": "high"  // highest job priority a builder can be taken off for escort: "idle" (idle builders only), "low", "normal" or "high" (urgent jobs never)
 },
 
+// Artillery (main role artillery): each unit works alone, shooting known enemy buildings
+"artillery": {
+	"ally_threat": 10.0,  // only walk to a firing spot with at least this much allied power within ally_radius: our and allied mobile armed units, not counting artillery (main role) or aircraft, so artillery can't escort itself. Power is each unit's power including its pwr_mod (thr_mod is ignored). A building already in range is shot only while the spot still has this much cover, otherwise the unit rejoins the group; -1 = any spot, always shoot (old behaviour)
+	"ally_radius": 500.0,  // see ally_threat
+	"max_path_threat": 1.0,  // the path to a firing spot may not cross enemy threat (threat map, summed and fading with distance) above this x the unit's own power (including pwr_mod); if no such path exists it joins a group instead; -1 = no limit (threat is only avoided where cheap)
+	"no_scout": true,  // nothing to shoot or walk to: stay put while the spot is threat-free and (ally_threat) covered, otherwise move to safety: behind the nearest attack/defend group, else a defended mex cluster, else the base. false = old behaviour: walk the scout route to enemy mexes, or fight-move to a random spot
+	"follow_dist": 300.0,  // when moving to safety near a group, stand this far behind its leader on the side towards our base
+	"artillery_flee_margin": 400.0  // checked every update: flee when an armed mobile enemy currently in radar or LOS (aircraft, paralysed and unfinished units excluded; unidentified radar blips only while moving) is within its weapon range + this, unless (ally_threat) our cover is at the artillery's spot. It runs to the nearest safety spot (behind a group, defended mex cluster, base) that is further from the enemy, else the one furthest from it, and stops fleeing once the enemy is out of reach or cover arrives; -1 = off. Default for all artillery; a unit type can override it with its own artillery_flee_margin in its "behaviour" entry
+},
+
 "guard": {
 	// units with "attribute": ["guarded"] (e.g. artillery) also get a guard slot that follows all the rules below
 	"roles": ["raider", "riot"],  // main roles that may take a builder's guard slot; a custom role ("bullshit_raider") matches only itself, a base role ("raider") also matches roles bound to it; [] = nobody guards

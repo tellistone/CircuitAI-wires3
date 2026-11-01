@@ -356,6 +356,11 @@ void CFactoryManager::ReadConfig()
 
 		cdef->SetRetreat(behaviour.get("retreat", cdef->GetRetreat()).asFloat());
 
+		const Json::Value& artyFlee = behaviour["artillery_flee_margin"];
+		if (!artyFlee.isNull()) {
+			cdef->SetArtyFleeMargin(artyFlee.asFloat());
+		}
+
 		const Json::Value& pwrMod = behaviour["pwr_mod"];
 		if (!pwrMod.isNull()) {
 			cdef->ModPower(pwrMod.asFloat());

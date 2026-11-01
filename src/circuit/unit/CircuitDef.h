@@ -272,6 +272,9 @@ public:
 
 	void SetRetreat(float value) { retreat = value; }
 	float GetRetreat()   const { return retreat; }
+	// behaviour.json per unit "artillery_flee_margin"; unset = use the "artillery" block's value
+	void SetArtyFleeMargin(float value) { artyFleeMargin = value; isArtyFleeMarginSet = true; }
+	float GetArtyFleeMargin(float defaultValue) const { return isArtyFleeMarginSet ? artyFleeMargin : defaultValue; }
 
 	float GetRadius();
 	float GetHeight();
@@ -369,6 +372,8 @@ private:
 //	float altitude;
 	float jumpRange;
 	float retreat;
+	float artyFleeMargin = -1.f;
+	bool isArtyFleeMarginSet = false;
 
 	float radius;
 	float height;
