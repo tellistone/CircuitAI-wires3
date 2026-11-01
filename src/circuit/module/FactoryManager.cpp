@@ -287,6 +287,10 @@ void CFactoryManager::ReadConfig()
 		cdef->AddRole(it->second.type, circuit->GetBindedRole(it->second.type));
 		roleDefs[it->second.type].insert(cdef->GetId());
 
+		// Config role list is authoritative for enemy roles: replace auto-assigned
+		// ones (e.g. "air" for every flyer) so scouts etc. don't count as air threat.
+		// Commanders keep "comm".
+		cdef->SetEnemyRoles(cdef->IsRoleComm() ? CCircuitDef::GetMask(ROLE_TYPE(COMM)) : static_cast<CCircuitDef::RoleM>(CCircuitDef::RoleMask::NONE));
 //		if (role.size() < 2) {
 			cdef->AddEnemyRoles(it->second.mask);
 //		} else {
