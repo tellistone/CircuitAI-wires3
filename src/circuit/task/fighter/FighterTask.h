@@ -60,12 +60,17 @@ protected:
 	// NONE: no usable range (old orders); HOLD: every spot dangerous but the unit's own spot is safe;
 	// RISKY: every spot dangerous, the unit's too: least dangerous spot by the usual score
 	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
+	float GetFireRange(CCircuitUnit* unit) const;  // max range against the current target's kind
+	bool IsFireSpotKept(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // old spot still within 0.95x range
 	FireSpot FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, springai::AIFloat3& outPos) const;
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	// Units sent to a RISKY firing spot, with the frame: pull-back leaves them alone for 3 s
 	// (pointers only compared, never dereferenced)
 	std::map<CCircuitUnit*, int> riskySpotFrames;
+	// Firing spot each unit was last sent to: offered again as a candidate and claimed first
+	// (spot, frame it was last ordered); forgotten after 10 s without a new order
+	std::map<CCircuitUnit*, std::pair<springai::AIFloat3, int>> fireSpots;
 	// Threat allowed at a spot for this strength (tasks with an escape override it)
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const {
 		return std::numeric_limits<float>::max();
