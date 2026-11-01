@@ -72,6 +72,13 @@
 	"debug": false  // true = write guard events and a status line per slot every 10 s to infolog.txt (lines start with "GUARD")
 },
 
+// Mobile anti-air squads (main role anti_air)
+"antiair": {
+	"leash": 800.0,  // only chase aircraft within this distance of home: one of our attack/defend group leaders or the base; aircraft already in weapon range are always engaged; -1 = no leash (chase the nearest aircraft anywhere)
+	"own_ground": true,  // aircraft over ground where our influence beats the enemy's also count as near home
+	"fire_spot": 0.9  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
+},
+
 "defence": {
 	"infl_rad": 4,  // influenece cell radius for defendAlly map
 	"base_rad": [1000.0, 2000.0],  // defend if enemy within clamp(distance(lane_pos, base_pos), 1000, 2000) radius

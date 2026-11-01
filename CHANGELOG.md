@@ -7,6 +7,43 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Anti-air leash** (`antiair` block in `behaviour.json`). Mobile AA squads (main role `anti_air`) used to chase the
+  nearest known aircraft anywhere on the map, so they followed planes home into enemy territory alone.
+  - `leash` (default -1 = off): only chase an aircraft within this distance of home, meaning one of our attack or
+    defend group leaders or the base. An aircraft already in weapon range is always engaged. With no aircraft
+    near home, the squad stays with the nearest attack group, as it already did with no target.
+  - `own_ground` (default `false`): an aircraft over ground where our influence beats the enemy's also counts as near home.
+  - `fire_spot` (default -1 = off): check enemy threat where the squad would stand to shoot, this fraction of its
+    shortest weapon range short of the aircraft, instead of under the aircraft.
+  The shipped `behaviour.json` sets `leash` 800, `own_ground` true and `fire_spot` 0.9.
+- **Anti-air moves are always threat-aware.** AA squads no longer fall back to plain engine orders that ignore threat:
+  - no path to the target: go to a safe spot (attack group, defended mex cluster or base) instead of fight-moving at it;
+  - no path to the disengage spot: same safe-spot search instead of a straight move;
+  - hit with no safe path: threat-aware path to base instead of a straight fight-move;
+  - last resort: threat-aware path to the commander instead of a Guard order;
+  - regroup: each unit paths to the gathering point instead of fight-moving to it.
+  When even that finds no path, the squad holds where it is (weapons still fire) and retries on the next update.
+- **Anti-air firing spots.** AA squads now judge the attack task's firing spots (`IFighterTask::Attack`)
+  against their own strength: a spot or the walk to it with more threat than the squad can take counts as dangerous,
+  so they hold or pick the least dangerous spot instead of walking in. Target choice and firing spots use the same
+  allowance (squad strength x `thr_mod.base_bonus` / `thr_mod.distance.aa` at the spot).
+  At a firing spot AA now fights from the spot instead of taking an Attack order, so the engine never chases a
+  plane past it (`IFighterTask::isFireSpotChase`, new `CCircuitUnit::FightFrom`; other tasks unchanged).
+- **Anti-air path threat cap.** Every AA path request passes a threat cap (squad strength with the strictest
+  `thr_mod.distance` and loosest `base_bonus` of start and goals, never below the threat where the unit stands),
+  so routes go around known defences instead of through them. With no capped route the squad holds; only the
+  last escape to base, after being hit, may ignore the cap.
+  A unit that can't find a capped route back to its squad when regrouping leaves for its own AA task, so it
+  doesn't keep the whole squad in regroup (no targets) or get dropped as stuck. AA walks to the firing spot it
+  judged when picking a target, not to the aircraft itself. `own_ground` leaves out the squad's own influence, so
+  AA can't call its own surroundings in enemy land "ours" and creep forward.
+  A unit split off that way can't merge back for 30 s. While engaging, AA units farther than 2x their range from
+  the aircraft get no firing spot and keep following the squad path (`IFighterTask::fireSpotReach`, off for other tasks).
+  During regroup only units outside half the regroup distance get a path back; the rest hold. While engaging, AA
+  re-orders on a target tile change only once the aircraft moved 1/4 of its air range (`IFighterTask::retargetMove`,
+  off for other tasks). Leash, `fire_spot` and the engage check use the AA range against aircraft, not the longest
+  weapon range.
+  Only `leash`, `own_ground` and `fire_spot` default to the old behaviour; the other AA changes above apply to every config.
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
   slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.

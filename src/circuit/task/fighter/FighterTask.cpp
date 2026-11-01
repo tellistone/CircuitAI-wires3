@@ -175,19 +175,29 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
 	const bool isRepeatAttack = (frame >= attackFrame + attackRepeat);
 	attackFrame = isRepeatAttack ? frame : attackFrame;
+	const AIFloat3& tPos = target->GetPos();
+	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
 	std::vector<CCircuitUnit*> orderUnits;
 	for (CCircuitUnit* unit : units) {
 		if (unit->Blocker() != nullptr) {
 			continue;  // Do not interrupt current action
 		}
+		if ((fireSpotReach > 0.f)
+			&& (unit->GetPos(frame).SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * fireSpotReach)))
+		{
+			continue;  // far behind: keep following the squad's path instead of a straight walk to a spot
+		}
 		unit->GetTravelAct()->StateWait();
 
 		if (isRepeatAttack
 			|| (unit->GetTarget() != target)
-			|| (unit->GetTargetTile() != targetTile))
+			|| ((unit->GetTargetTile() != targetTile) && isTileMoveOrder))
 		{
 			orderUnits.push_back(unit);
 		}
+	}
+	if (!orderUnits.empty()) {
+		lastOrderTargetPos = tPos;
 	}
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
 	// Longest range picks first; each pick replaces that unit's claim.
@@ -214,7 +224,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			case FireSpot::RISKY: {  // RISKY: nowhere safe, not here either: the least dangerous spot
 				claims[unit] = firePos;
 				fireSpots[unit] = {firePos, frame, FireSpot::RISKY == spot};
-				unit->AttackFrom(firePos, target, targetTile, timeout);
+				if (isFireSpotChase) {
+					unit->AttackFrom(firePos, target, targetTile, timeout);
+				} else {
+					unit->FightFrom(firePos, target, targetTile, timeout);
+				}
 			} break;
 			case FireSpot::HOLD: {  // every spot dangerous, here is safe: stay, fight what comes into range
 				claims[unit] = firePos;

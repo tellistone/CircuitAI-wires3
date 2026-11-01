@@ -412,6 +412,19 @@ void CCircuitUnit::AttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int ti
 	)
 }
 
+void CCircuitUnit::FightFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout)
+{
+	target = enemy;
+	targetTile = tile;
+	TRY_UNIT(manager->GetCircuit(), this,
+		CmdMoveTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		// Fight at the spot: shoots what comes into range (the set target first), stays put
+		unit->Fight(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+		CmdWantedSpeed(NO_SPEED_LIMIT);
+		CmdSetTarget(target);
+	)
+}
+
 void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, int timeout)
 {
 	target = enemy;
