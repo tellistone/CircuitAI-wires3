@@ -746,7 +746,7 @@ float CMilitaryManager::GetAttackGatherPower() const
 	return std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
 }
 
-CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit) const
+CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self) const
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
@@ -756,7 +756,7 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit) const
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
 		CAttackTask* squad = static_cast<CAttackTask*>(t);
 		CCircuitUnit* squadLeader = squad->GetLeader();
-		if (squad->IsDead() || (squadLeader == nullptr) || (squad->GetAttackPower() < minAttackers)
+		if ((squad == self) || squad->IsDead() || (squadLeader == nullptr) || (squad->GetAttackPower() <= power)
 			|| !squad->IsCompatible(unit))
 		{
 			continue;
@@ -774,9 +774,9 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit) const
 	return best;
 }
 
-IFighterTask* CMilitaryManager::EnqueueReinforce(CCircuitUnit* unit)
+IFighterTask* CMilitaryManager::EnqueueReinforce(CCircuitUnit* unit, float power)
 {
-	CAttackTask* squad = FindReinforceSquad(unit);
+	CAttackTask* squad = FindReinforceSquad(unit, power);
 	if (squad == nullptr) {
 		return nullptr;
 	}
@@ -1825,7 +1825,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		} else {
 			// Attack-bound units start in a gathering (defend) group at base. While no attack task exists this
 			// is the first army gathering to its power. Otherwise CDefendTask promotes it on its first update:
-			// it reinforces the nearest army it can join (EnqueueReinforce), or leaves as a small attack group.
+			// it reinforces the nearest stronger group it can join (EnqueueReinforce), or leaves as a small attack group.
 			task = EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());
 		}
 	}

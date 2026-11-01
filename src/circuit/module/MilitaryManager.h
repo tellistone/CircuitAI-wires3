@@ -52,10 +52,11 @@ public:
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
 	// Power an attack-bound group gathers at base before it leaves: max(quota.attack, enemy threat / allies)
 	float GetAttackGatherPower() const;
-	// Nearest attack army (power >= quota.attack) that this unit's group may join and can reach; nullptr if none
-	CAttackTask* FindReinforceSquad(CCircuitUnit* unit) const;
-	// New attack task that walks to FindReinforceSquad(unit) and merges into it; nullptr if there is none
-	IFighterTask* EnqueueReinforce(CCircuitUnit* unit);
+	// Nearest attack group stronger than `power` that the group led by `unit` may join and can reach;
+	// nullptr if none. `self` is skipped.
+	CAttackTask* FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self = nullptr) const;
+	// New attack task that walks to FindReinforceSquad(unit, power) and merges into it; nullptr if there is none
+	IFighterTask* EnqueueReinforce(CCircuitUnit* unit, float power);
 	CRetreatTask* EnqueueRetreat();
 private:
 	void DequeueTask(IUnitTask* task, bool done = false);

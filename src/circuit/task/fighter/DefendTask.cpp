@@ -110,7 +110,7 @@ void CDefendTask::Update()
 		} else if (!militaryMgr->GetTasks(check).empty()) {
 			// Attack-bound groups reinforce the nearest army they can join; with none, leave as a small group
 			if (promote == FightType::ATTACK) {
-				task = militaryMgr->EnqueueReinforce(leader);
+				task = militaryMgr->EnqueueReinforce(leader, attackPower);
 			}
 			if (task == nullptr) {
 				task = militaryMgr->EnqueueTask(promote);
