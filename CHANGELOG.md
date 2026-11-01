@@ -14,6 +14,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   Guarded-unit slots have their own `max_share` pool (`guarded_max_share`, -1 = same as `max_share`), so builder slots
   can't use up the whole share. Their safe check also leaves out squadmates and every other guarded unit, so a squad
   or a group of artillery can't call its own spot safe.
+  The safe check (all slots) now leaves out every slot's guard, not only its own, so two vips side by side don't each
+  count the other's guard, release their own together, then pull again.
   For an army unit the safe check also looks at its squad's attack or defend point, the way a builder's job location is
   checked, so artillery gathering at base for an attack takes a guard along. A point within the unit's weapon range is
   treated as its target, not a destination, and is ignored.

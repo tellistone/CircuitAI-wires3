@@ -341,7 +341,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 float CFGuardTask::GetExcludedInflAt(CCircuitUnit* vip, const AIFloat3& pos) const
 {
 	// Allied influence that must not make the vip's spot look safe, each unit counted once:
-	//   the vip itself and its guards, always;
+	//   the vip itself and the guards of every slot, always;
 	//   for a "guarded" vip also its squadmates and every other guarded unit (artillery parked together
 	//   would otherwise call each other safe, and a squad isn't protection for its own artillery)
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -354,8 +354,13 @@ float CFGuardTask::GetExcludedInflAt(CCircuitUnit* vip, const AIFloat3& pos) con
 		}
 	};
 	exclude(vip);
-	for (CCircuitUnit* unit : units) {
-		exclude(unit);
+	// Every slot's guard, not only this slot's: two vips side by side would otherwise each call the
+	// other's guard protection, release their own guards together, then both pull again (ping-pong)
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	for (IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::GUARD)) {
+		for (CCircuitUnit* unit : t->GetAssignees()) {
+			exclude(unit);
+		}
 	}
 	if (!isGuardedVip) {
 		return sum;
@@ -366,7 +371,7 @@ float CFGuardTask::GetExcludedInflAt(CCircuitUnit* vip, const AIFloat3& pos) con
 			exclude(unit);
 		}
 	}
-	for (CCircuitUnit* unit : static_cast<CMilitaryManager*>(manager)->GetArmy()) {
+	for (CCircuitUnit* unit : militaryMgr->GetArmy()) {
 		if (unit->GetCircuitDef()->IsAttrGuarded()) {
 			exclude(unit);
 		}
