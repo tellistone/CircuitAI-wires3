@@ -199,10 +199,17 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	std::sort(orderUnits.begin(), orderUnits.end(), [](CCircuitUnit* a, CCircuitUnit* b) {
 		return a->GetCircuitDef()->GetMaxRange() > b->GetCircuitDef()->GetMaxRange();
 	});
+	// Units not re-ordered this round keep standing where they are: their spots count as taken
 	F3Vec claimed;
+	for (CCircuitUnit* unit : units) {
+		if (std::find(orderUnits.begin(), orderUnits.end(), unit) == orderUnits.end()) {
+			claimed.push_back(unit->GetPos(frame));
+		}
+	}
+	const float safeThreat = GetEscapeSafeThreat();
 	for (CCircuitUnit* unit : orderUnits) {
 		AIFloat3 firePos;
-		if (!unit->GetCircuitDef()->IsAttrMelee() && FindFireSpot(unit, claimed, firePos)) {
+		if (!unit->GetCircuitDef()->IsAttrMelee() && FindFireSpot(unit, claimed, safeThreat, firePos)) {
 			claimed.push_back(firePos);
 			unit->AttackFrom(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
 		} else {
@@ -211,7 +218,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	}
 }
 
-bool IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, AIFloat3& outPos) const
+bool IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, AIFloat3& outPos) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
@@ -236,22 +243,42 @@ bool IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, AIFloa
 	const float strength = std::max(cdef->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f)), THREAT_MIN);
 	const float wThreat = circuit->GetMilitaryManager()->GetAttackSpotThreat();
 	const float sqCrowd = SQUARE(80.f);
-	auto score = [&](const AIFloat3& p) {
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	// Spots the task's escape would call dangerous (same line as its IsInDanger) are only a last resort
+	auto isDanger = [&](const AIFloat3& p, float threat) {
+		return (safeThreat > 0.f)
+			&& (threat >= safeThreat * militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(p)) / GetThrDistModAt(p));
+	};
+	bool isFound = false;
+	float bestScore = std::numeric_limits<float>::max();
+	AIFloat3 quietPos;  // least-threat spot, used if every spot is dangerous
+	float quietThreat = std::numeric_limits<float>::max();
+	auto consider = [&](const AIFloat3& p) {
+		const float threat = threatMap->GetThreatAt(unit, p);
+		if (threat < quietThreat) {
+			quietThreat = threat;
+			quietPos = p;
+		}
+		if (isDanger(p, threat)) {
+			return;
+		}
 		int crowd = 0;
 		for (const AIFloat3& c : claimed) {
 			if (c.SqDistance2D(p) < sqCrowd) {
 				++crowd;
 			}
 		}
-		return wThreat * (threatMap->GetThreatAt(unit, p) / strength + 0.5f * crowd) + p.distance2D(uPos) / range;
+		const float s = wThreat * (threat / strength + 0.5f * crowd) + p.distance2D(uPos) / range;
+		if (s < bestScore) {
+			bestScore = s;
+			outPos = p;
+			isFound = true;
+		}
 	};
 
-	bool isFound = false;
-	float bestScore = std::numeric_limits<float>::max();
-	if (uDist <= radius) {  // already in range: standing still is a candidate
-		bestScore = score(uPos);
-		outPos = uPos;
-		isFound = true;
+	if (uDist <= range) {  // already in range: standing still is a candidate
+		consider(uPos);
 	}
 	// 13 spots on the arc, +-90 degrees around our bearing from the target (never round its far side)
 	for (int i = -6; i <= 6; ++i) {
@@ -261,12 +288,11 @@ bool IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, AIFloa
 		if (!terrainMgr->CanMoveToPos(unit->GetArea(), p)) {
 			continue;
 		}
-		const float s = score(p);
-		if (s < bestScore) {
-			bestScore = s;
-			outPos = p;
-			isFound = true;
-		}
+		consider(p);
+	}
+	if (!isFound && (quietThreat < std::numeric_limits<float>::max())) {
+		outPos = quietPos;
+		isFound = true;
 	}
 	return isFound;
 }

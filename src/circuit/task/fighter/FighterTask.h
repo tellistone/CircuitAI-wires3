@@ -54,7 +54,9 @@ protected:
 	void Attack(const int frame, const bool isDirect = false);
 	// Firing spot for a ranged unit: within its weapon range of the target, trading walking distance against
 	// threat and against spots already claimed by other units this round; false = no usable range
-	bool FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, springai::AIFloat3& outPos) const;
+	bool FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, springai::AIFloat3& outPos) const;
+	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
+	virtual float GetEscapeSafeThreat() const { return -1.f; }
 
 	FightType fightType;
 	springai::AIFloat3 position;  // attack/scout position

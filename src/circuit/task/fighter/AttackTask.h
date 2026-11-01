@@ -49,6 +49,7 @@ private:
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
 	float GetSafeThreat() const;
+	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
 	float GetUnitPower(CCircuitUnit* unit) const;
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
 	bool IsInDanger(int frame, bool& isPathUnsafe);  // fills 'endangered'
