@@ -52,6 +52,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, hitFrame(-1)
 		, scaleRefSqDist(0.f)
 		, anchorTargetId(-1)
+		, pickSqDist(0.f)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -486,6 +487,7 @@ void CAttackTask::FindTarget()
 	auto anchorFor = [&](CEnemyInfo* e) {
 		return ((prevAnchorId >= 0) && (e->GetId() == prevAnchorId)) ? prevRef : sqOBDist;
 	};
+	pickSqDist = sqOBDist;
 	std::vector<std::pair<float, CEnemyInfo*>> candidates;  // (scaled distance, enemy)
 
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
@@ -562,8 +564,12 @@ void CAttackTask::FindTarget()
 	if (bestTarget != nullptr) {
 		SetTarget(bestTarget);
 		position = target->GetPos();
-		scaleRefSqDist = anchorFor(bestTarget);
-		anchorTargetId = bestTarget->GetId();
+		// Keep the scale only for a fight towards home (target nearer our base than the reference):
+		// an outward fight never relied on it, so stragglers behind the group get no discount
+		const float ref = anchorFor(bestTarget);
+		const bool isHomeward = bestTarget->GetPos().SqDistance2D(basePos) < ref;
+		scaleRefSqDist = isHomeward ? ref : 0.f;
+		anchorTargetId = isHomeward ? bestTarget->GetId() : -1;
 	} else {
 		scaleRefSqDist = 0.f;  // no fight accepted: no near-base discount
 		anchorTargetId = -1;
@@ -866,8 +872,11 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 	}
 	if (reached != nullptr) {
 		if (reached->GetId() != anchorTargetId) {
-			// the route led to another candidate: it was judged from where the group stood at pick time
-			anchorTargetId = reached->GetId();
+			// The route led to another candidate: it was judged from where the group stood at pick time
+			const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+			const bool isHomeward = reached->GetPos().SqDistance2D(basePos) < pickSqDist;
+			scaleRefSqDist = isHomeward ? pickSqDist : 0.f;
+			anchorTargetId = isHomeward ? reached->GetId() : -1;
 		}
 		SetTarget(reached);
 		position = reached->GetPos();
