@@ -323,6 +323,29 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 	auto isDanger = [&](const AIFloat3& p, float threat) {
 		return (safeThreat > 0.f) && (threat >= GetAllowedThreatAt(p, safeThreat));
 	};
+	// The walk there counts too: a straight line from the unit (skipping the square it stands in, so a
+	// unit already in danger can still step out) that crosses danger would get it pulled back on the way
+	const float step = threatMap->GetSquareSize();
+	auto isWalkDanger = [&](const AIFloat3& p) {
+		if (safeThreat <= 0.f) {
+			return false;
+		}
+		AIFloat3 dir = p - uPos;
+		dir.y = 0.f;
+		const float dist = dir.Length2D();
+		if (dist <= step) {
+			return false;
+		}
+		dir /= dist;
+		for (float d = step; d < dist; d += step) {
+			AIFloat3 q = uPos + dir * d;
+			CTerrainManager::CorrectPosition(q);
+			if (isDanger(q, threatMap->GetThreatAt(unit, q))) {
+				return true;
+			}
+		}
+		return false;
+	};
 	bool isFound = false;
 	float bestScore = std::numeric_limits<float>::max();
 	AIFloat3 riskyPos = -RgtVector;  // best by score among dangerous spots
@@ -336,7 +359,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 			}
 		}
 		const float s = wThreat * (threat / strength + 0.5f * crowd) + p.distance2D(uPos) / range;
-		if (isDanger(p, threat)) {
+		if (isDanger(p, threat) || isWalkDanger(p)) {
 			if (s < riskyScore) {
 				riskyScore = s;
 				riskyPos = p;
