@@ -397,6 +397,32 @@ void CCircuitUnit::Attack(const AIFloat3& position, CEnemyInfo* enemy, int tile,
 	Attack(position, enemy, timeout);
 }
 
+void CCircuitUnit::AttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout)
+{
+	target = enemy;
+	targetTile = tile;
+	TRY_UNIT(manager->GetCircuit(), this,
+		// Move, not Fight: go straight to the firing spot (weapons still shoot what's in range on the way)
+		CmdMoveTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+		// Then fight from the spot (not toward the target's position: once it dies the unit stays put)
+		unit->Fight(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+		CmdWantedSpeed(NO_SPEED_LIMIT);
+		CmdSetTarget(target);
+	)
+}
+
+void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, int timeout)
+{
+	target = enemy;
+	targetTile = tile;
+	// Fight to its own spot: stays put but keeps fight behaviours (auto-kiting, skirmishing)
+	TRY_UNIT(manager->GetCircuit(), this,
+		unit->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
+}
+
 void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 {
 	TRY_UNIT(manager->GetCircuit(), this,

@@ -348,6 +348,16 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.raid_flee_share must be a number 0..1, using 0.5", cfgName.c_str());
 	}
 	raidFleeShare = utils::clamp(qfleeShare.isNumeric() ? qfleeShare.asFloat() : 0.5f, 0.f, 1.f);
+	const Json::Value& qatkFleeShare = quotas.get("attack_flee_share", 0.5f);
+	if (!qatkFleeShare.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.attack_flee_share must be a number 0..1, using 0.5", cfgName.c_str());
+	}
+	attackFleeShare = utils::clamp(qatkFleeShare.isNumeric() ? qatkFleeShare.asFloat() : 0.5f, 0.f, 1.f);
+	const Json::Value& qspotThreat = quotas.get("attack_spot_threat", 1.f);
+	if (!qspotThreat.isNumeric() || (qspotThreat.asFloat() < 0.f)) {
+		circuit->LOG("CONFIG %s: quota.attack_spot_threat must be a number >= 0, using 1.0", cfgName.c_str());
+	}
+	attackSpotThreat = (qspotThreat.isNumeric() && (qspotThreat.asFloat() >= 0.f)) ? qspotThreat.asFloat() : 1.f;
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
 		if (!raidTargets.isNull()) {
@@ -391,6 +401,11 @@ void CMilitaryManager::ReadConfig()
 	defaultMod.len = 0.f;
 	attackMod = readThrMod("attack", defaultMod);
 	baseThrBonus = qbaseBonus.isNumeric() ? qbaseBonus.asFloat() : 2.f;
+	const Json::Value& qscaleMin = qthrMod.get("scale_min", 0.25f);
+	if (!qscaleMin.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.thr_mod.scale_min must be a number 0..1, using 0.25", cfgName.c_str());
+	}
+	thrScaleMin = utils::clamp(qscaleMin.isNumeric() ? qscaleMin.asFloat() : 0.25f, 0.f, 1.f);
 	if (!qbaseBonus.isNumeric() || (baseThrBonus <= 0.f)) {
 		// 0 would make nothing near the base centre engageable
 		circuit->LOG("CONFIG %s: quota.thr_mod.base_bonus must be a number > 0, using 2.0", cfgName.c_str());
@@ -740,6 +755,50 @@ IFighterTask* CMilitaryManager::EnqueueDefend(IFighterTask::FightType check, IFi
 										 check, promote, power, 1.0f);
 	fightTasks[static_cast<IFighterTask::FT>(IFighterTask::FightType::DEFEND)].insert(task);
 	fightUpdates.push_back(task);
+	return task;
+}
+
+float CMilitaryManager::GetAttackGatherPower() const
+{
+	return std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
+}
+
+CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self) const
+{
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	CAttackTask* best = nullptr;
+	float minSqDist = std::numeric_limits<float>::max();
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
+		CAttackTask* squad = static_cast<CAttackTask*>(t);
+		CCircuitUnit* squadLeader = squad->GetLeader();
+		if ((squad == self) || squad->IsDead() || (squadLeader == nullptr) || (squad->GetAttackPower() <= power)
+			|| !squad->IsCompatible(unit))
+		{
+			continue;
+		}
+		const AIFloat3& squadPos = squadLeader->GetPos(frame);
+		if (!terrainMgr->CanMoveToPos(unit->GetArea(), squadPos)) {
+			continue;
+		}
+		const float sqDist = pos.SqDistance2D(squadPos);
+		if (sqDist < minSqDist) {
+			minSqDist = sqDist;
+			best = squad;
+		}
+	}
+	return best;
+}
+
+IFighterTask* CMilitaryManager::EnqueueReinforce(CCircuitUnit* unit, float power)
+{
+	CAttackTask* squad = FindReinforceSquad(unit, power);
+	if (squad == nullptr) {
+		return nullptr;
+	}
+	CAttackTask* task = static_cast<CAttackTask*>(EnqueueTask(IFighterTask::FightType::ATTACK));
+	task->SetReinforce(squad);
 	return task;
 }
 
@@ -1774,12 +1833,11 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 				} break;
 				case IFighterTask::FightType::AH: {
 					if (!cdef->IsRoleMine() && (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) < 1.f)) {
-						task = EnqueueTask(IFighterTask::FightType::ATTACK);
+						task = EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());  // see below
 					}
 				} break;
 				case IFighterTask::FightType::DEFEND: {
-					const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
-					task = EnqueueDefend(IFighterTask::FightType::ATTACK, power);
+					task = EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());  // see below
 				} break;
 				default: break;
 			}
@@ -1787,10 +1845,10 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 				task = EnqueueTask(it->second);
 			}
 		} else {
-			const bool isDefend = GetTasks(IFighterTask::FightType::ATTACK).empty();
-			const float power = std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
-			task = isDefend ? EnqueueDefend(IFighterTask::FightType::ATTACK, power)
-							: EnqueueTask(IFighterTask::FightType::ATTACK);
+			// Attack-bound units start in a gathering (defend) group at base. While no attack task exists this
+			// is the first army gathering to its power. Otherwise CDefendTask promotes it on its first update:
+			// it reinforces the nearest stronger group it can join (EnqueueReinforce), or leaves as a small attack group.
+			task = EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());
 		}
 	}
 
