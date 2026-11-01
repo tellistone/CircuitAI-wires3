@@ -60,6 +60,8 @@ protected:
 	// NONE: no usable range (old orders); HOLD: every spot dangerous but the unit's own spot is safe;
 	// RISKY: every spot dangerous, the unit's too: least dangerous spot by the usual score
 	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
+	float GetFireRange(CCircuitUnit* unit) const;  // max range against the current target's kind
+	bool IsFireSpotKept(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // old spot still within 0.95x range
 	FireSpot FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, springai::AIFloat3& outPos) const;
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }

@@ -74,6 +74,8 @@ void IFighterTask::RemoveAssignee(CCircuitUnit* unit)
 
 	attackPower -= unit->GetCircuitDef()->GetPower();
 	cowards.erase(unit);
+	fireSpots.erase(unit);
+	riskySpotFrames.erase(unit);
 	if (unit->HasShield()) {
 		shields.erase(unit);
 	}
@@ -195,24 +197,27 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		return;
 	}
 
-	// Forget spots of units that left the group
-	for (auto it = fireSpots.begin(); it != fireSpots.end();) {
-		it = (units.find(it->first) == units.end()) ? fireSpots.erase(it) : std::next(it);
+	// Units still heading to a spot in range of the target pick first, then longest range first.
+	// Later units avoid spots already taken.
+	std::map<CCircuitUnit*, AIFloat3> keptSpots;
+	for (CCircuitUnit* unit : orderUnits) {
+		AIFloat3 p;
+		if (IsFireSpotKept(unit, p)) {
+			keptSpots[unit] = p;
+		} else {
+			fireSpots.erase(unit);
+		}
 	}
-	// Units still heading to a spot that is in range of the target pick first (so nobody takes it
-	// from them); then longest range first. Later units avoid spots already taken.
-	const AIFloat3& tPos = target->GetPos();
-	auto hasValidSpot = [&](CCircuitUnit* u) {
-		auto it = fireSpots.find(u);
-		return (it != fireSpots.end())
-			&& (it->second.SqDistance2D(tPos) <= SQUARE(u->GetCircuitDef()->GetMaxRange()));
-	};
+	std::map<CCircuitUnit*, float> ranges;
+	for (CCircuitUnit* unit : orderUnits) {
+		ranges[unit] = GetFireRange(unit);
+	}
 	std::sort(orderUnits.begin(), orderUnits.end(), [&](CCircuitUnit* a, CCircuitUnit* b) {
-		const bool va = hasValidSpot(a), vb = hasValidSpot(b);
+		const bool va = keptSpots.count(a) > 0, vb = keptSpots.count(b) > 0;
 		if (va != vb) {
 			return va;
 		}
-		return a->GetCircuitDef()->GetMaxRange() > b->GetCircuitDef()->GetMaxRange();
+		return ranges[a] > ranges[b];
 	});
 	// Units not re-ordered this round keep standing where they are: their spots count as taken
 	F3Vec claimed;
@@ -221,11 +226,24 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			claimed.push_back(unit->GetPos(frame));
 		}
 	}
+	// Spots still being headed to are taken before anyone picks: others avoid them
+	for (const auto& kv : keptSpots) {
+		claimed.push_back(kv.second);
+	}
 	const float safeThreat = GetEscapeSafeThreat();
 	for (auto it = riskySpotFrames.begin(); it != riskySpotFrames.end();) {  // forget expired (and dead) units
 		it = (frame >= it->second + FRAMES_PER_SEC * 3) ? riskySpotFrames.erase(it) : std::next(it);
 	}
 	for (CCircuitUnit* unit : orderUnits) {
+		auto itKept = keptSpots.find(unit);
+		if (itKept != keptSpots.end()) {  // its own claim doesn't count against it
+			auto itc = std::find_if(claimed.begin(), claimed.end(), [&](const AIFloat3& c) {
+				return (c.x == itKept->second.x) && (c.z == itKept->second.z);
+			});
+			if (itc != claimed.end()) {
+				claimed.erase(itc);
+			}
+		}
 		AIFloat3 firePos;
 		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
 				: FindFireSpot(unit, claimed, safeThreat, firePos);
@@ -252,16 +270,34 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	}
 }
 
+float IFighterTask::GetFireRange(CCircuitUnit* unit) const
+{
+	const AIFloat3& tPos = target->GetPos();
+	CCircuitDef* edef = target->GetCircuitDef();
+	const CCircuitDef::RangeType rt = ((edef != nullptr) && edef->IsAbleToFly()) ? CCircuitDef::RangeType::AIR
+			: (tPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
+	return unit->GetCircuitDef()->GetMaxRange(rt);
+}
+
+bool IFighterTask::IsFireSpotKept(CCircuitUnit* unit, AIFloat3& outPos) const
+{
+	auto it = fireSpots.find(unit);
+	if ((it == fireSpots.end())
+		|| (it->second.SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * 0.95f)))
+	{
+		return false;
+	}
+	outPos = it->second;
+	return true;
+}
+
 IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, AIFloat3& outPos) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const AIFloat3& tPos = target->GetPos();
-	CCircuitDef* edef = target->GetCircuitDef();
-	const CCircuitDef::RangeType rt = ((edef != nullptr) && edef->IsAbleToFly()) ? CCircuitDef::RangeType::AIR
-			: (tPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-	const float range = cdef->GetMaxRange(rt);
+	const float range = GetFireRange(unit);
 	if (range < SQUARE_SIZE * 4) {
 		return FireSpot::NONE;
 	}
@@ -312,9 +348,9 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 		consider(uPos);
 	}
 	// The spot it was already heading to, if still in range of the target: the distance term favours it
-	auto itSpot = fireSpots.find(unit);
-	if ((itSpot != fireSpots.end()) && (itSpot->second.SqDistance2D(tPos) <= SQUARE(range))) {
-		consider(itSpot->second);
+	AIFloat3 keptPos;
+	if (IsFireSpotKept(unit, keptPos)) {
+		consider(keptPos);
 	}
 	// 13 spots on the arc, +-90 degrees around our bearing from the target (never round its far side)
 	for (int i = -6; i <= 6; ++i) {
