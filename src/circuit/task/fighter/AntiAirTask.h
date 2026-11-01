@@ -52,6 +52,7 @@ private:
 
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
+	float GetAirRange() const;  // the squad's range against aircraft
 	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
 	// Pathfinder threat cap for a route from startPos to goals (see .cpp)
 	float GetPathThreatCap(CCircuitUnit* unit, const springai::AIFloat3& startPos, const F3Vec& goals) const;

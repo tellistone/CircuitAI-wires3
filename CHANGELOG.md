@@ -39,6 +39,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   AA can't call its own surroundings in enemy land "ours" and creep forward.
   A unit split off that way can't merge back for 30 s. While engaging, AA units farther than 2x their range from
   the aircraft get no firing spot and keep following the squad path (`IFighterTask::fireSpotReach`, off for other tasks).
+  During regroup only units outside the regroup distance get a path back; the rest hold. While engaging, AA
+  re-orders on a target tile change only once the aircraft moved 1/4 of its air range (`IFighterTask::retargetMove`,
+  off for other tasks). Leash, `fire_spot` and the engage check use the AA range against aircraft, not the longest
+  weapon range.
   Only `leash`, `own_ground` and `fire_spot` default to the old behaviour; the other AA changes above apply to every config.
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a

@@ -70,6 +70,10 @@ protected:
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)
 	bool isFireSpotChase = true;  // at a firing spot: true = Attack order (engine may chase), false = fight from the spot
+	// > 0: a unit already ordered on the target is re-ordered for a tile change only once the target moved
+	// this far (elmos) from where it was at the last orders; the repeat timer still applies
+	float retargetMove = -1.f;
+	springai::AIFloat3 lastOrderTargetPos;
 	float fireSpotReach = -1.f;  // > 0: units farther than this x their fire range from the target get no attack order and keep travelling
 	// Firing spot each unit was last sent to (pointers only compared, never dereferenced)
 	struct SFireSpot {

@@ -157,9 +157,11 @@ void CAntiAirTask::Update()
 	bool mustRegroup = IsMustRegroup();
 	if (State::REGROUP == state) {
 		if (mustRegroup) {
+			// Same "far from the group" distance as IsMustRegroup: only those need a path back
+			const float sqNearDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * units.size(), highestRange));
 			for (CCircuitUnit* unit : units) {
-				if (unit == leader) {
-					Hold(unit);  // the gathering point is the leader's spot
+				if ((unit == leader) || (groupPos.SqDistance2D(unit->GetPos(frame)) <= sqNearDist)) {
+					Hold(unit);  // at the gathering point (the leader's spot) already
 				} else if (IsQueryReady(unit)) {
 					RegroupUnit(unit);
 				}
@@ -189,9 +191,10 @@ void CAntiAirTask::Update()
 	const AIFloat3& startPos = leader->GetPos(frame);
 	state = State::ROAM;
 	if (target != nullptr) {
-		const float sqRange = SQUARE(lowestRange);
+		const float sqRange = SQUARE(GetAirRange());
 		if (position.SqDistance2D(startPos) < sqRange) {
 			state = State::ENGAGE;
+			retargetMove = GetAirRange() * 0.25f;  // a plane changes tile nearly every update: re-order only when it moved this far
 			Attack(frame);
 			return;
 		}
@@ -293,11 +296,12 @@ void CAntiAirTask::FindTarget()
 
 	// antiair block of behaviour.json
 	const CMilitaryManager::SAntiAirCfg& aaCfg = militaryMgr->GetAntiAirCfg();
-	const float sqRange = SQUARE(lowestRange);
+	const float airRange = GetAirRange();
+	const float sqRange = SQUARE(airRange);
 	const bool isLeash = (aaCfg.leash >= 0.f);
 	const float sqLeash = SQUARE(aaCfg.leash);
 	const bool isFireSpot = (aaCfg.fireSpot >= 0.f);
-	const float fireDist = lowestRange * aaCfg.fireSpot;
+	const float fireDist = airRange * aaCfg.fireSpot;
 	// Home points: our attack and defend group leaders, and the base
 	homePoints.clear();
 	if (isLeash) {
@@ -631,6 +635,14 @@ void CAntiAirTask::FlushHolds()
 		)
 	}
 	holdPending.clear();
+}
+
+float CAntiAirTask::GetAirRange() const
+{
+	// lowestRange is the longest range over all weapon kinds; AA targets planes, so use the air range
+	// (squads hold one unit type, so the leader's is everyone's)
+	const float airRange = (leader != nullptr) ? leader->GetCircuitDef()->GetMaxRange(CCircuitDef::RangeType::AIR) : 0.f;
+	return (airRange > 0.f) ? airRange : lowestRange;
 }
 
 float CAntiAirTask::GetSafeThreat() const

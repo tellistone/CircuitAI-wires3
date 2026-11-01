@@ -175,6 +175,8 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
 	const bool isRepeatAttack = (frame >= attackFrame + attackRepeat);
 	attackFrame = isRepeatAttack ? frame : attackFrame;
+	const AIFloat3& tPos = target->GetPos();
+	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
 	std::vector<CCircuitUnit*> orderUnits;
 	for (CCircuitUnit* unit : units) {
 		if (unit->Blocker() != nullptr) {
@@ -189,10 +191,13 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 
 		if (isRepeatAttack
 			|| (unit->GetTarget() != target)
-			|| (unit->GetTargetTile() != targetTile))
+			|| ((unit->GetTargetTile() != targetTile) && isTileMoveOrder))
 		{
 			orderUnits.push_back(unit);
 		}
+	}
+	if (!orderUnits.empty()) {
+		lastOrderTargetPos = tPos;
 	}
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
 	// Longest range picks first; each pick replaces that unit's claim.
