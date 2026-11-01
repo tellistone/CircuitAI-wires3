@@ -76,8 +76,9 @@ public:
 	void FillSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 
 	struct SArtilleryCfg {
-		float allyThreat;  // firing spot needs at least this allied influence (unit itself excluded); < 0 = off
-		float maxPathThreat;  // paths to a firing spot may not cross threat above this * unit's own power; < 0 = no limit
+		float allyThreat;  // firing spot needs at least this threat of allied mobile armed units (not artillery, not air) within allyRadius; < 0 = off
+		float allyRadius;
+		float maxPathThreat;  // paths to a firing spot may not cross enemy threat above this * unit's own threat; < 0 = no limit
 		float followDist;  // with a group, stand this far behind its leader (towards base)
 		bool isNoScout;  // nothing to shoot or walk to: join the nearest group instead of scouting enemy mexes
 	};

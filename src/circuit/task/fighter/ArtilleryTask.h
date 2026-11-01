@@ -9,7 +9,6 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_ARTILLERYTASK_H_
 
 #include "task/fighter/FighterTask.h"
-#include "terrain/path/MicroPather.h"
 
 namespace circuit {
 
@@ -41,10 +40,13 @@ private:
 	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // nothing to walk to
 	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // join the nearest group (no_scout)
 	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
-	NSMicroPather::TestFunc GetAllyTest(CCircuitUnit* unit) const;
-	bool IsAllySpot(CCircuitUnit* unit, const springai::AIFloat3& spot) const;
+	void FallbackNoSpot(CCircuitUnit* unit, bool isUpdating);  // no acceptable firing spot
+	float FillCoveredSpots(CCircuitUnit* unit, float range);  // fills firePositions, returns goal range
 
 	F3Vec safePositions;
+	F3Vec firePositions;  // covered firing cells (ally_threat)
+	std::vector<float> coverGrid;  // FillCoveredSpots scratch
+	std::vector<char> cellAdded;
 };
 
 } // namespace circuit

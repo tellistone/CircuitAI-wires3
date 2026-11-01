@@ -438,6 +438,7 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& artyCfg = root["artillery"];
 	artillery.allyThreat = artyCfg.get("ally_threat", -1.f).asFloat();
+	artillery.allyRadius = std::max(0.f, artyCfg.get("ally_radius", 500.f).asFloat());
 	artillery.maxPathThreat = artyCfg.get("max_path_threat", -1.f).asFloat();
 	artillery.followDist = std::max(0.f, artyCfg.get("follow_dist", 0.f).asFloat());
 	artillery.isNoScout = artyCfg.get("no_scout", false).asBool();
