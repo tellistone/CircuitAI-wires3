@@ -7,6 +7,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Anti-air leash** (`antiair` block in `behaviour.json`). Mobile AA squads (main role `anti_air`) used to chase the
+  nearest known aircraft anywhere on the map, so they followed planes home into enemy territory alone.
+  - `leash` (default -1 = off): only chase an aircraft within this distance of home, meaning one of our attack or
+    defend group leaders or the base. An aircraft already in weapon range is always engaged. With no aircraft
+    near home, the squad stays with the nearest attack group, as it already did with no target.
+  - `own_ground` (default `false`): an aircraft over ground where our influence beats the enemy's also counts as near home.
+  - `fire_spot` (default -1 = off): check enemy threat where the squad would stand to shoot, this fraction of its
+    shortest weapon range short of the aircraft, instead of under the aircraft.
+  The shipped `behaviour.json` sets `leash` 800, `own_ground` true and `fire_spot` 0.9.
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
   slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.

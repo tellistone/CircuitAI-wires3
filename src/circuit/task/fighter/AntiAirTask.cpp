@@ -7,6 +7,7 @@
 
 #include "task/fighter/AntiAirTask.h"
 #include "task/TaskManager.h"
+#include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
@@ -24,6 +25,8 @@
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
+
+#include <array>
 
 namespace circuit {
 
@@ -259,14 +262,36 @@ void CAntiAirTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 void CAntiAirTask::FindTarget()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
-	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = leader->GetPos(frame);
 	STerrainMapArea* area = leader->GetArea();
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
 	const float maxPower = attackPower * powerMod;  // divided by the thr_mod.distance curve at each enemy's spot
+
+	// antiair block of behaviour.json
+	const CMilitaryManager::SAntiAirCfg& aaCfg = militaryMgr->GetAntiAirCfg();
+	const float sqRange = SQUARE(lowestRange);
+	const bool isLeash = (aaCfg.leash >= 0.f);
+	const float sqLeash = SQUARE(aaCfg.leash);
+	const bool isFireSpot = (aaCfg.fireSpot >= 0.f);
+	const float fireDist = lowestRange * aaCfg.fireSpot;
+	// Home points: our attack and defend group leaders, and the base
+	homePoints.clear();
+	if (isLeash) {
+		const std::array<IFighterTask::FightType, 2> types = {IFighterTask::FightType::ATTACK, IFighterTask::FightType::DEFEND};
+		for (IFighterTask::FightType type : types) {
+			for (IFighterTask* task : militaryMgr->GetTasks(type)) {
+				homePoints.push_back(static_cast<ISquadTask*>(task)->GetLeaderPos(frame));
+			}
+		}
+		homePoints.push_back(circuit->GetSetupManager()->GetBasePos());
+	}
 
 	CEnemyInfo* bestTarget = nullptr;
 	float minSqDist = std::numeric_limits<float>::max();
@@ -275,12 +300,10 @@ void CAntiAirTask::FindTarget()
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
-		if (enemy->IsHidden() ||
-			(maxPower / GetThrDistModAt(enemy->GetPos()) <= threatMap->GetThreatAt(enemy->GetPos()) - enemy->GetThreat()) ||
-			!terrainMgr->CanMoveToPos(area, enemy->GetPos()))
-		{
+		if (enemy->IsHidden()) {
 			continue;
 		}
+		const AIFloat3& ePos = enemy->GetPos();
 
 		CCircuitDef* edef = enemy->GetCircuitDef();
 		if (edef != nullptr) {
@@ -291,11 +314,44 @@ void CAntiAirTask::FindTarget()
 			}
 		}
 
-		const float sqDist = pos.SqDistance2D(enemy->GetPos());
-		if (minSqDist > sqDist) {
-			minSqDist = sqDist;
-			bestTarget = enemy;
+		const float sqDist = pos.SqDistance2D(ePos);
+		if (sqDist >= minSqDist) {
+			continue;
 		}
+
+		// Leash: aircraft already in range is always fair game; otherwise it must be near home
+		if (isLeash && (sqDist > sqRange)) {
+			bool isNearHome = aaCfg.isOwnGround && (inflMap->GetInfluenceAt(ePos) > INFL_EPS);
+			for (const AIFloat3& hp : homePoints) {
+				if (isNearHome) {
+					break;
+				}
+				isNearHome = (hp.SqDistance2D(ePos) <= sqLeash);
+			}
+			if (!isNearHome) {
+				continue;
+			}
+		}
+
+		// Threat where the AA would stand to shoot, not under the aircraft
+		AIFloat3 checkPos = ePos;
+		if (isFireSpot) {
+			if (sqDist <= sqRange) {
+				checkPos = pos;
+			} else {
+				checkPos = ePos + (pos - ePos).Normalize2D() * fireDist;
+				CTerrainManager::CorrectPosition(checkPos);
+			}
+		}
+		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - enemy->GetThreat());
+		if ((maxPower / GetThrDistModAt(checkPos) <= threat) ||
+			!terrainMgr->CanMoveToPos(area, ePos))
+		{
+			continue;
+		}
+
+		minSqDist = sqDist;
+		bestTarget = enemy;
 	}
 
 	SetTarget(bestTarget);

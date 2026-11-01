@@ -38,6 +38,8 @@ private:
 	void Fallback();
 
 	void ApplyDamagedPath(const CQueryPathMulti* query);
+
+	F3Vec homePoints;  // FindTarget scratch: leash anchors
 };
 
 } // namespace circuit

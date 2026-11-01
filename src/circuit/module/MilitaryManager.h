@@ -94,6 +94,13 @@ public:
 		bool isDebug;  // log guard slot events and a 10 s status line per slot to infolog  // guard in enemy threat is cancelled and the slot closes for this long, < 0 = never cancel
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }
+
+	struct SAntiAirCfg {
+		float leash;  // chase aircraft only within this distance of a home point (attack/defend group leader, base); < 0 = no leash
+		bool isOwnGround;  // aircraft over ground where our influence beats the enemy's also count as near home
+		float fireSpot;  // threat is checked where the AA would shoot from: this fraction of its range short of the aircraft; < 0 = at the aircraft
+	};
+	const SAntiAirCfg& GetAntiAirCfg() const { return antiAir; }
 	bool IsGuardRole(CCircuitDef* cdef) const;
 	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
 	bool IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const;
@@ -211,6 +218,7 @@ private:
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
 	SGuardCfg guard;
 	std::map<int, int> guardBanUntil;  // unit id -> frame
+	SAntiAirCfg antiAir;
 
 	struct SRaidQuota {
 		float min;
