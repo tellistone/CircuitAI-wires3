@@ -45,6 +45,11 @@ public:
 	void UpdateAreaUsers(CTerrainManager* terrainManager);
 	void SetAreaUpdated(bool value) { isAreaUpdated = value; }
 
+	// Allied AIs share one pathfinder: when its owner AI is released, the next ally takes over.
+	// Queries that were in flight on the old scheduler are dropped by its release (see IPathQuery::IsLost).
+	void SetScheduler(const std::shared_ptr<CScheduler>& value) { scheduler = value; ++generation; }
+	int GetGeneration() const { return generation; }
+
 	const FloatVec& GetHeightMap() const;
 
 	void* MoveXY2MoveNode(int x, int y) const;
@@ -90,6 +95,8 @@ private:
 	int MakeQueryId() { return queryId++; }
 	void FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, int frame);
 
+	// Wraps a completion so it runs inside the engine event of the AI whose unit asked (shared pathfinder)
+	PathCallback DeliverToOwner(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete);
 	void RunPathSingle(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);
 	void RunPathMulti(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);
 	void RunCostMap(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);
@@ -116,6 +123,7 @@ private:
 
 	int queryId;
 	std::shared_ptr<CScheduler> scheduler;
+	int generation = 0;  // bumped on every SetScheduler
 
 #ifdef DEBUG_VIS
 private:

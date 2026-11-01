@@ -9,6 +9,7 @@
 #include "unit/FactoryData.h"
 #include "map/MapManager.h"
 #include "map/ThreatMap.h"
+#include "map/InfluenceMap.h"
 #include "resource/MetalManager.h"
 #include "resource/EnergyGrid.h"
 #include "setup/DefenceMatrix.h"
@@ -375,6 +376,31 @@ void CAllyTeam::DelegateAuthority(CCircuitAI* curOwner)
 			mapManager->SetAuthority(circuit);
 			metalManager->SetAuthority(circuit);
 			energyGrid->SetAuthority(circuit);
+			// The enemy manager keeps an AI pointer too (its updates run on that AI's scheduler): without this
+			// the next ally's updates went through the released, deleted AI
+			enemyManager->SetAuthority(circuit);
+			// Updates in flight now run on the leaving AI's scheduler, whose release drops them before they apply:
+			// their "updating" flags would stay set and block every later threat/influence/enemy update.
+			// While a flag is set nobody can start another update, so clearing it next frame is safe.
+			const bool isThreatUpd = mapManager->GetThreatMap()->IsUpdating();
+			const bool isInflUpd = mapManager->GetInflMap()->IsUpdating();
+			const bool isEnemyUpd = enemyManager->IsUpdating();
+			if (isThreatUpd || isInflUpd || isEnemyUpd) {
+				circuit->GetScheduler()->RunTaskAt(std::make_shared<CGameTask>([this, isThreatUpd, isInflUpd, isEnemyUpd]() {
+					if (isThreatUpd) {
+						mapManager->GetThreatMap()->DropUpdate();
+					}
+					if (isInflUpd) {
+						mapManager->GetInflMap()->DropUpdate();
+					}
+					if (isEnemyUpd) {
+						enemyManager->DropUpdate();
+					}
+				}));
+			}
+			// The pathfinder ran on the leaving AI's scheduler, which stops now: without this every ally's
+			// path queries would wait forever once the first allied AI is released (team died or resigned)
+			pathfinder->SetScheduler(circuit->GetScheduler());
 			circuit->GetScheduler()->RunOnRelease(std::make_shared<CGameTask>(&CAllyTeam::DelegateAuthority, this, circuit));
 			break;
 		}

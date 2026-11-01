@@ -15,6 +15,8 @@
 #include "terrain/TerrainManager.h"
 #include "map/ThreatMap.h"
 #include "unit/CircuitUnit.h"
+#include "unit/UnitManager.h"
+#include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
 #ifdef DEBUG_VIS
@@ -313,8 +315,50 @@ std::shared_ptr<IPathQuery> CPathFinder::CreateLineMapQuery(
 	return pQuery;
 }
 
+PathCallback CPathFinder::DeliverToOwner(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete)
+{
+	CCircuitUnit* unit = query->GetUnit();
+	if ((onComplete == nullptr) || (unit == nullptr) || (unit->GetManager() == nullptr)) {
+		return std::move(onComplete);
+	}
+	CCircuitAI* owner = unit->GetManager()->GetCircuit();
+	if (owner->GetScheduler() == scheduler) {
+		return std::move(onComplete);  // the AI that owns this pathfinder: completions already run in its events
+	}
+	std::weak_ptr<CScheduler> ownerSched = owner->GetScheduler();
+	std::weak_ptr<IPathQuery> wQuery = query;
+	return [owner, ownerSched, wQuery, onComplete](const IPathQuery* q) {
+		std::shared_ptr<CScheduler> sched = ownerSched.lock();
+		if (sched == nullptr) {
+			return;  // that AI is gone
+		}
+		if (CCircuitAI::GetEventOwner() == owner) {  // pointer compare: owner may be gone with its scheduler kept alive
+			onComplete(q);
+			return;
+		}
+		std::shared_ptr<IPathQuery> query = wQuery.lock();
+		if (query == nullptr) {
+			return;
+		}
+		query->SetState(IPathQuery::State::PROCESS);  // its task keeps waiting until the result is delivered
+		// Runs on that AI's next frame, from its own event
+		sched->RunTaskAt(std::make_shared<CGameTask>([wQuery, onComplete]() {
+			std::shared_ptr<IPathQuery> query = wQuery.lock();
+			if (query != nullptr) {
+				query->SetState(IPathQuery::State::READY);
+				onComplete(query.get());
+			}
+		}));
+	};
+}
+
 void CPathFinder::RunQuery(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete)
 {
+	// Allied AIs share this pathfinder, and completions run on its scheduler, i.e. inside the engine event of the
+	// AI that created it. Orders sent from another AI's event are rejected by the server ("invalid team ID"),
+	// so hand each completion back to the AI that asked for it.
+	onComplete = DeliverToOwner(query, std::move(onComplete));
+	query->SetGeneration(generation);
 	switch (query->GetType()) {
 		case IPathQuery::Type::SINGLE: {
 			RunPathSingle(query, std::move(onComplete));

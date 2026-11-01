@@ -133,8 +133,16 @@ CCircuitAI::~CCircuitAI()
 	}
 }
 
+CCircuitAI* CCircuitAI::eventOwner = nullptr;
+
 int CCircuitAI::HandleEvent(int topic, const void* data)
 {
+	// Remember whose engine event this is (restore on return: events can nest)
+	struct SOwnerGuard {  // restores the owner even if the handler throws
+		CCircuitAI* prev;
+		SOwnerGuard(CCircuitAI* ai) : prev(eventOwner) { eventOwner = ai; }
+		~SOwnerGuard() { eventOwner = prev; }
+	} guard(this);
 	return (this->*eventHandler)(topic, data);
 }
 
