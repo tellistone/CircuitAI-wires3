@@ -59,8 +59,8 @@
 	"ally_threat": 10.0,  // only walk to a firing spot with at least this much allied threat within ally_radius: our and allied mobile armed units, not counting artillery (main role) or aircraft, so artillery can't escort itself. Threat uses the same formula as enemy threat (a typical skirmisher is ~3-8). A building already in range is shot only while the spot still has this much cover, otherwise the unit rejoins the group; -1 = any spot, always shoot (old behaviour)
 	"ally_radius": 500.0,  // see ally_threat
 	"max_path_threat": 1.0,  // the path to a firing spot may not cross enemy threat (threat map, summed and fading with distance) above this x the unit's own threat; if no such path exists it joins a group instead; -1 = no limit (threat is only avoided where cheap)
-	"no_scout": true,  // nothing to shoot or walk to: join the nearest attack/defend group (else a defended mex cluster, else the base) instead of walking the scout route to enemy mexes or fight-moving to a random spot
-	"follow_dist": 300.0  // when joining a group, stand this far behind its leader on the side towards our base
+	"no_scout": true,  // nothing to shoot or walk to: stay put while the spot is threat-free and (ally_threat) covered, otherwise move to safety: behind the nearest attack/defend group, else a defended mex cluster, else the base. false = old behaviour: walk the scout route to enemy mexes, or fight-move to a random spot
+	"follow_dist": 300.0  // when moving to safety near a group, stand this far behind its leader on the side towards our base
 },
 
 "guard": {

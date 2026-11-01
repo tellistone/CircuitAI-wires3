@@ -38,7 +38,8 @@ private:
 
 	// artillery block of behaviour.json
 	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // nothing to walk to
-	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // join the nearest group (no_scout)
+	void FallbackStay(CCircuitUnit* unit, bool isUpdating);  // no_scout: hold if safe and covered, else FallbackSafePos
+	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // move to the nearest group
 	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackNoSpot(CCircuitUnit* unit, bool isUpdating);  // no acceptable firing spot
 	float FillCoveredSpots(CCircuitUnit* unit, float range);  // fills firePositions, returns goal range

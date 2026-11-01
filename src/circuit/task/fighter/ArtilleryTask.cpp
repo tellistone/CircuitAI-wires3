@@ -337,10 +337,11 @@ void CArtilleryTask::ApplyBasePos(const CQueryPathSingle* query, bool isUpdating
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
 
-	if (!pPath->posPath.empty()) {
+	const bool isNoScout = manager->GetCircuit()->GetMilitaryManager()->GetArtilleryCfg().isNoScout;
+	if ((pPath->posPath.size() > 2) || (!isNoScout && !pPath->posPath.empty())) {
 		unit->GetTravelAct()->SetPath(pPath);
 		unit->GetTravelAct()->StateActivate();
-	} else if (manager->GetCircuit()->GetMilitaryManager()->GetArtilleryCfg().isNoScout) {
+	} else if (isNoScout) {
 		unit->GetTravelAct()->StateWait();  // stay put rather than scout
 	} else {
 		FallbackScout(unit, isUpdating);
@@ -417,10 +418,31 @@ void CArtilleryTask::Fallback(CCircuitUnit* unit, bool proceed)
 void CArtilleryTask::FallbackNoTarget(CCircuitUnit* unit, bool isUpdating)
 {
 	if (manager->GetCircuit()->GetMilitaryManager()->GetArtilleryCfg().isNoScout) {
-		FallbackSafePos(unit, isUpdating);
+		FallbackStay(unit, isUpdating);
 	} else {
 		FallbackScout(unit, isUpdating);
 	}
+}
+
+void CArtilleryTask::FallbackStay(CCircuitUnit* unit, bool isUpdating)
+{
+	// Stay put while the spot is threat-free and (ally_threat) still covered, otherwise move to safety.
+	// Re-checked every few updates by Execute
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	const bool isSafe = (circuit->GetThreatMap()->GetThreatAt(unit, pos) <= THREAT_MIN);
+	const bool isCovered = (circuit->GetMilitaryManager()->GetArtilleryCfg().allyThreat < 0.f) || HasCover(unit, pos);
+	if (!isSafe || !isCovered) {
+		FallbackSafePos(unit, isUpdating);
+		return;
+	}
+	if (unit->GetTravelAct()->IsActive()) {
+		// Walking somewhere that is no longer wanted: stop here
+		TRY_UNIT(circuit, unit,
+			unit->GetUnit()->Stop();
+		)
+	}
+	unit->GetTravelAct()->StateWait();
 }
 
 void CArtilleryTask::FallbackSafePos(CCircuitUnit* unit, bool isUpdating)
@@ -475,10 +497,13 @@ void CArtilleryTask::ApplySafePos(const CQueryPathMulti* query, bool isUpdating)
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
 
-	if (!pPath->posPath.empty()) {
+	if (pPath->posPath.size() > 2) {
 		position = pPath->posPath.back();
 		unit->GetTravelAct()->SetPath(pPath);
 		unit->GetTravelAct()->StateActivate();
+	} else if (!pPath->posPath.empty()) {
+		// Already there: a move order would finish at once, make the unit idle and restart the task
+		unit->GetTravelAct()->StateWait();
 	} else {
 		FallbackBasePos(unit, isUpdating);
 	}
@@ -487,7 +512,7 @@ void CArtilleryTask::ApplySafePos(const CQueryPathMulti* query, bool isUpdating)
 void CArtilleryTask::FallbackNoSpot(CCircuitUnit* unit, bool isUpdating)
 {
 	if (manager->GetCircuit()->GetMilitaryManager()->GetArtilleryCfg().isNoScout) {
-		FallbackSafePos(unit, isUpdating);
+		FallbackStay(unit, isUpdating);
 	} else {
 		FallbackBasePos(unit, isUpdating);
 	}
