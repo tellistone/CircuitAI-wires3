@@ -90,6 +90,8 @@ private:
 	int MakeQueryId() { return queryId++; }
 	void FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, int frame);
 
+	// Wraps a completion so it runs inside the engine event of the AI whose unit asked (shared pathfinder)
+	PathCallback DeliverToOwner(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete);
 	void RunPathSingle(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);
 	void RunPathMulti(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);
 	void RunCostMap(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);

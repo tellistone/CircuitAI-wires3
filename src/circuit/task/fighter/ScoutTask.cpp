@@ -19,7 +19,6 @@
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
-#include "util/Scheduler.h"
 #include "util/Utils.h"
 
 #include <limits>
@@ -556,19 +555,8 @@ void CScoutTask::ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo
 	// Unit actions are only updated every ACTION_UPDATE_RATE frames (staggered) and move actions
 	// at most once per second, so a new path could take ~2s to reach the unit. Issue it now.
 	travelAct->ResetUpdateTimer();
-	if (circuit->IsEventOwner()) {
-		unit->Update(circuit);
-	} else {
-		// Path callbacks can run inside an allied AI's event (shared pathfinder): orders sent from there are
-		// rejected by the server. Issue from our own scheduler instead, which runs on our next engine frame.
-		const ICoreUnit::Id unitId = unit->GetId();
-		circuit->GetScheduler()->RunTaskAt(std::make_shared<CGameTask>([circuit, unitId]() {
-			CCircuitUnit* u = circuit->GetTeamUnit(unitId);
-			if ((u != nullptr) && !u->IsDead()) {
-				u->Update(circuit);  // runs the unit's current actions; harmless if its task changed meanwhile
-			}
-		}));
-	}
+	// (Path callbacks always run in our own engine event: CPathFinder::DeliverToOwner)
+	unit->Update(circuit);
 }
 
 bool CScoutTask::NeedRepath(CCircuitUnit* unit, ICoreUnit::Id targetId) const
