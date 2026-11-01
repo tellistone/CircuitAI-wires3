@@ -59,6 +59,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, fleeGiveUpDest(-RgtVector)
 		, pickSqDist(0.f)
 {
+	attackRepeat = FRAMES_PER_SEC * 2;  // same ~2 s tempo as the decisions
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
 	float z = rand() % circuit->GetTerrainManager()->GetTerrainHeight();
@@ -220,12 +221,12 @@ void CAttackTask::Update()
 		if (isFleeing || (frame < fleeFrame)) {
 			// keep running along the escape path for a moment instead of turning straight back;
 			// still send units with empty shields to retreat (normally done at each decision below)
-			if (updCount % 4 == 2) {
+			if (updCount % 2 == 0) {
 				ISquadTask::Update();
 			}
 			return;
 		}
-		// One forced re-plan per normal decision interval (~4 s): if the new route is still unsafe ahead
+		// One forced re-plan per normal decision interval (~2 s): if the new route is still unsafe ahead
 		// (route caps are looser than per-spot allowances), wait for the next normal decision
 		if (isPathUnsafe && !isReplanForced && (frame >= lastTouched + FRAMES_PER_SEC)) {
 			lastTouched = frame;
@@ -255,7 +256,7 @@ void CAttackTask::Update()
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	bool isExecute = (updCount % 4 == 2);
+	bool isExecute = (updCount % 2 == 0);  // decide every 2 updates (~2 s)
 	if (!isExecute) {
 		for (CCircuitUnit* unit : units) {
 			isExecute |= unit->IsForceUpdate(frame);
@@ -277,7 +278,7 @@ void CAttackTask::Update()
 
 	/*
 	 * Reinforce: a group under quota.attack walks to the nearest stronger group instead of hunting alone.
-	 * A small group that isn't fighting looks for one every decision (~4 s), unless it gave up recently.
+	 * A small group that isn't fighting looks for one every decision (~2 s), unless it gave up recently.
 	 */
 	if (attackPower >= minPower) {
 		reinforce = nullptr;  // an army itself (grown by merges)
@@ -458,7 +459,7 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query)
 		if (pPath->path.size() > 2) {
 			ActivePath(lowestSpeed);
 		}
-	} else if (++reinforceFails >= 3) {
+	} else if (++reinforceFails >= 6) {  // ~12 s of empty routes at a decision every ~2 s
 		// No safe route 3 times in a row (~12 s): act as a small attack group for 30 s, then look again
 		// (merge checks and absorbing still apply meanwhile)
 		reinforce = nullptr;
@@ -524,6 +525,7 @@ void CAttackTask::FindTarget()
 	pickSqDist = sqOBDist;
 	std::vector<std::pair<float, CEnemyInfo*>> candidates;  // (scaled distance, enemy)
 
+	const ICoreUnit::Id prevTargetId = (target != nullptr) ? target->GetId() : -1;
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
 	threatMap->SetThreatType(leader);
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
@@ -581,11 +583,21 @@ void CAttackTask::FindTarget()
 	candidateIds.clear();
 	candidatePos.clear();
 	CEnemyInfo* bestTarget = nullptr;
+	float bestKey = 0.f;
+	CEnemyInfo* prevTarget = nullptr;
+	float prevKey = 0.f;
+	size_t prevIdx = 0;
 	for (const auto& c : candidates) {
 		scaleRefSqDist = anchorFor(c.second);
 		if (IsApproachSafe(c.second->GetPos(), pos, maxPower)) {
 			if (bestTarget == nullptr) {
 				bestTarget = c.second;
+				bestKey = c.first;
+			}
+			if (c.second->GetId() == prevTargetId) {
+				prevTarget = c.second;
+				prevKey = c.first;
+				prevIdx = candidateIds.size();
 			}
 			candidateIds.push_back(c.second->GetId());
 			candidatePos.push_back(c.second->GetPos());
@@ -593,6 +605,14 @@ void CAttackTask::FindTarget()
 				break;
 			}
 		}
+	}
+
+	// Stickiness: keep the current target unless another is clearly nearer (20% by distance), so
+	// near-equal targets don't flip back and forth between decisions. It also goes first in the route's list.
+	if ((prevTarget != nullptr) && (prevTarget != bestTarget) && (bestKey >= prevKey * SQUARE(0.8f))) {
+		bestTarget = prevTarget;
+		std::rotate(candidateIds.begin(), candidateIds.begin() + prevIdx, candidateIds.begin() + prevIdx + 1);
+		std::rotate(candidatePos.begin(), candidatePos.begin() + prevIdx, candidatePos.begin() + prevIdx + 1);
 	}
 
 	if (bestTarget != nullptr) {

@@ -174,7 +174,7 @@ void IFighterTask::SetTarget(CEnemyInfo* enemy)
 void IFighterTask::Attack(const int frame, const bool isDirect)
 {
 	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
-	const bool isRepeatAttack = (frame >= attackFrame + FRAMES_PER_SEC * 3);
+	const bool isRepeatAttack = (frame >= attackFrame + attackRepeat);
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	std::vector<CCircuitUnit*> orderUnits;
 	for (CCircuitUnit* unit : units) {
@@ -278,9 +278,13 @@ float IFighterTask::GetFireRange(CCircuitUnit* unit) const
 bool IFighterTask::IsFireSpotKept(CCircuitUnit* unit, AIFloat3& outPos) const
 {
 	auto it = fireSpots.find(unit);
-	if ((it == fireSpots.end())
-		|| (manager->GetCircuit()->GetLastFrame() > it->second.second + FRAMES_PER_SEC * 10)
-		|| (it->second.first.SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * 0.95f)))
+	if (it == fireSpots.end()) {
+		return false;
+	}
+	const float range = GetFireRange(unit);
+	const float sqDist = it->second.first.SqDistance2D(target->GetPos());
+	if ((manager->GetCircuit()->GetLastFrame() > it->second.second + FRAMES_PER_SEC * 10)
+		|| (sqDist > SQUARE(range * 0.95f)) || (sqDist < SQUARE(range * 0.6f)))
 	{
 		return false;
 	}
@@ -341,10 +345,12 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 		}
 	};
 
-	if (uDist <= range) {  // already in range: standing still is a candidate
+	// Standing still, or the spot it was already heading to, while in range but not point-blank
+	// (closer than 0.6x range a fresh arc spot steps it back out): the distance term favours them
+	const float sqMinDist = SQUARE(range * 0.6f);
+	if ((uDist <= range) && (uDist * uDist >= sqMinDist)) {
 		consider(uPos);
 	}
-	// The spot it was already heading to, if still in range of the target: the distance term favours it
 	AIFloat3 keptPos;
 	if (IsFireSpotKept(unit, keptPos)) {
 		consider(keptPos);
