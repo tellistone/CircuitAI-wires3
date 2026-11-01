@@ -53,6 +53,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, scaleRefSqDist(0.f)
 		, anchorTargetId(-1)
 		, corneredFrame(-1)
+		, isReplanForced(false)
 		, corneredPos(-RgtVector)
 		, isCorneredHold(false)
 		, fleeGiveUpDest(-RgtVector)
@@ -120,7 +121,7 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 {
 	ISquadTask::AssignTo(unit);
 	CCircuitDef* cdef = unit->GetCircuitDef();
-	highestRange = std::max(highestRange, cdef->GetLosRadius());
+	UpdateHighestRange();
 
 	if (cdef->IsRoleSupport()) {
 		unit->PushBack(new CSupportAction(unit));
@@ -145,9 +146,24 @@ void CAttackTask::RemoveAssignee(CCircuitUnit* unit)
 		manager->AbortTask(this);
 		return;
 	}
-	highestRange = std::max(highestRange, leader->GetCircuitDef()->GetLosRadius());
+	UpdateHighestRange();
 	// Under quota.attack after a loss the group stays together (it used to break up and walk home
 	// to gather); Update() looks for a stronger group to reinforce while it is not engaged.
+}
+
+void CAttackTask::Merge(ISquadTask* task)
+{
+	ISquadTask::Merge(task);
+	UpdateHighestRange();
+}
+
+void CAttackTask::UpdateHighestRange()
+{
+	highestRange = 0.f;
+	for (CCircuitUnit* unit : units) {
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		highestRange = std::max(highestRange, std::max(cdef->GetMaxRange(), cdef->GetLosRadius()));
+	}
 }
 
 void CAttackTask::Start(CCircuitUnit* unit)
@@ -209,8 +225,11 @@ void CAttackTask::Update()
 			}
 			return;
 		}
-		if (isPathUnsafe && (frame >= lastTouched + FRAMES_PER_SEC)) {
-			lastTouched = frame;  // at most one forced re-plan per second
+		// One forced re-plan per normal decision interval (~4 s): if the new route is still unsafe ahead
+		// (route caps are looser than per-spot allowances), wait for the next normal decision
+		if (isPathUnsafe && !isReplanForced && (frame >= lastTouched + FRAMES_PER_SEC)) {
+			lastTouched = frame;
+			isReplanForced = true;
 			for (CCircuitUnit* unit : units) {
 				unit->ForceUpdate(frame);  // re-plan now instead of walking into it
 			}
@@ -248,6 +267,7 @@ void CAttackTask::Update()
 			return;
 		}
 	} else {
+		isReplanForced = false;  // normal decision: a forced re-plan is allowed again
 		ISquadTask::Update();
 		if (leader == nullptr) {  // task aborted
 			return;

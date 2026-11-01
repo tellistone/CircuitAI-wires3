@@ -25,6 +25,7 @@ public:
 	void SetReinforce(CAttackTask* squad) { reinforce = squad; }
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
+	virtual void Merge(ISquadTask* task) override;
 
 	virtual void Start(CCircuitUnit* unit) override;
 	virtual void Update() override;
@@ -61,6 +62,8 @@ private:
 	void ApplyTargetPath(const CQueryPathMulti* query, const std::vector<ICoreUnit::Id>& ids);
 	// Nothing to go to: hold at the quietest reachable spot within 2x our range (never head home),
 	// avoiding the spot we were last hit at while holding; retry next decision
+	// highestRange = max over all units of (weapon range, sight radius), rebuilt the same way on join, leave, merge
+	void UpdateHighestRange();
 	void HoldPosition();
 	void MoveGroupTo(const springai::AIFloat3& pos);
 	// Quietest reachable spot within 2x our range (24 samples + where we stand), avoiding the last hit area;
@@ -93,6 +96,7 @@ private:
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	int corneredFrame;  // last cornered check
+	bool isReplanForced;  // a forced re-plan (unsafe path ahead) was used since the last normal decision
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)
 	bool isCorneredHold;  // cornered while holding ground: keep holding (no flee) until the danger ends
 	springai::AIFloat3 fleeGiveUpDest;  // flee gave up within 400 elmos of this: cornered stays near it
