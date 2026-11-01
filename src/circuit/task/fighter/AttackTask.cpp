@@ -171,7 +171,7 @@ void CAttackTask::Update()
 	{
 		const int frame = manager->GetCircuit()->GetLastFrame();
 		bool isPathUnsafe = false;
-		// Not while defending: a fight with a target nearer our base than we are is held (no flee, no pull-back)
+		// Not while defending: a fight with a target inside the base defence radius is held (no flee, no pull-back)
 		const bool isDanger = IsInDanger(frame, isPathUnsafe);
 		const bool isHolding = IsHoldingGround(frame);
 		const bool isFleeing = isDanger && !isHolding && Flee(frame);
@@ -567,16 +567,20 @@ bool CAttackTask::IsHoldingGround(int frame) const
 	if ((State::ENGAGE != state) || (target == nullptr)) {
 		return false;
 	}
-	const AIFloat3& basePos = manager->GetCircuit()->GetSetupManager()->GetBasePos();
-	return target->GetPos().SqDistance2D(basePos) < leader->GetPos(frame).SqDistance2D(basePos);
+	// Only inside the base defence radius (where thr_mod.base_bonus applies): out in the field the enemy
+	// is nearer our base than we are in about half of all fights, and those should still be escapable
+	CCircuitAI* circuit = manager->GetCircuit();
+	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	return (baseRange > 0.f) && (target->GetPos().SqDistance2D(basePos) < SQUARE(baseRange));
 }
 
 float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const AIFloat3& endPos) const
 {
-	// As raid paths: our current strength over the strictest thr_mod.distance value of the two ends.
-	// Never above attackPower, so with no attack distance curve paths stay as before.
+	// As raid paths: our current strength (incl. thr_mod) over the strictest thr_mod.distance value of
+	// the two ends, so routes allow what target picking allows
 	const float pathMod = std::max(GetThrDistModAt(startPos), GetThrDistModAt(endPos));
-	return std::min(attackPower, GetSafeThreat() / pathMod);
+	return GetSafeThreat() / pathMod;
 }
 
 float CAttackTask::GetSafeThreat() const
@@ -765,7 +769,10 @@ void CAttackTask::ApplyTargetPath(const CQueryPathSingle* query)
 	if (!pPath->posPath.empty()) {
 		ActivePath(lowestSpeed);
 	} else {
-		Fallback();
+		// No route within our threat cap: drop the target and head for the front instead of
+		// charging straight in (Fallback's plain Fight order ignores threat)
+		SetTarget(nullptr);
+		FallbackFrontPos();
 	}
 }
 

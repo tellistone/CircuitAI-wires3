@@ -41,7 +41,7 @@ private:
 	// stays below the allowance at each sampled spot (same near-base scale as the target's own spot)
 	bool IsApproachSafe(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float safeThreat,
 			const springai::AIFloat3& basePos, float sqOBDist) const;
-	// Fighting a target nearer our base than we are: stand and fight instead of fleeing
+	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const springai::AIFloat3& endPos) const;
