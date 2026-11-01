@@ -614,7 +614,8 @@ bool CRaidTask::Flee(int frame)
 		dest = circuit->GetSetupManager()->GetBasePos();
 	}
 	if (leader->GetPos(frame).SqDistance2D(dest) < SQUARE(400.f)) {
-		fleeFrame = 0;
+		// End the "keep running" hold, but keep the 4 s cautious window of the last escape
+		fleeFrame = std::min(fleeFrame, frame);
 		return false;  // danger at home: running gets us nowhere
 	}
 
