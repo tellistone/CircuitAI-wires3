@@ -10,6 +10,8 @@
 
 #include "task/fighter/SquadTask.h"
 
+#include <set>
+
 namespace circuit {
 
 class CAntiAirTask: public ISquadTask {
@@ -26,6 +28,12 @@ public:
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
+
+protected:
+	// Firing spots (IFighterTask::Attack): judge spots against the squad's current strength,
+	// with the same allowance as target choice (base bonus and thr_mod.distance at the spot)
+	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
+	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override;
 
 private:
 	void FindTarget();
@@ -44,7 +52,13 @@ private:
 
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
+	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
+	void FlushHolds();
+
 	F3Vec homePoints;  // FindTarget scratch: leash anchors
+	// Hold orders are sent from Update(): path callbacks can run during an allied AI's turn,
+	// and orders sent from there go out under the wrong team and are dropped
+	std::set<CCircuitUnit*> holdPending;
 };
 
 } // namespace circuit

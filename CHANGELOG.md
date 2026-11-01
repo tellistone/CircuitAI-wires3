@@ -23,6 +23,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - last resort: threat-aware path to the commander instead of a Guard order;
   - regroup: each unit paths to the gathering point instead of fight-moving to it.
   When even that finds no path, the squad holds where it is (weapons still fire) and retries on the next update.
+- **Anti-air firing spots.** AA squads now judge the attack task's firing spots (`IFighterTask::Attack`)
+  against their own strength: a spot or the walk to it with more threat than the squad can take counts as dangerous,
+  so they hold or pick the least dangerous spot instead of walking in. Target choice and firing spots use the same
+  allowance (squad strength x `thr_mod.base_bonus` / `thr_mod.distance.aa` at the spot).
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
   slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.

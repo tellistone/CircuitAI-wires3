@@ -78,6 +78,7 @@ void CAntiAirTask::AssignTo(CCircuitUnit* unit)
 
 void CAntiAirTask::RemoveAssignee(CCircuitUnit* unit)
 {
+	holdPending.erase(unit);
 	ISquadTask::RemoveAssignee(unit);
 	if (leader == nullptr) {
 		manager->AbortTask(this);
@@ -104,6 +105,8 @@ void CAntiAirTask::Update()
 	 */
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+
+	FlushHolds();
 
 	if (State::DISENGAGE == state) {
 		if (updCount % 32 == 1) {
@@ -271,7 +274,7 @@ void CAntiAirTask::FindTarget()
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
-	const float maxPower = attackPower * powerMod;  // divided by the thr_mod.distance curve at each enemy's spot
+	const float maxPower = attackPower * powerMod;  // judged with GetAllowedThreatAt at each spot
 
 	// antiair block of behaviour.json
 	const CMilitaryManager::SAntiAirCfg& aaCfg = militaryMgr->GetAntiAirCfg();
@@ -343,7 +346,7 @@ void CAntiAirTask::FindTarget()
 			}
 		}
 		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - enemy->GetThreat());
-		if ((maxPower / GetThrDistModAt(checkPos) <= threat) ||
+		if ((threat >= GetAllowedThreatAt(checkPos, maxPower)) ||
 			!terrainMgr->CanMoveToPos(area, ePos))
 		{
 			continue;
@@ -551,12 +554,44 @@ void CAntiAirTask::ApplyRegroupPath(const CQueryPathSingle* query)
 
 void CAntiAirTask::Hold(CCircuitUnit* unit)
 {
-	// No threat-aware way to go: stay put (weapons still fire at what comes in range)
-	CCircuitAI* circuit = manager->GetCircuit();
-	TRY_UNIT(circuit, unit,
-		unit->GetUnit()->Stop();
-	)
+	// No threat-aware way to go: stay put (weapons still fire at what comes in range).
+	// The Stop order itself goes out from Update() (FlushHolds).
 	unit->GetTravelAct()->StateWait();
+	holdPending.insert(unit);
+}
+
+void CAntiAirTask::FlushHolds()
+{
+	if (holdPending.empty()) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	for (CCircuitUnit* unit : holdPending) {
+		if (units.find(unit) == units.end() || unit->GetTravelAct()->IsActive()) {
+			continue;  // left the task, or got a path since
+		}
+		TRY_UNIT(circuit, unit,
+			unit->GetUnit()->Stop();
+		)
+	}
+	holdPending.clear();
+}
+
+float CAntiAirTask::GetSafeThreat() const
+{
+	float power = 0.f;
+	for (CCircuitUnit* unit : units) {
+		power += unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+	}
+	return std::max(power, THREAT_MIN) * powerMod;
+}
+
+float CAntiAirTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float bonus = circuit->GetMilitaryManager()->GetBaseThrBonus(basePos.SqDistance2D(pos));
+	return strength * bonus / GetThrDistModAt(pos);
 }
 
 void CAntiAirTask::HoldAll()
