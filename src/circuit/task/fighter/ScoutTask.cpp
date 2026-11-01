@@ -84,6 +84,12 @@ void CScoutTask::Update()
 
 	// Re-decide on every update (was every 2nd update and at most once per second).
 	// Floor at the threat map refresh rate: re-deciding faster would only reuse the same threat data.
+	if (isIssuePending) {
+		isIssuePending = false;
+		for (CCircuitUnit* unit : units) {
+			unit->Update(circuit);  // a path applied from another AI's event: issue it now, from our own
+		}
+	}
 	if (frame >= lastTouched + THREAT_UPDATE_RATE) {
 		lastTouched = frame;
 		for (CCircuitUnit* unit : units) {
@@ -383,7 +389,6 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, in
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
 	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const float safeThreat = GetSafeThreat(unit);
 	const bool hasCap = (GetPathThreatCap(unit) < std::numeric_limits<float>::max());
@@ -428,12 +433,15 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, in
 		movePos = getHomePos();
 		position = -RgtVector;  // forces a fresh pick on the next update
 	}
-	if (utils::is_valid(movePos)) {
-		TRY_UNIT(circuit, unit,
-			unit->CmdMoveTo(movePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-		)
+	if (!utils::is_valid(movePos)) {
+		unit->GetTravelAct()->StateWait();
+		return;
 	}
-	unit->GetTravelAct()->StateWait();
+	// NOTE: This runs in a pathfinder callback, which can run inside an allied AI's engine event (shared pathfinder),
+	//       where orders are rejected by the server. A one-point path goes through ActivatePath, which handles that.
+	std::shared_ptr<PathInfo> pMove = std::make_shared<PathInfo>();
+	pMove->posPath.push_back(movePos);
+	ActivatePath(unit, pMove, -1, false);
 }
 
 float CScoutTask::GetSafeThreat(CCircuitUnit* unit) const
@@ -553,7 +561,13 @@ void CScoutTask::ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo
 	// Unit actions are only updated every ACTION_UPDATE_RATE frames (staggered) and move actions
 	// at most once per second, so a new path could take ~2s to reach the unit. Issue it now.
 	travelAct->ResetUpdateTimer();
-	unit->Update(circuit);
+	if (circuit->IsEventOwner()) {
+		unit->Update(circuit);
+	} else {
+		// Path callbacks can run inside an allied AI's event (shared pathfinder): orders sent from there are
+		// rejected by the server, so issue on our own next task update
+		isIssuePending = true;
+	}
 }
 
 bool CScoutTask::NeedRepath(CCircuitUnit* unit, ICoreUnit::Id targetId) const

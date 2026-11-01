@@ -133,9 +133,16 @@ CCircuitAI::~CCircuitAI()
 	}
 }
 
+CCircuitAI* CCircuitAI::eventOwner = nullptr;
+
 int CCircuitAI::HandleEvent(int topic, const void* data)
 {
-	return (this->*eventHandler)(topic, data);
+	// Remember whose engine event this is (restore on return: events can nest)
+	CCircuitAI* prevOwner = eventOwner;
+	eventOwner = this;
+	const int ret = (this->*eventHandler)(topic, data);
+	eventOwner = prevOwner;
+	return ret;
 }
 
 void CCircuitAI::NotifyGameEnd()

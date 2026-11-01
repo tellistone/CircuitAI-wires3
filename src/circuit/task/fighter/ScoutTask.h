@@ -59,6 +59,7 @@ private:
 	bool isPathCapped = false;  // current travel path avoids tiles above safe threat
 	int lastAttackFrame = -1;
 	int lastStallCheck = -1;  // last check for an empty order queue
+	bool isIssuePending = false;  // a path was applied outside our own engine event: issue it on the next Update
 	ICoreUnit::Id lastAttackId = -1;  // enemy id -> frame until which it is skipped
 };
 
