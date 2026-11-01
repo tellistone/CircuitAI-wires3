@@ -43,8 +43,8 @@ private:
 	void FallbackSafePos();
 	void ApplySafePos(const CQueryPathMulti* query);
 	void FallbackCommPos();
-	void FallbackBasePos();
-	void ApplyFallbackPath(const CQueryPathSingle* query, bool isDisengage);
+	void FallbackBasePos(bool isCapped);
+	void ApplyFallbackPath(const CQueryPathSingle* query, bool isDisengage, bool isCapped);
 	void RegroupUnit(CCircuitUnit* unit);
 	void ApplyRegroupPath(const CQueryPathSingle* query);
 	void Hold(CCircuitUnit* unit);
@@ -53,6 +53,8 @@ private:
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
 	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
+	// Pathfinder threat cap for a route from startPos to goals (see .cpp)
+	float GetPathThreatCap(CCircuitUnit* unit, const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	void FlushHolds();
 
 	F3Vec homePoints;  // FindTarget scratch: leash anchors

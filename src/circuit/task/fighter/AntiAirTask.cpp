@@ -27,6 +27,7 @@
 #include "AISCommands.h"
 
 #include <array>
+#include <limits>
 
 namespace circuit {
 
@@ -35,6 +36,7 @@ using namespace springai;
 CAntiAirTask::CAntiAirTask(ITaskManager* mgr, float powerMod)
 		: ISquadTask(mgr, FightType::AA, powerMod)
 {
+	isFireSpotChase = false;  // fight from the firing spot, never let the engine chase a plane past it
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
 	float z = rand() % circuit->GetTerrainManager()->GetTerrainHeight();
@@ -194,7 +196,7 @@ void CAntiAirTask::Update()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathfinder->GetSquareSize());
+			startPos, position, pathfinder->GetSquareSize(), nullptr, GetPathThreatCap(leader, startPos, {position}));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -250,7 +252,7 @@ void CAntiAirTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, urgentPositions);
+			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(leader, startPos, urgentPositions));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -372,7 +374,7 @@ void CAntiAirTask::FallbackDisengage()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathfinder->GetSquareSize());
+			startPos, position, pathfinder->GetSquareSize(), nullptr, GetPathThreatCap(leader, startPos, {position}));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -426,7 +428,7 @@ void CAntiAirTask::FallbackSafePos()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, urgentPositions);
+			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(leader, startPos, urgentPositions));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -468,18 +470,18 @@ void CAntiAirTask::FallbackCommPos()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, commander->GetPos(frame), pathRange);
+			startPos, commander->GetPos(frame), pathRange, nullptr, GetPathThreatCap(leader, startPos, {commander->GetPos(frame)}));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
 	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
-			this->ApplyFallbackPath(static_cast<const CQueryPathSingle*>(query), false);
+			this->ApplyFallbackPath(static_cast<const CQueryPathSingle*>(query), false, true);
 		}
 	});
 }
 
-void CAntiAirTask::FallbackBasePos()
+void CAntiAirTask::FallbackBasePos(bool isCapped)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
@@ -490,18 +492,19 @@ void CAntiAirTask::FallbackBasePos()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, basePos, pathRange);
+			startPos, basePos, pathRange, nullptr,
+			isCapped ? GetPathThreatCap(leader, startPos, {basePos}) : std::numeric_limits<float>::max());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+	pathfinder->RunQuery(query, [this, isCapped](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
-			this->ApplyFallbackPath(static_cast<const CQueryPathSingle*>(query), true);
+			this->ApplyFallbackPath(static_cast<const CQueryPathSingle*>(query), true, isCapped);
 		}
 	});
 }
 
-void CAntiAirTask::ApplyFallbackPath(const CQueryPathSingle* query, bool isDisengage)
+void CAntiAirTask::ApplyFallbackPath(const CQueryPathSingle* query, bool isDisengage, bool isCapped)
 {
 	pPath = query->GetPathInfo();
 
@@ -511,6 +514,8 @@ void CAntiAirTask::ApplyFallbackPath(const CQueryPathSingle* query, bool isDisen
 		if (isDisengage) {
 			state = State::DISENGAGE;
 		}
+	} else if (isDisengage && isCapped) {
+		FallbackBasePos(false);  // getting away matters more than the cap: last try through any threat
 	} else {
 		HoldAll();
 	}
@@ -525,7 +530,7 @@ void CAntiAirTask::RegroupUnit(CCircuitUnit* unit)
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			unit, circuit->GetThreatMap(), frame,
-			startPos, groupPos, DEFAULT_SLACK);
+			startPos, groupPos, DEFAULT_SLACK, nullptr, GetPathThreatCap(unit, startPos, {groupPos}));
 	pathQueries[unit] = query;
 	query->HoldTask(this);
 
@@ -586,6 +591,28 @@ float CAntiAirTask::GetSafeThreat() const
 	return std::max(power, THREAT_MIN) * powerMod;
 }
 
+float CAntiAirTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
+{
+	// The pathfinder skips cells hotter than this. One value for the whole route: the squad's strength with
+	// the strictest thr_mod.distance and the loosest base_bonus of start and goals (as attack groups do).
+	// Never below the threat where the unit stands, so a squad already in danger can still walk out
+	// through ground no hotter than here.
+	if (unit->GetUnit()->IsCloaked()) {
+		return std::numeric_limits<float>::max();  // the pathfinder uses the decloak-range array, a different scale
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	float curve = GetThrDistModAt(startPos);
+	float bonus = militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(startPos));
+	for (const AIFloat3& g : goals) {
+		curve = std::max(curve, GetThrDistModAt(g));
+		bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(g)));
+	}
+	const float cap = GetSafeThreat() * bonus / curve;
+	return std::max(cap, circuit->GetThreatMap()->GetThreatAt(unit, startPos) + THREAT_MIN);
+}
+
 float CAntiAirTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -610,7 +637,7 @@ void CAntiAirTask::ApplyDamagedPath(const CQueryPathMulti* query)
 		ActivePath();
 		state = State::DISENGAGE;
 	} else {
-		FallbackBasePos();  // was: fight-move straight to base
+		FallbackBasePos(true);  // was: fight-move straight to base
 	}
 }
 

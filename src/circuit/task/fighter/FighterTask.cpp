@@ -214,7 +214,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			case FireSpot::RISKY: {  // RISKY: nowhere safe, not here either: the least dangerous spot
 				claims[unit] = firePos;
 				fireSpots[unit] = {firePos, frame, FireSpot::RISKY == spot};
-				unit->AttackFrom(firePos, target, targetTile, timeout);
+				if (isFireSpotChase) {
+					unit->AttackFrom(firePos, target, targetTile, timeout);
+				} else {
+					unit->FightFrom(firePos, target, targetTile, timeout);
+				}
 			} break;
 			case FireSpot::HOLD: {  // every spot dangerous, here is safe: stay, fight what comes into range
 				claims[unit] = firePos;

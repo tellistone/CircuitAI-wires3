@@ -27,6 +27,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   against their own strength: a spot or the walk to it with more threat than the squad can take counts as dangerous,
   so they hold or pick the least dangerous spot instead of walking in. Target choice and firing spots use the same
   allowance (squad strength x `thr_mod.base_bonus` / `thr_mod.distance.aa` at the spot).
+  At a firing spot AA now fights from the spot instead of taking an Attack order, so the engine never chases a
+  plane past it (`IFighterTask::isFireSpotChase`, new `CCircuitUnit::FightFrom`; other tasks unchanged).
+- **Anti-air path threat cap.** Every AA path request passes a threat cap (squad strength with the strictest
+  `thr_mod.distance` and loosest `base_bonus` of start and goals, never below the threat where the unit stands),
+  so routes go around known defences instead of through them. With no capped route the squad holds; only the
+  last escape to base, after being hit, may ignore the cap.
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
   slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.

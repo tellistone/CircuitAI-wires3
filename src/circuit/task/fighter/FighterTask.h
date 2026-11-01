@@ -69,6 +69,7 @@ protected:
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)
+	bool isFireSpotChase = true;  // at a firing spot: true = Attack order (engine may chase), false = fight from the spot
 	// Firing spot each unit was last sent to (pointers only compared, never dereferenced)
 	struct SFireSpot {
 		springai::AIFloat3 pos;
