@@ -98,7 +98,8 @@ private:
 	bool isReplanForced;  // a forced re-plan (unsafe path ahead) was used since the last normal decision
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)
 	bool isCorneredHold;  // cornered while holding ground: keep holding (no flee) until the danger ends
-	bool isAtFleeDest;  // flee gave up: already within 400 elmos of where it would run to
+	bool isAtFleeDest;
+	springai::AIFloat3 fleeDest;  // where the current escape runs to (straight-move fallback when no path)  // flee gave up: already within 400 elmos of where it would run to
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget
 };
 

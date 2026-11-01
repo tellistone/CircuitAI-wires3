@@ -57,6 +57,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, corneredPos(-RgtVector)
 		, isCorneredHold(false)
 		, isAtFleeDest(false)
+		, fleeDest(-RgtVector)
 		, pickSqDist(0.f)
 {
 	attackRepeat = FRAMES_PER_SEC * 2;  // same ~2 s tempo as the decisions
@@ -869,9 +870,10 @@ bool CAttackTask::Flee(int frame)
 		return true;  // escape path is fresh
 	}
 	fleePathFrame = frame;
+	fleeDest = dest;
 
 	// No straight move first: it could run through the enemy. Units keep their current orders until the
-	// threat-aware path arrives.
+	// threat-aware path arrives (the straight move is only the fallback when no path is found).
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
@@ -891,7 +893,20 @@ void CAttackTask::ApplyFleePath(const CQueryPathSingle* query)
 {
 	pPath = query->GetPathInfo();
 	if (pPath->posPath.empty()) {
-		return;  // no way out found: keep current orders; Flee re-queries within 1 s while the danger lasts
+		// No way out found: fall back to a straight move to the destination (Flee re-queries within 1 s)
+		CCircuitAI* circuit = manager->GetCircuit();
+		const int frame = circuit->GetLastFrame();
+		for (CCircuitUnit* unit : units) {
+			if (unit->Blocker() != nullptr) {
+				continue;
+			}
+			unit->GetTravelAct()->StateWait();
+			TRY_UNIT(circuit, unit,
+				unit->CmdMoveTo(fleeDest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+				unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+			)
+		}
+		return;
 	}
 	ActivePath();
 }
