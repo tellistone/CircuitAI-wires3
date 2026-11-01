@@ -21,6 +21,7 @@ namespace circuit {
 class CGameTask;
 class CBDefenceTask;
 class CRetreatTask;
+class CAttackTask;
 
 class CMilitaryManager: public IUnitModule {
 public:
@@ -49,6 +50,13 @@ public:
 	IFighterTask* EnqueueDefend(IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType check, IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
+	// Power an attack-bound group gathers at base before it leaves: max(quota.attack, enemy threat / allies)
+	float GetAttackGatherPower() const;
+	// Nearest attack group stronger than `power` that the group led by `unit` may join and can reach;
+	// nullptr if none. `self` is skipped.
+	CAttackTask* FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self = nullptr) const;
+	// New attack task that walks to FindReinforceSquad(unit, power) and merges into it; nullptr if there is none
+	IFighterTask* EnqueueReinforce(CCircuitUnit* unit, float power);
 	CRetreatTask* EnqueueRetreat();
 private:
 	void DequeueTask(IUnitTask* task, bool done = false);
@@ -132,6 +140,9 @@ public:
 	}
 
 	float GetRaidFleeShare() const { return raidFleeShare; }
+	float GetAttackFleeShare() const { return attackFleeShare; }
+	float GetThrScaleMin() const { return thrScaleMin; }
+	float GetAttackSpotThreat() const { return attackSpotThreat; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
 	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
 	// Courage bonus inside the base defence radius: quota.thr_mod.base_bonus at the base centre, falling to 1 at the radius edge
@@ -218,9 +229,12 @@ private:
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;
+	float attackFleeShare;  // quota.attack_flee_share
+	float attackSpotThreat;  // quota.attack_spot_threat
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
 	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
 	float baseThrBonus;  // quota.thr_mod.base_bonus
+	float thrScaleMin;  // quota.thr_mod.scale_min
 	struct SThreatQuota {
 		float min;
 		float len;

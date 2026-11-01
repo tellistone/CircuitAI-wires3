@@ -11,6 +11,9 @@
 #include "task/UnitTask.h"
 #include "util/Defines.h"
 
+#include <limits>
+#include <map>
+
 namespace circuit {
 
 class CEnemyInfo;
@@ -52,6 +55,21 @@ protected:
 	// The engine still lets weapons shoot other units while the ordered target can't be hit (out of range),
 	// but switches to the ordered target as soon as it can.
 	void Attack(const int frame, const bool isDirect = false);
+	// Firing spot for a ranged unit: within its weapon range of the target, trading walking distance against
+	// threat and against spots already claimed by other units this round; false = no usable range
+	// NONE: no usable range (old orders); HOLD: every spot dangerous but the unit's own spot is safe;
+	// RISKY: every spot dangerous, the unit's too: least dangerous spot by the usual score
+	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
+	FireSpot FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, springai::AIFloat3& outPos) const;
+	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
+	virtual float GetEscapeSafeThreat() const { return -1.f; }
+	// Units sent to a RISKY firing spot, with the frame: pull-back leaves them alone for 3 s
+	// (pointers only compared, never dereferenced)
+	std::map<CCircuitUnit*, int> riskySpotFrames;
+	// Threat allowed at a spot for this strength (tasks with an escape override it)
+	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const {
+		return std::numeric_limits<float>::max();
+	}
 
 	FightType fightType;
 	springai::AIFloat3 position;  // attack/scout position

@@ -104,8 +104,19 @@ void CDefendTask::Update()
 	 */
 	if (updCount % 32 == 1) {
 		CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-		if ((attackPower >= maxPower) || !militaryMgr->GetTasks(check).empty()) {
-			IFighterTask* task = militaryMgr->EnqueueTask(promote);
+		IFighterTask* task = nullptr;
+		if (attackPower >= maxPower) {
+			task = militaryMgr->EnqueueTask(promote);  // big enough: leave as a new group
+		} else if (!militaryMgr->GetTasks(check).empty()) {
+			// Attack-bound groups reinforce the nearest army they can join; with none, leave as a small group
+			if (promote == FightType::ATTACK) {
+				task = militaryMgr->EnqueueReinforce(leader, attackPower);
+			}
+			if (task == nullptr) {
+				task = militaryMgr->EnqueueTask(promote);
+			}
+		}
+		if (task != nullptr) {
 			decltype(units) tmpUnits = units;
 			for (CCircuitUnit* unit : tmpUnits) {
 				manager->AssignTask(unit, task);
