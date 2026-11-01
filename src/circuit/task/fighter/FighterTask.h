@@ -66,6 +66,8 @@ protected:
 	// Units sent to a RISKY firing spot, with the frame: pull-back leaves them alone for 3 s
 	// (pointers only compared, never dereferenced)
 	std::map<CCircuitUnit*, int> riskySpotFrames;
+	// Firing spot each unit was last sent to: offered again as a candidate and claimed first
+	std::map<CCircuitUnit*, springai::AIFloat3> fireSpots;
 	// Threat allowed at a spot for this strength (tasks with an escape override it)
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const {
 		return std::numeric_limits<float>::max();

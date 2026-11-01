@@ -195,8 +195,23 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		return;
 	}
 
-	// Longest range picks its firing spot first; later units avoid spots already taken
-	std::sort(orderUnits.begin(), orderUnits.end(), [](CCircuitUnit* a, CCircuitUnit* b) {
+	// Forget spots of units that left the group
+	for (auto it = fireSpots.begin(); it != fireSpots.end();) {
+		it = (units.find(it->first) == units.end()) ? fireSpots.erase(it) : std::next(it);
+	}
+	// Units still heading to a spot that is in range of the target pick first (so nobody takes it
+	// from them); then longest range first. Later units avoid spots already taken.
+	const AIFloat3& tPos = target->GetPos();
+	auto hasValidSpot = [&](CCircuitUnit* u) {
+		auto it = fireSpots.find(u);
+		return (it != fireSpots.end())
+			&& (it->second.SqDistance2D(tPos) <= SQUARE(u->GetCircuitDef()->GetMaxRange()));
+	};
+	std::sort(orderUnits.begin(), orderUnits.end(), [&](CCircuitUnit* a, CCircuitUnit* b) {
+		const bool va = hasValidSpot(a), vb = hasValidSpot(b);
+		if (va != vb) {
+			return va;
+		}
 		return a->GetCircuitDef()->GetMaxRange() > b->GetCircuitDef()->GetMaxRange();
 	});
 	// Units not re-ordered this round keep standing where they are: their spots count as taken
@@ -214,6 +229,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		AIFloat3 firePos;
 		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
 				: FindFireSpot(unit, claimed, safeThreat, firePos);
+		if ((FireSpot::SPOT == spot) || (FireSpot::RISKY == spot)) {
+			fireSpots[unit] = firePos;
+		} else {
+			fireSpots.erase(unit);
+		}
 		if (FireSpot::SPOT == spot) {
 			claimed.push_back(firePos);
 			unit->AttackFrom(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
@@ -290,6 +310,11 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 
 	if (uDist <= range) {  // already in range: standing still is a candidate
 		consider(uPos);
+	}
+	// The spot it was already heading to, if still in range of the target: the distance term favours it
+	auto itSpot = fireSpots.find(unit);
+	if ((itSpot != fireSpots.end()) && (itSpot->second.SqDistance2D(tPos) <= SQUARE(range))) {
+		consider(itSpot->second);
 	}
 	// 13 spots on the arc, +-90 degrees around our bearing from the target (never round its far side)
 	for (int i = -6; i <= 6; ++i) {
