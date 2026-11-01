@@ -26,6 +26,7 @@
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
+#include "Command.h"
 //#include "Drawer.h"  // TraceRay
 
 namespace circuit {
@@ -86,7 +87,20 @@ void CScoutTask::Update()
 	if (frame >= lastTouched + THREAT_UPDATE_RATE) {
 		lastTouched = frame;
 		for (CCircuitUnit* unit : units) {
-			Execute(unit, true);
+			// Safety net: a scout with an empty order queue and no travel path is standing still for no reason.
+			// The engine sends UnitIdle only once when the queue empties, so re-decide from scratch here.
+			bool isStalled = false;
+			if ((frame >= lastStallCheck + FRAMES_PER_SEC * 2) && !unit->GetTravelAct()->IsActive() && IsQueryReady(unit)) {
+				lastStallCheck = frame;
+				auto commands = unit->GetUnit()->GetCurrentCommands();
+				isStalled = commands.empty();
+				utils::free_clear(commands);
+			}
+			if (isStalled) {
+				position = -RgtVector;  // pick a fresh destination
+				lastAttackId = -1;
+			}
+			Execute(unit, !isStalled);
 		}
 	} else {
 		for (CCircuitUnit* unit : units) {
@@ -330,9 +344,14 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 	const AIFloat3& threatPos = unit->GetTravelAct()->IsActive() ? position : pos;
 	const float safeThreat = GetSafeThreat(unit);
 	// NOTE: Use max(unit_threat, THREAT_MIN) for no-weapon scouts
-	const bool proceed = isUpdating && utils::is_valid(position) && (threatMap->GetThreatAt(unit, threatPos) < safeThreat / GetThrDistModAt(threatPos));
+	// Arrived (spot in sight): pick the next one instead of re-ordering a move to where we stand
+	const float arriveDist = std::max(unit->GetCircuitDef()->GetLosRadius() * 0.5f, (float)circuit->GetPathfinder()->GetSquareSize() * 2.f);
+	const bool isArrived = utils::is_valid(position) && !unit->GetTravelAct()->IsActive()
+			&& (pos.SqDistance2D(position) < SQUARE(arriveDist));
+	const bool isSafe = utils::is_valid(position) && (threatMap->GetThreatAt(unit, threatPos) < safeThreat / GetThrDistModAt(threatPos));
+	const bool proceed = isUpdating && isSafe && !isArrived;
 	if (!proceed) {
-		if (isUpdating && utils::is_valid(position)) {
+		if (isUpdating && utils::is_valid(position) && !isSafe) {
 			// Destination turned dangerous (e.g. an army sits there): don't re-pick it straight away
 			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
 		}
@@ -368,40 +387,55 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, in
 {
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
-
-	if (pPath->path.size() > 2) {
-//		position = path.back();
-		ActivatePath(unit, pPath, -1, isCapped && (GetPathThreatCap(unit) < std::numeric_limits<float>::max()));
-		return;
-	}
-
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const float safeThreat = GetSafeThreat(unit);
+	const bool hasCap = (GetPathThreatCap(unit) < std::numeric_limits<float>::max());
+	auto isSafeNow = [&](const AIFloat3& p) {
+		return utils::is_valid(p) && (threatMap->GetThreatAt(unit, p) < safeThreat / GetThrDistModAt(p));
+	};
+	auto getHomePos = [&]() {
+		return circuit->GetTerrainManager()->GetMovePosition(unit->GetArea(), circuit->GetSetupManager()->GetBasePos());
+	};
 
-	if (pPath->path.empty() && isCapped && (GetPathThreatCap(unit) < std::numeric_limits<float>::max())) {
-		// No route that stays out of danger
+	if (pPath->path.size() > 2) {
+		ActivatePath(unit, pPath, -1, isCapped && hasCap);
+		return;
+	}
+
+	// No capped route to a spot we can reach: danger is in the way (or we stand in it)
+	if (pPath->path.empty() && isCapped && hasCap
+		&& utils::is_valid(position) && circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), position))
+	{
 		if (attempt < 2) {
 			// Try another scouting spot; keep scouts off this one for a while
 			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
 			position = PickScoutPosition(unit, safeThreat);
-			RunScoutQuery(unit, true, attempt + 1);
-		} else {
-			// Every route crosses some danger, or we are standing in it: least-threat route to a destination
-			// that is safe right now, mobile enemies included (spot picking ignores them); else go home
-			if (!utils::is_valid(position) || (threatMap->GetThreatAt(unit, position) >= safeThreat / GetThrDistModAt(position))) {
-				position = circuit->GetTerrainManager()->GetMovePosition(unit->GetArea(), circuit->GetSetupManager()->GetBasePos());
-			}
-			RunScoutQuery(unit, false, attempt + 1);
+		} else if (!isSafeNow(position)) {
+			// Least-threat route, but only to a destination that is safe right now
+			// (spot picking ignores mobile enemies); else go home
+			position = getHomePos();
 		}
+		RunScoutQuery(unit, attempt < 2, attempt + 1);
 		return;
 	}
 
-	// Very short path or no path at all: plain move only into a safe spot
-	if (utils::is_valid(position) && (threatMap->GetThreatAt(unit, position) < safeThreat / GetThrDistModAt(position))) {
+	// No route at all (e.g. still inside the factory), or the spot is right here. Always give an order, so the
+	// scout never stands with an empty queue: plain move to the spot if it is safe, otherwise towards home.
+	// The next update re-plans from wherever this gets us.
+	AIFloat3 movePos = position;
+	if (!isSafeNow(position)) {
+		if (utils::is_valid(position) && !pPath->path.empty()) {
+			// Standing next to a spot that turned dangerous: keep scouts off it for a while
+			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
+		}
+		movePos = getHomePos();
+		position = -RgtVector;  // forces a fresh pick on the next update
+	}
+	if (utils::is_valid(movePos)) {
 		TRY_UNIT(circuit, unit,
-			unit->CmdMoveTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdMoveTo(movePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 		)
 	}
 	unit->GetTravelAct()->StateWait();
