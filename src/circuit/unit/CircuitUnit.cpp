@@ -402,7 +402,8 @@ void CCircuitUnit::AttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int ti
 	target = enemy;
 	targetTile = tile;
 	TRY_UNIT(manager->GetCircuit(), this,
-		unit->Fight(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		// Move, not Fight: go straight to the firing spot (weapons still shoot what's in range on the way)
+		CmdMoveTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 		unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
 		unit->Fight(enemy->GetPos(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);  // los-cheat related
 		CmdWantedSpeed(NO_SPEED_LIMIT);
