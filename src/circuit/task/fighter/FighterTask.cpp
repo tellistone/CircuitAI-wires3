@@ -207,6 +207,9 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		}
 	}
 	const float safeThreat = GetEscapeSafeThreat();
+	for (auto it = riskySpotFrames.begin(); it != riskySpotFrames.end();) {  // forget expired (and dead) units
+		it = (frame >= it->second + FRAMES_PER_SEC * 3) ? riskySpotFrames.erase(it) : std::next(it);
+	}
 	for (CCircuitUnit* unit : orderUnits) {
 		AIFloat3 firePos;
 		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
