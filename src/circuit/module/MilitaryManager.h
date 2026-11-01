@@ -80,6 +80,7 @@ public:
 		float allyRadius;
 		float maxPathThreat;  // paths to a firing spot may not cross enemy threat above this * unit's own power; < 0 = no limit
 		float followDist;  // with a group, stand this far behind its leader (towards base)
+		float fleeMargin;  // flee when an armed mobile enemy is within its range + this; < 0 = off
 		bool isNoScout;  // nothing to shoot or walk to: join the nearest group instead of scouting enemy mexes
 	};
 	const SArtilleryCfg& GetArtilleryCfg() const { return artillery; }

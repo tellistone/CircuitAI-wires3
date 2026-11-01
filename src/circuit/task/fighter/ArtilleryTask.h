@@ -40,7 +40,11 @@ private:
 	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // nothing to walk to
 	void FallbackStay(CCircuitUnit* unit, bool isUpdating);  // no_scout: hold if safe and covered, else FallbackSafePos
 	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // move to the nearest group
-	void HoldHere(CCircuitUnit* unit);  // stop walking (incl. queued engine waypoints) and wait
+	void HoldHere(CCircuitUnit* unit);
+	void FillSafeSpots(CCircuitUnit* unit);  // safePositions: FillSafePos pulled back by follow_dist
+	bool CheckFlee(CCircuitUnit* unit);  // artillery_flee_margin; true while fleeing
+	void Flee(CCircuitUnit* unit, const springai::AIFloat3& dangerPos);
+	void ApplyFleePath(const CQueryPathSingle* query);  // stop walking (incl. queued engine waypoints) and wait
 	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackNoSpot(CCircuitUnit* unit, bool isUpdating);  // no acceptable firing spot
 	float FillCoveredSpots(CCircuitUnit* unit, float range);  // fills firePositions, returns goal range
@@ -48,6 +52,8 @@ private:
 	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot);  // enough escort threat near spot
 
 	F3Vec safePositions;
+	bool isFleeing = false;
+	int fleeFrame = 0;  // re-plan the flee after this frame
 	F3Vec firePositions;  // covered firing cells (ally_threat)
 	std::vector<float> coverGrid;  // FillCoveredSpots scratch
 	std::vector<char> cellAdded;

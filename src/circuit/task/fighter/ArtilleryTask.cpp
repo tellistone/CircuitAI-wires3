@@ -83,15 +83,13 @@ void CArtilleryTask::Update()
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 
-	if (++updCount % 4 == 0) {
-		for (CCircuitUnit* unit : units) {
-			Execute(unit, true);
+	const bool isTick = (++updCount % 4 == 0);
+	for (CCircuitUnit* unit : units) {
+		if (CheckFlee(unit)) {  // every update: run from approaching enemies before anything else
+			continue;
 		}
-	} else {
-		for (CCircuitUnit* unit : units) {
-			if (unit->IsForceUpdate(frame)) {
-				Execute(unit, true);
-			}
+		if (isTick || unit->IsForceUpdate(frame)) {
+			Execute(unit, true);
 		}
 	}
 }
@@ -455,9 +453,32 @@ void CArtilleryTask::HoldHere(CCircuitUnit* unit)
 void CArtilleryTask::FallbackSafePos(CCircuitUnit* unit, bool isUpdating)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+
+	FillSafeSpots(unit);
+
+	const AIFloat3& startPos = unit->GetPos(frame);
+	const float pathRange = DEFAULT_SLACK * 4;
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
+			unit, circuit->GetThreatMap(), frame,
+			startPos, pathRange, safePositions);
+	pathQueries[unit] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this, isUpdating](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplySafePos(static_cast<const CQueryPathMulti*>(query), isUpdating);
+		}
+	});
+}
+
+void CArtilleryTask::FillSafeSpots(CCircuitUnit* unit)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const int frame = circuit->GetLastFrame();
 
 	// Nearest attack/defend group leaders, else a defended mex cluster, else the base
 	militaryMgr->FillSafePos(unit, safePositions);
@@ -481,22 +502,6 @@ void CArtilleryTask::FallbackSafePos(CCircuitUnit* unit, bool isUpdating)
 			}
 		}
 	}
-
-	const AIFloat3& startPos = unit->GetPos(frame);
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
-			unit, circuit->GetThreatMap(), frame,
-			startPos, pathRange, safePositions);
-	pathQueries[unit] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this, isUpdating](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplySafePos(static_cast<const CQueryPathMulti*>(query), isUpdating);
-		}
-	});
 }
 
 void CArtilleryTask::ApplySafePos(const CQueryPathMulti* query, bool isUpdating)
@@ -600,6 +605,127 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 		}
 	}
 	return goalRange;
+}
+
+bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
+{
+	// artillery_flee_margin: flee when a known armed mobile enemy (or unidentified radar blip) is within
+	// its weapon range + margin, unless (ally_threat) our cover is here. Returns true while fleeing
+	CCircuitAI* circuit = manager->GetCircuit();
+	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
+	if ((artyCfg.fleeMargin < 0.f) || (unit->Blocker() != nullptr)) {
+		isFleeing = false;
+		return false;
+	}
+
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	CEnemyInfo* danger = nullptr;
+	float minSqDist = std::numeric_limits<float>::max();
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		CEnemyInfo* enemy = kv.second;
+		if (enemy->IsHidden()) {
+			continue;
+		}
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef != nullptr) && (!edef->IsMobile() || !edef->IsAttacker() || edef->IsPlane())) {
+			continue;
+		}
+		const float reach = ((edef != nullptr) ? edef->GetMaxRange() : 0.f) + artyCfg.fleeMargin;
+		const float sqDist = pos.SqDistance2D(enemy->GetPos());
+		if ((sqDist <= SQUARE(reach)) && (sqDist < minSqDist)) {
+			minSqDist = sqDist;
+			danger = enemy;
+		}
+	}
+	if ((danger == nullptr) || ((artyCfg.allyThreat >= 0.f) && HasCover(unit, pos))) {
+		isFleeing = false;
+		return false;
+	}
+
+	if ((isFleeing && (frame < fleeFrame)) || !IsQueryReady(unit)) {
+		return true;  // already on the way
+	}
+	isFleeing = true;
+	fleeFrame = frame + FRAMES_PER_SEC * 2;  // re-plan the flee every 2 s while the danger stays
+	Flee(unit, danger->GetPos());
+	return true;
+}
+
+void CArtilleryTask::Flee(CCircuitUnit* unit, const AIFloat3& dangerPos)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+
+	// Candidates: safety spots (behind groups, else defended mex cluster, else base) and the base
+	FillSafeSpots(unit);
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	if (circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), basePos)) {
+		safePositions.push_back(basePos);
+	}
+
+	// Nearest spot that is further from the danger than we are, else the one furthest from it
+	const float sqDangerDist = pos.SqDistance2D(dangerPos);
+	const AIFloat3* best = nullptr;
+	float bestSqDist = std::numeric_limits<float>::max();
+	for (const AIFloat3& spot : safePositions) {
+		const float sqDist = pos.SqDistance2D(spot);
+		if ((spot.SqDistance2D(dangerPos) > sqDangerDist) && (sqDist < bestSqDist)) {
+			bestSqDist = sqDist;
+			best = &spot;
+		}
+	}
+	if (best == nullptr) {
+		float maxSqDist = -1.f;
+		for (const AIFloat3& spot : safePositions) {
+			const float sqDist = spot.SqDistance2D(dangerPos);
+			if (sqDist > maxSqDist) {
+				maxSqDist = sqDist;
+				best = &spot;
+			}
+		}
+	}
+	if (best == nullptr) {
+		FallbackBasePos(unit, true);
+		return;
+	}
+	position = *best;
+
+	const CMilitaryManager::SArtilleryCfg& artyCfg = militaryMgr->GetArtilleryCfg();
+	const float maxThreat = (artyCfg.maxPathThreat >= 0.f)
+			? std::max(artyCfg.maxPathThreat * unit->GetCircuitDef()->GetPower(), THREAT_MIN)
+			: std::numeric_limits<float>::max();
+	const float pathRange = DEFAULT_SLACK * 4;
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			unit, circuit->GetThreatMap(), frame,
+			pos, position, pathRange, nullptr, maxThreat);
+	pathQueries[unit] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
+		}
+	});
+}
+
+void CArtilleryTask::ApplyFleePath(const CQueryPathSingle* query)
+{
+	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
+	CCircuitUnit* unit = query->GetUnit();
+
+	if (pPath->posPath.size() > 2) {
+		unit->GetTravelAct()->SetPath(pPath);
+		unit->GetTravelAct()->StateActivate();
+	} else if (!pPath->posPath.empty()) {
+		HoldHere(unit);  // already there; nowhere better to go
+	} else {
+		FallbackBasePos(unit, true);  // no path under the threat cap: any path home
+	}
 }
 
 void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)

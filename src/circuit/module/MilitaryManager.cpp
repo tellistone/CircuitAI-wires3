@@ -442,6 +442,7 @@ void CMilitaryManager::ReadConfig()
 	artillery.maxPathThreat = artyCfg.get("max_path_threat", -1.f).asFloat();
 	artillery.followDist = std::max(0.f, artyCfg.get("follow_dist", 0.f).asFloat());
 	artillery.isNoScout = artyCfg.get("no_scout", false).asBool();
+	artillery.fleeMargin = artyCfg.get("artillery_flee_margin", -1.f).asFloat();
 
 	const Json::Value& guardCfg = root["guard"];
 	guard.maxWorkers = std::max(0, guardCfg.get("max_workers", 3).asInt());
