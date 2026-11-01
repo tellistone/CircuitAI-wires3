@@ -613,7 +613,8 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 	// its weapon range + margin, unless (ally_threat) our cover is here. Returns true while fleeing
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
-	if ((artyCfg.fleeMargin < 0.f) || (unit->Blocker() != nullptr)) {
+	const float fleeMargin = unit->GetCircuitDef()->GetArtyFleeMargin(artyCfg.fleeMargin);  // per unit type, else the block's
+	if ((fleeMargin < 0.f) || (unit->Blocker() != nullptr)) {
 		isFleeing = false;
 		return false;
 	}
@@ -624,14 +625,22 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 	float minSqDist = std::numeric_limits<float>::max();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
-		if (enemy->IsHidden()) {
+		// Only enemies we see now (not last-known ghosts) that can act
+		if (enemy->IsHidden() || !enemy->IsInRadarOrLOS()
+			|| enemy->IsBeingBuilt() || enemy->IsParalyzed() || enemy->IsDisarmed())
+		{
 			continue;
 		}
 		CCircuitDef* edef = enemy->GetCircuitDef();
-		if ((edef != nullptr) && (!edef->IsMobile() || !edef->IsAttacker() || edef->IsPlane())) {
+		if (edef == nullptr) {
+			// Unidentified radar blip: only a moving one (a parked building blip is no danger)
+			if (enemy->GetVel().SqLength2D() < 0.01f) {
+				continue;
+			}
+		} else if (!edef->IsMobile() || !edef->IsAttacker() || edef->IsPlane()) {
 			continue;
 		}
-		const float reach = ((edef != nullptr) ? edef->GetMaxRange() : 0.f) + artyCfg.fleeMargin;
+		const float reach = ((edef != nullptr) ? edef->GetMaxRange() : 0.f) + fleeMargin;
 		const float sqDist = pos.SqDistance2D(enemy->GetPos());
 		if ((sqDist <= SQUARE(reach)) && (sqDist < minSqDist)) {
 			minSqDist = sqDist;
