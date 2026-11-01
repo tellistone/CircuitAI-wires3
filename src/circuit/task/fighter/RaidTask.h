@@ -47,11 +47,13 @@ private:
 	float GetUnitPower(CCircuitUnit* unit) const;
 	void PullBackEndangered(int frame);
 	bool Flee(int frame);  // false: nowhere better to go (already home), fight instead
+	bool IsFleeQueryPending() const;  // our escape path request is still in flight
 	void ApplyFleePath(const CQueryPathSingle* query);
 
 	float maxPower;
 	int fleeFrame;  // keep running until this frame
 	int fleePathFrame;  // last escape path request
+	int fleeQueryId;  // pending escape path request (-1: none), not superseded by the 1 s refresh
 	springai::AIFloat3 fleeDest;  // haven (or base) of the current escape: straight-move fallback when no path is found
 	int pullFrame;  // last pull-back of endangered stragglers
 	std::vector<CCircuitUnit*> endangered;

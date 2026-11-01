@@ -40,6 +40,7 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, maxPower(maxPower)
 		, fleeFrame(0)
 		, fleePathFrame(0)
+		, fleeQueryId(-1)
 		, fleeDest(-RgtVector)
 		, pullFrame(0)
 		, isFightPending(false)
@@ -700,6 +701,9 @@ bool CRaidTask::Flee(int frame)
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
 		return true;  // escape path is fresh
 	}
+	if (wasFleeing && IsFleeQueryPending() && (frame < fleePathFrame + FRAMES_PER_SEC * 5)) {
+		return true;  // a slow pathfinder: don't cancel the pending way out with a new request (gives up after 5 s)
+	}
 	fleePathFrame = frame;
 	lastTouched = frame;
 
@@ -713,25 +717,39 @@ bool CRaidTask::Flee(int frame)
 			leader, circuit->GetThreatMap(), frame,
 			leader->GetPos(frame), dest, pathfinder->GetSquareSize());  // threat as cost, no cap: least-threat way out
 	pathQueries[leader] = query;  // supersedes any pending target/raid path
+	fleeQueryId = query->GetId();
 	query->HoldTask(this);
 
 	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
+			this->fleeQueryId = -1;
 			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
 		}
 	});
 	return true;
 }
 
+bool CRaidTask::IsFleeQueryPending() const
+{
+	if (fleeQueryId < 0) {
+		return false;
+	}
+	const auto it = pathQueries.find(leader);
+	return (it != pathQueries.end()) && (it->second->GetId() == fleeQueryId);
+}
+
 void CRaidTask::ApplyFleePath(const CQueryPathSingle* query)
 {
 	// Keep the raid destination in 'position': once the escape ends, FallbackRaid re-checks it
 	// (and picks another if it is dangerous) instead of the group walking all the way home
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	if (frame >= fleeFrame) {
+		return;  // late result: the escape is over and the group may have engaged again, don't drag it home
+	}
 	pPath = query->GetPathInfo();
 	if (pPath->posPath.empty()) {
 		// No way out found: fall back to the straight move to the haven (or base)
-		CCircuitAI* circuit = manager->GetCircuit();
-		const int frame = circuit->GetLastFrame();
 		for (CCircuitUnit* unit : units) {
 			if (unit->Blocker() != nullptr) {
 				continue;
