@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_ATTACKTASK_H_
 
 #include "task/fighter/SquadTask.h"
+#include "unit/CoreUnit.h"
 
 namespace circuit {
 
@@ -44,7 +45,7 @@ private:
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates
-	float GetPathThreatCap(const springai::AIFloat3& startPos, const springai::AIFloat3& endPos) const;
+	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
 	float GetSafeThreat() const;
 	float GetUnitPower(CCircuitUnit* unit) const;
@@ -53,12 +54,10 @@ private:
 	void PullBackEndangered(int frame);
 	bool Flee(int frame);  // false: nowhere better to go, fight instead
 	void ApplyFleePath(const CQueryPathSingle* query);
-	void ApplyTargetPath(const CQueryPathSingle* query);
+	void ApplyTargetPath(const CQueryPathMulti* query);
+	void HoldPosition();  // nothing to go to: stop where we are (never head home), retry next decision
 	void FallbackFrontPos();
 	void ApplyFrontPos(const CQueryPathMulti* query);
-	void FallbackBasePos();
-	void ApplyBasePos(const CQueryPathSingle* query);
-	void Fallback();
 
 	float minPower;
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use
@@ -68,6 +67,8 @@ private:
 	int fleePathFrame;  // last escape path request
 	int pullFrame;  // last pull-back of endangered stragglers
 	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
+	std::vector<ICoreUnit::Id> candidateIds;  // FindTarget: safe targets, nearest first (max 16)
+	F3Vec candidatePos;  // their positions, goals of the target route
 };
 
 } // namespace circuit

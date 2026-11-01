@@ -278,20 +278,20 @@ void CAttackTask::Update()
 		return;
 	}
 
-	const AIFloat3& endPos = position;
+	// Route-aware pick: one capped route to all safe candidates; whichever it reaches first becomes the target
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const float eps = pathfinder->GetSquareSize();
 	const float pathRange = std::max(highestRange - eps, eps);
 
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, endPos, pathRange, GetHitTest(), GetPathThreatCap(startPos, endPos));
+			startPos, pathRange, candidatePos, GetHitTest(), GetPathThreatCap(startPos, candidatePos));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
 	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
-			this->ApplyTargetPath(static_cast<const CQueryPathSingle*>(query));
+			this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query));
 		}
 	});
 }
@@ -379,8 +379,8 @@ void CAttackTask::Reinforce(const int frame)
 	if (!IsQueryReady(leader)) {
 		return;
 	}
-	// Threat-aware path to the group's leader; cells with threat above GetPathThreatCap are blocked
-	// (same cap as an army's target path). It only has to get within 800 elmos, so the hot zone around
+	// Threat-aware path to the group's leader; cells with threat above attackPower (no thr_mod: a
+	// reinforcing group is meant to avoid fights), or GetPathThreatCap if lower, are blocked. It only has to get within 800 elmos, so the hot zone around
 	// a fighting group doesn't block it; merging takes over inside 1000 elmos (CheckMergeTask every
 	// 4 updates from our side, AbsorbWeakerTasks every 8 from an army's side).
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -391,7 +391,7 @@ void CAttackTask::Reinforce(const int frame)
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, position));
+			startPos, position, pathRange, nullptr, std::min(attackPower, GetPathThreatCap(startPos, {position})));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -519,11 +519,21 @@ void CAttackTask::FindTarget()
 	// spot we'd shoot it from sits under a big enemy group's guns
 	std::sort(candidates.begin(), candidates.end(),
 			[](const std::pair<float, CEnemyInfo*>& a, const std::pair<float, CEnemyInfo*>& b) { return a.first < b.first; });
+	// Keep the nearest 16 safe ones as goals of one route query (Update); the nearest is the target until
+	// the route says which one we can actually reach under the threat cap
+	candidateIds.clear();
+	candidatePos.clear();
 	CEnemyInfo* bestTarget = nullptr;
 	for (const auto& c : candidates) {
 		if (IsApproachSafe(c.second->GetPos(), pos, maxPower, basePos, sqOBDist)) {
-			bestTarget = c.second;
-			break;
+			if (bestTarget == nullptr) {
+				bestTarget = c.second;
+			}
+			candidateIds.push_back(c.second->GetId());
+			candidatePos.push_back(c.second->GetPos());
+			if (candidateIds.size() >= 16) {
+				break;
+			}
 		}
 	}
 
@@ -575,11 +585,14 @@ bool CAttackTask::IsHoldingGround(int frame) const
 	return (baseRange > 0.f) && (target->GetPos().SqDistance2D(basePos) < SQUARE(baseRange));
 }
 
-float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const AIFloat3& endPos) const
+float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals) const
 {
 	// As raid paths: our current strength (incl. thr_mod) over the strictest thr_mod.distance value of
-	// the two ends, so routes allow what target picking allows
-	const float pathMod = std::max(GetThrDistModAt(startPos), GetThrDistModAt(endPos));
+	// start and goals, so routes allow what target picking allows
+	float pathMod = GetThrDistModAt(startPos);
+	for (const AIFloat3& g : goals) {
+		pathMod = std::max(pathMod, GetThrDistModAt(g));
+	}
 	return GetSafeThreat() / pathMod;
 }
 
@@ -762,18 +775,38 @@ void CAttackTask::ApplyFleePath(const CQueryPathSingle* query)
 	ActivePath();
 }
 
-void CAttackTask::ApplyTargetPath(const CQueryPathSingle* query)
+void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query)
 {
 	pPath = query->GetPathInfo();
 
-	if (!pPath->posPath.empty()) {
-		ActivePath(lowestSpeed);
-	} else {
-		// No route within our threat cap: drop the target and head for the front instead of
-		// charging straight in (Fallback's plain Fight order ignores threat)
+	if (pPath->posPath.empty()) {
+		// No candidate reachable within our threat cap: drop the target and head for the front
 		SetTarget(nullptr);
 		FallbackFrontPos();
+		return;
 	}
+
+	// The candidate the route ends nearest to is the one it reached
+	const AIFloat3& endPos = pPath->posPath.back();
+	const F3Vec& goals = query->GetTargets();
+	CCircuitAI* circuit = manager->GetCircuit();
+	CEnemyInfo* reached = nullptr;
+	float minSqDist = std::numeric_limits<float>::max();
+	for (size_t i = 0; (i < goals.size()) && (i < candidateIds.size()); ++i) {
+		const float sqDist = goals[i].SqDistance2D(endPos);
+		if (sqDist < minSqDist) {
+			CEnemyInfo* enemy = circuit->GetEnemyInfo(candidateIds[i]);  // may have died since
+			if (enemy != nullptr) {
+				minSqDist = sqDist;
+				reached = enemy;
+			}
+		}
+	}
+	if (reached != nullptr) {
+		SetTarget(reached);
+		position = reached->GetPos();
+	}
+	ActivePath(lowestSpeed);
 }
 
 void CAttackTask::FallbackFrontPos()
@@ -781,7 +814,7 @@ void CAttackTask::FallbackFrontPos()
 	CCircuitAI* circuit = manager->GetCircuit();
 	circuit->GetMilitaryManager()->FillFrontPos(leader, urgentPositions);
 	if (urgentPositions.empty()) {
-		FallbackBasePos();
+		HoldPosition();
 		return;
 	}
 
@@ -792,7 +825,7 @@ void CAttackTask::FallbackFrontPos()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, urgentPositions);
+			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(startPos, urgentPositions));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -812,58 +845,25 @@ void CAttackTask::ApplyFrontPos(const CQueryPathMulti* query)
 			ActivePath();
 		}
 	} else {
-		FallbackBasePos();
+		HoldPosition();
 	}
 }
 
-void CAttackTask::FallbackBasePos()
+void CAttackTask::HoldPosition()
 {
+	// Never head home from the front with nothing to do: stay and fight whatever comes,
+	// the next decision (~4 s) looks for a target or the front again
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	CSetupManager* setupMgr = circuit->GetSetupManager();
-
-	const AIFloat3& startPos = leader->GetPos(frame);
-	const AIFloat3& endPos = setupMgr->GetBasePos();
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, endPos, pathRange);
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyBasePos(static_cast<const CQueryPathSingle*>(query));
-		}
-	});
-}
-
-void CAttackTask::ApplyBasePos(const CQueryPathSingle* query)
-{
-	pPath = query->GetPathInfo();
-
-	if (!pPath->path.empty()) {
-		if (pPath->path.size() > 2) {
-			ActivePath();
-		}
-	} else {
-		Fallback();
-	}
-}
-
-void CAttackTask::Fallback()
-{
-	// should never happen
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
+	pPath = std::make_shared<PathInfo>();
 	for (CCircuitUnit* unit : units) {
-		TRY_UNIT(circuit, unit,
-			unit->GetUnit()->Fight(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-			unit->CmdWantedSpeed(lowestSpeed);
-		)
+		if (unit->Blocker() != nullptr) {
+			continue;
+		}
 		unit->GetTravelAct()->StateWait();
+		TRY_UNIT(circuit, unit,
+			unit->GetUnit()->Fight(unit->GetPos(frame), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		)
 	}
 }
 
