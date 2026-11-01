@@ -51,6 +51,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, hitRadius(0.f)
 		, hitFrame(-1)
 		, scaleRefSqDist(0.f)
+		, anchorTargetId(-1)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -477,7 +478,14 @@ void CAttackTask::FindTarget()
 	const int noChaseCat = cdef->GetNoChaseCategory();
 
 	const float sqOBDist = pos.SqDistance2D(basePos);  // Own to Base distance
-	scaleRefSqDist = sqOBDist;  // near-base scale is measured from here until the next pick (escape, routes, fire spots too)
+	// Near-base scale reference: the enemy we already went for keeps the anchor from when it was first picked
+	// (otherwise the discount would fade as we close in, and the escape would flee the fight we accepted);
+	// every other enemy is judged from where we stand now
+	const ICoreUnit::Id prevAnchorId = (scaleRefSqDist > 0.f) ? anchorTargetId : -1;
+	const float prevRef = scaleRefSqDist;
+	auto anchorFor = [&](CEnemyInfo* e) {
+		return ((prevAnchorId >= 0) && (e->GetId() == prevAnchorId)) ? prevRef : sqOBDist;
+	};
 	std::vector<std::pair<float, CEnemyInfo*>> candidates;  // (scaled distance, enemy)
 
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
@@ -490,7 +498,8 @@ void CAttackTask::FindTarget()
 		}
 		const AIFloat3& ePos = enemy->GetPos();
 		const float sqBEDist = ePos.SqDistance2D(basePos);  // Base to Enemy distance
-		const float scale = std::min(sqBEDist / sqOBDist, 1.f);
+		const float scale = std::min(sqBEDist / sqOBDist, 1.f);  // ordering
+		scaleRefSqDist = anchorFor(enemy);
 		if ((threatMap->GetThreatAt(ePos) >= GetAllowedThreatAt(ePos, maxPower))
 			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange))
 		{
@@ -537,6 +546,7 @@ void CAttackTask::FindTarget()
 	candidatePos.clear();
 	CEnemyInfo* bestTarget = nullptr;
 	for (const auto& c : candidates) {
+		scaleRefSqDist = anchorFor(c.second);
 		if (IsApproachSafe(c.second->GetPos(), pos, maxPower)) {
 			if (bestTarget == nullptr) {
 				bestTarget = c.second;
@@ -552,8 +562,11 @@ void CAttackTask::FindTarget()
 	if (bestTarget != nullptr) {
 		SetTarget(bestTarget);
 		position = target->GetPos();
+		scaleRefSqDist = anchorFor(bestTarget);
+		anchorTargetId = bestTarget->GetId();
 	} else {
 		scaleRefSqDist = 0.f;  // no fight accepted: no near-base discount
+		anchorTargetId = -1;
 	}
 	// Return: target, startPos=leader->pos, endPos=position
 }
@@ -640,8 +653,11 @@ float CAttackTask::GetNearBaseScaleAt(const AIFloat3& pos) const
 	if (scaleRefSqDist <= 0.f) {
 		return 1.f;
 	}
-	const AIFloat3& basePos = manager->GetCircuit()->GetSetupManager()->GetBasePos();
-	return std::min(pos.SqDistance2D(basePos) / scaleRefSqDist, 1.f);
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	// Floor (quota.thr_mod.scale_min): caps the near-base boost, so groups near base still flee a far bigger army
+	const float scale = std::min(pos.SqDistance2D(basePos) / scaleRefSqDist, 1.f);
+	return std::max(scale, circuit->GetMilitaryManager()->GetThrScaleMin());
 }
 
 float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) const
@@ -849,6 +865,10 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		reached = nearest;
 	}
 	if (reached != nullptr) {
+		if (reached->GetId() != anchorTargetId) {
+			// the route led to another candidate: it was judged from where the group stood at pick time
+			anchorTargetId = reached->GetId();
+		}
 		SetTarget(reached);
 		position = reached->GetPos();
 	}

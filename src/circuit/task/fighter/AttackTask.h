@@ -81,7 +81,8 @@ private:
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
 	float hitRadius;
 	int hitFrame;
-	float scaleRefSqDist;  // leader-to-base distance^2 when the target was last picked: reference of the near-base scale
+	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
+	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 };
 
 } // namespace circuit

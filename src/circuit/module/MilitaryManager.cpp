@@ -401,6 +401,11 @@ void CMilitaryManager::ReadConfig()
 	defaultMod.len = 0.f;
 	attackMod = readThrMod("attack", defaultMod);
 	baseThrBonus = qbaseBonus.isNumeric() ? qbaseBonus.asFloat() : 2.f;
+	const Json::Value& qscaleMin = qthrMod.get("scale_min", 0.25f);
+	if (!qscaleMin.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.thr_mod.scale_min must be a number 0..1, using 0.25", cfgName.c_str());
+	}
+	thrScaleMin = utils::clamp(qscaleMin.isNumeric() ? qscaleMin.asFloat() : 0.25f, 0.f, 1.f);
 	if (!qbaseBonus.isNumeric() || (baseThrBonus <= 0.f)) {
 		// 0 would make nothing near the base centre engageable
 		circuit->LOG("CONFIG %s: quota.thr_mod.base_bonus must be a number > 0, using 2.0", cfgName.c_str());
