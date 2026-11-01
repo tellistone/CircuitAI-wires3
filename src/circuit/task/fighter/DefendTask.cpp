@@ -108,9 +108,13 @@ void CDefendTask::Update()
 		if (attackPower >= maxPower) {
 			task = militaryMgr->EnqueueTask(promote);  // big enough: leave as a new group
 		} else if (!militaryMgr->GetTasks(check).empty()) {
-			// Attack-bound groups go out only to reinforce an army they can join; otherwise keep gathering
-			task = (promote == FightType::ATTACK) ? militaryMgr->EnqueueReinforce(leader)
-												  : militaryMgr->EnqueueTask(promote);
+			// Attack-bound groups reinforce the nearest army they can join; with none, leave as a small group
+			if (promote == FightType::ATTACK) {
+				task = militaryMgr->EnqueueReinforce(leader);
+			}
+			if (task == nullptr) {
+				task = militaryMgr->EnqueueTask(promote);
+			}
 		}
 		if (task != nullptr) {
 			decltype(units) tmpUnits = units;

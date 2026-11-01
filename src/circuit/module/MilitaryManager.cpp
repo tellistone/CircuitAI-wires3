@@ -1823,9 +1823,9 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 				task = EnqueueTask(it->second);
 			}
 		} else {
-			// Attack-bound units never walk out alone. They start in a gathering (defend) group at base;
-			// on its first update and every 32 after, CDefendTask either leaves as a new army (enough power)
-			// or, once any attack task exists, reinforces the nearest army it can join (EnqueueReinforce).
+			// Attack-bound units start in a gathering (defend) group at base. While no attack task exists this
+			// is the first army gathering to its power. Otherwise CDefendTask promotes it on its first update:
+			// it reinforces the nearest army it can join (EnqueueReinforce), or leaves as a small attack group.
 			task = EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());
 		}
 	}

@@ -36,6 +36,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
 		, reinforce(nullptr)
+		, isReinforceAbandoned(false)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -120,10 +121,15 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 void CAttackTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	ISquadTask::RemoveAssignee(unit);
-	if ((attackPower < minPower) || (leader == nullptr)) {
+	if (leader == nullptr) {
 		manager->AbortTask(this);
-	} else {
-		highestRange = std::max(highestRange, leader->GetCircuitDef()->GetLosRadius());
+		return;
+	}
+	highestRange = std::max(highestRange, leader->GetCircuitDef()->GetLosRadius());
+	// Under quota.attack after a loss the group stays together (it used to break up and walk home
+	// to gather) and tries to reinforce the nearest army; with none it carries on as a small group.
+	if ((attackPower < minPower) && (reinforce == nullptr) && !isReinforceAbandoned) {
+		reinforce = static_cast<CMilitaryManager*>(manager)->FindReinforceSquad(leader);
 	}
 }
 
@@ -198,10 +204,10 @@ void CAttackTask::Update()
 	if (reinforce != nullptr) {
 		if (attackPower >= minPower) {
 			reinforce = nullptr;  // grown into an army itself (merges on the way)
-		} else {
+		} else if (GetReinforceSquad() != nullptr) {
 			Reinforce(frame);
 			return;
-		}
+		}  // else: no army left to join, carry on as a small attack group
 	}
 
 	const AIFloat3& startPos = leader->GetPos(frame);
@@ -327,26 +333,23 @@ void CAttackTask::Reinforce(const int frame)
 	SetTarget(nullptr);
 	state = State::ROAM;
 
-	CAttackTask* squad = GetReinforceSquad();
-	if (squad == nullptr) {
-		ConvertToGather();
-		return;
-	}
 	if (!IsQueryReady(leader)) {
 		return;
 	}
 
-	// Threat-aware path to the army's leader, no threat cap. Merging takes over within 1000 elmos
-	// (CheckMergeTask every 4 updates from our side, AbsorbWeakerTasks every 8 from the army's side).
+	// Threat-aware path to the army's leader; cells with threat above our attackPower are blocked
+	// (same cap as an army's target path). No safe route: give up reinforcing (ApplyReinforcePath).
+	// Merging takes over within 1000 elmos (CheckMergeTask every 4 updates from our side,
+	// AbsorbWeakerTasks every 8 from the army's side).
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& startPos = leader->GetPos(frame);
-	position = squad->GetLeaderPos(frame);
+	position = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad this update
 	const float pathRange = DEFAULT_SLACK * 4;
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathRange);
+			startPos, position, pathRange, nullptr, attackPower);
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -366,20 +369,10 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query)
 			ActivePath(lowestSpeed);
 		}
 	} else {
-		Fallback();  // Fight-move straight to the army
-	}
-}
-
-void CAttackTask::ConvertToGather()
-{
-	// No army to join: go back to gathering at base (CDefendTask) instead of fighting alone.
-	// NOTE: moving the first unit out aborts this task (power < quota.attack); nothing may touch
-	//       members after the loop.
-	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	IFighterTask* task = militaryMgr->EnqueueDefend(FightType::ATTACK, militaryMgr->GetAttackGatherPower());
-	decltype(units) tmpUnits = units;
-	for (CCircuitUnit* unit : tmpUnits) {
-		manager->AssignTask(unit, task);
+		// No safe route to the army: abandon reinforcing for good and act as a small attack group
+		// from the next decision on (merge checks and absorbing still apply)
+		reinforce = nullptr;
+		isReinforceAbandoned = true;
 	}
 }
 
