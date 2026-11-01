@@ -344,14 +344,9 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 	const AIFloat3& threatPos = unit->GetTravelAct()->IsActive() ? position : pos;
 	const float safeThreat = GetSafeThreat(unit);
 	// NOTE: Use max(unit_threat, THREAT_MIN) for no-weapon scouts
-	// Arrived (spot in sight): pick the next one instead of re-ordering a move to where we stand
-	const float arriveDist = std::max(unit->GetCircuitDef()->GetLosRadius() * 0.5f, (float)circuit->GetPathfinder()->GetSquareSize() * 2.f);
-	const bool isArrived = utils::is_valid(position) && !unit->GetTravelAct()->IsActive()
-			&& (pos.SqDistance2D(position) < SQUARE(arriveDist));
-	const bool isSafe = utils::is_valid(position) && (threatMap->GetThreatAt(unit, threatPos) < safeThreat / GetThrDistModAt(threatPos));
-	const bool proceed = isUpdating && isSafe && !isArrived;
+	const bool proceed = isUpdating && utils::is_valid(position) && (threatMap->GetThreatAt(unit, threatPos) < safeThreat / GetThrDistModAt(threatPos));
 	if (!proceed) {
-		if (isUpdating && utils::is_valid(position) && !isSafe) {
+		if (isUpdating && utils::is_valid(position)) {
 			// Destination turned dangerous (e.g. an army sits there): don't re-pick it straight away
 			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
 		}
