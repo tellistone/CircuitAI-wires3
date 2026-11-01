@@ -42,11 +42,14 @@ private:
 	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackNoSpot(CCircuitUnit* unit, bool isUpdating);  // no acceptable firing spot
 	float FillCoveredSpots(CCircuitUnit* unit, float range);  // fills firePositions, returns goal range
+	void CollectEscorts(CCircuitUnit* unit);  // fills escorts
+	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot);  // enough escort threat near spot
 
 	F3Vec safePositions;
 	F3Vec firePositions;  // covered firing cells (ally_threat)
 	std::vector<float> coverGrid;  // FillCoveredSpots scratch
 	std::vector<char> cellAdded;
+	std::vector<std::pair<springai::AIFloat3, float>> escorts;  // position, threat
 };
 
 } // namespace circuit

@@ -107,6 +107,15 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	const AIFloat3& pos = unit->GetPos(frame);
 	CEnemyInfo* bestTarget = FindTarget(unit, pos);
 
+	// ally_threat: don't stay behind shooting once the escort has moved on
+	const bool isNeedCover = (circuit->GetMilitaryManager()->GetArtilleryCfg().allyThreat >= 0.f);
+	if ((bestTarget != nullptr) && isNeedCover && !HasCover(unit, pos)) {
+		if (IsQueryReady(unit)) {
+			FallbackNoSpot(unit, isUpdating);
+		}
+		return;
+	}
+
 	if (bestTarget != nullptr) {
 		unit->GetTravelAct()->StateWait();
 
@@ -289,7 +298,7 @@ void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdati
 	CCircuitUnit* unit = query->GetUnit();
 
 	if (!pPath->posPath.empty()
-		&& (manager->GetCircuit()->GetThreatMap()->GetThreatAt(pPath->posPath.back()) <= THREAT_MIN))
+		&& (manager->GetCircuit()->GetThreatMap()->GetThreatAt(unit, pPath->posPath.back()) <= THREAT_MIN))  // this unit's threat layer
 	{
 		position = pPath->posPath.back();
 		unit->GetTravelAct()->SetPath(pPath);
@@ -490,7 +499,9 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
-	const int frame = circuit->GetLastFrame();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	STerrainMapArea* area = unit->GetArea();
 
 	// Grid of candidate firing cells; the pathfinder accepts any spot within half a cell of a centre
 	const int cellSize = circuit->GetPathfinder()->GetSquareSize() * 4;
@@ -499,27 +510,17 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 	const int height = CTerrainManager::GetTerrainHeight() / cellSize + 1;
 	coverGrid.assign(width * height, 0.f);
 
-	// Cover: threat of allied mobile armed units near the cell. Artillery (main role) and aircraft
-	// don't count, so artillery can't escort itself
+	// Cover: threat of escorts near the cell
 	const float allyRadius = artyCfg.allyRadius;
 	const float sqAllyRadius = SQUARE(allyRadius);
 	const int cellRad = int(allyRadius / cellSize) + 1;
 	bool isAnyCover = false;
-	for (auto& kv : circuit->GetFriendlyUnits()) {
-		CAllyUnit* ally = kv.second;
-		CCircuitDef* adef = ally->GetCircuitDef();
-		if ((ally->GetId() == unit->GetId()) || (adef == nullptr) || !adef->IsMobile() || !adef->IsAttacker() || adef->IsPlane()
-			|| (adef->GetMainRole() == ROLE_TYPE(ARTY)))
-		{
-			continue;
-		}
-		const AIFloat3& allyPos = ally->GetPos(frame);
-		if (!utils::is_valid(allyPos)) {
-			continue;
-		}
+	CollectEscorts(unit);
+	for (const auto& escort : escorts) {
+		const AIFloat3& allyPos = escort.first;
+		const float allyThreat = escort.second;
 		const int ax = int(allyPos.x) / cellSize;
 		const int az = int(allyPos.z) / cellSize;
-		const float allyThreat = adef->GetThreat();
 		for (int z = std::max(az - cellRad, 0); z <= std::min(az + cellRad, height - 1); ++z) {
 			for (int x = std::max(ax - cellRad, 0); x <= std::min(ax + cellRad, width - 1); ++x) {
 				const AIFloat3 cellPos((x + 0.5f) * cellSize, 0.f, (z + 0.5f) * cellSize);
@@ -554,13 +555,58 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 				if (cellPos.SqDistance2D(target) > sqFireRange) {
 					continue;
 				}
-				isAdded[index] = 1;
+				isAdded[index] = 1;  // checked once, whatever the outcome
 				CTerrainManager::CorrectPosition(cellPos);
+				// Only threat-free cells the unit can reach: otherwise the nearest goal may be one that
+				// gets rejected afterwards (threat), or the search may sweep the whole map (unreachable)
+				if ((threatMap->GetThreatAt(unit, cellPos) > THREAT_MIN) || !terrainMgr->CanMoveToPos(area, cellPos)) {
+					continue;
+				}
 				firePositions.push_back(cellPos);
 			}
 		}
 	}
 	return goalRange;
+}
+
+void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
+{
+	// Allied mobile armed units. Artillery (main role) and aircraft don't count, so artillery can't escort itself
+	escorts.clear();
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	circuit->UpdateFriendlyUnits();  // drop units that died since the last refresh
+	for (auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* ally = kv.second;
+		CCircuitDef* adef = ally->GetCircuitDef();
+		if ((ally->GetId() == unit->GetId()) || (adef == nullptr) || !adef->IsMobile() || !adef->IsAttacker() || adef->IsPlane()
+			|| (adef->GetMainRole() == ROLE_TYPE(ARTY)))
+		{
+			continue;
+		}
+		const AIFloat3& allyPos = ally->GetPos(frame);
+		if (utils::is_valid(allyPos)) {
+			escorts.emplace_back(allyPos, adef->GetThreat());
+		}
+	}
+}
+
+bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
+	// One grid cell of slack: firing spots are picked by cell centre, and the unit may stop up to
+	// half a cell away, so without slack it could arrive, find no cover and turn back
+	const float slack = circuit->GetPathfinder()->GetSquareSize() * 4;
+	const float sqAllyRadius = SQUARE(artyCfg.allyRadius + slack);
+	CollectEscorts(unit);
+	float cover = 0.f;
+	for (const auto& escort : escorts) {
+		if (escort.first.SqDistance2D(spot) <= sqAllyRadius) {
+			cover += escort.second;
+		}
+	}
+	return cover >= artyCfg.allyThreat;
 }
 
 } // namespace circuit
