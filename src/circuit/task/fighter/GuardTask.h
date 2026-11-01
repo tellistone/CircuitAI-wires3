@@ -34,6 +34,7 @@ public:
 	bool IsActive() const;
 	bool IsVipSafe() const { return isVipSafe; }
 	ICoreUnit::Id GetVipId() const { return vipId; }
+	bool IsGuardedPool() const { return isGuardedVip; }
 
 private:
 	void CheckVip(CCircuitUnit* vip);
@@ -44,8 +45,10 @@ private:
 	void ReleaseUnit(CCircuitUnit* unit);
 	void DebugLog(CCircuitUnit* vip, const char* event) const;
 	void Pull(CCircuitUnit* vip);
+	float GetExcludedInflAt(CCircuitUnit* vip, const springai::AIFloat3& pos) const;
 
 	ICoreUnit::Id vipId;
+	bool isGuardedVip;  // vip has the "guarded" attribute: own share pool, stricter safe check
 	float maxPower;
 	bool isVipRetreat;
 	bool isVipSafe;
