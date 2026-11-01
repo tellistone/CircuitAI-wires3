@@ -44,6 +44,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, reinforceRetryFrame(-1)
 		, fleeFrame(0)
 		, fleePathFrame(0)
+		, fleeQueryId(-1)
 		, pullFrame(0)
 		, isHolding(false)
 		, stepFrame(0)
@@ -869,6 +870,11 @@ bool CAttackTask::Flee(int frame)
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
 		return true;  // escape path is fresh
 	}
+	// Don't replace an escape query that hasn't come back yet (a slow shared pathfinder would otherwise
+	// never deliver a way out); give it up to 5 s
+	if (wasFleeing && IsFleeQueryPending() && (frame < fleePathFrame + FRAMES_PER_SEC * 5)) {
+		return true;
+	}
 	fleePathFrame = frame;
 	fleeDest = dest;
 
@@ -879,18 +885,33 @@ bool CAttackTask::Flee(int frame)
 			leader, circuit->GetThreatMap(), frame,
 			leader->GetPos(frame), dest, pathfinder->GetSquareSize());  // threat as cost, no cap: least-threat way out
 	pathQueries[leader] = query;  // supersedes any pending target/reinforce path
+	fleeQueryId = query->GetId();
 	query->HoldTask(this);
 
 	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
+			this->fleeQueryId = -1;
 			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
 		}
 	});
 	return true;
 }
 
+bool CAttackTask::IsFleeQueryPending() const
+{
+	if (fleeQueryId < 0) {
+		return false;
+	}
+	auto it = pathQueries.find(leader);
+	return (it != pathQueries.end()) && (it->second != nullptr) && (it->second->GetId() == fleeQueryId)
+			&& !it->second->IsLost();
+}
+
 void CAttackTask::ApplyFleePath(const CQueryPathSingle* query)
 {
+	if (manager->GetCircuit()->GetLastFrame() >= fleeFrame) {
+		return;  // the escape is over (re-engaged): a late result must not drag the group home
+	}
 	pPath = query->GetPathInfo();
 	if (pPath->posPath.empty()) {
 		// No way out found: fall back to a straight move to the destination (Flee re-queries within 1 s)

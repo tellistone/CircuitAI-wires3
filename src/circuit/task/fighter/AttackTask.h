@@ -83,6 +83,8 @@ private:
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
 	int fleeFrame;  // keep running until this frame
 	int fleePathFrame;  // last escape path request
+	int fleeQueryId;  // id of the escape path query still in flight, -1 = none
+	bool IsFleeQueryPending() const;
 	int pullFrame;  // last pull-back of endangered stragglers
 	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
 	std::vector<ICoreUnit::Id> candidateIds;  // FindTarget: safe targets, nearest first (max 16)
