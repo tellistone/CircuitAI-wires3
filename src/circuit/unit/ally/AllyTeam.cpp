@@ -375,6 +375,9 @@ void CAllyTeam::DelegateAuthority(CCircuitAI* curOwner)
 			mapManager->SetAuthority(circuit);
 			metalManager->SetAuthority(circuit);
 			energyGrid->SetAuthority(circuit);
+			// The pathfinder ran on the leaving AI's scheduler, which stops now: without this every ally's
+			// path queries would wait forever once the first allied AI is released (team died or resigned)
+			pathfinder->SetScheduler(circuit->GetScheduler());
 			circuit->GetScheduler()->RunOnRelease(std::make_shared<CGameTask>(&CAllyTeam::DelegateAuthority, this, circuit));
 			break;
 		}

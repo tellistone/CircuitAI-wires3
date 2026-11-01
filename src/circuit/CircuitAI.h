@@ -94,6 +94,7 @@ public:
 	// allied AIs share a pathfinder, so path callbacks can run inside another AI's event, and the server rejects
 	// orders sent from there ("invalid team ID ... in AICOMMAND").
 	bool IsEventOwner() const { return eventOwner == this; }
+	static const CCircuitAI* GetEventOwner() { return eventOwner; }  // compare only: never dereference
 	void NotifyGameEnd();
 	void NotifyResign();
 	void Resign(int newTeamId, springai::Economy* economy);

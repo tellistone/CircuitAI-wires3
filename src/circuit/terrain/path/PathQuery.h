@@ -30,6 +30,9 @@ public:
 
 	void SetState(State value) { state.store(value); }
 	State GetState() const { return state.load(); }
+	void SetGeneration(int value) { generation = value; }
+	// Still waiting, but its pathfinder changed scheduler since it was run: the result will never come
+	bool IsLost() const;
 
 	void Init(const bool* canMoveArray, const float* threatArray,
 			  NSMicroPather::CostFunc&& moveFun, NSMicroPather::CostFunc&& threatFun,
@@ -52,6 +55,7 @@ protected:
 	int id;
 	Type type;
 	std::atomic<State> state;
+	int generation = 0;  // CPathFinder::GetGeneration() when run
 
 	const bool* canMoveArray;  // outdate after AREA_UPDATE_RATE
 	const float* threatArray;  // outdate after THREAT_UPDATE_RATE

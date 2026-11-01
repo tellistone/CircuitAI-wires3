@@ -332,7 +332,7 @@ PathCallback CPathFinder::DeliverToOwner(const std::shared_ptr<IPathQuery>& quer
 		if (sched == nullptr) {
 			return;  // that AI is gone
 		}
-		if (owner->IsEventOwner()) {
+		if (CCircuitAI::GetEventOwner() == owner) {  // pointer compare: owner may be gone with its scheduler kept alive
 			onComplete(q);
 			return;
 		}
@@ -358,6 +358,7 @@ void CPathFinder::RunQuery(const std::shared_ptr<IPathQuery>& query, PathCallbac
 	// AI that created it. Orders sent from another AI's event are rejected by the server ("invalid team ID"),
 	// so hand each completion back to the AI that asked for it.
 	onComplete = DeliverToOwner(query, std::move(onComplete));
+	query->SetGeneration(generation);
 	switch (query->GetType()) {
 		case IPathQuery::Type::SINGLE: {
 			RunPathSingle(query, std::move(onComplete));

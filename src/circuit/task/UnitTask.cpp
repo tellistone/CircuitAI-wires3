@@ -113,7 +113,8 @@ bool IUnitTask::IsQueryReady(CCircuitUnit* unit) const
 {
 	const auto it = pathQueries.find(unit);
 	std::shared_ptr<IPathQuery> query = (it == pathQueries.end()) ? nullptr : it->second;
-	return (query == nullptr) || (IPathQuery::State::READY == query->GetState());
+	// A lost query (its pathfinder changed owner AI while it was in flight) never completes: don't wait for it
+	return (query == nullptr) || (IPathQuery::State::READY == query->GetState()) || query->IsLost();
 }
 
 bool IUnitTask::IsQueryAlive(const IPathQuery* query) const
