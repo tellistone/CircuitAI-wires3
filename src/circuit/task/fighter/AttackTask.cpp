@@ -206,6 +206,14 @@ void CAttackTask::Update()
 		reinforce = static_cast<CMilitaryManager*>(manager)->FindReinforceSquad(leader, attackPower, this);
 	}
 	if ((reinforce != nullptr) && (GetReinforceSquad() != nullptr)) {
+		// Fight back on the way: a target that passes the usual checks (FindTarget: threat at its spot
+		// below our power) and is already within range gets attacked; otherwise keep walking.
+		FindTarget();
+		if ((target != nullptr) && (target->GetPos().SqDistance2D(leader->GetPos(frame)) < SQUARE(highestRange))) {
+			state = State::ENGAGE;
+			Attack(frame);
+			return;
+		}
 		Reinforce(frame);
 		return;
 	}  // else: nothing to join, carry on as a small attack group
