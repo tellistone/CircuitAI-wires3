@@ -75,6 +75,14 @@ public:
 	void FillStaticSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 
+	struct SArtilleryCfg {
+		float allyThreat;  // firing spot needs at least this allied influence (unit itself excluded); < 0 = off
+		float maxPathThreat;  // paths to a firing spot may not cross threat above this * unit's own power; < 0 = no limit
+		float followDist;  // with a group, stand this far behind its leader (towards base)
+		bool isNoScout;  // nothing to shoot or walk to: join the nearest group instead of scouting enemy mexes
+	};
+	const SArtilleryCfg& GetArtilleryCfg() const { return artillery; }
+
 	IFighterTask* AddGuardTask(CCircuitUnit* unit);
 	bool DelGuardTask(CCircuitUnit* unit);
 	IFighterTask* GetGuardTask(CCircuitUnit* unit) const;
@@ -207,6 +215,7 @@ private:
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;
+	SArtilleryCfg artillery;
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
 	SGuardCfg guard;

@@ -49,6 +49,9 @@ public:
 	float GetMobileArmedInflAt(CAllyUnit* u, const springai::AIFloat3& position) const;
 
 	int Pos2Index(const springai::AIFloat3& pos) const;
+	int GetSquareSize() const { return squareSize; }
+	int GetWidth() const { return width; }
+	int GetHeight() const { return height; }
 
 private:
 	struct SInfluenceData {

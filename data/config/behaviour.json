@@ -54,6 +54,14 @@
 	"take_from": "high"  // highest job priority a builder can be taken off for escort: "idle" (idle builders only), "low", "normal" or "high" (urgent jobs never)
 },
 
+// Artillery (main role artillery): each unit works alone, shooting known enemy buildings
+"artillery": {
+	"ally_threat": 10.0,  // only walk to a firing spot where allied influence (same units as guard.safe, the unit itself excluded) is at least this; buildings already in range are always shot; -1 = any spot (old behaviour)
+	"max_path_threat": 1.0,  // the path to a firing spot may not cross enemy threat above this x the unit's own power; if no such path exists it joins a group instead; -1 = no limit (threat is only avoided where cheap)
+	"no_scout": true,  // nothing to shoot or walk to: join the nearest attack/defend group (else a defended mex cluster, else the base) instead of walking the scout route to enemy mexes or fight-moving to a random spot
+	"follow_dist": 300.0  // when joining a group, stand this far behind its leader on the side towards our base
+},
+
 "guard": {
 	// units with "attribute": ["guarded"] (e.g. artillery) also get a guard slot that follows all the rules below
 	"roles": ["raider", "riot"],  // main roles that may take a builder's guard slot; a custom role ("bullshit_raider") matches only itself, a base role ("raider") also matches roles bound to it; [] = nobody guards

@@ -7,6 +7,7 @@
 
 #include "task/fighter/ArtilleryTask.h"
 #include "task/TaskManager.h"
+#include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
@@ -122,7 +123,7 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	}
 
 	if (enemyPositions.empty()) {
-		FallbackScout(unit, isUpdating);
+		FallbackNoTarget(unit, isUpdating);
 		return;
 	}
 
@@ -130,10 +131,17 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const float range = std::max(cdef->GetMaxRange()/* - threatMap->GetSquareSize()*/, (float)threatMap->GetSquareSize());
 
+	// artillery block of behaviour.json: firing spots need allied cover, paths may not cross heavy threat
+	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
+	NSMicroPather::TestFunc allyTest = (artyCfg.allyThreat >= 0.f) ? GetAllyTest(unit) : nullptr;
+	const float maxThreat = (artyCfg.maxPathThreat >= 0.f)
+			? std::max(artyCfg.maxPathThreat * cdef->GetPower(), THREAT_MIN)
+			: std::numeric_limits<float>::max();
+
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			unit, threatMap, frame,
-			pos, range, enemyPositions);
+			pos, range, enemyPositions, std::move(allyTest), maxThreat);
 	pathQueries[unit] = query;
 	query->HoldTask(this);
 
@@ -270,14 +278,19 @@ void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdati
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
 
-	if (!pPath->posPath.empty()) {
-		if (manager->GetCircuit()->GetThreatMap()->GetThreatAt(pPath->posPath.back()) > THREAT_MIN) {
-			FallbackBasePos(unit, isUpdating);
-		} else {
-			position = pPath->posPath.back();
-			unit->GetTravelAct()->SetPath(pPath);
-			unit->GetTravelAct()->StateActivate();
-		}
+	CCircuitAI* circuit = manager->GetCircuit();
+	const bool isNoScout = circuit->GetMilitaryManager()->GetArtilleryCfg().isNoScout;
+
+	// NOTE: the pathfinder always adds the building's own cell as a goal, so the ally check is repeated here
+	if (!pPath->posPath.empty()
+		&& (circuit->GetThreatMap()->GetThreatAt(pPath->posPath.back()) <= THREAT_MIN)
+		&& IsAllySpot(unit, pPath->posPath.back()))
+	{
+		position = pPath->posPath.back();
+		unit->GetTravelAct()->SetPath(pPath);
+		unit->GetTravelAct()->StateActivate();
+	} else if (isNoScout) {
+		FallbackSafePos(unit, isUpdating);
 	} else {
 		FallbackBasePos(unit, isUpdating);
 	}
@@ -315,6 +328,8 @@ void CArtilleryTask::ApplyBasePos(const CQueryPathSingle* query, bool isUpdating
 	if (!pPath->posPath.empty()) {
 		unit->GetTravelAct()->SetPath(pPath);
 		unit->GetTravelAct()->StateActivate();
+	} else if (manager->GetCircuit()->GetMilitaryManager()->GetArtilleryCfg().isNoScout) {
+		unit->GetTravelAct()->StateWait();  // stay put rather than scout
 	} else {
 		FallbackScout(unit, isUpdating);
 	}
@@ -385,6 +400,115 @@ void CArtilleryTask::Fallback(CCircuitUnit* unit, bool proceed)
 		unit->GetUnit()->Fight(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 	)
 	unit->GetTravelAct()->StateWait();
+}
+
+void CArtilleryTask::FallbackNoTarget(CCircuitUnit* unit, bool isUpdating)
+{
+	if (manager->GetCircuit()->GetMilitaryManager()->GetArtilleryCfg().isNoScout) {
+		FallbackSafePos(unit, isUpdating);
+	} else {
+		FallbackScout(unit, isUpdating);
+	}
+}
+
+void CArtilleryTask::FallbackSafePos(CCircuitUnit* unit, bool isUpdating)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const int frame = circuit->GetLastFrame();
+
+	// Nearest attack/defend group leaders, else a defended mex cluster, else the base
+	militaryMgr->FillSafePos(unit, safePositions);
+
+	// Stand behind the leader, on the side towards our base
+	const float followDist = militaryMgr->GetArtilleryCfg().followDist;
+	if (followDist > 0.f) {
+		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+		STerrainMapArea* area = unit->GetArea();
+		for (AIFloat3& safePos : safePositions) {
+			AIFloat3 dir = basePos - safePos;
+			dir.y = 0.f;
+			const float len = dir.Length2D();
+			if (len <= followDist) {
+				continue;
+			}
+			AIFloat3 backPos = safePos + dir / len * followDist;
+			CTerrainManager::CorrectPosition(backPos);
+			if (terrainMgr->CanMoveToPos(area, backPos)) {
+				safePos = backPos;
+			}
+		}
+	}
+
+	const AIFloat3& startPos = unit->GetPos(frame);
+	const float pathRange = DEFAULT_SLACK * 4;
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
+			unit, circuit->GetThreatMap(), frame,
+			startPos, pathRange, safePositions);
+	pathQueries[unit] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this, isUpdating](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplySafePos(static_cast<const CQueryPathMulti*>(query), isUpdating);
+		}
+	});
+}
+
+void CArtilleryTask::ApplySafePos(const CQueryPathMulti* query, bool isUpdating)
+{
+	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
+	CCircuitUnit* unit = query->GetUnit();
+
+	if (!pPath->posPath.empty()) {
+		position = pPath->posPath.back();
+		unit->GetTravelAct()->SetPath(pPath);
+		unit->GetTravelAct()->StateActivate();
+	} else {
+		FallbackBasePos(unit, isUpdating);
+	}
+}
+
+NSMicroPather::TestFunc CArtilleryTask::GetAllyTest(CCircuitUnit* unit) const
+{
+	// Snapshot of the influence cells with enough allied cover (the unit itself excluded):
+	// the path query runs on another thread, so it must not read the influence map
+	CCircuitAI* circuit = manager->GetCircuit();
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	const float minAlly = circuit->GetMilitaryManager()->GetArtilleryCfg().allyThreat;
+	const int width = inflMap->GetWidth();
+	const int height = inflMap->GetHeight();
+	const int inflSize = inflMap->GetSquareSize();
+	auto isCovered = std::make_shared<std::vector<char>>(width * height, 0);
+	for (int z = 0; z < height; ++z) {
+		for (int x = 0; x < width; ++x) {
+			const AIFloat3 cellPos((x + 0.5f) * inflSize, 0.f, (z + 0.5f) * inflSize);
+			const float ally = inflMap->GetAllyInflAt(cellPos) - inflMap->GetMobileArmedInflAt(unit, cellPos);
+			(*isCovered)[z * width + x] = (ally >= minAlly) ? 1 : 0;
+		}
+	}
+
+	const int pathSize = circuit->GetPathfinder()->GetSquareSize();
+	return [isCovered, width, height, inflSize, pathSize](int2 start, int2 end) {
+		// start: candidate firing cell, path-map coordinates
+		const int x = utils::clamp((start.x * pathSize + pathSize / 2) / inflSize, 0, width - 1);
+		const int z = utils::clamp((start.y * pathSize + pathSize / 2) / inflSize, 0, height - 1);
+		return (*isCovered)[z * width + x] != 0;
+	};
+}
+
+bool CArtilleryTask::IsAllySpot(CCircuitUnit* unit, const AIFloat3& spot) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const float minAlly = circuit->GetMilitaryManager()->GetArtilleryCfg().allyThreat;
+	if (minAlly < 0.f) {
+		return true;
+	}
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	return inflMap->GetAllyInflAt(spot) - inflMap->GetMobileArmedInflAt(unit, spot) >= minAlly;
 }
 
 } // namespace circuit

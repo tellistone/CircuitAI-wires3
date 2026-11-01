@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_ARTILLERYTASK_H_
 
 #include "task/fighter/FighterTask.h"
+#include "terrain/path/MicroPather.h"
 
 namespace circuit {
 
@@ -35,6 +36,15 @@ private:
 	void FallbackScout(CCircuitUnit* unit, bool isUpdating);
 	void ApplyScoutPath(const CQueryPathSingle* query);
 	void Fallback(CCircuitUnit* unit, bool proceed);
+
+	// artillery block of behaviour.json
+	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // nothing to walk to
+	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // join the nearest group (no_scout)
+	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
+	NSMicroPather::TestFunc GetAllyTest(CCircuitUnit* unit) const;
+	bool IsAllySpot(CCircuitUnit* unit, const springai::AIFloat3& spot) const;
+
+	F3Vec safePositions;
 };
 
 } // namespace circuit

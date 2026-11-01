@@ -436,6 +436,12 @@ void CMilitaryManager::ReadConfig()
 	scoutMod = readThrMod("scout", attackMod);
 	defenceMod = readThrMod("defence", defaultMod);
 
+	const Json::Value& artyCfg = root["artillery"];
+	artillery.allyThreat = artyCfg.get("ally_threat", -1.f).asFloat();
+	artillery.maxPathThreat = artyCfg.get("max_path_threat", -1.f).asFloat();
+	artillery.followDist = std::max(0.f, artyCfg.get("follow_dist", 0.f).asFloat());
+	artillery.isNoScout = artyCfg.get("no_scout", false).asBool();
+
 	const Json::Value& guardCfg = root["guard"];
 	guard.maxWorkers = std::max(0, guardCfg.get("max_workers", 3).asInt());
 	const Json::Value& guardSafe = guardCfg["safe"];
