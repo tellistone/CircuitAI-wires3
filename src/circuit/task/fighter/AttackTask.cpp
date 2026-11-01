@@ -56,7 +56,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, isReplanForced(false)
 		, corneredPos(-RgtVector)
 		, isCorneredHold(false)
-		, fleeGiveUpDest(-RgtVector)
+		, isAtFleeDest(false)
 		, pickSqDist(0.f)
 {
 	attackRepeat = FRAMES_PER_SEC * 2;  // same ~2 s tempo as the decisions
@@ -204,8 +204,11 @@ void CAttackTask::Update()
 		// Not while defending: a fight with a target inside the base defence radius is held (no flee, no pull-back)
 		const bool isDanger = IsInDanger(frame, isPathUnsafe);
 		const bool isHolding = IsHoldingGround(frame) || (isDanger && isCorneredHold);
+		isAtFleeDest = false;
 		const bool isFleeing = isDanger && !isHolding && Flee(frame);
-		if (isDanger && !isFleeing) {
+		// Already at the flee destination (stronger group, haven, base): no cornered rule, carry on as usual
+		// (pull-back and normal decisions)
+		if (isDanger && !isFleeing && !isAtFleeDest) {
 			// Cornered (holding ground, or nowhere better to run): don't stand and take it.
 			// Moving to a quieter spot ends ENGAGE, so remember that this group is holding ground.
 			isCorneredHold = isHolding;
@@ -214,7 +217,6 @@ void CAttackTask::Update()
 		}
 		corneredPos = -RgtVector;
 		isCorneredHold = false;
-		fleeGiveUpDest = -RgtVector;
 		if (!isFleeing && !isHolding) {
 			PullBackEndangered(frame);
 		}
@@ -852,7 +854,7 @@ bool CAttackTask::Flee(int frame)
 		dest = circuit->GetSetupManager()->GetBasePos();
 	}
 	if (leader->GetPos(frame).SqDistance2D(dest) < SQUARE(400.f)) {
-		fleeGiveUpDest = dest;  // the cornered rule stays within 400 elmos of it
+		isAtFleeDest = true;
 		fleeFrame = std::min(fleeFrame, frame);  // stop running, but keep the cautious window after it
 		return false;  // already there: running gets us nowhere
 	}
@@ -861,7 +863,6 @@ bool CAttackTask::Flee(int frame)
 	state = State::ROAM;
 	isHolding = false;
 	scaleRefSqDist = 0.f;  // running: judge danger at full value, also on the way home
-	fleeGiveUpDest = -RgtVector;
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
@@ -1004,12 +1005,12 @@ void CAttackTask::HoldPosition()
 {
 	// Never head home from the front with nothing to do: hold at the quietest spot nearby
 	AIFloat3 bestPos;
-	FindQuietSpot(leader->GetPos(manager->GetCircuit()->GetLastFrame()), bestPos, -RgtVector, 0.f);
+	FindQuietSpot(leader->GetPos(manager->GetCircuit()->GetLastFrame()), bestPos);
 	MoveGroupTo(bestPos);
 	isHolding = true;
 }
 
-float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos, const AIFloat3& anchor, float anchorRadius)
+float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 {
 	// Quietest reachable spot within 2x our range: stay put when it is as quiet as anywhere around
 	// (no creeping), and keep away from where we were last hit while holding (attackers we can't see
@@ -1034,9 +1035,7 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos, const AI
 			const float angle = a * static_cast<float>(M_PI) / 4.f;
 			AIFloat3 p(pos.x + dist * cosf(angle), pos.y, pos.z + dist * sinf(angle));
 			CTerrainManager::CorrectPosition(p);
-			if (isHitZone(p) || !terrainMgr->CanMoveToPos(area, p)
-				|| (utils::is_valid(anchor) && (p.SqDistance2D(anchor) > SQUARE(anchorRadius))))
-			{
+			if (isHitZone(p) || !terrainMgr->CanMoveToPos(area, p)) {
 				continue;
 			}
 			const float threat = threatMap->GetThreatAt(leader, p);
@@ -1068,10 +1067,7 @@ void CAttackTask::Cornered(int frame)
 	const float hereThreat = threatMap->GetThreatAt(leader, pos);
 
 	AIFloat3 quietPos;
-	// Flee gave up next to a haven / stronger group: stay within 400 elmos of it, or the next update
-	// would flee back to it (holding ground: no flee, so no limit)
-	const AIFloat3 anchor = isCorneredHold ? AIFloat3(-RgtVector) : fleeGiveUpDest;
-	const float quietThreat = FindQuietSpot(pos, quietPos, anchor, 400.f);
+	const float quietThreat = FindQuietSpot(pos, quietPos);
 	// Already heading somewhere: switch only to a clearly (20%) quieter spot
 	const bool isMoving = utils::is_valid(corneredPos) && (corneredPos.SqDistance2D(pos) > SQUARE(200.f));
 	const float refThreat = isMoving ? threatMap->GetThreatAt(leader, corneredPos) : hereThreat;
