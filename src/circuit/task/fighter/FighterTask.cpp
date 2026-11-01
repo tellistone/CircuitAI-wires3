@@ -323,8 +323,9 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 	auto isDanger = [&](const AIFloat3& p, float threat) {
 		return (safeThreat > 0.f) && (threat >= GetAllowedThreatAt(p, safeThreat));
 	};
-	// The walk there counts too: a straight line from the unit (skipping the square it stands in, so a
-	// unit already in danger can still step out) that crosses danger would get it pulled back on the way
+	// The walk there counts too: a straight line from the unit that crosses danger would get it pulled back
+	// on the way. Danger at the start of the walk is ignored until the line first leaves it, so a unit
+	// already in danger can still step out; only danger met after that counts.
 	const float step = threatMap->GetSquareSize();
 	auto isWalkDanger = [&](const AIFloat3& p) {
 		if (safeThreat <= 0.f) {
@@ -337,10 +338,14 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 			return false;
 		}
 		dir /= dist;
+		bool isLeft = false;  // has the walk left the danger it started in
 		for (float d = step; d < dist; d += step) {
 			AIFloat3 q = uPos + dir * d;
 			CTerrainManager::CorrectPosition(q);
-			if (isDanger(q, threatMap->GetThreatAt(unit, q))) {
+			const bool isQDanger = isDanger(q, threatMap->GetThreatAt(unit, q));
+			if (!isQDanger) {
+				isLeft = true;
+			} else if (isLeft) {
 				return true;
 			}
 		}
