@@ -52,6 +52,7 @@ private:
 	float maxPower;
 	int fleeFrame;  // keep running until this frame
 	int fleePathFrame;  // last escape path request
+	springai::AIFloat3 fleeDest;  // haven (or base) of the current escape: straight-move fallback when no path is found
 	int pullFrame;  // last pull-back of endangered stragglers
 	std::vector<CCircuitUnit*> endangered;
 	bool isFightPending;
