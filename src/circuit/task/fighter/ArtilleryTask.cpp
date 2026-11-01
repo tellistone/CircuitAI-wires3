@@ -342,7 +342,7 @@ void CArtilleryTask::ApplyBasePos(const CQueryPathSingle* query, bool isUpdating
 		unit->GetTravelAct()->SetPath(pPath);
 		unit->GetTravelAct()->StateActivate();
 	} else if (isNoScout) {
-		unit->GetTravelAct()->StateWait();  // stay put rather than scout
+		HoldHere(unit);  // stay put rather than scout
 	} else {
 		FallbackScout(unit, isUpdating);
 	}
@@ -436,8 +436,14 @@ void CArtilleryTask::FallbackStay(CCircuitUnit* unit, bool isUpdating)
 		FallbackSafePos(unit, isUpdating);
 		return;
 	}
+	HoldHere(unit);
+}
+
+void CArtilleryTask::HoldHere(CCircuitUnit* unit)
+{
 	if (unit->GetTravelAct()->IsActive()) {
-		// Walking somewhere that is no longer wanted: stop here
+		// Walking somewhere that is no longer wanted: the engine still holds queued waypoints, stop here
+		CCircuitAI* circuit = manager->GetCircuit();
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Stop();
 		)
@@ -503,7 +509,7 @@ void CArtilleryTask::ApplySafePos(const CQueryPathMulti* query, bool isUpdating)
 		unit->GetTravelAct()->StateActivate();
 	} else if (!pPath->posPath.empty()) {
 		// Already there: a move order would finish at once, make the unit idle and restart the task
-		unit->GetTravelAct()->StateWait();
+		HoldHere(unit);
 	} else {
 		FallbackBasePos(unit, isUpdating);
 	}
