@@ -29,6 +29,7 @@ public:
 
 	void EnqueueUpdate();
 	bool IsUpdating() const { return isUpdating; }
+	void DropUpdate() { isUpdating = false; }  // the update in flight was dropped with its scheduler
 
 	void SetEnemyUnitRange(CEnemyUnit* e) const;
 	void SetEnemyUnitThreat(CEnemyUnit* e) const { e->SetThreat(GetEnemyUnitThreat(e)); }
