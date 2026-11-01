@@ -59,10 +59,10 @@ private:
 	bool FlushSplits();  // true: the task was aborted (no units left)
 
 	F3Vec homePoints;  // FindTarget scratch: leash anchors
-	// Hold orders are sent from Update(): path callbacks can run during an allied AI's turn,
-	// and orders sent from there go out under the wrong team and are dropped
+	// Hold orders are queued by path callbacks and sent from Update(), next to the squad's other orders
 	std::set<CCircuitUnit*> holdPending;
 	std::set<CCircuitUnit*> splitPending;  // can't rejoin the squad safely: leaves for its own task (from Update)
+	int mergeFrame = 0;  // no merging (either way) before this frame: set on a task split off a blocked regroup
 	springai::AIFloat3 approachPos;  // where to walk to shoot the target: its firing spot (FindTarget)
 };
 

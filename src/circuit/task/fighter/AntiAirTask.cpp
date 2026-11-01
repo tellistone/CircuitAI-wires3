@@ -35,10 +35,13 @@ namespace circuit {
 
 using namespace springai;
 
+static const int SPLIT_MERGE_COOLDOWN = FRAMES_PER_SEC * 30;  // a unit split off a blocked regroup doesn't merge for this long
+
 CAntiAirTask::CAntiAirTask(ITaskManager* mgr, float powerMod)
 		: ISquadTask(mgr, FightType::AA, powerMod)
 {
 	isFireSpotChase = false;  // fight from the firing spot, never let the engine chase a plane past it
+	fireSpotReach = 2.f;  // stragglers keep following the squad path
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
 	float z = rand() % circuit->GetTerrainManager()->GetTerrainHeight();
@@ -58,6 +61,9 @@ bool CAntiAirTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	const int frame = manager->GetCircuit()->GetLastFrame();
+	if (frame < mergeFrame) {
+		return false;  // split off a blocked regroup not long ago
+	}
 	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
 		return false;
 	}
@@ -136,7 +142,7 @@ void CAntiAirTask::Update()
 	/*
 	 * Merge tasks if possible
 	 */
-	ISquadTask* task = GetMergeTask();
+	ISquadTask* task = (frame >= mergeFrame) ? GetMergeTask() : nullptr;
 	if (task != nullptr) {
 		task->Merge(this);
 		units.clear();
@@ -593,8 +599,11 @@ bool CAntiAirTask::FlushSplits()
 		}
 	}
 	splitPending.clear();
+	const int noMergeUntil = manager->GetCircuit()->GetLastFrame() + SPLIT_MERGE_COOLDOWN;
 	for (CCircuitUnit* unit : leaving) {
-		manager->AssignTask(unit, militaryMgr->EnqueueTask(IFighterTask::FightType::AA));
+		CAntiAirTask* task = static_cast<CAntiAirTask*>(militaryMgr->EnqueueTask(IFighterTask::FightType::AA));
+		task->mergeFrame = noMergeUntil;  // else it merges straight back (straight safe line) and splits again
+		manager->AssignTask(unit, task);
 	}
 	return units.empty() || (leader == nullptr);
 }
@@ -602,7 +611,7 @@ bool CAntiAirTask::FlushSplits()
 void CAntiAirTask::Hold(CCircuitUnit* unit)
 {
 	// No threat-aware way to go: stay put (weapons still fire at what comes in range).
-	// The Stop order itself goes out from Update() (FlushHolds).
+	// The Stop order itself goes out from Update() (FlushHolds), with the squad's other orders.
 	unit->GetTravelAct()->StateWait();
 	holdPending.insert(unit);
 }

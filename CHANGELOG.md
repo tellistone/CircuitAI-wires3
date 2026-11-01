@@ -37,6 +37,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   doesn't keep the whole squad in regroup (no targets) or get dropped as stuck. AA walks to the firing spot it
   judged when picking a target, not to the aircraft itself. `own_ground` leaves out the squad's own influence, so
   AA can't call its own surroundings in enemy land "ours" and creep forward.
+  A unit split off that way can't merge back for 30 s. While engaging, AA units farther than 2x their range from
+  the aircraft get no firing spot and keep following the squad path (`IFighterTask::fireSpotReach`, off for other tasks).
+  Only `leash`, `own_ground` and `fire_spot` default to the old behaviour; the other AA changes above apply to every config.
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
   slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.

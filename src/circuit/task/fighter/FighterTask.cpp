@@ -180,6 +180,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		if (unit->Blocker() != nullptr) {
 			continue;  // Do not interrupt current action
 		}
+		if ((fireSpotReach > 0.f)
+			&& (unit->GetPos(frame).SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * fireSpotReach)))
+		{
+			continue;  // far behind: keep following the squad's path instead of a straight walk to a spot
+		}
 		unit->GetTravelAct()->StateWait();
 
 		if (isRepeatAttack
