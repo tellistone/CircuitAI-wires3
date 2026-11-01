@@ -503,9 +503,10 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	STerrainMapArea* area = unit->GetArea();
 
-	// Grid of candidate firing cells; the pathfinder accepts any spot within half a cell of a centre
-	const int cellSize = circuit->GetPathfinder()->GetSquareSize() * 4;
-	const float goalRange = cellSize * 0.5f;
+	// Grid of candidate firing cells, one per pathfinder square (64 elmos);
+	// the pathfinder accepts any square within one square of a cell centre
+	const int cellSize = circuit->GetPathfinder()->GetSquareSize();
+	const float goalRange = cellSize;
 	const int width = CTerrainManager::GetTerrainWidth() / cellSize + 1;
 	const int height = CTerrainManager::GetTerrainHeight() / cellSize + 1;
 	coverGrid.assign(width * height, 0.f);
@@ -535,9 +536,9 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 		return goalRange;
 	}
 
-	// Covered cells within range of a building: centre at most (range - cell) from it,
-	// so any spot the pathfinder may stop at still reaches the building
-	const float fireRange = std::max(range - cellSize, goalRange);
+	// Covered cells within range of a building: centre at most (range - 2 cells) from it,
+	// so any spot the pathfinder may stop at (up to ~1.5 cells off) still reaches the building
+	const float fireRange = std::max(range - 2 * cellSize, goalRange);
 	const float sqFireRange = SQUARE(fireRange);
 	const int fireRad = int(fireRange / cellSize) + 1;
 	std::vector<char>& isAdded = cellAdded;
@@ -595,9 +596,9 @@ bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
-	// One grid cell of slack: firing spots are picked by cell centre, and the unit may stop up to
-	// half a cell away, so without slack it could arrive, find no cover and turn back
-	const float slack = circuit->GetPathfinder()->GetSquareSize() * 4;
+	// Slack: firing spots are picked by cell centre, and the unit may stop up to ~1.5 cells
+	// away, so without slack it could arrive, find no cover and turn back
+	const float slack = circuit->GetPathfinder()->GetSquareSize() * 2;
 	const float sqAllyRadius = SQUARE(artyCfg.allyRadius + slack);
 	CollectEscorts(unit);
 	float cover = 0.f;
