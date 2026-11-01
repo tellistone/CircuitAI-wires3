@@ -242,7 +242,9 @@ const float FIRE_BAND_MIN = 0.6f;   // own/kept spot no closer than this, x rang
 const float FIRE_BAND_MAX = 0.95f;  // own/kept spot no farther than this, x range
 const float CROWD_RADIUS  = 80.f;   // claims within this count as crowding a spot
 const float CROWD_WEIGHT  = 0.5f;   // score per crowding claim (x attack_spot_threat)
-const int   ARC_STEPS     = 6;      // spots each side of our bearing, PI/12 apart (+-90 degrees)
+const int   ARC_STEPS     = 6;      // spots each side of our bearing, PI/24 apart (+-45 degrees)
+const float ARC_SPAN      = 0.25f;  // half the arc, x PI
+const float SUPPORT_RADIUS = 400.f; // own units heading within this of a spot back up a unit there
 const int   SPOT_KEEP     = FRAMES_PER_SEC * 10;  // last spot forgotten this long after its order
 const int   RISKY_GRACE   = FRAMES_PER_SEC * 3;   // pull-back leaves a unit sent to a RISKY spot alone
 }
@@ -300,9 +302,29 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const std:
 	const float wThreat = circuit->GetMilitaryManager()->GetAttackSpotThreat();
 	const float step = threatMap->GetSquareSize();
 	const bool hasDangerLine = (safeThreat > 0.f);
-	// Danger = what the task's escape calls dangerous (same allowance as its IsInDanger)
+	// Local support: the unit stands alone at its spot, so a spot is judged against the strength of our units
+	// heading to within SUPPORT_RADIUS of it (itself included), not the whole group's; never more than that
+	std::vector<std::pair<AIFloat3, float>> backers;  // (where each unit is heading, its current strength)
+	for (const auto& kv : claims) {
+		if (kv.first != unit) {
+			CCircuitUnit* u = kv.first;
+			backers.emplace_back(kv.second,
+					u->GetCircuitDef()->GetPower() * sqrtf(std::max(u->GetHealthPercent(), 0.f)) * powerMod);
+		}
+	}
+	const float ownStrength = strength * powerMod;
+	auto supportAt = [&](const AIFloat3& p) {
+		float s = ownStrength;
+		for (const auto& b : backers) {
+			if (b.first.SqDistance2D(p) < SQUARE(SUPPORT_RADIUS)) {
+				s += b.second;
+			}
+		}
+		return std::min(s, safeThreat);
+	};
+	// Danger = what the task's escape calls dangerous (same allowance as its IsInDanger), for the local support
 	auto isDanger = [&](const AIFloat3& p, float threat) {
-		return hasDangerLine && (threat >= GetAllowedThreatAt(p, safeThreat));
+		return hasDangerLine && (threat >= GetAllowedThreatAt(p, supportAt(p)));
 	};
 	const float startThreat = threatMap->GetThreatAt(unit, uPos);
 	const bool isSafeHere = hasDangerLine && !isDanger(uPos, startThreat);
@@ -371,12 +393,12 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const std:
 	if (GetKeptFireSpot(unit, keptPos)) {
 		consider(keptPos);
 	}
-	// Spots on an arc around the target, facing us (never round its far side)
+	// Spots on an arc around the target, facing us (+-45 degrees: keeps the group together)
 	AIFloat3 dir = uPos - tPos;
 	const float bearing = (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
 	const float radius = range * FIRE_RADIUS;
 	for (int i = -ARC_STEPS; i <= ARC_STEPS; ++i) {
-		const float angle = bearing + i * static_cast<float>(M_PI) / (2 * ARC_STEPS);
+		const float angle = bearing + i * static_cast<float>(M_PI) * ARC_SPAN / ARC_STEPS;
 		AIFloat3 p(tPos.x + radius * cosf(angle), tPos.y, tPos.z + radius * sinf(angle));
 		CTerrainManager::CorrectPosition(p);
 		if (terrainMgr->CanMoveToPos(unit->GetArea(), p)) {
