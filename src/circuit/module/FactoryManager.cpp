@@ -287,6 +287,10 @@ void CFactoryManager::ReadConfig()
 		cdef->AddRole(it->second.type, circuit->GetBindedRole(it->second.type));
 		roleDefs[it->second.type].insert(cdef->GetId());
 
+		// Auto-assigned "air" enemy role is dropped for units listed in config:
+		// only units whose config roles include "air" count as enemy air (so scouts
+		// like planelightscout don't trigger AA). Auto "static"/"builder"/"comm" stay.
+		cdef->DelEnemyRoles(CCircuitDef::RoleMask::AIR);
 //		if (role.size() < 2) {
 			cdef->AddEnemyRoles(it->second.mask);
 //		} else {

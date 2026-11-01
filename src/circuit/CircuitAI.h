@@ -90,6 +90,11 @@ public:
 // ---- AI Event handler ---- BEGIN
 public:
 	int HandleEvent(int topic, const void* data);
+	// True while the engine is running one of this AI's events. Orders are only accepted from inside our own events:
+	// allied AIs share a pathfinder, so path callbacks can run inside another AI's event, and the server rejects
+	// orders sent from there ("invalid team ID ... in AICOMMAND").
+	bool IsEventOwner() const { return eventOwner == this; }
+	static const CCircuitAI* GetEventOwner() { return eventOwner; }  // compare only: never dereference
 	void NotifyGameEnd();
 	void NotifyResign();
 	void Resign(int newTeamId, springai::Economy* economy);
@@ -317,6 +322,7 @@ private:
 	std::unique_ptr<springai::SkirmishAI> skirmishAI;
 	std::unique_ptr<springai::Team>       team;
 
+	static CCircuitAI* eventOwner;  // AI whose engine event is running now
 	static std::unique_ptr<CGameAttribute> gameAttribute;
 	static unsigned int gaCounter;
 	void CreateGameAttribute();
