@@ -56,22 +56,26 @@ protected:
 	// but switches to the ordered target as soon as it can.
 	void Attack(const int frame, const bool isDirect = false);
 	// Firing spot for a ranged unit: within its weapon range of the target, trading walking distance against
-	// threat and against spots already claimed by other units this round; false = no usable range
-	// NONE: no usable range (old orders); HOLD: every spot dangerous but the unit's own spot is safe;
-	// RISKY: every spot dangerous, the unit's too: least dangerous spot by the usual score
+	// threat and against spots other units are heading to.
+	// NONE: no usable range (old orders); SPOT: a safe spot; HOLD: every spot dangerous but the unit's own
+	// spot is safe; RISKY: nowhere safe, the unit's spot neither: the least dangerous spot
 	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
 	float GetFireRange(CCircuitUnit* unit) const;  // max range against the current target's kind
-	bool IsFireSpotKept(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // old spot still 0.6-0.95x range from the target, ordered within 10 s
-	FireSpot FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, springai::AIFloat3& outPos) const;
+	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x range from the target
+	bool GetKeptFireSpot(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // last spot, if still usable
+	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
+	FireSpot FindFireSpot(CCircuitUnit* unit, const std::map<CCircuitUnit*, springai::AIFloat3>& claims,
+			float safeThreat, springai::AIFloat3& outPos) const;
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
-	// Units sent to a RISKY firing spot, with the frame: pull-back leaves them alone for 3 s
-	// (pointers only compared, never dereferenced)
-	std::map<CCircuitUnit*, int> riskySpotFrames;
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)
-	// Firing spot each unit was last sent to: offered again as a candidate and claimed first
-	// (spot, frame it was last ordered); forgotten after 10 s without a new order
-	std::map<CCircuitUnit*, std::pair<springai::AIFloat3, int>> fireSpots;
+	// Firing spot each unit was last sent to (pointers only compared, never dereferenced)
+	struct SFireSpot {
+		springai::AIFloat3 pos;
+		int frame;  // when it was last ordered
+		bool isRisky;
+	};
+	std::map<CCircuitUnit*, SFireSpot> fireSpots;
 	// Threat allowed at a spot for this strength (tasks with an escape override it)
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const {
 		return std::numeric_limits<float>::max();
