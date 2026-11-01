@@ -157,8 +157,9 @@ void CAntiAirTask::Update()
 	bool mustRegroup = IsMustRegroup();
 	if (State::REGROUP == state) {
 		if (mustRegroup) {
-			// Same "far from the group" distance as IsMustRegroup: only those need a path back
-			const float sqNearDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * units.size(), highestRange));
+			// Half of IsMustRegroup's "far from the group" distance: anything it may call far gets a path back
+			// (it counts only units that can move, so its distance can be smaller than one from units.size())
+			const float sqNearDist = SQUARE(0.5f * std::max<float>(SQUARE_SIZE * 8 * units.size(), highestRange));
 			for (CCircuitUnit* unit : units) {
 				if ((unit == leader) || (groupPos.SqDistance2D(unit->GetPos(frame)) <= sqNearDist)) {
 					Hold(unit);  // at the gathering point (the leader's spot) already
