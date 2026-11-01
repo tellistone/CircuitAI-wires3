@@ -130,6 +130,8 @@ public:
 	void Attack(const springai::AIFloat3& position, int timeout);
 	void Attack(const springai::AIFloat3& position, CEnemyInfo* enemy, int timeout);
 	void Attack(const springai::AIFloat3& position, CEnemyInfo* enemy, int tile, int timeout);
+	// Ranged: fight-move to firePos (a spot within weapon range of the enemy), then attack it
+	void AttackFrom(const springai::AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout);
 	void Guard(CCircuitUnit* target, int timeout);
 	void Gather(const springai::AIFloat3& groupPos, int timeout);
 

@@ -397,6 +397,19 @@ void CCircuitUnit::Attack(const AIFloat3& position, CEnemyInfo* enemy, int tile,
 	Attack(position, enemy, timeout);
 }
 
+void CCircuitUnit::AttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout)
+{
+	target = enemy;
+	targetTile = tile;
+	TRY_UNIT(manager->GetCircuit(), this,
+		unit->Fight(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+		unit->Fight(enemy->GetPos(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);  // los-cheat related
+		CmdWantedSpeed(NO_SPEED_LIMIT);
+		CmdSetTarget(target);
+	)
+}
+
 void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 {
 	TRY_UNIT(manager->GetCircuit(), this,

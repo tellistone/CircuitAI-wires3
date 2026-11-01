@@ -52,6 +52,9 @@ protected:
 	// The engine still lets weapons shoot other units while the ordered target can't be hit (out of range),
 	// but switches to the ordered target as soon as it can.
 	void Attack(const int frame, const bool isDirect = false);
+	// Firing spot for a ranged unit: within its weapon range of the target, trading walking distance against
+	// threat and against spots already claimed by other units this round; false = no usable range
+	bool FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, springai::AIFloat3& outPos) const;
 
 	FightType fightType;
 	springai::AIFloat3 position;  // attack/scout position

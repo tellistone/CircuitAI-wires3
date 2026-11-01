@@ -6,6 +6,7 @@
 	"raid_target_roles": ["builder", "commander"],  // enemy roles raid groups attack first (plus types with the "raid_target" attribute); [] = attribute only
 	"raid_flee_share": 0.5,  // raid group flees when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
 	"attack": 20.0,  // min power of attack group
+	"attack_spot_threat": 1.0,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking
 	"attack_flee_share": 0.5,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
 	"thr_mod": {
 		"attack": [0.45, 0.45],  // [<min>, <max>] enemy threat modifier for target selection of attack task
