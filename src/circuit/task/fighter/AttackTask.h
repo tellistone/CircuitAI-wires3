@@ -38,8 +38,13 @@ private:
 	void AbsorbWeakerTasks();
 	void FindTarget();
 	// Highest threat on the line from the target towards us, out to our range (where we'd shoot from),
-	// stays below the allowance at each sampled spot
-	bool IsApproachSafe(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float safeThreat) const;
+	// stays below the allowance at each sampled spot (same near-base scale as the target's own spot)
+	bool IsApproachSafe(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float safeThreat,
+			const springai::AIFloat3& basePos, float sqOBDist) const;
+	// Fighting a target nearer our base than we are: stand and fight instead of fleeing
+	bool IsHoldingGround(int frame) const;
+	// Threat cap for target and reinforce paths: never above what the escape tolerates
+	float GetPathThreatCap(const springai::AIFloat3& startPos, const springai::AIFloat3& endPos) const;
 	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
 	float GetSafeThreat() const;
 	float GetUnitPower(CCircuitUnit* unit) const;

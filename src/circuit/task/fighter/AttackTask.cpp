@@ -171,12 +171,20 @@ void CAttackTask::Update()
 	{
 		const int frame = manager->GetCircuit()->GetLastFrame();
 		bool isPathUnsafe = false;
-		if (IsInDanger(frame, isPathUnsafe) && Flee(frame)) {
-			return;
+		// Not while defending: a fight with a target nearer our base than we are is held (no flee, no pull-back)
+		const bool isDanger = IsInDanger(frame, isPathUnsafe);
+		const bool isHolding = IsHoldingGround(frame);
+		const bool isFleeing = isDanger && !isHolding && Flee(frame);
+		if (!isFleeing && !isHolding) {
+			PullBackEndangered(frame);
 		}
-		PullBackEndangered(frame);
-		if (frame < fleeFrame) {
-			return;  // keep running along the escape path for a moment instead of turning straight back
+		if (isFleeing || (frame < fleeFrame)) {
+			// keep running along the escape path for a moment instead of turning straight back;
+			// still send units with empty shields to retreat (normally done at each decision below)
+			if (updCount % 4 == 2) {
+				ISquadTask::Update();
+			}
+			return;
 		}
 		if (isPathUnsafe && (frame >= lastTouched + FRAMES_PER_SEC)) {
 			lastTouched = frame;  // at most one forced re-plan per second
@@ -277,7 +285,7 @@ void CAttackTask::Update()
 
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, endPos, pathRange, GetHitTest(), attackPower);
+			startPos, endPos, pathRange, GetHitTest(), GetPathThreatCap(startPos, endPos));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -371,8 +379,7 @@ void CAttackTask::Reinforce(const int frame)
 	if (!IsQueryReady(leader)) {
 		return;
 	}
-
-	// Threat-aware path to the group's leader; cells with threat above our attackPower are blocked
+	// Threat-aware path to the group's leader; cells with threat above GetPathThreatCap are blocked
 	// (same cap as an army's target path). It only has to get within 800 elmos, so the hot zone around
 	// a fighting group doesn't block it; merging takes over inside 1000 elmos (CheckMergeTask every
 	// 4 updates from our side, AbsorbWeakerTasks every 8 from an army's side).
@@ -384,7 +391,7 @@ void CAttackTask::Reinforce(const int frame)
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathRange, nullptr, attackPower);
+			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, position));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -514,7 +521,7 @@ void CAttackTask::FindTarget()
 			[](const std::pair<float, CEnemyInfo*>& a, const std::pair<float, CEnemyInfo*>& b) { return a.first < b.first; });
 	CEnemyInfo* bestTarget = nullptr;
 	for (const auto& c : candidates) {
-		if (IsApproachSafe(c.second->GetPos(), pos, maxPower)) {
+		if (IsApproachSafe(c.second->GetPos(), pos, maxPower, basePos, sqOBDist)) {
 			bestTarget = c.second;
 			break;
 		}
@@ -527,10 +534,12 @@ void CAttackTask::FindTarget()
 	// Return: target, startPos=leader->pos, endPos=position
 }
 
-bool CAttackTask::IsApproachSafe(const AIFloat3& ePos, const AIFloat3& pos, float safeThreat) const
+bool CAttackTask::IsApproachSafe(const AIFloat3& ePos, const AIFloat3& pos, float safeThreat,
+		const AIFloat3& basePos, float sqOBDist) const
 {
 	// Walk from the target towards us, out to our range (or to us if closer), one threat square at a time.
-	// No near-base scale here: that bonus is only for the target's own spot.
+	// Each spot gets the same near-base scale as the target's own spot in FindTarget: threat counts less
+	// where the spot is nearer our base than we are.
 	// Expects threatMap->SetThreatType(leader) already done (FindTarget).
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
 	AIFloat3 dir = pos - ePos;
@@ -545,11 +554,29 @@ bool CAttackTask::IsApproachSafe(const AIFloat3& ePos, const AIFloat3& pos, floa
 	for (float d = step; d <= reach; d += step) {
 		AIFloat3 p = ePos + dir * d;
 		CTerrainManager::CorrectPosition(p);
-		if (threatMap->GetThreatAt(p) >= safeThreat / GetThrDistModAt(p)) {
+		const float scale = (sqOBDist > 0.f) ? std::min(p.SqDistance2D(basePos) / sqOBDist, 1.f) : 1.f;
+		if (threatMap->GetThreatAt(p) * scale >= safeThreat / GetThrDistModAt(p)) {
 			return false;
 		}
 	}
 	return true;
+}
+
+bool CAttackTask::IsHoldingGround(int frame) const
+{
+	if ((State::ENGAGE != state) || (target == nullptr)) {
+		return false;
+	}
+	const AIFloat3& basePos = manager->GetCircuit()->GetSetupManager()->GetBasePos();
+	return target->GetPos().SqDistance2D(basePos) < leader->GetPos(frame).SqDistance2D(basePos);
+}
+
+float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const AIFloat3& endPos) const
+{
+	// As raid paths: our current strength over the strictest thr_mod.distance value of the two ends.
+	// Never above attackPower, so with no attack distance curve paths stay as before.
+	const float pathMod = std::max(GetThrDistModAt(startPos), GetThrDistModAt(endPos));
+	return std::min(attackPower, GetSafeThreat() / pathMod);
 }
 
 float CAttackTask::GetSafeThreat() const
@@ -666,7 +693,12 @@ bool CAttackTask::Flee(int frame)
 	AIFloat3 dest = -RgtVector;
 	CAttackTask* squad = static_cast<CMilitaryManager*>(manager)->FindReinforceSquad(leader, attackPower, this);
 	if (squad != nullptr) {
-		dest = squad->GetLeaderPos(frame);
+		// Only if the two groups together can stand there: it may be in this same fight, or past the enemy
+		const AIFloat3& squadPos = squad->GetLeaderPos(frame);
+		const float together = GetSafeThreat() + squad->GetSafeThreat();
+		if (circuit->GetThreatMap()->GetThreatAt(leader, squadPos) < GetSafeThreatAt(squadPos, together)) {
+			dest = squadPos;
+		}
 	}
 	if (!utils::is_valid(dest)) {
 		dest = circuit->GetFactoryManager()->GetClosestHaven(leader);
@@ -675,7 +707,7 @@ bool CAttackTask::Flee(int frame)
 		dest = circuit->GetSetupManager()->GetBasePos();
 	}
 	if (leader->GetPos(frame).SqDistance2D(dest) < SQUARE(400.f)) {
-		fleeFrame = 0;
+		fleeFrame = std::min(fleeFrame, frame);  // stop running, but keep the cautious window after it
 		return false;  // already there: running gets us nowhere
 	}
 
