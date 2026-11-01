@@ -691,7 +691,7 @@
 		"retreat": 0.8
 	},
 	"planeheavyfighter": {
-		"role": ["anti_air"],
+		"role": ["anti_air", "air"],
 		"attribute": ["melee"],
 		"limit": 8,
 		"retreat": 0.4,
