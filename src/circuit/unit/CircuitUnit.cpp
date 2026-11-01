@@ -415,8 +415,10 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 {
 	target = enemy;
 	targetTile = tile;
+	// Fight to its own spot: stays put but keeps fight behaviours (auto-kiting, skirmishing)
 	TRY_UNIT(manager->GetCircuit(), this,
-		CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		unit->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		CmdWantedSpeed(NO_SPEED_LIMIT);
 	)
 }
 
