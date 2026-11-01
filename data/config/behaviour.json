@@ -6,6 +6,7 @@
 	"raid_target_roles": ["builder", "commander"],  // enemy roles raid groups attack first (plus types with the "raid_target" attribute); [] = attribute only
 	"raid_flee_share": 0.5,  // raid group flees when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
 	"attack": 20.0,  // min power of attack group
+	"attack_flee_share": 0.5,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
 	"thr_mod": {
 		"attack": [0.45, 0.45],  // [<min>, <max>] enemy threat modifier for target selection of attack task
 		"raid": [0.45, 0.45],  // same for raid task (raider groups): target choice, escape and path threat; missing = use "attack"

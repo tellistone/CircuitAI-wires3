@@ -37,6 +37,17 @@ private:
 	void ApplyReinforcePath(const CQueryPathSingle* query);
 	void AbsorbWeakerTasks();
 	void FindTarget();
+	// Highest threat on the line from the target towards us, out to our range (where we'd shoot from),
+	// stays below the allowance at each sampled spot
+	bool IsApproachSafe(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float safeThreat) const;
+	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
+	float GetSafeThreat() const;
+	float GetUnitPower(CCircuitUnit* unit) const;
+	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
+	bool IsInDanger(int frame, bool& isPathUnsafe);  // fills 'endangered'
+	void PullBackEndangered(int frame);
+	bool Flee(int frame);  // false: nowhere better to go, fight instead
+	void ApplyFleePath(const CQueryPathSingle* query);
 	void ApplyTargetPath(const CQueryPathSingle* query);
 	void FallbackFrontPos();
 	void ApplyFrontPos(const CQueryPathMulti* query);
@@ -48,6 +59,10 @@ private:
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
+	int fleeFrame;  // keep running until this frame
+	int fleePathFrame;  // last escape path request
+	int pullFrame;  // last pull-back of endangered stragglers
+	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
 };
 
 } // namespace circuit

@@ -348,6 +348,11 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.raid_flee_share must be a number 0..1, using 0.5", cfgName.c_str());
 	}
 	raidFleeShare = utils::clamp(qfleeShare.isNumeric() ? qfleeShare.asFloat() : 0.5f, 0.f, 1.f);
+	const Json::Value& qatkFleeShare = quotas.get("attack_flee_share", 0.5f);
+	if (!qatkFleeShare.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.attack_flee_share must be a number 0..1, using 0.5", cfgName.c_str());
+	}
+	attackFleeShare = utils::clamp(qatkFleeShare.isNumeric() ? qatkFleeShare.asFloat() : 0.5f, 0.f, 1.f);
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
 		if (!raidTargets.isNull()) {

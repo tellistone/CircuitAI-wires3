@@ -9,6 +9,7 @@
 #include "task/TaskManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
+#include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
@@ -26,6 +27,8 @@
 
 #include "spring/SpringMap.h"
 
+#include <algorithm>
+
 #include "AISCommands.h"
 
 namespace circuit {
@@ -38,6 +41,9 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, reinforce(nullptr)
 		, reinforceFails(0)
 		, reinforceRetryFrame(-1)
+		, fleeFrame(0)
+		, fleePathFrame(0)
+		, pullFrame(0)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -158,6 +164,27 @@ void CAttackTask::Update()
 		return;
 	}
 	AbsorbWeakerTasks();
+
+	/*
+	 * Escape: checked on every update (not just every decision), also while engaging or reinforcing
+	 */
+	{
+		const int frame = manager->GetCircuit()->GetLastFrame();
+		bool isPathUnsafe = false;
+		if (IsInDanger(frame, isPathUnsafe) && Flee(frame)) {
+			return;
+		}
+		PullBackEndangered(frame);
+		if (frame < fleeFrame) {
+			return;  // keep running along the escape path for a moment instead of turning straight back
+		}
+		if (isPathUnsafe && (frame >= lastTouched + FRAMES_PER_SEC)) {
+			lastTouched = frame;  // at most one forced re-plan per second
+			for (CCircuitUnit* unit : units) {
+				unit->ForceUpdate(frame);  // re-plan now instead of walking into it
+			}
+		}
+	}
 
 	/*
 	 * Regroup if required
@@ -422,14 +449,17 @@ void CAttackTask::FindTarget()
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
 	const float maxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
-	const float maxPower = attackPower * powerMod;  // divided by the thr_mod.distance curve at each enemy's spot
+	// Current-health strength (same measure the escape uses, so we don't pick fights we'd flee from at once),
+	// a bit lower for 4 s after an escape; divided by the thr_mod.distance curve at each judged spot
+	const int frame = circuit->GetLastFrame();
+	const bool isCautious = (frame < fleeFrame + FRAMES_PER_SEC * 4);
+	const float maxPower = GetSafeThreat() * (isCautious ? 0.75f : 1.f);
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
 
-	CEnemyInfo* bestTarget = nullptr;
 	const float sqOBDist = pos.SqDistance2D(basePos);  // Own to Base distance
-	float minSqDist = std::numeric_limits<float>::max();
+	std::vector<std::pair<float, CEnemyInfo*>> candidates;  // (scaled distance, enemy)
 
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
 	threatMap->SetThreatType(leader);
@@ -475,9 +505,18 @@ void CAttackTask::FindTarget()
 		}
 
 		const float sqOEDist = pos.SqDistance2D(ePos) * scale;  // Own to Enemy distance
-		if (minSqDist > sqOEDist) {
-			minSqDist = sqOEDist;
-			bestTarget = enemy;
+		candidates.emplace_back(sqOEDist, enemy);
+	}
+
+	// Nearest candidate whose approach is also safe: the target's own cell can be quiet while the
+	// spot we'd shoot it from sits under a big enemy group's guns
+	std::sort(candidates.begin(), candidates.end(),
+			[](const std::pair<float, CEnemyInfo*>& a, const std::pair<float, CEnemyInfo*>& b) { return a.first < b.first; });
+	CEnemyInfo* bestTarget = nullptr;
+	for (const auto& c : candidates) {
+		if (IsApproachSafe(c.second->GetPos(), pos, maxPower)) {
+			bestTarget = c.second;
+			break;
 		}
 	}
 
@@ -486,6 +525,205 @@ void CAttackTask::FindTarget()
 		position = target->GetPos();
 	}
 	// Return: target, startPos=leader->pos, endPos=position
+}
+
+bool CAttackTask::IsApproachSafe(const AIFloat3& ePos, const AIFloat3& pos, float safeThreat) const
+{
+	// Walk from the target towards us, out to our range (or to us if closer), one threat square at a time.
+	// No near-base scale here: that bonus is only for the target's own spot.
+	// Expects threatMap->SetThreatType(leader) already done (FindTarget).
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	AIFloat3 dir = pos - ePos;
+	dir.y = 0.f;
+	const float dist = dir.Length2D();
+	if (dist < 1.f) {
+		return true;
+	}
+	dir /= dist;
+	const float reach = std::min(highestRange, dist);
+	const float step = threatMap->GetSquareSize();
+	for (float d = step; d <= reach; d += step) {
+		AIFloat3 p = ePos + dir * d;
+		CTerrainManager::CorrectPosition(p);
+		if (threatMap->GetThreatAt(p) >= safeThreat / GetThrDistModAt(p)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+float CAttackTask::GetSafeThreat() const
+{
+	// Like attackPower (def power incl. pwr_mod) but scaled by current health, times the task's powerMod
+	float power = 0.f;
+	for (CCircuitUnit* unit : units) {
+		power += GetUnitPower(unit);
+	}
+	return std::max(power, THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
+}
+
+float CAttackTask::GetUnitPower(CCircuitUnit* unit) const
+{
+	return unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+}
+
+float CAttackTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
+{
+	// Same allowance as the raid escape: near-base bonus and the distance curve at this spot
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float sqDist = basePos.SqDistance2D(pos);
+	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist) / GetThrDistModAt(pos);
+}
+
+bool CAttackTask::IsInDanger(int frame, bool& isPathUnsafe)
+{
+	isPathUnsafe = false;
+	endangered.clear();
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	const float safeThreat = GetSafeThreat();
+	float totalPower = 0.f;
+	float dangerPower = 0.f;
+	for (CCircuitUnit* unit : units) {
+		const float power = GetUnitPower(unit);
+		totalPower += power;
+		if (unit->GetUnit()->IsCloaked()) {
+			continue;  // unseen: enemies in range can't shoot it
+		}
+		const AIFloat3& pos = unit->GetPos(frame);
+		if (threatMap->GetThreatAt(unit, pos) >= GetSafeThreatAt(pos, safeThreat)) {
+			endangered.push_back(unit);
+			dangerPower += power;
+		}
+	}
+	// Flee only when the units in danger hold at least quota.attack_flee_share of the group's current strength
+	const float fleeShare = static_cast<CMilitaryManager*>(manager)->GetAttackFleeShare();
+	if (!endangered.empty() && (dangerPower >= fleeShare * totalPower)) {
+		return true;
+	}
+
+	if (!leader->GetTravelAct()->IsActive() || leader->GetUnit()->IsCloaked()) {
+		return false;
+	}
+	const std::shared_ptr<PathInfo>& path = leader->GetTravelAct()->GetPath();
+	if (path == nullptr) {
+		return false;
+	}
+	// The stretch of path the group covers in the next ~2s
+	const AIFloat3& pos = leader->GetPos(frame);
+	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
+	const float sqLookAhead = SQUARE(lookAhead);
+	for (const AIFloat3& p : path->posPath) {
+		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetSafeThreatAt(p, safeThreat))) {
+			isPathUnsafe = true;
+			break;
+		}
+	}
+	return false;
+}
+
+void CAttackTask::PullBackEndangered(int frame)
+{
+	// Units in danger that didn't make the whole group flee: send them to the strength-weighted centre
+	// of the units that are safe
+	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {
+		return;
+	}
+	AIFloat3 safePos(ZeroVector);
+	float safePower = 0.f;
+	for (CCircuitUnit* unit : units) {
+		if (std::find(endangered.begin(), endangered.end(), unit) != endangered.end()) {
+			continue;
+		}
+		const float power = std::max(GetUnitPower(unit), 1e-3f);
+		safePos += unit->GetPos(frame) * power;
+		safePower += power;
+	}
+	if (safePower <= 0.f) {
+		return;
+	}
+	safePos /= safePower;
+	CTerrainManager::CorrectPosition(safePos);
+	pullFrame = frame;
+
+	CCircuitAI* circuit = manager->GetCircuit();
+	for (CCircuitUnit* unit : endangered) {
+		if (unit->Blocker() != nullptr) {
+			continue;
+		}
+		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
+		TRY_UNIT(circuit, unit,
+			unit->CmdMoveTo(safePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+		)
+	}
+}
+
+bool CAttackTask::Flee(int frame)
+{
+	// Run to the nearest stronger attack group (fight beside it, then merge), else the closest haven, else base
+	CCircuitAI* circuit = manager->GetCircuit();
+	AIFloat3 dest = -RgtVector;
+	CAttackTask* squad = static_cast<CMilitaryManager*>(manager)->FindReinforceSquad(leader, attackPower, this);
+	if (squad != nullptr) {
+		dest = squad->GetLeaderPos(frame);
+	}
+	if (!utils::is_valid(dest)) {
+		dest = circuit->GetFactoryManager()->GetClosestHaven(leader);
+	}
+	if (!utils::is_valid(dest)) {
+		dest = circuit->GetSetupManager()->GetBasePos();
+	}
+	if (leader->GetPos(frame).SqDistance2D(dest) < SQUARE(400.f)) {
+		fleeFrame = 0;
+		return false;  // already there: running gets us nowhere
+	}
+
+	SetTarget(nullptr);
+	state = State::ROAM;
+	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
+	fleeFrame = frame + FRAMES_PER_SEC * 2;
+	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
+		return true;  // escape path is fresh
+	}
+	fleePathFrame = frame;
+
+	// Break off at once; the threat-aware path replaces this when it is ready
+	if (!wasFleeing) {
+		for (CCircuitUnit* unit : units) {
+			if (unit->Blocker() != nullptr) {
+				continue;
+			}
+			unit->GetTravelAct()->StateWait();
+			TRY_UNIT(circuit, unit,
+				unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+				unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+			)
+		}
+	}
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			leader, circuit->GetThreatMap(), frame,
+			leader->GetPos(frame), dest, pathfinder->GetSquareSize());  // threat as cost, no cap: least-threat way out
+	pathQueries[leader] = query;  // supersedes any pending target/reinforce path
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
+		}
+	});
+	return true;
+}
+
+void CAttackTask::ApplyFleePath(const CQueryPathSingle* query)
+{
+	pPath = query->GetPathInfo();
+	if (pPath->posPath.empty()) {
+		return;  // keep the straight move from Flee()
+	}
+	ActivePath();
 }
 
 void CAttackTask::ApplyTargetPath(const CQueryPathSingle* query)
