@@ -214,6 +214,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		if (FireSpot::SPOT == spot) {
 			claimed.push_back(firePos);
 			unit->AttackFrom(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
+		} else if (FireSpot::RISKY == spot) {
+			// Nowhere safe to shoot from and not safe here either: the least dangerous spot
+			claimed.push_back(firePos);
+			riskySpotFrames[unit] = frame;
+			unit->AttackFrom(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
 		} else if (FireSpot::HOLD == spot) {
 			// Every spot in range is one the escape calls dangerous: stay put, shoot what comes into range
 			claimed.push_back(firePos);
@@ -255,11 +260,10 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 	};
 	bool isFound = false;
 	float bestScore = std::numeric_limits<float>::max();
+	AIFloat3 riskyPos = -RgtVector;  // best by score among dangerous spots
+	float riskyScore = std::numeric_limits<float>::max();
 	auto consider = [&](const AIFloat3& p) {
 		const float threat = threatMap->GetThreatAt(unit, p);
-		if (isDanger(p, threat)) {
-			return;
-		}
 		int crowd = 0;
 		for (const AIFloat3& c : claimed) {
 			if (c.SqDistance2D(p) < sqCrowd) {
@@ -267,6 +271,13 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 			}
 		}
 		const float s = wThreat * (threat / strength + 0.5f * crowd) + p.distance2D(uPos) / range;
+		if (isDanger(p, threat)) {
+			if (s < riskyScore) {
+				riskyScore = s;
+				riskyPos = p;
+			}
+			return;
+		}
 		if (s < bestScore) {
 			bestScore = s;
 			outPos = p;
@@ -288,10 +299,17 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 		consider(p);
 	}
 	if (!isFound) {
-		// Every spot dangerous: hold only if where the unit stands is safe; otherwise attack as before
-		outPos = uPos;
+		// Every spot dangerous: hold if where the unit stands is safe; otherwise the least dangerous spot
 		const bool isSafeHere = (safeThreat > 0.f) && !isDanger(uPos, threatMap->GetThreatAt(unit, uPos));
-		return isSafeHere ? FireSpot::HOLD : FireSpot::NONE;
+		if (isSafeHere) {
+			outPos = uPos;
+			return FireSpot::HOLD;
+		}
+		if (utils::is_valid(riskyPos)) {
+			outPos = riskyPos;
+			return FireSpot::RISKY;
+		}
+		return FireSpot::NONE;
 	}
 	return FireSpot::SPOT;
 }

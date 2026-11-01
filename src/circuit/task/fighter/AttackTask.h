@@ -65,7 +65,8 @@ private:
 	void MoveGroupTo(const springai::AIFloat3& pos);
 	// Quietest reachable spot within 2x our range (24 samples + where we stand), avoiding the last hit area;
 	// returns the threat there
-	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
+	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos,
+			const springai::AIFloat3& anchor, float anchorRadius);
 	// In danger but not fleeing (hold-ground, flee gave up): move to the quietest spot nearby by the
 	// least-threat route; already there: attack the nearest enemy we can hit. Re-checked every second.
 	void Cornered(int frame);
@@ -93,6 +94,8 @@ private:
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	int corneredFrame;  // last cornered check
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)
+	bool isCorneredHold;  // cornered while holding ground: keep holding (no flee) until the danger ends
+	springai::AIFloat3 fleeGiveUpDest;  // flee gave up within 400 elmos of this: cornered stays near it
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget
 };
 
