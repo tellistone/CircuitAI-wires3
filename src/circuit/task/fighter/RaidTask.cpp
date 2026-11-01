@@ -520,7 +520,7 @@ void CRaidTask::AttackDirect(int frame)
 {
 	// Same re-order rule as IFighterTask::Attack, without firing spots
 	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
-	const bool isRepeatAttack = (frame >= attackFrame + FRAMES_PER_SEC * 3);
+	const bool isRepeatAttack = (frame >= attackFrame + attackRepeat);
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	for (CCircuitUnit* unit : units) {
 		if (unit->Blocker() != nullptr) {
