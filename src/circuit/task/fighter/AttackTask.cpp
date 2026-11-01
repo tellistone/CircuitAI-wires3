@@ -870,20 +870,8 @@ bool CAttackTask::Flee(int frame)
 	}
 	fleePathFrame = frame;
 
-	// Break off at once; the threat-aware path replaces this when it is ready
-	if (!wasFleeing) {
-		for (CCircuitUnit* unit : units) {
-			if (unit->Blocker() != nullptr) {
-				continue;
-			}
-			unit->GetTravelAct()->StateWait();
-			TRY_UNIT(circuit, unit,
-				unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-				unit->CmdWantedSpeed(NO_SPEED_LIMIT);
-			)
-		}
-	}
-
+	// No straight move first: it could run through the enemy. Units keep their current orders until the
+	// threat-aware path arrives.
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
