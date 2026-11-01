@@ -300,6 +300,13 @@ void CAttackTask::Update()
 	}  // else: nothing to join, carry on as a small attack group
 
 	const AIFloat3& startPos = leader->GetPos(frame);
+	// A route is still being worked out: keep the current pick until it comes back, unless the target is
+	// already within range (then engage as usual)
+	if (!IsQueryReady(leader) && (target != nullptr)
+		&& (target->GetPos().SqDistance2D(startPos) >= SQUARE(highestRange)))
+	{
+		return;
+	}
 	if (circuit->GetInflMap()->GetInfluenceAt(startPos) < -INFL_EPS) {
 		SetTarget(nullptr);
 		scaleRefSqDist = 0.f;
@@ -586,7 +593,7 @@ void CAttackTask::FindTarget()
 	float bestKey = 0.f;
 	CEnemyInfo* prevTarget = nullptr;
 	float prevKey = 0.f;
-	size_t prevIdx = 0;
+	std::vector<float> candidateKeys;
 	for (const auto& c : candidates) {
 		scaleRefSqDist = anchorFor(c.second);
 		if (IsApproachSafe(c.second->GetPos(), pos, maxPower)) {
@@ -597,8 +604,8 @@ void CAttackTask::FindTarget()
 			if (c.second->GetId() == prevTargetId) {
 				prevTarget = c.second;
 				prevKey = c.first;
-				prevIdx = candidateIds.size();
 			}
+			candidateKeys.push_back(c.first);
 			candidateIds.push_back(c.second->GetId());
 			candidatePos.push_back(c.second->GetPos());
 			if (candidateIds.size() >= 16) {
@@ -608,11 +615,21 @@ void CAttackTask::FindTarget()
 	}
 
 	// Stickiness: keep the current target unless another is clearly nearer (20% by distance), so
-	// near-equal targets don't flip back and forth between decisions. It also goes first in the route's list.
-	if ((prevTarget != nullptr) && (prevTarget != bestTarget) && (bestKey >= prevKey * SQUARE(0.8f))) {
+	// near-equal targets don't flip back and forth between decisions. The route then only gets the kept
+	// target (first) plus candidates clearly nearer than it, so it can't swap to a near-equal one either.
+	if ((prevTarget != nullptr) && (bestKey >= prevKey * SQUARE(0.8f))) {
 		bestTarget = prevTarget;
-		std::rotate(candidateIds.begin(), candidateIds.begin() + prevIdx, candidateIds.begin() + prevIdx + 1);
-		std::rotate(candidatePos.begin(), candidatePos.begin() + prevIdx, candidatePos.begin() + prevIdx + 1);
+		const float sqClear = prevKey * SQUARE(0.8f);
+		std::vector<ICoreUnit::Id> ids = {prevTarget->GetId()};
+		F3Vec poss = {prevTarget->GetPos()};
+		for (size_t i = 0; i < candidateIds.size(); ++i) {
+			if ((candidateKeys[i] < sqClear) && (candidateIds[i] != prevTarget->GetId())) {
+				ids.push_back(candidateIds[i]);
+				poss.push_back(candidatePos[i]);
+			}
+		}
+		candidateIds.swap(ids);
+		candidatePos.swap(poss);
 	}
 
 	if (bestTarget != nullptr) {
