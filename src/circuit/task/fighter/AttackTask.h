@@ -41,8 +41,7 @@ private:
 	void FindTarget();
 	// Highest threat on the line from the target towards us, out to our range (where we'd shoot from),
 	// stays below the allowance at each sampled spot (same near-base scale as the target's own spot)
-	bool IsApproachSafe(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float safeThreat,
-			const springai::AIFloat3& basePos, float sqOBDist) const;
+	bool IsApproachSafe(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float safeThreat) const;
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates
@@ -51,7 +50,10 @@ private:
 	float GetSafeThreat() const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
 	float GetUnitPower(CCircuitUnit* unit) const;
-	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
+	// The one threat allowance used everywhere (picking, approach line, escape, path ahead, firing spots,
+	// flee target, route caps): strength x base_bonus(spot) / thr_mod.distance(spot) / scale(spot)
+	float GetNearBaseScaleAt(const springai::AIFloat3& pos) const;
+	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override;
 	bool IsInDanger(int frame, bool& isPathUnsafe);  // fills 'endangered'
 	void PullBackEndangered(int frame);
 	bool Flee(int frame);  // false: nowhere better to go, fight instead
@@ -79,6 +81,7 @@ private:
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
 	float hitRadius;
 	int hitFrame;
+	float scaleRefSqDist;  // leader-to-base distance^2 when the target was last picked: reference of the near-base scale
 };
 
 } // namespace circuit

@@ -410,6 +410,15 @@ void CCircuitUnit::AttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int ti
 	)
 }
 
+void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, int timeout)
+{
+	target = enemy;
+	targetTile = tile;
+	TRY_UNIT(manager->GetCircuit(), this,
+		CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+	)
+}
+
 void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 {
 	TRY_UNIT(manager->GetCircuit(), this,

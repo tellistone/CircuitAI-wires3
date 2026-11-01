@@ -209,16 +209,22 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	const float safeThreat = GetEscapeSafeThreat();
 	for (CCircuitUnit* unit : orderUnits) {
 		AIFloat3 firePos;
-		if (!unit->GetCircuitDef()->IsAttrMelee() && FindFireSpot(unit, claimed, safeThreat, firePos)) {
+		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
+				: FindFireSpot(unit, claimed, safeThreat, firePos);
+		if (FireSpot::SPOT == spot) {
 			claimed.push_back(firePos);
 			unit->AttackFrom(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
+		} else if (FireSpot::HOLD == spot) {
+			// Every spot in range is one the escape calls dangerous: stay put, shoot what comes into range
+			claimed.push_back(firePos);
+			unit->HoldFire(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
 		} else {
 			unit->Attack(target->GetPos(), target, targetTile, frame + FRAMES_PER_SEC * 60);
 		}
 	}
 }
 
-bool IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, AIFloat3& outPos) const
+IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float safeThreat, AIFloat3& outPos) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
@@ -229,7 +235,7 @@ bool IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float 
 			: (tPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
 	const float range = cdef->GetMaxRange(rt);
 	if (range < SQUARE_SIZE * 4) {
-		return false;
+		return FireSpot::NONE;
 	}
 	const float radius = range * 0.9f;
 	const AIFloat3& uPos = unit->GetPos(frame);
@@ -243,23 +249,14 @@ bool IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float 
 	const float strength = std::max(cdef->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f)), THREAT_MIN);
 	const float wThreat = circuit->GetMilitaryManager()->GetAttackSpotThreat();
 	const float sqCrowd = SQUARE(80.f);
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	// Spots the task's escape would call dangerous (same line as its IsInDanger) are only a last resort
+	// Spots the task's escape would call dangerous (same allowance as its IsInDanger) are skipped
 	auto isDanger = [&](const AIFloat3& p, float threat) {
-		return (safeThreat > 0.f)
-			&& (threat >= safeThreat * militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(p)) / GetThrDistModAt(p));
+		return (safeThreat > 0.f) && (threat >= GetAllowedThreatAt(p, safeThreat));
 	};
 	bool isFound = false;
 	float bestScore = std::numeric_limits<float>::max();
-	AIFloat3 quietPos;  // least-threat spot, used if every spot is dangerous
-	float quietThreat = std::numeric_limits<float>::max();
 	auto consider = [&](const AIFloat3& p) {
 		const float threat = threatMap->GetThreatAt(unit, p);
-		if (threat < quietThreat) {
-			quietThreat = threat;
-			quietPos = p;
-		}
 		if (isDanger(p, threat)) {
 			return;
 		}
@@ -290,11 +287,11 @@ bool IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Vec& claimed, float 
 		}
 		consider(p);
 	}
-	if (!isFound && (quietThreat < std::numeric_limits<float>::max())) {
-		outPos = quietPos;
-		isFound = true;
+	if (!isFound) {
+		outPos = uPos;
+		return (safeThreat > 0.f) ? FireSpot::HOLD : FireSpot::NONE;
 	}
-	return isFound;
+	return FireSpot::SPOT;
 }
 
 #ifdef DEBUG_VIS

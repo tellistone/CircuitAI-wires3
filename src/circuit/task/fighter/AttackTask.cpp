@@ -50,6 +50,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, hitPos(-RgtVector)
 		, hitRadius(0.f)
 		, hitFrame(-1)
+		, scaleRefSqDist(0.f)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -256,6 +257,7 @@ void CAttackTask::Update()
 			Attack(frame);
 			return;
 		}
+		scaleRefSqDist = 0.f;  // walking to a group, not into an accepted fight
 		Reinforce(frame);
 		return;
 	}  // else: nothing to join, carry on as a small attack group
@@ -263,6 +265,7 @@ void CAttackTask::Update()
 	const AIFloat3& startPos = leader->GetPos(frame);
 	if (circuit->GetInflMap()->GetInfluenceAt(startPos) < -INFL_EPS) {
 		SetTarget(nullptr);
+		scaleRefSqDist = 0.f;
 	} else {
 		FindTarget();
 	}
@@ -474,6 +477,7 @@ void CAttackTask::FindTarget()
 	const int noChaseCat = cdef->GetNoChaseCategory();
 
 	const float sqOBDist = pos.SqDistance2D(basePos);  // Own to Base distance
+	scaleRefSqDist = sqOBDist;  // near-base scale is measured from here until the next pick (escape, routes, fire spots too)
 	std::vector<std::pair<float, CEnemyInfo*>> candidates;  // (scaled distance, enemy)
 
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
@@ -487,7 +491,7 @@ void CAttackTask::FindTarget()
 		const AIFloat3& ePos = enemy->GetPos();
 		const float sqBEDist = ePos.SqDistance2D(basePos);  // Base to Enemy distance
 		const float scale = std::min(sqBEDist / sqOBDist, 1.f);
-		if ((maxPower / GetThrDistModAt(ePos) <= threatMap->GetThreatAt(ePos) * scale)
+		if ((threatMap->GetThreatAt(ePos) >= GetAllowedThreatAt(ePos, maxPower))
 			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange))
 		{
 			continue;
@@ -533,7 +537,7 @@ void CAttackTask::FindTarget()
 	candidatePos.clear();
 	CEnemyInfo* bestTarget = nullptr;
 	for (const auto& c : candidates) {
-		if (IsApproachSafe(c.second->GetPos(), pos, maxPower, basePos, sqOBDist)) {
+		if (IsApproachSafe(c.second->GetPos(), pos, maxPower)) {
 			if (bestTarget == nullptr) {
 				bestTarget = c.second;
 			}
@@ -548,16 +552,16 @@ void CAttackTask::FindTarget()
 	if (bestTarget != nullptr) {
 		SetTarget(bestTarget);
 		position = target->GetPos();
+	} else {
+		scaleRefSqDist = 0.f;  // no fight accepted: no near-base discount
 	}
 	// Return: target, startPos=leader->pos, endPos=position
 }
 
-bool CAttackTask::IsApproachSafe(const AIFloat3& ePos, const AIFloat3& pos, float safeThreat,
-		const AIFloat3& basePos, float sqOBDist) const
+bool CAttackTask::IsApproachSafe(const AIFloat3& ePos, const AIFloat3& pos, float safeThreat) const
 {
-	// Walk from the target towards us, out to our range (or to us if closer), one threat square at a time.
-	// Each spot gets the same near-base scale as the target's own spot in FindTarget: threat counts less
-	// where the spot is nearer our base than we are.
+	// Walk from the target towards us, out to our range (or to us if closer), one threat square at a time,
+	// judging each spot with the common allowance.
 	// Expects threatMap->SetThreatType(leader) already done (FindTarget).
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
 	AIFloat3 dir = pos - ePos;
@@ -572,8 +576,7 @@ bool CAttackTask::IsApproachSafe(const AIFloat3& ePos, const AIFloat3& pos, floa
 	for (float d = step; d <= reach; d += step) {
 		AIFloat3 p = ePos + dir * d;
 		CTerrainManager::CorrectPosition(p);
-		const float scale = (sqOBDist > 0.f) ? std::min(p.SqDistance2D(basePos) / sqOBDist, 1.f) : 1.f;
-		if (threatMap->GetThreatAt(p) * scale >= safeThreat / GetThrDistModAt(p)) {
+		if (threatMap->GetThreatAt(p) >= GetAllowedThreatAt(p, safeThreat)) {
 			return false;
 		}
 	}
@@ -595,13 +598,23 @@ bool CAttackTask::IsHoldingGround(int frame) const
 
 float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals) const
 {
-	// As raid paths: our current strength (incl. thr_mod) over the strictest thr_mod.distance value of
-	// start and goals, so routes allow what target picking allows
-	float pathMod = GetThrDistModAt(startPos);
+	// One cap for the whole route (the pathfinder takes a single value): the common allowance with the
+	// strictest thr_mod.distance value of start and goals, but the loosest base_bonus and near-base scale,
+	// so a target that passed picking thanks to them stays reachable. Spots on the way that are hotter than
+	// their own allowance are caught by the path-ahead check and the escape; threat is also a route cost,
+	// so the route avoids them where it can.
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	float curve = GetThrDistModAt(startPos);
+	float bonus = militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(startPos));
+	float scale = GetNearBaseScaleAt(startPos);
 	for (const AIFloat3& g : goals) {
-		pathMod = std::max(pathMod, GetThrDistModAt(g));
+		curve = std::max(curve, GetThrDistModAt(g));
+		bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(g)));
+		scale = std::min(scale, GetNearBaseScaleAt(g));
 	}
-	return GetSafeThreat() / pathMod;
+	return GetSafeThreat() * bonus / curve / std::max(scale, 1e-3f);
 }
 
 float CAttackTask::GetSafeThreat() const
@@ -619,13 +632,24 @@ float CAttackTask::GetUnitPower(CCircuitUnit* unit) const
 	return unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
 }
 
-float CAttackTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
+float CAttackTask::GetNearBaseScaleAt(const AIFloat3& pos) const
 {
-	// Same allowance as the raid escape: near-base bonus and the distance curve at this spot
+	// Threat at spots nearer our base than the group was when it last picked a target counts less
+	// (quadratic, as FindTarget always did). Fixed at pick time, so a group closing in on an enemy
+	// between it and our base keeps judging that fight the way it accepted it.
+	if (scaleRefSqDist <= 0.f) {
+		return 1.f;
+	}
+	const AIFloat3& basePos = manager->GetCircuit()->GetSetupManager()->GetBasePos();
+	return std::min(pos.SqDistance2D(basePos) / scaleRefSqDist, 1.f);
+}
+
+float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) const
+{
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	const float sqDist = basePos.SqDistance2D(pos);
-	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist) / GetThrDistModAt(pos);
+	const float bonus = circuit->GetMilitaryManager()->GetBaseThrBonus(basePos.SqDistance2D(pos));
+	return strength * bonus / GetThrDistModAt(pos) / std::max(GetNearBaseScaleAt(pos), 1e-3f);
 }
 
 bool CAttackTask::IsInDanger(int frame, bool& isPathUnsafe)
@@ -643,7 +667,7 @@ bool CAttackTask::IsInDanger(int frame, bool& isPathUnsafe)
 			continue;  // unseen: enemies in range can't shoot it
 		}
 		const AIFloat3& pos = unit->GetPos(frame);
-		if (threatMap->GetThreatAt(unit, pos) >= GetSafeThreatAt(pos, safeThreat)) {
+		if (threatMap->GetThreatAt(unit, pos) >= GetAllowedThreatAt(pos, safeThreat)) {
 			endangered.push_back(unit);
 			dangerPower += power;
 		}
@@ -666,7 +690,7 @@ bool CAttackTask::IsInDanger(int frame, bool& isPathUnsafe)
 	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
 	const float sqLookAhead = SQUARE(lookAhead);
 	for (const AIFloat3& p : path->posPath) {
-		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetSafeThreatAt(p, safeThreat))) {
+		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, safeThreat))) {
 			isPathUnsafe = true;
 			break;
 		}
@@ -721,7 +745,7 @@ bool CAttackTask::Flee(int frame)
 		// Only if the two groups together can stand there: it may be in this same fight, or past the enemy
 		const AIFloat3& squadPos = squad->GetLeaderPos(frame);
 		const float together = GetSafeThreat() + squad->GetSafeThreat();
-		if (circuit->GetThreatMap()->GetThreatAt(leader, squadPos) < GetSafeThreatAt(squadPos, together)) {
+		if (circuit->GetThreatMap()->GetThreatAt(leader, squadPos) < GetAllowedThreatAt(squadPos, together)) {
 			dest = squadPos;
 		}
 	}
@@ -739,6 +763,7 @@ bool CAttackTask::Flee(int frame)
 	SetTarget(nullptr);
 	state = State::ROAM;
 	isHolding = false;
+	scaleRefSqDist = 0.f;  // running: judge danger at full value, also on the way home
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
@@ -791,6 +816,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 	if (pPath->posPath.empty()) {
 		// No candidate reachable within our threat cap: drop the target and head for the front
 		SetTarget(nullptr);
+		scaleRefSqDist = 0.f;
 		FallbackFrontPos();
 		return;
 	}
