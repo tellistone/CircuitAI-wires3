@@ -9,6 +9,9 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_RAIDTASK_H_
 
 #include "task/fighter/SquadTask.h"
+#include "unit/CoreUnit.h"
+
+#include <map>
 
 namespace circuit {
 
@@ -35,17 +38,30 @@ private:
 	// Escape: current group strength vs threat where the units are and just ahead on the path
 	float GetSafeThreat() const;
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
+	// Firing spots (IFighterTask::Attack) skip spots the escape would call dangerous
+	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
+	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override {
+		return GetSafeThreatAt(pos, strength);
+	}
 	bool IsInDanger(int frame, bool& isPathUnsafe);  // fills 'endangered'
 	float GetUnitPower(CCircuitUnit* unit) const;
 	void PullBackEndangered(int frame);
 	bool Flee(int frame);  // false: nowhere better to go (already home), fight instead
+	bool IsFleeQueryPending() const;  // our escape path request is still in flight
 	void ApplyFleePath(const CQueryPathSingle* query);
 
 	float maxPower;
 	int fleeFrame;  // keep running until this frame
 	int fleePathFrame;  // last escape path request
+	int fleeQueryId;  // pending escape path request (-1: none), not superseded by the 1 s refresh
+	springai::AIFloat3 fleeDest;  // haven (or base) of the current escape: straight-move fallback when no path is found
 	int pullFrame;  // last pull-back of endangered stragglers
-	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
+	std::vector<CCircuitUnit*> endangered;
+	bool isFightPending;
+	std::map<ICoreUnit::Id, int> heldTargets;  // targets with no safe firing spot in reach, and when: skipped for 10 s
+	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
+	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach  // short roam path: Fight order to send from Update() (not from the path callback)
+	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger
 };
 
 } // namespace circuit

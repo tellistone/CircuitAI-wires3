@@ -189,13 +189,6 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			orderUnits.push_back(unit);
 		}
 	}
-	if (isDirect) {
-		for (CCircuitUnit* unit : orderUnits) {
-			unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);
-		}
-		return;
-	}
-
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
 	// Longest range picks first; each pick replaces that unit's claim.
 	std::map<CCircuitUnit*, AIFloat3> claims;
@@ -228,9 +221,13 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 				fireSpots.erase(unit);
 				unit->HoldFire(firePos, target, targetTile, timeout);
 			} break;
-			default: {
+			default: {  // melee / no usable range
 				fireSpots.erase(unit);
-				unit->Attack(target->GetPos(), target, targetTile, timeout);
+				if (isDirect) {
+					unit->Attack(target, targetTile, timeout);  // keeps target priority
+				} else {
+					unit->Attack(target->GetPos(), target, targetTile, timeout);
+				}
 			} break;
 		}
 	}

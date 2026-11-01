@@ -51,9 +51,9 @@ protected:
 	// The task's thr_mod multiplier from its distance-from-base curve (quota.thr_mod.distance.<task>), read at the spot
 	// being judged (an enemy, a destination, a unit's own position): divide a threat allowance by it. 1 if not configured.
 	float GetThrDistModAt(const springai::AIFloat3& pos) const;
-	// isDirect: Attack the target first instead of fight-moving to it.
-	// The engine still lets weapons shoot other units while the ordered target can't be hit (out of range),
-	// but switches to the ordered target as soon as it can.
+	// Ranged units move to a firing spot (FindFireSpot), then Attack the target. isDirect: units without a spot
+	// (melee, no usable range) get a direct Attack instead of a fight-move, so the target keeps priority.
+	// The engine still lets weapons shoot other units while the ordered target can't be hit.
 	void Attack(const int frame, const bool isDirect = false);
 	// Firing spot for a ranged unit: within its weapon range of the target, trading walking distance against
 	// threat and against spots other units are heading to.
