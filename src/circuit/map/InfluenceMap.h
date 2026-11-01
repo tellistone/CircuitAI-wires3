@@ -39,6 +39,7 @@ private:
 public:
 	void EnqueueUpdate();
 	bool IsUpdating() const { return isUpdating; }
+	void DropUpdate() { isUpdating = false; }  // the update in flight was dropped with its scheduler
 
 	float GetEnemyInflAt(const springai::AIFloat3& position) const;
 	float GetAllyInflAt(const springai::AIFloat3& position) const;

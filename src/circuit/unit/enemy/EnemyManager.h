@@ -51,6 +51,7 @@ public:
 	void PrepareUpdate();
 	void EnqueueUpdate();
 	bool IsUpdating() const { return isUpdating; }
+	void DropUpdate() { isUpdating = false; }  // the update in flight was dropped with its scheduler
 
 	bool UnitInLOS(CEnemyUnit* data);
 	std::pair<CEnemyUnit*, bool> RegisterEnemyUnit(ICoreUnit::Id unitId, bool isInLOS);

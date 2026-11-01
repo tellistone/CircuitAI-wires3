@@ -58,6 +58,7 @@ private:
 	ICoreUnit::Id lastPathTargetId = -1;  // target the current travel path leads to (-1: none)
 	bool isPathCapped = false;  // current travel path avoids tiles above safe threat
 	int lastAttackFrame = -1;
+	int lastStallCheck = -1;  // last check for an empty order queue
 	ICoreUnit::Id lastAttackId = -1;  // enemy id -> frame until which it is skipped
 };
 

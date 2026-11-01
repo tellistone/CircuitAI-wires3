@@ -6,6 +6,7 @@
  */
 
 #include "terrain/path/PathQuery.h"
+#include "terrain/path/PathFinder.h"
 #include "task/UnitTask.h"
 
 namespace circuit {
@@ -45,6 +46,11 @@ void IPathQuery::HoldTask(IUnitTask* task)
 {
 	taskHolder = task;
 	taskHolder->AddRef();
+}
+
+bool IPathQuery::IsLost() const
+{
+	return (State::PROCESS == GetState()) && (generation != pathfinder.GetGeneration());
 }
 
 } // namespace circuit

@@ -112,6 +112,7 @@ public:
 	RoleT GetMainRole() const { return mainRole; }
 	void AddEnemyRole(RoleT type) { enemyRole |= GetMask(type); }
 	void AddEnemyRoles(RoleM mask) { enemyRole |= mask; }
+	void DelEnemyRoles(RoleM mask) { enemyRole &= ~mask; }
 	bool IsEnemyRoleAny(RoleM value) const { return (enemyRole & value) != 0; }
 
 	void AddAttribute(AttrType type) { attr |= GetMask(static_cast<AttrT>(type)); }

@@ -17,6 +17,8 @@
 
 #include "Log.h"
 
+#include <set>
+
 namespace circuit {
 
 using namespace springai;
@@ -24,6 +26,7 @@ using namespace springai;
 CFGuardTask::CFGuardTask(ITaskManager* mgr, CCircuitUnit* vip, float maxPower)
 		: IFighterTask(mgr, FightType::GUARD, 1.f)
 		, vipId(vip->GetId())
+		, isGuardedVip(vip->GetCircuitDef()->IsAttrGuarded())
 		, maxPower(maxPower)
 		, isVipRetreat(false)
 		, isVipSafe(false)
@@ -68,7 +71,7 @@ bool CFGuardTask::CanAssignTo(CCircuitUnit* unit) const
 	// Don't send a unit (e.g. one just released by another slot's threat exit) to a builder under heavy threat
 	// The cap check is O(army) and runs once per slot on every MakeTask, so it comes after the cheap checks
 	return !IsOverThreat(unit, vipPos)
-			&& !militaryMgr->IsGuardCapReached(unit->GetCircuitDef())
+			&& !militaryMgr->IsGuardCapReached(unit->GetCircuitDef(), isGuardedVip)
 			&& circuit->GetTerrainManager()->CanReachAt(unit, vipPos, unit->GetCircuitDef()->GetMaxRange());
 }
 
@@ -194,10 +197,8 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	const AIFloat3& pos = vip->GetPos(circuit->GetLastFrame());
 	// An armed vip (a "guarded" artillery, an armed commander) counts in the map too: take it out,
 	// or it would call its own spot safe
-	float allyInfl = inflMap->GetAllyInflAt(pos) - inflMap->GetMobileArmedInflAt(vip, pos);
-	for (CCircuitUnit* unit : units) {
-		allyInfl -= inflMap->GetMobileArmedInflAt(unit, pos);  // the guard's real share, not its full power
-	}
+	// The guard's real share is taken out too, not its full power (see GetExcludedInflAt)
+	float allyInfl = inflMap->GetAllyInflAt(pos) - GetExcludedInflAt(vip, pos);
 	const int frame = circuit->GetLastFrame();
 	lastAlly = allyInfl;
 	lastEnemy = inflMap->GetEnemyInflAt(pos);
@@ -208,10 +209,7 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	if (isSafe) {
 		const AIFloat3 dest = GetVipDestination(vip);
 		if (utils::is_valid(dest)) {
-			float destAlly = inflMap->GetAllyInflAt(dest) - inflMap->GetMobileArmedInflAt(vip, dest);
-			for (CCircuitUnit* unit : units) {
-				destAlly -= inflMap->GetMobileArmedInflAt(unit, dest);
-			}
+			const float destAlly = inflMap->GetAllyInflAt(dest) - GetExcludedInflAt(vip, dest);
 			isSafe = (destAlly >= cfg.safeAlly) && (inflMap->GetEnemyInflAt(dest) <= cfg.safeEnemy);
 		}
 	}
@@ -328,7 +326,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		if (IsOverThreat(unit, pos) || IsOverThreat(unit, unitPos)) {
 			continue;
 		}
-		if (!militaryMgr->IsGuardCapReached(unit->GetCircuitDef())  // O(army): checked last, on nearby candidates only
+		if (!militaryMgr->IsGuardCapReached(unit->GetCircuitDef(), isGuardedVip)  // O(army): checked last, on nearby candidates only
 			&& terrainMgr->CanReachAt(unit, pos, unit->GetCircuitDef()->GetMaxRange()))
 		{
 			minSqDist = sqDist;
@@ -338,6 +336,58 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 	if (best != nullptr) {
 		manager->AssignTask(best, this);
 	}
+}
+
+float CFGuardTask::GetExcludedInflAt(CCircuitUnit* vip, const AIFloat3& pos) const
+{
+	// Allied influence that must not make the vip's spot look safe, each unit counted once:
+	//   the vip itself and the guards of every slot, always;
+	//   for a "guarded" vip also its squadmates and every other guarded unit (artillery parked together
+	//   would otherwise call each other safe, and a squad isn't protection for its own artillery)
+	CCircuitAI* circuit = manager->GetCircuit();
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	std::set<CCircuitUnit*> seen;
+	float sum = 0.f;
+	auto exclude = [&](CCircuitUnit* u) {
+		if (seen.insert(u).second) {
+			sum += inflMap->GetMobileArmedInflAt(u, pos);
+		}
+	};
+	exclude(vip);
+	// Every slot's guard, not only this slot's: two vips side by side would otherwise each call the
+	// other's guard protection, release their own guards together, then both pull again (ping-pong)
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	for (IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::GUARD)) {
+		for (CCircuitUnit* unit : t->GetAssignees()) {
+			exclude(unit);
+		}
+	}
+	if (!isGuardedVip) {
+		return sum;
+	}
+	IUnitTask* task = vip->GetTask();
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)) {  // not IDLE: that one holds every idle unit
+		for (CCircuitUnit* unit : task->GetAssignees()) {
+			exclude(unit);
+		}
+		// A support unit (role or "support" attribute) is alone in its task but tags along with the nearest
+		// attack or defend squad, which it picks again on every update: those squads are its squadmates
+		if (static_cast<IFighterTask*>(task)->GetFightType() == FightType::SUPPORT) {
+			for (FightType ft : {FightType::ATTACK, FightType::DEFEND}) {
+				for (IFighterTask* t : militaryMgr->GetTasks(ft)) {
+					for (CCircuitUnit* unit : t->GetAssignees()) {
+						exclude(unit);
+					}
+				}
+			}
+		}
+	}
+	for (CCircuitUnit* unit : militaryMgr->GetArmy()) {
+		if (unit->GetCircuitDef()->IsAttrGuarded()) {
+			exclude(unit);
+		}
+	}
+	return sum;
 }
 
 void CFGuardTask::DebugLog(CCircuitUnit* vip, const char* event) const
