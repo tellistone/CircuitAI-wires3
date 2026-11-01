@@ -19,6 +19,7 @@
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
+#include "util/Scheduler.h"
 #include "util/Utils.h"
 
 #include <limits>
@@ -84,12 +85,6 @@ void CScoutTask::Update()
 
 	// Re-decide on every update (was every 2nd update and at most once per second).
 	// Floor at the threat map refresh rate: re-deciding faster would only reuse the same threat data.
-	if (isIssuePending) {
-		isIssuePending = false;
-		for (CCircuitUnit* unit : units) {
-			unit->Update(circuit);  // a path applied from another AI's event: issue it now, from our own
-		}
-	}
 	if (frame >= lastTouched + THREAT_UPDATE_RATE) {
 		lastTouched = frame;
 		for (CCircuitUnit* unit : units) {
@@ -565,8 +560,14 @@ void CScoutTask::ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo
 		unit->Update(circuit);
 	} else {
 		// Path callbacks can run inside an allied AI's event (shared pathfinder): orders sent from there are
-		// rejected by the server, so issue on our own next task update
-		isIssuePending = true;
+		// rejected by the server. Issue from our own scheduler instead, which runs on our next engine frame.
+		const ICoreUnit::Id unitId = unit->GetId();
+		circuit->GetScheduler()->RunTaskAt(std::make_shared<CGameTask>([circuit, unitId]() {
+			CCircuitUnit* u = circuit->GetTeamUnit(unitId);
+			if ((u != nullptr) && !u->IsDead()) {
+				u->Update(circuit);  // runs the unit's current actions; harmless if its task changed meanwhile
+			}
+		}));
 	}
 }
 
