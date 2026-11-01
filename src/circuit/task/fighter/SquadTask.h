@@ -33,9 +33,10 @@ private:
 	void FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd);
 
 	bool IsMergeSafe() const;
-	ISquadTask* CheckMergeTask();
 
 protected:
+	// Nearest same-type task this one may join (no ground/influence check, see GetMergeTask)
+	ISquadTask* CheckMergeTask();
 	ISquadTask* GetMergeTask();
 	bool IsMustRegroup();
 	void ActivePath(float speed = NO_SPEED_LIMIT);

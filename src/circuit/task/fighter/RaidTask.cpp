@@ -29,6 +29,8 @@
 
 #include "AISCommands.h"
 
+#define MOVING_SPEED	0.5f  // elmos per frame: a target faster than this counts as moving (no firing spots)
+
 namespace circuit {
 
 using namespace springai;
@@ -38,7 +40,10 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, maxPower(maxPower)
 		, fleeFrame(0)
 		, fleePathFrame(0)
+		, fleeQueryId(-1)
+		, fleeDest(-RgtVector)
 		, pullFrame(0)
+		, isFightPending(false)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -133,6 +138,9 @@ void CRaidTask::Update()
 	if (IsInDanger(frame, isPathUnsafe) && Flee(frame)) {
 		return;
 	}
+	if (isFightPending) {
+		SendPendingFight(frame);
+	}
 	PullBackEndangered(frame);
 	if (frame < fleeFrame) {
 		return;  // keep running along the escape path for a moment instead of turning straight back
@@ -210,8 +218,19 @@ void CRaidTask::Update()
 				}
 			}
 		} else {
-			// Direct Attack keeps FindTarget's priority (e.g. turret over nearby solars); a fight-move would shoot whatever comes first
-			Attack(frame, true);
+			const AIFloat3& tVel = target->GetVel();
+			if (tVel.SqLength2D() > SQUARE(MOVING_SPEED)) {
+				// Moving target (fleeing builder etc.): a firing spot goes stale at once, chase it directly
+				AttackDirect(frame);
+			} else {
+				// Firing spot per unit (in range, close, low threat), plain move there then Attack: keeps FindTarget's priority
+				Attack(frame, true);
+				if (IsAllHolding()) {
+					// Every ranged unit holds (no safe spot in range) while the target is out of reach: the group would
+					// stand still for as long as FindTarget keeps choosing it. Pass on it for a while instead.
+					heldTargets[target->GetId()] = frame;
+				}
+			}
 		}
 		return;
 	}
@@ -316,6 +335,13 @@ bool CRaidTask::FindTarget()
 		CEnemyInfo* enemy = kv.second;
 		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)) {
 			continue;
+		}
+		auto itHeld = heldTargets.find(enemy->GetId());
+		if (itHeld != heldTargets.end()) {
+			if (circuit->GetLastFrame() < itHeld->second + FRAMES_PER_SEC * 10) {
+				continue;  // no safe firing spot last time: pass on it for 10 s
+			}
+			heldTargets.erase(itHeld);
 		}
 
 		const AIFloat3& ePos = enemy->GetPos();
@@ -487,8 +513,53 @@ void CRaidTask::ApplyRaidPath(const CQueryPathSingle* query)
 		return;
 	}
 
+	// Short path: plain Fight order, sent from Update(). Path callbacks can run during an allied AI's turn,
+	// and orders sent from there go out under the wrong team and are dropped.
+	isFightPending = true;
+}
+
+void CRaidTask::AttackDirect(int frame)
+{
+	// Same re-order rule as IFighterTask::Attack, without firing spots
+	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
+	const bool isRepeatAttack = (frame >= attackFrame + attackRepeat);
+	attackFrame = isRepeatAttack ? frame : attackFrame;
+	for (CCircuitUnit* unit : units) {
+		if (unit->Blocker() != nullptr) {
+			continue;
+		}
+		unit->GetTravelAct()->StateWait();
+		fireSpots.erase(unit);
+		if (isRepeatAttack || (unit->GetTarget() != target) || (unit->GetTargetTile() != targetTile)) {
+			unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);
+		}
+	}
+}
+
+bool CRaidTask::IsAllHolding() const
+{
+	// HOLD (IFighterTask::Attack): ranged unit ordered on this target without a firing spot
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	int ranged = 0;
+	for (CCircuitUnit* unit : units) {
+		const float range = GetFireRange(unit);
+		if (unit->GetCircuitDef()->IsAttrMelee() || (range < SQUARE_SIZE * 4)) {
+			continue;
+		}
+		++ranged;
+		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())
+			|| (unit->GetPos(frame).SqDistance2D(target->GetPos()) <= SQUARE(range)))
+		{
+			return false;  // has a spot, or can already shoot it
+		}
+	}
+	return ranged > 0;
+}
+
+void CRaidTask::SendPendingFight(int frame)
+{
+	isFightPending = false;
 	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Fight(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
@@ -598,6 +669,9 @@ void CRaidTask::PullBackEndangered(int frame)
 		if (unit->Blocker() != nullptr) {
 			continue;
 		}
+		if (IsOnRiskySpot(unit, frame)) {
+			continue;  // sent to the least dangerous firing spot on purpose: don't undo it for 3 s
+		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
 		TRY_UNIT(circuit, unit,
 			unit->CmdMoveTo(safePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
@@ -614,56 +688,80 @@ bool CRaidTask::Flee(int frame)
 		dest = circuit->GetSetupManager()->GetBasePos();
 	}
 	if (leader->GetPos(frame).SqDistance2D(dest) < SQUARE(400.f)) {
-		fleeFrame = 0;
+		// End the "keep running" hold, but keep the 4 s cautious window of the last escape
+		fleeFrame = std::min(fleeFrame, frame);
 		return false;  // danger at home: running gets us nowhere
 	}
 
 	SetTarget(nullptr);
 	state = State::ROAM;
+	isFightPending = false;  // the escape replaces any pending roam order
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
 		return true;  // escape path is fresh
 	}
+	if (wasFleeing && IsFleeQueryPending() && (frame < fleePathFrame + FRAMES_PER_SEC * 5)) {
+		return true;  // a slow pathfinder: don't cancel the pending way out with a new request (gives up after 5 s)
+	}
 	fleePathFrame = frame;
 	lastTouched = frame;
 
-	// Break off at once; the threat-aware path replaces this when it is ready
-	if (!wasFleeing) {
-		for (CCircuitUnit* unit : units) {
-			if (unit->Blocker() != nullptr) {
-				continue;
-			}
-			unit->GetTravelAct()->StateWait();
-			TRY_UNIT(circuit, unit,
-				unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-				unit->CmdWantedSpeed(NO_SPEED_LIMIT);
-			)
-		}
-	}
+	// No straight move home while the path is computed: a straight line can run through the threat,
+	// and a one-reading danger blip would send the whole group home. Units keep their orders until the
+	// least-threat path arrives; only if no path is found do they take the straight move (ApplyFleePath).
+	fleeDest = dest;
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
 			leader->GetPos(frame), dest, pathfinder->GetSquareSize());  // threat as cost, no cap: least-threat way out
 	pathQueries[leader] = query;  // supersedes any pending target/raid path
+	fleeQueryId = query->GetId();
 	query->HoldTask(this);
 
 	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
+			this->fleeQueryId = -1;
 			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
 		}
 	});
 	return true;
 }
 
+bool CRaidTask::IsFleeQueryPending() const
+{
+	if (fleeQueryId < 0) {
+		return false;
+	}
+	const auto it = pathQueries.find(leader);
+	return (it != pathQueries.end()) && (it->second != nullptr) && (it->second->GetId() == fleeQueryId)
+			&& !it->second->IsLost();  // dropped by a pathfinder handover: its callback never comes
+}
+
 void CRaidTask::ApplyFleePath(const CQueryPathSingle* query)
 {
 	// Keep the raid destination in 'position': once the escape ends, FallbackRaid re-checks it
 	// (and picks another if it is dangerous) instead of the group walking all the way home
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	if (frame >= fleeFrame) {
+		return;  // late result: the escape is over and the group may have engaged again, don't drag it home
+	}
 	pPath = query->GetPathInfo();
 	if (pPath->posPath.empty()) {
-		return;  // keep the straight move from Flee()
+		// No way out found: fall back to the straight move to the haven (or base)
+		for (CCircuitUnit* unit : units) {
+			if (unit->Blocker() != nullptr) {
+				continue;
+			}
+			unit->GetTravelAct()->StateWait();
+			TRY_UNIT(circuit, unit,
+				unit->CmdMoveTo(fleeDest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+				unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+			)
+		}
+		return;
 	}
 	ActivePath();
 }
