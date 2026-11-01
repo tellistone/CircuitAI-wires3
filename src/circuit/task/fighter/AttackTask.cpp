@@ -891,7 +891,7 @@ void CAttackTask::ApplyFleePath(const CQueryPathSingle* query)
 {
 	pPath = query->GetPathInfo();
 	if (pPath->posPath.empty()) {
-		return;  // keep the straight move from Flee()
+		return;  // no way out found: keep current orders; Flee re-queries within 1 s while the danger lasts
 	}
 	ActivePath();
 }
