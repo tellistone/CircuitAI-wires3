@@ -735,7 +735,8 @@ bool CRaidTask::IsFleeQueryPending() const
 		return false;
 	}
 	const auto it = pathQueries.find(leader);
-	return (it != pathQueries.end()) && (it->second->GetId() == fleeQueryId);
+	return (it != pathQueries.end()) && (it->second != nullptr) && (it->second->GetId() == fleeQueryId)
+			&& !it->second->IsLost();  // dropped by a pathfinder handover: its callback never comes
 }
 
 void CRaidTask::ApplyFleePath(const CQueryPathSingle* query)
