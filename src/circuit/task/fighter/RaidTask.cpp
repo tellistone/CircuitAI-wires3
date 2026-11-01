@@ -667,8 +667,7 @@ void CRaidTask::PullBackEndangered(int frame)
 		if (unit->Blocker() != nullptr) {
 			continue;
 		}
-		auto it = riskySpotFrames.find(unit);
-		if ((it != riskySpotFrames.end()) && (frame < it->second + FRAMES_PER_SEC * 3)) {
+		if (IsOnRiskySpot(unit, frame)) {
 			continue;  // sent to the least dangerous firing spot on purpose: don't undo it for 3 s
 		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path

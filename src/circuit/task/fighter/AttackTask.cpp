@@ -820,8 +820,7 @@ void CAttackTask::PullBackEndangered(int frame)
 		if (unit->Blocker() != nullptr) {
 			continue;
 		}
-		auto it = riskySpotFrames.find(unit);
-		if ((it != riskySpotFrames.end()) && (frame < it->second + FRAMES_PER_SEC * 3)) {
+		if (IsOnRiskySpot(unit, frame)) {
 			continue;  // just sent to the least dangerous firing spot: don't bounce it back
 		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
