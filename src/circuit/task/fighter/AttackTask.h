@@ -63,6 +63,14 @@ private:
 	// avoiding the spot we were last hit at while holding; retry next decision
 	void HoldPosition();
 	void MoveGroupTo(const springai::AIFloat3& pos);
+	// Quietest reachable spot within 2x our range (24 samples + where we stand), avoiding the last hit area;
+	// returns the threat there
+	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
+	// In danger but not fleeing (hold-ground, flee gave up): move to the quietest spot nearby by the
+	// least-threat route; already there: attack the nearest enemy we can hit. Re-checked every second.
+	void Cornered(int frame);
+	void ApplyCorneredPath(const CQueryPathSingle* query);
+	CEnemyInfo* FindNearestHittable(int frame) const;
 	void FallbackFrontPos();
 	void ApplyFrontPos(const CQueryPathMulti* query);
 
@@ -83,6 +91,8 @@ private:
 	int hitFrame;
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
+	int corneredFrame;  // last cornered check
+	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget
 };
 

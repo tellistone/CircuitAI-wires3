@@ -288,8 +288,10 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const F3Ve
 		consider(p);
 	}
 	if (!isFound) {
+		// Every spot dangerous: hold only if where the unit stands is safe; otherwise attack as before
 		outPos = uPos;
-		return (safeThreat > 0.f) ? FireSpot::HOLD : FireSpot::NONE;
+		const bool isSafeHere = (safeThreat > 0.f) && !isDanger(uPos, threatMap->GetThreatAt(unit, uPos));
+		return isSafeHere ? FireSpot::HOLD : FireSpot::NONE;
 	}
 	return FireSpot::SPOT;
 }

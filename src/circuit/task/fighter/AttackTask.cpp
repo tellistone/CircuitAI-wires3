@@ -52,6 +52,8 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, hitFrame(-1)
 		, scaleRefSqDist(0.f)
 		, anchorTargetId(-1)
+		, corneredFrame(-1)
+		, corneredPos(-RgtVector)
 		, pickSqDist(0.f)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -184,6 +186,12 @@ void CAttackTask::Update()
 		const bool isDanger = IsInDanger(frame, isPathUnsafe);
 		const bool isHolding = IsHoldingGround(frame);
 		const bool isFleeing = isDanger && !isHolding && Flee(frame);
+		if (isDanger && !isFleeing) {
+			// Cornered (holding ground, or nowhere better to run): don't stand and take it
+			Cornered(frame);
+			return;
+		}
+		corneredPos = -RgtVector;
 		if (!isFleeing && !isHolding) {
 			PullBackEndangered(frame);
 		}
@@ -926,14 +934,22 @@ void CAttackTask::ApplyFrontPos(const CQueryPathMulti* query)
 
 void CAttackTask::HoldPosition()
 {
-	// Never head home from the front with nothing to do. Hold at the quietest reachable spot within
-	// 2x our range: stay put when it is as quiet as anywhere around (no creeping), and keep away from
-	// where we were last hit while holding (attackers we can't see or reach leave no threat on the map).
+	// Never head home from the front with nothing to do: hold at the quietest spot nearby
+	AIFloat3 bestPos;
+	FindQuietSpot(leader->GetPos(manager->GetCircuit()->GetLastFrame()), bestPos);
+	MoveGroupTo(bestPos);
+	isHolding = true;
+}
+
+float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
+{
+	// Quietest reachable spot within 2x our range: stay put when it is as quiet as anywhere around
+	// (no creeping), and keep away from where we were last hit while holding (attackers we can't see
+	// or reach leave no threat on the map)
 	CCircuitAI* circuit = manager->GetCircuit();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const int frame = circuit->GetLastFrame();
-	const AIFloat3& pos = leader->GetPos(frame);
 	STerrainMapArea* area = leader->GetArea();
 	const bool isAvoidHit = (frame < hitFrame + FRAMES_PER_SEC * 30);
 	auto isHitZone = [&](const AIFloat3& p) {
@@ -965,9 +981,97 @@ void CAttackTask::HoldPosition()
 			}
 		}
 	}
+	outPos = bestPos;
+	return (bestThreat < std::numeric_limits<float>::max()) ? bestThreat : threatMap->GetThreatAt(leader, pos);
+}
 
-	MoveGroupTo(bestPos);
-	isHolding = true;
+void CAttackTask::Cornered(int frame)
+{
+	if (frame < corneredFrame + FRAMES_PER_SEC) {
+		return;  // keep the current move / attack for a second
+	}
+	corneredFrame = frame;
+	isHolding = false;
+	CCircuitAI* circuit = manager->GetCircuit();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const AIFloat3& pos = leader->GetPos(frame);
+	const float hereThreat = threatMap->GetThreatAt(leader, pos);
+
+	AIFloat3 quietPos;
+	const float quietThreat = FindQuietSpot(pos, quietPos);
+	// Already heading somewhere: switch only to a clearly (20%) quieter spot
+	const bool isMoving = utils::is_valid(corneredPos) && (corneredPos.SqDistance2D(pos) > SQUARE(200.f));
+	const float refThreat = isMoving ? threatMap->GetThreatAt(leader, corneredPos) : hereThreat;
+	if ((quietPos.SqDistance2D(pos) > SQUARE(200.f)) && (quietThreat < refThreat * 0.8f)) {
+		corneredPos = quietPos;
+		SetTarget(nullptr);
+		state = State::ROAM;
+		CPathFinder* pathfinder = circuit->GetPathfinder();
+		std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+				leader, threatMap, frame, pos, quietPos, pathfinder->GetSquareSize());  // threat as cost, no cap
+		pathQueries[leader] = query;
+		query->HoldTask(this);
+		pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+			if (this->IsQueryAlive(query)) {
+				this->ApplyCorneredPath(static_cast<const CQueryPathSingle*>(query));
+			}
+		});
+		return;
+	}
+	if (isMoving) {
+		return;  // still on the way to a spot that is quiet enough
+	}
+	corneredPos = -RgtVector;
+
+	// Nowhere quieter: fight from here
+	CEnemyInfo* enemy = ((target != nullptr) && (target->GetPos().SqDistance2D(pos) < SQUARE(highestRange)))
+			? target : FindNearestHittable(frame);
+	if (enemy != nullptr) {
+		SetTarget(enemy);
+		position = enemy->GetPos();
+		state = State::ENGAGE;
+		Attack(frame);
+	}
+}
+
+void CAttackTask::ApplyCorneredPath(const CQueryPathSingle* query)
+{
+	pPath = query->GetPathInfo();
+	if (pPath->posPath.empty()) {
+		MoveGroupTo(corneredPos);
+		return;
+	}
+	ActivePath();
+}
+
+CEnemyInfo* CAttackTask::FindNearestHittable(int frame) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CCircuitDef* cdef = leader->GetCircuitDef();
+	const AIFloat3& pos = leader->GetPos(frame);
+	const int canTargetCat = cdef->GetTargetCategory();
+	const bool notAA = !cdef->HasAntiAir();
+	const float maxSqDist = SQUARE(std::max(highestRange, cdef->GetMaxRange()) * 1.5f);
+	CEnemyInfo* best = nullptr;
+	float minSqDist = maxSqDist;
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		CEnemyInfo* enemy = kv.second;
+		if (enemy->IsHidden()) {
+			continue;
+		}
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef != nullptr)
+			&& (((edef->GetCategory() & canTargetCat) == 0) || (edef->IsAbleToFly() && notAA)))
+		{
+			continue;
+		}
+		const float sqDist = enemy->GetPos().SqDistance2D(pos);
+		if (sqDist < minSqDist) {
+			minSqDist = sqDist;
+			best = enemy;
+		}
+	}
+	return best;
 }
 
 void CAttackTask::MoveGroupTo(const AIFloat3& pos)
