@@ -9,6 +9,9 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_RAIDTASK_H_
 
 #include "task/fighter/SquadTask.h"
+#include "unit/CoreUnit.h"
+
+#include <map>
 
 namespace circuit {
 
@@ -51,7 +54,10 @@ private:
 	int fleePathFrame;  // last escape path request
 	int pullFrame;  // last pull-back of endangered stragglers
 	std::vector<CCircuitUnit*> endangered;
-	bool isFightPending;  // short roam path: Fight order to send from Update() (not from the path callback)
+	bool isFightPending;
+	std::map<ICoreUnit::Id, int> heldTargets;  // targets with no safe firing spot in reach, and when: skipped for 10 s
+	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
+	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach  // short roam path: Fight order to send from Update() (not from the path callback)
 	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger
 };
 

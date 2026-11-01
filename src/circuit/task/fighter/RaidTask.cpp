@@ -29,6 +29,8 @@
 
 #include "AISCommands.h"
 
+#define MOVING_SPEED	0.5f  // elmos per frame: a target faster than this counts as moving (no firing spots)
+
 namespace circuit {
 
 using namespace springai;
@@ -214,8 +216,19 @@ void CRaidTask::Update()
 				}
 			}
 		} else {
-			// Firing spot per unit (in range, close, low threat), plain move there then Attack: keeps FindTarget's priority
-			Attack(frame, true);
+			const AIFloat3& tVel = target->GetVel();
+			if (tVel.SqLength2D() > SQUARE(MOVING_SPEED)) {
+				// Moving target (fleeing builder etc.): a firing spot goes stale at once, chase it directly
+				AttackDirect(frame);
+			} else {
+				// Firing spot per unit (in range, close, low threat), plain move there then Attack: keeps FindTarget's priority
+				Attack(frame, true);
+				if (IsAllHolding()) {
+					// Every ranged unit holds (no safe spot in range) while the target is out of reach: the group would
+					// stand still for as long as FindTarget keeps choosing it. Pass on it for a while instead.
+					heldTargets[target->GetId()] = frame;
+				}
+			}
 		}
 		return;
 	}
@@ -320,6 +333,13 @@ bool CRaidTask::FindTarget()
 		CEnemyInfo* enemy = kv.second;
 		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)) {
 			continue;
+		}
+		auto itHeld = heldTargets.find(enemy->GetId());
+		if (itHeld != heldTargets.end()) {
+			if (circuit->GetLastFrame() < itHeld->second + FRAMES_PER_SEC * 10) {
+				continue;  // no safe firing spot last time: pass on it for 10 s
+			}
+			heldTargets.erase(itHeld);
 		}
 
 		const AIFloat3& ePos = enemy->GetPos();
@@ -494,6 +514,44 @@ void CRaidTask::ApplyRaidPath(const CQueryPathSingle* query)
 	// Short path: plain Fight order, sent from Update(). Path callbacks can run during an allied AI's turn,
 	// and orders sent from there go out under the wrong team and are dropped.
 	isFightPending = true;
+}
+
+void CRaidTask::AttackDirect(int frame)
+{
+	// Same re-order rule as IFighterTask::Attack, without firing spots
+	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
+	const bool isRepeatAttack = (frame >= attackFrame + FRAMES_PER_SEC * 3);
+	attackFrame = isRepeatAttack ? frame : attackFrame;
+	for (CCircuitUnit* unit : units) {
+		if (unit->Blocker() != nullptr) {
+			continue;
+		}
+		unit->GetTravelAct()->StateWait();
+		fireSpots.erase(unit);
+		if (isRepeatAttack || (unit->GetTarget() != target) || (unit->GetTargetTile() != targetTile)) {
+			unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);
+		}
+	}
+}
+
+bool CRaidTask::IsAllHolding() const
+{
+	// HOLD (IFighterTask::Attack): ranged unit ordered on this target without a firing spot
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	int ranged = 0;
+	for (CCircuitUnit* unit : units) {
+		const float range = GetFireRange(unit);
+		if (unit->GetCircuitDef()->IsAttrMelee() || (range < SQUARE_SIZE * 4)) {
+			continue;
+		}
+		++ranged;
+		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())
+			|| (unit->GetPos(frame).SqDistance2D(target->GetPos()) <= SQUARE(range)))
+		{
+			return false;  // has a spot, or can already shoot it
+		}
+	}
+	return ranged > 0;
 }
 
 void CRaidTask::SendPendingFight(int frame)
