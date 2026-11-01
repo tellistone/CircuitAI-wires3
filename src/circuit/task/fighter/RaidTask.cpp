@@ -702,19 +702,9 @@ bool CRaidTask::Flee(int frame)
 	fleePathFrame = frame;
 	lastTouched = frame;
 
-	// Break off at once; the threat-aware path replaces this when it is ready
-	if (!wasFleeing) {
-		for (CCircuitUnit* unit : units) {
-			if (unit->Blocker() != nullptr) {
-				continue;
-			}
-			unit->GetTravelAct()->StateWait();
-			TRY_UNIT(circuit, unit,
-				unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-				unit->CmdWantedSpeed(NO_SPEED_LIMIT);
-			)
-		}
-	}
+	// No straight move home while the path is computed: a straight line can run through the threat,
+	// and a one-reading danger blip would send the whole group home. Units keep their orders until the
+	// least-threat path arrives (a failed path is retried within 1 s while the danger lasts).
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
@@ -737,7 +727,7 @@ void CRaidTask::ApplyFleePath(const CQueryPathSingle* query)
 	// (and picks another if it is dangerous) instead of the group walking all the way home
 	pPath = query->GetPathInfo();
 	if (pPath->posPath.empty()) {
-		return;  // keep the straight move from Flee()
+		return;  // no way out found: Flee() retries the path within 1 s while the danger lasts
 	}
 	ActivePath();
 }
