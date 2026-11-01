@@ -68,9 +68,8 @@ private:
 	void MoveGroupTo(const springai::AIFloat3& pos);
 	// Quietest reachable spot within 2x our range (24 samples + where we stand), avoiding the last hit area;
 	// returns the threat there
-	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos,
-			const springai::AIFloat3& anchor, float anchorRadius);
-	// In danger but not fleeing (hold-ground, flee gave up): move to the quietest spot nearby by the
+	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
+	// In danger but not fleeing (hold-ground): move to the quietest spot nearby by the
 	// least-threat route; already there: attack the nearest enemy we can hit. Re-checked every second.
 	void Cornered(int frame);
 	void ApplyCorneredPath(const CQueryPathSingle* query);
@@ -84,6 +83,8 @@ private:
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
 	int fleeFrame;  // keep running until this frame
 	int fleePathFrame;  // last escape path request
+	int fleeQueryId;  // id of the escape path query still in flight, -1 = none
+	bool IsFleeQueryPending() const;
 	int pullFrame;  // last pull-back of endangered stragglers
 	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
 	std::vector<ICoreUnit::Id> candidateIds;  // FindTarget: safe targets, nearest first (max 16)
@@ -99,7 +100,8 @@ private:
 	bool isReplanForced;  // a forced re-plan (unsafe path ahead) was used since the last normal decision
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)
 	bool isCorneredHold;  // cornered while holding ground: keep holding (no flee) until the danger ends
-	springai::AIFloat3 fleeGiveUpDest;  // flee gave up within 400 elmos of this: cornered stays near it
+	bool isAtFleeDest;
+	springai::AIFloat3 fleeDest;  // where the current escape runs to (straight-move fallback when no path)  // flee gave up: already within 400 elmos of where it would run to
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget
 };
 
