@@ -219,11 +219,12 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		}
 		return ranges[a] > ranges[b];
 	});
-	// Units not re-ordered this round keep standing where they are: their spots count as taken
+	// Units not re-ordered this round: the spot they're heading to counts as taken, else where they stand
 	F3Vec claimed;
 	for (CCircuitUnit* unit : units) {
 		if (std::find(orderUnits.begin(), orderUnits.end(), unit) == orderUnits.end()) {
-			claimed.push_back(unit->GetPos(frame));
+			AIFloat3 p;
+			claimed.push_back(IsFireSpotKept(unit, p) ? p : unit->GetPos(frame));
 		}
 	}
 	// Spots still being headed to are taken before anyone picks: others avoid them
@@ -248,7 +249,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
 				: FindFireSpot(unit, claimed, safeThreat, firePos);
 		if ((FireSpot::SPOT == spot) || (FireSpot::RISKY == spot)) {
-			fireSpots[unit] = firePos;
+			fireSpots[unit] = std::make_pair(firePos, frame);
 		} else {
 			fireSpots.erase(unit);
 		}
@@ -283,11 +284,12 @@ bool IFighterTask::IsFireSpotKept(CCircuitUnit* unit, AIFloat3& outPos) const
 {
 	auto it = fireSpots.find(unit);
 	if ((it == fireSpots.end())
-		|| (it->second.SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * 0.95f)))
+		|| (manager->GetCircuit()->GetLastFrame() > it->second.second + FRAMES_PER_SEC * 10)
+		|| (it->second.first.SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * 0.95f)))
 	{
 		return false;
 	}
-	outPos = it->second;
+	outPos = it->second.first;
 	return true;
 }
 
