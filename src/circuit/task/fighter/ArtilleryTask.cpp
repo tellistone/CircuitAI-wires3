@@ -142,7 +142,8 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	// artillery block of behaviour.json: firing spots need allied cover, paths may not cross heavy threat
 	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
 	const float maxThreat = (artyCfg.maxPathThreat >= 0.f)
-			? std::max(artyCfg.maxPathThreat * cdef->GetThreat(), THREAT_MIN)  // same formula as enemy threat on the map
+			// Own power (pwr_mod), not threat: thr_mod shapes how scary a type looks as an enemy and is often ~0 for artillery
+			? std::max(artyCfg.maxPathThreat * cdef->GetPower(), THREAT_MIN)
 			: std::numeric_limits<float>::max();
 
 	// Goals: either any cell within range of a building (old), or only covered firing cells
@@ -618,7 +619,7 @@ void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
 		}
 		const AIFloat3& allyPos = ally->GetPos(frame);
 		if (utils::is_valid(allyPos)) {
-			escorts.emplace_back(allyPos, adef->GetThreat());
+			escorts.emplace_back(allyPos, adef->GetPower());  // ally strength: pwr_mod, not thr_mod
 		}
 	}
 }
