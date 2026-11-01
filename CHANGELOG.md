@@ -33,6 +33,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `thr_mod.distance` and loosest `base_bonus` of start and goals, never below the threat where the unit stands),
   so routes go around known defences instead of through them. With no capped route the squad holds; only the
   last escape to base, after being hit, may ignore the cap.
+  A unit that can't find a capped route back to its squad when regrouping leaves for its own AA task, so it
+  doesn't keep the whole squad in regroup (no targets) or get dropped as stuck. AA walks to the firing spot it
+  judged when picking a target, not to the aircraft itself. `own_ground` leaves out the squad's own influence, so
+  AA can't call its own surroundings in enemy land "ours" and creep forward.
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
   slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.

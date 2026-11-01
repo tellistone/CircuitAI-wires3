@@ -26,7 +26,9 @@
 
 #include "AISCommands.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 
 namespace circuit {
@@ -41,6 +43,7 @@ CAntiAirTask::CAntiAirTask(ITaskManager* mgr, float powerMod)
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
 	float z = rand() % circuit->GetTerrainManager()->GetTerrainHeight();
 	position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
+	approachPos = position;
 }
 
 CAntiAirTask::~CAntiAirTask()
@@ -81,6 +84,7 @@ void CAntiAirTask::AssignTo(CCircuitUnit* unit)
 void CAntiAirTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	holdPending.erase(unit);
+	splitPending.erase(unit);
 	ISquadTask::RemoveAssignee(unit);
 	if (leader == nullptr) {
 		manager->AbortTask(this);
@@ -109,6 +113,9 @@ void CAntiAirTask::Update()
 	const int frame = circuit->GetLastFrame();
 
 	FlushHolds();
+	if (FlushSplits()) {
+		return;  // task aborted: its last units left
+	}
 
 	if (State::DISENGAGE == state) {
 		if (updCount % 32 == 1) {
@@ -196,7 +203,7 @@ void CAntiAirTask::Update()
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathfinder->GetSquareSize(), nullptr, GetPathThreatCap(leader, startPos, {position}));
+			startPos, approachPos, pathfinder->GetSquareSize(), nullptr, GetPathThreatCap(leader, startPos, {approachPos}));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -276,7 +283,7 @@ void CAntiAirTask::FindTarget()
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
-	const float maxPower = attackPower * powerMod;  // judged with GetAllowedThreatAt at each spot
+	const float maxPower = GetSafeThreat();  // health-scaled, same as firing spots; judged with GetAllowedThreatAt
 
 	// antiair block of behaviour.json
 	const CMilitaryManager::SAntiAirCfg& aaCfg = militaryMgr->GetAntiAirCfg();
@@ -325,7 +332,16 @@ void CAntiAirTask::FindTarget()
 
 		// Leash: aircraft already in range is always fair game; otherwise it must be near home
 		if (isLeash && (sqDist > sqRange)) {
-			bool isNearHome = aaCfg.isOwnGround && (inflMap->GetInfluenceAt(ePos) > INFL_EPS);
+			bool isNearHome = false;
+			if (aaCfg.isOwnGround) {
+				// Our influence there without the squad's own share: else AA in enemy land makes its
+				// surroundings "ours" and creeps forward one plane at a time
+				float infl = inflMap->GetInfluenceAt(ePos);
+				for (CCircuitUnit* u : units) {
+					infl -= inflMap->GetMobileArmedInflAt(u, ePos);
+				}
+				isNearHome = (infl > INFL_EPS);
+			}
 			for (const AIFloat3& hp : homePoints) {
 				if (isNearHome) {
 					break;
@@ -345,6 +361,9 @@ void CAntiAirTask::FindTarget()
 			} else {
 				checkPos = ePos + (pos - ePos).Normalize2D() * fireDist;
 				CTerrainManager::CorrectPosition(checkPos);
+				if (!terrainMgr->CanMoveToPos(area, checkPos)) {
+					checkPos = ePos;  // can't stand there: judge and approach as before
+				}
 			}
 		}
 		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - enemy->GetThreat());
@@ -356,6 +375,7 @@ void CAntiAirTask::FindTarget()
 
 		minSqDist = sqDist;
 		bestTarget = enemy;
+		approachPos = checkPos;
 	}
 
 	SetTarget(bestTarget);
@@ -553,8 +573,30 @@ void CAntiAirTask::ApplyRegroupPath(const CQueryPathSingle* query)
 		unit->GetTravelAct()->SetPath(path);
 		unit->GetTravelAct()->StateActivate();
 	} else {
+		// Can't rejoin without crossing threat: it would hold far away and keep the whole squad
+		// in REGROUP (no targets) until the stuck-unit rule drops it. Give it its own task instead.
 		Hold(unit);
+		splitPending.insert(unit);
 	}
+}
+
+bool CAntiAirTask::FlushSplits()
+{
+	if (splitPending.empty()) {
+		return false;
+	}
+	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	std::vector<CCircuitUnit*> leaving;
+	for (CCircuitUnit* unit : splitPending) {
+		if ((unit != leader) && (units.find(unit) != units.end())) {
+			leaving.push_back(unit);
+		}
+	}
+	splitPending.clear();
+	for (CCircuitUnit* unit : leaving) {
+		manager->AssignTask(unit, militaryMgr->EnqueueTask(IFighterTask::FightType::AA));
+	}
+	return units.empty() || (leader == nullptr);
 }
 
 void CAntiAirTask::Hold(CCircuitUnit* unit)
@@ -623,6 +665,7 @@ float CAntiAirTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) cons
 
 void CAntiAirTask::HoldAll()
 {
+	pPath = std::make_shared<PathInfo>();  // else OnUnitIdle -> Start() would resume the old path after the Stop
 	for (CCircuitUnit* unit : units) {
 		Hold(unit);
 	}

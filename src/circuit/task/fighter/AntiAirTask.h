@@ -56,11 +56,14 @@ private:
 	// Pathfinder threat cap for a route from startPos to goals (see .cpp)
 	float GetPathThreatCap(CCircuitUnit* unit, const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	void FlushHolds();
+	bool FlushSplits();  // true: the task was aborted (no units left)
 
 	F3Vec homePoints;  // FindTarget scratch: leash anchors
 	// Hold orders are sent from Update(): path callbacks can run during an allied AI's turn,
 	// and orders sent from there go out under the wrong team and are dropped
 	std::set<CCircuitUnit*> holdPending;
+	std::set<CCircuitUnit*> splitPending;  // can't rejoin the squad safely: leaves for its own task (from Update)
+	springai::AIFloat3 approachPos;  // where to walk to shoot the target: its firing spot (FindTarget)
 };
 
 } // namespace circuit
