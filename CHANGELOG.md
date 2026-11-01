@@ -16,6 +16,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - `fire_spot` (default -1 = off): check enemy threat where the squad would stand to shoot, this fraction of its
     shortest weapon range short of the aircraft, instead of under the aircraft.
   The shipped `behaviour.json` sets `leash` 800, `own_ground` true and `fire_spot` 0.9.
+- **Anti-air moves are always threat-aware.** AA squads no longer fall back to plain engine orders that ignore threat:
+  - no path to the target: go to a safe spot (attack group, defended mex cluster or base) instead of fight-moving at it;
+  - no path to the disengage spot: same safe-spot search instead of a straight move;
+  - hit with no safe path: threat-aware path to base instead of a straight fight-move;
+  - last resort: threat-aware path to the commander instead of a Guard order;
+  - regroup: each unit paths to the gathering point instead of fight-moving to it.
+  When even that finds no path, the squad holds where it is (weapons still fire) and retries on the next update.
 - **`guarded` unit attribute.** Any unit type with `"attribute": ["guarded"]` (for example artillery) gets a guard
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
   slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.

@@ -35,7 +35,12 @@ private:
 	void FallbackSafePos();
 	void ApplySafePos(const CQueryPathMulti* query);
 	void FallbackCommPos();
-	void Fallback();
+	void FallbackBasePos();
+	void ApplyFallbackPath(const CQueryPathSingle* query, bool isDisengage);
+	void RegroupUnit(CCircuitUnit* unit);
+	void ApplyRegroupPath(const CQueryPathSingle* query);
+	void Hold(CCircuitUnit* unit);
+	void HoldAll();
 
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
