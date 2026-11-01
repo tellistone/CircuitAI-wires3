@@ -11,6 +11,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   slot that follows all the `guard` rules, from when it finishes until it dies. A builder with the attribute gets a
   slot whatever `max_workers` says. Guarded units never guard others and don't count toward `max_share`. Flying units and static defences get no slot.
   The safe check leaves out the guarded unit's own influence, so an armed unit can't call its own spot safe.
+  Guarded-unit slots have their own `max_share` pool (`guarded_max_share`, -1 = same as `max_share`), so builder slots
+  can't use up the whole share. Their safe check also leaves out squadmates and every other guarded unit, so a squad
+  or a group of artillery can't call its own spot safe.
   For an army unit the safe check also looks at its squad's attack or defend point, the way a builder's job location is
   checked, so artillery gathering at base for an attack takes a guard along. A point within the unit's weapon range is
   treated as its target, not a destination, and is ignored.

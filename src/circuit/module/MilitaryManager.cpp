@@ -455,6 +455,8 @@ void CMilitaryManager::ReadConfig()
 	guard.threatCooldown = (threatCd < 0.f) ? -1 : int(threatCd * FRAMES_PER_SEC);
 	guard.threatRatio = std::max(0.f, guardCfg.get("threat_ratio", 0.f).asFloat());
 	guard.maxShare = std::max(0.f, guardCfg.get("max_share", 1.f).asFloat());
+	const float guardedShare = guardCfg.get("guarded_max_share", -1.f).asFloat();
+	guard.guardedMaxShare = (guardedShare < 0.f) ? guard.maxShare : guardedShare;
 	guard.isDamageExit = guardCfg.get("damage_exit", true).asBool();
 	guard.isDebug = guardCfg.get("debug", false).asBool();
 	guard.roleMask = 0;
@@ -1406,9 +1408,11 @@ bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
 	return (guard.roleMask & mask) != 0;
 }
 
-bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
+bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const
 {
-	if (guard.maxShare >= 1.f) {
+	// Two pools: builder slots and "guarded"-unit slots, so builders can't use up the whole share
+	const float maxShare = isGuardedPool ? guard.guardedMaxShare : guard.maxShare;
+	if (maxShare >= 1.f) {
 		return false;
 	}
 	// Per role: e.g. 0.3 = at most 30% of raiders and 30% of riots guard at once (rounded up, so 1 raider may guard)
@@ -1424,6 +1428,9 @@ bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
 	}
 	unsigned int guarding = 0;
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::GUARD)) {
+		if (static_cast<CFGuardTask*>(t)->IsGuardedPool() != isGuardedPool) {
+			continue;
+		}
 		for (CCircuitUnit* u : t->GetAssignees()) {
 			if (circuit->GetBindedRole(u->GetCircuitDef()->GetMainRole()) == role) {
 				++guarding;
@@ -1431,7 +1438,7 @@ bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef) const
 		}
 	}
 	// -1e-3: 0.3f * 10 is 3.0000001f in float, which would ceil to 4
-	return guarding >= std::ceil(guard.maxShare * total - 1e-3f);
+	return guarding >= std::ceil(maxShare * total - 1e-3f);
 }
 
 void CMilitaryManager::BanGuard(CCircuitUnit* unit, int frames)

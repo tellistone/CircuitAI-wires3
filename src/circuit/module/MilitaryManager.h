@@ -87,6 +87,7 @@ public:
 		int safeFrames;  // builder must stay safe this long before its guard leaves
 		float pullRange;  // empty active slot pulls the nearest eligible unit within this range, <= 0 = no pull
 		float threatRatio;  // ... only when threat at the guard > this * guard's own threat (0 = any threat)
+		float guardedMaxShare;  // same as maxShare, separate pool for slots of "guarded" units
 		float maxShare;  // max share of a role's units (by acting main role) on guard duty at once, rounded up; >= 1 = no limit
 		int threatCooldown;
 		bool isDamageExit;  // a guard that takes damage is released at once and the slot cools down (threat_cooldown)
@@ -94,7 +95,8 @@ public:
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }
 	bool IsGuardRole(CCircuitDef* cdef) const;
-	bool IsGuardCapReached(CCircuitDef* cdef) const;
+	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
+	bool IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const;
 	// A guard released by damage or threat can't take any guard slot until the ban ends
 	void BanGuard(CCircuitUnit* unit, int frames);
 	bool IsGuardBanned(CCircuitUnit* unit) const;
