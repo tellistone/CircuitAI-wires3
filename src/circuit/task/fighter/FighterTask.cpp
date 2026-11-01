@@ -188,13 +188,6 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			orderUnits.push_back(unit);
 		}
 	}
-	if (isDirect) {
-		for (CCircuitUnit* unit : orderUnits) {
-			unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);
-		}
-		return;
-	}
-
 	// Longest range picks its firing spot first; later units avoid spots already taken
 	std::sort(orderUnits.begin(), orderUnits.end(), [](CCircuitUnit* a, CCircuitUnit* b) {
 		return a->GetCircuitDef()->GetMaxRange() > b->GetCircuitDef()->GetMaxRange();
@@ -214,18 +207,19 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		AIFloat3 firePos;
 		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
 				: FindFireSpot(unit, claimed, safeThreat, firePos);
-		if (FireSpot::SPOT == spot) {
+		if ((FireSpot::SPOT == spot) || (FireSpot::RISKY == spot)) {
+			// RISKY: nowhere safe to shoot from and not safe here either: the least dangerous spot
 			claimed.push_back(firePos);
-			unit->AttackFrom(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
-		} else if (FireSpot::RISKY == spot) {
-			// Nowhere safe to shoot from and not safe here either: the least dangerous spot
-			claimed.push_back(firePos);
-			riskySpotFrames[unit] = frame;
+			if (FireSpot::RISKY == spot) {
+				riskySpotFrames[unit] = frame;
+			}
 			unit->AttackFrom(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
 		} else if (FireSpot::HOLD == spot) {
 			// Every spot in range is one the escape calls dangerous: stay put, shoot what comes into range
 			claimed.push_back(firePos);
 			unit->HoldFire(firePos, target, targetTile, frame + FRAMES_PER_SEC * 60);
+		} else if (isDirect) {
+			unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);  // melee / no usable range
 		} else {
 			unit->Attack(target->GetPos(), target, targetTile, frame + FRAMES_PER_SEC * 60);
 		}

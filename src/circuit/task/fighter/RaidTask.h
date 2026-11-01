@@ -35,6 +35,11 @@ private:
 	// Escape: current group strength vs threat where the units are and just ahead on the path
 	float GetSafeThreat() const;
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
+	// Firing spots (IFighterTask::Attack) skip spots the escape would call dangerous
+	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
+	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override {
+		return GetSafeThreatAt(pos, strength);
+	}
 	bool IsInDanger(int frame, bool& isPathUnsafe);  // fills 'endangered'
 	float GetUnitPower(CCircuitUnit* unit) const;
 	void PullBackEndangered(int frame);
@@ -45,7 +50,9 @@ private:
 	int fleeFrame;  // keep running until this frame
 	int fleePathFrame;  // last escape path request
 	int pullFrame;  // last pull-back of endangered stragglers
-	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
+	std::vector<CCircuitUnit*> endangered;
+	bool isFightPending;  // short roam path: Fight order to send from Update() (not from the path callback)
+	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger
 };
 
 } // namespace circuit

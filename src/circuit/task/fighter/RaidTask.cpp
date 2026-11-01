@@ -39,6 +39,7 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, fleeFrame(0)
 		, fleePathFrame(0)
 		, pullFrame(0)
+		, isFightPending(false)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -133,6 +134,9 @@ void CRaidTask::Update()
 	if (IsInDanger(frame, isPathUnsafe) && Flee(frame)) {
 		return;
 	}
+	if (isFightPending) {
+		SendPendingFight(frame);
+	}
 	PullBackEndangered(frame);
 	if (frame < fleeFrame) {
 		return;  // keep running along the escape path for a moment instead of turning straight back
@@ -210,7 +214,7 @@ void CRaidTask::Update()
 				}
 			}
 		} else {
-			// Direct Attack keeps FindTarget's priority (e.g. turret over nearby solars); a fight-move would shoot whatever comes first
+			// Firing spot per unit (in range, close, low threat), plain move there then Attack: keeps FindTarget's priority
 			Attack(frame, true);
 		}
 		return;
@@ -487,8 +491,15 @@ void CRaidTask::ApplyRaidPath(const CQueryPathSingle* query)
 		return;
 	}
 
+	// Short path: plain Fight order, sent from Update(). Path callbacks can run during an allied AI's turn,
+	// and orders sent from there go out under the wrong team and are dropped.
+	isFightPending = true;
+}
+
+void CRaidTask::SendPendingFight(int frame)
+{
+	isFightPending = false;
 	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Fight(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
@@ -598,6 +609,10 @@ void CRaidTask::PullBackEndangered(int frame)
 		if (unit->Blocker() != nullptr) {
 			continue;
 		}
+		auto it = riskySpotFrames.find(unit);
+		if ((it != riskySpotFrames.end()) && (frame < it->second + FRAMES_PER_SEC * 3)) {
+			continue;  // sent to the least dangerous firing spot on purpose: don't undo it for 3 s
+		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
 		TRY_UNIT(circuit, unit,
 			unit->CmdMoveTo(safePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
@@ -621,6 +636,7 @@ bool CRaidTask::Flee(int frame)
 
 	SetTarget(nullptr);
 	state = State::ROAM;
+	isFightPending = false;  // the escape replaces any pending roam order
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
