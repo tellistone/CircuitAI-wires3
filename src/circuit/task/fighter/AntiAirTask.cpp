@@ -35,6 +35,26 @@ namespace circuit {
 
 using namespace springai;
 
+static constexpr float UNKNOWN_AIR_HEIGHT = 50.f;  // an unidentified blip this far above ground counts as a plane
+static constexpr float BLIP_POS_ERROR = 96.f;  // engine default radar error size (ZK keeps it): sideways shift of a blip
+
+// Ground (or water surface) a radar blip stands on, as high as it can be: the blip is shifted sideways by up
+// to BLIP_POS_ERROR, so take the highest ground around it, else a ground unit near a cliff reads as flying
+static float GetBlipGroundHeight(CMap* map, const AIFloat3& p)
+{
+	const float maxX = CTerrainManager::GetTerrainWidth() - 1.f;
+	const float maxZ = CTerrainManager::GetTerrainHeight() - 1.f;
+	const float offsets[][2] = {{0.f, 0.f}, {1.f, 0.f}, {-1.f, 0.f}, {0.f, 1.f}, {0.f, -1.f},
+								{0.7f, 0.7f}, {0.7f, -0.7f}, {-0.7f, 0.7f}, {-0.7f, -0.7f}};
+	float height = 0.f;  // water surface: a ship or hover floats at 0 over a deep sea floor
+	for (const auto& o : offsets) {
+		const float x = std::min(std::max(p.x + o[0] * BLIP_POS_ERROR, 0.f), maxX);
+		const float z = std::min(std::max(p.z + o[1] * BLIP_POS_ERROR, 0.f), maxZ);
+		height = std::max(height, map->GetElevationAt(x, z));
+	}
+	return height;
+}
+
 static const int SPLIT_MERGE_COOLDOWN = FRAMES_PER_SEC * 30;  // a unit split off a blocked regroup doesn't merge for this long
 
 CAntiAirTask::CAntiAirTask(ITaskManager* mgr, float powerMod)
@@ -287,6 +307,7 @@ void CAntiAirTask::FindTarget()
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CMap* map = circuit->GetMap();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = leader->GetPos(frame);
 	STerrainMapArea* area = leader->GetArea();
@@ -334,6 +355,10 @@ void CAntiAirTask::FindTarget()
 			{
 				continue;
 			}
+		} else if (ePos.y - GetBlipGroundHeight(map, ePos) < UNKNOWN_AIR_HEIGHT) {
+			// Unknown radar blip: skips the category check above, so only one flying high enough
+			// is taken for a plane; a ground raider's dot in our mex field is not an AA target
+			continue;
 		}
 
 		const float sqDist = pos.SqDistance2D(ePos);
@@ -341,17 +366,45 @@ void CAntiAirTask::FindTarget()
 			continue;
 		}
 
+		// Threat where the AA would stand to shoot, not under the aircraft
+		AIFloat3 checkPos = ePos;
+		bool isCoverSpot = true;  // checkPos may be judged for building cover
+		if (isFireSpot) {
+			if (sqDist <= sqRange) {
+				checkPos = pos;
+			} else {
+				checkPos = ePos + (pos - ePos).Normalize2D() * fireDist;
+				CTerrainManager::CorrectPosition(checkPos);
+				if (!terrainMgr->CanMoveToPos(area, checkPos)) {
+					checkPos = ePos;  // can't stand there: judge and approach as before
+					isCoverSpot = false;  // but don't let cover under the plane stand in for the spot
+				}
+			}
+		}
+
 		// Leash: aircraft already in range is always fair game; otherwise it must be near home
 		if (isLeash && (sqDist > sqRange)) {
 			bool isNearHome = false;
 			if (aaCfg.isOwnGround) {
-				// Our influence there without the squad's own share: else AA in enemy land makes its
-				// surroundings "ours" and creeps forward one plane at a time
-				float infl = inflMap->GetInfluenceAt(ePos);
-				for (CCircuitUnit* u : units) {
-					infl -= inflMap->GetMobileArmedInflAt(u, ePos);
+				// Ground our buildings and static defences cover is ours, judged where the AA would stand.
+				// The plain influence map counts armed units only, so a mex field or the back of the base
+				// with no army nearby reads as neutral.
+				isNearHome = isCoverSpot && (inflMap->GetAllyDefendInflAt(checkPos) > INFL_EPS);
+				if (!isNearHome) {
+					// Else our armed influence under the plane, without the squad's own share (else AA in enemy
+					// land makes its surroundings "ours" and creeps forward one plane at a time), must be real
+					// and beat the enemy's without the plane's own share. The plane's share is at most its
+					// threat, and none for a plane with no ground range (a pure fighter adds no influence),
+					// so it is taken off the enemy side only when it has one, clamped, never added to ours.
+					// Without the range check a fighter's threat would erase a real enemy army under it.
+					float allyInfl = inflMap->GetAllyInflAt(ePos);
+					for (CCircuitUnit* u : units) {
+						allyInfl -= inflMap->GetMobileArmedInflAt(u, ePos);
+					}
+					const float planeShare = (enemy->GetData()->GetRange(CCircuitDef::ThreatType::LAND) > 0) ? enemy->GetThreat() : 0.f;
+					const float enemyInfl = std::max(0.f, inflMap->GetEnemyInflAt(ePos) - planeShare);
+					isNearHome = (allyInfl > INFL_EPS) && (allyInfl - enemyInfl > INFL_EPS);
 				}
-				isNearHome = (infl > INFL_EPS);
 			}
 			for (const AIFloat3& hp : homePoints) {
 				if (isNearHome) {
@@ -364,20 +417,18 @@ void CAntiAirTask::FindTarget()
 			}
 		}
 
-		// Threat where the AA would stand to shoot, not under the aircraft
-		AIFloat3 checkPos = ePos;
-		if (isFireSpot) {
-			if (sqDist <= sqRange) {
-				checkPos = pos;
-			} else {
-				checkPos = ePos + (pos - ePos).Normalize2D() * fireDist;
-				CTerrainManager::CorrectPosition(checkPos);
-				if (!terrainMgr->CanMoveToPos(area, checkPos)) {
-					checkPos = ePos;  // can't stand there: judge and approach as before
-				}
+		// Take off only the plane's own threat at checkPos, as the threat map drew it: none outside
+		// its ground range (a pure fighter has none), so it can't erase real ground threat there
+		float planeThreat = 0.f;
+		const int planeRange = enemy->GetData()->GetRange(CCircuitDef::ThreatType::LAND);  // threat map cells
+		if (planeRange > 0) {
+			const float cells = checkPos.distance2D(ePos) / threatMap->GetSquareSize();
+			if (cells <= planeRange) {
+				const bool isConst = (edef != nullptr) && edef->IsAlwaysHit();
+				planeThreat = isConst ? enemy->GetThreat() : enemy->GetThreat() * (1.f - 0.5f * cells / planeRange);
 			}
 		}
-		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - enemy->GetThreat());
+		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - planeThreat);
 		if ((threat >= GetAllowedThreatAt(checkPos, maxPower)) ||
 			!terrainMgr->CanMoveToPos(area, ePos))
 		{

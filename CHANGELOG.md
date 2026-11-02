@@ -12,7 +12,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - `leash` (default -1 = off): only chase an aircraft within this distance of home, meaning one of our attack or
     defend group leaders or the base. An aircraft already in weapon range is always engaged. With no aircraft
     near home, the squad stays with the nearest attack group, as it already did with no target.
-  - `own_ground` (default `false`): an aircraft over ground where our influence beats the enemy's also counts as near home.
+  - `own_ground` (default `false`): also counts as near home when the spot the squad would shoot from is covered
+    by our buildings or static defences (the area defend groups treat as ours, radius `defence.infl_rad`), or when
+    our armed units other than the squad have influence under the aircraft and beat the enemy's, not counting the
+    plane's own share.
   - `fire_spot` (default -1 = off): check enemy threat where the squad would stand to shoot, this fraction of its
     shortest weapon range short of the aircraft, instead of under the aircraft.
   The shipped `behaviour.json` sets `leash` 800, `own_ground` true and `fire_spot` 0.9.
@@ -29,6 +32,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   allowance (squad strength x `thr_mod.base_bonus` / `thr_mod.distance.aa` at the spot).
   At a firing spot AA now fights from the spot instead of taking an Attack order, so the engine never chases a
   plane past it (`IFighterTask::isFireSpotChase`, new `CCircuitUnit::FightFrom`; other tasks unchanged).
+- **Anti-air target checks.** An unidentified radar blip is taken for a plane only when it is at least 50 elmos above
+  the ground, so AA no longer walks to a ground unit's dot it can't shoot. The ground is the highest terrain within the
+  radar error (96 elmos) around the dot, and never below the water surface, so ships and units by cliffs don't pass. When judging threat at a firing spot, only
+  the plane's own threat at that spot is taken off (none outside its ground range, none for a pure fighter), so a
+  plane can no longer make real ground threat under it disappear.
 - **Anti-air path threat cap.** Every AA path request passes a threat cap (squad strength with the strictest
   `thr_mod.distance` and loosest `base_bonus` of start and goals, never below the threat where the unit stands),
   so routes go around known defences instead of through them. With no capped route the squad holds; only the
