@@ -765,6 +765,10 @@ void CAttackTask::FindTarget()
 		}
 	}
 
+	// The full screened list: if the route's approach to the pick is rejected, the next route goes to these
+	screenedIds = candidateIds;
+	screenedPos = candidatePos;
+
 	// Stickiness: keep the current target unless another is clearly nearer (20% by distance), so
 	// near-equal targets don't flip back and forth between decisions. The route then only gets the kept
 	// target (first) plus candidates clearly nearer than it, so it can't swap to a near-equal one either.
@@ -1138,12 +1142,19 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 			scaleRefSqDist = prevRef;
 			anchorTargetId = prevAnchor;
 			rejectedUntil[reached->GetId()] = frame + REJECTED_TARGET_FRAMES;
+			// Not our target any more, while the next route runs (nor counted against its group limit)
+			SetTarget(nullptr);
+			// Next route: every screened candidate of the last decision, not just this route's goals (when the
+			// current target was kept, those were only it and the clearly nearer ones), minus rejected and dead
 			std::vector<ICoreUnit::Id> restIds;
 			F3Vec restGoals;
-			for (size_t i = 0; (i < goals.size()) && (i < ids.size()); ++i) {
-				if ((ids[i] != reached->GetId()) && (circuit->GetEnemyInfo(ids[i]) != nullptr)) {
-					restIds.push_back(ids[i]);
-					restGoals.push_back(goals[i]);
+			for (size_t i = 0; (i < screenedIds.size()) && (i < screenedPos.size()); ++i) {
+				auto it = rejectedUntil.find(screenedIds[i]);
+				if (((it == rejectedUntil.end()) || (it->second <= frame))
+					&& (circuit->GetEnemyInfo(screenedIds[i]) != nullptr))
+				{
+					restIds.push_back(screenedIds[i]);
+					restGoals.push_back(screenedPos[i]);
 				}
 			}
 			if ((++targetRouteTries < MAX_TARGET_ROUTES) && !restIds.empty()) {
