@@ -15,10 +15,11 @@
 	"attack": 20.0,  // min power of attack group
 	"attack_spot_threat": 1.0,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking
 	"attack_flee_share": 0.5,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
+	"attack_group_radius": [2.0, 800],  // [<x the group's highest weapon/LOS range>, <min elmos>]: attack group units farther than this from their leader are stragglers: while the group fights they walk to the leader instead of straight to a firing spot
 	"attack_merge": {  // how attack groups join (the smaller walks to the bigger), absorb (an army pulls in small groups) and reinforce (a small group walks to the nearest stronger group)
 		"speed_ratio": 1.5,  // leaders' speeds within this factor of each other, else the groups never merge or reinforce each other
-		"distance": 2000,  // leaders within this many elmos may join or absorb
-		"travel_sec": 30,  // ...and at most this many seconds of straight travel apart at the walking group's slowest speed (max 60; keeps arrivals inside the 60 s regroup limit, after which far-away units are dropped as stuck)
+		"distance": 2000,  // leaders within this many elmos may join or absorb (>= 1)
+		"travel_sec": 30,  // ...and at most this many seconds of straight travel apart at the walking group's slowest speed (1 to 60; keeps arrivals inside the 60 s regroup limit, after which far-away units are dropped as stuck)
 		"join_interval": [4, 32],  // [<group under quota.attack>, <army>]: check for a group to join every this many updates (~1 s each)
 		"absorb_interval": 8,  // an army absorbs small groups every this many updates
 		"support_radius": 400,  // on the line to the bigger group, within this many elmos of its leader both groups' strength counts against threat

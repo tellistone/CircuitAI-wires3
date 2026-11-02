@@ -395,8 +395,8 @@ void CMilitaryManager::ReadConfig()
 			return v.asFloat();
 		};
 		attackMerge.speedRatio = readNum("speed_ratio", 1.5f, 1.f);
-		attackMerge.distance = readNum("distance", 2000.f, 0.f);
-		attackMerge.travelSec = readNum("travel_sec", 30.f, 0.f);
+		attackMerge.distance = readNum("distance", 2000.f, 1.f);  // 0 would stop merging but not reinforcing
+		attackMerge.travelSec = readNum("travel_sec", 30.f, 1.f);
 		if (attackMerge.travelSec > MAX_TRAVEL_SEC) {  // ISquadTask::CheckMergeTask has its own fixed limit
 			circuit->LOG("CONFIG %s: quota.attack_merge.travel_sec above %i has no effect, using %i", cfgName.c_str(), MAX_TRAVEL_SEC, MAX_TRAVEL_SEC);
 			attackMerge.travelSec = MAX_TRAVEL_SEC;
@@ -414,6 +414,15 @@ void CMilitaryManager::ReadConfig()
 		attackMerge.reinforceRange = readNum("reinforce_range", 800.f, 0.f);
 		attackMerge.reinforceFails = static_cast<int>(readNum("reinforce_fails", 10.f, 1.f));
 		attackMerge.reinforceRetry = static_cast<int>(readNum("reinforce_retry", 10.f, 0.f) * FRAMES_PER_SEC);
+	}
+	{
+		const Json::Value& q = quotas["attack_group_radius"];
+		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
+				&& (q[0u].asFloat() >= 0.f) && (q[1u].asFloat() >= 0.f));
+		if (!isOk) {
+			circuit->LOG("CONFIG %s: quota.attack_group_radius must be [<x group range >= 0>, <min elmos >= 0>], using [2, 800]", cfgName.c_str());
+		}
+		attackGroupRadius = (isOk && !q.isNull()) ? std::make_pair(q[0u].asFloat(), q[1u].asFloat()) : std::make_pair(2.f, 800.f);
 	}
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders

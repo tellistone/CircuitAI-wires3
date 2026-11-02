@@ -180,6 +180,8 @@ public:
 		int reinforceRetry;  // frames to act as a small attack group after giving up, before looking again
 	};
 	const SAttackMerge& GetAttackMerge() const { return attackMerge; }
+	// quota.attack_group_radius: [<x the group's range>, <min elmos>]; units farther from the leader are stragglers
+	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
 	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
 	// Courage bonus inside the base defence radius: quota.thr_mod.base_bonus at the base centre, falling to 1 at the radius edge
@@ -276,6 +278,7 @@ private:
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
+	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
 	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
 	float baseThrBonus;  // quota.thr_mod.base_bonus

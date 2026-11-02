@@ -295,7 +295,7 @@ void CAttackTask::Update()
 		FindTarget();
 		if ((target != nullptr) && (target->GetPos().SqDistance2D(leader->GetPos(frame)) < SQUARE(highestRange))) {
 			state = State::ENGAGE;
-			Attack(frame);
+			Engage(frame);
 			return;
 		}
 		scaleRefSqDist = 0.f;  // walking to a group, not into an accepted fight
@@ -320,7 +320,7 @@ void CAttackTask::Update()
 	if (target != nullptr) {
 		if (position.SqDistance2D(startPos) < SQUARE(highestRange)) {
 			state = State::ENGAGE;
-			Attack(frame);
+			Engage(frame);
 			return;
 		}
 	}
@@ -363,6 +363,38 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 	const CMilitaryManager::SAttackMerge& cfg = static_cast<CMilitaryManager*>(manager)->GetAttackMerge();
 	const int interval = (attackPower < minPower) ? cfg.joinSmall : cfg.joinArmy;  // quota.attack_merge.join_interval
 	return ((updCount % interval == 1 % interval) && !IsFighting()) ? CheckMergeTask() : nullptr;
+}
+
+float CAttackTask::GetGroupRadius() const
+{
+	// quota.attack_group_radius: [<x the group's highest weapon/LOS range>, <min elmos>]
+	const std::pair<float, float>& r = static_cast<CMilitaryManager*>(manager)->GetAttackGroupRadius();
+	return std::max(highestRange * r.first, r.second);
+}
+
+bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
+{
+	// A straggler: farther from the leader than the group radius (still walking in after a merge, or left behind)
+	return unit->GetPos(frame).SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
+}
+
+void CAttackTask::Engage(int frame)
+{
+	Attack(frame);
+	// Stragglers (IsOutOfReach) got no attack order. One without an active path (e.g. it merged in while we were
+	// engaged: it took the leader's waiting travel state) would idle where it is: walk it to the leader, along the
+	// line the merge check judged safe, rather than straight to a firing spot next to the enemy
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	CCircuitAI* circuit = manager->GetCircuit();
+	for (CCircuitUnit* unit : units) {
+		if ((unit->Blocker() != nullptr) || unit->GetTravelAct()->IsActive() || !IsOutOfReach(unit, frame)) {
+			continue;
+		}
+		TRY_UNIT(circuit, unit,
+			unit->CmdMoveTo(leaderPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+		)
+	}
 }
 
 bool CAttackTask::IsFighting() const
@@ -1187,7 +1219,7 @@ void CAttackTask::Cornered(int frame)
 		SetTarget(enemy);
 		position = enemy->GetPos();
 		state = State::ENGAGE;
-		Attack(frame);
+		Engage(frame);
 	}
 }
 

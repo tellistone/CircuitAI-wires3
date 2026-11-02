@@ -35,6 +35,11 @@ public:
 
 private:
 	ISquadTask* GetAttackMergeTask();
+	// Attack (firing spots), and walk stragglers (IsOutOfReach) to the leader if they have no path
+	void Engage(int frame);
+	float GetGroupRadius() const;  // quota.attack_group_radius
+	// Straggler: farther from the leader than GetGroupRadius. Gets no firing-spot order (keeps travelling)
+	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const override;
 	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Straight line from our leader to the host's: threat below our allowance, both groups' strength near the host
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
