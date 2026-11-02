@@ -35,6 +35,9 @@ namespace circuit {
 
 using namespace springai;
 
+// The main body moves to another cluster only when that one has this much more power around it
+static constexpr float CORE_SWITCH_RATIO = 1.25f;
+
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
@@ -149,7 +152,10 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 void CAttackTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	ISquadTask::RemoveAssignee(unit);
-	coreFrame = -1;  // coreUnit may be the unit that left
+	coreFrame = -1;
+	if (coreUnit == unit) {
+		coreUnit = nullptr;  // pick a new centre (sticks to the leader first)
+	}
 	if (leader == nullptr) {
 		manager->AbortTask(this);
 		return;
@@ -387,40 +393,59 @@ float CAttackTask::GetGroupRadius() const
 void CAttackTask::UpdateCore(int frame) const
 {
 	// The main body: the unit with the most health-scaled power within the group radius of it, and that power.
-	// O(n^2) over the group, once per frame at most (cached; reset when units join or leave)
+	// Once per frame at most (cached; reset when units join or leave). Health and position are read once per
+	// unit, the O(n^2) part only compares cached numbers.
+	// Sticky: the current centre (else the leader) stays unless another unit has clearly more power around it,
+	// so the main body doesn't flip between two similar clusters as health changes
 	if (coreFrame == frame) {
 		return;
 	}
 	coreFrame = frame;
-	coreUnit = leader;  // ties keep the leader
+	CCircuitUnit* prevCore = coreUnit;  // only compared, never dereferenced (may have left the group)
+	coreUnit = leader;
 	corePower = 0.f;
 	if (units.empty()) {
 		return;
 	}
+	static std::vector<CCircuitUnit*> ptsUnit;  // NOTE: micro-opt
+	static std::vector<AIFloat3> ptsPos;
+	static std::vector<float> ptsPower;
+	for (CCircuitUnit* unit : units) {
+		ptsUnit.push_back(unit);
+		ptsPos.push_back(unit->GetPos(frame));
+		ptsPower.push_back(GetUnitPower(unit));
+	}
 	const float sqRadius = SQUARE(GetGroupRadius());
-	auto powerAround = [&](CCircuitUnit* center) {
-		const AIFloat3& c = center->GetPos(frame);
+	const size_t n = ptsUnit.size();
+	int bestIdx = 0;
+	float bestPower = -1.f;
+	int refIdx = -1;  // the current centre if still with us, else the leader
+	float refPower = 0.f;
+	for (size_t i = 0; i < n; ++i) {
 		float power = 0.f;
-		for (CCircuitUnit* unit : units) {
-			if (unit->GetPos(frame).SqDistance2D(c) <= sqRadius) {
-				power += GetUnitPower(unit);
+		for (size_t j = 0; j < n; ++j) {
+			if (ptsPos[i].SqDistance2D(ptsPos[j]) <= sqRadius) {
+				power += ptsPower[j];
 			}
 		}
-		return power;
-	};
-	if (leader != nullptr) {
-		corePower = powerAround(leader);
-	}
-	for (CCircuitUnit* unit : units) {
-		if (unit == leader) {
-			continue;
+		if (power > bestPower) {
+			bestPower = power;
+			bestIdx = i;
 		}
-		const float power = powerAround(unit);
-		if ((coreUnit == nullptr) || (power > corePower)) {
-			coreUnit = unit;
-			corePower = power;
+		if ((ptsUnit[i] == prevCore) || ((ptsUnit[i] == leader) && (refIdx < 0))) {  // the current centre wins
+			refIdx = i;
+			refPower = power;
 		}
 	}
+	if ((refIdx >= 0) && (bestPower <= refPower * CORE_SWITCH_RATIO)) {
+		bestIdx = refIdx;
+		bestPower = refPower;
+	}
+	coreUnit = ptsUnit[bestIdx];
+	corePower = bestPower;
+	ptsUnit.clear();
+	ptsPos.clear();
+	ptsPower.clear();
 }
 
 bool CAttackTask::IsInCore(CCircuitUnit* unit, int frame) const
