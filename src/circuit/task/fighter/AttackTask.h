@@ -19,7 +19,7 @@ public:
 	virtual ~CAttackTask();
 
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;
-	// CanAssignTo without the 1000-elmo distance limit: speed, movement type, not a worse mover
+	// CanAssignTo without the MERGE_DIST (2000 elmos) distance limit: speed, movement type, not a worse mover
 	bool IsCompatible(CCircuitUnit* unit) const;
 	// Walk to this stronger group and merge into it instead of hunting targets alone (while a safe route exists)
 	void SetReinforce(CAttackTask* squad) { reinforce = squad; }

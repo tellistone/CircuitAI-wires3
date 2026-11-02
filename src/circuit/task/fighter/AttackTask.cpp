@@ -35,6 +35,9 @@ namespace circuit {
 
 using namespace springai;
 
+// Leaders within this distance may merge (join or absorb)
+static constexpr float MERGE_DIST = 2000.f;
+
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
@@ -76,7 +79,7 @@ bool CAttackTask::CanAssignTo(CCircuitUnit* unit) const
 	assert(leader != nullptr);
 
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
+	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(MERGE_DIST)) {
 		return false;
 	}
 	return IsCompatible(unit);
@@ -385,15 +388,22 @@ bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 	// within 400 elmos of the host's leader it stands beside us, so both groups' strength counts there
 	const CAttackTask* squad = static_cast<const CAttackTask*>(host);  // merging stays within one fight type
 	const int frame = manager->GetCircuit()->GetLastFrame();
+	const AIFloat3& from = leader->GetPos(frame);
+	const AIFloat3& to = squad->GetLeaderPos(frame);
+	// At most 30 s of straight travel, as for absorbing: with MERGE_DIST at 2000 elmos a slow group could
+	// otherwise still be walking when the regroup's 60 s limit drops far-away units as stuck
+	if (from.SqDistance2D(to) >= SQUARE(MAX_TRAVEL_SEC / 2 * lowestSpeed)) {
+		return false;
+	}
 	const float ownStrength = GetSafeThreat();
-	return IsLineSafe(leader->GetPos(frame), squad->GetLeaderPos(frame), std::numeric_limits<float>::max(),
+	return IsLineSafe(from, to, std::numeric_limits<float>::max(),
 			ownStrength, ownStrength + squad->GetSafeThreat());
 }
 
 void CAttackTask::AbsorbWeakerTasks()
 {
 	// A group at or above quota.attack pulls in attack groups under quota.attack near it, every 8 updates.
-	// Same rules as joining (CanAssignTo: speed within 1.5x, leaders within 1000 elmos, movement type,
+	// Same rules as joining (CanAssignTo: speed within 1.5x, leaders within MERGE_DIST, movement type,
 	// never a worse mover than our leader; reachable; IsSafeMergeLine), seen from the small group's side,
 	// but at most 30 s of travel so absorbed units arrive well inside the 60 s regroup "stuck" limit.
 	if ((attackPower < minPower) || (updCount % 8 != 5)) {
@@ -462,10 +472,10 @@ void CAttackTask::Reinforce(const int frame)
 	if (!IsQueryReady(leader)) {
 		return;
 	}
-	// Threat-aware path to the group's leader; cells with threat above attackPower (no thr_mod: a
-	// reinforcing group is meant to avoid fights), or GetPathThreatCap if lower, are blocked. It only has to get within 800 elmos, so the hot zone around
-	// a fighting group doesn't block it; merging takes over inside 1000 elmos (CheckMergeTask every
-	// 4 updates from our side, AbsorbWeakerTasks every 8 from an army's side).
+	// Threat-aware path to the group's leader, capped like every other route (GetPathThreatCap: the common
+	// allowance). It only has to get within 800 elmos, so the hot zone around a fighting group doesn't block
+	// it; merging takes over inside MERGE_DIST (CheckMergeTask every 4 updates from our side,
+	// AbsorbWeakerTasks every 8 from an army's side).
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& startPos = leader->GetPos(frame);
 	position = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad this update
@@ -474,7 +484,7 @@ void CAttackTask::Reinforce(const int frame)
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathRange, nullptr, std::min(attackPower, GetPathThreatCap(startPos, {position})));
+			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, {position}));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
