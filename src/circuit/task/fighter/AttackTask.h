@@ -11,6 +11,8 @@
 #include "task/fighter/SquadTask.h"
 #include "unit/CoreUnit.h"
 
+#include <map>
+
 namespace circuit {
 
 class CAttackTask: public ISquadTask {
@@ -115,6 +117,7 @@ private:
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	int targetRouteTries;  // routes so far in this target decision (MAX_TARGET_ROUTES)
+	std::map<ICoreUnit::Id, int> rejectedUntil;  // targets dropped for an unsafe route approach -> skip until frame
 	int corneredFrame;  // last cornered check
 	bool isReplanForced;  // a forced re-plan (unsafe path ahead) was used since the last normal decision
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)

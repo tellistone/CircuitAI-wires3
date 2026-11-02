@@ -38,6 +38,8 @@ using namespace springai;
 // Routes per target decision: each one whose approach to the target it reaches is unsafe drops that target
 // and routes again to the rest
 static constexpr int MAX_TARGET_ROUTES = 3;
+// A target dropped for an unsafe route approach isn't picked again for this long
+static constexpr int REJECTED_TARGET_FRAMES = FRAMES_PER_SEC * 10;
 
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
@@ -377,9 +379,10 @@ void CAttackTask::RequestTargetPath(std::vector<ICoreUnit::Id> ids, F3Vec goals)
 bool CAttackTask::IsApproachSafe(const F3Vec& path, const AIFloat3& targetPos, float strength) const
 {
 	// The ground we'd fight from, judged spot by spot with the common allowance (no support):
-	// 1. the line from the target to where the route ends: the firing spots lie between them
+	// 1. the line from the target to where the route ends, out to our range: the firing spots lie on it. Capped:
+	//    a route cut short (or a target that moved) ends far away, and the ground in between is the route's job
 	const AIFloat3& endPos = path.back();
-	if (!IsLineSafe(targetPos, endPos, std::numeric_limits<float>::max(), strength, strength, 0.f)) {
+	if (!IsLineSafe(targetPos, endPos, highestRange, strength, strength, 0.f)) {
 		return false;
 	}
 	// 2. the route's last stretch, as long as our range, walked back from its end
@@ -673,10 +676,16 @@ void CAttackTask::FindTarget()
 	const ICoreUnit::Id prevTargetId = (target != nullptr) ? target->GetId() : -1;
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
 	threatMap->SetThreatType(leader);
+	// Targets whose route approach was unsafe are skipped for a while (else stickiness picks them again)
+	for (auto it = rejectedUntil.begin(); it != rejectedUntil.end();) {
+		it = (it->second <= frame) ? rejectedUntil.erase(it) : std::next(it);
+	}
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
-		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)) {
+		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)
+			|| (rejectedUntil.find(enemy->GetId()) != rejectedUntil.end()))
+		{
 			continue;
 		}
 		const AIFloat3& ePos = enemy->GetPos();
@@ -719,8 +728,8 @@ void CAttackTask::FindTarget()
 		candidates.emplace_back(sqOEDist, enemy);
 	}
 
-	// Nearest candidates first. Their approach (the ground we'd shoot from) is checked on the route itself,
-	// when it comes back (ApplyTargetPath / IsApproachSafe)
+	// Nearest candidates first. The approach (the ground we'd shoot from) of one beyond our range is checked on
+	// the route itself, when it comes back (ApplyTargetPath / IsApproachSafe); within range, below
 	std::sort(candidates.begin(), candidates.end(),
 			[](const std::pair<float, CEnemyInfo*>& a, const std::pair<float, CEnemyInfo*>& b) { return a.first < b.first; });
 	// Keep the nearest 16 as goals of one route query (Update); the nearest is the target until
@@ -732,7 +741,16 @@ void CAttackTask::FindTarget()
 	CEnemyInfo* prevTarget = nullptr;
 	float prevKey = 0.f;
 	std::vector<float> candidateKeys;
+	const float sqRange = SQUARE(highestRange);
 	for (const auto& c : candidates) {
+		// Within range the group engages at once, without a route (Update): judge its approach here, on the
+		// straight line from the target towards us, out to our range
+		if (c.second->GetPos().SqDistance2D(pos) < sqRange) {
+			scaleRefSqDist = anchorFor(c.second);
+			if (!IsLineSafe(c.second->GetPos(), pos, highestRange, maxPower, maxPower, 0.f)) {
+				continue;
+			}
+		}
 		if (bestTarget == nullptr) {
 			bestTarget = c.second;
 			bestKey = c.first;
@@ -1121,6 +1139,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		if (!IsApproachSafe(path->posPath, reached->GetPos(), maxPower)) {
 			scaleRefSqDist = prevRef;
 			anchorTargetId = prevAnchor;
+			rejectedUntil[reached->GetId()] = frame + REJECTED_TARGET_FRAMES;
 			std::vector<ICoreUnit::Id> restIds;
 			F3Vec restGoals;
 			for (size_t i = 0; (i < goals.size()) && (i < ids.size()); ++i) {
