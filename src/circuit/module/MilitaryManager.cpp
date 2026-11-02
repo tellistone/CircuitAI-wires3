@@ -33,6 +33,7 @@
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathMulti.h"
+#include "terrain/path/QueryCostMap.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/enemy/EnemyManager.h"
 #include "CircuitAI.h"
@@ -331,6 +332,24 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& quotas = root["quota"];
 	maxScouts = quotas.get("scout", 3).asUInt();
+	scoutPerMex = quotas.get("scout_per_mex", 1.f).asFloat();
+	scoutMax = quotas.get("scout_max", 12).asUInt();
+	scoutMapCurve.clear();
+	const Json::Value& qmap = quotas["scout_map_size"];
+	if (qmap.isArray()) {
+		for (const Json::Value& pt : qmap) {
+			if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
+				circuit->LOG("CONFIG %s: quota.scout_map_size points must be [<map size>, <multiplier >= 0>]", cfgName.c_str());
+				continue;
+			}
+			scoutMapCurve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+		}
+		std::sort(scoutMapCurve.begin(), scoutMapCurve.end());
+	} else if (qmap.isNull()) {
+		scoutMapCurve = {{8.f, 1.f}, {20.f, 4.f}};
+	} else {
+		circuit->LOG("CONFIG %s: quota.scout_map_size must be a list of [<map size>, <multiplier>] points", cfgName.c_str());
+	}
 	const Json::Value& qspot = quotas["scout_spot"];
 	scoutSpot.enemy = qspot.get("enemy", 1.f).asFloat();
 	scoutSpot.stale = qspot.get("stale", 1.f).asFloat();
@@ -623,6 +642,9 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateIdle, this), interval, offset + 0);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateFight, this), 1/*interval / 2*/, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDefenceTasks, this), FRAMES_PER_SEC * 5, offset + 2);
+		if (scoutPerMex > 0.f) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateScoutQuota, this), FRAMES_PER_SEC * 15, offset + 3);
+		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
 								FRAMES_PER_SEC * 60,
@@ -1226,6 +1248,118 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 	return spots[bestIdx].position;
 }
 
+// Piecewise-linear [x, y] curve sorted by x, flat beyond its ends; empty = 1
+static float EvalCurve(const std::vector<std::pair<float, float>>& curve, float x)
+{
+	if (curve.empty()) {
+		return 1.f;
+	}
+	if (x <= curve.front().first) {
+		return curve.front().second;
+	}
+	for (size_t i = 1; i < curve.size(); ++i) {
+		const auto& b = curve[i];
+		if (x <= b.first) {
+			const auto& a = curve[i - 1];
+			const float t = (b.first > a.first) ? (x - a.first) / (b.first - a.first) : 1.f;
+			return a.second + (b.second - a.second) * t;
+		}
+	}
+	return curve.back().second;
+}
+
+unsigned int CMilitaryManager::GetMaxScouts(const CCircuitDef* cdef) const
+{
+	auto it = scoutMexBonus.find(cdef->GetMobileId());
+	const unsigned int count = maxScouts + ((it == scoutMexBonus.end()) ? 0 : it->second);
+	// quota.scout_max caps the bonus; quota.scout stays the minimum even above it; 0 = no cap
+	return (scoutMax > 0) ? std::max(std::min(count, scoutMax), maxScouts) : count;
+}
+
+void CMilitaryManager::UpdateScoutQuota()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	// One scout-capable unit per movement type stands in for that type (its move map and threat layer;
+	// the bottleneck query never uses the cloak layer, which is on a different scale).
+	std::map<int, CCircuitUnit*> refUnits;
+	for (CCircuitUnit* unit : army) {
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		if (!cdef->IsRoleScout() || (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER)) {
+			continue;
+		}
+		auto it = refUnits.find(cdef->GetMobileId());
+		if (it == refUnits.end()) {
+			refUnits[cdef->GetMobileId()] = unit;
+		} else if ((unit->GetTask()->GetType() == IUnitTask::Type::FIGHTER)
+			&& (static_cast<IFighterTask*>(unit->GetTask())->GetFightType() == IFighterTask::FightType::SCOUT)
+			&& !((it->second->GetTask()->GetType() == IUnitTask::Type::FIGHTER)
+				&& (static_cast<IFighterTask*>(it->second->GetTask())->GetFightType() == IFighterTask::FightType::SCOUT)))
+		{
+			it->second = unit;  // a unit already scouting is the best stand-in
+		}
+	}
+	// Only movement types we actually have a scout-capable unit of get a bonus
+	for (auto it = scoutMexBonus.begin(); it != scoutMexBonus.end();) {
+		it = (refUnits.find(it->first) == refUnits.end()) ? scoutMexBonus.erase(it) : std::next(it);
+	}
+
+	// All players: enemy teams (engine count, minus Gaia) plus our ally team's players that haven't resigned
+	const int enemyPlayers = std::max(circuit->GetEnemyTeamSize(), 1);
+	const int players = std::max(circuit->GetEnemyTeamSize(), 0) + std::max(circuit->GetAllyTeam()->GetAliveSize(), 1);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	// Average of the random powerMod ScoutTask gets (0.75 / thr_mod.scout)
+	const float powerMod = 0.75f / std::max(scoutMod.min + 0.5f * scoutMod.len, 1e-3f);
+	// Second multiplier: map size curve / all players. Size = side of a square map with the same area,
+	// in Spring map units (512 elmos), so 8x8 -> 8 and a 10x16 map -> ~12.6
+	const float mapSize = sqrtf(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
+	const float mapMult = EvalCurve(scoutMapCurve, mapSize) / players;
+
+	for (auto& kv : refUnits) {
+		const int mobileId = kv.first;
+		CCircuitUnit* unit = kv.second;
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		// Fresh unit of this type, same scale as ScoutTask::GetSafeThreat
+		const float safeThreat = std::max(cdef->GetPower(), THREAT_MIN) * powerMod;
+		AIFloat3 startPos = basePos;
+		if ((unit->GetArea() != nullptr) && !terrainMgr->CanMoveToPos(unit->GetArea(), startPos)) {
+			startPos = unit->GetPos(frame);  // our base is not in its area (e.g. ships): flood from where it is
+		}
+		CTerrainManager::CorrectPosition(startPos);
+
+		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true);
+		pathfinder->RunQuery(query, [this, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
+			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
+			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
+			unsigned int count = 0;
+			for (auto& kv : circuit->GetEnemyInfos()) {
+				CEnemyInfo* enemy = kv.second;
+				CCircuitDef* edef = enemy->GetCircuitDef();
+				if ((edef == nullptr) || !edef->IsMex() || enemy->IsHidden()) {
+					continue;
+				}
+				AIFloat3 pos = enemy->GetPos();
+				CTerrainManager::CorrectPosition(pos);
+				// Least possible "highest threat crossed" from our base to the mex; -1 = no route for this movement type
+				float bottleneck = q->GetCostAtSquare(pos);  // the mex's own square
+				if (bottleneck < 0.f) {
+					bottleneck = q->GetCostAt(pos, sqSize);  // blocked by the mex itself: the squares around it
+				}
+				if ((bottleneck >= 0.f)
+					&& (bottleneck - THREAT_BASE < safeThreat / GetThrDistMod(IFighterTask::FightType::SCOUT, pos)))
+				{
+					++count;
+				}
+			}
+			// (reachable mexes / enemy players) x (map size curve / all players) x scout_per_mex, rounded down
+			scoutMexBonus[mobileId] = (unsigned int)(scoutPerMex * mapMult * count / enemyPlayers);
+		});
+	}
+}
+
 void CMilitaryManager::BlockScoutSpot(const AIFloat3& spot, int frames)
 {
 	const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
@@ -1259,21 +1393,7 @@ float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloa
 	const float height = CTerrainManager::GetTerrainHeight();
 	const float diagonal = sqrtf(width * width + height * height);
 	const float frac = circuit->GetSetupManager()->GetBasePos().distance2D(pos) / diagonal;
-	if (frac <= thrDistCurve.front().first) {
-		return thrDistCurve.front().second;
-	}
-	if (frac >= thrDistCurve.back().first) {
-		return thrDistCurve.back().second;
-	}
-	for (size_t i = 1; i < thrDistCurve.size(); ++i) {
-		const auto& b = thrDistCurve[i];
-		if (frac <= b.first) {
-			const auto& a = thrDistCurve[i - 1];
-			const float t = (b.first > a.first) ? (frac - a.first) / (b.first - a.first) : 1.f;
-			return a.second + (b.second - a.second) * t;
-		}
-	}
-	return thrDistCurve.back().second;
+	return EvalCurve(thrDistCurve, frac);
 }
 
 AIFloat3 CMilitaryManager::GetRaidPosition(CCircuitUnit* unit)
@@ -1823,7 +1943,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	// Any main role with the scout attribute (scout as a secondary role) fills the scout quota first.
 	// Units whose main role already leads to scouting keep their own path below.
 	if (cdef->IsRoleScout() && ((it == types.end()) || (it->second != IFighterTask::FightType::SCOUT))
-		&& (GetTasks(IFighterTask::FightType::SCOUT).size() < maxScouts))
+		&& (GetTasks(IFighterTask::FightType::SCOUT).size() < GetMaxScouts(cdef)))
 	{
 		task = EnqueueTask(IFighterTask::FightType::SCOUT);
 	}

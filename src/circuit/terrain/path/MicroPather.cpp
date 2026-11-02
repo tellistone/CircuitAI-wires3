@@ -48,6 +48,7 @@
 #include "util/Defines.h"
 
 #include <cstdlib>  // malloc(), free()
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -908,7 +909,7 @@ int CMicroPather::FindBestPathToPointOnRadius(void* startNode, void* endNode,
 	return NO_SOLUTION;
 }
 
-void CMicroPather::MakeCostMap(void* startNode, std::vector<float>& costMap)
+void CMicroPather::MakeCostMap(void* startNode, std::vector<float>& costMap, bool isBottleneck)
 {
 	assert(!isRunning);
 	isRunning = true;
@@ -990,7 +991,11 @@ void CMicroPather::MakeCostMap(void* startNode, std::vector<float>& costMap)
 			assert(nodeCost > 0.f);  // > 1.f for speed
 			#endif
 
-			newCost += (i > 3) ? nodeCost * SQRT_2 : nodeCost;
+			if (isBottleneck) {
+				newCost = std::max(newCost, threatArray[index2]);
+			} else {
+				newCost += (i > 3) ? nodeCost * SQRT_2 : nodeCost;
+			}
 
 			if (directNode->costFromStart <= newCost) {
 				// do nothing, this path is not better than existing one
