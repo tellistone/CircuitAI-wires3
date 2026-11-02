@@ -370,6 +370,11 @@ void CFactoryManager::ReadConfig()
 			cdef->ModThreat(thrMod.asFloat());
 		}
 
+		const Json::Value& distMod = behaviour["target_dist_mod"];
+		if (!distMod.isNull()) {
+			cdef->SetTargetDistMod(std::max(distMod.asFloat(), 0.01f));
+		}
+
 		cdef->SetIgnore(behaviour.get("ignore", cdef->IsIgnore()).asBool());
 	}
 

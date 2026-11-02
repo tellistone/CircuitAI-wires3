@@ -166,6 +166,10 @@
 		// Enemy threat multiplier
 //		"thr_mod": 1.0,
 
+		// Attack groups choosing a target count this enemy type's distance as this many times its real
+		// distance: > 1 = less wanted (e.g. solars), < 1 = more wanted
+//		"target_dist_mod": 1.0,
+
 		// Ignore enemy
 //		"ignore": false
 	},
@@ -1101,7 +1105,8 @@
 		"limit": 5
 	},
 	"energysolar": {
-		"role": ["mine"]
+		"role": ["mine"],
+		"target_dist_mod": 2.0
 	},
 	"staticshield": {
 		"role": ["static", "turtle"]
