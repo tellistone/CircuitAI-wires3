@@ -35,6 +35,9 @@ public:
 
 private:
 	ISquadTask* GetAttackMergeTask();
+	CAttackTask* FindMergeTask() const;
+	// Straight line from our leader to the host's: threat below our allowance, both groups' strength near the host
+	bool IsSafeMergeLine(const CAttackTask* host) const;
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame);
 	void ApplyReinforcePath(const CQueryPathSingle* query);

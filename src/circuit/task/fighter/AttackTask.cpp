@@ -16,7 +16,6 @@
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathSingle.h"
 #include "terrain/path/QueryPathMulti.h"
-#include "terrain/path/QueryLineMap.h"
 #include "unit/action/FightAction.h"
 #include "unit/action/MoveAction.h"
 #include "unit/action/SupportAction.h"
@@ -357,16 +356,85 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 {
 	// Groups under quota.attack look for a group to join every 4 updates, others every 32.
 	// Unlike other squads, an attack group may merge while its leader stands on enemy-held ground;
-	// the straight line between the leaders must still be safe (CheckMergeTask).
+	// the straight line between the leaders must still be safe by the threat allowance (IsSafeMergeLine).
 	const int interval = (attackPower < minPower) ? 4 : 32;
-	return (updCount % interval == 1) ? CheckMergeTask() : nullptr;
+	return (updCount % interval == 1) ? FindMergeTask() : nullptr;
+}
+
+CAttackTask* CAttackTask::FindMergeTask() const
+{
+	// As ISquadTask::CheckMergeTask: nearest attack group with at least our power that we may join
+	// (CanAssignTo), reachable, within 60 s of travel; but the line is judged by IsSafeMergeLine
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = leader->GetPos(frame);
+	STerrainMapArea* area = leader->GetArea();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float sqMaxDistCost = SQUARE(MAX_TRAVEL_SEC * lowestSpeed);
+	float metric = std::numeric_limits<float>::max();
+	CAttackTask* best = nullptr;
+
+	const std::set<IFighterTask*>& tasks = static_cast<CMilitaryManager*>(manager)->GetTasks(fightType);
+	for (IFighterTask* t : tasks) {
+		CAttackTask* candy = static_cast<CAttackTask*>(t);
+		if ((candy == this) || candy->IsDead() || (candy->GetLeader() == nullptr)
+			|| (candy->GetAttackPower() < attackPower) || !candy->CanAssignTo(leader))
+		{
+			continue;
+		}
+		const AIFloat3& taskPos = candy->GetLeaderPos(frame);
+		if (!terrainMgr->CanMoveToPos(area, taskPos)) {  // ensure that path always exists
+			continue;
+		}
+		const float sqDistCost = pos.SqDistance2D(taskPos);
+		if ((sqDistCost >= metric) || (sqDistCost >= sqMaxDistCost)) {
+			continue;
+		}
+		if (!IsSafeMergeLine(candy)) {
+			continue;
+		}
+		best = candy;
+		metric = sqDistCost;
+	}
+	return best;
+}
+
+bool CAttackTask::IsSafeMergeLine(const CAttackTask* host) const
+{
+	// This group walks the straight line from its leader to the host's leader. Each threat square on it must
+	// be below this group's allowance (its own current strength, as its escape judges it); within 400 elmos
+	// of the host's leader the host stands beside it, so both groups' strength counts there.
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const AIFloat3& from = leader->GetPos(frame);
+	const AIFloat3& to = host->GetLeaderPos(frame);
+	const float ownStrength = GetSafeThreat();
+	const float together = ownStrength + host->GetSafeThreat();
+	AIFloat3 dir = to - from;
+	dir.y = 0.f;
+	const float dist = dir.Length2D();
+	if (dist < 1.f) {
+		return true;
+	}
+	dir /= dist;
+	const float step = threatMap->GetSquareSize();
+	for (float d = step; d < dist + step; d += step) {
+		AIFloat3 p = from + dir * std::min(d, dist);
+		CTerrainManager::CorrectPosition(p);
+		const float strength = (p.SqDistance2D(to) < SQUARE(400.f)) ? together : ownStrength;
+		if (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, strength)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 void CAttackTask::AbsorbWeakerTasks()
 {
 	// A group at or above quota.attack pulls in attack groups under quota.attack near it, every 8 updates.
 	// Same rules as joining (CanAssignTo: speed within 1.5x, leaders within 1000 elmos, movement type,
-	// never a worse mover than our leader; reachable; safe straight line), seen from the small group's side,
+	// never a worse mover than our leader; reachable; IsSafeMergeLine), seen from the small group's side,
 	// but at most 30 s of travel so absorbed units arrive well inside the 60 s regroup "stuck" limit.
 	if ((attackPower < minPower) || (updCount % 8 != 5)) {
 		return;
@@ -376,7 +444,6 @@ void CAttackTask::AbsorbWeakerTasks()
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = leader->GetPos(frame);
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CPathFinder* pathfinder = circuit->GetPathfinder();
 
 	static std::vector<CAttackTask*> weaklings;  // NOTE: micro-opt
 	const std::set<IFighterTask*>& tasks = static_cast<CMilitaryManager*>(manager)->GetTasks(fightType);
@@ -396,9 +463,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		if (candyPos.SqDistance2D(pos) >= SQUARE(MAX_TRAVEL_SEC / 2 * candy->lowestSpeed)) {
 			continue;
 		}
-		std::shared_ptr<CQueryLineMap> query = std::static_pointer_cast<CQueryLineMap>(
-				pathfinder->CreateLineMapQuery(candyLeader, circuit->GetThreatMap(), frame));
-		if (!query->IsSafeLine(candyPos, pos)) {
+		if (!candy->IsSafeMergeLine(this)) {  // the small group walks to us
 			continue;
 		}
 		weaklings.push_back(candy);
