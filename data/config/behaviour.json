@@ -92,7 +92,7 @@
 // Mobile anti-air squads (main role anti_air)
 "antiair": {
 	"leash": 800.0,  // only chase aircraft within this distance of home: one of our attack/defend group leaders or the base; aircraft already in weapon range are always engaged; -1 = no leash (chase the nearest aircraft anywhere)
-	"own_ground": true,  // aircraft over ground our buildings or static defences cover (defence.infl_rad), or where our influence beats the enemy's (not counting the plane itself), also count as near home
+	"own_ground": true,  // also counts as near home: the spot the squad would shoot from is covered by our buildings or static defences (defence.infl_rad), or our other armed units beat the enemy (not counting the plane) under the aircraft
 	"fire_spot": 0.9  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
 },
 
