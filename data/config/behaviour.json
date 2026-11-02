@@ -5,6 +5,9 @@
 	// Every 15s add (known enemy mexes this scout movement type can reach from our base without crossing threat
 	// it couldn't take) / (enemy players), rounded down, on top of "scout". This value multiplies that bonus; 0 = off
 	"scout_per_mex": 1.0,
+	// Second multiplier on that bonus: this curve at the map size, divided by enemy players. Points are
+	// [<map side in map units, e.g. 8 for 8x8; non-square maps use sqrt(w*h)>, <multiplier>], flat beyond the ends
+	"scout_map_size": [[8, 1.0], [20, 4.0]],
 	"raid": [7.0, 42.0],  // [<min>, <avg>] power of raider squad
 	"raid_target_roles": ["builder", "commander"],  // enemy roles raid groups attack first (plus types with the "raid_target" attribute); [] = attribute only
 	"raid_flee_share": 0.5,  // raid group flees when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group

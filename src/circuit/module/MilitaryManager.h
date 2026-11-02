@@ -253,6 +253,8 @@ private:
 	unsigned int maxScouts;  // quota.scout: the minimum
 	float scoutPerMex;  // quota.scout_per_mex: multiplier on the reachable-mex bonus (0 = off)
 	std::map<int, unsigned int> scoutMexBonus;  // by mobile type id (-1 = air)
+	// quota.scout_map_size: [<map side in Spring map units (512 elmos)>, <multiplier>] points
+	std::vector<std::pair<float, float>> scoutMapCurve;
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;

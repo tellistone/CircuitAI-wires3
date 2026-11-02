@@ -333,6 +333,22 @@ void CMilitaryManager::ReadConfig()
 	const Json::Value& quotas = root["quota"];
 	maxScouts = quotas.get("scout", 3).asUInt();
 	scoutPerMex = quotas.get("scout_per_mex", 1.f).asFloat();
+	scoutMapCurve.clear();
+	const Json::Value& qmap = quotas["scout_map_size"];
+	if (qmap.isArray()) {
+		for (const Json::Value& pt : qmap) {
+			if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
+				circuit->LOG("CONFIG %s: quota.scout_map_size points must be [<map size>, <multiplier >= 0>]", cfgName.c_str());
+				continue;
+			}
+			scoutMapCurve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+		}
+		std::sort(scoutMapCurve.begin(), scoutMapCurve.end());
+	} else if (qmap.isNull()) {
+		scoutMapCurve = {{8.f, 1.f}, {20.f, 4.f}};
+	} else {
+		circuit->LOG("CONFIG %s: quota.scout_map_size must be a list of [<map size>, <multiplier>] points", cfgName.c_str());
+	}
 	const Json::Value& qspot = quotas["scout_spot"];
 	scoutSpot.enemy = qspot.get("enemy", 1.f).asFloat();
 	scoutSpot.stale = qspot.get("stale", 1.f).asFloat();
@@ -1272,6 +1288,10 @@ void CMilitaryManager::UpdateScoutQuota()
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	// Average of the random powerMod ScoutTask gets (0.75 / thr_mod.scout)
 	const float powerMod = 0.75f / std::max(scoutMod.min + 0.5f * scoutMod.len, 1e-3f);
+	// Second multiplier: map size curve / enemy players. Size = side of a square map with the same area,
+	// in Spring map units (512 elmos), so 8x8 -> 8 and a 10x16 map -> ~12.6
+	const float mapSize = sqrtf(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
+	const float mapMult = EvalCurve(scoutMapCurve, mapSize) / enemyPlayers;
 
 	for (auto& kv : refUnits) {
 		const int mobileId = kv.first;
@@ -1286,7 +1306,7 @@ void CMilitaryManager::UpdateScoutQuota()
 		CTerrainManager::CorrectPosition(startPos);
 
 		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true);
-		pathfinder->RunQuery(query, [this, mobileId, safeThreat, enemyPlayers](const IPathQuery* query) {
+		pathfinder->RunQuery(query, [this, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
 			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
 			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
 			unsigned int count = 0;
@@ -1307,7 +1327,8 @@ void CMilitaryManager::UpdateScoutQuota()
 					++count;
 				}
 			}
-			scoutMexBonus[mobileId] = (unsigned int)(scoutPerMex * count / enemyPlayers);
+			// (reachable mexes / enemy players) x (map size curve / enemy players) x scout_per_mex, rounded down
+			scoutMexBonus[mobileId] = (unsigned int)(scoutPerMex * mapMult * count / enemyPlayers);
 		});
 	}
 }
@@ -1335,6 +1356,26 @@ float CMilitaryManager::GetBaseThrBonus(float sqDistToBase) const
 	return 1.f + (baseThrBonus - 1.f) * (1.f - sqrtf(sqDistToBase) / baseRange);
 }
 
+// Piecewise-linear [x, y] curve sorted by x, flat beyond its ends; empty = 1
+static float EvalCurve(const std::vector<std::pair<float, float>>& curve, float x)
+{
+	if (curve.empty()) {
+		return 1.f;
+	}
+	if (x <= curve.front().first) {
+		return curve.front().second;
+	}
+	for (size_t i = 1; i < curve.size(); ++i) {
+		const auto& b = curve[i];
+		if (x <= b.first) {
+			const auto& a = curve[i - 1];
+			const float t = (b.first > a.first) ? (x - a.first) / (b.first - a.first) : 1.f;
+			return a.second + (b.second - a.second) * t;
+		}
+	}
+	return curve.back().second;
+}
+
 float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloat3& pos) const
 {
 	const ThrDistCurve& thrDistCurve = thrDistCurves[static_cast<IFighterTask::FT>(type)];
@@ -1345,21 +1386,7 @@ float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloa
 	const float height = CTerrainManager::GetTerrainHeight();
 	const float diagonal = sqrtf(width * width + height * height);
 	const float frac = circuit->GetSetupManager()->GetBasePos().distance2D(pos) / diagonal;
-	if (frac <= thrDistCurve.front().first) {
-		return thrDistCurve.front().second;
-	}
-	if (frac >= thrDistCurve.back().first) {
-		return thrDistCurve.back().second;
-	}
-	for (size_t i = 1; i < thrDistCurve.size(); ++i) {
-		const auto& b = thrDistCurve[i];
-		if (frac <= b.first) {
-			const auto& a = thrDistCurve[i - 1];
-			const float t = (b.first > a.first) ? (frac - a.first) / (b.first - a.first) : 1.f;
-			return a.second + (b.second - a.second) * t;
-		}
-	}
-	return thrDistCurve.back().second;
+	return EvalCurve(thrDistCurve, frac);
 }
 
 AIFloat3 CMilitaryManager::GetRaidPosition(CCircuitUnit* unit)
