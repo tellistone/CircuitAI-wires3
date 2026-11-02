@@ -226,7 +226,6 @@ bool ISquadTask::IsMustRegroup()
 	}
 
 	static std::vector<CCircuitUnit*> validUnits;  // NOTE: micro-opt
-	static std::vector<CCircuitUnit*> stuckUnits;  // released after the loops over units
 //	validUnits.reserve(units.size());
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();;
 	for (CCircuitUnit* unit : units) {
@@ -256,13 +255,17 @@ bool ISquadTask::IsMustRegroup()
 			if ((sqDist > sqMaxDist) &&
 				((unit->GetTaskFrame() < groupFrame) || !terrainMgr->CanMoveToPos(unit->GetArea(), pos)))
 			{
-				stuckUnits.push_back(unit);
+				TRY_UNIT(circuit, unit,
+					unit->GetUnit()->Stop();
+					unit->GetUnit()->SetMoveState(2);
+				)
+				circuit->Garbage(unit, "stuck");
+//				circuit->GetBuilderManager()->EnqueueReclaim(IBuilderTask::Priority::HIGH, unit);
 			}
 		}
 
 		validUnits.clear();
 		state = State::ROAM;
-		ReleaseStuck(stuckUnits);  // may leave leader == nullptr (task aborted): callers check
 		return false;
 	}
 
@@ -279,28 +282,18 @@ bool ISquadTask::IsMustRegroup()
 
 	if (!wasRegroup && (State::REGROUP == state)) {
 		if (utils::is_equal_pos(prevGroupPos, groupPos)) {
-			stuckUnits.push_back(leader);
+			TRY_UNIT(circuit, leader,
+				leader->GetUnit()->Stop();
+				leader->GetUnit()->SetMoveState(2);
+			)
+			circuit->Garbage(leader, "stuck");
+//			circuit->GetBuilderManager()->EnqueueReclaim(IBuilderTask::Priority::HIGH, leader);
 		}
 		prevGroupPos = groupPos;
 	}
 
 	validUnits.clear();
-	ReleaseStuck(stuckUnits);  // may leave leader == nullptr (task aborted): callers check
-	return (leader != nullptr) && (State::REGROUP == state);
-}
-
-void ISquadTask::ReleaseStuck(std::vector<CCircuitUnit*>& stuck)
-{
-	// A unit that looks stuck leaves the squad and goes back to the idle pool, which gives it a new task
-	// like a fresh unit (it used to be dropped from the AI for good, left idle where it stood)
-	CCircuitAI* circuit = manager->GetCircuit();
-	for (CCircuitUnit* unit : stuck) {
-		TRY_UNIT(circuit, unit,
-			unit->GetUnit()->Stop();
-		)
-		RemoveAssignee(unit);  // to the idle task; a squad left without units aborts
-	}
-	stuck.clear();
+	return State::REGROUP == state;
 }
 
 void ISquadTask::ActivePath(float speed)

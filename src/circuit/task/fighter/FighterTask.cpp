@@ -182,7 +182,9 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		if (unit->Blocker() != nullptr) {
 			continue;  // Do not interrupt current action
 		}
-		if (IsOutOfReach(unit, frame)) {
+		if ((fireSpotReach > 0.f)
+			&& (unit->GetPos(frame).SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * fireSpotReach)))
+		{
 			continue;  // far behind: keep following the squad's path instead of a straight walk to a spot
 		}
 		unit->GetTravelAct()->StateWait();
@@ -256,12 +258,6 @@ const float ARC_SPAN      = 0.25f;  // half the arc, x PI
 const float SUPPORT_RADIUS = 400.f; // own units heading within this of a spot back up a unit there
 const int   SPOT_KEEP     = FRAMES_PER_SEC * 10;  // last spot forgotten this long after its order
 const int   RISKY_GRACE   = FRAMES_PER_SEC * 3;   // pull-back leaves a unit sent to a RISKY spot alone
-}
-
-bool IFighterTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
-{
-	return (fireSpotReach > 0.f)
-		&& (unit->GetPos(frame).SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * fireSpotReach));
 }
 
 float IFighterTask::GetFireRange(CCircuitUnit* unit) const
