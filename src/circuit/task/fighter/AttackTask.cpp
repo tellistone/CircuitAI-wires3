@@ -359,45 +359,7 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 	// the straight line between the leaders must still be safe by the threat allowance (IsSafeMergeLine).
 	// Not while fighting: walking off to another group would leave a fight we accepted (absorbing skips us too)
 	const int interval = (attackPower < minPower) ? 4 : 32;
-	return ((updCount % interval == 1) && !IsFighting()) ? FindMergeTask() : nullptr;
-}
-
-CAttackTask* CAttackTask::FindMergeTask() const
-{
-	// As ISquadTask::CheckMergeTask: nearest attack group with at least our power that we may join
-	// (CanAssignTo), reachable, within 60 s of travel; but the line is judged by IsSafeMergeLine
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& pos = leader->GetPos(frame);
-	STerrainMapArea* area = leader->GetArea();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const float sqMaxDistCost = SQUARE(MAX_TRAVEL_SEC * lowestSpeed);
-	float metric = std::numeric_limits<float>::max();
-	CAttackTask* best = nullptr;
-
-	const std::set<IFighterTask*>& tasks = static_cast<CMilitaryManager*>(manager)->GetTasks(fightType);
-	for (IFighterTask* t : tasks) {
-		CAttackTask* candy = static_cast<CAttackTask*>(t);
-		if ((candy == this) || candy->IsDead() || (candy->GetLeader() == nullptr)
-			|| (candy->GetAttackPower() < attackPower) || !candy->CanAssignTo(leader))
-		{
-			continue;
-		}
-		const AIFloat3& taskPos = candy->GetLeaderPos(frame);
-		if (!terrainMgr->CanMoveToPos(area, taskPos)) {  // ensure that path always exists
-			continue;
-		}
-		const float sqDistCost = pos.SqDistance2D(taskPos);
-		if ((sqDistCost >= metric) || (sqDistCost >= sqMaxDistCost)) {
-			continue;
-		}
-		if (!IsSafeMergeLine(candy)) {
-			continue;
-		}
-		best = candy;
-		metric = sqDistCost;
-	}
-	return best;
+	return ((updCount % interval == 1) && !IsFighting()) ? CheckMergeTask() : nullptr;
 }
 
 bool CAttackTask::IsFighting() const
@@ -417,35 +379,15 @@ bool CAttackTask::IsFighting() const
 	return false;
 }
 
-bool CAttackTask::IsSafeMergeLine(const CAttackTask* host) const
+bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 {
-	// This group walks the straight line from its leader to the host's leader. Each threat square on it must
-	// be below this group's allowance (its own current strength, as its escape judges it); within 400 elmos
-	// of the host's leader the host stands beside it, so both groups' strength counts there.
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	const AIFloat3& from = leader->GetPos(frame);
-	const AIFloat3& to = host->GetLeaderPos(frame);
+	// We walk the straight line to the host's leader, judged by our allowance (as our escape judges it);
+	// within 400 elmos of the host's leader it stands beside us, so both groups' strength counts there
+	const CAttackTask* squad = static_cast<const CAttackTask*>(host);  // merging stays within one fight type
+	const int frame = manager->GetCircuit()->GetLastFrame();
 	const float ownStrength = GetSafeThreat();
-	const float together = ownStrength + host->GetSafeThreat();
-	AIFloat3 dir = to - from;
-	dir.y = 0.f;
-	const float dist = dir.Length2D();
-	if (dist < 1.f) {
-		return true;
-	}
-	dir /= dist;
-	const float step = threatMap->GetSquareSize();
-	for (float d = step; d < dist + step; d += step) {
-		AIFloat3 p = from + dir * std::min(d, dist);
-		CTerrainManager::CorrectPosition(p);
-		const float strength = (p.SqDistance2D(to) < SQUARE(400.f)) ? together : ownStrength;
-		if (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, strength)) {
-			return false;
-		}
-	}
-	return true;
+	return IsLineSafe(leader->GetPos(frame), squad->GetLeaderPos(frame), std::numeric_limits<float>::max(),
+			ownStrength, ownStrength + squad->GetSafeThreat());
 }
 
 void CAttackTask::AbsorbWeakerTasks()
@@ -684,7 +626,8 @@ void CAttackTask::FindTarget()
 	std::vector<float> candidateKeys;
 	for (const auto& c : candidates) {
 		scaleRefSqDist = anchorFor(c.second);
-		if (IsApproachSafe(c.second->GetPos(), pos, maxPower)) {
+		// Approach line: from the target towards us, out to our range
+		if (IsLineSafe(c.second->GetPos(), pos, highestRange, maxPower, maxPower)) {
 			if (bestTarget == nullptr) {
 				bestTarget = c.second;
 				bestKey = c.first;
@@ -736,25 +679,26 @@ void CAttackTask::FindTarget()
 	// Return: target, startPos=leader->pos, endPos=position
 }
 
-bool CAttackTask::IsApproachSafe(const AIFloat3& ePos, const AIFloat3& pos, float safeThreat) const
+bool CAttackTask::IsLineSafe(const AIFloat3& from, const AIFloat3& to, float maxReach,
+		float strength, float supportStrength) const
 {
-	// Walk from the target towards us, out to our range (or to us if closer), one threat square at a time,
-	// judging each spot with the common allowance.
-	// Expects threatMap->SetThreatType(leader) already done (FindTarget).
+	// Walk from 'from' towards 'to', out to maxReach (or to 'to' if closer), one threat square at a time,
+	// judging each spot with the common allowance; within 400 elmos of 'to' with supportStrength
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
-	AIFloat3 dir = pos - ePos;
+	AIFloat3 dir = to - from;
 	dir.y = 0.f;
 	const float dist = dir.Length2D();
 	if (dist < 1.f) {
 		return true;
 	}
 	dir /= dist;
-	const float reach = std::min(highestRange, dist);
+	const float reach = std::min(maxReach, dist);
 	const float step = threatMap->GetSquareSize();
 	for (float d = step; d <= reach; d += step) {
-		AIFloat3 p = ePos + dir * d;
+		AIFloat3 p = from + dir * d;
 		CTerrainManager::CorrectPosition(p);
-		if (threatMap->GetThreatAt(p) >= GetAllowedThreatAt(p, safeThreat)) {
+		const float s = (p.SqDistance2D(to) < SQUARE(400.f)) ? supportStrength : strength;
+		if (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, s)) {
 			return false;
 		}
 	}

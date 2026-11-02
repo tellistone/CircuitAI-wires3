@@ -35,18 +35,19 @@ public:
 
 private:
 	ISquadTask* GetAttackMergeTask();
-	CAttackTask* FindMergeTask() const;
 	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Straight line from our leader to the host's: threat below our allowance, both groups' strength near the host
-	bool IsSafeMergeLine(const CAttackTask* host) const;
+	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame);
 	void ApplyReinforcePath(const CQueryPathSingle* query);
 	void AbsorbWeakerTasks();
 	void FindTarget();
-	// Highest threat on the line from the target towards us, out to our range (where we'd shoot from),
-	// stays below the allowance at each sampled spot (same near-base scale as the target's own spot)
-	bool IsApproachSafe(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float safeThreat) const;
+	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below the allowance for 'strength' at each
+	// sampled spot, or for 'supportStrength' within 400 elmos of 'to'. Used by target picking (approach line from the
+	// target towards us, out to our range) and merging (from our leader to the host's)
+	bool IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
+			float strength, float supportStrength) const;
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates

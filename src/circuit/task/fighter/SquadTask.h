@@ -37,6 +37,9 @@ private:
 protected:
 	// Nearest same-type task this one may join (no ground/influence check, see GetMergeTask)
 	ISquadTask* CheckMergeTask();
+	// Is the straight line from our leader to the host's leader safe to walk for merging?
+	// Default: walkable and no threat at all (CQueryLineMap::IsSafeLine)
+	virtual bool IsSafeMergeLine(const ISquadTask* host) const;
 	ISquadTask* GetMergeTask();
 	bool IsMustRegroup();
 	void ActivePath(float speed = NO_SPEED_LIMIT);
