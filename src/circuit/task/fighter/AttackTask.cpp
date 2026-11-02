@@ -357,8 +357,9 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 	// Groups under quota.attack look for a group to join every 4 updates, others every 32.
 	// Unlike other squads, an attack group may merge while its leader stands on enemy-held ground;
 	// the straight line between the leaders must still be safe by the threat allowance (IsSafeMergeLine).
+	// Not while engaged: walking off to another group would leave a fight we accepted (absorbing skips us too)
 	const int interval = (attackPower < minPower) ? 4 : 32;
-	return (updCount % interval == 1) ? FindMergeTask() : nullptr;
+	return ((updCount % interval == 1) && (State::ENGAGE != state)) ? FindMergeTask() : nullptr;
 }
 
 CAttackTask* CAttackTask::FindMergeTask() const
@@ -452,6 +453,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		CCircuitUnit* candyLeader = candy->GetLeader();
 		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
 			|| (candy->GetAttackPower() >= minPower)
+			|| (State::ENGAGE == candy->state)  // fighting: let it finish its fight (it doesn't join either)
 			|| !CanAssignTo(candyLeader))
 		{
 			continue;
