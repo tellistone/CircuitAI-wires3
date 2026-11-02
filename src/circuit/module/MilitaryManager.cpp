@@ -416,13 +416,11 @@ void CMilitaryManager::ReadConfig()
 		attackMerge.reinforceRetry = static_cast<int>(readNum("reinforce_retry", 10.f, 0.f) * FRAMES_PER_SEC);
 	}
 	{
-		// x range >= 1: a unit within weapon range of a target the group engages (within its range of the leader)
-		// is then never a straggler
 		const Json::Value& q = quotas["attack_group_radius"];
 		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
-				&& (q[0u].asFloat() >= 1.f) && (q[1u].asFloat() >= 0.f));
+				&& (q[0u].asFloat() >= 0.f) && (q[1u].asFloat() >= 0.f));
 		if (!isOk) {
-			circuit->LOG("CONFIG %s: quota.attack_group_radius must be [<x group range >= 1>, <min elmos >= 0>], using [2, 800]", cfgName.c_str());
+			circuit->LOG("CONFIG %s: quota.attack_group_radius must be [<x group range >= 0>, <min elmos >= 0>], using [2, 800]", cfgName.c_str());
 		}
 		attackGroupRadius = (isOk && !q.isNull()) ? std::make_pair(q[0u].asFloat(), q[1u].asFloat()) : std::make_pair(2.f, 800.f);
 	}

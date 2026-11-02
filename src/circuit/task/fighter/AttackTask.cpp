@@ -377,8 +377,13 @@ float CAttackTask::GetGroupRadius() const
 
 bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 {
-	// A straggler: farther from the leader than the group radius (still walking in after a merge, or left behind)
-	return unit->GetPos(frame).SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
+	// A straggler: farther from the leader than the group radius (still walking in after a merge, or left behind),
+	// unless it already has the target within its weapon range
+	const AIFloat3& pos = unit->GetPos(frame);
+	if ((target != nullptr) && (pos.SqDistance2D(target->GetPos()) < SQUARE(unit->GetCircuitDef()->GetMaxRange()))) {
+		return false;
+	}
+	return pos.SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
 }
 
 void CAttackTask::Engage(int frame)
