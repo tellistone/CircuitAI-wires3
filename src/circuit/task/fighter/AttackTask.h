@@ -74,6 +74,8 @@ private:
 	void Cornered(int frame);
 	void ApplyCorneredPath(const CQueryPathSingle* query);
 	CEnemyInfo* FindNearestHittable(int frame) const;
+	bool IsOnEnemyGround() const;  // influence at the leader < 0
+	// No target: route to the front line, or hold nearby when on enemy-held ground (or no front / no safe route)
 	void FallbackFrontPos();
 	void ApplyFrontPos(const CQueryPathMulti* query);
 

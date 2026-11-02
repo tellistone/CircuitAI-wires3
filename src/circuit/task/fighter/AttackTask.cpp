@@ -312,7 +312,8 @@ void CAttackTask::Update()
 		return;
 	}
 	// Also on enemy-held ground (influence < 0): FindTarget already judges threat at the target and along
-	// the approach line, and skipping it there sent the group back to the front line, bouncing it on the border
+	// the approach line (skipping it there sent the group back to the front line). With nothing to go for
+	// there, FallbackFrontPos holds nearby instead of walking back.
 	FindTarget();
 
 	state = State::ROAM;
@@ -525,12 +526,14 @@ void CAttackTask::FindTarget()
 	// Near-base scale reference: the enemy we already went for keeps the anchor from when it was first picked
 	// (otherwise the discount would fade as we close in, and the escape would flee the fight we accepted);
 	// every other enemy is judged from where we stand now
+	// No discount at all while we stand on enemy-held ground: the enemy outweighs us here, judge at full value
+	const bool isEnemyGround = IsOnEnemyGround();
 	const ICoreUnit::Id prevAnchorId = (scaleRefSqDist > 0.f) ? anchorTargetId : -1;
 	const float prevRef = scaleRefSqDist;
 	auto anchorFor = [&](CEnemyInfo* e) {
-		return ((prevAnchorId >= 0) && (e->GetId() == prevAnchorId)) ? prevRef : sqOBDist;
+		return isEnemyGround ? 0.f : (((prevAnchorId >= 0) && (e->GetId() == prevAnchorId)) ? prevRef : sqOBDist);
 	};
-	pickSqDist = sqOBDist;
+	pickSqDist = isEnemyGround ? 0.f : sqOBDist;  // 0: ApplyTargetPath keeps no anchor either
 	std::vector<std::pair<float, CEnemyInfo*>> candidates;  // (scaled distance, enemy)
 
 	const ICoreUnit::Id prevTargetId = (target != nullptr) ? target->GetId() : -1;
@@ -639,7 +642,7 @@ void CAttackTask::FindTarget()
 		// Keep the scale only for a fight towards home (target nearer our base than the reference):
 		// an outward fight never relied on it, so stragglers behind the group get no discount
 		const float ref = anchorFor(bestTarget);
-		const bool isHomeward = bestTarget->GetPos().SqDistance2D(basePos) < ref;
+		const bool isHomeward = (ref > 0.f) && (bestTarget->GetPos().SqDistance2D(basePos) < ref);
 		scaleRefSqDist = isHomeward ? ref : 0.f;
 		anchorTargetId = isHomeward ? bestTarget->GetId() : -1;
 	} else {
@@ -982,9 +985,21 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 	ActivePath(lowestSpeed);
 }
 
+bool CAttackTask::IsOnEnemyGround() const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	return circuit->GetInflMap()->GetInfluenceAt(leader->GetPos(circuit->GetLastFrame())) < -INFL_EPS;
+}
+
 void CAttackTask::FallbackFrontPos()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
+	if (IsOnEnemyGround()) {
+		// The front is our own cluster on friendly ground: routing there from enemy-held ground walks the
+		// group back, and it would bounce on the border. Hold at the quietest spot nearby instead.
+		HoldPosition();
+		return;
+	}
 	circuit->GetMilitaryManager()->FillFrontPos(leader, urgentPositions);
 	if (urgentPositions.empty()) {
 		HoldPosition();
