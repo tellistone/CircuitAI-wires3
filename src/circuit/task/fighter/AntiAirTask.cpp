@@ -343,6 +343,7 @@ void CAntiAirTask::FindTarget()
 
 		// Threat where the AA would stand to shoot, not under the aircraft
 		AIFloat3 checkPos = ePos;
+		bool isCoverSpot = true;  // checkPos may be judged for building cover
 		if (isFireSpot) {
 			if (sqDist <= sqRange) {
 				checkPos = pos;
@@ -351,6 +352,7 @@ void CAntiAirTask::FindTarget()
 				CTerrainManager::CorrectPosition(checkPos);
 				if (!terrainMgr->CanMoveToPos(area, checkPos)) {
 					checkPos = ePos;  // can't stand there: judge and approach as before
+					isCoverSpot = false;  // but don't let cover under the plane stand in for the spot
 				}
 			}
 		}
@@ -362,18 +364,20 @@ void CAntiAirTask::FindTarget()
 				// Ground our buildings and static defences cover is ours, judged where the AA would stand.
 				// The plain influence map counts armed units only, so a mex field or the back of the base
 				// with no army nearby reads as neutral.
-				isNearHome = (inflMap->GetAllyDefendInflAt(checkPos) > INFL_EPS);
+				isNearHome = isCoverSpot && (inflMap->GetAllyDefendInflAt(checkPos) > INFL_EPS);
 				if (!isNearHome) {
 					// Else our armed influence under the plane, without the squad's own share (else AA in enemy
 					// land makes its surroundings "ours" and creeps forward one plane at a time), must be real
 					// and beat the enemy's without the plane's own share. The plane's share is at most its
-					// threat (less if it moved since the map was built, none for a fighter with no ground
-					// range), so it is taken off the enemy side and clamped, never added to ours.
+					// threat, and none for a plane with no ground range (a pure fighter adds no influence),
+					// so it is taken off the enemy side only when it has one, clamped, never added to ours.
+					// Without the range check a fighter's threat would erase a real enemy army under it.
 					float allyInfl = inflMap->GetAllyInflAt(ePos);
 					for (CCircuitUnit* u : units) {
 						allyInfl -= inflMap->GetMobileArmedInflAt(u, ePos);
 					}
-					const float enemyInfl = std::max(0.f, inflMap->GetEnemyInflAt(ePos) - enemy->GetThreat());
+					const float planeShare = (enemy->GetData()->GetRange(CCircuitDef::ThreatType::LAND) > 0) ? enemy->GetThreat() : 0.f;
+					const float enemyInfl = std::max(0.f, inflMap->GetEnemyInflAt(ePos) - planeShare);
 					isNearHome = (allyInfl > INFL_EPS) && (allyInfl - enemyInfl > INFL_EPS);
 				}
 			}
