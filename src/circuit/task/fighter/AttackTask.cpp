@@ -746,6 +746,7 @@ void CAttackTask::FindTarget()
 	float bestRawKey = 0.f;  // bestKey without target_dist_mod
 	CEnemyInfo* prevTarget = nullptr;
 	float prevKey = 0.f;
+	float prevRawKey = 0.f;
 	std::vector<float> candidateKeys;
 	for (const auto& c : candidates) {
 		// A target within range is engaged at once, without a route: the straight line from it towards us is
@@ -771,6 +772,7 @@ void CAttackTask::FindTarget()
 		if (c.second->GetId() == prevTargetId) {
 			prevTarget = c.second;
 			prevKey = c.first;
+			prevRawKey = rawKey;
 		}
 		candidateKeys.push_back(c.first);
 		candidateIds.push_back(c.second->GetId());
@@ -778,6 +780,22 @@ void CAttackTask::FindTarget()
 		if (candidateIds.size() >= 16) {
 			break;
 		}
+	}
+
+	// The current target was kept above although really nearer than the best; if stickiness won't keep it
+	// either, leave it out too, or it would take the route
+	if ((prevTarget != nullptr) && (prevTarget != bestTarget) && (prevRawKey < bestRawKey)
+		&& (bestKey < prevKey * SQUARE(0.8f)))
+	{
+		for (size_t i = 0; i < candidateIds.size(); ++i) {
+			if (candidateIds[i] == prevTarget->GetId()) {
+				candidateIds.erase(candidateIds.begin() + i);
+				candidatePos.erase(candidatePos.begin() + i);
+				candidateKeys.erase(candidateKeys.begin() + i);
+				break;
+			}
+		}
+		prevTarget = nullptr;
 	}
 
 	// The full screened list: if the route's approach to the pick is rejected, the next route goes to these
