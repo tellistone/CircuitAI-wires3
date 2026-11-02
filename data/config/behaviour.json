@@ -3,7 +3,7 @@
 "quota": {
 	"scout": 1,  // max scout units out of raiders
 	// Every 15s add (known enemy mexes this scout movement type can reach from our base without crossing threat
-	// it couldn't take) / (all players), rounded down, on top of "scout". This value multiplies that bonus; 0 = off
+	// it couldn't take) / (enemy players), rounded down, on top of "scout". This value multiplies that bonus; 0 = off
 	"scout_per_mex": 1.0,
 	"scout_max": 12,  // cap on "scout" + bonus ("scout" itself is never cut); 0 = no cap
 	// Second multiplier on that bonus: this curve at the map size, divided by all players. Points are

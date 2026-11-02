@@ -1304,6 +1304,7 @@ void CMilitaryManager::UpdateScoutQuota()
 	}
 
 	// All players: enemy teams (engine count, minus Gaia) plus our ally team's players that haven't resigned
+	const int enemyPlayers = std::max(circuit->GetEnemyTeamSize(), 1);
 	const int players = std::max(circuit->GetEnemyTeamSize(), 0) + std::max(circuit->GetAllyTeam()->GetAliveSize(), 1);
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
@@ -1330,7 +1331,7 @@ void CMilitaryManager::UpdateScoutQuota()
 		CTerrainManager::CorrectPosition(startPos);
 
 		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true);
-		pathfinder->RunQuery(query, [this, mobileId, safeThreat, players, mapMult](const IPathQuery* query) {
+		pathfinder->RunQuery(query, [this, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
 			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
 			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
 			unsigned int count = 0;
@@ -1353,8 +1354,8 @@ void CMilitaryManager::UpdateScoutQuota()
 					++count;
 				}
 			}
-			// (reachable mexes / all players) x (map size curve / all players) x scout_per_mex, rounded down
-			scoutMexBonus[mobileId] = (unsigned int)(scoutPerMex * mapMult * count / players);
+			// (reachable mexes / enemy players) x (map size curve / all players) x scout_per_mex, rounded down
+			scoutMexBonus[mobileId] = (unsigned int)(scoutPerMex * mapMult * count / enemyPlayers);
 		});
 	}
 }
