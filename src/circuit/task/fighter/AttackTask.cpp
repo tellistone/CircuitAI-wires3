@@ -35,6 +35,10 @@ namespace circuit {
 
 using namespace springai;
 
+// Routes per target decision: each one whose approach to the target it reaches is unsafe drops that target
+// and routes again to the rest
+static constexpr int MAX_TARGET_ROUTES = 3;
+
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
@@ -52,6 +56,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, hitFrame(-1)
 		, scaleRefSqDist(0.f)
 		, anchorTargetId(-1)
+		, targetRouteTries(0)
 		, corneredFrame(-1)
 		, isReplanForced(false)
 		, corneredPos(-RgtVector)
@@ -340,23 +345,67 @@ void CAttackTask::Update()
 		return;
 	}
 
-	// Route-aware pick: one capped route to all safe candidates; whichever it reaches first becomes the target
+	// Route-aware pick: one capped route to all candidates; whichever it reaches first becomes the target,
+	// if the route's approach to it is safe
+	targetRouteTries = 0;
+	RequestTargetPath(candidateIds, candidatePos);
+}
+
+void CAttackTask::RequestTargetPath(std::vector<ICoreUnit::Id> ids, F3Vec goals)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& startPos = leader->GetPos(frame);
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const float eps = pathfinder->GetSquareSize();
 	const float pathRange = std::max(highestRange - eps, eps);
 
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, candidatePos, GetHitTest(), GetPathThreatCap(startPos, candidatePos));
+			startPos, pathRange, goals, GetHitTest(), GetPathThreatCap(startPos, goals));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
 	// The route reports back later; a later FindTarget may have rewritten the candidates by then
-	pathfinder->RunQuery(query, [this, ids = candidateIds](const IPathQuery* query) {
+	pathfinder->RunQuery(query, [this, ids = std::move(ids)](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
 			this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query), ids);
 		}
 	});
+}
+
+bool CAttackTask::IsApproachSafe(const F3Vec& path, const AIFloat3& targetPos, float strength) const
+{
+	// The ground we'd fight from, judged spot by spot with the common allowance (no support):
+	// 1. the line from the target to where the route ends: the firing spots lie between them
+	const AIFloat3& endPos = path.back();
+	if (!IsLineSafe(targetPos, endPos, std::numeric_limits<float>::max(), strength, strength, 0.f)) {
+		return false;
+	}
+	// 2. the route's last stretch, as long as our range, walked back from its end
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	const float step = threatMap->GetSquareSize();
+	float left = highestRange;
+	for (size_t i = path.size() - 1; (i > 0) && (left > 0.f); --i) {
+		const AIFloat3& b = path[i];
+		AIFloat3 dir = path[i - 1] - b;
+		dir.y = 0.f;
+		const float len = dir.Length2D();
+		if (len < 1.f) {
+			continue;
+		}
+		dir /= len;
+		const float reach = std::min(len, left);
+		for (float d = step; d <= reach; d += step) {
+			AIFloat3 p = b + dir * d;
+			CTerrainManager::CorrectPosition(p);
+			if (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, strength)) {
+				return false;
+			}
+		}
+		left -= len;
+	}
+	return true;
 }
 
 ISquadTask* CAttackTask::GetAttackMergeTask()
@@ -670,12 +719,12 @@ void CAttackTask::FindTarget()
 		candidates.emplace_back(sqOEDist, enemy);
 	}
 
-	// Nearest candidate whose approach is also safe: the target's own cell can be quiet while the
-	// spot we'd shoot it from sits under a big enemy group's guns
+	// Nearest candidates first. Their approach (the ground we'd shoot from) is checked on the route itself,
+	// when it comes back (ApplyTargetPath / IsApproachSafe)
 	std::sort(candidates.begin(), candidates.end(),
 			[](const std::pair<float, CEnemyInfo*>& a, const std::pair<float, CEnemyInfo*>& b) { return a.first < b.first; });
-	// Keep the nearest 16 safe ones as goals of one route query (Update); the nearest is the target until
-	// the route says which one we can actually reach under the threat cap
+	// Keep the nearest 16 as goals of one route query (Update); the nearest is the target until
+	// the route says which one we can actually reach under the threat cap, with a safe approach
 	candidateIds.clear();
 	candidatePos.clear();
 	CEnemyInfo* bestTarget = nullptr;
@@ -684,23 +733,19 @@ void CAttackTask::FindTarget()
 	float prevKey = 0.f;
 	std::vector<float> candidateKeys;
 	for (const auto& c : candidates) {
-		scaleRefSqDist = anchorFor(c.second);
-		// Approach line: from the target towards us, out to our range
-		if (IsLineSafe(c.second->GetPos(), pos, highestRange, maxPower, maxPower, 0.f)) {
-			if (bestTarget == nullptr) {
-				bestTarget = c.second;
-				bestKey = c.first;
-			}
-			if (c.second->GetId() == prevTargetId) {
-				prevTarget = c.second;
-				prevKey = c.first;
-			}
-			candidateKeys.push_back(c.first);
-			candidateIds.push_back(c.second->GetId());
-			candidatePos.push_back(c.second->GetPos());
-			if (candidateIds.size() >= 16) {
-				break;
-			}
+		if (bestTarget == nullptr) {
+			bestTarget = c.second;
+			bestKey = c.first;
+		}
+		if (c.second->GetId() == prevTargetId) {
+			prevTarget = c.second;
+			prevKey = c.first;
+		}
+		candidateKeys.push_back(c.first);
+		candidateIds.push_back(c.second->GetId());
+		candidatePos.push_back(c.second->GetPos());
+		if (candidateIds.size() >= 16) {
+			break;
 		}
 	}
 
@@ -1021,9 +1066,10 @@ void CAttackTask::ApplyFleePath(const CQueryPathSingle* query)
 
 void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vector<ICoreUnit::Id>& ids)
 {
-	pPath = query->GetPathInfo();
+	const std::shared_ptr<PathInfo> path = query->GetPathInfo();  // a copy: routing again may release the query
 
-	if (pPath->posPath.empty()) {
+	if (path->posPath.empty()) {
+		pPath = path;
 		// No candidate reachable within our threat cap: drop the target and head for the front
 		SetTarget(nullptr);
 		scaleRefSqDist = 0.f;
@@ -1033,7 +1079,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 
 	// The route reached the candidate it ends within range of (nearest first in the list, as FindTarget
 	// sorted it); if none is within range (moved, corrected), the one it ends nearest to
-	const AIFloat3& endPos = pPath->posPath.back();
+	const AIFloat3& endPos = path->posPath.back();
 	const F3Vec& goals = query->GetTargets();
 	CCircuitAI* circuit = manager->GetCircuit();
 	const float sqInRange = SQUARE(query->GetMaxRange() + circuit->GetPathfinder()->GetSquareSize());
@@ -1059,6 +1105,8 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		reached = nearest;
 	}
 	if (reached != nullptr) {
+		const float prevRef = scaleRefSqDist;
+		const ICoreUnit::Id prevAnchor = anchorTargetId;
 		if (reached->GetId() != anchorTargetId) {
 			// The route led to another candidate: it was judged from where the group stood at pick time
 			const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
@@ -1066,9 +1114,35 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 			scaleRefSqDist = isHomeward ? pickSqDist : 0.f;
 			anchorTargetId = isHomeward ? reached->GetId() : -1;
 		}
+		// Its approach on this route must be safe (same strength as picking: lower for 4 s after an escape).
+		// If not, route again to the other candidates, up to MAX_TARGET_ROUTES routes per decision
+		const int frame = circuit->GetLastFrame();
+		const float maxPower = GetSafeThreat() * ((frame < fleeFrame + FRAMES_PER_SEC * 4) ? 0.75f : 1.f);
+		if (!IsApproachSafe(path->posPath, reached->GetPos(), maxPower)) {
+			scaleRefSqDist = prevRef;
+			anchorTargetId = prevAnchor;
+			std::vector<ICoreUnit::Id> restIds;
+			F3Vec restGoals;
+			for (size_t i = 0; (i < goals.size()) && (i < ids.size()); ++i) {
+				if ((ids[i] != reached->GetId()) && (circuit->GetEnemyInfo(ids[i]) != nullptr)) {
+					restIds.push_back(ids[i]);
+					restGoals.push_back(goals[i]);
+				}
+			}
+			if ((++targetRouteTries < MAX_TARGET_ROUTES) && !restIds.empty()) {
+				RequestTargetPath(std::move(restIds), std::move(restGoals));
+				return;
+			}
+			SetTarget(nullptr);
+			scaleRefSqDist = 0.f;
+			anchorTargetId = -1;
+			FallbackFrontPos();
+			return;
+		}
 		SetTarget(reached);
 		position = reached->GetPos();
 	}
+	pPath = path;
 	ActivePath(lowestSpeed);
 }
 
