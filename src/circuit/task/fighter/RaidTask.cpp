@@ -544,11 +544,15 @@ bool CRaidTask::IsAllHolding() const
 {
 	// HOLD (IFighterTask::Attack): ranged unit ordered on this target without a firing spot
 	const int frame = manager->GetCircuit()->GetLastFrame();
+	// Melee units with firing spots (quota.melee) hold like ranged ones: on a ring route they have a spot, and one
+	// sent to another enemy (per-target cap) has another target, so neither counts as holding
+	const float meleeSpotRange = static_cast<CMilitaryManager*>(manager)->GetMeleeSpot().spotRange;
 	int ranged = 0;
 	for (CCircuitUnit* unit : units) {
 		const float range = GetFireRange(unit);
-		if (unit->GetCircuitDef()->IsAttrMelee() || (range < SQUARE_SIZE * 4)) {
-			continue;
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		if ((cdef->IsAttrMelee() && (cdef->GetMeleeSpotRange(meleeSpotRange) <= 0.f)) || (range < SQUARE_SIZE * 4)) {
+			continue;  // old close-in melee, or no usable range
 		}
 		++ranged;
 		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())

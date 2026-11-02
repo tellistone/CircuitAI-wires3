@@ -70,11 +70,11 @@ protected:
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
 	FireSpot FindFireSpot(CCircuitUnit* unit, const std::map<CCircuitUnit*, springai::AIFloat3>& claims,
 			float safeThreat, springai::AIFloat3& outPos) const;
-	// Melee variant of the same search, against enemy: spots on a full ring at spotRange x range from it (not the
+	// Melee variant of the same search, against enemy: spots on a full ring at radius from it (not the
 	// +-45 degree arc, nor where the unit stands or its last spot: a melee unit never stays put), none closer than
 	// minSep to meleeClaims (other melee units' spots on this enemy) unless no safe spot is. outAngle: the ring angle
 	// chosen (SPOT/RISKY), so the caller can continue around the ring from it
-	FireSpot FindMeleeSpot(CCircuitUnit* unit, CEnemyInfo* enemy, float spotRange,
+	FireSpot FindMeleeSpot(CCircuitUnit* unit, CEnemyInfo* enemy, float radius,
 			const std::map<CCircuitUnit*, springai::AIFloat3>& claims, const std::vector<springai::AIFloat3>& meleeClaims,
 			float minSep, bool isForward, float safeThreat, springai::AIFloat3& outPos, float& outAngle) const;
 	// Shared by FindFireSpot and FindMeleeSpot: score candidate spots against threat, crowding and walk distance
