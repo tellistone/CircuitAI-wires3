@@ -227,6 +227,15 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
 	// Melee units claim their spot.
 	// Longest range picks first; each pick replaces that unit's claim.
+	// Melee orders on enemies that are gone: no longer a claim (crowding) or a cap count
+	for (auto it = meleeOrders.begin(); it != meleeOrders.end();) {
+		if (circuit->GetEnemyInfo(it->second.enemyId) == nullptr) {
+			fireSpots.erase(it->first);
+			it = meleeOrders.erase(it);
+		} else {
+			++it;
+		}
+	}
 	std::map<CCircuitUnit*, AIFloat3> claims;
 	BuildClaims(frame, claims);
 	std::map<CCircuitUnit*, float> ranges;
@@ -349,8 +358,8 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 	}
 
 	// Who gets new orders: no order yet (on repeat, or a new enemy), a new enemy, or, while not yet in range of it:
-	// its enemy moved away from where the spot was picked, or (on repeat) the unit was sent elsewhere meanwhile
-	// (escape, regroup). A unit in range is left to its Attack.
+	// its enemy moved away from where the spot was picked, or (on repeat) the unit got no closer to its spot since
+	// the last repeat (idle, or sent elsewhere: escape, pull-back, regroup). A unit in range is left to its Attack.
 	std::vector<CCircuitUnit*> replans;
 	for (CCircuitUnit* unit : order) {
 		CEnemyInfo* enemy = assigned[unit];
@@ -359,14 +368,22 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 		if (it == meleeOrders.end()) {
 			isReplan = isRepeatAttack || (unit->GetTarget() != enemy);
 		} else {
-			const SMeleeOrder& mo = it->second;
+			SMeleeOrder& mo = it->second;
 			const AIFloat3& uPos = unit->GetPos(frame);
 			const AIFloat3& ePos = enemy->GetPos();
 			const bool isInRange = (uPos.SqDistance2D(ePos) <= SQUARE(GetFireRange(unit, enemy)));
+			bool isStalled = false;
+			if (isRepeatAttack) {
+				const float spotDist = uPos.distance2D(mo.pos);
+				isStalled = (spotDist > mo.lastSpotDist - SQUARE_SIZE);
+				mo.lastSpotDist = spotDist;
+			}
 			isReplan = (mo.enemy != enemy) || (unit->GetTarget() != enemy)
 					|| (!isInRange
-						&& ((ePos.SqDistance2D(mo.enemyPos) > SQUARE(mo.radius * 0.5f + SQUARE_SIZE * 2))
-							|| (isRepeatAttack && (uPos.SqDistance2D(ePos) > SQUARE(mo.radius * 2.f + SQUARE_SIZE * 8)))));
+						&& ((ePos.SqDistance2D(mo.enemyPos) > SQUARE(mo.radius * 0.5f + SQUARE_SIZE * 2)) || isStalled));
+			if (!isReplan) {
+				mo.frame = frame;  // still on it: keeps counting toward its enemy's cap
+			}
 		}
 		if (isReplan) {
 			replans.push_back(unit);
@@ -414,9 +431,11 @@ void IFighterTask::SendMelee(CCircuitUnit* unit, CEnemyInfo* enemy, int nOnEnemy
 		case FireSpot::SPOT:
 		case FireSpot::RISKY: {
 			// Jumpers jump in to the spot (jump ready) unless already sent to this enemy: re-orders of a unit on its
-			// way (enemy moved) would waste the jump
+			// way (enemy moved) would waste the jump, and so would a short hop (under half the jump range)
 			auto it = meleeOrders.find(unit);
-			const bool isJump = (it == meleeOrders.end()) || (it->second.enemy != enemy);
+			const AIFloat3& uPos = unit->GetPos(frame);
+			const bool isJump = ((it == meleeOrders.end()) || (it->second.enemy != enemy))
+					&& (uPos.SqDistance2D(pos) > SQUARE(cdef->GetJumpRange() * 0.5f));
 			SMeleeOrder mo;
 			mo.pos = pos;
 			mo.enemyPos = enemy->GetPos();
@@ -424,6 +443,7 @@ void IFighterTask::SendMelee(CCircuitUnit* unit, CEnemyInfo* enemy, int nOnEnemy
 			mo.enemyId = enemy->GetId();
 			mo.radius = radius;
 			mo.frame = frame;
+			mo.lastSpotDist = uPos.distance2D(pos);
 			meleeOrders[unit] = mo;
 			meleeHolding.erase(unit);
 			claims[unit] = pos;

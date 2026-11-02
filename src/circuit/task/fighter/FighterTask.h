@@ -103,7 +103,8 @@ protected:
 		CEnemyInfo* enemy;  // compared only, never dereferenced
 		int enemyId;
 		float radius;  // ring radius
-		int frame;  // when ordered
+		int frame;  // when ordered, or last confirmed still on its enemy
+		float lastSpotDist;  // distance to pos at the order / last repeat check (no progress: re-order)
 	};
 	std::map<CCircuitUnit*, SMeleeOrder> meleeOrders;
 	std::set<CCircuitUnit*> meleeHolding;  // melee units last told to HOLD (not a direct Attack)
