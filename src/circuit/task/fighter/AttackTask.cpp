@@ -504,12 +504,12 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query)
 		if (pPath->path.size() > 2) {
 			ActivePath(lowestSpeed);
 		}
-	} else if (++reinforceFails >= 6) {  // ~12 s of empty routes at a decision every ~2 s
-		// No safe route 3 times in a row (~12 s): act as a small attack group for 30 s, then look again
+	} else if (++reinforceFails >= 10) {  // ~20 s of empty routes at a decision every ~2 s
+		// No safe route 10 times in a row (~20 s): act as a small attack group for 10 s, then look again
 		// (merge checks and absorbing still apply meanwhile)
 		reinforce = nullptr;
 		reinforceFails = 0;
-		reinforceRetryFrame = manager->GetCircuit()->GetLastFrame() + FRAMES_PER_SEC * 30;
+		reinforceRetryFrame = manager->GetCircuit()->GetLastFrame() + FRAMES_PER_SEC * 10;
 	}
 }
 
