@@ -53,7 +53,7 @@ public:
 	using RoleM = std::underlying_type<RoleMask>::type;
 
 	/*
-	 * MELEE:     fight from close spots around the target, keep moving between them (quota.melee)
+	 * MELEE:     move to a close spot around the target, then attack it (quota.melee)
 	 * BOOST:     boost speed on retreat
 	 * NO_JUMP:   disable jump on retreat
 	 * NO_STRAFE: isable gunship's strafe

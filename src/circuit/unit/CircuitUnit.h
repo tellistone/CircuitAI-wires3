@@ -136,9 +136,8 @@ public:
 	void FightFrom(const springai::AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout);
 	// Stay at pos (no Attack order: the engine fires at whatever comes into range); remembers enemy/tile
 	void HoldFire(const springai::AIFloat3& pos, CEnemyInfo* enemy, int tile, int timeout);
-	// Melee: plain moves through these spots in turn (no Attack: the unit keeps moving), the enemy set as target.
-	// isJump: jump to the first spot if the jump is ready
-	void MeleeRoute(const std::vector<springai::AIFloat3>& spots, CEnemyInfo* enemy, int tile, int timeout, bool isJump);
+	// Melee: move to firePos (isJump: jump there if the jump is ready), then Attack the enemy and fight-move to it
+	void MeleeAttackFrom(const springai::AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout, bool isJump);
 	void Guard(CCircuitUnit* target, int timeout);
 	void Gather(const springai::AIFloat3& groupPos, int timeout);
 

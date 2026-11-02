@@ -436,21 +436,18 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 	)
 }
 
-void CCircuitUnit::MeleeRoute(const std::vector<AIFloat3>& spots, CEnemyInfo* enemy, int tile, int timeout, bool isJump)
+void CCircuitUnit::MeleeAttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout, bool isJump)
 {
 	target = enemy;
 	targetTile = tile;
 	TRY_UNIT(manager->GetCircuit(), this,
-		short options = UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY;
-		const bool isJumpIn = isJump && IsJumpReady();
-		for (const AIFloat3& p : spots) {
-			if (isJumpIn && (options == UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY)) {
-				CmdJumpTo(p, options, timeout);  // jump in to the first spot, walk on from there
-			} else {
-				CmdMoveTo(p, options, timeout);
-			}
-			options |= UNIT_COMMAND_OPTION_SHIFT_KEY;
+		if (isJump && IsJumpReady()) {
+			CmdJumpTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		} else {
+			CmdMoveTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 		}
+		unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+		unit->Fight(enemy->GetPos(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
 		CmdWantedSpeed(NO_SPEED_LIMIT);
 		CmdSetTarget(target);
 	)

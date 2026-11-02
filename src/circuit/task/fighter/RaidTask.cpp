@@ -533,7 +533,7 @@ void CRaidTask::AttackDirect(int frame)
 		}
 		unit->GetTravelAct()->StateWait();
 		fireSpots.erase(unit);
-		meleeRoutes.erase(unit);
+		meleeOrders.erase(unit);
 		meleeHolding.erase(unit);
 		if (isRepeatAttack || (unit->GetTarget() != target) || (unit->GetTargetTile() != targetTile)) {
 			unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);
@@ -545,7 +545,7 @@ bool CRaidTask::IsAllHolding() const
 {
 	// HOLD (IFighterTask::Attack): ranged unit ordered on this target without a firing spot
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	// Melee units with firing spots (quota.melee) hold like ranged ones: on a ring route they have a spot, and one
+	// Melee units with firing spots (quota.melee) hold like ranged ones: sent to a spot they have one, and one
 	// sent to another enemy (per-target cap) has another target, so neither counts as holding
 	const float meleeSpotRange = static_cast<CMilitaryManager*>(manager)->GetMeleeSpot().spotRange;
 	int ranged = 0;
