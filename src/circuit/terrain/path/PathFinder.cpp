@@ -292,13 +292,13 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathMultiQuery(
  */
 std::shared_ptr<IPathQuery> CPathFinder::CreateCostMapQuery(
 		CCircuitUnit* unit, CThreatMap* threatMap, int frame,  // SetMapData
-		const AIFloat3& startPos)
+		const AIFloat3& startPos, bool isBottleneck)
 {
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryCostMap>(*this, MakeQueryId());
 	CQueryCostMap* query = static_cast<CQueryCostMap*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame);
-	query->InitQuery(startPos);
+	FillMapData(query, unit, threatMap, frame, !isBottleneck);
+	query->InitQuery(startPos, isBottleneck);
 
 	return pQuery;
 }
@@ -373,7 +373,7 @@ void CPathFinder::RunQuery(const std::shared_ptr<IPathQuery>& query, PathCallbac
 	}
 }
 
-void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, int frame)
+void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, int frame, bool allowCloak)
 {
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	STerrainMapMobileType::Id mobileTypeId = cdef->GetMobileId();
@@ -401,7 +401,7 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap*
 		threatFun = [threatArray](int index) {
 			return 2.f * threatArray[index];
 		};
-	} else if (unit->GetUnit()->IsCloaked()) {
+	} else if (allowCloak && unit->GetUnit()->IsCloaked()) {
 		threatArray = threatMap->GetCloakThreatArray();
 		moveFun = [&sectors, maxSlope](int index) {
 			return sectors[index].maxSlope / maxSlope;
@@ -698,7 +698,7 @@ void CPathFinder::MakeCostMap(IPathQuery* query, NSMicroPather::CMicroPather* mi
 	std::vector<float>& costMap = q->GetCostMapRef();
 
 	micropather->SetMapData(canMoveArray, threatArray, moveFun, threatFun, heightMap);
-	micropather->MakeCostMap(Pos2MoveNode(startPos), costMap);
+	micropather->MakeCostMap(Pos2MoveNode(startPos), costMap, q->IsBottleneck());
 }
 
 #ifdef DEBUG_VIS

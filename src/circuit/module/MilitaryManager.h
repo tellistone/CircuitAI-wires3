@@ -139,6 +139,10 @@ public:
 	void DiceBigGun();
 	float ClampMobileCostRatio() const;
 	void UpdateDefenceTasks();
+	// Every 15s: count known enemy mexes each scout movement type can reach from our base without crossing
+	// threat it couldn't take, divided by the number of enemy players; added on top of quota.scout
+	void UpdateScoutQuota();
+	unsigned int GetMaxScouts(const CCircuitDef* cdef) const;
 	void UpdateDefence();
 	void MakeBaseDefence(const springai::AIFloat3& pos);
 
@@ -246,7 +250,9 @@ private:
 		float min;
 		float avg;
 	} raid;
-	unsigned int maxScouts;
+	unsigned int maxScouts;  // quota.scout: the minimum
+	float scoutPerMex;  // quota.scout_per_mex: multiplier on the reachable-mex bonus (0 = off)
+	std::map<int, unsigned int> scoutMexBonus;  // by mobile type id (-1 = air)
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;

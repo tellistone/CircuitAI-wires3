@@ -20,9 +20,10 @@ CQueryCostMap::~CQueryCostMap()
 {
 }
 
-void CQueryCostMap::InitQuery(const AIFloat3& startPos)
+void CQueryCostMap::InitQuery(const AIFloat3& startPos, bool isBottleneck)
 {
 	this->startPos = startPos;
+	this->isBottleneck = isBottleneck;
 }
 
 void CQueryCostMap::Prepare()

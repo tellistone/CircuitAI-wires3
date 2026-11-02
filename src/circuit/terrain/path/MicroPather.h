@@ -243,7 +243,9 @@ namespace NSMicroPather {
 					IndexVec* path, float* cost);
 			int FindBestPathToPointOnRadius(void* startNode, void* endNode, int radius, float maxThreat, TestFunc hitTest,
 					IndexVec* path, float* cost);
-			void MakeCostMap(void* startNode, std::vector<float>& costMap);
+			// isBottleneck: each cell gets the lowest possible "highest threat crossed" on a route from startNode
+			//               (widest-path flood) instead of the summed path cost
+			void MakeCostMap(void* startNode, std::vector<float>& costMap, bool isBottleneck = false);
 
 			size_t RefinePath(IndexVec& path);
 			void FillPathInfo(PathInfo& iPath);
