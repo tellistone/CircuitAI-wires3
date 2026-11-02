@@ -389,6 +389,7 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 		float angle = 0.f;
 		FireSpot spot = FireSpot::NONE;
 		float radius = 0.f;
+		bool isCircling = false;  // already on a route around this enemy, still near the ring
 		if (spotRange > 0.f) {
 			radius = GetFireRange(unit, enemy) * spotRange;
 			// Other melee units' spots on this enemy, and how far apart spots must be: 0.8 x the chord between
@@ -403,8 +404,9 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 			const float minSep = 2.f * radius * sinf(static_cast<float>(M_PI) / n) * MELEE_SEP;
 			// Already circling this enemy (a route on it, still near the ring): carry on the same way round
 			auto itr = meleeRoutes.find(unit);
-			const bool isForward = (itr != meleeRoutes.end()) && (itr->second.enemy == enemy)
+			isCircling = (itr != meleeRoutes.end()) && (itr->second.enemy == enemy)
 					&& (unit->GetPos(frame).SqDistance2D(enemy->GetPos()) < SQUARE(radius * 2.f + SQUARE_SIZE * 8));
+			const bool isForward = isCircling;
 			spot = FindMeleeSpot(unit, enemy, spotRange, claims, meleeClaims, minSep, isForward, safeThreat, pos, angle);
 			if ((FireSpot::SPOT != spot) && isForward) {  // nothing safe ahead: any way round
 				spot = FindMeleeSpot(unit, enemy, spotRange, claims, meleeClaims, minSep, false, safeThreat, pos, angle);
@@ -435,7 +437,8 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 				}
 				claims[unit] = pos;
 				fireSpots[unit] = {pos, frame, FireSpot::RISKY == spot};
-				unit->MeleeRoute(route.spots, enemy, tile, timeout);
+				// Jumpers jump in to the first spot (jump ready), not while already circling: that would waste the jump
+				unit->MeleeRoute(route.spots, enemy, tile, timeout, !isCircling);
 				meleeRoutes[unit] = std::move(route);
 			} break;
 			case FireSpot::HOLD: {  // every spot dangerous, here is safe: stay, fight what comes into range

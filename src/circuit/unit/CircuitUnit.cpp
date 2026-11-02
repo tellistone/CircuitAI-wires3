@@ -436,14 +436,19 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 	)
 }
 
-void CCircuitUnit::MeleeRoute(const std::vector<AIFloat3>& spots, CEnemyInfo* enemy, int tile, int timeout)
+void CCircuitUnit::MeleeRoute(const std::vector<AIFloat3>& spots, CEnemyInfo* enemy, int tile, int timeout, bool isJump)
 {
 	target = enemy;
 	targetTile = tile;
 	TRY_UNIT(manager->GetCircuit(), this,
 		short options = UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY;
+		const bool isJumpIn = isJump && IsJumpReady();
 		for (const AIFloat3& p : spots) {
-			CmdMoveTo(p, options, timeout);
+			if (isJumpIn && (options == UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY)) {
+				CmdJumpTo(p, options, timeout);  // jump in to the first spot, walk on from there
+			} else {
+				CmdMoveTo(p, options, timeout);
+			}
 			options |= UNIT_COMMAND_OPTION_SHIFT_KEY;
 		}
 		CmdWantedSpeed(NO_SPEED_LIMIT);
