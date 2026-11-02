@@ -107,9 +107,9 @@ private:
 	bool IsFleeQueryPending() const;
 	int pullFrame;  // last pull-back of endangered stragglers
 	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
-	std::vector<ICoreUnit::Id> candidateIds;  // FindTarget: safe targets, nearest first (max 16)
+	std::vector<ICoreUnit::Id> candidateIds;  // FindTarget: screened targets, nearest first (max 16)
 	F3Vec candidatePos;  // their positions, goals of the target route
-	std::vector<ICoreUnit::Id> screenedIds;  // FindTarget: all safe targets before stickiness trims them (retry goals)
+	std::vector<ICoreUnit::Id> screenedIds;  // FindTarget: all screened targets before stickiness trims them (retry goals)
 	F3Vec screenedPos;
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)
 	int stepFrame;  // last step back after being hit while holding
