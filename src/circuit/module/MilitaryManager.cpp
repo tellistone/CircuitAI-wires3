@@ -333,6 +333,7 @@ void CMilitaryManager::ReadConfig()
 	const Json::Value& quotas = root["quota"];
 	maxScouts = quotas.get("scout", 3).asUInt();
 	scoutPerMex = quotas.get("scout_per_mex", 1.f).asFloat();
+	scoutMax = quotas.get("scout_max", 12).asUInt();
 	scoutMapCurve.clear();
 	const Json::Value& qmap = quotas["scout_map_size"];
 	if (qmap.isArray()) {
@@ -1270,7 +1271,9 @@ static float EvalCurve(const std::vector<std::pair<float, float>>& curve, float 
 unsigned int CMilitaryManager::GetMaxScouts(const CCircuitDef* cdef) const
 {
 	auto it = scoutMexBonus.find(cdef->GetMobileId());
-	return maxScouts + ((it == scoutMexBonus.end()) ? 0 : it->second);
+	const unsigned int count = maxScouts + ((it == scoutMexBonus.end()) ? 0 : it->second);
+	// quota.scout_max caps the bonus; quota.scout stays the minimum even above it; 0 = no cap
+	return (scoutMax > 0) ? std::max(std::min(count, scoutMax), maxScouts) : count;
 }
 
 void CMilitaryManager::UpdateScoutQuota()
@@ -1300,7 +1303,8 @@ void CMilitaryManager::UpdateScoutQuota()
 		it = (refUnits.find(it->first) == refUnits.end()) ? scoutMexBonus.erase(it) : std::next(it);
 	}
 
-	const int enemyPlayers = std::max(circuit->GetEnemyTeamSize(), 1);
+	// All players: enemy teams (engine count, minus Gaia) plus our ally team's players that haven't resigned
+	const int players = std::max(circuit->GetEnemyTeamSize(), 0) + std::max(circuit->GetAllyTeam()->GetAliveSize(), 1);
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	CThreatMap* threatMap = circuit->GetThreatMap();
@@ -1308,10 +1312,10 @@ void CMilitaryManager::UpdateScoutQuota()
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	// Average of the random powerMod ScoutTask gets (0.75 / thr_mod.scout)
 	const float powerMod = 0.75f / std::max(scoutMod.min + 0.5f * scoutMod.len, 1e-3f);
-	// Second multiplier: map size curve / enemy players. Size = side of a square map with the same area,
+	// Second multiplier: map size curve / all players. Size = side of a square map with the same area,
 	// in Spring map units (512 elmos), so 8x8 -> 8 and a 10x16 map -> ~12.6
 	const float mapSize = sqrtf(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
-	const float mapMult = EvalCurve(scoutMapCurve, mapSize) / enemyPlayers;
+	const float mapMult = EvalCurve(scoutMapCurve, mapSize) / players;
 
 	for (auto& kv : refUnits) {
 		const int mobileId = kv.first;
@@ -1326,7 +1330,7 @@ void CMilitaryManager::UpdateScoutQuota()
 		CTerrainManager::CorrectPosition(startPos);
 
 		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true);
-		pathfinder->RunQuery(query, [this, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
+		pathfinder->RunQuery(query, [this, mobileId, safeThreat, players, mapMult](const IPathQuery* query) {
 			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
 			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
 			unsigned int count = 0;
@@ -1349,8 +1353,8 @@ void CMilitaryManager::UpdateScoutQuota()
 					++count;
 				}
 			}
-			// (reachable mexes / enemy players) x (map size curve / enemy players) x scout_per_mex, rounded down
-			scoutMexBonus[mobileId] = (unsigned int)(scoutPerMex * mapMult * count / enemyPlayers);
+			// (reachable mexes / all players) x (map size curve / all players) x scout_per_mex, rounded down
+			scoutMexBonus[mobileId] = (unsigned int)(scoutPerMex * mapMult * count / players);
 		});
 	}
 }

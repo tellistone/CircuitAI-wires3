@@ -251,6 +251,7 @@ private:
 		float avg;
 	} raid;
 	unsigned int maxScouts;  // quota.scout: the minimum
+	unsigned int scoutMax;  // quota.scout_max: cap on minimum + bonus (0 = none)
 	float scoutPerMex;  // quota.scout_per_mex: multiplier on the reachable-mex bonus (0 = off)
 	std::map<int, unsigned int> scoutMexBonus;  // by mobile type id (-1 = air)
 	// quota.scout_map_size: [<map side in Spring map units (512 elmos)>, <multiplier>] points
