@@ -41,7 +41,10 @@ protected:
 	// Default: walkable and no threat at all (CQueryLineMap::IsSafeLine)
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const;
 	ISquadTask* GetMergeTask();
+	// Also releases stuck units (far from the regroup spot after 60 s, or a leader that didn't move between
+	// regroups) to the idle pool; leader == nullptr afterwards if none are left
 	bool IsMustRegroup();
+	void ReleaseStuck(std::vector<CCircuitUnit*>& stuck);
 	void ActivePath(float speed = NO_SPEED_LIMIT);
 	NSMicroPather::TestFunc GetHitTest() const;
 
