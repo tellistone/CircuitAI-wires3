@@ -151,6 +151,9 @@ void CRaidTask::Update()
 	 */
 	bool wasRegroup = (State::REGROUP == state);
 	bool mustRegroup = IsMustRegroup();
+	if (leader == nullptr) {  // all units released as stuck: task aborted
+		return;
+	}
 	if (State::REGROUP == state) {
 		if (mustRegroup) {
 			const int timeout = frame + FRAMES_PER_SEC * 60;

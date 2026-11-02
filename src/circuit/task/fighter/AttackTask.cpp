@@ -249,6 +249,9 @@ void CAttackTask::Update()
 	 */
 	bool wasRegroup = (State::REGROUP == state);
 	bool mustRegroup = IsMustRegroup();
+	if (leader == nullptr) {  // all units released as stuck: task aborted
+		return;
+	}
 	if (State::REGROUP == state) {
 		if (mustRegroup) {
 			CCircuitAI* circuit = manager->GetCircuit();
