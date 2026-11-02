@@ -355,7 +355,8 @@ void CAttackTask::Update()
 
 ISquadTask* CAttackTask::GetAttackMergeTask()
 {
-	// Groups under quota.attack look for a group to join every 4 updates, others every 32.
+	// Groups under quota.attack look for a group to join every quota.attack_merge.join_interval[0] (4) updates,
+	// others every join_interval[1] (32).
 	// Unlike other squads, an attack group may merge while its leader stands on enemy-held ground;
 	// the straight line between the leaders must still be safe by the threat allowance (IsSafeMergeLine).
 	// Not while fighting: walking off to another group would leave a fight we accepted (absorbing skips us too)
@@ -402,7 +403,8 @@ bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 
 void CAttackTask::AbsorbWeakerTasks()
 {
-	// A group at or above quota.attack pulls in attack groups under quota.attack near it, every 8 updates.
+	// A group at or above quota.attack pulls in attack groups under quota.attack near it, every
+	// quota.attack_merge.absorb_interval (8) updates.
 	// Same rules as joining (CanAssignTo: speed ratio, leaders within the merge distance, movement type,
 	// never a worse mover than our leader; reachable; IsSafeMergeLine incl. its travel limit), seen from the
 	// small group's side. Interval: quota.attack_merge.absorb_interval.
@@ -470,13 +472,18 @@ void CAttackTask::Reinforce(const int frame)
 		return;
 	}
 	// Threat-aware path to the group's leader, capped like every other route (GetPathThreatCap: the common
-	// allowance). It only has to get within 800 elmos, so the hot zone around a fighting group doesn't block
+	// allowance). It only has to get within reinforce_range (800), so the hot zone around a fighting group doesn't block
 	// it; merging takes over inside the merge distance (CheckMergeTask from our side, AbsorbWeakerTasks from
 	// an army's side). Range: quota.attack_merge.reinforce_range.
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& startPos = leader->GetPos(frame);
 	position = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad this update
-	const float pathRange = static_cast<CMilitaryManager*>(manager)->GetAttackMerge().reinforceRange;
+	// Never stop farther out than we can merge from (the merge distance, or travel_sec at our slowest speed), with
+	// a margin for the host moving: otherwise a slow group would park short of the host and never merge
+	const CMilitaryManager::SAttackMerge& cfg = static_cast<CMilitaryManager*>(manager)->GetAttackMerge();
+	const float mergeReach = std::min(cfg.distance, cfg.travelSec * lowestSpeed);
+	const float pathRange = std::max(std::min(cfg.reinforceRange, mergeReach * 0.8f),
+			static_cast<float>(circuit->GetPathfinder()->GetSquareSize()));
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(

@@ -397,6 +397,10 @@ void CMilitaryManager::ReadConfig()
 		attackMerge.speedRatio = readNum("speed_ratio", 1.5f, 1.f);
 		attackMerge.distance = readNum("distance", 2000.f, 0.f);
 		attackMerge.travelSec = readNum("travel_sec", 30.f, 0.f);
+		if (attackMerge.travelSec > MAX_TRAVEL_SEC) {  // ISquadTask::CheckMergeTask has its own fixed limit
+			circuit->LOG("CONFIG %s: quota.attack_merge.travel_sec above %i has no effect, using %i", cfgName.c_str(), MAX_TRAVEL_SEC, MAX_TRAVEL_SEC);
+			attackMerge.travelSec = MAX_TRAVEL_SEC;
+		}
 		const Json::Value& qjoin = qmerge.isObject() ? qmerge["join_interval"] : Json::Value();
 		const bool isJoinOk = qjoin.isNull() || (qjoin.isArray() && (qjoin.size() == 2)
 				&& qjoin[0u].isNumeric() && qjoin[1u].isNumeric() && (qjoin[0u].asInt() >= 1) && (qjoin[1u].asInt() >= 1));

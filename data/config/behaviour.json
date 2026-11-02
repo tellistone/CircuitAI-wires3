@@ -18,11 +18,11 @@
 	"attack_merge": {  // how attack groups join (the smaller walks to the bigger), absorb (an army pulls in small groups) and reinforce (a small group walks to the nearest stronger group)
 		"speed_ratio": 1.5,  // leaders' speeds within this factor of each other, else the groups never merge or reinforce each other
 		"distance": 2000,  // leaders within this many elmos may join or absorb
-		"travel_sec": 30,  // ...and at most this many seconds of straight travel apart at the walking group's slowest speed (keeps arrivals inside the 60 s regroup limit, after which far-away units are dropped as stuck)
+		"travel_sec": 30,  // ...and at most this many seconds of straight travel apart at the walking group's slowest speed (max 60; keeps arrivals inside the 60 s regroup limit, after which far-away units are dropped as stuck)
 		"join_interval": [4, 32],  // [<group under quota.attack>, <army>]: check for a group to join every this many updates (~1 s each)
 		"absorb_interval": 8,  // an army absorbs small groups every this many updates
 		"support_radius": 400,  // on the line to the bigger group, within this many elmos of its leader both groups' strength counts against threat
-		"reinforce_range": 800,  // a reinforcing group's route only has to get this close to the stronger group's leader (merging finishes it)
+		"reinforce_range": 800,  // a reinforcing group's route only has to get this close to the stronger group's leader (merging finishes it); never more than 80% of what the group can merge from (distance, or travel_sec at its slowest speed)
 		"reinforce_fails": 10,  // empty reinforce routes in a row (one per ~2 s decision) before giving up
 		"reinforce_retry": 10  // seconds to act as a small attack group after giving up, before looking for a group again
 	},
