@@ -103,10 +103,20 @@ protected:
 		std::vector<springai::AIFloat3> spots;
 		springai::AIFloat3 enemyPos;  // enemy position when planned
 		CEnemyInfo* enemy;  // compared only, never dereferenced
+		int enemyId;
 		float radius;  // ring radius
 		int frame;  // when ordered
 	};
 	std::map<CCircuitUnit*, SMeleeRoute> meleeRoutes;
+	std::set<CCircuitUnit*> meleeHolding;  // melee units last told to HOLD (not a direct Attack)
+	// Where every unit is heading (ranged: kept spot or own position; melee: its route spot nearest to it)
+	void BuildClaims(const int frame, std::map<CCircuitUnit*, springai::AIFloat3>& claims) const;
+	// Spot (FindMeleeSpot) and route round the ring for one melee unit on enemy, nOnEnemy of the task's melee units
+	// on it (spacing), meleeClaims their spots
+	void SendMelee(CCircuitUnit* unit, CEnemyInfo* enemy, int nOnEnemy, std::map<CCircuitUnit*, springai::AIFloat3>& claims,
+			const std::vector<springai::AIFloat3>& meleeClaims, float safeThreat, const int frame, const int timeout);
+	// A melee unit idle at the end of its route: send it on round the ring at once (only near the ring)
+	void ResendMelee(CCircuitUnit* unit);
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)

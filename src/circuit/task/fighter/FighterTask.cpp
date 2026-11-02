@@ -27,10 +27,6 @@ namespace circuit {
 
 using namespace springai;
 
-namespace {
-const int   MELEE_IDLE_WAKE = FRAMES_PER_SEC * 2;  // an idle melee unit wakes its group if its route is this old
-}
-
 F3Vec IFighterTask::urgentPositions;  // NOTE: micro-opt
 F3Vec IFighterTask::enemyPositions;  // NOTE: micro-opt
 
@@ -80,6 +76,7 @@ void IFighterTask::RemoveAssignee(CCircuitUnit* unit)
 	cowards.erase(unit);
 	fireSpots.erase(unit);
 	meleeRoutes.erase(unit);
+	meleeHolding.erase(unit);
 	if (unit->HasShield()) {
 		shields.erase(unit);
 	}
@@ -110,13 +107,10 @@ void IFighterTask::OnUnitIdle(CCircuitUnit* unit)
 		unit->SetTaskFrame(manager->GetCircuit()->GetLastFrame());
 		auto itr = meleeRoutes.find(unit);
 		if (itr != meleeRoutes.end()) {
-			// Walked its whole route: the next Attack sends it on. Wake the group for that now rather than at its
-			// next decision (attack ~2 s, defend ~16 s), unless the route was just ordered (limits group re-decides)
-			const int frame = manager->GetCircuit()->GetLastFrame();
-			if (frame >= itr->second.frame + MELEE_IDLE_WAKE) {
-				unit->ForceUpdate(frame);
-			}
+			// Walked its whole route: send it on round the ring now, not at the group's next decision
+			// (attack ~2 s, defend ~16 s). Should that not happen, the next Attack replans it.
 			itr->second.frame = -FRAMES_PER_SEC * 3600;
+			ResendMelee(unit);
 		}
 	}
 }
@@ -198,7 +192,7 @@ const int   SPOT_KEEP     = FRAMES_PER_SEC * 10;  // last spot forgotten this lo
 const int   RISKY_GRACE   = FRAMES_PER_SEC * 3;   // pull-back leaves a unit sent to a RISKY spot alone
 // Melee spots: a full ring of 16 spots (PI/8 apart) around the enemy
 const int   MELEE_STEPS   = 8;      // spots each side of our bearing
-const int   MELEE_HOPS_MAX = 12;    // most spots queued per route: the chosen one, then on around the ring
+const int   MELEE_HOPS_MAX = 6;     // most spots queued per route: the chosen one, then on around the ring (one lap)
 const float MELEE_ROUTE_SEC = 4.f;  // ...as many as it takes to walk about this long (at least 4 spots)
 const int   MELEE_HOP_SLOTS = 3;    // ring slots between queued spots (3 x PI/8 = 67.5 degrees)
 const float MELEE_SEP     = 0.8f;   // spots of melee units on one enemy at least this x the even-spacing chord apart
@@ -245,22 +239,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	// Melee units on a route claim the route spot nearest to them.
 	// Longest range picks first; each pick replaces that unit's claim.
 	std::map<CCircuitUnit*, AIFloat3> claims;
-	for (CCircuitUnit* unit : units) {
-		const AIFloat3& uPos = unit->GetPos(frame);
-		auto itr = meleeRoutes.find(unit);
-		if (itr != meleeRoutes.end()) {
-			AIFloat3 nearSpot = itr->second.spots.front();
-			for (const AIFloat3& sp : itr->second.spots) {
-				if (sp.SqDistance2D(uPos) < nearSpot.SqDistance2D(uPos)) {
-					nearSpot = sp;
-				}
-			}
-			claims[unit] = nearSpot;
-			continue;
-		}
-		AIFloat3 p;
-		claims[unit] = GetKeptFireSpot(unit, p) ? p : uPos;
-	}
+	BuildClaims(frame, claims);
 	std::map<CCircuitUnit*, float> ranges;
 	for (CCircuitUnit* unit : orderUnits) {
 		ranges[unit] = GetFireRange(unit);
@@ -302,6 +281,26 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	}
 	if (!meleeUnits.empty()) {
 		AttackMelee(frame, meleeUnits, isRepeatAttack, claims, safeThreat, timeout);
+	}
+}
+
+void IFighterTask::BuildClaims(const int frame, std::map<CCircuitUnit*, AIFloat3>& claims) const
+{
+	for (CCircuitUnit* unit : units) {
+		const AIFloat3& uPos = unit->GetPos(frame);
+		auto itr = meleeRoutes.find(unit);
+		if (itr != meleeRoutes.end()) {
+			AIFloat3 nearSpot = itr->second.spots.front();
+			for (const AIFloat3& sp : itr->second.spots) {
+				if (sp.SqDistance2D(uPos) < nearSpot.SqDistance2D(uPos)) {
+					nearSpot = sp;
+				}
+			}
+			claims[unit] = nearSpot;
+			continue;
+		}
+		AIFloat3 p;
+		claims[unit] = GetKeptFireSpot(unit, p) ? p : uPos;
 	}
 }
 
@@ -399,11 +398,28 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 		}
 	}
 
+	for (CCircuitUnit* unit : replans) {  // nearest first: they pick their spots first
+		CEnemyInfo* enemy = assigned[unit];
+		// Other melee units' spots on this enemy
+		std::vector<AIFloat3> meleeClaims;
+		for (const auto& kv : assigned) {
+			if ((kv.first != unit) && (kv.second == enemy)) {
+				meleeClaims.push_back(claims[kv.first]);
+			}
+		}
+		SendMelee(unit, enemy, taskCounts[enemy], claims, meleeClaims, safeThreat, frame, timeout);
+	}
+}
+
+void IFighterTask::SendMelee(CCircuitUnit* unit, CEnemyInfo* enemy, int nOnEnemy, std::map<CCircuitUnit*, AIFloat3>& claims,
+		const std::vector<AIFloat3>& meleeClaims, float safeThreat, const int frame, const int timeout)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const CMilitaryManager::SMeleeSpot& cfg = circuit->GetMilitaryManager()->GetMeleeSpot();
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	for (CCircuitUnit* unit : replans) {  // nearest first: they pick their spots first
-		CEnemyInfo* enemy = assigned[unit];
+	{
 		const int tile = inflMap->Pos2Index(enemy->GetPos());
 		CCircuitDef* cdef = unit->GetCircuitDef();
 		const float spotRange = cdef->GetMeleeSpotRange(cfg.spotRange);  // behaviour.json per unit "melee_range"
@@ -419,15 +435,8 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 			CCircuitDef* edef = enemy->GetCircuitDef();  // nullptr: unidentified radar blip
 			const float bodies = cdef->GetRadius() + ((edef != nullptr) ? edef->GetRadius() : 0.f);
 			radius = std::min(std::max(range * spotRange, bodies + SQUARE_SIZE), range * 0.95f);
-			// Other melee units' spots on this enemy, and how far apart spots must be: 0.8 x the chord between
-			// that many units evenly spread around the ring
-			std::vector<AIFloat3> meleeClaims;
-			for (const auto& kv : assigned) {
-				if ((kv.first != unit) && (kv.second == enemy)) {
-					meleeClaims.push_back(claims[kv.first]);
-				}
-			}
-			const int n = std::max(taskCounts[enemy], 2);
+			// How far apart spots must be: 0.8 x the chord between that many units evenly spread around the ring
+			const int n = std::max(nOnEnemy, 2);
 			const float minSep = 2.f * radius * sinf(static_cast<float>(M_PI) / n) * MELEE_SEP;
 			// Already circling this enemy (a route on it, still near the ring): carry on the same way round
 			auto itr = meleeRoutes.find(unit);
@@ -446,12 +455,13 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 				route.spots.push_back(pos);
 				route.enemyPos = enemy->GetPos();
 				route.enemy = enemy;
+				route.enemyId = enemy->GetId();
 				route.radius = radius;
 				route.frame = frame;
 				// Keep moving: on around the ring, the same way for every unit of the task so they stay apart,
 				// up to the first spot that can't be reached or is dangerous. Not from a RISKY spot.
-				// Enough spots to keep it walking about MELEE_ROUTE_SEC (at least 4, at most MELEE_HOPS_MAX), so it is
-				// still on its way at the group's next decision; OnUnitIdle wakes the group if it runs out anyway
+				// Enough spots to keep it walking about MELEE_ROUTE_SEC (at least 4, at most one lap: spacing is only
+				// judged at the first spot), so it's still on its way at the next decision; OnUnitIdle sends it on anyway
 				const AIFloat3& ePos = enemy->GetPos();
 				const float hopLen = std::max(2.f * radius * sinf(MELEE_HOP_SLOTS * static_cast<float>(M_PI) / (2 * MELEE_STEPS)), 1.f);
 				const int hops = utils::clamp(static_cast<int>(ceilf(cdef->GetSpeed() * MELEE_ROUTE_SEC / hopLen)) + 1, 4, MELEE_HOPS_MAX);
@@ -471,20 +481,53 @@ void IFighterTask::AttackMelee(const int frame, const std::vector<CCircuitUnit*>
 				// Jumpers jump in to the first spot (jump ready), not while already circling: that would waste the jump
 				unit->MeleeRoute(route.spots, enemy, tile, timeout, !isCircling);
 				meleeRoutes[unit] = std::move(route);
+				meleeHolding.erase(unit);
 			} break;
 			case FireSpot::HOLD: {  // every spot dangerous, here is safe: stay, fight what comes into range
 				claims[unit] = pos;
 				fireSpots.erase(unit);
 				meleeRoutes.erase(unit);
+				meleeHolding.insert(unit);  // RaidTask::IsAllHolding: a direct Attack (below) looks the same otherwise
 				unit->HoldFire(pos, enemy, tile, timeout);
 			} break;
 			default: {  // no usable range, or melee_range <= 0 for this unit: close in directly
 				fireSpots.erase(unit);
 				meleeRoutes.erase(unit);
+				meleeHolding.erase(unit);
 				unit->Attack(enemy, tile, timeout);
 			} break;
 		}
 	}
+}
+
+void IFighterTask::ResendMelee(CCircuitUnit* unit)
+{
+	auto itr = meleeRoutes.find(unit);
+	if ((target == nullptr) || (itr == meleeRoutes.end()) || (unit->Blocker() != nullptr)) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const SMeleeRoute& route = itr->second;
+	CEnemyInfo* enemy = (route.enemyId == target->GetId()) ? target : circuit->GetEnemyInfo(route.enemyId);
+	if ((enemy == nullptr) || enemy->IsHidden()) {
+		return;
+	}
+	// Only from the ring: a unit idle elsewhere (end of an escape, a regroup) waits for the group's decision
+	if (unit->GetPos(frame).SqDistance2D(enemy->GetPos()) > SQUARE(route.radius * 2.f + SQUARE_SIZE * 8)) {
+		return;
+	}
+	std::map<CCircuitUnit*, AIFloat3> claims;
+	BuildClaims(frame, claims);
+	std::vector<AIFloat3> meleeClaims;
+	int nOnEnemy = 1;
+	for (const auto& kv : meleeRoutes) {
+		if ((kv.first != unit) && (kv.second.enemyId == route.enemyId)) {
+			meleeClaims.push_back(claims[kv.first]);
+			++nOnEnemy;
+		}
+	}
+	SendMelee(unit, enemy, nOnEnemy, claims, meleeClaims, GetEscapeSafeThreat(), frame, frame + FRAMES_PER_SEC * 60);
 }
 
 CEnemyInfo* IFighterTask::FindMeleeAltTarget(CCircuitUnit* unit, const std::map<CEnemyInfo*, int>& counts, int cap,

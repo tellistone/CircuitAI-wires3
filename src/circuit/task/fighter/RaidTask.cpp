@@ -534,6 +534,7 @@ void CRaidTask::AttackDirect(int frame)
 		unit->GetTravelAct()->StateWait();
 		fireSpots.erase(unit);
 		meleeRoutes.erase(unit);
+		meleeHolding.erase(unit);
 		if (isRepeatAttack || (unit->GetTarget() != target) || (unit->GetTargetTile() != targetTile)) {
 			unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);
 		}
@@ -553,6 +554,15 @@ bool CRaidTask::IsAllHolding() const
 		CCircuitDef* cdef = unit->GetCircuitDef();
 		if ((cdef->IsAttrMelee() && (cdef->GetMeleeSpotRange(meleeSpotRange) <= 0.f)) || (range < SQUARE_SIZE * 4)) {
 			continue;  // old close-in melee, or no usable range
+		}
+		if (cdef->IsAttrMelee()) {  // spot-mode melee: only an explicit HOLD counts (a direct Attack looks the same)
+			++ranged;
+			if ((meleeHolding.find(unit) == meleeHolding.end()) || (unit->GetTarget() != target)
+				|| (unit->GetPos(frame).SqDistance2D(target->GetPos()) <= SQUARE(range)))
+			{
+				return false;
+			}
+			continue;
 		}
 		++ranged;
 		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())
