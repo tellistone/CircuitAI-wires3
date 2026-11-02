@@ -15,18 +15,6 @@
 	"attack": 20.0,  // min power of attack group
 	"attack_spot_threat": 1.0,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking
 	"attack_flee_share": 0.5,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
-	"attack_group_radius": [2.0, 800],  // [<x the group's highest weapon/LOS range>, <min elmos>]: attack group units farther than this from their leader, and without the target in their weapon range, are stragglers: while the group fights they walk to the leader instead of straight to a firing spot
-	"attack_merge": {  // how attack groups join (the smaller walks to the bigger), absorb (an army pulls in small groups) and reinforce (a small group walks to the nearest stronger group)
-		"speed_ratio": 1.5,  // leaders' speeds within this factor of each other, else the groups never merge or reinforce each other
-		"distance": 2000,  // leaders within this many elmos may join or absorb (>= 1)
-		"travel_sec": 30,  // ...and at most this many seconds of straight travel apart at the walking group's slowest speed (1 to 60; keeps arrivals inside the 60 s regroup limit, after which far-away units are dropped as stuck)
-		"join_interval": [4, 32],  // [<group under quota.attack>, <army>]: check for a group to join every this many updates (~1 s each)
-		"absorb_interval": 8,  // an army absorbs small groups every this many updates
-		"support_radius": 400,  // on the line to the bigger group, within this many elmos of its leader both groups' strength counts against threat
-		"reinforce_range": 800,  // a reinforcing group's route only has to get this close to the stronger group's leader (merging finishes it); never more than 80% of what the group can merge from (distance, or travel_sec at its slowest speed)
-		"reinforce_fails": 10,  // empty reinforce routes in a row (one per ~2 s decision) before giving up
-		"reinforce_retry": 10  // seconds to act as a small attack group after giving up, before looking for a group again
-	},
 	"thr_mod": {
 		"attack": [0.45, 0.45],  // [<min>, <max>] enemy threat modifier for target selection of attack task
 		"raid": [0.45, 0.45],  // same for raid task (raider groups): target choice, escape and path threat; missing = use "attack"
