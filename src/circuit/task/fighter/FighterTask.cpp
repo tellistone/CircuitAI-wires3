@@ -238,13 +238,13 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		const AIFloat3& uPos = unit->GetPos(frame);
 		auto itr = meleeRoutes.find(unit);
 		if (itr != meleeRoutes.end()) {
-			AIFloat3 near = itr->second.spots.front();
+			AIFloat3 nearSpot = itr->second.spots.front();
 			for (const AIFloat3& sp : itr->second.spots) {
-				if (sp.SqDistance2D(uPos) < near.SqDistance2D(uPos)) {
-					near = sp;
+				if (sp.SqDistance2D(uPos) < nearSpot.SqDistance2D(uPos)) {
+					nearSpot = sp;
 				}
 			}
-			claims[unit] = near;
+			claims[unit] = nearSpot;
 			continue;
 		}
 		AIFloat3 p;
