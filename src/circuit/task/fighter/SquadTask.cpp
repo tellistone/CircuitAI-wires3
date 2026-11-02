@@ -252,10 +252,8 @@ bool ISquadTask::IsMustRegroup()
 			}
 			const AIFloat3& pos = unit->GetPos(frame);
 			const float sqDist = groupPos.SqDistance2D(pos);
-			// Spares units that joined within 60 s before the regroup began (merged or absorbed from afar:
-			// the straight-line travel limit can't see detours), they get until the next regroup
 			if ((sqDist > sqMaxDist) &&
-				((unit->GetTaskFrame() < groupFrame - FRAMES_PER_SEC * 60) || !terrainMgr->CanMoveToPos(unit->GetArea(), pos)))
+				((unit->GetTaskFrame() < groupFrame) || !terrainMgr->CanMoveToPos(unit->GetArea(), pos)))
 			{
 				TRY_UNIT(circuit, unit,
 					unit->GetUnit()->Stop();
