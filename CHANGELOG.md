@@ -12,7 +12,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - `leash` (default -1 = off): only chase an aircraft within this distance of home, meaning one of our attack or
     defend group leaders or the base. An aircraft already in weapon range is always engaged. With no aircraft
     near home, the squad stays with the nearest attack group, as it already did with no target.
-  - `own_ground` (default `false`): an aircraft over ground where our influence beats the enemy's also counts as near home.
+  - `own_ground` (default `false`): an aircraft over ground our buildings or static defences cover (the same area
+    defend groups treat as ours, radius `defence.infl_rad`) also counts as near home, as does one over ground where our
+    influence beats the enemy's, not counting the squad's own units or the plane itself.
   - `fire_spot` (default -1 = off): check enemy threat where the squad would stand to shoot, this fraction of its
     shortest weapon range short of the aircraft, instead of under the aircraft.
   The shipped `behaviour.json` sets `leash` 800, `own_ground` true and `fire_spot` 0.9.

@@ -345,13 +345,20 @@ void CAntiAirTask::FindTarget()
 		if (isLeash && (sqDist > sqRange)) {
 			bool isNearHome = false;
 			if (aaCfg.isOwnGround) {
-				// Our influence there without the squad's own share: else AA in enemy land makes its
-				// surroundings "ours" and creeps forward one plane at a time
-				float infl = inflMap->GetInfluenceAt(ePos);
-				for (CCircuitUnit* u : units) {
-					infl -= inflMap->GetMobileArmedInflAt(u, ePos);
+				// Ground our buildings and static defences cover is ours. The plain influence map counts
+				// armed units only, so a mex field or the back of the base with no army nearby reads as
+				// neutral, and the plane over it adds enemy influence of its own: AA never chased there.
+				isNearHome = (inflMap->GetAllyDefendInflAt(ePos) > INFL_EPS);
+				if (!isNearHome) {
+					// Else our influence there without the squad's own share (else AA in enemy land makes
+					// its surroundings "ours" and creeps forward one plane at a time), and without the
+					// plane's own share (a lone plane must not turn our ground into the enemy's)
+					float infl = inflMap->GetInfluenceAt(ePos) + enemy->GetThreat();
+					for (CCircuitUnit* u : units) {
+						infl -= inflMap->GetMobileArmedInflAt(u, ePos);
+					}
+					isNearHome = (infl > INFL_EPS);
 				}
-				isNearHome = (infl > INFL_EPS);
 			}
 			for (const AIFloat3& hp : homePoints) {
 				if (isNearHome) {
