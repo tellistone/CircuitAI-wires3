@@ -36,6 +36,7 @@ public:
 private:
 	ISquadTask* GetAttackMergeTask();
 	CAttackTask* FindMergeTask() const;
+	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Straight line from our leader to the host's: threat below our allowance, both groups' strength near the host
 	bool IsSafeMergeLine(const CAttackTask* host) const;
 	CAttackTask* GetReinforceSquad();
@@ -78,7 +79,7 @@ private:
 	void ApplyCorneredPath(const CQueryPathSingle* query);
 	CEnemyInfo* FindNearestHittable(int frame) const;
 	bool IsOnEnemyGround() const;  // influence at the leader < 0
-	// No target: route to the front line, or hold nearby when on enemy-held ground (or no front / no safe route)
+	// No target: route to the front line, or hold nearby when past it on enemy-held ground (or no front / no safe route)
 	void FallbackFrontPos();
 	void ApplyFrontPos(const CQueryPathMulti* query);
 

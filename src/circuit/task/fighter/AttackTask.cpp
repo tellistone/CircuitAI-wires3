@@ -357,9 +357,9 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 	// Groups under quota.attack look for a group to join every 4 updates, others every 32.
 	// Unlike other squads, an attack group may merge while its leader stands on enemy-held ground;
 	// the straight line between the leaders must still be safe by the threat allowance (IsSafeMergeLine).
-	// Not while engaged: walking off to another group would leave a fight we accepted (absorbing skips us too)
+	// Not while fighting: walking off to another group would leave a fight we accepted (absorbing skips us too)
 	const int interval = (attackPower < minPower) ? 4 : 32;
-	return ((updCount % interval == 1) && (State::ENGAGE != state)) ? FindMergeTask() : nullptr;
+	return ((updCount % interval == 1) && !IsFighting()) ? FindMergeTask() : nullptr;
 }
 
 CAttackTask* CAttackTask::FindMergeTask() const
@@ -398,6 +398,23 @@ CAttackTask* CAttackTask::FindMergeTask() const
 		metric = sqDistCost;
 	}
 	return best;
+}
+
+bool CAttackTask::IsFighting() const
+{
+	// Engaged and some unit has the target within its own weapon range. ENGAGE alone starts at highestRange,
+	// which includes LOS radius: far too wide to keep groups from merging.
+	if ((State::ENGAGE != state) || (target == nullptr)) {
+		return false;
+	}
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const AIFloat3& tPos = target->GetPos();
+	for (CCircuitUnit* unit : units) {
+		if (unit->GetPos(frame).SqDistance2D(tPos) < SQUARE(unit->GetCircuitDef()->GetMaxRange())) {
+			return true;
+		}
+	}
+	return false;
 }
 
 bool CAttackTask::IsSafeMergeLine(const CAttackTask* host) const
@@ -453,7 +470,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		CCircuitUnit* candyLeader = candy->GetLeader();
 		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
 			|| (candy->GetAttackPower() >= minPower)
-			|| (State::ENGAGE == candy->state)  // fighting: let it finish its fight (it doesn't join either)
+			|| candy->IsFighting()  // let it finish its fight (it doesn't join either)
 			|| !CanAssignTo(candyLeader))
 		{
 			continue;
@@ -1061,12 +1078,6 @@ bool CAttackTask::IsOnEnemyGround() const
 void CAttackTask::FallbackFrontPos()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (IsOnEnemyGround()) {
-		// The front is our own cluster on friendly ground: routing there from enemy-held ground walks the
-		// group back, and it would bounce on the border. Hold at the quietest spot nearby instead.
-		HoldPosition();
-		return;
-	}
 	circuit->GetMilitaryManager()->FillFrontPos(leader, urgentPositions);
 	if (urgentPositions.empty()) {
 		HoldPosition();
@@ -1075,6 +1086,20 @@ void CAttackTask::FallbackFrontPos()
 
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& startPos = leader->GetPos(frame);
+	if (IsOnEnemyGround()) {
+		// The front is our own cluster on friendly ground. Already past it (farther from our base than its
+		// nearest point): routing there walks the group back, and it would bounce on the border, so hold at
+		// the quietest spot nearby. Not past it (an enemy-held patch on the way): keep going to the front.
+		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+		float sqFrontDist = std::numeric_limits<float>::max();
+		for (const AIFloat3& p : urgentPositions) {
+			sqFrontDist = std::min(sqFrontDist, p.SqDistance2D(basePos));
+		}
+		if (startPos.SqDistance2D(basePos) > sqFrontDist) {
+			HoldPosition();
+			return;
+		}
+	}
 	const float pathRange = DEFAULT_SLACK * 4;
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
