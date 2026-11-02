@@ -78,4 +78,14 @@ float CQueryCostMap::GetCostAt(const AIFloat3& endPos, int radius) const
 	return pathCost;
 }
 
+float CQueryCostMap::GetCostAtSquare(const AIFloat3& pos) const
+{
+	int x, y;
+	pathfinder.Pos2PathXY(pos, &x, &y);
+	if (!pathfinder.IsInPathMap(x, y)) {
+		return -1.f;
+	}
+	return costMap[pathfinder.PathXY2PathIndex(x, y)];
+}
+
 } // namespace circuit

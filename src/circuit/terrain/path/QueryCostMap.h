@@ -30,6 +30,8 @@ public:
 
 	// Result
 	float GetCostAt(const springai::AIFloat3& endPos, int radius) const;
+	// Cost of the one square under pos, -1 if not reached
+	float GetCostAtSquare(const springai::AIFloat3& pos) const;
 
 private:
 	std::vector<float> costMap;

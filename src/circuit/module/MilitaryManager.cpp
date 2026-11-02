@@ -1247,6 +1247,26 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 	return spots[bestIdx].position;
 }
 
+// Piecewise-linear [x, y] curve sorted by x, flat beyond its ends; empty = 1
+static float EvalCurve(const std::vector<std::pair<float, float>>& curve, float x)
+{
+	if (curve.empty()) {
+		return 1.f;
+	}
+	if (x <= curve.front().first) {
+		return curve.front().second;
+	}
+	for (size_t i = 1; i < curve.size(); ++i) {
+		const auto& b = curve[i];
+		if (x <= b.first) {
+			const auto& a = curve[i - 1];
+			const float t = (b.first > a.first) ? (x - a.first) / (b.first - a.first) : 1.f;
+			return a.second + (b.second - a.second) * t;
+		}
+	}
+	return curve.back().second;
+}
+
 unsigned int CMilitaryManager::GetMaxScouts(const CCircuitDef* cdef) const
 {
 	auto it = scoutMexBonus.find(cdef->GetMobileId());
@@ -1256,8 +1276,8 @@ unsigned int CMilitaryManager::GetMaxScouts(const CCircuitDef* cdef) const
 void CMilitaryManager::UpdateScoutQuota()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
-	// One scout-capable unit per movement type stands in for that type (its move map and threat layer).
-	// Prefer an uncloaked one: the cloak layer is on a different scale (FillMapData ignores it here anyway).
+	// One scout-capable unit per movement type stands in for that type (its move map and threat layer;
+	// the bottleneck query never uses the cloak layer, which is on a different scale).
 	std::map<int, CCircuitUnit*> refUnits;
 	for (CCircuitUnit* unit : army) {
 		CCircuitDef* cdef = unit->GetCircuitDef();
@@ -1318,9 +1338,11 @@ void CMilitaryManager::UpdateScoutQuota()
 				}
 				AIFloat3 pos = enemy->GetPos();
 				CTerrainManager::CorrectPosition(pos);
-				// Least possible "highest threat crossed" from our base to the mex (or right next to it,
-				// in case the mex blocks its own square); -1 = no route for this movement type
-				const float bottleneck = q->GetCostAt(pos, sqSize * 2);
+				// Least possible "highest threat crossed" from our base to the mex; -1 = no route for this movement type
+				float bottleneck = q->GetCostAtSquare(pos);  // the mex's own square
+				if (bottleneck < 0.f) {
+					bottleneck = q->GetCostAt(pos, sqSize);  // blocked by the mex itself: the squares around it
+				}
 				if ((bottleneck >= 0.f)
 					&& (bottleneck - THREAT_BASE < safeThreat / GetThrDistMod(IFighterTask::FightType::SCOUT, pos)))
 				{
@@ -1354,26 +1376,6 @@ float CMilitaryManager::GetBaseThrBonus(float sqDistToBase) const
 		return 1.f;
 	}
 	return 1.f + (baseThrBonus - 1.f) * (1.f - sqrtf(sqDistToBase) / baseRange);
-}
-
-// Piecewise-linear [x, y] curve sorted by x, flat beyond its ends; empty = 1
-static float EvalCurve(const std::vector<std::pair<float, float>>& curve, float x)
-{
-	if (curve.empty()) {
-		return 1.f;
-	}
-	if (x <= curve.front().first) {
-		return curve.front().second;
-	}
-	for (size_t i = 1; i < curve.size(); ++i) {
-		const auto& b = curve[i];
-		if (x <= b.first) {
-			const auto& a = curve[i - 1];
-			const float t = (b.first > a.first) ? (x - a.first) / (b.first - a.first) : 1.f;
-			return a.second + (b.second - a.second) * t;
-		}
-	}
-	return curve.back().second;
 }
 
 float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloat3& pos) const
