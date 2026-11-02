@@ -75,6 +75,8 @@ protected:
 	float retargetMove = -1.f;
 	springai::AIFloat3 lastOrderTargetPos;
 	float fireSpotReach = -1.f;  // > 0: units farther than this x their fire range from the target get no attack order and keep travelling
+	// Attack skips this unit (no attack order, keeps travelling). Default: fireSpotReach
+	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const;
 	// Firing spot each unit was last sent to (pointers only compared, never dereferenced)
 	struct SFireSpot {
 		springai::AIFloat3 pos;

@@ -19,7 +19,7 @@ public:
 	virtual ~CAttackTask();
 
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;
-	// CanAssignTo without the 1000-elmo distance limit: speed, movement type, not a worse mover
+	// CanAssignTo without the quota.attack_merge.distance limit: speed ratio, movement type, not a worse mover
 	bool IsCompatible(CCircuitUnit* unit) const;
 	// Walk to this stronger group and merge into it instead of hunting targets alone (while a safe route exists)
 	void SetReinforce(CAttackTask* squad) { reinforce = squad; }
@@ -35,6 +35,12 @@ public:
 
 private:
 	ISquadTask* GetAttackMergeTask();
+	// Attack (firing spots), and walk stragglers (IsOutOfReach) to the leader if they have no path
+	void Engage(int frame);
+	float GetGroupRadius() const;  // quota.attack_group_radius
+	// Straggler: farther from the leader than GetGroupRadius and the target out of its weapon range.
+	// Gets no firing-spot order (keeps travelling)
+	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const override;
 	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Straight line from our leader to the host's: threat below our allowance, both groups' strength near the host
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
@@ -44,10 +50,10 @@ private:
 	void AbsorbWeakerTasks();
 	void FindTarget();
 	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below the allowance for 'strength' at each
-	// sampled spot, or for 'supportStrength' within 400 elmos of 'to'. Used by target picking (approach line from the
+	// sampled spot, or for 'supportStrength' within supportRadius of 'to'. Used by target picking (approach line from the
 	// target towards us, out to our range) and merging (from our leader to the host's)
 	bool IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
-			float strength, float supportStrength) const;
+			float strength, float supportStrength, float supportRadius) const;
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates
