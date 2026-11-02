@@ -44,6 +44,9 @@
 		"static": 4.25,  // initial modifier for power of attack group based on static enemy threat
 		"comm": 0.75
 	},
+	"target_dist_mod": {  // attack groups choosing a target count these enemies' distance as this many times their real distance (see behaviour's "target_dist_mod")
+		"comm": 1.0  // all commanders; a commander's own behaviour entry overrides it
+	},
 	"aa_threat": 80.0,  // anti-air threat threshold, air factories will stop production when AA threat exceeds
 	"slack_mod": {
 		"all": 0.5,  // threat map 64-elmos slack multiplier for all units
@@ -165,6 +168,10 @@
 //		"pwr_mod": 1.0,
 		// Enemy threat multiplier
 //		"thr_mod": 1.0,
+
+		// Attack groups choosing a target count this enemy type's distance as this many times its real
+		// distance: > 1 = less wanted (e.g. solars), < 1 = more wanted
+//		"target_dist_mod": 1.0,
 
 		// Ignore enemy
 //		"ignore": false
@@ -1109,7 +1116,8 @@
 		"limit": 5
 	},
 	"energysolar": {
-		"role": ["mine"]
+		"role": ["mine"],
+		"target_dist_mod": 2.0
 	},
 	"staticshield": {
 		"role": ["static", "turtle"]

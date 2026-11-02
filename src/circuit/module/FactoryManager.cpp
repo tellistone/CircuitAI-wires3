@@ -261,6 +261,17 @@ void CFactoryManager::ReadConfig()
 	CCircuitDef::RoleName& roleNames = CCircuitDef::GetRoleNames();
 	CCircuitDef::AttrName& attrNames = CCircuitDef::GetAttrNames();
 	CCircuitDef::FireName& fireNames = CCircuitDef::GetFireNames();
+	// Commanders' target_dist_mod (quota.target_dist_mod.comm); a commander's own behaviour entry overrides it
+	const Json::Value& commDistMod = root["quota"]["target_dist_mod"]["comm"];
+	if (!commDistMod.isNull()) {
+		const float mod = std::max(commDistMod.asFloat(), 0.01f);
+		for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
+			if (cdef.IsRoleComm()) {
+				cdef.SetTargetDistMod(mod);
+			}
+		}
+	}
+
 	const Json::Value& behaviours = root["behaviour"];
 	for (const std::string& defName : behaviours.getMemberNames()) {
 		CCircuitDef* cdef = circuit->GetCircuitDef(defName.c_str());
@@ -368,6 +379,11 @@ void CFactoryManager::ReadConfig()
 		const Json::Value& thrMod = behaviour["thr_mod"];
 		if (!thrMod.isNull()) {
 			cdef->ModThreat(thrMod.asFloat());
+		}
+
+		const Json::Value& distMod = behaviour["target_dist_mod"];
+		if (!distMod.isNull()) {
+			cdef->SetTargetDistMod(std::max(distMod.asFloat(), 0.01f));
 		}
 
 		cdef->SetIgnore(behaviour.get("ignore", cdef->IsIgnore()).asBool());
