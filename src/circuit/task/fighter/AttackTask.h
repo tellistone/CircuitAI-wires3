@@ -42,7 +42,8 @@ private:
 	// power (corePower). Cached per frame, reset on join / leave / merge
 	void UpdateCore(int frame) const;
 	bool IsInCore(CCircuitUnit* unit, int frame) const;  // within GetGroupRadius of coreUnit
-	// Straggler: outside the main body. Gets no firing-spot order (keeps travelling) and doesn't count for strength
+	// Straggler: outside the main body and the target out of its weapon range.
+	// Gets no firing-spot order (keeps travelling)
 	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const override;
 	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Straight line from our leader to the host's: threat below our allowance, both groups' strength near the host

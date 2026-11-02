@@ -428,8 +428,14 @@ bool CAttackTask::IsInCore(CCircuitUnit* unit, int frame) const
 
 bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 {
-	// A straggler: outside the main body (still walking in after a merge, or left behind). Measured from the
-	// core, not the leader, which may itself be the one lagging behind
+	// A straggler: outside the main body (still walking in after a merge, or left behind), unless it already has
+	// the target within its weapon range. Measured from the core, not the leader, which may itself be the one
+	// lagging behind
+	if ((target != nullptr)
+		&& (unit->GetPos(frame).SqDistance2D(target->GetPos()) < SQUARE(unit->GetCircuitDef()->GetMaxRange())))
+	{
+		return false;
+	}
 	return !IsInCore(unit, frame);
 }
 
