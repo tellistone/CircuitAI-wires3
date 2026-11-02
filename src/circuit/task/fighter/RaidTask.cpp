@@ -533,6 +533,7 @@ void CRaidTask::AttackDirect(int frame)
 		}
 		unit->GetTravelAct()->StateWait();
 		fireSpots.erase(unit);
+		meleeRoutes.erase(unit);
 		if (isRepeatAttack || (unit->GetTarget() != target) || (unit->GetTargetTile() != targetTile)) {
 			unit->Attack(target, targetTile, frame + FRAMES_PER_SEC * 60);
 		}

@@ -14,6 +14,15 @@
 	"raid_flee_share": 0.5,  // raid group flees when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
 	"attack": 20.0,  // min power of attack group
 	"attack_spot_threat": 1.0,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking
+	// Units with the "melee" attribute in attack, defend, raid and anti-air groups. Each picks a spot on a ring around its
+	// target (same threat/crowding/walking-distance score as ranged firing spots), well apart from the other melee units
+	// on that target, then walks (plain moves, target set) on around the ring through a few more spots and is sent on
+	// again before it gets to the end: it never stands still at a spot
+	"melee": {
+		"spot_range": 0.4,  // ring radius, x the unit's weapon range; a unit type's own "melee_range" overrides it (either way); <= 0 = off (old behaviour: walk straight onto the target)
+		"per_target": 6,  // at most this many melee units on one target; the rest attack the nearest other enemy within "retarget_radius" of it (else the target after all); <= 0 = no cap
+		"retarget_radius": 600  // elmos
+	},
 	"attack_flee_share": 0.5,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
 	"attack_group_radius": [2.0, 800],  // [<x the group's highest weapon/LOS range>, <min elmos>]: attack group units farther than this from their leader, and without the target in their weapon range, are stragglers: while the group fights they walk to the leader instead of straight to a firing spot
 	"attack_merge": {  // how attack groups join (the smaller walks to the bigger), absorb (an army pulls in small groups) and reinforce (a small group walks to the nearest stronger group)
@@ -126,7 +135,8 @@
 		"role": ["builder", "mine"]
 
 		// Attributes - optinal states
-		// "melee" - always move close to target, disregard attack range
+		// "melee" - fight from close spots around the target and keep moving between them (quota.melee); per unit
+		//           "melee_range": <fraction of weapon range> overrides quota.melee.spot_range
 		// "boost" - boost speed on retreat
 		// "no_jump" - disable jump on retreat
 		// "no_strafe" - disable gunship's strafe

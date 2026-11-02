@@ -361,6 +361,15 @@ void CFactoryManager::ReadConfig()
 			cdef->SetArtyFleeMargin(artyFlee.asFloat());
 		}
 
+		const Json::Value& meleeRange = behaviour["melee_range"];
+		if (!meleeRange.isNull()) {
+			if (!meleeRange.isNumeric()) {
+				circuit->LOG("CONFIG %s: %s melee_range must be a number, ignored", cfgName.c_str(), defName.c_str());
+			} else {
+				cdef->SetMeleeSpotRange(meleeRange.asFloat());
+			}
+		}
+
 		const Json::Value& pwrMod = behaviour["pwr_mod"];
 		if (!pwrMod.isNull()) {
 			cdef->ModPower(pwrMod.asFloat());

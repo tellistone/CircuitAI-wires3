@@ -378,6 +378,26 @@ void CMilitaryManager::ReadConfig()
 	}
 	attackSpotThreat = (qspotThreat.isNumeric() && (qspotThreat.asFloat() >= 0.f)) ? qspotThreat.asFloat() : 1.f;
 	{
+		const Json::Value& qmelee = quotas["melee"];
+		if (!qmelee.isNull() && !qmelee.isObject()) {
+			circuit->LOG("CONFIG %s: quota.melee must be an object, using defaults", cfgName.c_str());
+		}
+		auto readNum = [&](const char* key, float defVal) {
+			const Json::Value& v = qmelee.isObject() ? qmelee[key] : Json::Value();
+			if (v.isNull()) {
+				return defVal;
+			}
+			if (!v.isNumeric()) {
+				circuit->LOG("CONFIG %s: quota.melee.%s must be a number, using %g", cfgName.c_str(), key, defVal);
+				return defVal;
+			}
+			return v.asFloat();
+		};
+		meleeSpot.spotRange = readNum("spot_range", 0.4f);
+		meleeSpot.perTarget = static_cast<int>(readNum("per_target", 6.f));
+		meleeSpot.retargetRadius = std::max(readNum("retarget_radius", 600.f), 0.f);
+	}
+	{
 		const Json::Value& qmerge = quotas["attack_merge"];
 		if (!qmerge.isNull() && !qmerge.isObject()) {
 			circuit->LOG("CONFIG %s: quota.attack_merge must be an object, using defaults", cfgName.c_str());

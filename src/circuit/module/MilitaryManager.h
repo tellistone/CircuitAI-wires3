@@ -166,6 +166,13 @@ public:
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
+	// quota.melee: firing spots for units with the "melee" attribute
+	struct SMeleeSpot {
+		float spotRange;  // spots this fraction of the weapon range from the target (unit's melee_range overrides); <= 0: off
+		int perTarget;  // at most this many melee units on one target, the rest pick another; <= 0: no cap
+		float retargetRadius;  // ...within this many elmos of the crowded target
+	};
+	const SMeleeSpot& GetMeleeSpot() const { return meleeSpot; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other
 	struct SAttackMerge {
 		float speedRatio;  // leaders' speeds within this factor of each other
@@ -277,6 +284,7 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackSpotThreat;  // quota.attack_spot_threat
+	SMeleeSpot meleeSpot;  // quota.melee
 	SAttackMerge attackMerge;  // quota.attack_merge
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted

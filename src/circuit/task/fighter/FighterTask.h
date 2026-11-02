@@ -13,6 +13,7 @@
 
 #include <limits>
 #include <map>
+#include <vector>
 
 namespace circuit {
 
@@ -52,8 +53,10 @@ protected:
 	// being judged (an enemy, a destination, a unit's own position): divide a threat allowance by it. 1 if not configured.
 	float GetThrDistModAt(const springai::AIFloat3& pos) const;
 	// Ranged units move to a firing spot (FindFireSpot), then Attack the target. isDirect: units without a spot
-	// (melee, no usable range) get a direct Attack instead of a fight-move, so the target keeps priority.
+	// (no usable range) get a direct Attack instead of a fight-move, so the target keeps priority.
 	// The engine still lets weapons shoot other units while the ordered target can't be hit.
+	// Melee units (quota.melee.spot_range > 0) get spots close to the target, well apart from each other, and keep
+	// moving between them (AttackMelee); past quota.melee.per_target on one target the rest pick a nearby enemy.
 	void Attack(const int frame, const bool isDirect = false);
 	// Firing spot for a ranged unit: within its weapon range of the target, trading walking distance against
 	// threat and against spots other units are heading to.
@@ -61,11 +64,49 @@ protected:
 	// spot is safe; RISKY: nowhere safe, the unit's spot neither: the least dangerous spot
 	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
 	float GetFireRange(CCircuitUnit* unit) const;  // max range against the current target's kind
+	float GetFireRange(CCircuitUnit* unit, CEnemyInfo* enemy) const;  // max range against this enemy's kind
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x range from the target
 	bool GetKeptFireSpot(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // last spot, if still usable
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
 	FireSpot FindFireSpot(CCircuitUnit* unit, const std::map<CCircuitUnit*, springai::AIFloat3>& claims,
 			float safeThreat, springai::AIFloat3& outPos) const;
+	// Melee variant of the same search, against enemy: spots on a full ring at spotRange x range from it (not the
+	// +-45 degree arc, nor where the unit stands or its last spot: a melee unit never stays put), none closer than
+	// minSep to meleeClaims (other melee units' spots on this enemy) unless no safe spot is. outAngle: the ring angle
+	// chosen (SPOT/RISKY), so the caller can continue around the ring from it
+	FireSpot FindMeleeSpot(CCircuitUnit* unit, CEnemyInfo* enemy, float spotRange,
+			const std::map<CCircuitUnit*, springai::AIFloat3>& claims, const std::vector<springai::AIFloat3>& meleeClaims,
+			float minSep, bool isForward, float safeThreat, springai::AIFloat3& outPos, float& outAngle) const;
+	// Shared by FindFireSpot and FindMeleeSpot: score candidate spots against threat, crowding and walk distance
+	struct SSpotShape {
+		float radius;  // candidate ring radius (elmos)
+		float bearing;  // ring centre angle
+		float arcSpan;  // half the arc, x PI (1 = full ring)
+		int arcSteps;  // spots each side of the bearing
+		bool isMelee;  // never consider where the unit stands or its last spot; spots near the unit are skipped
+		float minSep;  // melee: skip spots closer than this to meleeClaims (if any other spot is left)
+		const std::vector<springai::AIFloat3>* meleeClaims;
+		bool isForward;  // melee already circling this enemy: only the half ring ahead (increasing angle)
+	};
+	FireSpot SearchSpot(CCircuitUnit* unit, CEnemyInfo* enemy, float range, const SSpotShape& shape,
+			const std::map<CCircuitUnit*, springai::AIFloat3>& claims, float safeThreat,
+			springai::AIFloat3& outPos, float& outAngle) const;
+	// Melee units of the task (already filtered by Attack) on target or, past the per-target cap, on another enemy
+	void AttackMelee(const int frame, const std::vector<CCircuitUnit*>& meleeUnits, const bool isRepeatAttack,
+			std::map<CCircuitUnit*, springai::AIFloat3>& claims, float safeThreat, const int timeout);
+	// Nearest enemy within quota.melee.retarget_radius of target that this unit can hit and reach, with room
+	// under the per-target cap (counts: melee units already on each enemy); nullptr: none
+	CEnemyInfo* FindMeleeAltTarget(CCircuitUnit* unit, const std::map<CEnemyInfo*, int>& counts, int cap,
+			float radius, float safeThreat) const;
+	// Route a melee unit was last sent along: a few ring spots around its enemy, walked in turn
+	struct SMeleeRoute {
+		std::vector<springai::AIFloat3> spots;
+		springai::AIFloat3 enemyPos;  // enemy position when planned
+		CEnemyInfo* enemy;  // compared only, never dereferenced
+		float radius;  // ring radius
+		int frame;  // when ordered
+	};
+	std::map<CCircuitUnit*, SMeleeRoute> meleeRoutes;
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)

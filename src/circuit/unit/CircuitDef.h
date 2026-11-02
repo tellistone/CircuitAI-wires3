@@ -53,7 +53,7 @@ public:
 	using RoleM = std::underlying_type<RoleMask>::type;
 
 	/*
-	 * MELEE:     always move close to target, disregard attack range
+	 * MELEE:     fight from close spots around the target, keep moving between them (quota.melee)
 	 * BOOST:     boost speed on retreat
 	 * NO_JUMP:   disable jump on retreat
 	 * NO_STRAFE: isable gunship's strafe
@@ -275,6 +275,10 @@ public:
 	// behaviour.json per unit "artillery_flee_margin"; unset = use the "artillery" block's value
 	void SetArtyFleeMargin(float value) { artyFleeMargin = value; isArtyFleeMarginSet = true; }
 	float GetArtyFleeMargin(float defaultValue) const { return isArtyFleeMarginSet ? artyFleeMargin : defaultValue; }
+	// behaviour.json per unit "melee_range": melee firing spots this fraction of the weapon range from the target;
+	// unset = use quota.melee.spot_range
+	void SetMeleeSpotRange(float value) { meleeSpotRange = value; isMeleeSpotRangeSet = true; }
+	float GetMeleeSpotRange(float defaultValue) const { return isMeleeSpotRangeSet ? meleeSpotRange : defaultValue; }
 
 	float GetRadius();
 	float GetHeight();
@@ -374,6 +378,8 @@ private:
 	float retreat;
 	float artyFleeMargin = -1.f;
 	bool isArtyFleeMarginSet = false;
+	float meleeSpotRange = -1.f;
+	bool isMeleeSpotRangeSet = false;
 
 	float radius;
 	float height;

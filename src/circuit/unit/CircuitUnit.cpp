@@ -436,6 +436,21 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 	)
 }
 
+void CCircuitUnit::MeleeRoute(const std::vector<AIFloat3>& spots, CEnemyInfo* enemy, int tile, int timeout)
+{
+	target = enemy;
+	targetTile = tile;
+	TRY_UNIT(manager->GetCircuit(), this,
+		short options = UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY;
+		for (const AIFloat3& p : spots) {
+			CmdMoveTo(p, options, timeout);
+			options |= UNIT_COMMAND_OPTION_SHIFT_KEY;
+		}
+		CmdWantedSpeed(NO_SPEED_LIMIT);
+		CmdSetTarget(target);
+	)
+}
+
 void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 {
 	TRY_UNIT(manager->GetCircuit(), this,
