@@ -11,6 +11,8 @@
 #include "task/fighter/SquadTask.h"
 #include "unit/CoreUnit.h"
 
+#include <map>
+
 namespace circuit {
 
 class CAttackTask: public ISquadTask {
@@ -50,8 +52,8 @@ private:
 	void AbsorbWeakerTasks();
 	void FindTarget();
 	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below the allowance for 'strength' at each
-	// sampled spot, or for 'supportStrength' within supportRadius of 'to'. Used by target picking (approach line from the
-	// target towards us, out to our range) and merging (from our leader to the host's)
+	// sampled spot, or for 'supportStrength' within supportRadius of 'to'. Used by the target approach check (from the
+	// target to where its route ends) and merging (from our leader to the host's)
 	bool IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
 			float strength, float supportStrength, float supportRadius) const;
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
@@ -70,7 +72,12 @@ private:
 	void PullBackEndangered(int frame);
 	bool Flee(int frame);  // false: nowhere better to go, fight instead
 	void ApplyFleePath(const CQueryPathSingle* query);
+	// One capped route to all candidate targets (goals in the order of ids)
+	void RequestTargetPath(std::vector<ICoreUnit::Id> ids, F3Vec goals);
 	void ApplyTargetPath(const CQueryPathMulti* query, const std::vector<ICoreUnit::Id>& ids);
+	// The ground we'd fight the target from, along this route: the line from the target to the route's end,
+	// and the route's last stretch as long as our range; every spot below the allowance for 'strength'
+	bool IsApproachSafe(const F3Vec& path, const springai::AIFloat3& targetPos, float strength) const;
 	// Nothing to go to: hold at the quietest reachable spot within 2x our range (never head home),
 	// avoiding the spot we were last hit at while holding; retry next decision
 	// highestRange = max over all units of (weapon range, sight radius), rebuilt the same way on join, leave, merge
@@ -102,6 +109,8 @@ private:
 	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
 	std::vector<ICoreUnit::Id> candidateIds;  // FindTarget: safe targets, nearest first (max 16)
 	F3Vec candidatePos;  // their positions, goals of the target route
+	std::vector<ICoreUnit::Id> screenedIds;  // FindTarget: all safe targets before stickiness trims them (retry goals)
+	F3Vec screenedPos;
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)
 	int stepFrame;  // last step back after being hit while holding
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
@@ -109,6 +118,8 @@ private:
 	int hitFrame;
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
+	int targetRouteTries;  // routes so far in this target decision (MAX_TARGET_ROUTES)
+	std::map<ICoreUnit::Id, int> rejectedUntil;  // targets dropped for an unsafe route approach -> skip until frame
 	int corneredFrame;  // last cornered check
 	bool isReplanForced;  // a forced re-plan (unsafe path ahead) was used since the last normal decision
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)
