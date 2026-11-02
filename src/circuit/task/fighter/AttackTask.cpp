@@ -59,6 +59,9 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, isAtFleeDest(false)
 		, fleeDest(-RgtVector)
 		, pickSqDist(0.f)
+		, coreFrame(-1)
+		, coreUnit(nullptr)
+		, corePower(0.f)
 {
 	attackRepeat = FRAMES_PER_SEC * 2;  // same ~2 s tempo as the decisions
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -125,6 +128,7 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 	ISquadTask::AssignTo(unit);
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	UpdateHighestRange();
+	coreFrame = -1;
 
 	if (cdef->IsRoleSupport()) {
 		unit->PushBack(new CSupportAction(unit));
@@ -145,6 +149,7 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 void CAttackTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	ISquadTask::RemoveAssignee(unit);
+	coreFrame = -1;  // coreUnit may be the unit that left
 	if (leader == nullptr) {
 		manager->AbortTask(this);
 		return;
@@ -158,6 +163,7 @@ void CAttackTask::Merge(ISquadTask* task)
 {
 	ISquadTask::Merge(task);
 	UpdateHighestRange();
+	coreFrame = -1;
 }
 
 void CAttackTask::UpdateHighestRange()
@@ -372,26 +378,76 @@ float CAttackTask::GetGroupRadius() const
 	return std::max(highestRange * r.first, r.second);
 }
 
+void CAttackTask::UpdateCore(int frame) const
+{
+	// The main body: the unit with the most health-scaled power within the group radius of it, and that power.
+	// O(n^2) over the group, once per frame at most (cached; reset when units join or leave)
+	if (coreFrame == frame) {
+		return;
+	}
+	coreFrame = frame;
+	coreUnit = leader;  // ties keep the leader
+	corePower = 0.f;
+	if (units.empty()) {
+		return;
+	}
+	const float sqRadius = SQUARE(GetGroupRadius());
+	auto powerAround = [&](CCircuitUnit* center) {
+		const AIFloat3& c = center->GetPos(frame);
+		float power = 0.f;
+		for (CCircuitUnit* unit : units) {
+			if (unit->GetPos(frame).SqDistance2D(c) <= sqRadius) {
+				power += GetUnitPower(unit);
+			}
+		}
+		return power;
+	};
+	if (leader != nullptr) {
+		corePower = powerAround(leader);
+	}
+	for (CCircuitUnit* unit : units) {
+		if (unit == leader) {
+			continue;
+		}
+		const float power = powerAround(unit);
+		if ((coreUnit == nullptr) || (power > corePower)) {
+			coreUnit = unit;
+			corePower = power;
+		}
+	}
+}
+
+bool CAttackTask::IsInCore(CCircuitUnit* unit, int frame) const
+{
+	UpdateCore(frame);
+	return (coreUnit != nullptr) && (unit->GetPos(frame).SqDistance2D(coreUnit->GetPos(frame)) <= SQUARE(GetGroupRadius()));
+}
+
 bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 {
-	// A straggler: farther from the leader than the group radius (still walking in after a merge, or left behind)
-	return unit->GetPos(frame).SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
+	// A straggler: outside the main body (still walking in after a merge, or left behind). Measured from the
+	// core, not the leader, which may itself be the one lagging behind
+	return !IsInCore(unit, frame);
 }
 
 void CAttackTask::Engage(int frame)
 {
 	Attack(frame);
 	// Stragglers (IsOutOfReach) got no attack order. One without an active path (e.g. it merged in while we were
-	// engaged: it took the leader's waiting travel state) would idle where it is: walk it to the leader, along the
-	// line the merge check judged safe, rather than straight to a firing spot next to the enemy
-	const AIFloat3& leaderPos = leader->GetPos(frame);
+	// engaged: it took the leader's waiting travel state) would idle where it is: walk it to the main body
+	// rather than straight to a firing spot next to the enemy
+	UpdateCore(frame);
+	if (coreUnit == nullptr) {
+		return;
+	}
+	const AIFloat3 corePos = coreUnit->GetPos(frame);
 	CCircuitAI* circuit = manager->GetCircuit();
 	for (CCircuitUnit* unit : units) {
 		if ((unit->Blocker() != nullptr) || unit->GetTravelAct()->IsActive() || !IsOutOfReach(unit, frame)) {
 			continue;
 		}
 		TRY_UNIT(circuit, unit,
-			unit->CmdMoveTo(leaderPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdMoveTo(corePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
 		)
 	}
@@ -789,12 +845,11 @@ float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals
 
 float CAttackTask::GetSafeThreat() const
 {
-	// Like attackPower (def power incl. pwr_mod) but scaled by current health, times the task's powerMod
-	float power = 0.f;
-	for (CCircuitUnit* unit : units) {
-		power += GetUnitPower(unit);
-	}
-	return std::max(power, THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
+	// Like attackPower (def power incl. pwr_mod) but scaled by current health, times the task's powerMod.
+	// Only the main body counts (UpdateCore): units still walking in, or left far behind, can't help in a fight
+	// here yet, so they don't make the group pick fights, stay in danger or take routes sized for them
+	UpdateCore(manager->GetCircuit()->GetLastFrame());
+	return std::max(corePower, THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
 }
 
 float CAttackTask::GetUnitPower(CCircuitUnit* unit) const
@@ -831,23 +886,25 @@ bool CAttackTask::IsInDanger(int frame, bool& isPathUnsafe)
 	endangered.clear();
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
 	const float safeThreat = GetSafeThreat();
-	float totalPower = 0.f;
 	float dangerPower = 0.f;
+	bool isCoreInDanger = false;
 	for (CCircuitUnit* unit : units) {
-		const float power = GetUnitPower(unit);
-		totalPower += power;
 		if (unit->GetUnit()->IsCloaked()) {
 			continue;  // unseen: enemies in range can't shoot it
 		}
 		const AIFloat3& pos = unit->GetPos(frame);
 		if (threatMap->GetThreatAt(unit, pos) >= GetAllowedThreatAt(pos, safeThreat)) {
-			endangered.push_back(unit);
-			dangerPower += power;
+			endangered.push_back(unit);  // stragglers too: PullBackEndangered moves them out
+			if (IsInCore(unit, frame)) {
+				isCoreInDanger = true;
+				dangerPower += GetUnitPower(unit);
+			}
 		}
 	}
-	// Flee only when the units in danger hold at least quota.attack_flee_share of the group's current strength
+	// Flee only when main-body units in danger hold at least quota.attack_flee_share of the main body's
+	// current strength; a straggler in danger alone is pulled back, the group doesn't run for it
 	const float fleeShare = static_cast<CMilitaryManager*>(manager)->GetAttackFleeShare();
-	if (!endangered.empty() && (dangerPower >= fleeShare * totalPower)) {
+	if (isCoreInDanger && (dangerPower >= fleeShare * corePower)) {
 		return true;
 	}
 

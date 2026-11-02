@@ -35,10 +35,14 @@ public:
 
 private:
 	ISquadTask* GetAttackMergeTask();
-	// Attack (firing spots), and walk stragglers (IsOutOfReach) to the leader if they have no path
+	// Attack (firing spots), and walk stragglers (IsOutOfReach) to the main body if they have no path
 	void Engage(int frame);
 	float GetGroupRadius() const;  // quota.attack_group_radius
-	// Straggler: farther from the leader than GetGroupRadius. Gets no firing-spot order (keeps travelling)
+	// Main body (core): the unit with the most health-scaled power within GetGroupRadius of it (coreUnit), and that
+	// power (corePower). Cached per frame, reset on join / leave / merge
+	void UpdateCore(int frame) const;
+	bool IsInCore(CCircuitUnit* unit, int frame) const;  // within GetGroupRadius of coreUnit
+	// Straggler: outside the main body. Gets no firing-spot order (keeps travelling) and doesn't count for strength
 	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const override;
 	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Straight line from our leader to the host's: threat below our allowance, both groups' strength near the host
@@ -57,7 +61,7 @@ private:
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
-	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
+	// Escape, as in CRaidTask: main-body strength from current health, units standing in danger, flee / pull back
 	float GetSafeThreat() const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
 	float GetUnitPower(CCircuitUnit* unit) const;
@@ -115,6 +119,9 @@ private:
 	bool isAtFleeDest;
 	springai::AIFloat3 fleeDest;  // where the current escape runs to (straight-move fallback when no path)  // flee gave up: already within 400 elmos of where it would run to
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget
+	mutable int coreFrame;  // frame coreUnit / corePower were found at (-1: stale)
+	mutable CCircuitUnit* coreUnit;  // centre of the main body
+	mutable float corePower;  // health-scaled power of the units within GetGroupRadius of coreUnit
 };
 
 } // namespace circuit
