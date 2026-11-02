@@ -35,6 +35,7 @@ namespace circuit {
 
 using namespace springai;
 
+static constexpr float UNKNOWN_AIR_HEIGHT = 50.f;  // an unidentified blip this far above ground counts as a plane
 static const int SPLIT_MERGE_COOLDOWN = FRAMES_PER_SEC * 30;  // a unit split off a blocked regroup doesn't merge for this long
 
 CAntiAirTask::CAntiAirTask(ITaskManager* mgr, float powerMod)
@@ -287,6 +288,7 @@ void CAntiAirTask::FindTarget()
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CMap* map = circuit->GetMap();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = leader->GetPos(frame);
 	STerrainMapArea* area = leader->GetArea();
@@ -334,6 +336,10 @@ void CAntiAirTask::FindTarget()
 			{
 				continue;
 			}
+		} else if (ePos.y - map->GetElevationAt(ePos.x, ePos.z) < UNKNOWN_AIR_HEIGHT) {
+			// Unknown radar blip: skips the category check above, so only one flying high enough
+			// is taken for a plane; a ground raider's dot in our mex field is not an AA target
+			continue;
 		}
 
 		const float sqDist = pos.SqDistance2D(ePos);
@@ -392,7 +398,18 @@ void CAntiAirTask::FindTarget()
 			}
 		}
 
-		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - enemy->GetThreat());
+		// Take off only the plane's own threat at checkPos, as the threat map drew it: none outside
+		// its ground range (a pure fighter has none), so it can't erase real ground threat there
+		float planeThreat = 0.f;
+		const int planeRange = enemy->GetData()->GetRange(CCircuitDef::ThreatType::LAND);  // threat map cells
+		if (planeRange > 0) {
+			const float cells = checkPos.distance2D(ePos) / threatMap->GetSquareSize();
+			if (cells <= planeRange) {
+				const bool isConst = (edef != nullptr) && edef->IsAlwaysHit();
+				planeThreat = isConst ? enemy->GetThreat() : enemy->GetThreat() * (1.f - 0.5f * cells / planeRange);
+			}
+		}
+		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - planeThreat);
 		if ((threat >= GetAllowedThreatAt(checkPos, maxPower)) ||
 			!terrainMgr->CanMoveToPos(area, ePos))
 		{
