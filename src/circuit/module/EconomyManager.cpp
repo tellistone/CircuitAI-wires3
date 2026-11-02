@@ -852,25 +852,36 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	const float maxBuildTime = MAX_BUILD_SEC * (isEnergyStalling ? 0.25f : 1.f);
 
 	const int frame = circuit->GetLastFrame();
+	// Geothermal first: by the efficiency sort it ranks below fusion, and fusion at its limit stops the
+	// loop below, so geo would hardly ever be built. A free vent is cheaper energy per metal than fusion,
+	// so take it whenever it can be built in time and a free, safe, reachable vent exists.
 	CCircuitDef* geoDef = nullptr;
 	AIFloat3 geoPos = -RgtVector;
-	for (const auto& engy : energyDefs.GetInfos()) {  // sorted by high-tech first
-		if (!engy.cdef->IsAvailable(frame)) {
+	for (const auto& engy : energyDefs.GetInfos()) {
+		if (!engy.cdef->GetDef()->IsNeedGeo() || !engy.cdef->IsAvailable(frame) ||
+			(engy.cdef->GetCount() >= engy.data.limit) ||
+			(taskSize >= (int)(buildPower / engy.cdef->GetCostM() * 8 + 1)) ||
+			(engy.cdef->GetCostM() * 16.0f >= maxBuildTime * SQUARE(metalIncome)))
+		{
 			continue;
 		}
-		if (engy.cdef->GetDef()->IsNeedGeo()) {
-			// Geothermal goes only on a free, safe vent. Without one (or at its limit) it is skipped,
-			// so it never stops cheaper energy from being built.
-			if ((geoDef != nullptr) || (engy.cdef->GetCount() >= engy.data.limit)) {
-				continue;
-			}
-			const AIFloat3 pos = FindGeoSpot(engy.cdef, position, unit);
-			if (!utils::is_valid(pos)) {
-				continue;
-			}
+		const AIFloat3 pos = FindGeoSpot(engy.cdef, position, unit);
+		if (utils::is_valid(pos)) {
 			geoDef = engy.cdef;
 			geoPos = pos;
-		} else if (!terrainMgr->CanBeBuiltAtSafe(engy.cdef, position)) {
+			break;
+		}
+	}
+
+	if (geoDef != nullptr) {
+		bestDef = geoDef;
+		isLastHope = false;
+	} else for (const auto& engy : energyDefs.GetInfos()) {  // sorted by high-tech first
+		// Geothermal is handled above; skipping it here means its limit or a missing vent never blocks other energy
+		if (!engy.cdef->IsAvailable(frame) ||
+			engy.cdef->GetDef()->IsNeedGeo() ||
+			!terrainMgr->CanBeBuiltAtSafe(engy.cdef, position))
+		{
 			continue;
 		}
 
