@@ -1259,7 +1259,10 @@ void CMilitaryManager::UpdateScoutQuota()
 			it->second = unit;  // a unit already scouting is the best stand-in
 		}
 	}
-	// Movement types with no scout-capable unit keep their last bonus
+	// Only movement types we actually have a scout-capable unit of get a bonus
+	for (auto it = scoutMexBonus.begin(); it != scoutMexBonus.end();) {
+		it = (refUnits.find(it->first) == refUnits.end()) ? scoutMexBonus.erase(it) : std::next(it);
+	}
 
 	const int enemyPlayers = std::max(circuit->GetEnemyTeamSize(), 1);
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
