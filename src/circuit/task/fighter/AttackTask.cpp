@@ -158,6 +158,9 @@ void CAttackTask::Merge(ISquadTask* task)
 {
 	ISquadTask::Merge(task);
 	UpdateHighestRange();
+	// The newcomers usually start a regroup. A leader standing where the last regroup began counts as stuck
+	// (IsMustRegroup), which would drop the leader of a group that holds still while taking in several groups
+	prevGroupPos = -RgtVector;
 }
 
 void CAttackTask::UpdateHighestRange()
