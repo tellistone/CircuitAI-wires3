@@ -22,6 +22,8 @@ public:
 	virtual void Update() override;
 
 protected:
+	virtual void Execute(CCircuitUnit* unit) override;
+
 	bool isStalling;
 };
 

@@ -9,6 +9,7 @@
 #include "task/TaskManager.h"
 #include "module/EconomyManager.h"
 #include "unit/CircuitUnit.h"
+#include "spring/SpringMap.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
@@ -45,6 +46,28 @@ void CBEnergyTask::Update()
 	TRY_UNIT(circuit, target,
 		target->CmdPriority(ClampPriority());
 	)
+}
+
+void CBEnergyTask::Execute(CCircuitUnit* unit)
+{
+	if ((target != nullptr) || !buildDef->GetDef()->IsNeedGeo()) {
+		IBuilderTask::Execute(unit);
+		return;
+	}
+
+	// Geothermal: must stay exactly on a vent, never search around the position
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (!utils::is_valid(buildPos) || !circuit->GetMap()->IsPossibleToBuildAt(buildDef->GetDef(), buildPos, facing)) {
+		SetBuildPos(-RgtVector);
+		const AIFloat3 pos = circuit->GetEconomyManager()->FindGeoSpot(buildDef, position, unit);
+		if (!utils::is_valid(pos)) {
+			// Fallback to Guard/Assist/Patrol
+			manager->FallbackTask(unit);
+			return;
+		}
+		SetBuildPos(pos);
+	}
+	IBuilderTask::Execute(unit);  // buildPos is a free vent: builds there
 }
 
 } // namespace circuit

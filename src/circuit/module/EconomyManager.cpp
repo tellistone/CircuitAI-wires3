@@ -13,6 +13,7 @@
 #include "resource/MetalManager.h"
 #include "resource/EnergyGrid.h"
 #include "terrain/TerrainManager.h"
+#include "map/ThreatMap.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
@@ -66,6 +67,12 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, energyCur(.0f)
 		, energyPull(.0f)
 		, energyUse(.0f)
+		, geoSpotsFrame(-1)
+		, geoThreat(1.f)
+		, geoMorphIncome(-1.f)
+		, geoMorphFrame(0)
+		, geoMorphing(nullptr)
+		, geoMorphStart(-1)
 {
 	metalRes = circuit->GetCallback()->GetResourceByName(RES_NAME_METAL);
 	energyRes = circuit->GetCallback()->GetResourceByName(RES_NAME_ENERGY);
@@ -237,6 +244,20 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 			if ((it != customParams.end()) && (utils::string_to_float(it->second) > 1)) {
 				finishedHandler[cdef.GetId()] = energyFinishedHandler;
 				energyDefs.AddDef(&cdef);
+
+				// geothermal that morphs into an upgrade (energygeo -> energyheavygeo)
+				if (cdef.GetDef()->IsNeedGeo() && (customParams.find("morphto") != customParams.end())) {
+					finishedHandler[cdef.GetId()] = [this, energyFinishedHandler](CCircuitUnit* unit) {
+						energyFinishedHandler(unit);
+						geoMorphees.insert(unit);
+					};
+					destroyedHandler[cdef.GetId()] = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
+						geoMorphees.erase(unit);
+						if (geoMorphing == unit) {
+							geoMorphing = nullptr;
+						}
+					};
+				}
 			}
 
 		} else {
@@ -308,6 +329,14 @@ void CEconomyManager::ReadConfig()
 	}
 
 	pylonLinkInc = energy.get("link_inc", 16.0f).asFloat();
+
+	{
+		const Json::Value& geo = energy["geo"];
+		geoThreat = geo.get("threat", 1.0f).asFloat();
+		const Json::Value& morph = geo["morph"];
+		geoMorphIncome = morph.get((unsigned)0, -1.f).asFloat();
+		geoMorphFrame = morph.get((unsigned)1, 0).asInt() * FRAMES_PER_SEC;
+	}
 
 	std::vector<std::pair<std::string, int>> engies;
 	std::string type = circuit->GetTerrainManager()->IsWaterMap() ? "water" : "land";
@@ -418,6 +447,11 @@ void CEconomyManager::Init()
 								interval, circuit->GetSkirmishAIId() + 1 + interval / 2);
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CEconomyManager::UpdateResourceIncome, this), TEAM_SLOWUPDATE_RATE);
+
+		if (geoMorphIncome >= 0.f) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CEconomyManager::UpdateGeoMorph, this),
+									FRAMES_PER_SEC * 10, circuit->GetSkirmishAIId() + 2);
+		}
 	};
 
 	circuit->GetSetupManager()->ExecOnFindStart(subinit);
@@ -469,7 +503,7 @@ CCircuitDef* CEconomyManager::GetLowEnergy(const AIFloat3& pos, float& outMake) 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
 	return energyDefs.GetWorstDef([frame, terrainMgr, &pos, &outMake](CCircuitDef* cdef, const SEnergyExt& data) {
-		if (cdef->IsAvailable(frame) && terrainMgr->CanBeBuiltAtSafe(cdef, pos)) {
+		if (cdef->IsAvailable(frame) && !cdef->GetDef()->IsNeedGeo() && terrainMgr->CanBeBuiltAtSafe(cdef, pos)) {
 			outMake = data.make;
 			return true;
 		}
@@ -818,12 +852,25 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	const float maxBuildTime = MAX_BUILD_SEC * (isEnergyStalling ? 0.25f : 1.f);
 
 	const int frame = circuit->GetLastFrame();
+	CCircuitDef* geoDef = nullptr;
+	AIFloat3 geoPos = -RgtVector;
 	for (const auto& engy : energyDefs.GetInfos()) {  // sorted by high-tech first
-		// TODO: Add geothermal powerplant support
-		if (!engy.cdef->IsAvailable(frame) ||
-			!terrainMgr->CanBeBuiltAtSafe(engy.cdef, position) ||
-			engy.cdef->GetDef()->IsNeedGeo())
-		{
+		if (!engy.cdef->IsAvailable(frame)) {
+			continue;
+		}
+		if (engy.cdef->GetDef()->IsNeedGeo()) {
+			// Geothermal goes only on a free, safe vent. Without one (or at its limit) it is skipped,
+			// so it never stops cheaper energy from being built.
+			if ((geoDef != nullptr) || (engy.cdef->GetCount() >= engy.data.limit)) {
+				continue;
+			}
+			const AIFloat3 pos = FindGeoSpot(engy.cdef, position, unit);
+			if (!utils::is_valid(pos)) {
+				continue;
+			}
+			geoDef = engy.cdef;
+			geoPos = pos;
+		} else if (!terrainMgr->CanBeBuiltAtSafe(engy.cdef, position)) {
 			continue;
 		}
 
@@ -861,7 +908,10 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// Find place to build
 	AIFloat3 buildPos = -RgtVector;
 	CMetalManager* metalMgr = circuit->GetMetalManager();
-	if (!bestDef->IsRoleSupport()) {
+	const bool isGeo = (bestDef == geoDef);
+	if (isGeo) {
+		buildPos = geoPos;
+	} else if (!bestDef->IsRoleSupport()) {
 		const CMetalData::Metals& spots = metalMgr->GetSpots();
 		CMetalData::PointPredicate predicate = [&spots, terrainMgr](int index) {
 			return !terrainMgr->IsZoneAlly(spots[index].position);
@@ -891,10 +941,123 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
 		IBuilderTask::Priority priority = isEnergyStalling ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
+		if (isGeo) {
+			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
+			IBuilderTask* task = builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
+			task->SetBuildPos(buildPos);
+			return task;
+		}
 		return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 16.0f, true);
 	}
 
 	return nullptr;
+}
+
+void CEconomyManager::UpdateGeoSpots()
+{
+	// Vents may only be visible once in LOS, so known spots are merged with whatever is visible now
+	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
+	for (Feature* feature : features) {
+		FeatureDef* featDef = feature->GetDef();
+		if (featDef == nullptr) {
+			continue;
+		}
+		const bool isGeo = featDef->IsGeoThermal();
+		delete featDef;
+		if (!isGeo) {
+			continue;
+		}
+		const AIFloat3 pos = feature->GetPosition();
+		bool isKnown = false;
+		for (const AIFloat3& spot : geoSpots) {
+			if (spot.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 2)) {
+				isKnown = true;
+				break;
+			}
+		}
+		if (!isKnown) {
+			geoSpots.push_back(pos);
+		}
+	}
+	utils::free_clear(features);
+}
+
+AIFloat3 CEconomyManager::FindGeoSpot(CCircuitDef* cdef, const AIFloat3& position, CCircuitUnit* unit)
+{
+	const int frame = circuit->GetLastFrame();
+	if (frame >= geoSpotsFrame) {
+		UpdateGeoSpots();
+		geoSpotsFrame = frame + FRAMES_PER_SEC * 60;
+	}
+	if (geoSpots.empty()) {
+		return -RgtVector;
+	}
+
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CMap* map = circuit->GetMap();
+	const std::set<IBuilderTask*>& tasks = circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY);
+	AIFloat3 bestPos = -RgtVector;
+	float minSqDist = std::numeric_limits<float>::max();
+	for (const AIFloat3& spot : geoSpots) {
+		const float sqDist = position.SqDistance2D(spot);
+		if (sqDist >= minSqDist) {
+			continue;
+		}
+		if (terrainMgr->IsZoneAlly(spot) ||
+			!terrainMgr->CanBeBuiltAtSafe(cdef, spot) ||
+			(threatMap->GetAllThreatAt(spot) > geoThreat) ||
+			((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, spot, unit->GetCircuitDef()->GetBuildDistance())))
+		{
+			continue;
+		}
+		bool isTaken = false;  // another geothermal task already went for this vent
+		for (IBuilderTask* t : tasks) {
+			if (t->GetBuildDef()->GetDef()->IsNeedGeo() && (t->GetPosition().SqDistance2D(spot) < SQUARE(SQUARE_SIZE * 4))) {
+				isTaken = true;
+				break;
+			}
+		}
+		if (isTaken || !map->IsPossibleToBuildAt(cdef->GetDef(), spot, UNIT_COMMAND_BUILD_NO_FACING)) {
+			continue;
+		}
+		bestPos = spot;
+		minSqDist = sqDist;
+	}
+	return bestPos;
+}
+
+void CEconomyManager::UpdateGeoMorph()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	const int frame = circuit->GetLastFrame();
+	if (geoMorphing != nullptr) {
+		if (frame < geoMorphStart + FRAMES_PER_SEC * 300) {
+			return;  // one at a time
+		}
+		geoMorphing = nullptr;  // morph got stuck or was stopped: let another one try
+	}
+	if (geoMorphees.empty() || (frame < geoMorphFrame) || (GetAvgMetalIncome() < geoMorphIncome) ||
+		IsMetalEmpty() || IsEnergyStalling())
+	{
+		return;
+	}
+
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	for (auto it = geoMorphees.begin(); it != geoMorphees.end(); ++it) {
+		CCircuitUnit* unit = *it;
+		if (((unit->GetTask() != nullptr) && (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER)) ||
+			(unit->GetHealthPercent() < 0.9f) ||
+			(threatMap->GetAllThreatAt(unit->GetPos(frame)) > geoThreat))
+		{
+			continue;
+		}
+		unit->Morph();
+		geoMorphing = unit;
+		geoMorphStart = frame;
+		geoMorphees.erase(it);
+		break;
+	}
 }
 
 IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCircuitUnit* unit)
