@@ -311,12 +311,9 @@ void CAttackTask::Update()
 	{
 		return;
 	}
-	if (circuit->GetInflMap()->GetInfluenceAt(startPos) < -INFL_EPS) {
-		SetTarget(nullptr);
-		scaleRefSqDist = 0.f;
-	} else {
-		FindTarget();
-	}
+	// Also on enemy-held ground (influence < 0): FindTarget already judges threat at the target and along
+	// the approach line, and skipping it there sent the group back to the front line, bouncing it on the border
+	FindTarget();
 
 	state = State::ROAM;
 	if (target != nullptr) {
