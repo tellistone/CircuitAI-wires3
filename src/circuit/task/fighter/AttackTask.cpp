@@ -35,9 +35,6 @@ namespace circuit {
 
 using namespace springai;
 
-// Leaders within this distance may merge (join or absorb)
-static constexpr float MERGE_DIST = 2000.f;
-
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
@@ -79,7 +76,8 @@ bool CAttackTask::CanAssignTo(CCircuitUnit* unit) const
 	assert(leader != nullptr);
 
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(MERGE_DIST)) {
+	const float mergeDist = static_cast<CMilitaryManager*>(manager)->GetAttackMerge().distance;  // quota.attack_merge.distance
+	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(mergeDist)) {
 		return false;
 	}
 	return IsCompatible(unit);
@@ -94,7 +92,7 @@ bool CAttackTask::IsCompatible(CCircuitUnit* unit) const
 	if (speedLeader > speedUnit) {
 		std::swap(speedLeader, speedUnit);
 	}
-	if (speedLeader * 1.5f < speedUnit) {
+	if (speedLeader * static_cast<CMilitaryManager*>(manager)->GetAttackMerge().speedRatio < speedUnit) {  // quota.attack_merge.speed_ratio
 		return false;
 	}
 
@@ -361,8 +359,9 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 	// Unlike other squads, an attack group may merge while its leader stands on enemy-held ground;
 	// the straight line between the leaders must still be safe by the threat allowance (IsSafeMergeLine).
 	// Not while fighting: walking off to another group would leave a fight we accepted (absorbing skips us too)
-	const int interval = (attackPower < minPower) ? 4 : 32;
-	return ((updCount % interval == 1) && !IsFighting()) ? CheckMergeTask() : nullptr;
+	const CMilitaryManager::SAttackMerge& cfg = static_cast<CMilitaryManager*>(manager)->GetAttackMerge();
+	const int interval = (attackPower < minPower) ? cfg.joinSmall : cfg.joinArmy;  // quota.attack_merge.join_interval
+	return ((updCount % interval == 1 % interval) && !IsFighting()) ? CheckMergeTask() : nullptr;
 }
 
 bool CAttackTask::IsFighting() const
@@ -385,28 +384,30 @@ bool CAttackTask::IsFighting() const
 bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 {
 	// We walk the straight line to the host's leader, judged by our allowance (as our escape judges it);
-	// within 400 elmos of the host's leader it stands beside us, so both groups' strength counts there
+	// within quota.attack_merge.support_radius (400) of the host's leader it stands beside us, so both groups' strength counts there
 	const CAttackTask* squad = static_cast<const CAttackTask*>(host);  // merging stays within one fight type
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	const AIFloat3& from = leader->GetPos(frame);
 	const AIFloat3& to = squad->GetLeaderPos(frame);
-	// At most 30 s of straight travel, as for absorbing: with MERGE_DIST at 2000 elmos a slow group could
+	// At most quota.attack_merge.travel_sec (30 s) of straight travel: with a long merge distance a slow group could
 	// otherwise still be walking when the regroup's 60 s limit drops far-away units as stuck
-	if (from.SqDistance2D(to) >= SQUARE(MAX_TRAVEL_SEC / 2 * lowestSpeed)) {
+	const CMilitaryManager::SAttackMerge& cfg = static_cast<CMilitaryManager*>(manager)->GetAttackMerge();
+	if (from.SqDistance2D(to) >= SQUARE(cfg.travelSec * lowestSpeed)) {
 		return false;
 	}
 	const float ownStrength = GetSafeThreat();
 	return IsLineSafe(from, to, std::numeric_limits<float>::max(),
-			ownStrength, ownStrength + squad->GetSafeThreat());
+			ownStrength, ownStrength + squad->GetSafeThreat(), cfg.supportRadius);
 }
 
 void CAttackTask::AbsorbWeakerTasks()
 {
 	// A group at or above quota.attack pulls in attack groups under quota.attack near it, every 8 updates.
-	// Same rules as joining (CanAssignTo: speed within 1.5x, leaders within MERGE_DIST, movement type,
-	// never a worse mover than our leader; reachable; IsSafeMergeLine), seen from the small group's side,
-	// but at most 30 s of travel so absorbed units arrive well inside the 60 s regroup "stuck" limit.
-	if ((attackPower < minPower) || (updCount % 8 != 5)) {
+	// Same rules as joining (CanAssignTo: speed ratio, leaders within the merge distance, movement type,
+	// never a worse mover than our leader; reachable; IsSafeMergeLine incl. its travel limit), seen from the
+	// small group's side. Interval: quota.attack_merge.absorb_interval.
+	const int absorbInterval = static_cast<CMilitaryManager*>(manager)->GetAttackMerge().absorb;
+	if ((attackPower < minPower) || (updCount % absorbInterval != 5 % absorbInterval)) {
 		return;
 	}
 
@@ -427,11 +428,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		{
 			continue;
 		}
-		const AIFloat3& candyPos = candyLeader->GetPos(frame);
 		if (!terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)) {
-			continue;
-		}
-		if (candyPos.SqDistance2D(pos) >= SQUARE(MAX_TRAVEL_SEC / 2 * candy->lowestSpeed)) {
 			continue;
 		}
 		if (!candy->IsSafeMergeLine(this)) {  // the small group walks to us
@@ -474,12 +471,12 @@ void CAttackTask::Reinforce(const int frame)
 	}
 	// Threat-aware path to the group's leader, capped like every other route (GetPathThreatCap: the common
 	// allowance). It only has to get within 800 elmos, so the hot zone around a fighting group doesn't block
-	// it; merging takes over inside MERGE_DIST (CheckMergeTask every 4 updates from our side,
-	// AbsorbWeakerTasks every 8 from an army's side).
+	// it; merging takes over inside the merge distance (CheckMergeTask from our side, AbsorbWeakerTasks from
+	// an army's side). Range: quota.attack_merge.reinforce_range.
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& startPos = leader->GetPos(frame);
 	position = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad this update
-	const float pathRange = 800.f;
+	const float pathRange = static_cast<CMilitaryManager*>(manager)->GetAttackMerge().reinforceRange;
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
@@ -504,12 +501,14 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query)
 		if (pPath->path.size() > 2) {
 			ActivePath(lowestSpeed);
 		}
-	} else if (++reinforceFails >= 10) {  // ~20 s of empty routes at a decision every ~2 s
-		// No safe route 10 times in a row (~20 s): act as a small attack group for 10 s, then look again
+	} else if (++reinforceFails >= static_cast<CMilitaryManager*>(manager)->GetAttackMerge().reinforceFails) {
+		// No safe route quota.attack_merge.reinforce_fails times in a row (10: ~20 s at a decision every ~2 s):
+		// act as a small attack group for reinforce_retry (10 s), then look again
 		// (merge checks and absorbing still apply meanwhile)
 		reinforce = nullptr;
 		reinforceFails = 0;
-		reinforceRetryFrame = manager->GetCircuit()->GetLastFrame() + FRAMES_PER_SEC * 10;
+		reinforceRetryFrame = manager->GetCircuit()->GetLastFrame()
+				+ static_cast<CMilitaryManager*>(manager)->GetAttackMerge().reinforceRetry;
 	}
 }
 
@@ -637,7 +636,7 @@ void CAttackTask::FindTarget()
 	for (const auto& c : candidates) {
 		scaleRefSqDist = anchorFor(c.second);
 		// Approach line: from the target towards us, out to our range
-		if (IsLineSafe(c.second->GetPos(), pos, highestRange, maxPower, maxPower)) {
+		if (IsLineSafe(c.second->GetPos(), pos, highestRange, maxPower, maxPower, 0.f)) {
 			if (bestTarget == nullptr) {
 				bestTarget = c.second;
 				bestKey = c.first;
@@ -690,10 +689,10 @@ void CAttackTask::FindTarget()
 }
 
 bool CAttackTask::IsLineSafe(const AIFloat3& from, const AIFloat3& to, float maxReach,
-		float strength, float supportStrength) const
+		float strength, float supportStrength, float supportRadius) const
 {
 	// Walk from 'from' towards 'to', out to maxReach (or to 'to' if closer), one threat square at a time,
-	// judging each spot with the common allowance; within 400 elmos of 'to' with supportStrength
+	// judging each spot with the common allowance; within supportRadius of 'to' with supportStrength
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
 	AIFloat3 dir = to - from;
 	dir.y = 0.f;
@@ -707,7 +706,7 @@ bool CAttackTask::IsLineSafe(const AIFloat3& from, const AIFloat3& to, float max
 	for (float d = step; d <= reach; d += step) {
 		AIFloat3 p = from + dir * d;
 		CTerrainManager::CorrectPosition(p);
-		const float s = (p.SqDistance2D(to) < SQUARE(400.f)) ? supportStrength : strength;
+		const float s = (p.SqDistance2D(to) < SQUARE(supportRadius)) ? supportStrength : strength;
 		if (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, s)) {
 			return false;
 		}

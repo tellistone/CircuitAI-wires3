@@ -44,10 +44,10 @@ private:
 	void AbsorbWeakerTasks();
 	void FindTarget();
 	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below the allowance for 'strength' at each
-	// sampled spot, or for 'supportStrength' within 400 elmos of 'to'. Used by target picking (approach line from the
+	// sampled spot, or for 'supportStrength' within supportRadius of 'to'. Used by target picking (approach line from the
 	// target towards us, out to our range) and merging (from our leader to the host's)
 	bool IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
-			float strength, float supportStrength) const;
+			float strength, float supportStrength, float supportRadius) const;
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates

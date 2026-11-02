@@ -166,6 +166,20 @@ public:
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
+	// quota.attack_merge: how attack groups join, absorb and reinforce each other
+	struct SAttackMerge {
+		float speedRatio;  // leaders' speeds within this factor of each other
+		float distance;  // leaders within this many elmos may join or absorb
+		float travelSec;  // and at most this many seconds of straight travel apart (the walking group's slowest speed)
+		int joinSmall;  // a group under quota.attack checks for a group to join every this many updates (~1 s each)
+		int joinArmy;  // an army checks every this many updates
+		int absorb;  // an army absorbs small groups every this many updates
+		float supportRadius;  // within this many elmos of the host's leader, both groups' strength counts on the merge line
+		float reinforceRange;  // a reinforcing group's route only has to get this close to the host's leader
+		int reinforceFails;  // empty reinforce routes in a row before giving up
+		int reinforceRetry;  // frames to act as a small attack group after giving up, before looking again
+	};
+	const SAttackMerge& GetAttackMerge() const { return attackMerge; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
 	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
 	// Courage bonus inside the base defence radius: quota.thr_mod.base_bonus at the base centre, falling to 1 at the radius edge
@@ -261,6 +275,7 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackSpotThreat;  // quota.attack_spot_threat
+	SAttackMerge attackMerge;  // quota.attack_merge
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
 	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
 	float baseThrBonus;  // quota.thr_mod.base_bonus

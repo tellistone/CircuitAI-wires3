@@ -377,6 +377,40 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.attack_spot_threat must be a number >= 0, using 1.0", cfgName.c_str());
 	}
 	attackSpotThreat = (qspotThreat.isNumeric() && (qspotThreat.asFloat() >= 0.f)) ? qspotThreat.asFloat() : 1.f;
+	{
+		const Json::Value& qmerge = quotas["attack_merge"];
+		if (!qmerge.isNull() && !qmerge.isObject()) {
+			circuit->LOG("CONFIG %s: quota.attack_merge must be an object, using defaults", cfgName.c_str());
+		}
+		// Missing keys use the default; a non-number or a value below the minimum logs and uses the default
+		auto readNum = [&](const char* name, float def, float minVal) {
+			const Json::Value& v = qmerge.isObject() ? qmerge[name] : Json::Value();
+			if (v.isNull()) {
+				return def;
+			}
+			if (!v.isNumeric() || (v.asFloat() < minVal)) {
+				circuit->LOG("CONFIG %s: quota.attack_merge.%s must be a number >= %g, using %g", cfgName.c_str(), name, minVal, def);
+				return def;
+			}
+			return v.asFloat();
+		};
+		attackMerge.speedRatio = readNum("speed_ratio", 1.5f, 1.f);
+		attackMerge.distance = readNum("distance", 2000.f, 0.f);
+		attackMerge.travelSec = readNum("travel_sec", 30.f, 0.f);
+		const Json::Value& qjoin = qmerge.isObject() ? qmerge["join_interval"] : Json::Value();
+		const bool isJoinOk = qjoin.isNull() || (qjoin.isArray() && (qjoin.size() == 2)
+				&& qjoin[0u].isNumeric() && qjoin[1u].isNumeric() && (qjoin[0u].asInt() >= 1) && (qjoin[1u].asInt() >= 1));
+		if (!isJoinOk) {
+			circuit->LOG("CONFIG %s: quota.attack_merge.join_interval must be [<small group >= 1>, <army >= 1>], using [4, 32]", cfgName.c_str());
+		}
+		attackMerge.joinSmall = (isJoinOk && !qjoin.isNull()) ? qjoin[0u].asInt() : 4;
+		attackMerge.joinArmy = (isJoinOk && !qjoin.isNull()) ? qjoin[1u].asInt() : 32;
+		attackMerge.absorb = static_cast<int>(readNum("absorb_interval", 8.f, 1.f));
+		attackMerge.supportRadius = readNum("support_radius", 400.f, 0.f);
+		attackMerge.reinforceRange = readNum("reinforce_range", 800.f, 0.f);
+		attackMerge.reinforceFails = static_cast<int>(readNum("reinforce_fails", 10.f, 1.f));
+		attackMerge.reinforceRetry = static_cast<int>(readNum("reinforce_retry", 10.f, 0.f) * FRAMES_PER_SEC);
+	}
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
 		if (!raidTargets.isNull()) {
