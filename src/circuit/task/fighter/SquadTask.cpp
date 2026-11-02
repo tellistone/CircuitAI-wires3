@@ -158,10 +158,6 @@ ISquadTask* ISquadTask::CheckMergeTask()
 	const float sqMaxDistCost = SQUARE(MAX_TRAVEL_SEC * lowestSpeed);
 	float metric = std::numeric_limits<float>::max();
 
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<CQueryLineMap> query = std::static_pointer_cast<CQueryLineMap>(
-			pathfinder->CreateLineMapQuery(leader, circuit->GetThreatMap(), frame));
-
 	const std::set<IFighterTask*>& tasks = static_cast<CMilitaryManager*>(manager)->GetTasks(fightType);
 	for (const IFighterTask* candidate : tasks) {
 		if ((candidate == this) ||
@@ -179,19 +175,33 @@ ISquadTask* ISquadTask::CheckMergeTask()
 			continue;
 		}
 
-		if (!query->IsSafeLine(pos, taskPos)) {  // ensure safe passage
+		// Check time-distance to target
+		float sqDistCost = pos.SqDistance2D(taskPos);
+		if ((sqDistCost >= metric) || (sqDistCost >= sqMaxDistCost)) {
 			continue;
 		}
 
-		// Check time-distance to target
-		float sqDistCost = pos.SqDistance2D(taskPos);
-		if ((sqDistCost < metric) && (sqDistCost < sqMaxDistCost)) {
-			task = candy;
-			metric = sqDistCost;
+		if (!IsSafeMergeLine(candy)) {  // ensure safe passage
+			continue;
 		}
+		task = candy;
+		metric = sqDistCost;
 	}
 
 	return const_cast<ISquadTask*>(task);
+}
+
+bool ISquadTask::IsSafeMergeLine(const ISquadTask* host) const
+{
+	// Default: the straight line is walkable and has no threat at all
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = leader->GetPos(frame);
+	const AIFloat3& tp = host->GetLeaderPos(frame);
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<CQueryLineMap> query = std::static_pointer_cast<CQueryLineMap>(
+			pathfinder->CreateLineMapQuery(leader, circuit->GetThreatMap(), frame));
+	return query->IsSafeLine(pos, utils::is_valid(tp) ? tp : pos);
 }
 
 ISquadTask* ISquadTask::GetMergeTask()
