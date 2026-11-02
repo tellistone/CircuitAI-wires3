@@ -33,7 +33,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   At a firing spot AA now fights from the spot instead of taking an Attack order, so the engine never chases a
   plane past it (`IFighterTask::isFireSpotChase`, new `CCircuitUnit::FightFrom`; other tasks unchanged).
 - **Anti-air target checks.** An unidentified radar blip is taken for a plane only when it is at least 50 elmos above
-  the ground, so AA no longer walks to a ground unit's dot it can't shoot. When judging threat at a firing spot, only
+  the ground, so AA no longer walks to a ground unit's dot it can't shoot. The ground is the highest terrain within the
+  radar error (96 elmos) around the dot, and never below the water surface, so ships and units by cliffs don't pass. When judging threat at a firing spot, only
   the plane's own threat at that spot is taken off (none outside its ground range, none for a pure fighter), so a
   plane can no longer make real ground threat under it disappear.
 - **Anti-air path threat cap.** Every AA path request passes a threat cap (squad strength with the strictest

@@ -36,6 +36,25 @@ namespace circuit {
 using namespace springai;
 
 static constexpr float UNKNOWN_AIR_HEIGHT = 50.f;  // an unidentified blip this far above ground counts as a plane
+static constexpr float BLIP_POS_ERROR = 96.f;  // engine default radar error size (ZK keeps it): sideways shift of a blip
+
+// Ground (or water surface) a radar blip stands on, as high as it can be: the blip is shifted sideways by up
+// to BLIP_POS_ERROR, so take the highest ground around it, else a ground unit near a cliff reads as flying
+static float GetBlipGroundHeight(CMap* map, const AIFloat3& p)
+{
+	const float maxX = CTerrainManager::GetTerrainWidth() - 1.f;
+	const float maxZ = CTerrainManager::GetTerrainHeight() - 1.f;
+	const float offsets[][2] = {{0.f, 0.f}, {1.f, 0.f}, {-1.f, 0.f}, {0.f, 1.f}, {0.f, -1.f},
+								{0.7f, 0.7f}, {0.7f, -0.7f}, {-0.7f, 0.7f}, {-0.7f, -0.7f}};
+	float height = 0.f;  // water surface: a ship or hover floats at 0 over a deep sea floor
+	for (const auto& o : offsets) {
+		const float x = std::min(std::max(p.x + o[0] * BLIP_POS_ERROR, 0.f), maxX);
+		const float z = std::min(std::max(p.z + o[1] * BLIP_POS_ERROR, 0.f), maxZ);
+		height = std::max(height, map->GetElevationAt(x, z));
+	}
+	return height;
+}
+
 static const int SPLIT_MERGE_COOLDOWN = FRAMES_PER_SEC * 30;  // a unit split off a blocked regroup doesn't merge for this long
 
 CAntiAirTask::CAntiAirTask(ITaskManager* mgr, float powerMod)
@@ -336,7 +355,7 @@ void CAntiAirTask::FindTarget()
 			{
 				continue;
 			}
-		} else if (ePos.y - map->GetElevationAt(ePos.x, ePos.z) < UNKNOWN_AIR_HEIGHT) {
+		} else if (ePos.y - GetBlipGroundHeight(map, ePos) < UNKNOWN_AIR_HEIGHT) {
 			// Unknown radar blip: skips the category check above, so only one flying high enough
 			// is taken for a plane; a ground raider's dot in our mex field is not an AA target
 			continue;
