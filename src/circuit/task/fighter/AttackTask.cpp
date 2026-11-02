@@ -728,8 +728,8 @@ void CAttackTask::FindTarget()
 		candidates.emplace_back(sqOEDist, enemy);
 	}
 
-	// Nearest candidates first. The approach (the ground we'd shoot from) of one beyond our range is checked on
-	// the route itself, when it comes back (ApplyTargetPath / IsApproachSafe); within range, below
+	// Nearest candidates whose approach passes the straight-line screen first. The one the route reaches is
+	// checked again on the route itself, when it comes back (ApplyTargetPath / IsApproachSafe)
 	std::sort(candidates.begin(), candidates.end(),
 			[](const std::pair<float, CEnemyInfo*>& a, const std::pair<float, CEnemyInfo*>& b) { return a.first < b.first; });
 	// Keep the nearest 16 as goals of one route query (Update); the nearest is the target until
@@ -741,15 +741,13 @@ void CAttackTask::FindTarget()
 	CEnemyInfo* prevTarget = nullptr;
 	float prevKey = 0.f;
 	std::vector<float> candidateKeys;
-	const float sqRange = SQUARE(highestRange);
 	for (const auto& c : candidates) {
-		// Within range the group engages at once, without a route (Update): judge its approach here, on the
-		// straight line from the target towards us, out to our range
-		if (c.second->GetPos().SqDistance2D(pos) < sqRange) {
-			scaleRefSqDist = anchorFor(c.second);
-			if (!IsLineSafe(c.second->GetPos(), pos, highestRange, maxPower, maxPower, 0.f)) {
-				continue;
-			}
+		// Quick screen: the straight line from the target towards us, out to our range. It is the only approach
+		// check for a target within range (engaged at once, without a route); one beyond range is checked again
+		// on its route when that comes back
+		scaleRefSqDist = anchorFor(c.second);
+		if (!IsLineSafe(c.second->GetPos(), pos, highestRange, maxPower, maxPower, 0.f)) {
+			continue;
 		}
 		if (bestTarget == nullptr) {
 			bestTarget = c.second;
