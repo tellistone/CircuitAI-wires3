@@ -39,7 +39,7 @@ using namespace springai;
 // and routes again to the rest
 static constexpr int MAX_TARGET_ROUTES = 3;
 // A target dropped for an unsafe route approach isn't picked again for this long
-static constexpr int REJECTED_TARGET_FRAMES = FRAMES_PER_SEC * 10;
+static constexpr int REJECTED_TARGET_FRAMES = FRAMES_PER_SEC * 6;
 
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
