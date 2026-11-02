@@ -656,6 +656,10 @@ void CAttackTask::FindTarget()
 	const bool isCautious = (frame < fleeFrame + FRAMES_PER_SEC * 4);
 	const float maxPower = GetSafeThreat() * (isCautious ? 0.75f : 1.f);
 	const float weaponRange = cdef->GetMaxRange();
+	auto distModFor = [](const CEnemyInfo* enemy) {
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		return (edef != nullptr) ? edef->GetTargetDistMod() : 1.f;
+	};
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
 
@@ -724,7 +728,8 @@ void CAttackTask::FindTarget()
 			}
 		}
 
-		const float sqOEDist = pos.SqDistance2D(ePos) * scale;  // Own to Enemy distance
+		// Own to Enemy distance, times the type's target_dist_mod (behaviour.json) so unwanted types count as farther
+		const float sqOEDist = pos.SqDistance2D(ePos) * scale * SQUARE(distModFor(enemy));
 		candidates.emplace_back(sqOEDist, enemy);
 	}
 
@@ -738,8 +743,10 @@ void CAttackTask::FindTarget()
 	candidatePos.clear();
 	CEnemyInfo* bestTarget = nullptr;
 	float bestKey = 0.f;
+	float bestRawKey = 0.f;  // bestKey without target_dist_mod
 	CEnemyInfo* prevTarget = nullptr;
 	float prevKey = 0.f;
+	float prevRawKey = 0.f;
 	std::vector<float> candidateKeys;
 	for (const auto& c : candidates) {
 		// A target within range is engaged at once, without a route: the straight line from it towards us is
@@ -750,13 +757,22 @@ void CAttackTask::FindTarget()
 				continue;
 			}
 		}
+		// The route goes to whichever goal it reaches first, i.e. about the really nearest. So leave out a
+		// candidate really nearer than the best but ranked behind it by target_dist_mod: it would take the route
+		// (kept if it is our current target, for stickiness)
+		const float rawKey = c.first / SQUARE(distModFor(c.second));
+		if ((bestTarget != nullptr) && (rawKey < bestRawKey) && (c.second->GetId() != prevTargetId)) {
+			continue;
+		}
 		if (bestTarget == nullptr) {
 			bestTarget = c.second;
 			bestKey = c.first;
+			bestRawKey = rawKey;
 		}
 		if (c.second->GetId() == prevTargetId) {
 			prevTarget = c.second;
 			prevKey = c.first;
+			prevRawKey = rawKey;
 		}
 		candidateKeys.push_back(c.first);
 		candidateIds.push_back(c.second->GetId());
@@ -764,6 +780,22 @@ void CAttackTask::FindTarget()
 		if (candidateIds.size() >= 16) {
 			break;
 		}
+	}
+
+	// The current target was kept above although really nearer than the best; if stickiness won't keep it
+	// either, leave it out too, or it would take the route
+	if ((prevTarget != nullptr) && (prevTarget != bestTarget) && (prevRawKey < bestRawKey)
+		&& (bestKey < prevKey * SQUARE(0.8f)))
+	{
+		for (size_t i = 0; i < candidateIds.size(); ++i) {
+			if (candidateIds[i] == prevTarget->GetId()) {
+				candidateIds.erase(candidateIds.begin() + i);
+				candidatePos.erase(candidatePos.begin() + i);
+				candidateKeys.erase(candidateKeys.begin() + i);
+				break;
+			}
+		}
+		prevTarget = nullptr;
 	}
 
 	// The full screened list: if the route's approach to the pick is rejected, the next route goes to these

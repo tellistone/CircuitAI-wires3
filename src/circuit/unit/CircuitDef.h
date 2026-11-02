@@ -275,6 +275,9 @@ public:
 	// behaviour.json per unit "artillery_flee_margin"; unset = use the "artillery" block's value
 	void SetArtyFleeMargin(float value) { artyFleeMargin = value; isArtyFleeMarginSet = true; }
 	float GetArtyFleeMargin(float defaultValue) const { return isArtyFleeMarginSet ? artyFleeMargin : defaultValue; }
+	// Attack target choice: this enemy type's distance counts as this many times its real distance
+	void SetTargetDistMod(float value) { targetDistMod = value; }
+	float GetTargetDistMod() const { return targetDistMod; }
 
 	float GetRadius();
 	float GetHeight();
@@ -374,6 +377,7 @@ private:
 	float retreat;
 	float artyFleeMargin = -1.f;
 	bool isArtyFleeMarginSet = false;
+	float targetDistMod = 1.f;
 
 	float radius;
 	float height;
