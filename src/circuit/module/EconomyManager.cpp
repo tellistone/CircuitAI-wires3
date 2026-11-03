@@ -1397,7 +1397,7 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 		return UpdatePylonTasks();
 	}
 
-	// Constructors reclaiming and metal close to full: storage at HIGH so the reclaim isn't wasted
+	// Constructors reclaiming and metal close to full: storage even if storage is already 10x income
 	bool isReclaiming = false;
 	for (IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::RECLAIM)) {
 		if (!t->GetAssignees().empty()) {
@@ -1428,8 +1428,7 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 		float z = terHeight / 4 + rand() % (int)(terHeight / 2);
 		buildPos = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
 	}
-	return builderMgr->EnqueueTask(isReclaimStore ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL,
-								   storeDef, buildPos, IBuilderTask::BuildType::STORE);
+	return builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, storeDef, buildPos, IBuilderTask::BuildType::STORE);
 }
 
 IBuilderTask* CEconomyManager::UpdatePylonTasks()
