@@ -17,6 +17,8 @@
 namespace circuit {
 
 class CEnemyInfo;
+class CAllyUnit;
+class CCircuitDef;
 
 class IFighterTask: public IUnitTask {
 public:
@@ -103,6 +105,13 @@ protected:
 
 	static F3Vec urgentPositions;  // NOTE: micro-opt
 	static F3Vec enemyPositions;  // NOTE: micro-opt
+
+	// AA flee cover: strength a friendly unit lends, health-scaled as squad strength is
+	// (power * sqrt(health %)); 0 for nanoframes
+	static float GetCoverPower(CAllyUnit* ally);
+	// Flee cover: a static unit that defends against ground or water units nearby. The threat map's rule:
+	// a ground/water threat range, which static AA and superweapons (range over 2000) don't get
+	static bool IsStaticDefence(CCircuitDef* cdef);
 
 #ifdef DEBUG_VIS
 public:
