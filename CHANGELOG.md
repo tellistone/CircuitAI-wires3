@@ -90,6 +90,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - Retreated units waiting to be repaired (at a haven or by builders) now patrol in place instead of back and forth
   between two points, so they stay in range of whatever is repairing them. They still return fire.
+- Retreated units now stop well inside the repairer's range (60% of it plus the unit's own radius) before waiting.
+  Before, the old patrol point could fall outside a sanctuary's nano tower range, so the unit was never repaired.
+  When waiting for a builder, its own build range is used instead of the nano tower's.
 
 ### Fixed
 

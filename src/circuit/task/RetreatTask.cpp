@@ -220,7 +220,12 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		haven = circuit->GetSetupManager()->GetBasePos();
 	}
 
-	const float maxDist = factoryMgr->GetAssistDef()->GetBuildDistance();
+	// Stop well inside the repairer's build range (same margin as the retreat path), so the wait spot
+	// can't end up on the edge or outside of it
+	const float repairDist = (repairer != nullptr)
+			? repairer->GetCircuitDef()->GetBuildDistance()
+			: factoryMgr->GetAssistDef()->GetBuildDistance();
+	const float maxDist = repairDist * 0.6f + cdef->GetRadius();  // big units can't get their center any closer
 	const AIFloat3& unitPos = unit->GetPos(frame);
 	if (unitPos.SqDistance2D(haven) > maxDist * maxDist) {
 		// TODO: push MoveAction into unit? to avoid enemy fire
