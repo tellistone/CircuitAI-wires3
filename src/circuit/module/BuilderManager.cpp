@@ -1076,6 +1076,17 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	return MakeBuilderTask(unit, pQuery.get());
 }
 
+IBuilderTask::Priority CBuilderManager::GetTaskPriority(const IBuilderTask* task, bool isEnergyStalling) const
+{
+	// Mex jobs still get picked during an energy stall, but rank as NORMAL so energy jobs (HIGH while stalling) go first
+	if (isEnergyStalling && (task->GetBuildType() == IBuilderTask::BuildType::MEX)
+		&& (task->GetPriority() == IBuilderTask::Priority::HIGH))
+	{
+		return IBuilderTask::Priority::NORMAL;
+	}
+	return task->GetPriority();
+}
+
 IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange)
 {
 	CThreatMap* threatMap = circuit->GetThreatMap();
@@ -1100,6 +1111,7 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	float metric = std::numeric_limits<float>::max();
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
+	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
 	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
 		for (const IBuilderTask* candidate : tasks) {
 			if (isPrioRepairFull && (candidate->GetPriority() == IBuilderTask::Priority::NOW)
@@ -1150,7 +1162,7 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 
 			distCost = std::max(distCost, COST_BASE);
 
-			float weight = (static_cast<float>(candidate->GetPriority()) + 1.0f);
+			float weight = (static_cast<float>(GetTaskPriority(candidate, isEnergyStalling)) + 1.0f);
 			weight = 1.0f / SQUARE(weight);
 			bool valid = false;
 
@@ -1216,6 +1228,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	float metric = std::numeric_limits<float>::max();
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
+	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
 	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
 		for (const IBuilderTask* candidate : tasks) {
 			if (isPrioRepairFull && (candidate->GetPriority() == IBuilderTask::Priority::NOW)
@@ -1269,7 +1282,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 
 			distCost = std::max(distCost, COST_BASE);
 
-			float weight = (static_cast<float>(candidate->GetPriority()) + 1.0f);
+			float weight = (static_cast<float>(GetTaskPriority(candidate, isEnergyStalling)) + 1.0f);
 			weight = 1.0f / SQUARE(weight);
 			bool valid = false;
 

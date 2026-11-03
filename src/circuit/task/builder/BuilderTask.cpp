@@ -624,7 +624,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 						pos += dir.Normalize2D() * (ourRange + pylonRange) * 0.9f;
 					}
 				}
-				circuit->GetBuilderManager()->EnqueuePylon(IBuilderTask::Priority::HIGH, pylonDef, pos, nullptr, 1.0f);
+				circuit->GetBuilderManager()->EnqueuePylon(IBuilderTask::Priority::NORMAL, pylonDef, pos, nullptr, 1.0f);
 			}
 		}
 	}
@@ -704,9 +704,9 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				pos = terrainMgr->GetBuildPosition(bdef, pos);
 
 				if (parent == nullptr) {
-					parent = builderMgr->EnqueueTask(IBuilderTask::Priority::NORMAL, bi.cdef, pos, bi.buildType, 0.f, true, 0);
+					parent = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, bi.cdef, pos, bi.buildType, 0.f, true, 0);
 				} else {
-					parent->SetNextTask(builderMgr->EnqueueTask(IBuilderTask::Priority::NORMAL, bi.cdef, pos, bi.buildType, 0.f, false, 0));
+					parent->SetNextTask(builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, bi.cdef, pos, bi.buildType, 0.f, false, 0));
 					parent = parent->GetNextTask();
 				}
 			}
