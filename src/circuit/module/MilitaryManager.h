@@ -164,6 +164,7 @@ public:
 
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
+	float GetAttackKeepThreat() const { return attackKeepThreat; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other
@@ -276,6 +277,7 @@ private:
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
+	float attackKeepThreat;  // quota.attack_keep_threat
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius

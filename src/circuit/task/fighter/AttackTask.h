@@ -60,6 +60,8 @@ private:
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
+	// quota.attack_keep_threat applies to the current target only outside the base defence radius
+	bool IsKeepAllowedAt(const springai::AIFloat3& pos) const;
 	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
 	float GetSafeThreat() const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
