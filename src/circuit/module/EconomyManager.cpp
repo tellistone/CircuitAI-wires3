@@ -68,8 +68,6 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, energyPull(.0f)
 		, energyUse(.0f)
 		, geoSpotsFrame(-1)
-		, reclaimMetal(0.f)
-		, reclaimMetalFrame(-1)
 		, geoThreat(1.f)
 		, geoMorphIncome(-1.f)
 		, geoMorphFrame(0)
@@ -763,28 +761,41 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	return task;
 }
 
-float CEconomyManager::GetReclaimMetal()
+float CEconomyManager::GetReclaimMetal(CCircuitDef* builderDef, const AIFloat3& position)
 {
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	STerrainMapArea* area = terrainMgr->GetCurrentMapArea(builderDef, position).first;  // nullptr = flying
 	const int frame = circuit->GetLastFrame();
-	if (frame < reclaimMetalFrame) {
-		return reclaimMetal;
+	auto it = reclaimMetal.find(area);
+	if ((it != reclaimMetal.end()) && (frame < it->second.second)) {
+		return it->second.first;
 	}
-	reclaimMetalFrame = frame + FRAMES_PER_SEC * 10;
 
-	reclaimMetal = 0.f;
+	// Same reach + threat test as UpdateReclaimTasks (CanReachAtSafe), but by area: no unit at hand
+	const float range = builderDef->GetBuildDistance();
+	float metal = 0.f;
 	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
 	for (Feature* feature : features) {
 		FeatureDef* featDef = feature->GetDef();
 		if (featDef == nullptr) {
 			continue;
 		}
-		if (featDef->IsReclaimable()) {
-			reclaimMetal += featDef->GetContainedResource(metalRes) * feature->GetReclaimLeft();
-		}
+		const float value = featDef->IsReclaimable() ? featDef->GetContainedResource(metalRes) : 0.f;
 		delete featDef;
+		if (value < 1.0f) {
+			continue;
+		}
+		AIFloat3 featPos = feature->GetPosition();
+		CTerrainManager::CorrectPosition(featPos);
+		if (!terrainMgr->CanMobileReachAtSafe(area, featPos, range)) {
+			continue;
+		}
+		metal += value * feature->GetReclaimLeft();
 	}
 	utils::free_clear(features);
-	return reclaimMetal;
+
+	reclaimMetal[area] = std::make_pair(metal, frame + FRAMES_PER_SEC * 10);
+	return metal;
 }
 
 IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCircuitUnit* unit, bool isNear)

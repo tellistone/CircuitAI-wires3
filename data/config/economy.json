@@ -53,8 +53,9 @@
 	"buildpower_army": {"ratio": 0.10, "since": 600},
 
 	// Also build constructors while their metal value is below <ratio> of the metal left in
-	// reclaimable features we can see (wrecks, rocks). Off before <since> seconds; ratio 0 disables.
-	"buildpower_reclaim": {"ratio": 0.10, "since": 0},
+	// reclaimable features we can see (wrecks, rocks) that the factory's constructor can reach with
+	// no enemy threat on them. Off before <since> seconds; ratio 0 disables.
+	"buildpower_reclaim": {"ratio": 0.10, "since": 300},
 
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,

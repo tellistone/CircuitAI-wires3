@@ -872,11 +872,8 @@ CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 	// Mid/late game: keep constructors' metal value at bpArmyRatio of the mobile army's
 	const bool isLowWorkerCost = (bpArmyRatio > 0.f) && (circuit->GetLastFrame() >= bpArmyFrame)
 		&& (builderMgr->GetWorkerCost() < circuit->GetMilitaryManager()->GetArmyCost() * bpArmyRatio);
-	// Keep constructors' metal value at bpReclaimRatio of the reclaim metal we can see
-	const bool isLowReclaimers = !isLowBuildPower && !isLowWorkerCost
-		&& (bpReclaimRatio > 0.f) && (circuit->GetLastFrame() >= bpReclaimFrame)
-		&& (builderMgr->GetWorkerCost() < economyMgr->GetReclaimMetal() * bpReclaimRatio);
-	if (!(isLowBuildPower || isLowWorkerCost || isLowReclaimers) || (rand() >= RAND_MAX / 2)) {
+	const bool isReclaimRule = (bpReclaimRatio > 0.f) && (circuit->GetLastFrame() >= bpReclaimFrame);
+	if (!(isLowBuildPower || isLowWorkerCost || isReclaimRule) || (rand() >= RAND_MAX / 2)) {
 		return nullptr;
 	}
 
@@ -888,6 +885,12 @@ CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 
 	if ((buildDef != nullptr) && buildDef->IsAvailable(circuit->GetLastFrame())) {
 		const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+		// Keep constructors' metal value at bpReclaimRatio of the reclaim this factory's constructor can safely reach
+		if (!isLowBuildPower && !isLowWorkerCost
+			&& (builderMgr->GetWorkerCost() >= economyMgr->GetReclaimMetal(buildDef, pos) * bpReclaimRatio))
+		{
+			return nullptr;
+		}
 		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 		if (!terrainMgr->CanBeBuiltAt(buildDef, pos, unit->GetCircuitDef()->GetBuildDistance())) {
 			return nullptr;
