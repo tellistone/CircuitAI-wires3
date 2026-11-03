@@ -33,16 +33,22 @@ IPathQuery::~IPathQuery()
 	}
 }
 
-void IPathQuery::SetThreatStrength(float strength)
+void IPathQuery::SetThreatStrength(float strength, float maxWeight)
 {
 	if (!(strength > 0.f)) {
 		return;  // no strength known: keep the flat weight
 	}
 	const float* arr = threatArray;
 	const float invStr = 1.f / std::max(strength, 1e-3f);
-	threatFun = [fun = std::move(threatFun), arr, invStr](int index) {
-		return fun(index) * 0.5f * (1.f + arr[index] * invStr);
-	};
+	if (maxWeight > 0.f) {
+		threatFun = [fun = std::move(threatFun), arr, invStr, maxWeight](int index) {
+			return fun(index) * 0.5f * std::min(1.f + arr[index] * invStr, maxWeight);
+		};
+	} else {
+		threatFun = [fun = std::move(threatFun), arr, invStr](int index) {
+			return fun(index) * 0.5f * (1.f + arr[index] * invStr);
+		};
+	}
 }
 
 void IPathQuery::SetThreatFloor(float value)

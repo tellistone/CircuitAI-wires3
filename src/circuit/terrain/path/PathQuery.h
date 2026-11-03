@@ -48,8 +48,9 @@ public:
 	// Dynamic threat cost: the usual 2x threat weight becomes (1 + threat / strength), so a cell costs
 	// threat x (1 + threat / strength) instead of 2 x threat: half price for light threat, the same at threat ==
 	// strength, steeper above. Units pathed on the cloak array (weight 1x) get half of that. Call after creating
-	// the query, before SetThreatFloor (either order works) and before running it
-	void SetThreatStrength(float strength);
+	// the query, before SetThreatFloor (either order works) and before running it.
+	// maxWeight caps (1 + threat / strength) (0 or less = no cap)
+	void SetThreatStrength(float strength, float maxWeight = 0.f);
 	float GetThreatFloor() const { return threatFloor; }
 	const FloatVec& GetHeightMap() const { return heightMap; }
 

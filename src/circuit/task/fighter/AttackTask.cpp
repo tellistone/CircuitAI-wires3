@@ -930,8 +930,13 @@ void CAttackTask::SetPathThreatStrength(IPathQuery* query, int kind) const
 	// Light threat (well below our strength) costs about half the flat 2x, threat equal to it the same, heavier
 	// threat more (quadratic). Big groups walk through what small ones go around
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	if (militaryMgr->IsAttackPathDynamic(static_cast<CMilitaryManager::AttackPath>(kind))) {
-		query->SetThreatStrength(GetSafeThreat());
+	const CMilitaryManager::AttackPath pathKind = static_cast<CMilitaryManager::AttackPath>(kind);
+	if (militaryMgr->IsAttackPathDynamic(pathKind)) {
+		// Escapes: capped, so a weak group under heavy fire doesn't trade a short run through the worst of it
+		// for a much longer one through moderate threat (more time under fire, and a wider search)
+		const bool isEscape = (pathKind == CMilitaryManager::AttackPath::FLEE)
+				|| (pathKind == CMilitaryManager::AttackPath::CORNERED);
+		query->SetThreatStrength(GetSafeThreat(), isEscape ? militaryMgr->GetAttackFleePathMaxWeight() : 0.f);
 	}
 }
 

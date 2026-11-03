@@ -405,6 +405,11 @@ void CMilitaryManager::ReadConfig()
 			attackPathDynamic[i] = value;
 		}
 	}
+	const Json::Value& qfleeWeight = quotas.get("attack_flee_path_max_weight", 3.f);
+	if (!qfleeWeight.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.attack_flee_path_max_weight must be a number >= 1, using 3.0", cfgName.c_str());
+	}
+	attackFleePathMaxWeight = qfleeWeight.isNumeric() ? std::max(qfleeWeight.asFloat(), 1.f) : 3.f;
 	const Json::Value& qspotThreat = quotas.get("attack_spot_threat", 1.f);
 	if (!qspotThreat.isNumeric() || (qspotThreat.asFloat() < 0.f)) {
 		circuit->LOG("CONFIG %s: quota.attack_spot_threat must be a number >= 0, using 1.0", cfgName.c_str());
