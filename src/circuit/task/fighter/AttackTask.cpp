@@ -655,6 +655,9 @@ void CAttackTask::FindTarget()
 	const int frame = circuit->GetLastFrame();
 	const bool isCautious = (frame < fleeFrame + FRAMES_PER_SEC * 4);
 	const float maxPower = GetSafeThreat() * (isCautious ? 0.75f : 1.f);
+	// The current target is judged against a looser allowance (quota.attack_keep_threat x), so small swings
+	// in threat or in our health don't drop it and pick it again at the next decision
+	const float keepPower = maxPower * static_cast<CMilitaryManager*>(manager)->GetAttackKeepThreat();
 	const float weaponRange = cdef->GetMaxRange();
 	auto distModFor = [](const CEnemyInfo* enemy) {
 		const CCircuitDef* edef = enemy->GetCircuitDef();
@@ -696,7 +699,8 @@ void CAttackTask::FindTarget()
 		const float sqBEDist = ePos.SqDistance2D(basePos);  // Base to Enemy distance
 		const float scale = std::min(sqBEDist / sqOBDist, 1.f);  // ordering
 		scaleRefSqDist = anchorFor(enemy);
-		if ((threatMap->GetThreatAt(ePos) >= GetAllowedThreatAt(ePos, maxPower))
+		const float power = (enemy->GetId() == prevTargetId) ? keepPower : maxPower;
+		if ((threatMap->GetThreatAt(ePos) >= GetAllowedThreatAt(ePos, power))
 			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange))
 		{
 			continue;
@@ -753,7 +757,8 @@ void CAttackTask::FindTarget()
 		// its approach check. One beyond range gets no line check: its route's approach is checked instead
 		if (c.second->GetPos().SqDistance2D(pos) < SQUARE(highestRange)) {
 			scaleRefSqDist = anchorFor(c.second);
-			if (!IsLineSafe(c.second->GetPos(), pos, highestRange, maxPower, maxPower, 0.f)) {
+			const float power = (c.second->GetId() == prevTargetId) ? keepPower : maxPower;
+			if (!IsLineSafe(c.second->GetPos(), pos, highestRange, power, power, 0.f)) {
 				continue;
 			}
 		}
