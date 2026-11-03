@@ -226,6 +226,7 @@ namespace NSMicroPather {
 			CostFunc moveFun;
 			CostFunc threatFun;
 			const FloatVec* heightMap;
+			float threatFloor = 0.f;  // threat at or below this counts as none when straightening the path
 
 			int mapSizeX;
 			int mapSizeY;
@@ -238,7 +239,8 @@ namespace NSMicroPather {
 			std::vector<void*> nodeTargets;  // helper vector
 
 			void SetMapData(const bool* canMoveArray, const float* threatArray,
-					const CostFunc& moveFun, const CostFunc& threatFun, const FloatVec& heightMap);
+					const CostFunc& moveFun, const CostFunc& threatFun, const FloatVec& heightMap,
+					float threatFloor = 0.f);
 			int FindBestPathToAnyGivenPoint(void* startNode, VoidVec& endNodes, VoidVec& targets, float maxThreat,
 					IndexVec* path, float* cost);
 			int FindBestPathToPointOnRadius(void* startNode, void* endNode, int radius, float maxThreat, TestFunc hitTest,

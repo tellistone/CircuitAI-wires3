@@ -377,6 +377,11 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.attack_keep_threat must be a number >= 1, using 1.34", cfgName.c_str());
 	}
 	attackKeepThreat = qkeepThreat.isNumeric() ? std::max(qkeepThreat.asFloat(), 1.f) : 1.34f;  // below 1 = off
+	const Json::Value& qignoreThreat = quotas.get("attack_path_ignore_threat", 0.25f);
+	if (!qignoreThreat.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.attack_path_ignore_threat must be a number 0..1, using 0.25", cfgName.c_str());
+	}
+	attackPathIgnoreThreat = utils::clamp(qignoreThreat.isNumeric() ? qignoreThreat.asFloat() : 0.25f, 0.f, 1.f);
 	const Json::Value& qspotThreat = quotas.get("attack_spot_threat", 1.f);
 	if (!qspotThreat.isNumeric() || (qspotThreat.asFloat() < 0.f)) {
 		circuit->LOG("CONFIG %s: quota.attack_spot_threat must be a number >= 0, using 1.0", cfgName.c_str());

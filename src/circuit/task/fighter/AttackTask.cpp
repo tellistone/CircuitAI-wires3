@@ -365,6 +365,7 @@ void CAttackTask::RequestTargetPath(std::vector<ICoreUnit::Id> ids, F3Vec goals)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, pathRange, goals, GetHitTest(), GetPathThreatCap(startPos, goals));
+	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -584,6 +585,7 @@ void CAttackTask::Reinforce(const int frame)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, {position}));
+	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -903,6 +905,16 @@ float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals
 		scale = std::min(scale, GetNearBaseScaleAt(g));
 	}
 	return GetSafeThreat() * bonus / curve / std::max(scale, 1e-3f);
+}
+
+void CAttackTask::SetPathThreatFloor(IPathQuery* query) const
+{
+	// Capped routes (target, front, reinforce) ignore light threat: at or below quota.attack_path_ignore_threat x
+	// the group's current strength it costs nothing, so the route goes straight through it instead of around
+	const float frac = static_cast<CMilitaryManager*>(manager)->GetAttackPathIgnoreThreat();
+	if (frac > 0.f) {
+		query->SetThreatFloor(GetSafeThreat() * frac);
+	}
 }
 
 bool CAttackTask::IsKeepAllowedAt(const AIFloat3& pos) const
@@ -1261,6 +1273,7 @@ void CAttackTask::FallbackFrontPos()
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(startPos, urgentPositions));
+	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 

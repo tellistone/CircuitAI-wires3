@@ -527,7 +527,7 @@ void CPathFinder::MakePath(IPathQuery* query, NSMicroPather::CMicroPather* micro
 	CTerrainData::CorrectPosition(startPos);
 	CTerrainData::CorrectPosition(endPos);
 
-	micropather->SetMapData(canMoveArray, threatArray, moveFun, threatFun, heightMap);
+	micropather->SetMapData(canMoveArray, threatArray, moveFun, threatFun, heightMap, q->GetThreatFloor());
 	if (micropather->FindBestPathToPointOnRadius(Pos2MoveNode(startPos), Pos2MoveNode(endPos),
 			radius, maxThreat, hitTest, &iPath.path, &pathCost) == CMicroPather::SOLVED)
 	{
@@ -672,7 +672,7 @@ void CPathFinder::FindBestPath(IPathQuery* query, NSMicroPather::CMicroPather* m
 
 	CTerrainData::CorrectPosition(startPos);
 
-	micropather->SetMapData(canMoveArray, threatArray, moveFun, threatFun, heightMap);
+	micropather->SetMapData(canMoveArray, threatArray, moveFun, threatFun, heightMap, q->GetThreatFloor());
 	if (micropather->FindBestPathToAnyGivenPoint(Pos2MoveNode(startPos), endNodes, nodeTargets,
 			maxThreat, &iPath.path, &pathCost) == CMicroPather::SOLVED)
 	{

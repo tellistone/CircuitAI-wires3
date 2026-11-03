@@ -62,6 +62,8 @@ private:
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	// quota.attack_keep_threat applies to the current target only outside the base defence radius
 	bool IsKeepAllowedAt(const springai::AIFloat3& pos) const;
+	// quota.attack_path_ignore_threat on a capped route: light threat costs nothing
+	void SetPathThreatFloor(IPathQuery* query) const;
 	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
 	float GetSafeThreat() const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }

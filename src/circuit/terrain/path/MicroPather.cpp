@@ -242,8 +242,9 @@ CMicroPather::~CMicroPather()
  * New: make sure that moveThreatFun doesn't return values below 0.0
  */
 void CMicroPather::SetMapData(const bool* canMoveArray, const float* threatArray,
-		const CostFunc& moveFun, const CostFunc& threatFun, const FloatVec& heightMap)
+		const CostFunc& moveFun, const CostFunc& threatFun, const FloatVec& heightMap, float threatFloor)
 {
+	this->threatFloor  = std::max(threatFloor, THREAT_EPSILON);
 	this->canMoveArray = canMoveArray;
 	this->threatArray  = threatArray;
 	this->moveFun      = moveFun;
@@ -1026,7 +1027,7 @@ void CMicroPather::MakeCostMap(void* startNode, std::vector<float>& costMap, boo
 
 size_t CMicroPather::RefinePath(IndexVec& path)
 {
-	if (threatArray[path[0]] > THREAT_EPSILON) {
+	if (threatArray[path[0]] > threatFloor) {
 		return 0;
 	}
 
@@ -1036,7 +1037,7 @@ size_t CMicroPather::RefinePath(IndexVec& path)
 	const float moveCost = moveFun(path[0]) + MOVE_EPSILON;
 
 	// All octant line draw
-	auto IsStraightLine = [this, x0, y0, moveCost](int index) {
+	auto IsStraightLine = [this, x0, y0, moveCost](int index) {  // threatFloor: THREAT_EPSILON unless set
 		// TODO: Remove node<->(x,y) conversions;
 		//       Use Bresenham's 1-octant line algorithm
 		int x1, y1;
@@ -1057,7 +1058,7 @@ size_t CMicroPather::RefinePath(IndexVec& path)
 			}
 
 			int idx = CanMoveNode2Index(graph.MoveXY2MoveNode(x, y));
-			if ((idx < 0) || (threatArray[idx] > THREAT_EPSILON) || (moveFun(idx) > moveCost)) {
+			if ((idx < 0) || (threatArray[idx] > threatFloor) || (moveFun(idx) > moveCost)) {
 				return false;
 			}
 		}
