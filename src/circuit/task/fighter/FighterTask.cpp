@@ -453,7 +453,7 @@ void IFighterTask::Log()
 float IFighterTask::GetCoverPower(CAllyUnit* ally)
 {
 	// Power scaled by sqrt(health %), as squad strength is; nanoframes don't count.
-	// The caller filters which units count (mobile, armed, not aircraft, its own role)
+	// The caller filters which units count (armed, not aircraft, not its own role)
 	springai::Unit* u = ally->GetUnit();
 	if (u->IsBeingBuilt()) {
 		return 0.f;

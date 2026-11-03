@@ -652,7 +652,7 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 		}
 	}
 	// Cover net of those enemies: an escort they outweigh doesn't hold the artillery in place
-	if ((danger == nullptr) || ((artyCfg.allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat))) {
+	if ((danger == nullptr) || ((artyCfg.allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat, true))) {
 		isFleeing = false;
 		return false;
 	}
@@ -742,9 +742,11 @@ void CArtilleryTask::ApplyFleePath(const CQueryPathSingle* query)
 	}
 }
 
-void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
+void CArtilleryTask::CollectEscorts(CCircuitUnit* unit, bool isFlee)
 {
-	// Allied mobile armed units. Artillery (main role) and aircraft don't count, so artillery can't escort itself
+	// Allied mobile armed units. Artillery (main role) and aircraft don't count, so artillery can't escort itself.
+	// For the flee check, static defences that can hit ground count too (firing spots look for a mobile escort).
+	// Full-health power: no per-unit health reads here, this runs over every friendly unit on each update
 	escorts.clear();
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
@@ -752,8 +754,9 @@ void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
 	for (auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* ally = kv.second;
 		CCircuitDef* adef = ally->GetCircuitDef();
-		if ((ally->GetId() == unit->GetId()) || (adef == nullptr) || !adef->IsMobile() || !adef->IsAttacker() || adef->IsPlane()
-			|| (adef->GetMainRole() == ROLE_TYPE(ARTY)))
+		if ((ally->GetId() == unit->GetId()) || (adef == nullptr) || !adef->IsAttacker() || adef->IsPlane()
+			|| (adef->IsMobile() ? (adef->GetMainRole() == ROLE_TYPE(ARTY))
+				: (!isFlee || !(adef->HasAntiLand() || adef->HasAntiWater()))))
 		{
 			continue;
 		}
@@ -764,7 +767,7 @@ void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
 	}
 }
 
-bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float enemyThreat)
+bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float enemyThreat, bool isFlee)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
@@ -772,7 +775,7 @@ bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float en
 	// away, so without slack it could arrive, find no cover and turn back
 	const float slack = circuit->GetPathfinder()->GetSquareSize() * 2;
 	const float sqAllyRadius = SQUARE(artyCfg.allyRadius + slack);
-	CollectEscorts(unit);
+	CollectEscorts(unit, isFlee);
 	float cover = 0.f;
 	for (const auto& escort : escorts) {
 		if (escort.first.SqDistance2D(spot) <= sqAllyRadius) {
