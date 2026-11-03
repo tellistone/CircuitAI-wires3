@@ -13,6 +13,24 @@
 		"claim_time": 20,   // seconds a picked spot stays reserved for that scout (default 20)
 		"static_range_mult": 1.0  // scales enemy defence ranges when judging if a spot is defended (default 1.0)
 	},  
+	// Raider production floor: while we have fewer raider units (main role "raider" or a role bound to it, e.g.
+	// "cloaked_raider"; alive plus queued in factories) than "raider" + bonus, a factory that can build a raider
+	// builds one (picked by its factory.json tier weights). The bonus is the scout formula (scout_map_size curve too),
+	// counting enemy mexes a starting raid group (quota.raid[0] power) can reach. All three missing = no floor
+	"raider": 1,  // min raider units
+	"raider_per_mex": 1.0,  // 0 = no bonus (default 0)
+	"raider_max": 12,  // cap on "raider" + bonus ("raider" itself is never cut); 0 = no cap
+	// Raid groups with no enemies known roam between scored spots (same scoring as scout_spot, own claims; the
+	// group's leader holds the claim) instead of the old mex list; contested clusters still come first. Missing = old roaming
+	"raider_spot": {
+		"enemy": 2.5,       // weight for closeness to the enemy (default 1.0)
+		"stale": 1.0,       // weight for time since the spot was last seen (default 1.0)
+		"travel": 0.5,      // penalty for distance from the group's leader (default 0.5)
+		"home_ratio": 0.5,  // skip spots nearer our base than this x their distance to the enemy (default 0.5)
+		"stale_time": 90,   // seconds until a seen spot counts as fully stale (default 90)
+		"claim_time": 20,   // seconds a picked spot stays reserved for that group (default 20)
+		"static_range_mult": 1.0  // scales enemy defence ranges when judging if a spot is defended (default 1.0)
+	},
         "target_dist_mod": {"comm": 0.5},
 	// Second multiplier on that bonus: this curve at the map size, divided by all players. Points are
 	// [<map side in map units, e.g. 8 for 8x8; non-square maps use sqrt(w*h)>, <multiplier>], flat beyond the ends

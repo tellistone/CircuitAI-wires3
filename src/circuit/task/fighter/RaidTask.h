@@ -63,6 +63,10 @@ private:
 	bool isContestedRoute;  // the pending target route goes only to enemies in contested clusters
 	int contestedFailFrame;  // when such a route last came back empty: all goals again for 10 s
 	bool isContestedDest;  // 'position' is a contested cluster picked by FallbackRaid
+	// quota.raider_spot: the scored spot FallbackRaid roams to, and the move position made from it (-RgtVector = none).
+	// Re-picked once the spot is in our LOS, turns dangerous, or 'position' was changed by something else
+	springai::AIFloat3 raidSpot;
+	springai::AIFloat3 raidSpotPos;
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach  // short roam path: Fight order to send from Update() (not from the path callback)
 	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger

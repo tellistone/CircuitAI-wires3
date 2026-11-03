@@ -7,6 +7,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Raider production floor** (`quota.raider`, `raider_per_mex`, `raider_max`; all default 0 = off; shipped 1, 1.0, 12).
+  The scout quota's twin for production: while we have fewer raider units (main role `raider` or a role bound to it,
+  alive plus queued in factories) than `raider` + bonus, a factory that can build a raider builds one, picked by its
+  `factory.json` tier weights. The bonus is the scout formula (reachable enemy mexes / enemy players x `scout_map_size`
+  curve / all players x `raider_per_mex`), with reachability judged for a starting raid group (`quota.raid[0]` power,
+  `thr_mod.raid`, `thr_mod.distance.raid`). `raider_max` caps `raider` + bonus but never cuts `raider` itself.
+- **Raid roaming spots** (`quota.raider_spot`, missing = old roaming; same keys and defaults as `scout_spot`). Raid groups
+  with no enemies known roam to the best-scored spot (near the enemy, unseen for longest, not defended by known static
+  enemies, not on our side) instead of the shared farthest-mex list. Groups claim spots separately from scouts; the
+  group re-picks once the spot is in our LOS, turns dangerous (then it is blocked for 10 s) or its destination was
+  changed by something else. Contested clusters still come first; with no spot left it roams the old way.
+
 - **Guards interpose** (`guard.interpose`, default `[120, 600]`). While a mobile armed ground enemy or an unknown radar dot, seen now, is
   within 600 of the guarded unit, its guard moves to a spot 120 towards the nearest one (at most halfway), instead of
   only following with the engine Guard order. A Guard order is queued behind the move, so from the spot it follows the

@@ -954,6 +954,50 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 //		return isValid && ((area == nullptr) || terrainMgr->IsEnemyInArea(area));
 //	};
 
+	// quota.raider floor: while we have fewer raider units (army plus queued here) than the quota, build a raider
+	// this factory can make, weighted by its tier's probabilities (equal if those are all 0)
+	if (militaryMgr->IsRaiderQuotaOn()) {
+		unsigned int raiders = militaryMgr->GetRaiderCount();
+		for (const CRecruitTask* t : factoryTasks) {
+			if ((t->GetBuildDef() != nullptr) && militaryMgr->IsRaider(t->GetBuildDef())) {
+				++raiders;
+			}
+		}
+		float raidMagnitude = 0.f;
+		for (unsigned i = 0; i < facDef.buildDefs.size(); ++i) {
+			CCircuitDef* bd = facDef.buildDefs[i];
+			if (!militaryMgr->IsRaider(bd)
+				|| (raiders >= militaryMgr->GetMinRaiders(bd))
+				|| ((bd->GetCloakCost() > .1f) && (energyNet < bd->GetCloakCost()))
+				|| !bd->IsAvailable(frame)
+				|| !terrainMgr->CanBeBuiltAt(bd, pos, range))
+			{
+				continue;
+			}
+			candidates.push_back(std::make_pair(bd, probs[i]));
+			raidMagnitude += probs[i];
+		}
+		if (!candidates.empty()) {
+			CCircuitDef* raidDef = candidates.back().first;
+			if (raidMagnitude > 0.f) {
+				float dice = (float)rand() / RAND_MAX * raidMagnitude;
+				for (auto& pair : candidates) {
+					dice -= pair.second;
+					if (dice < 0.f) {
+						raidDef = pair.first;
+						break;
+					}
+				}
+			} else {
+				raidDef = candidates[rand() % candidates.size()].first;
+			}
+			candidates.clear();
+			UnitDef* def = unit->GetCircuitDef()->GetDef();
+			float radius = std::max(def->GetXSize(), def->GetZSize()) * SQUARE_SIZE / 2;
+			return EnqueueTask(CRecruitTask::Priority::NORMAL, raidDef, pos, CRecruitTask::RecruitType::FIREPOWER, radius);
+		}
+	}
+
 	float magnitude = 0.f;
 	for (unsigned i = 0; i < facDef.buildDefs.size(); ++i) {
 		CCircuitDef* bd = facDef.buildDefs[i];
