@@ -177,12 +177,9 @@ void CFGuardTask::OnUnitIdle(CCircuitUnit* unit)
 	CCircuitAI* circuit = manager->GetCircuit();
 	CCircuitUnit* vip = circuit->GetTeamUnit(vipId);
 	if (vip != nullptr) {
-		// An interposing guard that reached its spot holds it until the next Update. One that stopped short
-		// (move failed or blocked) goes back to Guard, so it isn't left standing where the spot never re-orders it
-		const float sqSlack = SQUARE(SQUARE_SIZE * 8);
-		if (!isInterposing || (unit->GetPos(circuit->GetLastFrame()).SqDistance2D(interposeSpot) > sqSlack)) {
-			GuardVip(unit, vip);
-		}
+		// The move to an interpose spot has a Guard queued behind it, so going idle means the queue ended
+		// (or a move failed): follow the vip again, and let the next Update send a fresh spot if still needed
+		GuardVip(unit, vip);
 	} else {
 		manager->AbortTask(this);
 	}
@@ -422,6 +419,9 @@ void CFGuardTask::Interpose(CCircuitUnit* unit, CCircuitUnit* vip)
 	interposeSpot = spot;
 	TRY_UNIT(circuit, unit,
 		unit->CmdMoveTo(spot, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		// Queued after the move: from the spot the guard follows the vip (the engine keeps a stopped guard on
+		// the side it came from, i.e. the enemy's side) instead of standing still until the next Update
+		unit->GetUnit()->Guard(vip->GetUnit(), UNIT_COMMAND_OPTION_SHIFT_KEY);
 		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
 	)
 }
