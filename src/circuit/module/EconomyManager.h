@@ -14,6 +14,7 @@
 #include "AIFloat3.h"
 
 #include <set>
+#include <map>
 #include <memory>
 
 namespace springai {
@@ -30,6 +31,7 @@ extern const char* RES_NAME_METAL;
 extern const char* RES_NAME_ENERGY;
 
 class IBuilderTask;
+struct STerrainMapArea;
 class CGameTask;
 class CEnergyGrid;
 
@@ -86,6 +88,9 @@ public:
 
 	IBuilderTask* MakeEconomyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateMetalTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	// Metal left in visible reclaimable features that builderDef from position can reach with no threat on them.
+	// Cached per terrain area for 10s.
+	float GetReclaimMetal(CCircuitDef* builderDef, const springai::AIFloat3& position);
 	IBuilderTask* UpdateReclaimTasks(const springai::AIFloat3& position, CCircuitUnit* unit, bool isNear = true);
 	IBuilderTask* UpdateEnergyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateFactoryTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
@@ -210,6 +215,7 @@ private:
 	// Geothermal
 	std::vector<springai::AIFloat3> geoSpots;  // known geothermal vents
 	int geoSpotsFrame;  // next refresh of geoSpots
+	std::map<STerrainMapArea*, std::pair<float, int>> reclaimMetal;  // area: <metal, next refresh frame>
 	float geoThreat;  // max enemy threat at a vent to build there
 	float geoMorphIncome;  // min avg metal income to morph a geothermal into its upgrade, <0 = never
 	int geoMorphFrame;  // earliest frame for geothermal morph
