@@ -31,6 +31,7 @@ CRetreatTask::CRetreatTask(ITaskManager* mgr, int timeout)
 		: IUnitTask(mgr, Priority::NORMAL, Type::RETREAT, timeout)
 		, repairer(nullptr)
 		, regroupFrame(-1)
+		, lastHavenSqDist(-1.f)
 {
 }
 
@@ -227,7 +228,12 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 			: factoryMgr->GetAssistDef()->GetBuildDistance();
 	const float maxDist = repairDist * 0.6f + cdef->GetRadius();  // big units can't get their center any closer
 	const AIFloat3& unitPos = unit->GetPos(frame);
-	if (unitPos.SqDistance2D(haven) > maxDist * maxDist) {
+	const float sqDist = unitPos.SqDistance2D(haven);
+	// Crowded haven: accept a spot still in full range once the last move got it no closer
+	const bool isStuckInRange = (sqDist <= SQUARE(repairDist)) && (lastHavenSqDist >= 0.f)
+			&& (sqDist > lastHavenSqDist - SQUARE(SQUARE_SIZE * 2));
+	lastHavenSqDist = sqDist;
+	if ((sqDist > maxDist * maxDist) && !isStuckInRange) {
 		// TODO: push MoveAction into unit? to avoid enemy fire
 		TRY_UNIT(circuit, unit,
 			unit->CmdMoveTo(haven, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 1);
@@ -249,6 +255,7 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 			regroupFrame = frame;
 		}
 		state = State::REGROUP;
+		lastHavenSqDist = -1.f;
 	}
 }
 

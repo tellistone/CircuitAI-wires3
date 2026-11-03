@@ -47,6 +47,7 @@ private:
 
 	CCircuitUnit* repairer;
 	int regroupFrame;  // when unit arrived at haven
+	float lastHavenSqDist;  // distance to haven at the last move attempt, -1 = none
 	std::shared_ptr<IPathQuery> costQuery;  // owner
 };
 
