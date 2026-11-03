@@ -85,7 +85,6 @@ public:
 	// (the start cluster, or a neighbour of a cluster the walk crossed). They act as walls: mexes behind
 	// them can't be found even if safe. A mark lasts maxAge frames unless the walk crosses it safely.
 	const std::vector<int>& GetContestedClusters(int frame, int maxAge);
-	float GetContestedThreat(int index) const { return clusterInfos[index].contestedThreat; }
 
 	float GetMinIncome() const { return metalData->GetMinIncome(); }
 	float GetAvgIncome() const { return metalData->GetAvgIncome(); }
@@ -102,8 +101,7 @@ private:
 	struct SClusterInfo {
 		unsigned int queuedCount;
 		unsigned int finishedCount;
-		int contestedFrame;  // -1 = not contested
-		float contestedThreat;  // threat at its centre when marked
+		int contestedFrame;  // last frame marked; -1 = not contested
 	};
 	std::vector<SMetalInfo> metalInfos;
 	std::vector<SClusterInfo> clusterInfos;

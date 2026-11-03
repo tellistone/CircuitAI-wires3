@@ -707,15 +707,20 @@ void CAttackTask::FindTarget()
 		scaleRefSqDist = prevScaleRef;
 	}
 	const float contestedBonus = militaryMgr->GetContested().bonus;
-	auto keyModFor = [&](const CEnemyInfo* enemy) {  // key = squared distance x SQUARE(this)
-		const float distMod = distModFor(enemy);
+	auto isContested = [&contested](const CEnemyInfo* enemy) {
 		const AIFloat3& ePos = enemy->GetPos();
 		for (const CMilitaryManager::SContestedSpot& c : contested) {
 			if (ePos.SqDistance2D(c.pos) <= c.sqRadius) {
-				return distMod / contestedBonus;
+				return true;
 			}
 		}
-		return distMod;
+		return false;
+	};
+	// Off while any candidate is already within range: don't walk off from a fight for a contested target
+	bool isContestedOn = !contested.empty();
+	auto keyModFor = [&](const CEnemyInfo* enemy) {  // key = squared distance x SQUARE(this)
+		const float distMod = distModFor(enemy);
+		return (isContestedOn && isContested(enemy)) ? distMod / contestedBonus : distMod;
 	};
 	// Targets whose route approach was unsafe are skipped for a while (else stickiness picks them again)
 	for (auto it = rejectedUntil.begin(); it != rejectedUntil.end();) {
@@ -766,10 +771,20 @@ void CAttackTask::FindTarget()
 			}
 		}
 
-		// Own to Enemy distance, times the type's target_dist_mod (behaviour.json) so unwanted types count as farther,
-		// and divided by quota.contested.bonus in a contested cluster we can take
-		const float sqOEDist = pos.SqDistance2D(ePos) * scale * SQUARE(keyModFor(enemy));
+		// Own to Enemy distance, times the type's target_dist_mod (behaviour.json) so unwanted types count as farther
+		const float sqOEDist = pos.SqDistance2D(ePos) * scale * SQUARE(distModFor(enemy));
 		candidates.emplace_back(sqOEDist, enemy);
+		if (pos.SqDistance2D(ePos) < SQUARE(highestRange)) {
+			isContestedOn = false;
+		}
+	}
+	// Enemies in a contested cluster we can take count quota.contested.bonus times closer
+	if (isContestedOn) {
+		for (auto& c : candidates) {
+			if (isContested(c.second)) {
+				c.first /= SQUARE(contestedBonus);
+			}
+		}
 	}
 
 	// Nearest candidates first. A target within range must pass the straight-line screen here; one beyond

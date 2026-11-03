@@ -44,6 +44,9 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, fleeDest(-RgtVector)
 		, pullFrame(0)
 		, isFightPending(false)
+		, isContestedRoute(false)
+		, contestedFailFrame(-FRAMES_PER_SEC * 60)
+		, isContestedDest(false)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -287,6 +290,7 @@ void CRaidTask::OnUnitIdle(CCircuitUnit* unit)
 		float z = rand() % terrainMgr->GetTerrainHeight();
 		position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
 		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
+		isContestedDest = false;
 	}
 
 	if (units.find(unit) != units.end()) {
@@ -333,8 +337,8 @@ bool CRaidTask::FindTarget()
 	urgentPositions.clear();
 	enemyPositions.clear();
 	threatMap->SetThreatType(leader);
-	// Contested clusters (threat there blocks our mex expansion) that this group can take: an enemy there is worth
-	// quota.contested.bonus x its power as a target in reach, and as a route goal counts that many times closer
+	// Contested clusters (threat there blocks our mex expansion) that this group can take: an enemy there counts
+	// quota.contested.bonus times closer as a route goal
 	std::vector<CMilitaryManager::SContestedSpot> contested;
 	militaryMgr->GetTakeableContested(leader, highestRange,
 			[this, maxPower](const AIFloat3& p) { return GetSafeThreatAt(p, maxPower); }, contested);
@@ -421,7 +425,6 @@ bool CRaidTask::FindTarget()
 		}
 
 		float sqDist = pos.SqDistance2D(ePos);
-		const bool isEnemyContested = !contested.empty() && isContested(ePos);
 		if ((minPower / distMod > power) && (minSqDist > sqDist)) {
 			if (enemy->IsInRadarOrLOS()) {
 				if (((targetCat & noChaseCat) == 0) && !enemy->IsBeingBuilt()) {
@@ -429,10 +432,10 @@ bool CRaidTask::FindTarget()
 						bestTarget = enemy;
 						minSqDist = sqDist;
 						maxThreat = std::numeric_limits<float>::max();
-					} else if (maxThreat <= defThreat * (isEnemyContested ? contestedBonus : 1.f)) {
+					} else if (maxThreat <= defThreat) {
 						bestTarget = enemy;
 //						minSqDist = sqDist;
-						maxThreat = defThreat * (isEnemyContested ? contestedBonus : 1.f);
+						maxThreat = defThreat;
 					}
 //					minPower = power;
 				} else if (bestTarget == nullptr) {
@@ -446,7 +449,7 @@ bool CRaidTask::FindTarget()
 			urgentPositions.push_back(ePos);
 		} else {
 			enemyPositions.push_back(ePos);
-			if (isEnemyContested) {
+			if (!contested.empty() && isContested(ePos)) {
 				contestedPositions.push_back(ePos);
 				sqContestedDist = std::min(sqContestedDist, sqDist);
 			} else {
@@ -458,10 +461,12 @@ bool CRaidTask::FindTarget()
 		bestTarget = worstTarget;
 	}
 	// The route goes to the nearest goal it reaches: route only to contested enemies when the nearest of them,
-	// counted quota.contested.bonus times closer, is at least as near as the nearest other enemy
-	if (urgentPositions.empty() && !contestedPositions.empty()
-		&& (sqContestedDist <= sqOtherDist * SQUARE(contestedBonus)))
-	{
+	// counted quota.contested.bonus times closer, is at least as near as the nearest other enemy.
+	// Not for 10 s after such a route came back empty: then all goals again
+	isContestedRoute = urgentPositions.empty() && !contestedPositions.empty()
+			&& (sqContestedDist <= sqOtherDist * SQUARE(contestedBonus))
+			&& (circuit->GetLastFrame() >= contestedFailFrame + FRAMES_PER_SEC * 10);
+	if (isContestedRoute) {
 		enemyPositions.swap(contestedPositions);
 	}
 
@@ -486,11 +491,15 @@ void CRaidTask::ApplyTargetPath(const CQueryPathMulti* query)
 		position = pPath->posPath.back();
 		ActivePath();
 	} else {
-		FallbackRaid();
+		if (isContestedRoute) {
+			contestedFailFrame = manager->GetCircuit()->GetLastFrame();
+		}
+		// Not to a contested cluster: the capped route just failed, and the roam path has no cap
+		FallbackRaid(false);
 	}
 }
 
-void CRaidTask::FallbackRaid()
+void CRaidTask::FallbackRaid(bool isContestedAllowed)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
@@ -504,10 +513,12 @@ void CRaidTask::FallbackRaid()
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	std::vector<CMilitaryManager::SContestedSpot> contested;
 	threatMap->SetThreatType(leader);
-	const float cautionMod = (frame < fleeFrame + FRAMES_PER_SEC * 4) ? 0.75f : 1.f;  // same as FindTarget
-	militaryMgr->GetTakeableContested(leader, highestRange,
-			[this, safeThreat, cautionMod](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
-			contested);
+	if (isContestedAllowed) {
+		const float cautionMod = (frame < fleeFrame + FRAMES_PER_SEC * 4) ? 0.75f : 1.f;  // same as FindTarget
+		militaryMgr->GetTakeableContested(leader, highestRange,
+				[this, safeThreat, cautionMod](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
+				contested);
+	}
 	const CMilitaryManager::SContestedSpot* bestContested = nullptr;
 	float sqBestDist = std::numeric_limits<float>::max();
 	for (const CMilitaryManager::SContestedSpot& c : contested) {
@@ -517,9 +528,12 @@ void CRaidTask::FallbackRaid()
 			bestContested = &c;
 		}
 	}
+	// A contested destination from before is dropped too when contested ones aren't allowed now
+	const bool mustRepick = !isContestedAllowed && isContestedDest;
+	isContestedDest = (bestContested != nullptr);
 	if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);
-	} else if (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos)) {
+	} else if (mustRepick || (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos))) {
 		// Try a few candidates and keep the first one that passes the same check. Taking the next spot
 		// unchecked made raids hop to a new (often equally dangerous, far = strict curve) spot every update.
 		AIFloat3 candidate = -RgtVector;

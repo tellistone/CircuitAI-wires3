@@ -94,7 +94,7 @@ CMetalManager::~CMetalManager()
 
 void CMetalManager::Init()
 {
-	clusterInfos.resize(GetClusters().size(), {0, 0, -1, 0.f});
+	clusterInfos.resize(GetClusters().size(), {0, 0, -1});
 	for (unsigned i = 0; i < clusterInfos.size(); ++i) {
 		for (int idx : GetClusters()[i].idxSpots) {
 			metalInfos[idx].clusterId = i;
@@ -358,7 +358,6 @@ void CMetalManager::MarkContested(int index, int frame)
 		contestedIds.push_back(index);
 	}
 	info.contestedFrame = frame;
-	info.contestedThreat = circuit->GetThreatMap()->GetThreatAt(GetClusters()[index].position);
 }
 
 void CMetalManager::MarkWalkWalls(int frame)
