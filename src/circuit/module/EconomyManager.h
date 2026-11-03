@@ -94,6 +94,12 @@ public:
 	IBuilderTask* UpdateReclaimTasks(const springai::AIFloat3& position, CCircuitUnit* unit, bool isNear = true);
 	// Reclaim target rank: lower is better. Distance over (metal left)^reclaimValueExp
 	float GetReclaimRank(float sqDist, float metalLeft) const;
+	struct SReclaimTravel {
+		float minSec;  // at 1 metal left
+		float maxSec;  // at reclaimTravelMetal and above
+	};
+	// Seconds of travel allowed to a feature with metalLeft on the near reclaim search
+	float GetReclaimTravelSec(const SReclaimTravel& travel, float metalLeft) const;
 	// Reclaim job takes another constructor while its metal is above reclaimHelperSec of the build power on it
 	float GetReclaimHelperSec() const { return reclaimHelperSec; }
 	// Before this frame a non-combat constructor needs an escort (or a defended cluster) to build a mex
@@ -192,6 +198,10 @@ private:
 	float reclaimValueExp;
 	float reclaimHelperSec;
 	float reclaimStoreAt;
+	float reclaimTravelMetal;
+	float reclaimTravelFloor;
+	SReclaimTravel reclaimTravel;
+	SReclaimTravel reclaimTravelStarved;
 
 	struct SPullMtoS {
 		float pull;

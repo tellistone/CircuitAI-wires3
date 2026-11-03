@@ -300,6 +300,15 @@ void CEconomyManager::ReadConfig()
 	reclaimValueExp = recl.get("value_exp", 0.5f).asFloat();
 	reclaimHelperSec = std::max(recl.get("helper_sec", 20.f).asFloat(), 0.f);
 	reclaimStoreAt = recl.get("store_at", 0.7f).asFloat();
+	const Json::Value& travel = recl["travel"];
+	reclaimTravelMetal = travel.get("metal", 2000.f).asFloat();
+	reclaimTravelFloor = travel.get("floor", 5.f).asFloat();
+	const Json::Value& tSec = travel["sec"];
+	reclaimTravel.minSec = tSec.get((unsigned)0, 1.f).asFloat();
+	reclaimTravel.maxSec = tSec.get((unsigned)1, 30.f).asFloat();
+	const Json::Value& tStarved = travel["starved_sec"];
+	reclaimTravelStarved.minSec = tStarved.get((unsigned)0, 1.f).asFloat();
+	reclaimTravelStarved.maxSec = tStarved.get((unsigned)1, 60.f).asFloat();
 	const Json::Value& swch = econ["switch"];
 	const int minSwitch = swch.get((unsigned)0, 800).asInt();
 	const int maxSwitch = swch.get((unsigned)1, 900).asInt();
@@ -854,8 +863,12 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 	}
 
 	std::vector<Feature*> features;
+	// Near search: each feature's allowed travel (seconds at the unit's speed) scales with its metal left
+	const float speed = unit->GetCircuitDef()->GetSpeed();  // elmos per second
+	const bool isStarved = (GetMetalPull() * 0.8f > GetAvgMetalIncome());
+	const SReclaimTravel& travel = isStarved ? reclaimTravelStarved : reclaimTravel;
 	if (isNear) {
-		const float distance = unit->GetCircuitDef()->GetSpeed() * ((GetMetalPull() * 0.8f > GetAvgMetalIncome()) ? 300 : 30);
+		const float distance = speed * std::max(travel.maxSec, reclaimTravelFloor);
 		features = std::move(circuit->GetCallback()->GetFeaturesIn(position, distance));
 	} else {
 		features = std::move(circuit->GetCallback()->GetFeatures());
@@ -892,7 +905,11 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 		}
 		AIFloat3 featPos = feature->GetPosition();
 		CTerrainManager::CorrectPosition(featPos);  // Impulsed flying feature
-		spots.push_back({GetReclaimRank(position.SqDistance2D(featPos), metalLeft), reclaimValue, featPos});
+		const float sqDist = position.SqDistance2D(featPos);
+		if (isNear && (sqDist > SQUARE(speed * GetReclaimTravelSec(travel, metalLeft)))) {
+			continue;  // too far for its metal
+		}
+		spots.push_back({GetReclaimRank(sqDist, metalLeft), reclaimValue, featPos});
 	}
 	utils::free_clear(features);
 	std::sort(spots.begin(), spots.end(), [](const SReclaimSpot& a, const SReclaimSpot& b) { return a.rank < b.rank; });
@@ -923,6 +940,13 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 	}
 
 	return nullptr;
+}
+
+float CEconomyManager::GetReclaimTravelSec(const SReclaimTravel& travel, float metalLeft) const
+{
+	// Linear from (1 metal, minSec) to (reclaimTravelMetal, maxSec), capped at maxSec, never below the floor
+	const float t = std::min(std::max(metalLeft - 1.f, 0.f) / std::max(reclaimTravelMetal - 1.f, 1.f), 1.f);
+	return std::max(travel.minSec + (travel.maxSec - travel.minSec) * t, reclaimTravelFloor);
 }
 
 float CEconomyManager::GetReclaimRank(float sqDist, float metalLeft) const
