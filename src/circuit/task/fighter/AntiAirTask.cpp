@@ -754,8 +754,8 @@ void CAntiAirTask::HoldAll()
 bool CAntiAirTask::CheckFlee()
 {
 	// antiair.flee_margin: flee when an armed mobile ground enemy we see now (or a moving low radar blip)
-	// is within its weapon range + margin of any squad unit, unless (flee_ally_threat) enough of our mobile
-	// armed units stand next to the leader, as artillery does. Returns true while fleeing
+	// is within its weapon range + margin of any squad unit, unless (flee_ally_threat) our mobile armed units
+	// next to the leader outweigh those enemies by enough. Returns true while fleeing
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
 	CEnemyInfo* danger = nullptr;
@@ -763,6 +763,7 @@ bool CAntiAirTask::CheckFlee()
 	if ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) {
 		CMap* map = circuit->GetMap();
 		float minSqDist = std::numeric_limits<float>::max();
+		float dangerThreat = 0.f;
 		for (auto& kv : circuit->GetEnemyInfos()) {
 			CEnemyInfo* enemy = kv.second;
 			// Only enemies we see now (not last-known ghosts) that can act
@@ -790,15 +791,22 @@ bool CAntiAirTask::CheckFlee()
 					? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
 					: 0.f;
 			const float sqReach = SQUARE(eRange + aaCfg.fleeMargin);
+			bool isInReach = false;
 			for (CCircuitUnit* unit : units) {
 				const float sqDist = unit->GetPos(frame).SqDistance2D(ePos);
-				if ((sqDist <= sqReach) && (sqDist < minSqDist)) {
-					minSqDist = sqDist;
-					danger = enemy;
+				if (sqDist <= sqReach) {
+					isInReach = true;
+					if (sqDist < minSqDist) {
+						minSqDist = sqDist;
+						danger = enemy;
+					}
 				}
 			}
+			if (isInReach) {
+				dangerThreat += enemy->GetThreat();  // every enemy that would make us flee, counted once
+			}
 		}
-		if ((danger != nullptr) && (aaCfg.fleeAllyThreat >= 0.f) && IsFleeCovered(leader->GetPos(frame))) {
+		if ((danger != nullptr) && (aaCfg.fleeAllyThreat >= 0.f) && IsFleeCovered(leader->GetPos(frame), dangerThreat)) {
 			danger = nullptr;
 		}
 	}
@@ -823,11 +831,12 @@ bool CAntiAirTask::CheckFlee()
 	return true;
 }
 
-bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos) const
+bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat) const
 {
-	// Escort power next to the squad, as CArtilleryTask::HasCover: our and allied mobile armed units within
-	// flee_ally_radius, not counting AA (main role) or aircraft, so AA squads can't cover each other.
-	// Power is each unit's power with its pwr_mod. When the army leaves or dies, the cover goes with it.
+	// Net escort power next to the squad: our and allied mobile armed units within flee_ally_radius (as
+	// CArtilleryTask::HasCover; not AA (main role) or aircraft, so AA squads can't cover each other; each unit's
+	// power with its pwr_mod) minus enemyThreat (the enemies that set off the flee) must reach flee_ally_threat.
+	// When the army leaves or dies, or the enemy outgrows it, the cover goes.
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
 	const int frame = circuit->GetLastFrame();
@@ -845,7 +854,7 @@ bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos) const
 		const AIFloat3& allyPos = ally->GetPos(frame);
 		if (utils::is_valid(allyPos) && (allyPos.SqDistance2D(pos) <= sqRadius)) {
 			cover += adef->GetPower();
-			if (cover >= aaCfg.fleeAllyThreat) {
+			if (cover - enemyThreat >= aaCfg.fleeAllyThreat) {
 				return true;
 			}
 		}

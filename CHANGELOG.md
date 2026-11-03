@@ -25,8 +25,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   safe spot further from it: an attack/defend group leader, a defended mex cluster or the base. It re-plans every 2 s
   while the danger stays and goes back to normal work once it is gone. With `antiair.flee_ally_threat` (default -1 = off; shipped 10)
   and `flee_ally_radius` (500) there is no early flee while our and allied mobile armed units (not AA, not aircraft)
-  within that radius of the leader add up to that much power, as artillery's `ally_threat`: AA moving with an army
-  stays with it, and flees once the army leaves or dies.
+  within that radius of the leader, minus the threat of the enemies that set off the flee, add up to that much power
+  (artillery's `ally_threat`, net of the enemy): AA moving with an army stays with it, and flees once the army leaves,
+  dies or is outweighed.
 - **Mobile AA no longer joins attack groups.** In the shipped `behaviour.json`, cloakaa, amphaa, shieldaa, vehaa,
   jumpaa and tankaa had the `support` attribute, which adds the support role. Support units walk to the nearest attack
   or defend group and join it, so these AA never entered the anti-air task and never chased aircraft. The attribute is

@@ -53,7 +53,7 @@ private:
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
 	bool CheckFlee();  // antiair.flee_margin; true while fleeing
-	bool IsFleeCovered(const springai::AIFloat3& pos) const;  // antiair.flee_ally_threat / flee_ally_radius
+	bool IsFleeCovered(const springai::AIFloat3& pos, float enemyThreat) const;  // antiair.flee_ally_threat / flee_ally_radius
 	void Flee(const springai::AIFloat3& dangerPos);
 	void ApplyFleePath(const CQueryPathSingle* query);
 
