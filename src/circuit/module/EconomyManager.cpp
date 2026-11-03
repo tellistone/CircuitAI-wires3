@@ -68,6 +68,8 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, energyPull(.0f)
 		, energyUse(.0f)
 		, geoSpotsFrame(-1)
+		, reclaimMetal(0.f)
+		, reclaimMetalFrame(-1)
 		, geoThreat(1.f)
 		, geoMorphIncome(-1.f)
 		, geoMorphFrame(0)
@@ -759,6 +761,30 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	task = isEnergyStalling ? UpdateEnergyTasks(position, unit) : UpdateReclaimTasks(position, unit);
 
 	return task;
+}
+
+float CEconomyManager::GetReclaimMetal()
+{
+	const int frame = circuit->GetLastFrame();
+	if (frame < reclaimMetalFrame) {
+		return reclaimMetal;
+	}
+	reclaimMetalFrame = frame + FRAMES_PER_SEC * 10;
+
+	reclaimMetal = 0.f;
+	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
+	for (Feature* feature : features) {
+		FeatureDef* featDef = feature->GetDef();
+		if (featDef == nullptr) {
+			continue;
+		}
+		if (featDef->IsReclaimable()) {
+			reclaimMetal += featDef->GetContainedResource(metalRes) * feature->GetReclaimLeft();
+		}
+		delete featDef;
+	}
+	utils::free_clear(features);
+	return reclaimMetal;
 }
 
 IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCircuitUnit* unit, bool isNear)

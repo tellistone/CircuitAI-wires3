@@ -42,6 +42,8 @@ CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 		, bpRatio(1.f)
 		, bpArmyRatio(0.f)
 		, bpArmyFrame(0)
+		, bpReclaimRatio(0.f)
+		, bpReclaimFrame(0)
 		, reWeight(.5f)
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CFactoryManager::Init, this));
@@ -539,6 +541,9 @@ void CFactoryManager::ReadConfig()
 	const Json::Value& bpArmy = root["economy"]["buildpower_army"];
 	bpArmyRatio = bpArmy.get("ratio", 0.f).asFloat();
 	bpArmyFrame = bpArmy.get("since", 0.f).asFloat() * FRAMES_PER_SEC;
+	const Json::Value& bpReclaim = root["economy"]["buildpower_reclaim"];
+	bpReclaimRatio = bpReclaim.get("ratio", 0.f).asFloat();
+	bpReclaimFrame = bpReclaim.get("since", 0.f).asFloat() * FRAMES_PER_SEC;
 	reWeight = root["response"].get("_weight_", .5f).asFloat();
 }
 
@@ -867,7 +872,11 @@ CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 	// Mid/late game: keep constructors' metal value at bpArmyRatio of the mobile army's
 	const bool isLowWorkerCost = (bpArmyRatio > 0.f) && (circuit->GetLastFrame() >= bpArmyFrame)
 		&& (builderMgr->GetWorkerCost() < circuit->GetMilitaryManager()->GetArmyCost() * bpArmyRatio);
-	if (!(isLowBuildPower || isLowWorkerCost) || (rand() >= RAND_MAX / 2)) {
+	// Keep constructors' metal value at bpReclaimRatio of the reclaim metal we can see
+	const bool isLowReclaimers = !isLowBuildPower && !isLowWorkerCost
+		&& (bpReclaimRatio > 0.f) && (circuit->GetLastFrame() >= bpReclaimFrame)
+		&& (builderMgr->GetWorkerCost() < economyMgr->GetReclaimMetal() * bpReclaimRatio);
+	if (!(isLowBuildPower || isLowWorkerCost || isLowReclaimers) || (rand() >= RAND_MAX / 2)) {
 		return nullptr;
 	}
 
