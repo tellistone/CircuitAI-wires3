@@ -103,8 +103,11 @@
 // Mobile anti-air squads (main role anti_air)
 "antiair": {
 	"leash": 800.0,  // only chase aircraft within this distance of home: one of our attack/defend group leaders or the base; aircraft already in weapon range are always engaged; -1 = no leash (chase the nearest aircraft anywhere)
-	"own_ground": true,  // aircraft over ground where our influence beats the enemy's also count as near home
-	"fire_spot": 0.9  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
+	"own_ground": true,  // also counts as near home: the spot the squad would shoot from is covered by our buildings or static defences (defence.infl_rad), or our other armed units beat the enemy (not counting the plane) under the aircraft
+	"fire_spot": 0.9,  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
+	"flee_margin": 300.0,  // flee when an armed mobile ground enemy we see now (or a moving low radar blip) is within its weapon range + this of a squad unit: to the nearest attack/defend group, defended mex cluster or base further from it; -1 = off (flee only once hit)
+	"flee_ally_threat": 10.0,  // no early flee while our and allied mobile armed units (not AA, not aircraft) and static defences that can hit ground (not superweapons), within flee_ally_radius of the squad leader, minus the threat of the enemies that set off the flee, add up to at least this power (pwr_mod included, scaled by sqrt(health %); unfinished units don't count); -1 = flee regardless of escorts; missing = 10 when flee_margin is set
+	"flee_ally_radius": 500.0  // see flee_ally_threat
 },
 
 "artillery": {
@@ -113,7 +116,7 @@
 	"max_path_threat": 1.0,  // the path to a firing spot may not cross enemy threat (threat map, summed and fading with distance) above this x the unit's own power (including pwr_mod); if no such path exists it joins a group instead; -1 = no limit (threat is only avoided where cheap)
 	"no_scout": true,  // nothing to shoot or walk to: stay put while the spot is threat-free and (ally_threat) covered, otherwise move to safety: behind the nearest attack/defend group, else a defended mex cluster, else the base. false = old behaviour: walk the scout route to enemy mexes, or fight-move to a random spot
 	"follow_dist": 300.0,  // when moving to safety near a group, stand this far behind its leader on the side towards our base
-	"artillery_flee_margin": 400.0  // checked every update: flee when an armed mobile enemy currently in radar or LOS (aircraft, paralysed and unfinished units excluded; unidentified radar blips only while moving) is within its weapon range + this, unless (ally_threat) our cover is at the artillery's spot. It runs to the nearest safety spot (behind a group, defended mex cluster, base) that is further from the enemy, else the one furthest from it, and stops fleeing once the enemy is out of reach or cover arrives; -1 = off. Default for all artillery; a unit type can override it with its own artillery_flee_margin in its "behaviour" entry
+	"artillery_flee_margin": 400.0  // checked every update: flee when an armed mobile enemy currently in radar or LOS (aircraft, paralysed and unfinished units excluded; unidentified radar blips only while moving) is within its weapon range + this, unless (ally_threat) our cover at the artillery's spot (static defences that can hit ground count here too, not superweapons), minus the threat of the enemies that set off the flee, still reaches ally_threat. It runs to the nearest safety spot (behind a group, defended mex cluster, base) that is further from the enemy, else the one furthest from it, and stops fleeing once the enemy is out of reach or cover arrives; -1 = off. Default for all artillery; a unit type can override it with its own artillery_flee_margin in its "behaviour" entry
 },
 
 
@@ -263,7 +266,7 @@
 	"cloakaa": {
 		// threat 2.26 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee", "support"],
+		"attribute": ["melee"],
 		"retreat": 0.7,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -417,7 +420,7 @@
 	"amphaa": {
 		// threat 14.52 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee", "ret_fight", "support"],
+		"attribute": ["melee", "ret_fight"],
 		"retreat": 0.3,
 		"limit": 5,
 		"pwr_mod": 3.0,
@@ -579,7 +582,7 @@
 	"shieldaa": {
 		// threat 2.49 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["support", "ret_fight"],
+		"attribute": ["ret_fight"],
 		"retreat": 0.7,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -665,7 +668,7 @@
 	"vehaa": {
 		// threat 5.89 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["support"],
+		"attribute": [],
 		"retreat": 0.75,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -748,7 +751,7 @@
 	"jumpaa": {
 		// threat 8.83 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee", "support"],
+		"attribute": ["melee"],
 		"retreat": 0.8,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -985,7 +988,7 @@
 	"tankaa": {
 		// threat 9.66 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["support", "prio_repair"],
+		"attribute": ["prio_repair"],
 		"retreat": 0.8,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2

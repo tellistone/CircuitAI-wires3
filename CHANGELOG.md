@@ -23,6 +23,24 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - `fire_spot` (default -1 = off): check enemy threat where the squad would stand to shoot, this fraction of its
     shortest weapon range short of the aircraft, instead of under the aircraft.
   The shipped `behaviour.json` sets `leash` 800, `own_ground` true and `fire_spot` 0.9.
+- **Anti-air early flee** (`antiair.flee_margin`, default -1 = off; shipped 300). AA squads used to move away only once
+  hit. Now, on every update, when a mobile ground enemy we see now that can hit ground targets (or a moving radar blip
+  low enough not to be a plane) is within its ground weapon range + this margin of any squad unit, the squad paths (threat-capped) to the nearest
+  safe spot further from it: an attack/defend group leader, a defended mex cluster or the base. It re-plans every 2 s
+  while the danger stays and goes back to normal work once it is gone. With `antiair.flee_ally_threat` (default -1 = off; shipped 10)
+  and `flee_ally_radius` (500) there is no early flee while our and allied mobile armed units (not AA, not aircraft)
+  and static defences that can hit ground (weapon range up to 2000, so no superweapons) within that radius of the leader, each at its power × √(health %) (nanoframes don't count), minus the threat of the enemies that set off the flee, add up to that much power
+  (artillery's `ally_threat`, net of the enemy): AA moving with an army stays with it, and flees once the army leaves,
+  dies or is outweighed. If `flee_margin` is set and `flee_ally_threat` is missing, it defaults to 10.
+- **Artillery flee cover is net of the enemy.** The `artillery_flee_margin` check now needs the `ally_threat` escort
+  power at the artillery's spot minus the summed threat of the enemies that set off the flee (each counted once) to
+  reach `ally_threat`, so an escort the enemy outweighs no longer holds artillery in place. For this check, static
+  defences that can hit ground (not superweapons) count as cover too, at full-health power. Firing-spot cover is unchanged.
+- **Mobile AA no longer joins attack groups.** In the shipped `behaviour.json`, cloakaa, amphaa, shieldaa, vehaa,
+  jumpaa and tankaa had the `support` attribute, which adds the support role. Support units walk to the nearest attack
+  or defend group and join it, so these AA never entered the anti-air task and never chased aircraft. The attribute is
+  removed from them; they now use the AA task (leash, own ground, and staying with the nearest attack group when there
+  is no aircraft to chase).
 - **Anti-air moves are always threat-aware.** AA squads no longer fall back to plain engine orders that ignore threat:
   - no path to the target: go to a safe spot (attack group, defended mex cluster or base) instead of fight-moving at it;
   - no path to the disengage spot: same safe-spot search instead of a straight move;
