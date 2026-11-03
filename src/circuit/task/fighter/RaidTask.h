@@ -32,7 +32,8 @@ public:
 private:
 	bool FindTarget();
 	void ApplyTargetPath(const CQueryPathMulti* query);
-	void FallbackRaid();
+	// isContestedAllowed: may head for a contested cluster (not after a failed route to targets: its path is uncapped)
+	void FallbackRaid(bool isContestedAllowed = true);
 	void ApplyRaidPath(const CQueryPathSingle* query);
 
 	// Escape: current group strength vs threat where the units are and just ahead on the path
@@ -59,6 +60,9 @@ private:
 	std::vector<CCircuitUnit*> endangered;
 	bool isFightPending;
 	std::map<ICoreUnit::Id, int> heldTargets;  // targets with no safe firing spot in reach, and when: skipped for 10 s
+	bool isContestedRoute;  // the pending target route goes only to enemies in contested clusters
+	int contestedFailFrame;  // when such a route last came back empty: all goals again for 10 s
+	bool isContestedDest;  // 'position' is a contested cluster picked by FallbackRaid
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach  // short roam path: Fight order to send from Update() (not from the path callback)
 	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger
