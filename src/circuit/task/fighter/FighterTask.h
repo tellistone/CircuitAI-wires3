@@ -17,6 +17,7 @@
 namespace circuit {
 
 class CEnemyInfo;
+class CAllyUnit;
 
 class IFighterTask: public IUnitTask {
 public:
@@ -103,6 +104,10 @@ protected:
 
 	static F3Vec urgentPositions;  // NOTE: micro-opt
 	static F3Vec enemyPositions;  // NOTE: micro-opt
+
+	// Flee cover: strength a friendly unit lends, health-scaled as squad strength is
+	// (power * sqrt(health %)); 0 for unarmed units, nanoframes and anti-air turrets
+	static float GetCoverPower(CAllyUnit* ally, bool isStaticAllowed);
 
 #ifdef DEBUG_VIS
 public:
