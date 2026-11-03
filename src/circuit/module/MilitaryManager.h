@@ -237,6 +237,11 @@ private:
 
 	std::vector<unsigned int> scoutPath;  // list of spot ids
 	unsigned int scoutIdx;
+	// Scout spots: metal spots (same index as CMetalManager), then known geothermal vents
+	void UpdateScoutSpots();
+	bool IsScoutSpotOurs(unsigned idx) const;  // our side holds it: finished mex / any geothermal on the vent
+	std::vector<springai::AIFloat3> scoutSpots;
+	unsigned scoutMetalCount = 0;
 	std::vector<int> scoutSeen;   // per spot: last frame it was in our LOS (-1 never)
 	std::vector<int> scoutClaim;  // per spot: last frame a scout picked it (-1 never)
 	std::vector<int> scoutClaimUnit;  // per spot: id of the scout that picked it

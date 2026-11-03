@@ -1030,13 +1030,19 @@ void CEconomyManager::UpdateGeoSpots()
 	utils::free_clear(features);
 }
 
-AIFloat3 CEconomyManager::FindGeoSpot(CCircuitDef* cdef, const AIFloat3& position, CCircuitUnit* unit)
+const std::vector<AIFloat3>& CEconomyManager::GetGeoSpots()
 {
 	const int frame = circuit->GetLastFrame();
 	if (frame >= geoSpotsFrame) {
 		UpdateGeoSpots();
 		geoSpotsFrame = frame + FRAMES_PER_SEC * 60;
 	}
+	return geoSpots;
+}
+
+AIFloat3 CEconomyManager::FindGeoSpot(CCircuitDef* cdef, const AIFloat3& position, CCircuitUnit* unit)
+{
+	GetGeoSpots();  // refresh
 	if (geoSpots.empty()) {
 		return -RgtVector;
 	}
