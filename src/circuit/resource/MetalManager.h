@@ -81,6 +81,11 @@ public:
 	int GetCluster(int index) const { return metalInfos[index].clusterId; }
 
 	int GetMexToBuild(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate);
+	// Contested clusters: ones with threat at their centre that the last GetMexToBuild walks ran into
+	// (the start cluster, or a neighbour of a cluster the walk crossed). They act as walls: mexes behind
+	// them can't be found even if safe. A mark lasts maxAge frames unless the walk crosses it safely.
+	const std::vector<int>& GetContestedClusters(int frame, int maxAge);
+	float GetContestedThreat(int index) const { return clusterInfos[index].contestedThreat; }
 
 	float GetMinIncome() const { return metalData->GetMinIncome(); }
 	float GetAvgIncome() const { return metalData->GetAvgIncome(); }
@@ -97,6 +102,8 @@ private:
 	struct SClusterInfo {
 		unsigned int queuedCount;
 		unsigned int finishedCount;
+		int contestedFrame;  // -1 = not contested
+		float contestedThreat;  // threat at its centre when marked
 	};
 	std::vector<SMetalInfo> metalInfos;
 	std::vector<SClusterInfo> clusterInfos;
@@ -107,6 +114,10 @@ private:
 		int index;
 	};
 	std::deque<SMex> markedMexes;  // sorted by insertion
+	std::vector<int> contestedIds;  // clusters with contestedFrame >= 0
+
+	void MarkContested(int index, int frame);
+	void MarkWalkWalls(int frame);
 
 	class SafeCluster;
 	class DetectCluster;

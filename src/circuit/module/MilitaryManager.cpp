@@ -378,6 +378,24 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.attack_keep_threat must be a number >= 1, using 1.34", cfgName.c_str());
 	}
 	attackKeepThreat = qkeepThreat.isNumeric() ? std::max(qkeepThreat.asFloat(), 1.f) : 1.34f;  // below 1 = off
+	{
+		const Json::Value& qcont = quotas["contested"];
+		if (!qcont.isNull() && !qcont.isObject()) {
+			circuit->LOG("CONFIG %s: quota.contested must be an object, using defaults", cfgName.c_str());
+		}
+		const Json::Value& qc = qcont.isObject() ? qcont : Json::Value::nullSingleton();
+		auto num = [&](const char* key, float def, float lo) {
+			const Json::Value& v = qc.get(key, def);
+			if (!v.isNumeric() || (v.asFloat() < lo)) {
+				circuit->LOG("CONFIG %s: quota.contested.%s must be a number >= %g, using %g", cfgName.c_str(), key, lo, def);
+				return def;
+			}
+			return v.asFloat();
+		};
+		contested.bonus = num("bonus", 2.f, 1.f);
+		contested.maxAge = static_cast<int>(num("age", 60.f, 1.f) * FRAMES_PER_SEC);
+		contested.range = num("range", 300.f, 0.f);
+	}
 	const Json::Value& qignoreThreat = quotas.get("attack_path_ignore_threat", 0.25f);
 	if (!qignoreThreat.isNumeric()) {
 		circuit->LOG("CONFIG %s: quota.attack_path_ignore_threat must be a number 0..1, using 0.25", cfgName.c_str());
@@ -1526,6 +1544,30 @@ float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloa
 	const float diagonal = sqrtf(width * width + height * height);
 	const float frac = circuit->GetSetupManager()->GetBasePos().distance2D(pos) / diagonal;
 	return EvalCurve(thrDistCurve, frac);
+}
+
+void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,
+		const std::function<float (const AIFloat3&)>& allowedAt, std::vector<SContestedSpot>& outSpots)
+{
+	outSpots.clear();
+	if (contested.bonus <= 1.f) {
+		return;
+	}
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
+	for (int index : metalMgr->GetContestedClusters(circuit->GetLastFrame(), contested.maxAge)) {
+		const AIFloat3& cPos = clusters[index].position;
+		// Live threat with this unit's threat type: the mark is from the builders' walk, maybe seconds ago
+		const float threat = threatMap->GetThreatAt(cPos);
+		if ((threat <= THREAT_MIN) || (threat >= allowedAt(cPos))
+			|| !terrainMgr->CanMobileReachAt(unit->GetArea(), cPos, reach))
+		{
+			continue;
+		}
+		outSpots.push_back({cPos, SQUARE(clusters[index].radius + contested.range)});
+	}
 }
 
 AIFloat3 CMilitaryManager::GetRaidPosition(CCircuitUnit* unit)

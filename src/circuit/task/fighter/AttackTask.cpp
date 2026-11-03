@@ -695,6 +695,28 @@ void CAttackTask::FindTarget()
 	fleeTargetId = -1;
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
 	threatMap->SetThreatType(leader);
+	// Contested clusters (threat there blocks our mex expansion) that this group can take: enemies there count as
+	// quota.contested.bonus times closer. Judged at the full allowance from where we stand (no near-base anchor)
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	std::vector<CMilitaryManager::SContestedSpot> contested;
+	{
+		const float prevScaleRef = scaleRefSqDist;
+		scaleRefSqDist = 0.f;
+		militaryMgr->GetTakeableContested(leader, highestRange,
+				[this, maxPower](const AIFloat3& p) { return GetAllowedThreatAt(p, maxPower); }, contested);
+		scaleRefSqDist = prevScaleRef;
+	}
+	const float contestedBonus = militaryMgr->GetContested().bonus;
+	auto keyModFor = [&](const CEnemyInfo* enemy) {  // key = squared distance x SQUARE(this)
+		const float distMod = distModFor(enemy);
+		const AIFloat3& ePos = enemy->GetPos();
+		for (const CMilitaryManager::SContestedSpot& c : contested) {
+			if (ePos.SqDistance2D(c.pos) <= c.sqRadius) {
+				return distMod / contestedBonus;
+			}
+		}
+		return distMod;
+	};
 	// Targets whose route approach was unsafe are skipped for a while (else stickiness picks them again)
 	for (auto it = rejectedUntil.begin(); it != rejectedUntil.end();) {
 		it = (it->second <= frame) ? rejectedUntil.erase(it) : std::next(it);
@@ -744,8 +766,9 @@ void CAttackTask::FindTarget()
 			}
 		}
 
-		// Own to Enemy distance, times the type's target_dist_mod (behaviour.json) so unwanted types count as farther
-		const float sqOEDist = pos.SqDistance2D(ePos) * scale * SQUARE(distModFor(enemy));
+		// Own to Enemy distance, times the type's target_dist_mod (behaviour.json) so unwanted types count as farther,
+		// and divided by quota.contested.bonus in a contested cluster we can take
+		const float sqOEDist = pos.SqDistance2D(ePos) * scale * SQUARE(keyModFor(enemy));
 		candidates.emplace_back(sqOEDist, enemy);
 	}
 
@@ -759,7 +782,7 @@ void CAttackTask::FindTarget()
 	candidatePos.clear();
 	CEnemyInfo* bestTarget = nullptr;
 	float bestKey = 0.f;
-	float bestRawKey = 0.f;  // bestKey without target_dist_mod
+	float bestRawKey = 0.f;  // bestKey without target_dist_mod and the contested bonus
 	CEnemyInfo* prevTarget = nullptr;
 	float prevKey = 0.f;
 	float prevRawKey = 0.f;
@@ -776,9 +799,9 @@ void CAttackTask::FindTarget()
 			}
 		}
 		// The route goes to whichever goal it reaches first, i.e. about the really nearest. So leave out a
-		// candidate really nearer than the best but ranked behind it by target_dist_mod: it would take the route
-		// (kept if it is our current target, for stickiness)
-		const float rawKey = c.first / SQUARE(distModFor(c.second));
+		// candidate really nearer than the best but ranked behind it by target_dist_mod or quota.contested: it would
+		// take the route (kept if it is our current target, for stickiness)
+		const float rawKey = c.first / SQUARE(keyModFor(c.second));
 		if ((bestTarget != nullptr) && (rawKey < bestRawKey) && (c.second->GetId() != prevTargetId)) {
 			continue;
 		}

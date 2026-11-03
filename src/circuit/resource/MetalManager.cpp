@@ -20,6 +20,8 @@
 #include "MoveData.h"
 #include "Pathing.h"
 
+#include <algorithm>
+
 namespace circuit {
 
 using namespace springai;
@@ -92,7 +94,7 @@ CMetalManager::~CMetalManager()
 
 void CMetalManager::Init()
 {
-	clusterInfos.resize(GetClusters().size(), {0});
+	clusterInfos.resize(GetClusters().size(), {0, 0, -1, 0.f});
 	for (unsigned i = 0; i < clusterInfos.size(); ++i) {
 		for (int idx : GetClusters()[i].idxSpots) {
 			metalInfos[idx].clusterId = i;
@@ -314,8 +316,13 @@ bool CMetalManager::IsMexInFinished(int index) const
 
 int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate& predicate)
 {
+	const int frame = circuit->GetLastFrame();
 	int index = FindNearestCluster(pos);
-	if (index < 0 || !(*threatFilter)[index]) {
+	if (index < 0) {
+		return -1;
+	}
+	if (!(*threatFilter)[index]) {
+		MarkContested(index, frame);  // the walk can't even start: our own cluster is the wall
 		return -1;
 	}
 	MarkAllyMexes();
@@ -327,6 +334,7 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 	shortPath->init();
 	shortPath->addSource(filteredGraph->nodeFromId(index));
 	CMetalData::ClusterGraph::Node target = shortPath->start(goal);
+	MarkWalkWalls(frame);
 
 	if (target != lemon::INVALID) {
 		float sqMinDist = std::numeric_limits<float>::max();
@@ -341,6 +349,48 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 
 	indices.clear();
 	return result;
+}
+
+void CMetalManager::MarkContested(int index, int frame)
+{
+	SClusterInfo& info = clusterInfos[index];
+	if (std::find(contestedIds.begin(), contestedIds.end(), index) == contestedIds.end()) {
+		contestedIds.push_back(index);
+	}
+	info.contestedFrame = frame;
+	info.contestedThreat = circuit->GetThreatMap()->GetThreatAt(GetClusters()[index].position);
+}
+
+void CMetalManager::MarkWalkWalls(int frame)
+{
+	// Every cluster the walk crossed is safe now; every threatened neighbour of one blocked the walk there
+	const CMetalData::ClusterGraph& graph = GetClusterGraph();
+	for (CMetalData::ClusterGraph::NodeIt n(graph); n != lemon::INVALID; ++n) {
+		if (!(*threatFilter)[n] || !shortPath->processed(n)) {
+			continue;
+		}
+		clusterInfos[graph.id(n)].contestedFrame = -1;  // pruned from contestedIds on the next read
+		for (CMetalData::ClusterGraph::IncEdgeIt e(graph, n); e != lemon::INVALID; ++e) {
+			CMetalData::ClusterGraph::Node v = graph.oppositeNode(n, e);
+			if (!(*threatFilter)[v]) {
+				MarkContested(graph.id(v), frame);
+			}
+		}
+	}
+}
+
+const std::vector<int>& CMetalManager::GetContestedClusters(int frame, int maxAge)
+{
+	auto it = std::remove_if(contestedIds.begin(), contestedIds.end(), [this, frame, maxAge](int index) {
+		SClusterInfo& info = clusterInfos[index];
+		if ((info.contestedFrame >= 0) && (frame - info.contestedFrame <= maxAge)) {
+			return false;
+		}
+		info.contestedFrame = -1;
+		return true;
+	});
+	contestedIds.erase(it, contestedIds.end());
+	return contestedIds;
 }
 
 } // namespace circuit

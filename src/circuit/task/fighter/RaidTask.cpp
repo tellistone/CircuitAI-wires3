@@ -333,6 +333,23 @@ bool CRaidTask::FindTarget()
 	urgentPositions.clear();
 	enemyPositions.clear();
 	threatMap->SetThreatType(leader);
+	// Contested clusters (threat there blocks our mex expansion) that this group can take: an enemy there is worth
+	// quota.contested.bonus x its power as a target in reach, and as a route goal counts that many times closer
+	std::vector<CMilitaryManager::SContestedSpot> contested;
+	militaryMgr->GetTakeableContested(leader, highestRange,
+			[this, maxPower](const AIFloat3& p) { return GetSafeThreatAt(p, maxPower); }, contested);
+	const float contestedBonus = militaryMgr->GetContested().bonus;
+	auto isContested = [&contested](const AIFloat3& ePos) {
+		for (const CMilitaryManager::SContestedSpot& c : contested) {
+			if (ePos.SqDistance2D(c.pos) <= c.sqRadius) {
+				return true;
+			}
+		}
+		return false;
+	};
+	F3Vec contestedPositions;
+	float sqContestedDist = std::numeric_limits<float>::max();
+	float sqOtherDist = std::numeric_limits<float>::max();
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
@@ -404,6 +421,7 @@ bool CRaidTask::FindTarget()
 		}
 
 		float sqDist = pos.SqDistance2D(ePos);
+		const bool isEnemyContested = !contested.empty() && isContested(ePos);
 		if ((minPower / distMod > power) && (minSqDist > sqDist)) {
 			if (enemy->IsInRadarOrLOS()) {
 				if (((targetCat & noChaseCat) == 0) && !enemy->IsBeingBuilt()) {
@@ -411,10 +429,10 @@ bool CRaidTask::FindTarget()
 						bestTarget = enemy;
 						minSqDist = sqDist;
 						maxThreat = std::numeric_limits<float>::max();
-					} else if (maxThreat <= defThreat) {
+					} else if (maxThreat <= defThreat * (isEnemyContested ? contestedBonus : 1.f)) {
 						bestTarget = enemy;
 //						minSqDist = sqDist;
-						maxThreat = defThreat;
+						maxThreat = defThreat * (isEnemyContested ? contestedBonus : 1.f);
 					}
 //					minPower = power;
 				} else if (bestTarget == nullptr) {
@@ -428,10 +446,23 @@ bool CRaidTask::FindTarget()
 			urgentPositions.push_back(ePos);
 		} else {
 			enemyPositions.push_back(ePos);
+			if (isEnemyContested) {
+				contestedPositions.push_back(ePos);
+				sqContestedDist = std::min(sqContestedDist, sqDist);
+			} else {
+				sqOtherDist = std::min(sqOtherDist, sqDist);
+			}
 		}
 	}
 	if (bestTarget == nullptr) {
 		bestTarget = worstTarget;
+	}
+	// The route goes to the nearest goal it reaches: route only to contested enemies when the nearest of them,
+	// counted quota.contested.bonus times closer, is at least as near as the nearest other enemy
+	if (urgentPositions.empty() && !contestedPositions.empty()
+		&& (sqContestedDist <= sqOtherDist * SQUARE(contestedBonus)))
+	{
+		enemyPositions.swap(contestedPositions);
 	}
 
 	if (bestTarget != nullptr) {
@@ -468,10 +499,29 @@ void CRaidTask::FallbackRaid()
 	const AIFloat3& pos = leader->GetPos(frame);
 	const AIFloat3& threatPos = leader->GetTravelAct()->IsActive() ? position : pos;
 	const float safeThreat = GetSafeThreat();
-	if (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos)) {
+	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
+	// unless we're already there; else the usual mex-spot roaming
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	std::vector<CMilitaryManager::SContestedSpot> contested;
+	threatMap->SetThreatType(leader);
+	const float cautionMod = (frame < fleeFrame + FRAMES_PER_SEC * 4) ? 0.75f : 1.f;  // same as FindTarget
+	militaryMgr->GetTakeableContested(leader, highestRange,
+			[this, safeThreat, cautionMod](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
+			contested);
+	const CMilitaryManager::SContestedSpot* bestContested = nullptr;
+	float sqBestDist = std::numeric_limits<float>::max();
+	for (const CMilitaryManager::SContestedSpot& c : contested) {
+		const float sqDist = pos.SqDistance2D(c.pos);
+		if ((sqDist > c.sqRadius) && (sqDist < sqBestDist)) {
+			sqBestDist = sqDist;
+			bestContested = &c;
+		}
+	}
+	if (bestContested != nullptr) {
+		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);
+	} else if (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos)) {
 		// Try a few candidates and keep the first one that passes the same check. Taking the next spot
 		// unchecked made raids hop to a new (often equally dangerous, far = strict curve) spot every update.
-		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 		AIFloat3 candidate = -RgtVector;
 		for (int i = 0; i < 8; ++i) {
 			candidate = militaryMgr->GetRaidPosition(leader);
