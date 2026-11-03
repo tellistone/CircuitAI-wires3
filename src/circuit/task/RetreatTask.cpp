@@ -31,6 +31,7 @@ CRetreatTask::CRetreatTask(ITaskManager* mgr, int timeout)
 		: IUnitTask(mgr, Priority::NORMAL, Type::RETREAT, timeout)
 		, repairer(nullptr)
 		, regroupFrame(-1)
+		, lastHavenSqDist(-1.f)
 {
 }
 
@@ -220,9 +221,19 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		haven = circuit->GetSetupManager()->GetBasePos();
 	}
 
-	const float maxDist = factoryMgr->GetAssistDef()->GetBuildDistance();
+	// Stop well inside the repairer's build range (same margin as the retreat path), so the wait spot
+	// can't end up on the edge or outside of it
+	const float repairDist = (repairer != nullptr)
+			? repairer->GetCircuitDef()->GetBuildDistance()
+			: factoryMgr->GetAssistDef()->GetBuildDistance();
+	const float maxDist = repairDist * 0.6f + cdef->GetRadius();  // big units can't get their center any closer
 	const AIFloat3& unitPos = unit->GetPos(frame);
-	if (unitPos.SqDistance2D(haven) > maxDist * maxDist) {
+	const float sqDist = unitPos.SqDistance2D(haven);
+	// Crowded haven: accept a spot still in full range once the last move got it no closer
+	const bool isStuckInRange = (sqDist <= SQUARE(repairDist)) && (lastHavenSqDist >= 0.f)
+			&& (sqDist > lastHavenSqDist - SQUARE(SQUARE_SIZE * 2));
+	lastHavenSqDist = sqDist;
+	if ((sqDist > maxDist * maxDist) && !isStuckInRange) {
 		// TODO: push MoveAction into unit? to avoid enemy fire
 		TRY_UNIT(circuit, unit,
 			unit->CmdMoveTo(haven, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 1);
@@ -230,27 +241,11 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		// TODO: Add fail counter?
 	} else {
 		// TODO: push WaitAction into unit
-		AIFloat3 pos = unitPos;
-		const float size = SQUARE_SIZE * 16;
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		float centerX = terrainMgr->GetTerrainWidth() / 2;
-		float centerZ = terrainMgr->GetTerrainHeight() / 2;
-		pos.x += (pos.x > centerX) ? size : -size;
-		pos.z += (pos.z > centerZ) ? size : -size;
-		AIFloat3 oldPos = pos;
-		CTerrainManager::CorrectPosition(pos);
-		if (oldPos.SqDistance2D(pos) > SQUARE_SIZE * SQUARE_SIZE) {
-			pos = unitPos;
-			pos.x += (pos.x > centerX) ? -size : size;
-			pos.z += (pos.z > centerZ) ? -size : size;
-		}
-		CTerrainManager::TerrainPredicate predicate = [unitPos](const AIFloat3& p) {
-			return unitPos.SqDistance2D(p) > SQUARE(SQUARE_SIZE * 8);
-		};
-		pos = terrainMgr->FindBuildSite(cdef, pos, maxDist, UNIT_COMMAND_BUILD_NO_FACING, predicate);
+		// Patrol on the spot: never goes idle and still returns fire, but holds still so repairers
+		// (nano towers, builders) keep it in range instead of losing it on a back-and-forth loop
 		TRY_UNIT(circuit, unit,
 //			unit->CmdPriority(0);
-			unit->GetUnit()->PatrolTo(pos);
+			unit->GetUnit()->PatrolTo(unitPos);
 		)
 
 		if (unit->GetTravelAct() != nullptr) {
@@ -260,6 +255,7 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 			regroupFrame = frame;
 		}
 		state = State::REGROUP;
+		lastHavenSqDist = -1.f;
 	}
 }
 
