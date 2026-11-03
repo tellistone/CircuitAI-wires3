@@ -79,6 +79,8 @@ public:
 	void BlockScoutSpot(const springai::AIFloat3& spot, int frames);
 	springai::AIFloat3 GetRaidPosition(CCircuitUnit* unit);
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
+	// Defence points of every metal cluster we hold (queued or finished, not on enemy ground) the unit can reach
+	void FillFriendlyClusterPos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillAttackSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillStaticSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillSafePos(CCircuitUnit* unit, F3Vec& outPositions);
@@ -165,6 +167,7 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
+	float GetAttackPathIgnoreThreat() const { return attackPathIgnoreThreat; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other
@@ -185,8 +188,19 @@ public:
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
 	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
+	// Highest value of the task's thr_mod.distance curve (1 if it has none)
+	float GetThrDistModMax(IFighterTask::FightType type) const {
+		const ThrDistCurve& curve = thrDistCurves[static_cast<IFighterTask::FT>(type)];
+		float result = curve.empty() ? 1.f : 0.f;
+		for (const auto& pt : curve) {
+			result = std::max(result, pt.second);
+		}
+		return result;
+	}
 	// Courage bonus inside the base defence radius: quota.thr_mod.base_bonus at the base centre, falling to 1 at the radius edge
 	float GetBaseThrBonus(float sqDistToBase) const;
+	// Lowest value GetBaseThrBonus can return: 1, or quota.thr_mod.base_bonus if that is below 1
+	float GetBaseThrBonusMin() const { return std::min(baseThrBonus, 1.f); }
 
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
@@ -278,6 +292,7 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackKeepThreat;  // quota.attack_keep_threat
+	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius

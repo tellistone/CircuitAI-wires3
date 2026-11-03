@@ -377,6 +377,11 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.attack_keep_threat must be a number >= 1, using 1.34", cfgName.c_str());
 	}
 	attackKeepThreat = qkeepThreat.isNumeric() ? std::max(qkeepThreat.asFloat(), 1.f) : 1.34f;  // below 1 = off
+	const Json::Value& qignoreThreat = quotas.get("attack_path_ignore_threat", 0.25f);
+	if (!qignoreThreat.isNumeric()) {
+		circuit->LOG("CONFIG %s: quota.attack_path_ignore_threat must be a number 0..1, using 0.25", cfgName.c_str());
+	}
+	attackPathIgnoreThreat = utils::clamp(qignoreThreat.isNumeric() ? qignoreThreat.asFloat() : 0.25f, 0.f, 1.f);
 	const Json::Value& qspotThreat = quotas.get("attack_spot_threat", 1.f);
 	if (!qspotThreat.isNumeric() || (qspotThreat.asFloat() < 0.f)) {
 		circuit->LOG("CONFIG %s: quota.attack_spot_threat must be a number >= 0, using 1.0", cfgName.c_str());
@@ -1508,6 +1513,28 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 		const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(index);
 		for (const CDefenceMatrix::SDefPoint& defPoint : points) {
 			outPositions.push_back(defPoint.position);
+		}
+	}
+}
+
+void CMilitaryManager::FillFriendlyClusterPos(CCircuitUnit* unit, F3Vec& outPositions)
+{
+	outPositions.clear();
+
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	STerrainMapArea* area = unit->GetArea();
+	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
+	for (int index = 0; index < (int)clusters.size(); ++index) {
+		// Same test as FillFrontPos
+		if ((inflMap->GetInfluenceAt(clusters[index].position) > -INFL_EPS)
+			&& (metalMgr->IsClusterQueued(index) || metalMgr->IsClusterFinished(index))
+			&& terrainMgr->CanMoveToPos(area, clusters[index].position))
+		{
+			for (const CDefenceMatrix::SDefPoint& defPoint : defence->GetDefPoints(index)) {
+				outPositions.push_back(defPoint.position);
+			}
 		}
 	}
 }

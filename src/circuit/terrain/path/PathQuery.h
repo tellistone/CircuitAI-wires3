@@ -42,6 +42,10 @@ public:
 	const float* GetThreatArray() const { return threatArray; }
 	const NSMicroPather::CostFunc& GetMoveFun() const { return moveFun; }
 	const NSMicroPather::CostFunc& GetThreatFun() const { return threatFun; }
+	// Threat at or below this counts as none: no route cost, and the path is straightened across it.
+	// Call after creating the query, before running it. The threat cap (maxThreat) is unchanged
+	void SetThreatFloor(float value);
+	float GetThreatFloor() const { return threatFloor; }
 	const FloatVec& GetHeightMap() const { return heightMap; }
 
 	CCircuitUnit* GetUnit() const { return unit; }
@@ -61,6 +65,7 @@ protected:
 	const float* threatArray;  // outdate after THREAT_UPDATE_RATE
 	NSMicroPather::CostFunc moveFun;  // AREA_UPDATE_RATE
 	NSMicroPather::CostFunc threatFun;  // THREAT_UPDATE_RATE
+	float threatFloor = 0.f;
 
 	CCircuitUnit* unit;  // optional, non-safe
 

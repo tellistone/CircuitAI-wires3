@@ -6,6 +6,8 @@
  */
 
 #include "terrain/path/PathQuery.h"
+
+#include <algorithm>
 #include "terrain/path/PathFinder.h"
 #include "task/UnitTask.h"
 
@@ -29,6 +31,19 @@ IPathQuery::~IPathQuery()
 	if (taskHolder != nullptr) {
 		taskHolder->Release();
 	}
+}
+
+void IPathQuery::SetThreatFloor(float value)
+{
+	threatFloor = std::max(value, 0.f);
+	if (threatFloor <= 0.f) {
+		return;
+	}
+	const float* arr = threatArray;
+	const float floor = threatFloor;
+	threatFun = [fun = std::move(threatFun), arr, floor](int index) {
+		return (arr[index] <= floor) ? 0.f : fun(index);
+	};
 }
 
 void IPathQuery::Init(const bool* canMoveArray, const float* threatArray,

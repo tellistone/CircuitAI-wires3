@@ -2,57 +2,69 @@
 {
 "quota": {
 	"scout": 1,  // max scout units out of raiders
-	// Every 15s add (known enemy mexes this scout movement type can reach from our base without crossing threat
-	// it couldn't take) / (enemy players), rounded down, on top of "scout". This value multiplies that bonus; 0 = off
 	"scout_per_mex": 1.0,
 	"scout_max": 12,  // cap on "scout" + bonus ("scout" itself is never cut); 0 = no cap
+	"scout_spot": {
+		"enemy": 2.5,       // weight for closeness to the enemy (default 1.0)
+		"stale": 1.0,       // weight for time since the spot was last seen (default 1.0)
+		"travel": 0.2,      // penalty for distance from the scout (default 0.5)
+		"home_ratio": 0.5,  // skip spots nearer our base than this x their distance to the enemy (default 0.5)
+		"stale_time": 90,   // seconds until a seen spot counts as fully stale (default 90)
+		"claim_time": 20,   // seconds a picked spot stays reserved for that scout (default 20)
+		"static_range_mult": 1.0  // scales enemy defence ranges when judging if a spot is defended (default 1.0)
+	},  
+        "target_dist_mod": {"comm": 0.5},
 	// Second multiplier on that bonus: this curve at the map size, divided by all players. Points are
 	// [<map side in map units, e.g. 8 for 8x8; non-square maps use sqrt(w*h)>, <multiplier>], flat beyond the ends
 	"scout_map_size": [[8, 1.0], [20, 4.0]],
-	"raid": [7.0, 42.0],  // [<min>, <avg>] power of raider squad
-	"raid_target_roles": ["builder", "commander"],  // enemy roles raid groups attack first (plus types with the "raid_target" attribute); [] = attribute only
-	"raid_flee_share": 0.5,  // raid group flees when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
-	"attack": 20.0,  // min power of attack group
-	"attack_spot_threat": 1.0,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking
-	"attack_keep_threat": 1.34,  // attack group's current target stays acceptable up to this x the usual threat allowance (at its spot, and on the approach line when in range; not on its route), so it isn't dropped and re-picked over small swings; not inside the base defence radius; 1 (or less) = off
-	"attack_flee_share": 0.5,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
-	"attack_group_radius": [2.0, 800],  // [<x the group's highest weapon/LOS range>, <min elmos>]: attack group units farther than this from their leader, and without the target in their weapon range, are stragglers: while the group fights they walk to the leader instead of straight to a firing spot
+
+	"raid": [9.0, 20.0],  // [<min>, <avg>] power of raider squad
+	"attack": 10.0,  // min power of attack group
+
+	"raid_flee_share": 0.33,
+        "attack_flee_share": 0.33,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
+
+	"attack_spot_threat": 0.33,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking
+"attack_group_radius": [2.0, 800],  // [<x the group's highest weapon/LOS range>, <min elmos>]: attack group units farther than this from their leader are stragglers: while the group fights they walk to the leader instead of straight to a firing spot
+         "attack_keep_threat": 1.34,  // attack group's current target stays acceptable up to this x the usual threat allowance (at its spot, and on the approach line when in range; not on its route), so it isn't dropped and re-picked over small swings; not inside the base defence radius; 1 (or less) = off
+	"attack_path_ignore_threat": 0.25,  // attack group routes to a target, the front or a group to reinforce count threat at or below this x the group's current strength as none (no detour around it); 0 = off; max 0.5 / the highest value of thr_mod.distance.attack (0.25 with the attack curve below, which peaks at 2.0), also x thr_mod.base_bonus if that is below 1; higher acts as that max
+
+
 	"attack_merge": {  // how attack groups join (the smaller walks to the bigger), absorb (an army pulls in small groups) and reinforce (a small group walks to the nearest stronger group)
-		"speed_ratio": 1.5,  // leaders' speeds within this factor of each other, else the groups never merge or reinforce each other
-		"distance": 2000,  // leaders within this many elmos may join or absorb (>= 1)
-		"travel_sec": 30,  // ...and at most this many seconds of straight travel apart at the walking group's slowest speed (1 to 60; keeps arrivals inside the 60 s regroup limit, after which far-away units are dropped as stuck)
-		"join_interval": [4, 32],  // [<group under quota.attack>, <army>]: check for a group to join every this many updates (~1 s each)
-		"absorb_interval": 8,  // an army absorbs small groups every this many updates
-		"support_radius": 400,  // on the line to the bigger group, within this many elmos of its leader both groups' strength counts against threat
-		"reinforce_range": 800,  // a reinforcing group's route only has to get this close to the stronger group's leader (merging finishes it); never more than 80% of what the group can merge from (distance, or travel_sec at its slowest speed)
-		"reinforce_fails": 10,  // empty reinforce routes in a row (one per ~2 s decision) before giving up
-		"reinforce_retry": 10  // seconds to act as a small attack group after giving up, before looking for a group again
-	},
+	"speed_ratio": 1.5,  // leaders' speeds within this factor of each other, else the groups never merge or reinforce each other
+	"distance": 800,  // leaders within this many elmos may join or absorb (>= 1)
+	"travel_sec": 10,  // ...and at most this many seconds of straight travel apart at the walking group's slowest speed (1 to 60; keeps arrivals inside the 60 s regroup limit, after which far-away units are dropped as stuck)
+	"join_interval": [8, 16],  // [<group under quota.attack>, <army>]: check for a group to join every this many updates (~1 s each)
+	"absorb_interval": 12,  // an army absorbs small groups every this many updates
+	"support_radius": 400,  // on the line to the bigger group, within this many elmos of its leader both groups' strength counts against threat
+	"reinforce_range": 400,  // a reinforcing group's route only has to get this close to the stronger group's leader (merging finishes it); never more than 80% of what the group can merge from (distance, or travel_sec at its slowest speed)
+	"reinforce_fails": 4,  // empty reinforce routes in a row (one per ~2 s decision) before giving up
+	"reinforce_retry": 15  // seconds to act as a small attack group after giving up, before looking for a group again
+         },
 	"thr_mod": {
-		"attack": [0.45, 0.45],  // [<min>, <max>] enemy threat modifier for target selection of attack task
-		"raid": [0.45, 0.45],  // same for raid task (raider groups): target choice, escape and path threat; missing = use "attack"
-		"scout": [0.45, 0.45],  // same for scout task; missing = use "attack"
+		"base_bonus": 2.0,
 		"scale_min": 0.25,  // attack groups count threat at spots nearer our base than where they picked their target as less, by (spot-to-base / group-to-base)^2, but never below this; 0.25 = at most 4x; 1 = off
-		"base_bonus": 2.0,  // raid and defence groups, and the attack group escape, inside the base defence radius accept up to this x threat at the base centre, falling to 1 at the radius edge; 1 = off; multiplies with "distance"
-		// Per task: multiply its thr_mod by distance from our base as a fraction of the map diagonal (higher = more cautious).
-		// [<fraction>, <multiplier>] points, linear between, flat beyond the ends; tasks: scout, raid, defend, attack, aa, ah, bomber; missing task = 1
+		"raid":   [0.85, 0.9],  // [<min>, <max>]; 1.0 = the distance curve below is the whole modifier
+		"scout":  [1.00, 1.00],
+		"attack": [0.66, 0.9],
+		"defence": [0.66, 0.9],  // [<min>, <max>] group size calculation of defence task (not distance based)
+		// [<fraction of map diagonal from base>, <multiplier>] points; tasks: scout, raid, defend, attack, aa, ah, bomber
 		"distance": {
-			"raid":  [[0.1, 0.5], [0.9, 2.0]],
-			"scout": [[0.1, 0.5], [0.9, 2.0]]
+			"raid":   [[0.4, 1.00], [0.9, 1.75]],
+			"scout":  [[0.4, 1.5], [0.9, 1.6]],
+			"attack": [[0.4, 1.00], [0.9, 2.0]],
+			"defend": [[0.4, 1.00], [0.9, 2.0]]
 		},
-		"defence": [0.80, 0.80],  // [<min>, <max>] enemy threat modifier for group size calculation of defence task
-		"mobile": 1.075,  // initial modifier for power of attack group based on mobile enemy threat
-		"static": 4.25,  // initial modifier for power of attack group based on static enemy threat
+
+		"mobile": 1.00,  // initial modifier for power of attack group based on mobile enemy threat
+		"static": 1.00,  // initial modifier for power of attack group based on static enemy threat
 		"comm": 0.75
 	},
-	"target_dist_mod": {  // attack groups choosing a target count these enemies' distance as this many times their real distance (see behaviour's "target_dist_mod")
-		"comm": 1.0  // all commanders; a commander's own behaviour entry overrides it
-	},
-	"aa_threat": 80.0,  // anti-air threat threshold, air factories will stop production when AA threat exceeds
+	"aa_threat": 80.0,  // anti-air threat threshold, air factories will stop production when AA threat exceedsx
 	"slack_mod": {
-		"all": 0.5,  // threat map 64-elmos slack multiplier for all units
-		"static": 1.5,  // additional 64-elmo-cells for static units
-		"speed": [0.75, 4.0]  // [<64elmo_cells_speed_mod>, <max_64elmo_cells>]
+		"all": 1.0,  // threat map 64-elmos slack multiplier for all units
+		"static": 1.0,  // additional 64-elmo-cells for static units
+		"speed": [0.36, 5.2]  // [<64elmo_cells_speed_mod>, <max_64elmo_cells>]
 	}
 },
 
@@ -61,26 +73,38 @@
 	"builder": [0.70, 1.0],  // [<default>, <UnitDef modifier>] for all builders
 	"fighter": [0.45, 1.0],  // [<default>, <UnitDef modifier>] for all not-builder units
 	"shield": [0.25, 0.275],  // [<empty>, <full>] shield power
-	"wait_timeout": 60,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
-	"repair_safe": false,  // true = builders skip priority repair of mobile units (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs
-	"repair_safe_static": false,  // same as repair_safe, for static units with prio_repair
-	"repair_pull": [1500, 0.34],  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
-	"repair_leash": [300, 20]  // [<distance>, <cooldown sec>]: cancel a started priority repair if the unit drives this far beyond build range, then no new priority repair for it during cooldown, distance 0 = disabled
+        "repair_safe_static": true,  // same as repair_safe, for static units with prio_repair
+	"wait_timeout": 120,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
+	"repair_safe": true,  // false = builders skip priority repair (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs
+	"repair_pull": [600, 0.4],  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
+        "repair_leash": [300, 5]  // [<distance>, <cooldown sec>]: cancel a started priority repair if the unit drives this far beyond build range, then no new priority repair for it during cooldown, distance 0 = disabled
+},
+
+"defence": {
+	"infl_rad": 8,  // influenece cell radius for defendAlly map
+	"base_rad": [1000.0, 2000.0],  // defend if enemy within clamp(distance(lane_pos, base_pos), 1000, 2000) radius
+	"comm_rad": [1000.0, 500.0]  // 0 distance from base ~ 1000, base_rad ~ 500.0
 },
 
 // Builder that follows a strong attack group: patrols behind it (auto repair/reclaim like fight) while the group
 // holds or advances, plain moves while it falls back towards base, threat-aware path when it lags behind
 "escort": {
-	"min_power": 60.0,  // min attack power of a group to get and keep an escort builder (compare quota.attack), 0 = disabled
-	"share": 0.2,  // max share of builders on escort duty (rounded down: 4 builders * 0.2 = 0 escorts)
-	"behind": 150.0,  // distance behind the group leader, towards base
-	"follow": 600.0,  // if further than this from its spot, builder catches up along a threat-aware path
+	"min_power": 40.0,  // min attack power of a group to get and keep an escort builder (compare quota.attack), 0 = disabled
+	"share": 0.15,  // max share of builders on escort duty (rounded down: 4 builders * 0.2 = 0 escorts)
+	"behind": 300.0,  // distance behind the group leader, towards base
+	"follow": 300.0,  // if further than this from its spot, builder catches up along a threat-aware path
 	"range": 600.0,  // only builders within this distance of any group member are picked
 	"comm": false,  // allow commander as escort
-	"take_from": "high"  // highest job priority a builder can be taken off for escort: "idle" (idle builders only), "low", "normal" or "high" (urgent jobs never)
+	"take_from": "normal"  // highest job priority a builder can be taken off for escort: "idle" (idle builders only), "low", "normal" or "high" (urgent jobs never)
 },
 
-// Artillery (main role artillery): each unit works alone, shooting known enemy buildings
+// Mobile anti-air squads (main role anti_air)
+"antiair": {
+	"leash": 800.0,  // only chase aircraft within this distance of home: one of our attack/defend group leaders or the base; aircraft already in weapon range are always engaged; -1 = no leash (chase the nearest aircraft anywhere)
+	"own_ground": true,  // aircraft over ground where our influence beats the enemy's also count as near home
+	"fire_spot": 0.9  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
+},
+
 "artillery": {
 	"ally_threat": 10.0,  // only walk to a firing spot with at least this much allied power within ally_radius: our and allied mobile armed units, not counting artillery (main role) or aircraft, so artillery can't escort itself. Power is each unit's power including its pwr_mod (thr_mod is ignored). A building already in range is shot only while the spot still has this much cover, otherwise the unit rejoins the group; -1 = any spot, always shoot (old behaviour)
 	"ally_radius": 500.0,  // see ally_threat
@@ -90,38 +114,25 @@
 	"artillery_flee_margin": 400.0  // checked every update: flee when an armed mobile enemy currently in radar or LOS (aircraft, paralysed and unfinished units excluded; unidentified radar blips only while moving) is within its weapon range + this, unless (ally_threat) our cover is at the artillery's spot. It runs to the nearest safety spot (behind a group, defended mex cluster, base) that is further from the enemy, else the one furthest from it, and stops fleeing once the enemy is out of reach or cover arrives; -1 = off. Default for all artillery; a unit type can override it with its own artillery_flee_margin in its "behaviour" entry
 },
 
+
+// Bodyguard for early unarmed builders: one unit per guard slot (needs CircuitAI PR #3)
 "guard": {
-	// units with "attribute": ["guarded"] (e.g. artillery) also get a guard slot that follows all the rules below
 	"roles": ["raider", "riot"],  // main roles that may take a builder's guard slot; a custom role ("bullshit_raider") matches only itself, a base role ("raider") also matches roles bound to it; [] = nobody guards
-	"max_workers": 3,  // an unarmed builder gets a guard slot if, once it is finished, the worker count (commander included) is below this; 0 = off
-	"max_share": 1.0,  // max share of each role's units guarding at once, per acting main role (0.3 = 30% of raiders and 30% of riots), rounded up so 1 unit of a role may guard; 1.0 = no limit, 0 = none
-	"guarded_max_share": -1.0,  // same as max_share, but a separate pool for the slots of "guarded" units, so builder slots can't use it up; -1 = same value as max_share
-	"safe": [20.0, 0.01],  // [ally, enemy]: the guard leaves while its builder stands where allied influence >= ally (here 20.0) and enemy influence <= enemy (here 0.01). The guard's own contribution at that spot isn't counted. Influence is in the same strength units as quota.attack. Both the builder's position and its current job's location (e.g. the mex it is walking to) must be safe. ally <= 0 = never safe. The guard also leaves while the builder retreats
-	"safe_time": 5.0,  // seconds the builder must stay safe before its guard leaves (stops a passing army from sending the guard away)
-	"pull_range": 800.0,  // max distance from the builder for any guard (assigned or pulled); an empty slot whose builder needs a guard also pulls the nearest eligible unit within it (idle, raid or defend task; never scouts, attack squads, retreating or guarding units; must reach the builder); 0 = only units asking for a new task fill it
-	"threat_cooldown": 10.0,  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
-	"threat_ratio": 1.0,  // ... but only if enemy threat at the guard > this * the guard's own threat; lower values cancel on lighter threat, 0 = any threat
-	"damage_exit": true,  // a guard that takes damage is released at once, and its builder gets no guard for threat_cooldown seconds (10 if threat_cooldown is -1). A guard released by damage or threat can't guard any builder for that long
-	"debug": false  // true = write guard events and a status line per slot every 10 s to infolog.txt (lines start with "GUARD")
+	"max_workers": 30,  // an unarmed builder gets a guard slot if, once it is finished, the worker count (commander included) is below this; 0 = off
+	"safe": [1.0, 0.01],  // [ally, enemy]: guard leaves while its builder stands where allied influence (guards excluded, same units as quota.attack) >= ally and enemy influence <= enemy; ally <= 0 = never safe. The guard also leaves while the builder retreats
+	"safe_time": 3.0,  // seconds the builder must stay safe before its guard leaves (stops a passing army from sending the guard away)
+	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (not retreating or guarding, can reach the builder); 0 = only units asking for a new task fill it
+        "threat_cooldown": 10.0,  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
+	"threat_ratio": 1.25,  // ... but only if enemy threat at the guard > this * the guard's own threat; lower values cancel on lighter threat, 0 = any threat
+        "max_share": 0.3,  // max share of each role's units guarding at once, per acting main role (0.3 = 30% of raiders and 30% of riots), rounded up so 1 unit of a role may guard; 1.0 = no limit, 0 = none
+        "guarded_max_share": 0.3, // as above, but for combat units instead of constructors.
+        "damage_exit": true  // a guard that takes damage is released at once, and its builder gets no guard for threat_cooldown seconds (10 if threat_cooldown is -1). A guard released by damage or threat can't guard any builder for that long
 },
-
-// Mobile anti-air squads (main role anti_air)
-"antiair": {
-	"leash": 800.0,  // only chase aircraft within this distance of home: one of our attack/defend group leaders or the base; aircraft already in weapon range are always engaged; -1 = no leash (chase the nearest aircraft anywhere)
-	"own_ground": true,  // also counts as near home: the spot the squad would shoot from is covered by our buildings or static defences (defence.infl_rad), or our other armed units beat the enemy (not counting the plane) under the aircraft
-	"fire_spot": 0.9  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
-},
-
-"defence": {
-	"infl_rad": 4,  // influenece cell radius for defendAlly map
-	"base_rad": [1000.0, 2000.0],  // defend if enemy within clamp(distance(lane_pos, base_pos), 1000, 2000) radius
-	"comm_rad": [1000.0, 500.0]  // 0 distance from base ~ 1000, base_rad ~ 500.0
-},
-
 
 "behaviour": {
 	// factorycloak
 	"cloakcon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		// "role": [<main>, <enemy>, <enemy>, ...]
 		// <main> is the role to make desicions of when to build it and what task to assign
 		// <enemy> is to decide how to counter enemy unit, if missing then equals to <main>
@@ -142,9 +153,6 @@
 		// "dg_cost" - DGun by metal cost instead of by threat
 		// "anti_stat" - only static targets
 		// "no_dgun" - do not use DGun
-		// "prio_repair" - when damaged above retreat threshold, builders rush to repair it (like "heavy" main role); on statics: below 90% health; commanders always have it
-		// "guarded" - gets a guard slot like an early builder (see "guard" block); never guards others; flying units and static defences excluded
-		// "raid_target" - raid groups attack this enemy type first, nearest one wins (in addition to quota.raid_target_roles)
 //		"attribute": ["boost", "no_strafe"],
 
 		// Fire state (open by default)
@@ -170,30 +178,30 @@
 		// Enemy threat multiplier
 //		"thr_mod": 1.0,
 
-		// Attack groups choosing a target count this enemy type's distance as this many times its real
-		// distance: > 1 = less wanted (e.g. solars), < 1 = more wanted
-//		"target_dist_mod": 1.0,
-
 		// Ignore enemy
 //		"ignore": false
 	},
 	"cloakraid": {
+		// threat 2.19 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider", "scout"],
 		"attribute": ["scout"],
+	        "target_dist_mod": 1.5,
 		"retreat": 0.1,
 		"pwr_mod": 0.9,
 		"thr_mod": 0.75
 	},
 	"cloakheavyraid": {
+		// threat 8.51 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["cloaked_raider", "raider"],
-		"attribute": ["ret_fight"],
+		"attribute": ["ret_fight", "prio_repair"],
 		"since": 180,
 		"limit": 3,
 		"pwr_mod": 1.0,
 		"thr_mod": 0.1,
-		"retreat": 0.4
+		"retreat": 0.1
 	},
 	"cloakskirm": {
+		// threat 4.10 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["skirmish"],
 		"attribute": ["ret_fight"],
 		"pwr_mod": 0.85,
@@ -202,22 +210,25 @@
 		"retreat": 0.35  // mostly disposable
 	},
 	"cloakriot": {
+		// threat 9.52 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot", "anti_sub"],
 		"attribute": ["melee", "ret_fight"],
 		"since": 180,
-		"retreat": 0.55,
+		"retreat": 0.25,
 		"pwr_mod": 1.4,
 		"thr_mod": 2.3
 	},
 	"cloakassault": {
+		// threat 46.76 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "anti_sub"],
-		"attribute": ["melee"],
-		"retreat": 0.35,  // assaults need to assault
+		"attribute": ["melee", "prio_repair"],
+		"retreat": 0.25,  // assaults need to assault
 		"since": 240,
-		"pwr_mod": 0.7,
-		"thr_mod": 1.1
+		"pwr_mod": 0.6,
+		"thr_mod": 0.55
 	},
 	"cloakarty": {
+		// threat 2.43 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery"],
 		"since": 550,
 		"limit": 8,
@@ -225,26 +236,31 @@
 		"thr_mod": 0.0
 	},
 	"cloaksnipe": {
+		// threat 10.81 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["snipe_target"],
-		"attribute": ["support"],
+		"attribute": ["support", "prio_repair", "raid_target"],
+	        "target_dist_mod": 0.34,
 		"pwr_mod": 3.0,
 		"since": 520,
 		"thr_mod": 0.0,
 		"retreat": 0.69
 	},
 	"cloakbomb": {
+		// mobile bomb, from its death explosion: threat 15.69 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["mine"],
 		"retreat": 0.01
 	},
 	"cloakjammer": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["assault"],
-		"since": 480,
+		"since": 660,
 		"retreat": 0.5,
 		"limit": 1
 	},
 	"cloakaa": {
+		// threat 2.26 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee", "ret_fight"],
+		"attribute": ["melee", "support"],
 		"retreat": 0.7,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -252,12 +268,14 @@
 
 	// factorygunship
 	"gunshipcon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["builder", "air"],
 		"limit": 2,
 		"since": 240,
 		"retreat": 0.99
 	},
 	"gunshipbomb": {
+		// threat 1.86 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["scout", "air"],  // "bomber"
 		"attribute": ["melee"],
 		"limit": 1,
@@ -265,6 +283,7 @@
 		"retreat": 0.01
 	},
 	"gunshipemp": {
+		// threat 10.62 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "air"],
 		"thr_mod": 0.1,
 		"pwr_mod": 0.1,
@@ -273,29 +292,35 @@
 		"retreat": 0.9
 	},
 	"gunshipskirm": {
+		// threat 14.02 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["air", "bullshit_raider"],
+		"attribute": ["prio_repair"],
 		"retreat": 0.65,
 		"pwr_mod": 0.7,
 		"limit": 8,
 		"thr_mod": 0.66
 	},
 	"gunshipraid": {
-		"role": ["scout", "air"],
+		// threat 2.46 at full health (raw, before pwr_mod/thr_mod)
+		"role": ["raider", "air"],
+		"attribute": ["prio_repair"],
 		"retreat": 0.7,
-		"limit": 1,
-		"pwr_mod": 1.25,
-		"thr_mod": 1.1
+		"pwr_mod": 0.4,
+		"thr_mod": 0.7
 	},
 	"gunshipheavyskirm": {
+		// threat 11.88 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "air"],
 		"since": 330,
-		"attribute": ["no_strafe"],
+		"attribute": ["no_strafe", "prio_repair"],
 		"retreat": 0.65,
 		"pwr_mod": 1.00,
 		"thr_mod": 1.00
 	},
 	"gunshipassault": {
+		// threat 26.54 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "air"],
+		"attribute": ["prio_repair"],
 		"limit": 3,
 		"since": 330,
 		"retreat": 0.5,
@@ -303,8 +328,9 @@
 		"thr_mod": 1.00
 	},
 	"gunshipkrow": {
+		// threat 169 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "air", "disarm_target"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "prio_repair"],
 		"retreat": 0.55,
 		"since": 720,
 		"pwr_mod": 0.3,
@@ -312,16 +338,20 @@
 		"limit": 0
 	},
 	"gunshiptrans": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["air"],
 		"limit": 0
 	},
 	"gunshipheavytrans": {
+		// threat 9.11 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["air"],
 		"limit": 0,
 		"thr_mod": 0.0
 	},
 	"gunshipaa": {
+		// threat 8.14 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air", "air"],
+		"attribute": ["prio_repair"],
 		"limit": 6,
 		"retreat": 0.95,
 		"pwr_mod": 3.0,
@@ -330,49 +360,59 @@
 
 	// factoryamph
 	"amphcon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["builder", "mine"]
 	},
 	"amphraid": {
+		// threat 6.79 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
 		"attribute": ["scout", "ret_fight"],
+	        "target_dist_mod": 1.5,
 		"pwr_mod": 0.7,
 		"thr_mod": 0.66,
-		"limit": 10,
 		"retreat": 0.25  // pretty disposable
 	},
 	"amphimpulse": {
+		// threat 8.76 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot"],
-		"limit": 1,
+		"limit": 2,
 		"retreat": 0.36,
 		"pwr_mod": 2.25,
 		"thr_mod": 2.25
 	},
 	"amphfloater": {
-		"role": ["assault", "snipe_target", "super"],
+		// threat 20.86 at full health (raw, before pwr_mod/thr_mod)
+		"role": ["assault", "snipe_target", "skirmish"],
+		"attribute": ["prio_repair", "raid_target"],
 		"limit": 14,
 		"since": 120,
 		"retreat": 0.25, // too slow to be retreating all the time
-		"pwr_mod": 1.3,
-		"thr_mod": 1.3
+		"pwr_mod": 0.9,
+		"thr_mod": 0.85
 	},
 	"amphriot": {
+		// threat 8.89 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot"],
-		"attribute": ["melee", "ret_fight"],
+		"attribute": ["melee", "ret_fight", "prio_repair"],
 		"pwr_mod": 1.5,
 		"retreat": 0.35 // too slow to be retreating all the time
 	},
 	"amphassault": {
+		// threat 46.42 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "disarm_target"],
+		"attribute": ["prio_repair"],
 		"retreat": 0.66,
 		"since": 520,
 		"pwr_mod": 1.4,
 		"thr_mod": 1.0
 	},
 	"amphtele": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["transport"],
 		"limit": 0
 	},
 	"amphaa": {
+		// threat 14.52 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
 		"attribute": ["melee", "ret_fight", "support"],
 		"retreat": 0.3,
@@ -383,61 +423,70 @@
 
 	// factoryspider
 	"spidercon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["builder", "mine"]
 	},
 	"spiderscout": {
-		"role": ["scout", "raider"],
-		"thr_mod": 0.5,
-		"limit": 20,
+		// threat 0.56 at full health (raw, before pwr_mod/thr_mod)
+		"role": ["scout"],
+		"thr_mod": 0.4,
+	        "target_dist_mod": 5.00,
+		"limit": 30,
 		"retreat": 0.01
 	},
 	"spiderassault": {
+		// threat 7.81 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "anti_sub"],
-		"attribute": ["melee", "ret_fight"],
-		"limit": 4,
-		"pwr_mod": 1.15,
+		"pwr_mod": 0.61, 
+		"thr_mod": 0.6,
 		"retreat": 0.35
 	},
 	"spideremp": {
-		"role": ["raider", "riot"],
-		"pwr_mod": 3.0,
-		"limit": 1,
+		// threat 20.26 at full health (raw, before pwr_mod/thr_mod)
+		"role": ["riot"],
+		"attribute": ["prio_repair", "support"],
+		"pwr_mod": 0.34,
+		"thr_mod": 0.33,
+		"limit": 4,
 		"retreat": 0.5
 	},
 	"spiderriot": {
+		// threat 11.95 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot"],
-		"pwr_mod": 2.0,
-		"limit": 4,
-		"attribute": ["support"],
+		"attribute": ["prio_repair"],
+		"pwr_mod": 1.0,
 		"retreat": 0.35
 	},
 	"spiderskirm": {
+		// threat 6.99 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["skirmish", "snipe_target", "super"],
-		"pwr_mod": 2.0,
-		"thr_mod": 1.0,
+		"attribute": ["prio_repair","raid_target"],
+		"pwr_mod": 1.1,
+		"thr_mod": 0.9,
 		"since": 180,
 		"retreat": 0.4
 	},
 	"spidercrabe": {
+		// threat 32.83 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "disarm_target", "turtle"],
-		"attribute": ["siege", "ret_fight", "support"],
+		"attribute": ["siege", "ret_fight", "prio_repair"],
 		"retreat": 0.5,
-		"thr_mod": 2.5,
-		"pwr_mod": 2.5,
-		"since": 300,
-		"thr_mod": 1.0
+		"thr_mod": 2.0,
+		"pwr_mod": 2.0,
+		"since": 300
 	},
 	"spiderantiheavy": {
+		// threat 9.58 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "mine"],
 		"retreat": 0.99,
 		"pwr_mod": 2.0,
 		"thr_mod": 0.1,
 		"since": 600,
-		"limit": 1
+		"limit": 2
 	},
 	"spideraa": {
+		// threat 10.38 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["ret_fight"],
 		"retreat": 0.6,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -445,58 +494,66 @@
 
 	// factoryshield
 	"shieldcon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["builder", "shieldball", "mine"],
 		"retreat": 1.3
 	},
 	"shieldscout": {
+		// threat 2.45 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["transport", "raider"],
 		"limit": 20,
 		"attribute": ["siege", "melee"],
+	        "target_dist_mod": 5.00,
 		"pwr_mod": 0.11,
 		"thr_mod": 0.1,
-		"retreat": 0.0
+		"retreat": 0.01
 	},
 	"shieldraid": {
+		// threat 2.30 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
-		"attribute": ["scout", "ret_fight"],
-		"retreat": 0.25,
-		"pwr_mod": 1.0,
-		"thr_mod": 0.9
+		"attribute": ["scout"],
+	        "target_dist_mod": 1.5,
+		"retreat": 0.01,
+		"pwr_mod": 0.9,
+		"thr_mod": 0.8
 	},
 	"shieldskirm": {
+		// threat 5.21 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["skirmish"],
-		"limit": 15,
-		"since": 200,
 		"pwr_mod": 0.7,
 		"thr_mod": 0.66,
 		"retreat": 0.3
 	},
 	"shieldassault": {
+		// threat 11.42 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "support", "shieldball"],
-		"attribute": ["melee"],
-		"limit": 20,
-		"retreat": 0.3,
-		"since": 120,
-		"pwr_mod": 0.7,
-		"thr_mod": 0.35
+		"attribute": ["prio_repair"],
+		"retreat": 1.1,
+		"since": 180,
+		"pwr_mod": 0.4,
+		"thr_mod": 0.5
 	},
 	"shieldriot": {
+		// threat 6.37 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot", "shieldball"],
 		"fire_state": "hold",
-		"since": 100,
-		"limit": 5,
-		"retreat": 0.3,
+		"attribute": ["support", "prio_repair"],
+		"since": 300,
+		"limit": 3,
 		"pwr_mod": 1.7,
 		"thr_mod": 1.7
 	},
 	"shieldfelon": {
+		// threat 39.25 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "shieldball", "snipe_target"],
-		"since": 420,
-		"retreat": 0.35,
-		"pwr_mod": 1.1,
-		"thr_mod": 1.1
+		"attribute": ["prio_repair"],
+		"since": 300,
+		"retreat": 1.1,
+		"pwr_mod": 0.7,
+		"thr_mod": 0.66
 	},
 	"shieldarty": {
+		// threat 12.73 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["disarm_target"],
 		"since": 300,
 		"retreat": 0.3,
@@ -504,19 +561,22 @@
 		"thr_mod": 0.0
 	},
 	"shieldbomb": {
+		// mobile bomb, from its death explosion: threat 12.34 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["mine"]
 	},
 	"shieldshield": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["super", "heavy", "shieldball"],
 		"since": 540,
-		"attribute": ["support"],
+		"attribute": ["support", "prio_repair"],
 		"retreat": 0.36,
 		"pwr_mod": 1.0,
 		"thr_mod": 0.25
 	},
 	"shieldaa": {
+		// threat 2.49 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee", "ret_fight"],
+		"attribute": ["support", "ret_fight"],
 		"retreat": 0.7,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -524,71 +584,85 @@
 
 	// factoryveh
 	"vehcon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["builder", "mine"]
 	},
 	"vehscout": {
+		// threat 2.75 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["scout"],
 		"attribute": ["scout"],
-		"thr_mod": 0.6,
-		"pwr_mod": 1.2,
+	        "target_dist_mod": 3.00,
+		"thr_mod": 0.25,
+		"pwr_mod": 0.27,
 		"retreat": 0.01,
-		"limit": 4
+		"limit": 12
 	},
 	"vehraid": {
+		// threat 4.13 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
 		"attribute": ["melee", "ret_fight"],
-		"retreat": 0.3,
-		"pwr_mod": 1.1,
+		"retreat": 0.1,
+		"pwr_mod": 1.0,
 		"thr_mod": 0.8
 	},
 	"vehsupport": {
+		// threat 3.27 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "missileskirm"],
-		"attribute": ["siege", "ret_fight"],
 		"limit": 4,
 		"pwr_mod": 1.0,
 		"thr_mod": 0.4,
 		"retreat": 0.6  // cannot retreat
 	},
 	"vehriot": {
+		// threat 11.81 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot"],
+		"attribute": ["prio_repair"],
 		"retreat": 0.6,
 		"pwr_mod": 1.5,
 		"thr_mod": 1.5
 	},
 	"vehassault": {
+		// threat 14.29 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "prio_repair"],
+		"retarget_radius": 0.8,
 		"retreat": 0.4,  // slow to turn around
 		"since": 180,
-		"pwr_mod": 0.9,
-		"thr_mod": 0.9
+		"pwr_mod": 0.8,
+		"thr_mod": 0.8
 	},
 	"vehcapture": {
+		// threat 17.60 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["support", "disarm_target", "snipe_target"],
-		"since": 180,
+		"attribute": ["prio_repair", "raid_target", "guarded"],
+		"since": 330,
+	        "target_dist_mod": 0.5,
 		"pwr_mod": 1,
 		"thr_mod": 1,
 		"retreat": 0.8
 	},
 	"veharty": {
+		// threat 2.01 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["transport", "super"],
 		"attribute": ["siege", "ret_fight"],
 		"limit": 15,
-		"since": 460,
-		"pwr_mod": 0.5,
-		"thr_mod": 0.0,
+		"since": 420,
 		"retreat": 0.8
 	},
 	"vehheavyarty": {
+		// threat 12.33 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "heavy", "turtle"],
-		"since": 300,
+		"attribute": ["prio_repair","raid_target", "guarded"],
+		"since": 420,
+	        "target_dist_mod": 0.5,
 		"retreat": 0.99,
-		"pwr_mod": 1.0,
+		"pwr_mod": 0.01,
 		"thr_mod": 0.00
 	},
 	"vehaa": {
+		// threat 5.89 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee"],
+		"attribute": ["support"],
 		"retreat": 0.75,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -596,53 +670,69 @@
 
 	// factoryjump
 	"jumpcon": {
+		// threat 2.89 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["builder", "mine"]
 	},
 	"jumpscout": {
+		// threat 5.20 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot", "raider"],
+	        "target_dist_mod": 3.00,
 		"limit": 15,
 		"attribute": ["melee", "siege"],
 		"retreat": 0
 	},
 	"jumpraid": {
-		"role": ["raider", "anti_sub"],
-		"attribute": ["melee"],
-		"retreat": 0.4,
-		"pwr_mod": 1.5,
+		// threat 3.83 at full health (raw, before pwr_mod/thr_mod)
+		"role": ["raider", "anti_sub", "bullshit_raider"],
+		"attribute": ["melee", "prio_repair"],
+		"retreat": 0.2,
+		"pwr_mod": 1.0,
 		"thr_mod": 0.9
 	},
 	"jumpblackhole": {
+		// threat 5.73 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["support"],
+		"attribute": ["prio_repair"],
 		"since": 300,
 		"limit": 6,
 		"retreat": 0.36
 	},
 	"jumpskirm": {
+		// threat 12.84 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["skirmish", "super", "snipe_target"],
+		"attribute": ["prio_repair"],
+		"pwr_mod": 0.6,
+		"thr_mod": 0.6,
 		"retreat": 0.4
 	},
 	"jumpassault": {
+		// threat 36.91 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "anti_sub", "disarm_target"],
-		"attribute": ["melee", "siege", "ret_fight"],
+		"attribute": ["melee", "siege", "ret_fight", "prio_repair"],
 		"retreat": 0.4,
-		"pwr_mod": 1.3,
-		"thr_mod": 0.5
+		"pwr_mod": 0.55,
+		"thr_mod": 0.55
 	},
 	"jumpsumo": {
+		// threat 44.84 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "support", "disarm_target"],
 		"limit": 0,
-		"attribute": ["melee", "no_jump"]  // jump on attack
+		"pwr_mod": 2.0,
+		"thr_mod": 2.0,
+		"attribute": ["melee", "no_jump", "prio_repair"]  // jump on attack
 	},
 	"jumparty": {
+		// threat 2.27 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "turtle", "snipe_target"],
-		"attribute": ["support"],
+		"attribute": ["support", "prio_repair", "raid_target", "guarded"],
+	        "target_dist_mod": 0.34,
 		"since": 600,
-		"pwr_mod": 0.1,
 		"limit": 2,
 		"thr_mod": 0.00,
 		"retreat": 0.99
 	},
 	"jumpbomb": {
+		// mobile bomb, from its death explosion: threat 129 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "builder"],
 		"attribute": ["melee", "mine"],
 		"fire_state": "open",
@@ -650,11 +740,12 @@
 		"limit": 2,
 		"retreat": 0.01,
 		"pwr_mod": 3.0,
-		"thr_mod": 0.01
+		"thr_mod": 0.00
 	},
 	"jumpaa": {
+		// threat 8.83 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "support"],
 		"retreat": 0.8,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -662,61 +753,72 @@
 
 	// factoryhover
 	"hovercon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["builder", "mine"]
 	},
 	"hoverraid": {
-		"role": ["scout"],
-		"attribute": ["melee"],		
+		// threat 2.93 at full health (raw, before pwr_mod/thr_mod)
+		"role": ["raider"],
+	        "target_dist_mod": 2.0,
+		"attribute": ["scout"],		
 		"pwr_mod": 0.9,
-		"thr_mod": 0.8,
-		"pwr_mod": 0.9,
-		"thr_mod": 0.9,
-		"limit": 4,
-		"retreat": 0.5
+		"thr_mod": 0.8
 	},
 	"hoverheavyraid": {
+		// threat 7.24 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider", "bullshit_raider"],	
+		"attribute": ["prio_repair"],
+	        "target_dist_mod": 1.25,
+		"limit": 6,
 		"retreat": 0.35,
 		"pwr_mod": 0.8,
 		"thr_mod": 0.8
 	},
 	"hoverskirm": {
+		// threat 4.80 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["skirmish", "support"],
+		"attribute": ["prio_repair"],
 		"retreat": 0.55,
 		"limit": 12,
 		"reload": 4.0,
 		"pwr_mod": 0.9,
-		"thr_mod": 0.6
+		"thr_mod": 0.7
 	},
 	"hoverassault": {
+		// threat 12.22 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "raider"],
-		"attribute": ["melee", "ret_hold"],
+		"attribute": ["melee", "ret_hold", "prio_repair"],
 		"retreat": 0.4,
-		"limit": 12,
 		"pwr_mod": 0.75,
 		"thr_mod": 0.45
 	},
 	"hoverdepthcharge": {
+		// threat 29.30 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_sub", "riot"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "prio_repair"],
 		"retreat": 0.6
 	},
 	"hoverriot": {
+		// threat 10.68 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot", "snipe_target"],
+		"attribute": ["prio_repair"],
 		"retreat": 0.4,
-		"pwr_mod": 1.00,
+		"pwr_mod": 1.26,
 		"thr_mod": 1.25
 	},
 	"hoverarty": {
+		// threat 17.66 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "heavy", "snipe_target"],
-		"attribute": ["siege"],
+		"attribute": ["siege", "support", "prio_repair", "raid_target", "guarded"],
 		"retreat": 0.99,
+	        "target_dist_mod": 0.34,
 		"pwr_mod": 1.5,
 		"thr_mod": 0.0
 	},
 	"hoveraa": {
+		// threat 7.54 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["ret_fight"],
+		"attribute": ["ret_fight", "prio_repair"],
 		"retreat": 0.7,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -724,12 +826,14 @@
 
 	// factoryplane
 	"planecon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["builder", "air"],
 		"since": 240,
 		"limit": 2,
 		"retreat": 0.99
 	},
 	"planefighter": {
+		// threat 3.04 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["scout", "air"],
 		"attribute": ["boost"],
 		"pwr_mod": 1.5,
@@ -738,6 +842,7 @@
 		"retreat": 0.8
 	},
 	"planeheavyfighter": {
+		// threat 3.30 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air", "air"],
 		"attribute": ["melee"],
 		"limit": 8,
@@ -746,6 +851,7 @@
 		"thr_mod": 3.0
 	},
 	"bomberprec": {
+		// threat 13.14 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["bomber", "air"],  // FIXME: should act as anti_heavy?
 		"attribute": ["siege"],
 		"limit": 10,
@@ -754,6 +860,7 @@
 		"thr_mod": 0.01
 	},
 	"bomberriot": {
+		// threat 19.73 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["bomber", "air"],
 		"limit": 0,
 		"retreat": 0.6,
@@ -761,6 +868,7 @@
 		"thr_mod": 0.01
 	},
 	"bomberdisarm": {
+		// threat 188 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "air"],
 		"attribute": ["siege", "bomber"],
 		"limit": 2,
@@ -770,6 +878,7 @@
 		"thr_mod": 0.01
 	},
 	"bomberheavy": {
+		// threat 114 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["bomber", "air"],
 		"fire_state": "return",
 		"limit": 4,
@@ -779,6 +888,7 @@
 		"thr_mod": 0.1
 	},
 	"bomberassault": {
+		// threat 245 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["bomber", "air"],
 		"attribute": ["anti_stat", "no_dgun"],
 		"fire_state": "hold",
@@ -789,6 +899,7 @@
 		"thr_mod": 0.01
 	},
 	"planescout": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["scout", "air"],
 		"since": 360,
 		"limit": 2,
@@ -797,66 +908,81 @@
 
 	// factorytank
 	"tankcon": {
+		// threat 3.63 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["builder"],
+		"attribute": ["prio_repair"],
 		"pwr_mod": 0.40,
 		"thr_mod": 0.40,
 		"retreat": 0.9
 	},
 	"tankraid": {
+		// threat 7.81 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["scout"],
-		"attribute": ["scout"],
-		"limit": 2,
-		"thr_mod": 0.66,
-		"pwr_mod": 0.8,
-		"retreat": 0.45
+		"attribute": ["scout", "prio_repair"],
+	        "target_dist_mod": 1.5,
+		"thr_mod": 1.1,
+		"pwr_mod": 1.1,
+		"retreat": 0.33
 	},
 	"tankheavyraid": {
+		// threat 24.11 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider", "bullshit_raider"],
-		"thr_mod": 0.6,
-		"pwr_mod": 0.65,
-		"retreat": 0.65
+		"attribute": ["prio_repair"],
+	        "target_dist_mod": 1.5,
+		"thr_mod": 0.4,
+		"pwr_mod": 0.4,
+		"retreat": 0.44
 	},
 	"tankriot": {
+		// threat 38.42 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot", "heavy", "snipe_target"],
-		"thr_mod": 1.25,
-		"pwr_mod": 0.75,
+		"attribute": ["prio_repair"],
+		"thr_mod": 0.68,
+		"pwr_mod": 0.68,
 		"retreat": 0.55
 	},
 	"tankassault": {
+		// threat 35.47 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "heavy", "anti_sub"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "prio_repair"],
 		"retreat": 0.55,
 		"pwr_mod": 0.85,
 		"thr_mod": 0.7
 	},
 	"tankheavyassault": {
+		// threat 134 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "disarm_target", "super"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "prio_repair"],
 		"pwr_mod": 0.85,
 		"thr_mod": 0.7,
 		"since": 480,
 		"retreat": 0.55
 	},
 	"tankarty": {
+		// threat 10.38 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "snipe_target", "heavy"],
-		"attribute": ["support"],
+		"attribute": ["support", "prio_repair", "raid_target", "guarded"],
 		"since": 1000,
+	        "target_dist_mod": 0.5,
 		"retreat": 0.99,
 		"pwr_mod": 1.0,
 		"thr_mod": 0.0
 	},
 	"tankheavyarty": {
+		// threat 25.58 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["transport"],
-		"attribute": ["support"],
+		"attribute": ["support", "prio_repair", "raid_target", "guarded"],
 		"since": 1000,
+	        "target_dist_mod": 0.5,
 		"limit": 1,
 		"retreat": 0.99,
 		"pwr_mod": 0.5,
 		"thr_mod": 0.0
 	},
 	"tankaa": {
+		// threat 9.66 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["ret_fight"],
+		"attribute": ["support", "prio_repair"],
 		"retreat": 0.8,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -864,68 +990,85 @@
 
 	// factoryship
 	"shipcon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["builder"]
 	},
 	"shipscout": {
+		// threat 1.59 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["scout"]
 	},
 	"shiptorpraider": {
+		// threat 5.25 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"]
 	},
 	"subraider": {
+		// threat 12.94 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"]
 	},
 	"shipriot": {
+		// threat 6.55 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot"]
 	},
 	"shipskirm": {
+		// threat 7.74 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["skirmish"]
 	},
 	"shipassault": {
+		// threat 45.18 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault"]
 	},
 	"shiparty": {
+		// threat 25.28 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery"]
 	},
 	"shipaa": {
+		// threat 11.72 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"]
 	},
 
 	// striderhub
 	"striderantiheavy": {
+		// threat 73.89 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "heavy"],
 		"limit": 1,
+	        "target_dist_mod": 0.5,
 		"pwr_mod": 0.5,
-		"attribute": ["melee", "ret_fight"],
+		"attribute": ["melee", "ret_fight", "prio_repair"],
 		"retreat": 0.35
 	},
 	"striderscorpion": {
+		// threat 222 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "heavy"],
 		"limit": 1,
 		"fire_state": "return",
-		"attribute": ["ret_fight"],
+		"attribute": ["ret_fight", "prio_repair"],
 		"retreat": 0.6,
 		"pwr_mod": 0.5,
 		"since": 1800,
 		"thr_mod": 0.5
 	},
 	"striderdante": {
+		// threat 113 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "disarm_target", "snipe_target"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "prio_repair"],
 		"limit": 2,
 		"retreat": 0.45,
 		"pwr_mod": 0.8,
 		"thr_mod": 0.75
 	},
 	"striderarty": {
+		// threat 20.45 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "heavy", "snipe_target"],
+		"attribute": ["prio_repair"],
+	        "target_dist_mod": 0.34,
 		"pwr_mod": 5.0,
 		"thr_mod": 0.0,
 		"retreat": 0.9
 	},
 	"striderfunnelweb": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["heavy", "turtle", "shieldball"],
-		"attribute": ["support"],
+		"attribute": ["support", "prio_repair"],
 		"retreat": 1.4,
 		"pwr_mod": 1.0,
 		"limit": 1,
@@ -933,160 +1076,206 @@
 		"thr_mod": 0.0
 	},
 	"striderbantha": {
+		// threat 481 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "support", "heavy"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "prio_repair"],
 		"retreat": 0.6,
 		"pwr_mod": 0.5,
 		"thr_mod": 0.5
 	},
 	"striderdetriment": {
+		// threat 565 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "support", "heavy"],
-		"attribute": ["melee"],
+		"attribute": ["melee", "prio_repair"],
 		"retreat": 0.50,  // deffo retreat, running into nab annihlator farm and sploding is silly :)
 		"pwr_mod": 0.34,
 		"thr_mod": 0.34
 	},
 	"subtacmissile": {
+		// threat 195 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "heavy"],
 		"attribute": ["stockpile"]
 	},
 	"shipcarrier": {
+		// threat 214 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "heavy"]
 	},
 	"shipheavyarty": {
+		// threat 82.65 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "heavy"]
 	},
 
 	// statics
 	"staticnuke": {
+		// threat 194 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "heavy"],
+		"attribute": ["prio_repair","raid_target"],
 		"fire_state": "hold",  // burst attacks
 		"reload": 30.0,
+	        "target_dist_mod": 0.25,
 		"limit": 1,
 		"since": 900,
 		"thr_mod": 0.01
 	},
 	"staticmissilesilo": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static", "support", "heavy"],
+		"attribute": ["prio_repair"],
+	        "target_dist_mod": 0.25,
 		"thr_mod": 0.01
 	},
 	"raveparty": {
+		// threat 732 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "heavy"],
+		"attribute": ["prio_repair"],
+	        "target_dist_mod": 0.25,
 		"limit": 1,
 		"since": 1200,
 		"thr_mod": 0.01
 	},
 	"zenith": {
+		// threat 171 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "heavy"],
+		"attribute": ["prio_repair"],
 		"fire_state": "hold",  // burst attacks
+	        "target_dist_mod": 0.25,
 		"reload": 105.0,  // 105sec / 0.7sec/met = 150 meteorsControlled
 		"limit": 1,
 		"since": 900,
 		"thr_mod": 0.01
 	},
 	"staticheavyarty": {
+		// threat 57.28 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "turtle", "heavy"],
+		"attribute": ["prio_repair"],
 		"limit": 5,
+	        "target_dist_mod": 0.25,
 		"thr_mod": 0.0,
 		"pwr_mod": 10.00
 	},
 	"turretheavy": {
+		// threat 121 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "snipe_target", "turtle"],
+		"attribute": ["prio_repair"],
 		"thr_mod": 1.00
 	},
 	"turretantiheavy": {
+		// threat 81.42 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "turtle", "static"],
+		"attribute": ["prio_repair"],
 		"thr_mod": 0.55
 	},
 	"staticarty": {
+		// threat 31.81 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "snipe_target", "turtle"],
+	        "target_dist_mod": 0.25,
+		"attribute": ["prio_repair"],
 		"thr_mod": 0.55
 	},
 	"staticantinuke": {
+		// threat 44.16 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "heavy", "support"],
+		"attribute": ["prio_repair", "raid_target"],
+	        "target_dist_mod": 0.25,
 		"since": 720,
 		"limit": 1
 	},
 	"turretheavylaser": {
+		// threat 23.26 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "heavy", "snipe_target"],
-		"thr_mod": 2.0
+		"attribute": ["prio_repair"],
+		"thr_mod": 2.33
 	},
 	"energysingu": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static", "turtle", "heavy"],
-		"attribute": ["support"],  // build at home
+	        "target_dist_mod": 0.1,
+		"attribute": ["prio_repair", "raid_target"],
 		"since": 660
 	},
 	"energyfusion": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static", "mine", "heavy"],
-		"attribute": ["support"],  // build at home
+	        "target_dist_mod": 0.25,
+		"attribute": ["prio_repair", "raid_target"],
 		"since": 280
 	},
-	"energygeo": {
-		"role": ["static", "mine"],  // built only on geothermal vents (economy.energy), wherever they are
-		"since": 180
-	},
-	"energyheavygeo": {
-		// not buildable: a finished energygeo morphs into it (economy.energy.geo.morph); explodes like a nuke
-		"role": ["static", "mine", "heavy"]
-	},
 	"turretaalaser": {
+		// threat 7.34 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
 		"attribute": ["siege", "ret_hold"],
 		"retreat": 0.4,  // FIXME: Bunker up turret when it's on low health, doesn't work for statics atm
 		"thr_mod": 1.0
 	},
 	"turretaaheavy": {
+		// threat 69.03 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air", "heavy", "turtle"],
+		"attribute": ["prio_repair", "raid_target"],
 		"limit": 1,
 		"thr_mod": 1.0
 	},
 	"turretlaser": {
+		// threat 2.65 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "riot", "builder"],
-		"thr_mod": 1.5
+		"attribute": ["prio_repair"],
+		"thr_mod": 1.25
 	},
 	"turretmissile": {
+		// threat 4.50 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["missileskirm", "riot", "builder"],
 		"thr_mod": 0.34
 	},
 	"turretriot": {
+		// threat 16.62 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "riot", "snipe_target"],
+		"attribute": ["prio_repair"],
 		"thr_mod": 1.65
 	},
 	"turretaafar": {
+		// threat 16.24 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air", "heavy", "turtle"],
-
+		"attribute": ["prio_repair", "raid_target"],
 		"thr_mod": 1.0
 	},
 	"turretaaflak": {
+		// threat 16.86 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air", "turtle"],
-
+		"attribute": ["prio_repair"],
 		"thr_mod": 1.0
 	},
 	"turretaaclose": {
+		// threat 40.98 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
+		"attribute": ["prio_repair"],
 		"thr_mod": 1.0
 	},
 	"turretgauss": {
+		// threat 16.87 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "turtle", "transport"],
-		"attribute": ["siege", "ret_hold"],
+		"attribute": ["siege", "ret_hold", "prio_repair"],
 		"retreat": 0.4,  // FIXME: Bunker up turret when it's on low health, doesn't work for statics atm
 		"thr_mod": 1.6
 	},
 	"turretemp": {
+		// threat 18.29 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static", "heavy", "snipe_target"],
+		"attribute": ["prio_repair"],
 		"thr_mod": 2.5
 	},
 
 	// support factories won't be built in front
 	"factoryplane": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static"],
 		"attribute": ["support"]
 	},
 	"factorygunship": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static"],
 		"attribute": ["support"]
 	},
 	"striderhub": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static"],
 		"since": 900,
 		"attribute": ["support"]
@@ -1094,137 +1283,196 @@
 
 	// Enemy Eco!! //
 	"staticmex": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine"]
 	},
 	"energywind": {
-		"role": ["mine"]
+		// threat 0 (unarmed: no influence, never counts toward safe)
+		"role": ["mine"],
+		"attribute": ["raid_target"]
 	},
 	"staticradar": {
-		"role": ["mine"]
+		// threat 0 (unarmed: no influence, never counts toward safe)
+		"role": ["mine"],
+		"attribute": ["raid_target"]
 	},
 	"staticcon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine"]
 	},
 	"energypylon": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine"]
 	},
 	"staticheavyradar": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine", "turtle"],
 		"limit": 1
 	},
 	"staticstorage": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine", "turtle"],
 		"limit": 5
 	},
 	"energysolar": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine"],
-		"target_dist_mod": 2.0
+	        "target_dist_mod": 5.00,
 	},
 	"staticshield": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static", "turtle"]
 	},
 
 	// Chickens!! //
 	"dronecarry": {
+		// threat 6.29 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["transport"]
 	},
 	"chicken": {
+		// threat 3.13 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"]
 	},
 	"chicken_blimpy": {
+		// threat 0.15 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["mine"]
 	},
 	"chicken_digger": {
+		// threat 1.52 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["riot"]
 	},
 	"chicken_dodo": {
+		// mobile bomb, from its death explosion: threat 10.07 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["mine"]
 	},
 	"chicken_dragon": {
+		// threat 304 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy"],
 		"thr_mod": 0.4
 	},
 	"chicken_drone": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["raider"]
 	},
 	"chicken_drone_starter": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["raider"]
 	},
 	"chicken_leaper": {
+		// threat 8.81 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"]
 	},
 	"chicken_listener": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static"]
 	},
 	"chicken_pigeon": {
+		// threat 1.22 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["air"]
 	},
 	"chicken_roc": {
+		// threat 28.37 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["air"]
 	},
 	"chicken_shield": {
+		// threat 14.97 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["support"]
 	},
 	"chicken_spidermonkey": {
+		// threat 6.40 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"]
 	},
 	"chicken_tiamat": {
+		// threat 66.20 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["air"],
 		"thr_mod": 0.05
 	},
 	"chickenblobber": {
+		// threat 22.05 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery"]
 	},
 	"chickenbroodqueen": {
+		// threat 21.43 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy"],
 		"thr_mod": 0.05
 	},
 	"chickenflyerqueen": {
+		// threat 1114 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["air"],
 		"thr_mod": 0.05
 	},
 	"chickenlandqueen": {
+		// threat 1164 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
 		"thr_mod": 0.05
 	},
 	"chickenspire": {
+		// threat 14.38 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["static"]
 	},
 	"chickena": {
+		// threat 41.37 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
 		"thr_mod": 0.05
 	},
 	"chickenc": {
+		// threat 15.58 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
 		"thr_mod": 0.05
 	},
 	"chickend": {
+		// threat 2.17 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
 		"thr_mod": 0.05
 	},
 	"chickenf": {
+		// threat 9.94 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
 		"thr_mod": 0.05
 	},
 	"chickenr": {
+		// threat 4.35 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["raider"],
 		"thr_mod": 0.05
 	},
 	"chickenwurm": {
+		// threat 14.60 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy"]
 	},
 
 	"tacnuke": {
+		// threat 35.57 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["super"]
 	},
 	"seismic": {
+		// threat 0.74 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["super"]
 	},
 	"empmissile": {
+		// threat 170 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["super"]
 	},
 	"napalmmissile": {
+		// threat 3.69 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["super"]
+	},
+	"planelightscout": {
+		// threat 0 (unarmed: no influence, never counts toward safe)
+		"role": ["scout"]
+	},
+        "energygeo": {
+		"role": ["static", "mine"],  // built only on geothermal vents (economy.energy), wherever they are
+		"since": 400,
+	        "target_dist_mod": 0.5
+	},
+	"energyheavygeo": {
+		// not buildable: a finished energygeo morphs into it (economy.energy.geo.morph); explodes like a nuke
+		"role": ["static", "mine", "heavy"],
+	        "target_dist_mod": 0.1
+	},
+	"dronelight": {
+		// threat 1.58 at full health (raw, before pwr_mod/thr_mod)
+		"role": ["scout"]
 	}
 }
 }

@@ -365,6 +365,7 @@ void CAttackTask::RequestTargetPath(std::vector<ICoreUnit::Id> ids, F3Vec goals)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, pathRange, goals, GetHitTest(), GetPathThreatCap(startPos, goals));
+	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -584,6 +585,7 @@ void CAttackTask::Reinforce(const int frame)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, {position}));
+	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -905,6 +907,22 @@ float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals
 	return GetSafeThreat() * bonus / curve / std::max(scale, 1e-3f);
 }
 
+void CAttackTask::SetPathThreatFloor(IPathQuery* query) const
+{
+	// Capped routes (target, front, reinforce) ignore light threat: at or below quota.attack_path_ignore_threat x
+	// the group's current strength it costs nothing, so the route goes straight through it instead of around.
+	// Never above half the lowest per-spot allowance anywhere (strength x the lowest base bonus / the attack
+	// thr_mod.distance curve's highest value; near-base scale <= 1), or the path-ahead check and the escape would
+	// flag ground the route treats as free
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	const float frac = militaryMgr->GetAttackPathIgnoreThreat();
+	if (frac > 0.f) {
+		const float maxFrac = 0.5f * militaryMgr->GetBaseThrBonusMin()
+				/ militaryMgr->GetThrDistModMax(IFighterTask::FightType::ATTACK);
+		query->SetThreatFloor(GetSafeThreat() * std::min(frac, maxFrac));
+	}
+}
+
 bool CAttackTask::IsKeepAllowedAt(const AIFloat3& pos) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -1039,7 +1057,8 @@ void CAttackTask::PullBackEndangered(int frame)
 
 bool CAttackTask::Flee(int frame)
 {
-	// Run to the nearest stronger attack group (fight beside it, then merge), else the closest haven, else base
+	// Run to the nearest stronger attack group (fight beside it, then merge), else the nearest safe ground we
+	// hold (a defence point of one of our metal clusters), else the closest haven, else base
 	CCircuitAI* circuit = manager->GetCircuit();
 	AIFloat3 dest = -RgtVector;
 	CAttackTask* squad = static_cast<CMilitaryManager*>(manager)->FindReinforceSquad(leader, attackPower, this);
@@ -1050,6 +1069,32 @@ bool CAttackTask::Flee(int frame)
 		if (circuit->GetThreatMap()->GetThreatAt(leader, squadPos) < GetAllowedThreatAt(squadPos, together)) {
 			dest = squadPos;
 		}
+	}
+	if (!utils::is_valid(dest)) {
+		// Nearest defence point of a metal cluster we hold (FillFriendlyClusterPos) where we can stand alone,
+		// not farther from our base than we are (never run forward), and not right here (within 400 we'd count
+		// as arrived and stop running)
+		static F3Vec clusterPositions;  // NOTE: micro-opt
+		circuit->GetMilitaryManager()->FillFriendlyClusterPos(leader, clusterPositions);
+		const AIFloat3& pos = leader->GetPos(frame);
+		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+		const float sqBaseDist = pos.SqDistance2D(basePos);
+		const float strength = GetSafeThreat();
+		CThreatMap* threatMap = circuit->GetThreatMap();
+		// Judged at full value, like the escape itself: no near-base discount from the fight we're leaving
+		const float prevRef = scaleRefSqDist;
+		scaleRefSqDist = 0.f;
+		float minSqDist = std::numeric_limits<float>::max();
+		for (const AIFloat3& p : clusterPositions) {
+			const float sqDist = pos.SqDistance2D(p);
+			if ((sqDist >= SQUARE(400.f)) && (sqDist < minSqDist) && (p.SqDistance2D(basePos) <= sqBaseDist)
+				&& (threatMap->GetThreatAt(leader, p) < GetAllowedThreatAt(p, strength)))
+			{
+				minSqDist = sqDist;
+				dest = p;
+			}
+		}
+		scaleRefSqDist = prevRef;
 	}
 	if (!utils::is_valid(dest)) {
 		dest = circuit->GetFactoryManager()->GetClosestHaven(leader);
@@ -1261,6 +1306,7 @@ void CAttackTask::FallbackFrontPos()
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(startPos, urgentPositions));
+	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
