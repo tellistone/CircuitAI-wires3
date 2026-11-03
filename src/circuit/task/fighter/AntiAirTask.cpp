@@ -835,8 +835,10 @@ bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat) const
 {
 	// Net escort power next to the squad: our and allied armed units within flee_ally_radius (as
 	// CArtilleryTask::HasCover; mobile ones but not AA (main role) or aircraft, so AA squads can't cover each
-	// other, plus static defences that can hit ground; each unit's power with its pwr_mod, scaled by sqrt(health %) as squad strength is) minus enemyThreat (the
-	// enemies that set off the flee) must reach flee_ally_threat. When the army leaves or dies, or the enemy outgrows it, the cover goes.
+	// other, plus static defences with a ground/water threat range, so not static AA or superweapons; each
+	// unit's power with its pwr_mod, scaled by sqrt(health %) as squad strength is) minus enemyThreat (the
+	// enemies that set off the flee) must reach flee_ally_threat. When the army leaves or dies, or the enemy
+	// outgrows it, the cover goes.
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
 	const int frame = circuit->GetLastFrame();
@@ -847,7 +849,7 @@ bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat) const
 		CAllyUnit* ally = kv.second;
 		CCircuitDef* adef = ally->GetCircuitDef();
 		if ((adef == nullptr) || !adef->IsAttacker() || adef->IsAbleToFly()
-			|| (adef->IsMobile() ? (adef->GetMainRole() == ROLE_TYPE(AA)) : !(adef->HasAntiLand() || adef->HasAntiWater())))
+			|| (adef->IsMobile() ? (adef->GetMainRole() == ROLE_TYPE(AA)) : !IsStaticDefence(adef)))
 		{
 			continue;
 		}

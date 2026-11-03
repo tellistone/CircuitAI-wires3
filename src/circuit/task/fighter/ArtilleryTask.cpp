@@ -756,7 +756,7 @@ void CArtilleryTask::CollectEscorts(CCircuitUnit* unit, bool isFlee)
 		CCircuitDef* adef = ally->GetCircuitDef();
 		if ((ally->GetId() == unit->GetId()) || (adef == nullptr) || !adef->IsAttacker() || adef->IsPlane()
 			|| (adef->IsMobile() ? (adef->GetMainRole() == ROLE_TYPE(ARTY))
-				: (!isFlee || !(adef->HasAntiLand() || adef->HasAntiWater()))))
+				: (!isFlee || !IsStaticDefence(adef))))
 		{
 			continue;
 		}

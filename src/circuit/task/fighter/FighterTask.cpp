@@ -18,6 +18,7 @@
 #include "unit/action/RearmAction.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/ally/AllyUnit.h"
+#include "unit/CircuitDef.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
@@ -461,6 +462,12 @@ float IFighterTask::GetCoverPower(CAllyUnit* ally)
 	const float maxHealth = u->GetMaxHealth();
 	const float healthPerc = (maxHealth > 0.f) ? u->GetHealth() / maxHealth : 0.f;
 	return ally->GetCircuitDef()->GetPower() * sqrtf(std::max(healthPerc, 0.f));  // ally strength: pwr_mod, not thr_mod
+}
+
+bool IFighterTask::IsStaticDefence(CCircuitDef* cdef)
+{
+	return (cdef->GetThreatRange(CCircuitDef::ThreatType::LAND) > 0)
+			|| (cdef->GetThreatRange(CCircuitDef::ThreatType::WATER) > 0);
 }
 
 } // namespace circuit
