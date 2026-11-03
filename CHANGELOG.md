@@ -86,6 +86,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Guard damage exit** (`guard.damage_exit`, default `true`). A guard that takes damage is released at once, and its
   builder gets no guard for `threat_cooldown` seconds.
 
+### Changed
+
+- Retreated units waiting to be repaired (at a haven or by builders) now patrol in place instead of back and forth
+  between two points, so they stay in range of whatever is repairing them. They still return fire.
+
 ### Fixed
 
 - The `retreat.repair_pull` share cap now also applies when idle builders choose their next job. Before, it only

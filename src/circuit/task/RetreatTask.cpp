@@ -230,27 +230,11 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		// TODO: Add fail counter?
 	} else {
 		// TODO: push WaitAction into unit
-		AIFloat3 pos = unitPos;
-		const float size = SQUARE_SIZE * 16;
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		float centerX = terrainMgr->GetTerrainWidth() / 2;
-		float centerZ = terrainMgr->GetTerrainHeight() / 2;
-		pos.x += (pos.x > centerX) ? size : -size;
-		pos.z += (pos.z > centerZ) ? size : -size;
-		AIFloat3 oldPos = pos;
-		CTerrainManager::CorrectPosition(pos);
-		if (oldPos.SqDistance2D(pos) > SQUARE_SIZE * SQUARE_SIZE) {
-			pos = unitPos;
-			pos.x += (pos.x > centerX) ? -size : size;
-			pos.z += (pos.z > centerZ) ? -size : size;
-		}
-		CTerrainManager::TerrainPredicate predicate = [unitPos](const AIFloat3& p) {
-			return unitPos.SqDistance2D(p) > SQUARE(SQUARE_SIZE * 8);
-		};
-		pos = terrainMgr->FindBuildSite(cdef, pos, maxDist, UNIT_COMMAND_BUILD_NO_FACING, predicate);
+		// Patrol on the spot: never goes idle and still returns fire, but holds still so repairers
+		// (nano towers, builders) keep it in range instead of losing it on a back-and-forth loop
 		TRY_UNIT(circuit, unit,
 //			unit->CmdPriority(0);
-			unit->GetUnit()->PatrolTo(pos);
+			unit->GetUnit()->PatrolTo(unitPos);
 		)
 
 		if (unit->GetTravelAct() != nullptr) {
