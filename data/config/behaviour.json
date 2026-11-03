@@ -83,7 +83,9 @@
 },
 
 "defence": {
-	"infl_rad": 8,  // influenece cell radius for defendAlly map
+	"infl_rad": 8,  // influenece cell radius for defendAlly map; also how far an ally structure claims ground for the front line (8 cells = 2048 elmos)
+	"front_enemy_rad": 8,  // cell radius (256 elmos) around each known enemy structure for the front line, default = infl_rad
+	"front_max_threat": 0.01,  // front line = cell covered by ally and enemy structures where both ally armed and enemy influence are at most this
 	"base_rad": [1000.0, 2000.0],  // defend if enemy within clamp(distance(lane_pos, base_pos), 1000, 2000) radius
 	"comm_rad": [1000.0, 500.0]  // 0 distance from base ~ 1000, base_rad ~ 500.0
 },

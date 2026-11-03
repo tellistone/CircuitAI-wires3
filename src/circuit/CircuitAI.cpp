@@ -24,8 +24,8 @@
 #include "util/GameAttribute.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
-#ifdef DEBUG_VIS
 #include "map/InfluenceMap.h"
+#ifdef DEBUG_VIS
 #include "map/ThreatMap.h"
 #include "resource/EnergyGrid.h"
 #endif  // DEBUG_VIS
@@ -765,6 +765,15 @@ int CCircuitAI::Update(int frame)
 
 int CCircuitAI::Message(int playerId, const char* message)
 {
+	// Available in release builds: "~front <teamId>" toggles map markers on front-line cells
+	const char cmdFront[] = "~front";
+	if (strncmp(message, cmdFront, 6) == 0) {
+		if ((strlen(message) > 7) && (teamId == atoi((const char*)&message[7]))) {
+			mapManager->GetInflMap()->ToggleFrontLineDraw();
+		}
+		return 0;
+	}
+
 #ifdef DEBUG_VIS
 	const char cmdBreak[]   = "~break";
 

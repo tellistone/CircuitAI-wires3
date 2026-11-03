@@ -7,6 +7,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Front line on the influence map** (`defence.front_enemy_rad`, `defence.front_max_threat`). Each 256-elmo influence cell now
+  also counts the static allies (ours and allied teams, armed or not) within `infl_rad`, and the known enemy statics
+  (armed or not, seen now or remembered; no radar blips or guessed enemies) within `front_enemy_rad` (default `infl_rad`).
+  A cell is front line when both counts are above 0 and both ally armed influence and enemy influence are at most
+  `front_max_threat` (default 0.01). `CInfluenceMap::IsFrontLineAt(pos)` reads it; nothing uses it yet. The chat command
+  `~front <teamId>` (release builds too) toggles map markers on the front-line cells of that AI, as of that moment.
 - **Guards interpose** (`guard.interpose`, default `[120, 600]`). While a mobile armed ground enemy or an unknown radar dot, seen now, is
   within 600 of the guarded unit, its guard moves to a spot 120 towards the nearest one (at most halfway), instead of
   only following with the engine Guard order. A Guard order is queued behind the move, so from the spot it follows the

@@ -17,6 +17,9 @@
 #include "json/json.h"
 
 #include "spring/SpringCallback.h"
+#include "spring/SpringMap.h"
+
+#include "Drawer.h"
 
 //#include "Cheats.h"
 #include "Feature.h"
@@ -44,6 +47,9 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	inflData0.allyInfl.resize(mapSize, INFL_BASE);
 	inflData0.allyDefendInfl.resize(mapSize, INFL_BASE);
 	inflData0.influence.resize(mapSize, INFL_BASE);
+	inflData0.allyStruct.resize(mapSize, 0.f);
+	inflData0.enemyStruct.resize(mapSize, 0.f);
+	inflData0.frontLine.resize(mapSize, 0.f);
 //	inflData0.tension.resize(mapSize, INFL_BASE);
 //	inflData0.vulnerability.resize(mapSize, INFL_BASE);
 //	inflData0.featureInfl.resize(mapSize, INFL_BASE);
@@ -51,6 +57,9 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	allyInfl = inflData0.allyInfl.data();
 	allyDefendInfl = inflData0.allyDefendInfl.data();
 	influence = inflData0.influence.data();
+	allyStruct = inflData0.allyStruct.data();
+	enemyStruct = inflData0.enemyStruct.data();
+	frontLine = inflData0.frontLine.data();
 //	tension = inflData0.tension.data();
 //	vulnerability = inflData0.vulnerability.data();
 //	featureInfl = inflData0.featureInfl.data();
@@ -59,6 +68,9 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	inflData1.allyInfl.resize(mapSize, INFL_BASE);
 	inflData1.allyDefendInfl.resize(mapSize, INFL_BASE);
 	inflData1.influence.resize(mapSize, INFL_BASE);
+	inflData1.allyStruct.resize(mapSize, 0.f);
+	inflData1.enemyStruct.resize(mapSize, 0.f);
+	inflData1.frontLine.resize(mapSize, 0.f);
 //	inflData1.tension.resize(mapSize, INFL_BASE);
 //	inflData1.vulnerability.resize(mapSize, INFL_BASE);
 //	inflData1.featureInfl.resize(mapSize, INFL_BASE);
@@ -66,6 +78,9 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	drawAllyInfl = inflData1.allyInfl.data();
 	drawAllyDefendInfl = inflData1.allyDefendInfl.data();
 	drawInfluence = inflData1.influence.data();
+	drawAllyStruct = inflData1.allyStruct.data();
+	drawEnemyStruct = inflData1.enemyStruct.data();
+	drawFrontLine = inflData1.frontLine.data();
 //	drawTension = inflData1.tension.data();
 //	drawVulnerability = inflData1.vulnerability.data();
 //	drawFeatureInfl = inflData1.featureInfl.data();
@@ -89,6 +104,13 @@ void CInfluenceMap::ReadConfig()
 	CCircuitAI* circuit = manager->GetCircuit();
 	const Json::Value& defence = circuit->GetSetupManager()->GetConfig()["defence"];
 	defRadius = defence.get("infl_rad", 5.f).asFloat();
+
+	// Front line: same cell radius as AddUnarmed uses for allyDefendInfl
+	const float cellsPerRad = DEFAULT_SLACK * 4.f / squareSize;
+	frontAllyRange = std::max(0, int(cellsPerRad * defRadius));
+	const float enemyRad = defence.get("front_enemy_rad", defRadius).asFloat();
+	frontEnemyRange = std::max(0, int(cellsPerRad * enemyRad));
+	frontMaxThreat = defence.get("front_max_threat", INFL_EPS).asFloat();
 }
 
 void CInfluenceMap::EnqueueUpdate()
@@ -109,6 +131,9 @@ void CInfluenceMap::Prepare(SInfluenceData& inflData)
 	std::fill(inflData.allyInfl.begin(), inflData.allyInfl.end(), INFL_BASE);
 	std::fill(inflData.allyDefendInfl.begin(), inflData.allyDefendInfl.end(), INFL_BASE);
 	std::fill(inflData.influence.begin(), inflData.influence.end(), INFL_BASE);
+	std::fill(inflData.allyStruct.begin(), inflData.allyStruct.end(), 0.f);
+	std::fill(inflData.enemyStruct.begin(), inflData.enemyStruct.end(), 0.f);
+	std::fill(inflData.frontLine.begin(), inflData.frontLine.end(), 0.f);
 //	std::fill(inflData.tension.begin(), inflData.tension.end(), INFL_BASE);
 //	std::fill(inflData.vulnerability.begin(), inflData.vulnerability.end(), INFL_BASE);
 //	std::fill(inflData.featureInfl.begin(), inflData.featureInfl.end(), INFL_BASE);
@@ -117,6 +142,9 @@ void CInfluenceMap::Prepare(SInfluenceData& inflData)
 	drawAllyInfl = inflData.allyInfl.data();
 	drawAllyDefendInfl = inflData.allyDefendInfl.data();
 	drawInfluence = inflData.influence.data();
+	drawAllyStruct = inflData.allyStruct.data();
+	drawEnemyStruct = inflData.enemyStruct.data();
+	drawFrontLine = inflData.frontLine.data();
 //	drawTension = inflData.tension.data();
 //	drawVulnerability = inflData.vulnerability.data();
 //	drawFeatureInfl = inflData.featureInfl.data();
@@ -131,6 +159,17 @@ void CInfluenceMap::Update()
 	for (const SEnemyData& e : enemyMgr->GetHostileDatas()) {
 		AddEnemy(e);
 	}
+
+	// Known enemy structures, armed (hostile) or not (peace), seen now or remembered.
+	// Skipped: unidentified radar blips (no cdef) and guessed enemies (fakes, id -1).
+	for (const auto* datas : {&enemyMgr->GetHostileDatas(), &enemyMgr->GetPeaceDatas()}) {
+		for (const SEnemyData& e : *datas) {
+			if ((e.cdef == nullptr) || e.cdef->IsMobile() || (e.id < 0)) {
+				continue;
+			}
+			AddStruct(e.pos, frontEnemyRange, drawEnemyStruct);
+		}
+	}
 }
 
 void CInfluenceMap::Apply()
@@ -138,8 +177,12 @@ void CInfluenceMap::Apply()
 	CCircuitAI* circuit = manager->GetCircuit();
 	circuit->UpdateFriendlyUnits();  // FIXME: update or ignore units with -RgtVector position
 	const CAllyTeam::AllyUnits& units = circuit->GetFriendlyUnits();
+	const int frame = circuit->GetLastFrame();
 	for (auto& kv : units) {
 		CAllyUnit* u = kv.second;
+		if (!u->GetCircuitDef()->IsMobile()) {
+			AddStruct(u->GetPos(frame), frontAllyRange, drawAllyStruct);
+		}
 		if (u->GetCircuitDef()->IsAttacker()) {
 			if (u->GetCircuitDef()->IsMobile()) {
 				AddMobileArmed(u);
@@ -152,6 +195,12 @@ void CInfluenceMap::Apply()
 	}
 	for (int i = 0; i < mapSize; ++i) {
 		drawInfluence[i] = drawAllyInfl[i] - drawEnemyInfl[i];
+	}
+	for (int i = 0; i < mapSize; ++i) {
+		const bool isFront = (drawAllyStruct[i] > 0.f) && (drawEnemyStruct[i] > 0.f)
+				&& (drawAllyInfl[i] - INFL_BASE <= frontMaxThreat)
+				&& (drawEnemyInfl[i] - INFL_BASE <= frontMaxThreat);
+		drawFrontLine[i] = isFront ? 1.f : 0.f;
 	}
 //	for (int i = 0; i < mapSize; ++i) {
 //		drawTension[i] = drawAllyInfl[i] + drawEnemyInfl[i];
@@ -191,6 +240,9 @@ void CInfluenceMap::SwapBuffers()
 	allyInfl = inflData.allyInfl.data();
 	allyDefendInfl = inflData.allyDefendInfl.data();
 	influence = inflData.influence.data();
+	allyStruct = inflData.allyStruct.data();
+	enemyStruct = inflData.enemyStruct.data();
+	frontLine = inflData.frontLine.data();
 //	tension = inflData.tension.data();
 //	vulnerability = inflData.vulnerability.data();
 //	featureInfl = inflData.featureInfl.data();
@@ -222,6 +274,51 @@ float CInfluenceMap::GetInfluenceAt(const AIFloat3& position) const
 	int x, z;
 	PosToXZ(position, x, z);
 	return influence[z * width + x] - INFL_BASE;
+}
+
+float CInfluenceMap::GetAllyStructAt(const AIFloat3& position) const
+{
+	int x, z;
+	PosToXZ(position, x, z);
+	return allyStruct[z * width + x];
+}
+
+float CInfluenceMap::GetEnemyStructAt(const AIFloat3& position) const
+{
+	int x, z;
+	PosToXZ(position, x, z);
+	return enemyStruct[z * width + x];
+}
+
+bool CInfluenceMap::IsFrontLineAt(const AIFloat3& position) const
+{
+	int x, z;
+	PosToXZ(position, x, z);
+	return frontLine[z * width + x] > 0.5f;
+}
+
+void CInfluenceMap::ToggleFrontLineDraw()
+{
+	Drawer* drawer = manager->GetCircuit()->GetDrawer();
+	if (!frontMarks.empty()) {
+		for (const AIFloat3& p : frontMarks) {
+			drawer->DeletePointsAndLines(p);
+		}
+		frontMarks.clear();
+		return;
+	}
+	CMap* map = manager->GetCircuit()->GetMap();
+	for (int z = 0; z < height; ++z) {
+		for (int x = 0; x < width; ++x) {
+			if (frontLine[z * width + x] < 0.5f) {
+				continue;
+			}
+			AIFloat3 p(x * squareSize + squareSize / 2, 0.f, z * squareSize + squareSize / 2);
+			p.y = map->GetElevationAt(p.x, p.z);
+			drawer->AddPoint(p, "");
+			frontMarks.push_back(p);
+		}
+	}
 }
 
 int CInfluenceMap::Pos2Index(const AIFloat3& pos) const
@@ -373,6 +470,29 @@ void CInfluenceMap::AddUnarmed(CAllyUnit* u)
 			const int index = z * width + x;
 			const float infl = val * (1.0f - 1.0f * sqrtf(lenSq) / range);
 			drawAllyDefendInfl[index] += infl;
+		}
+	}
+}
+
+void CInfluenceMap::AddStruct(const AIFloat3& pos, int range, float* layer)
+{
+	// Flat presence count: every cell within range of the structure gets +1
+	int posx, posz;
+	PosToXZ(pos, posx, posz);
+	const int rangeSq = SQUARE(range);
+
+	const int beginX = std::max(int(posx - range),           0);
+	const int endX   = std::min(int(posx + range + 1),   width);
+	const int beginZ = std::max(int(posz - range),           0);
+	const int endZ   = std::min(int(posz + range + 1),  height);
+
+	for (int z = beginZ; z < endZ; ++z) {
+		const int dzSq = SQUARE(posz - z);
+		for (int x = beginX; x < endX; ++x) {
+			if (SQUARE(posx - x) + dzSq > rangeSq) {
+				continue;
+			}
+			layer[z * width + x] += 1.f;
 		}
 	}
 }

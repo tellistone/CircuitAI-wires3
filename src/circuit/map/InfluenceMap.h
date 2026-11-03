@@ -45,6 +45,13 @@ public:
 	float GetAllyInflAt(const springai::AIFloat3& position) const;
 	float GetAllyDefendInflAt(const springai::AIFloat3& position) const;
 	float GetInfluenceAt(const springai::AIFloat3& position) const;
+	// Number of static allies (armed or not) whose infl_rad covers position
+	float GetAllyStructAt(const springai::AIFloat3& position) const;
+	// Number of known static enemies (armed or not, seen or remembered) whose front_enemy_rad covers position
+	float GetEnemyStructAt(const springai::AIFloat3& position) const;
+	// Covered by both ally and enemy structures, with no armed influence from either side
+	bool IsFrontLineAt(const springai::AIFloat3& position) const;
+	void ToggleFrontLineDraw();
 	// What one mobile armed ally adds to allyInfl at position, by the same formula as AddMobileArmed
 	float GetMobileArmedInflAt(CAllyUnit* u, const springai::AIFloat3& position) const;
 
@@ -56,6 +63,9 @@ private:
 		FloatVec allyInfl;
 		FloatVec allyDefendInfl;
 		FloatVec influence;
+		FloatVec allyStruct;
+		FloatVec enemyStruct;
+		FloatVec frontLine;  // 1 = front line, 0 = not
 //		FloatVec tension;
 //		FloatVec vulnerability;
 //		FloatVec featureInfl;
@@ -69,6 +79,7 @@ private:
 	void AddStaticArmed(CAllyUnit* u);
 	void AddUnarmed(CAllyUnit* u);
 	void AddEnemy(const SEnemyData& e);
+	void AddStruct(const springai::AIFloat3& pos, int range, float* layer);
 //	void AddFeature(springai::Feature* f);
 	inline void PosToXZ(const springai::AIFloat3& pos, int& x, int& z) const;
 
@@ -93,6 +104,9 @@ private:
 	float* drawAllyInfl;
 	float* drawAllyDefendInfl;
 	float* drawInfluence;
+	float* drawAllyStruct;
+	float* drawEnemyStruct;
+	float* drawFrontLine;
 //	float* drawTension;
 //	float* drawVulnerability;
 //	float* drawFeatureInfl;
@@ -102,11 +116,18 @@ private:
 	float* allyInfl;
 	float* allyDefendInfl;
 	float* influence;
+	float* allyStruct;
+	float* enemyStruct;
+	float* frontLine;
 //	float* tension;
 //	float* vulnerability;
 //	float* featureInfl;
 
 	float defRadius;
+	int frontAllyRange;  // cells
+	int frontEnemyRange;  // cells
+	float frontMaxThreat;
+	std::vector<springai::AIFloat3> frontMarks;
 
 #ifdef DEBUG_VIS
 private:
