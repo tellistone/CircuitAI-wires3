@@ -85,6 +85,10 @@ public:
 	// (the start cluster, or a neighbour of a cluster the walk crossed). They act as walls: mexes behind
 	// them can't be found even if safe. A mark lasts maxAge frames unless the walk crosses it safely.
 	const std::vector<int>& GetContestedClusters(int frame, int maxAge);
+	// Threat at a cluster's centre up to this doesn't block the GetMexToBuild walk (quota.contested.wall; THREAT_MIN default).
+	// Shared by the ally team: the last AI to read its config sets it
+	void SetWallThreat(float value) { wallThreat = value; }
+	float GetWallThreat() const { return wallThreat; }
 
 	float GetMinIncome() const { return metalData->GetMinIncome(); }
 	float GetAvgIncome() const { return metalData->GetAvgIncome(); }
@@ -107,6 +111,7 @@ private:
 	std::vector<SClusterInfo> clusterInfos;
 
 	int markFrame;
+	float wallThreat;
 	struct SMex {
 		ICoreUnit::Id unitId;
 		int index;

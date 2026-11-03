@@ -28,19 +28,21 @@ using namespace springai;
 
 class CMetalManager::SafeCluster : public lemon::MapBase<ClusterGraph::Node, bool> {
 public:
-	SafeCluster(CThreatMap* tm, const CMetalData::Clusters& cs)
+	SafeCluster(CThreatMap* tm, const CMetalData::Clusters& cs, const float& wt)
 		: threatMap(tm)
 		, clusters(cs)
+		, wallThreat(wt)
 	{}
 	Value operator[](Key k) const {
 		return (*this)[CMetalData::ClusterGraph::id(k)];
 	}
 	Value operator[](int u) const {
-		return threatMap->GetThreatAt(clusters[u].position) <= THREAT_MIN;
+		return threatMap->GetThreatAt(clusters[u].position) <= wallThreat;
 	}
 private:
 	CThreatMap* threatMap;
 	const CMetalData::Clusters& clusters;
+	const float& wallThreat;  // CMetalManager::wallThreat, may change after construction
 };
 
 class CMetalManager::DetectCluster : public lemon::MapBase<ClusterGraph::Node, bool> {
@@ -72,6 +74,7 @@ CMetalManager::CMetalManager(CCircuitAI* circuit, CMetalData* metalData)
 		: circuit(circuit)
 		, metalData(metalData)
 		, markFrame(-1)
+		, wallThreat(THREAT_MIN)
 		, threatFilter(nullptr)
 		, filteredGraph(nullptr)
 		, shortPath(nullptr)
@@ -101,7 +104,7 @@ void CMetalManager::Init()
 		}
 	}
 
-	threatFilter = new SafeCluster(circuit->GetThreatMap(), GetClusters());
+	threatFilter = new SafeCluster(circuit->GetThreatMap(), GetClusters(), wallThreat);
 	filteredGraph = new ClusterGraph(GetClusterGraph(), *threatFilter);
 	shortPath = new ShortPath(*filteredGraph, GetClusterEdgeCosts());
 }

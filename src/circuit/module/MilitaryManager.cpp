@@ -395,6 +395,7 @@ void CMilitaryManager::ReadConfig()
 		contested.bonus = num("bonus", 2.f, 1.f);
 		contested.maxAge = static_cast<int>(num("age", 60.f, 1.f) * FRAMES_PER_SEC);
 		contested.range = num("range", 300.f, 0.f);
+		circuit->GetMetalManager()->SetWallThreat(std::max(num("wall", THREAT_MIN, 0.f), THREAT_MIN));
 	}
 	const Json::Value& qignoreThreat = quotas.get("attack_path_ignore_threat", 0.25f);
 	if (!qignoreThreat.isNumeric()) {
@@ -1561,7 +1562,7 @@ void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,
 		const AIFloat3& cPos = clusters[index].position;
 		// Live threat with this unit's threat type: the mark is from the builders' walk, maybe seconds ago
 		const float threat = threatMap->GetThreatAt(cPos);
-		if ((threat <= THREAT_MIN) || (threat >= allowedAt(cPos))
+		if ((threat <= metalMgr->GetWallThreat()) || (threat >= allowedAt(cPos))
 			|| !terrainMgr->CanMobileReachAt(unit->GetArea(), cPos, reach))
 		{
 			continue;
