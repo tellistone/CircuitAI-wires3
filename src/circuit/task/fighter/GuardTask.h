@@ -45,6 +45,8 @@ private:
 	void ReleaseUnit(CCircuitUnit* unit);
 	void DebugLog(CCircuitUnit* vip, const char* event) const;
 	void Pull(CCircuitUnit* vip);
+	void Interpose(CCircuitUnit* unit, CCircuitUnit* vip);
+	void GuardVip(CCircuitUnit* unit, CCircuitUnit* vip);
 	float GetExcludedInflAt(CCircuitUnit* vip, const springai::AIFloat3& pos) const;
 
 	ICoreUnit::Id vipId;
@@ -56,7 +58,9 @@ private:
 	int cooldownUntil;
 	float lastAlly;  // allied influence at the builder, guards excluded (last check)
 	float lastEnemy;  // enemy influence at the builder (last check)
-	int nextDebugFrame;  // guard was released under enemy threat: slot stays closed until this frame
+	int nextDebugFrame;
+	bool isInterposing;  // the guard holds a spot between the vip and an enemy instead of the engine Guard
+	springai::AIFloat3 interposeSpot;  // last spot it was sent to  // guard was released under enemy threat: slot stays closed until this frame
 };
 
 } // namespace circuit

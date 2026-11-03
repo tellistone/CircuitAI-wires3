@@ -124,6 +124,7 @@
 	"safe": [1.0, 0.01],  // [ally, enemy]: guard leaves while its builder stands where allied influence (guards excluded, same units as quota.attack) >= ally and enemy influence <= enemy; ally <= 0 = never safe. The guard also leaves while the builder retreats
 	"safe_time": 3.0,  // seconds the builder must stay safe before its guard leaves (stops a passing army from sending the guard away)
 	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (not retreating or guarding, can reach the builder); 0 = only units asking for a new task fill it
+	"interpose": [120.0, 600.0],  // [<distance>, <range>]: while an armed ground enemy (or unknown radar dot) is within <range> of the vip, the guard stands <distance> from the vip towards the nearest one (at most halfway) instead of following it with the engine Guard order; distance 0 = engine Guard only
         "threat_cooldown": 10.0,  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
 	"threat_ratio": 1.25,  // ... but only if enemy threat at the guard > this * the guard's own threat; lower values cancel on lighter threat, 0 = any threat
         "max_share": 0.3,  // max share of each role's units guarding at once, per acting main role (0.3 = 30% of raiders and 30% of riots), rounded up so 1 unit of a role may guard; 1.0 = no limit, 0 = none

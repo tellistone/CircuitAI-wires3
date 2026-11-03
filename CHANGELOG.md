@@ -7,6 +7,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Guards interpose** (`guard.interpose`, default `[120, 600]`). While an armed ground enemy or an unknown radar dot is
+  within 600 of the guarded unit, its guard moves to a spot 120 towards the nearest one (at most halfway), instead of
+  only following with the engine Guard order. It goes back to Guard when no enemy is near. `[0, ...]` turns it off.
 - **Anti-air leash** (`antiair` block in `behaviour.json`). Mobile AA squads (main role `anti_air`) used to chase the
   nearest known aircraft anywhere on the map, so they followed planes home into enemy territory alone.
   - `leash` (default -1 = off): only chase an aircraft within this distance of home, meaning one of our attack or
