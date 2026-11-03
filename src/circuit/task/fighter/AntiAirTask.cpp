@@ -780,10 +780,16 @@ bool CAntiAirTask::CheckFlee()
 				{
 					continue;
 				}
-			} else if (!edef->IsMobile() || !edef->IsAttacker() || edef->IsAbleToFly()) {
-				continue;
+			} else if (!edef->IsMobile() || !edef->IsAttacker() || edef->IsAbleToFly()
+				|| !(edef->HasAntiLand() || edef->HasAntiWater()))
+			{
+				continue;  // enemy AA can't shoot the squad: no reason to run from it
 			}
-			const float sqReach = SQUARE(((edef != nullptr) ? edef->GetMaxRange() : 0.f) + aaCfg.fleeMargin);
+			// Its reach against the squad: ground (or water) weapon range, not its anti-air range
+			const float eRange = (edef != nullptr)
+					? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
+					: 0.f;
+			const float sqReach = SQUARE(eRange + aaCfg.fleeMargin);
 			for (CCircuitUnit* unit : units) {
 				const float sqDist = unit->GetPos(frame).SqDistance2D(ePos);
 				if ((sqDist <= sqReach) && (sqDist < minSqDist)) {
@@ -800,6 +806,7 @@ bool CAntiAirTask::CheckFlee()
 	if (danger == nullptr) {
 		if (isFleeing) {
 			isFleeing = false;
+			pathQueries.erase(leader);  // drop a flee path still in flight: it must not send the squad off afterwards
 			if (State::DISENGAGE == state) {
 				state = State::ROAM;  // danger gone: back to normal work on this update
 			}

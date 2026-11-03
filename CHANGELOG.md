@@ -20,8 +20,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     shortest weapon range short of the aircraft, instead of under the aircraft.
   The shipped `behaviour.json` sets `leash` 800, `own_ground` true and `fire_spot` 0.9.
 - **Anti-air early flee** (`antiair.flee_margin`, default -1 = off; shipped 300). AA squads used to move away only once
-  hit. Now, on every update, when an armed mobile ground enemy we see now (or a moving radar blip low enough not to be
-  a plane) is within its weapon range + this margin of any squad unit, the squad paths (threat-capped) to the nearest
+  hit. Now, on every update, when a mobile ground enemy we see now that can hit ground targets (or a moving radar blip
+  low enough not to be a plane) is within its ground weapon range + this margin of any squad unit, the squad paths (threat-capped) to the nearest
   safe spot further from it: an attack/defend group leader, a defended mex cluster or the base. It re-plans every 2 s
   while the danger stays and goes back to normal work once it is gone. With `antiair.flee_cover` (default true) there
   is no early flee while our other armed units' influence at the leader beats the enemy's.
