@@ -393,6 +393,10 @@ void CEconomyManager::Init()
 	mexMax = (mm < 1.f) ? decltype(mexMax)(mm * spSize) : std::numeric_limits<decltype(mexMax)>::max();
 	isAllyMexMax = mexCap.get((unsigned)1, true).asBool();
 	mexJobMod = std::max(econ.get("mex_jobs", 1.5f).asFloat(), 0.f);
+	const Json::Value& mexFront = econ["mex_front"];
+	mexFrontBias = utils::clamp(mexFront.get("bias", 0.15f).asFloat(), -0.9f, 0.9f);
+	mexFrontClusters = std::max(mexFront.get("clusters", 3).asInt(), 1);
+	mexFrontStarted = utils::clamp(mexFront.get("started", 0.3f).asFloat(), 0.f, 0.9f);
 
 	// [[<map size>, <seconds>], ...]: linear between points, clamped at the ends.
 	// Map size is sqrt(width * height) in 512-elmo map units, so 8x8 = 8 and 16x16 = 16.
@@ -795,7 +799,30 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 							&& map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING));
 				};
 			}
-			int index = metalMgr->GetMexToBuild(position, predicate);
+			int index;
+			const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+			const AIFloat3& lanePos = circuit->GetSetupManager()->GetLanePos();
+			if (((mexFrontBias != 0.f) || (mexFrontClusters > 1)) && utils::is_valid(basePos) && utils::is_valid(lanePos)
+				&& (basePos.SqDistance2D(lanePos) > SQUARE(SQUARE_SIZE)))
+			{
+				// Pick the cluster, then its nearest open spot. Cluster score: distance to its nearest open spot
+				// x (1 - bias x progress) x (1 - started) if we already queued or built a mex there.
+				// progress = the cluster centre's projection on base->lane over the base-lane distance,
+				// clamped to [-1, 1] (base = 0, lane = 1). The started bonus keeps clusters finishing one at a time.
+				const CMetalData::Clusters& clusters = metalMgr->GetClusters();
+				const AIFloat3 laneDir = (lanePos - basePos);
+				const float sqLaneLen = laneDir.SqLength2D();
+				const float bias = mexFrontBias;
+				const float startedMod = 1.f - mexFrontStarted;
+				CMetalManager::ClusterScore score = [metalMgr, &clusters, &basePos, laneDir, sqLaneLen, bias, startedMod](int cluster, float dist) {
+					const float progress = utils::clamp((clusters[cluster].position - basePos).dot2D(laneDir) / sqLaneLen, -1.f, 1.f);
+					const float mod = metalMgr->IsClusterStarted(cluster) ? startedMod : 1.f;
+					return dist * (1.f - bias * progress) * mod;
+				};
+				index = metalMgr->GetMexToBuild(position, predicate, mexFrontClusters, score);
+			} else {
+				index = metalMgr->GetMexToBuild(position, predicate);
+			}
 			if (index != -1) {
 				const AIFloat3& pos = spots[index].position;
 				IBuilderTask* mexTask = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos, IBuilderTask::BuildType::MEX, cost, .0f);

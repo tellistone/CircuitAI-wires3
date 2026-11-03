@@ -290,6 +290,18 @@ void CBuilderManager::ReadConfig()
 		terraDef = circuit->GetEconomyManager()->GetDefaultDef();
 	}
 
+	// Builder job choice: travel cost / weight, lowest wins; travel caps in seconds per priority; switch share
+	const Json::Value& jobs = root["economy"]["builder_jobs"];
+	const char* prioNames[] = {"low", "normal", "high"};
+	const float defWeight[] = {1.f, 2.f, 4.f};
+	const float defTravel[] = {10.f, 20.f, 30.f};
+	for (int i = 0; i < 3; ++i) {
+		jobWeight[i] = std::max(jobs["weight"].get(prioNames[i], defWeight[i]).asFloat(), 0.01f);
+		const float travel = jobs["travel"].get(prioNames[i], defTravel[i]).asFloat();
+		jobTravel[i] = (travel > 0.f) ? travel : std::numeric_limits<float>::max();  // 0 = no cap
+	}
+	jobSwitch = utils::clamp(jobs.get("switch", 0.5f).asFloat(), 0.f, 1.f);
+
 	const Json::Value& cond = root["porcupine"]["superweapon"]["condition"];
 	super.minIncome = cond.get((unsigned)0, 50.f).asFloat();
 	super.maxTime = cond.get((unsigned)1, 300.f).asFloat();
@@ -1076,6 +1088,27 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	return MakeBuilderTask(unit, pQuery.get());
 }
 
+float CBuilderManager::GetTaskWeight(IBuilderTask::Priority priority) const
+{
+	// Travel cost is divided by the priority's multiplier; NOW wins at any distance, as before
+	switch (priority) {
+		case IBuilderTask::Priority::LOW:    return 1.f / jobWeight[0];
+		case IBuilderTask::Priority::NORMAL: return 1.f / jobWeight[1];
+		case IBuilderTask::Priority::HIGH:   return 1.f / jobWeight[2];
+		default:                             return 1.f / 10000.f;
+	}
+}
+
+float CBuilderManager::GetTaskTravelSec(IBuilderTask::Priority priority) const
+{
+	switch (priority) {
+		case IBuilderTask::Priority::LOW:    return jobTravel[0];
+		case IBuilderTask::Priority::NORMAL: return jobTravel[1];
+		case IBuilderTask::Priority::HIGH:   return jobTravel[2];
+		default:                             return std::numeric_limits<float>::max();
+	}
+}
+
 IBuilderTask::Priority CBuilderManager::GetTaskPriority(const IBuilderTask* task, bool isEnergyStalling) const
 {
 	// Mex jobs still get picked during an energy stall, but rank as NORMAL so energy jobs (HIGH while stalling) go first
@@ -1162,8 +1195,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 
 			distCost = std::max(distCost, COST_BASE);
 
-			float weight = (static_cast<float>(GetTaskPriority(candidate, isEnergyStalling)) + 1.0f);
-			weight = 1.0f / SQUARE(weight);
+			const IBuilderTask::Priority prio = GetTaskPriority(candidate, isEnergyStalling);
+			const float weight = GetTaskWeight(prio);
 			bool valid = false;
 
 			CCircuitUnit* target = candidate->GetTarget();
@@ -1174,7 +1207,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 				const float healthSpeed = maxHealth * candidate->GetBuildPower() / candidate->GetCost();
 				valid = ((maxHealth - health) * 0.6f) * maxSpeed > healthSpeed * distCost;
 			} else {
-				valid = (distCost * weight < metric) && (distCost < MAX_TRAVEL_SEC * maxSpeed);
+				valid = (distCost * weight < metric) && (distCost < MAX_TRAVEL_SEC * maxSpeed)
+						&& (distCost < GetTaskTravelSec(prio) * maxSpeed);
 			}
 
 			if (valid) {
@@ -1226,6 +1260,10 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	const float maxThreat = threatMap->GetUnitThreat(unit);
 	const int buildDistance = std::max<int>(cdef->GetBuildDistance(), pathfinder->GetSquareSize());
 	float metric = std::numeric_limits<float>::max();
+	// Jobs beyond their priority's travel cap (economy.builder_jobs.travel) only count when nothing is within its cap,
+	// so a far mex still gets built when it is the only work, but never beats nearby work
+	const IBuilderTask* farTask = nullptr;
+	float farMetric = std::numeric_limits<float>::max();
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
@@ -1282,11 +1320,20 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 
 			distCost = std::max(distCost, COST_BASE);
 
-			float weight = (static_cast<float>(GetTaskPriority(candidate, isEnergyStalling)) + 1.0f);
-			weight = 1.0f / SQUARE(weight);
+			const IBuilderTask::Priority prio = GetTaskPriority(candidate, isEnergyStalling);
+			const float weight = GetTaskWeight(prio);
 			bool valid = false;
 
 			CCircuitUnit* target = candidate->GetTarget();
+			const bool isFar = (prio != IBuilderTask::Priority::NOW) && (distCost >= GetTaskTravelSec(prio) * maxSpeed);
+			if (isFar) {
+				if (distCost * weight < farMetric) {
+					farTask = candidate;
+					farMetric = distCost * weight;
+				}
+				continue;
+			}
+
 			if (target != nullptr) {
 				if (distCost * weight < metric) {
 					// BA: float time_to_build = targetDef->GetBuildTime() / workerDef->GetBuildSpeed();
@@ -1307,6 +1354,9 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 		}
 	}
 
+	if (task == nullptr) {
+		task = farTask;
+	}
 	if (task == nullptr) {
 		if ((unit->GetTask() != idleTask) || isNotReady) {
 			return nullptr;  // current task is in danger or unreachable

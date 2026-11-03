@@ -77,6 +77,24 @@
 	// Multiplier on the open mex job cap, (build power / mex cost * 8 + 2) * <mex_jobs>
 	"mex_jobs": 1.5,
 
+	// Mex cluster choice leans towards the front (the lane point between our base and the enemy).
+	// The <clusters> nearest safe clusters with open spots are scored by
+	//   distance to their nearest open spot x (1 - <bias> x progress) x (1 - <started> if we already have a mex queued or built there),
+	// progress = how far the cluster centre is along base -> lane (0 at base, 1 at the lane, clamped to [-1, 1]).
+	// The lowest-scored cluster wins and its nearest open spot is built. <started> keeps clusters finishing one at a time.
+	// bias 0 and clusters 1 = old behaviour (nearest spot in the nearest cluster with an open spot).
+	"mex_front": {"bias": 0.15, "clusters": 3, "started": 0.3},
+
+	// How constructors choose between open jobs: travel cost / <weight> of the job's priority, lowest wins (NOW always wins).
+	// travel: seconds of travel per priority; a job beyond its cap is taken only when no job is within its cap. 0 = no cap.
+	// switch: a constructor walking to a job takes a job of the same kind that is nearer than <switch> x its current
+	//   distance (0.5 = less than half as far); 0 disables.
+	"builder_jobs": {
+		"weight": {"low": 1, "normal": 2, "high": 4},
+		"travel": {"low": 10, "normal": 20, "high": 30},
+		"switch": 0.5
+	},
+
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,
 

@@ -441,6 +441,15 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 		manager->AssignTask(unit, task);
 		return false;
 	}
+	// Same kind of job, but much nearer than the one we walk to (economy.builder_jobs.switch): take it
+	const float switchShare = circuit->GetBuilderManager()->GetJobSwitch();
+	if ((task != nullptr) && (task != this) && (switchShare > 0.f) && (priority != Priority::NOW)) {
+		const AIFloat3& newPos = static_cast<IBuilderTask*>(task)->GetPosition();
+		if (utils::is_valid(newPos) && (pos.SqDistance2D(newPos) < SQUARE(switchShare) * sqDist)) {
+			manager->AssignTask(unit, task);
+			return false;
+		}
+	}
 	return true;
 }
 

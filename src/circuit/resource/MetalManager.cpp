@@ -70,6 +70,35 @@ private:
 	std::vector<int>& indices;
 };
 
+// Goal for the cluster walk that records open spots per cluster: true for a cluster with any open spot.
+// Unlike DetectCluster it doesn't stay true once something was found, so the walk can go on to the next cluster.
+class CMetalManager::DetectClusters : public lemon::MapBase<ClusterGraph::Node, bool> {
+public:
+	DetectClusters(CMetalManager* mgr, CMetalData::PointPredicate& pred, std::vector<int>& outIdxs)
+		: manager(mgr)
+		, predicate(pred)
+		, indices(outIdxs)
+	{}
+	Value operator[](Key k) const {
+		const int u = CMetalData::ClusterGraph::id(k);
+		if (manager->IsClusterQueued(u) || manager->IsClusterFinished(u)) {
+			return false;
+		}
+		bool isFound = false;
+		for (int index : manager->GetClusters()[u].idxSpots) {
+			if (predicate(index)) {
+				indices.push_back(index);
+				isFound = true;
+			}
+		}
+		return isFound;
+	}
+private:
+	CMetalManager* manager;
+	CMetalData::PointPredicate predicate;
+	std::vector<int>& indices;
+};
+
 CMetalManager::CMetalManager(CCircuitAI* circuit, CMetalData* metalData)
 		: circuit(circuit)
 		, metalData(metalData)
@@ -351,6 +380,67 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 	}
 
 	indices.clear();
+	return result;
+}
+
+int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate& predicate,
+								 unsigned maxClusters, const ClusterScore& score)
+{
+	const int frame = circuit->GetLastFrame();
+	int index = FindNearestCluster(pos);
+	if (index < 0) {
+		return -1;
+	}
+	if (!(*threatFilter)[index]) {
+		MarkContested(index, frame);  // the walk can't even start: our own cluster is the wall
+		return -1;
+	}
+	MarkAllyMexes();
+
+	static std::vector<int> indices;  // NOTE: micro-opt
+	indices.clear();
+
+	DetectClusters goal(this, predicate, indices);
+	shortPath->init();
+	shortPath->addSource(filteredGraph->nodeFromId(index));
+	// Each start() stops with the next cluster that has an open spot on top of the heap; process it so the
+	// next start() goes on from there
+	for (unsigned found = 0; found < std::max(maxClusters, 1u); ++found) {
+		if (shortPath->start(goal) == lemon::INVALID) {
+			break;
+		}
+		shortPath->processNextNode();
+	}
+	MarkWalkWalls(frame);
+
+	// Nearest open spot per found cluster (at most maxClusters of them)
+	static std::vector<std::pair<int, std::pair<int, float>>> nearest;  // cluster, (spot, sqDist); NOTE: micro-opt
+	nearest.clear();
+	for (int idx : indices) {
+		const int cluster = GetCluster(idx);
+		const float sqDist = GetSpots()[idx].position.SqDistance2D(pos);
+		auto it = std::find_if(nearest.begin(), nearest.end(), [cluster](const std::pair<int, std::pair<int, float>>& n) {
+			return n.first == cluster;
+		});
+		if (it == nearest.end()) {
+			nearest.push_back(std::make_pair(cluster, std::make_pair(idx, sqDist)));
+		} else if (sqDist < it->second.second) {
+			it->second = std::make_pair(idx, sqDist);
+		}
+	}
+
+	int result = -1;
+	float minScore = std::numeric_limits<float>::max();
+	for (const auto& n : nearest) {
+		const float s = score(n.first, std::sqrt(n.second.second));
+		if (s < minScore) {
+			minScore = s;
+			result = n.second.first;
+		}
+	}
+
+	indices.clear();
+	nearest.clear();
 	return result;
 }
 
