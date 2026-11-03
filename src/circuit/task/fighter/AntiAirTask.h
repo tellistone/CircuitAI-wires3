@@ -52,6 +52,11 @@ private:
 
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
+	bool CheckFlee();  // antiair.flee_margin; true while fleeing
+	bool IsFleeCovered(const springai::AIFloat3& pos) const;  // antiair.flee_cover
+	void Flee(const springai::AIFloat3& dangerPos);
+	void ApplyFleePath(const CQueryPathSingle* query);
+
 	float GetAirRange() const;  // the squad's range against aircraft
 	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
 	// Pathfinder threat cap for a route from startPos to goals (see .cpp)
@@ -65,6 +70,9 @@ private:
 	std::set<CCircuitUnit*> splitPending;  // can't rejoin the squad safely: leaves for its own task (from Update)
 	int mergeFrame = 0;  // no merging (either way) before this frame: set on a task split off a blocked regroup
 	springai::AIFloat3 approachPos;  // where to walk to shoot the target: its firing spot (FindTarget)
+	bool isFleeing = false;
+	int fleeFrame = 0;  // re-plan the flee after this frame
+	F3Vec fleeSpots;  // Flee scratch
 };
 
 } // namespace circuit

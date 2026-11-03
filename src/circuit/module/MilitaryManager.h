@@ -119,6 +119,8 @@ public:
 		float leash;  // chase aircraft only within this distance of a home point (attack/defend group leader, base); < 0 = no leash
 		bool isOwnGround;  // aircraft over ground where our influence beats the enemy's also count as near home
 		float fireSpot;  // threat is checked where the AA would shoot from: this fraction of its range short of the aircraft; < 0 = at the aircraft
+		float fleeMargin;  // flee when an armed mobile ground enemy is within its range + this of a squad unit; < 0 = off
+		bool isFleeCover;  // no flee while our other armed units' influence at the leader beats the enemy's
 	};
 	const SAntiAirCfg& GetAntiAirCfg() const { return antiAir; }
 	bool IsGuardRole(CCircuitDef* cdef) const;

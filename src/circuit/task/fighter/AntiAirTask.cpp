@@ -143,6 +143,10 @@ void CAntiAirTask::Update()
 		return;  // task aborted: its last units left
 	}
 
+	if (CheckFlee()) {  // every update: run from approaching ground enemies before anything else
+		return;
+	}
+
 	if (State::DISENGAGE == state) {
 		if (updCount % 32 == 1) {
 			const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
@@ -744,6 +748,153 @@ void CAntiAirTask::HoldAll()
 	pPath = std::make_shared<PathInfo>();  // else OnUnitIdle -> Start() would resume the old path after the Stop
 	for (CCircuitUnit* unit : units) {
 		Hold(unit);
+	}
+}
+
+bool CAntiAirTask::CheckFlee()
+{
+	// antiair.flee_margin: flee when an armed mobile ground enemy we see now (or a moving low radar blip)
+	// is within its weapon range + margin of any squad unit, unless (flee_cover) our other armed units hold
+	// the ground at the leader. Returns true while fleeing
+	CCircuitAI* circuit = manager->GetCircuit();
+	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
+	CEnemyInfo* danger = nullptr;
+	const int frame = circuit->GetLastFrame();
+	if ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) {
+		CMap* map = circuit->GetMap();
+		float minSqDist = std::numeric_limits<float>::max();
+		for (auto& kv : circuit->GetEnemyInfos()) {
+			CEnemyInfo* enemy = kv.second;
+			// Only enemies we see now (not last-known ghosts) that can act
+			if (enemy->IsHidden() || !enemy->IsInRadarOrLOS()
+				|| enemy->IsBeingBuilt() || enemy->IsParalyzed() || enemy->IsDisarmed())
+			{
+				continue;
+			}
+			const AIFloat3& ePos = enemy->GetPos();
+			CCircuitDef* edef = enemy->GetCircuitDef();
+			if (edef == nullptr) {
+				// Unidentified radar blip: only a moving one on the ground (a high one is a plane, our target)
+				if ((enemy->GetVel().SqLength2D() < 0.01f)
+					|| (ePos.y - GetBlipGroundHeight(map, ePos) >= UNKNOWN_AIR_HEIGHT))
+				{
+					continue;
+				}
+			} else if (!edef->IsMobile() || !edef->IsAttacker() || edef->IsAbleToFly()) {
+				continue;
+			}
+			const float sqReach = SQUARE(((edef != nullptr) ? edef->GetMaxRange() : 0.f) + aaCfg.fleeMargin);
+			for (CCircuitUnit* unit : units) {
+				const float sqDist = unit->GetPos(frame).SqDistance2D(ePos);
+				if ((sqDist <= sqReach) && (sqDist < minSqDist)) {
+					minSqDist = sqDist;
+					danger = enemy;
+				}
+			}
+		}
+		if ((danger != nullptr) && aaCfg.isFleeCover && IsFleeCovered(leader->GetPos(frame))) {
+			danger = nullptr;
+		}
+	}
+
+	if (danger == nullptr) {
+		if (isFleeing) {
+			isFleeing = false;
+			if (State::DISENGAGE == state) {
+				state = State::ROAM;  // danger gone: back to normal work on this update
+			}
+		}
+		return false;
+	}
+
+	if ((isFleeing && (frame < fleeFrame)) || !IsQueryReady(leader)) {
+		return true;  // already on the way
+	}
+	isFleeing = true;
+	fleeFrame = frame + FRAMES_PER_SEC * 2;  // re-plan the flee every 2 s while the danger stays
+	Flee(danger->GetPos());
+	return true;
+}
+
+bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos) const
+{
+	// Our armed influence at pos without the squad's own share beats the enemy's: an army or defences stand here
+	CInfluenceMap* inflMap = manager->GetCircuit()->GetInflMap();
+	float allyInfl = inflMap->GetAllyInflAt(pos);
+	for (CCircuitUnit* u : units) {
+		allyInfl -= inflMap->GetMobileArmedInflAt(u, pos);
+	}
+	return (allyInfl > INFL_EPS) && (allyInfl > inflMap->GetEnemyInflAt(pos));
+}
+
+void CAntiAirTask::Flee(const AIFloat3& dangerPos)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& startPos = leader->GetPos(frame);
+
+	// Candidates: safe spots (attack/defend group leaders, else a defended mex cluster, else base) and the base
+	circuit->GetMilitaryManager()->FillSafePos(leader, fleeSpots);
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	if (circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), basePos)) {
+		fleeSpots.push_back(basePos);
+	}
+
+	// Nearest spot further from the danger than we are, else the one furthest from it
+	const float sqDangerDist = startPos.SqDistance2D(dangerPos);
+	const AIFloat3* best = nullptr;
+	float bestSqDist = std::numeric_limits<float>::max();
+	for (const AIFloat3& spot : fleeSpots) {
+		const float sqDist = startPos.SqDistance2D(spot);
+		if ((spot.SqDistance2D(dangerPos) > sqDangerDist) && (sqDist < bestSqDist)) {
+			bestSqDist = sqDist;
+			best = &spot;
+		}
+	}
+	if (best == nullptr) {
+		float maxSqDist = -1.f;
+		for (const AIFloat3& spot : fleeSpots) {
+			const float sqDist = spot.SqDistance2D(dangerPos);
+			if (sqDist > maxSqDist) {
+				maxSqDist = sqDist;
+				best = &spot;
+			}
+		}
+	}
+	if (best == nullptr) {
+		FallbackBasePos(true);
+		return;
+	}
+	const AIFloat3 goal = *best;
+	const float pathRange = DEFAULT_SLACK * 4;
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			leader, circuit->GetThreatMap(), frame,
+			startPos, goal, pathRange, nullptr, GetPathThreatCap(leader, startPos, {goal}));
+	pathQueries[leader] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
+		}
+	});
+}
+
+void CAntiAirTask::ApplyFleePath(const CQueryPathSingle* query)
+{
+	pPath = query->GetPathInfo();
+
+	if (pPath->posPath.size() > 2) {
+		position = pPath->posPath.back();
+		ActivePath();
+		state = State::DISENGAGE;
+	} else if (!pPath->posPath.empty()) {
+		HoldAll();  // already there; nowhere better to go
+		state = State::DISENGAGE;
+	} else {
+		FallbackBasePos(true);  // no path under the cap: base, then (last resort) through any threat
 	}
 }
 

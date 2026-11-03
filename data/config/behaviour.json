@@ -103,8 +103,10 @@
 // Mobile anti-air squads (main role anti_air)
 "antiair": {
 	"leash": 800.0,  // only chase aircraft within this distance of home: one of our attack/defend group leaders or the base; aircraft already in weapon range are always engaged; -1 = no leash (chase the nearest aircraft anywhere)
-	"own_ground": true,  // aircraft over ground where our influence beats the enemy's also count as near home
-	"fire_spot": 0.9  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
+	"own_ground": true,  // also counts as near home: the spot the squad would shoot from is covered by our buildings or static defences (defence.infl_rad), or our other armed units beat the enemy (not counting the plane) under the aircraft
+	"fire_spot": 0.9,  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
+	"flee_margin": 300.0,  // flee when an armed mobile ground enemy we see now (or a moving low radar blip) is within its weapon range + this of a squad unit: to the nearest attack/defend group, defended mex cluster or base further from it; -1 = off (flee only once hit)
+	"flee_cover": true  // no early flee while our other armed units' influence at the squad leader beats the enemy's (it stands with an army or defences)
 },
 
 "artillery": {
@@ -262,7 +264,7 @@
 	"cloakaa": {
 		// threat 2.26 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee", "support"],
+		"attribute": ["melee"],
 		"retreat": 0.7,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -416,7 +418,7 @@
 	"amphaa": {
 		// threat 14.52 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee", "ret_fight", "support"],
+		"attribute": ["melee", "ret_fight"],
 		"retreat": 0.3,
 		"limit": 5,
 		"pwr_mod": 3.0,
@@ -578,7 +580,7 @@
 	"shieldaa": {
 		// threat 2.49 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["support", "ret_fight"],
+		"attribute": ["ret_fight"],
 		"retreat": 0.7,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -664,7 +666,7 @@
 	"vehaa": {
 		// threat 5.89 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["support"],
+		"attribute": [],
 		"retreat": 0.75,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -747,7 +749,7 @@
 	"jumpaa": {
 		// threat 8.83 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["melee", "support"],
+		"attribute": ["melee"],
 		"retreat": 0.8,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
@@ -984,7 +986,7 @@
 	"tankaa": {
 		// threat 9.66 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_air"],
-		"attribute": ["support", "prio_repair"],
+		"attribute": ["prio_repair"],
 		"retreat": 0.8,
 		"pwr_mod": 3.0,
 		"thr_mod": 1.2
