@@ -59,7 +59,11 @@ private:
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
 	// Threat cap for target and reinforce paths: never above what the escape tolerates
-	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
+	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals, float strengthMod = 1.f) const;
+	// quota.attack_keep_threat applies to the current target only outside the base defence radius
+	bool IsKeepAllowedAt(const springai::AIFloat3& pos) const;
+	// quota.attack_keep_threat if the current target is among these route goals, else 1
+	float GetKeepModFor(const std::vector<ICoreUnit::Id>& ids) const;
 	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
 	float GetSafeThreat() const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
@@ -118,7 +122,8 @@ private:
 	int hitFrame;
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
-	int targetRouteTries;  // routes so far in this target decision (MAX_TARGET_ROUTES)
+	int targetRouteTries;
+	ICoreUnit::Id keptTargetId;  // FindTarget: the current target, still a candidate, with the looser allowance (-1: none)  // routes so far in this target decision (MAX_TARGET_ROUTES)
 	std::map<ICoreUnit::Id, int> rejectedUntil;  // targets dropped for an unsafe route approach -> skip until frame
 	int corneredFrame;  // last cornered check
 	bool isReplanForced;  // a forced re-plan (unsafe path ahead) was used since the last normal decision
