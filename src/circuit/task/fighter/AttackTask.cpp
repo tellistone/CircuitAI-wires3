@@ -365,6 +365,7 @@ void CAttackTask::RequestTargetPath(std::vector<ICoreUnit::Id> ids, F3Vec goals)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, pathRange, goals, GetHitTest(), GetPathThreatCap(startPos, goals));
+	SetPathThreatStrength(query.get(), static_cast<int>(CMilitaryManager::AttackPath::TARGET));
 	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
@@ -585,6 +586,7 @@ void CAttackTask::Reinforce(const int frame)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, {position}));
+	SetPathThreatStrength(query.get(), static_cast<int>(CMilitaryManager::AttackPath::REINFORCE));
 	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
@@ -923,6 +925,16 @@ void CAttackTask::SetPathThreatFloor(IPathQuery* query) const
 	}
 }
 
+void CAttackTask::SetPathThreatStrength(IPathQuery* query, int kind) const
+{
+	// Light threat (well below our strength) costs about half the flat 2x, threat equal to it the same, heavier
+	// threat more (quadratic). Big groups walk through what small ones go around
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	if (militaryMgr->IsAttackPathDynamic(static_cast<CMilitaryManager::AttackPath>(kind))) {
+		query->SetThreatStrength(GetSafeThreat());
+	}
+}
+
 bool CAttackTask::IsKeepAllowedAt(const AIFloat3& pos) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -1131,6 +1143,7 @@ bool CAttackTask::Flee(int frame)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
 			leader->GetPos(frame), dest, pathfinder->GetSquareSize());  // threat as cost, no cap: least-threat way out
+	SetPathThreatStrength(query.get(), static_cast<int>(CMilitaryManager::AttackPath::FLEE));
 	pathQueries[leader] = query;  // supersedes any pending target/reinforce path
 	fleeQueryId = query->GetId();
 	query->HoldTask(this);
@@ -1306,6 +1319,7 @@ void CAttackTask::FallbackFrontPos()
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(startPos, urgentPositions));
+	SetPathThreatStrength(query.get(), static_cast<int>(CMilitaryManager::AttackPath::FRONT));
 	SetPathThreatFloor(query.get());
 	pathQueries[leader] = query;
 	query->HoldTask(this);
@@ -1407,6 +1421,7 @@ void CAttackTask::Cornered(int frame)
 		CPathFinder* pathfinder = circuit->GetPathfinder();
 		std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 				leader, threatMap, frame, pos, quietPos, pathfinder->GetSquareSize());  // threat as cost, no cap
+		SetPathThreatStrength(query.get(), static_cast<int>(CMilitaryManager::AttackPath::CORNERED));
 		pathQueries[leader] = query;
 		query->HoldTask(this);
 		pathfinder->RunQuery(query, [this](const IPathQuery* query) {

@@ -45,6 +45,11 @@ public:
 	// Threat at or below this counts as none: no route cost, and the path is straightened across it.
 	// Call after creating the query, before running it. The threat cap (maxThreat) is unchanged
 	void SetThreatFloor(float value);
+	// Dynamic threat cost: the usual 2x threat weight becomes (1 + threat / strength), so a cell costs
+	// threat x (1 + threat / strength) instead of 2 x threat: half price for light threat, the same at threat ==
+	// strength, steeper above. Units pathed on the cloak array (weight 1x) get half of that. Call after creating
+	// the query, before SetThreatFloor (either order works) and before running it
+	void SetThreatStrength(float strength);
 	float GetThreatFloor() const { return threatFloor; }
 	const FloatVec& GetHeightMap() const { return heightMap; }
 

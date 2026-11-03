@@ -64,6 +64,8 @@ private:
 	bool IsKeepAllowedAt(const springai::AIFloat3& pos) const;
 	// quota.attack_path_ignore_threat on a capped route: light threat costs nothing
 	void SetPathThreatFloor(IPathQuery* query) const;
+	// quota.attack_path_dynamic_cost: threat cost scaled by threat / the group's current strength, per route kind
+	void SetPathThreatStrength(IPathQuery* query, int kind) const;
 	// Escape, as in CRaidTask: group strength from current health, units standing in danger, flee / pull back
 	float GetSafeThreat() const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }

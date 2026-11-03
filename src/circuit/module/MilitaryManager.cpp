@@ -382,6 +382,29 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.attack_path_ignore_threat must be a number 0..1, using 0.25", cfgName.c_str());
 	}
 	attackPathIgnoreThreat = utils::clamp(qignoreThreat.isNumeric() ? qignoreThreat.asFloat() : 0.25f, 0.f, 1.f);
+	{
+		// Each route kind on or off (default on); a bare true/false sets them all
+		static const char* const kinds[] = {"target", "reinforce", "front", "flee", "cornered"};
+		const Json::Value& qdyn = quotas["attack_path_dynamic_cost"];
+		for (int i = 0; i < static_cast<int>(AttackPath::_SIZE_); ++i) {
+			bool value = true;
+			if (qdyn.isBool()) {
+				value = qdyn.asBool();
+			} else if (qdyn.isObject()) {
+				const Json::Value& v = qdyn[kinds[i]];
+				if (v.isBool()) {
+					value = v.asBool();
+				} else if (!v.isNull()) {
+					circuit->LOG("CONFIG %s: quota.attack_path_dynamic_cost.%s must be true or false, using true",
+							cfgName.c_str(), kinds[i]);
+				}
+			} else if (!qdyn.isNull()) {
+				circuit->LOG("CONFIG %s: quota.attack_path_dynamic_cost must be an object of true/false, using true",
+						cfgName.c_str());
+			}
+			attackPathDynamic[i] = value;
+		}
+	}
 	const Json::Value& qspotThreat = quotas.get("attack_spot_threat", 1.f);
 	if (!qspotThreat.isNumeric() || (qspotThreat.asFloat() < 0.f)) {
 		circuit->LOG("CONFIG %s: quota.attack_spot_threat must be a number >= 0, using 1.0", cfgName.c_str());
