@@ -6,6 +6,7 @@
  */
 
 #include "task/fighter/AntiAirTask.h"
+#include "task/fighter/AttackTask.h"
 #include "task/TaskManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -760,7 +761,23 @@ bool CAntiAirTask::CheckFlee()
 	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
 	CEnemyInfo* danger = nullptr;
 	const int frame = circuit->GetLastFrame();
-	if ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) {
+
+	// antiair.group_escape: next to an attack group, follow its call instead of judging alone. While it doesn't
+	// escape the squad counts as covered (no own flee, so it doesn't run off and come back at the front); when
+	// it escapes, run to the same spot
+	CAttackTask* group = (leader != nullptr) ? FindEscortedGroup(frame) : nullptr;
+	if (group != nullptr) {
+		const AIFloat3& dest = group->GetFleeDest();
+		if (group->IsEscaping(frame) && utils::is_valid(dest)) {
+			if ((isFleeing && (frame < fleeFrame)) || !IsQueryReady(leader)) {
+				return true;  // already on the way
+			}
+			isFleeing = true;
+			fleeFrame = frame + FRAMES_PER_SEC * 2;  // re-plan every 2 s: the group may pick another spot
+			FleeTo(dest);
+			return true;
+		}
+	} else if ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) {
 		CMap* map = circuit->GetMap();
 		float minSqDist = std::numeric_limits<float>::max();
 		for (auto& kv : circuit->GetEnemyInfos()) {
@@ -872,7 +889,38 @@ void CAntiAirTask::Flee(const AIFloat3& dangerPos)
 		FallbackBasePos(true);
 		return;
 	}
-	const AIFloat3 goal = *best;
+	FleeTo(*best);
+}
+
+CAttackTask* CAntiAirTask::FindEscortedGroup(int frame) const
+{
+	const CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	const float reach = militaryMgr->GetAntiAirCfg().groupEscape;
+	if (reach < 0.f) {
+		return nullptr;
+	}
+	const AIFloat3& pos = leader->GetPos(frame);
+	CAttackTask* best = nullptr;
+	float minSqDist = SQUARE(reach);
+	for (IFighterTask* task : militaryMgr->GetTasks(IFighterTask::FightType::ATTACK)) {
+		CAttackTask* attack = static_cast<CAttackTask*>(task);
+		if (attack->GetLeader() == nullptr) {
+			continue;
+		}
+		const float sqDist = pos.SqDistance2D(attack->GetLeaderPos(frame));
+		if (sqDist <= minSqDist) {
+			minSqDist = sqDist;
+			best = attack;
+		}
+	}
+	return best;
+}
+
+void CAntiAirTask::FleeTo(const AIFloat3& goal)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& startPos = leader->GetPos(frame);
 	const float pathRange = DEFAULT_SLACK * 4;
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();

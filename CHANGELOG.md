@@ -25,6 +25,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   safe spot further from it: an attack/defend group leader, a defended mex cluster or the base. It re-plans every 2 s
   while the danger stays and goes back to normal work once it is gone. With `antiair.flee_cover` (default true) there
   is no early flee while our other armed units' influence at the leader beats the enemy's.
+- **Anti-air follows the attack group's escape** (`antiair.group_escape`, default -1 = off; shipped 600). Within this
+  distance of an attack group leader, an AA squad doesn't flee on its own (no flee-and-return loop at the front); when
+  that group escapes, the squad paths (threat-capped) to the same spot, re-planned every 2 s. Away from attack groups
+  the early flee above applies. New `CAttackTask::IsEscaping` / `GetFleeDest`.
 - **Mobile AA no longer joins attack groups.** In the shipped `behaviour.json`, cloakaa, amphaa, shieldaa, vehaa,
   jumpaa and tankaa had the `support` attribute, which adds the support role. Support units walk to the nearest attack
   or defend group and join it, so these AA never entered the anti-air task and never chased aircraft. The attribute is
