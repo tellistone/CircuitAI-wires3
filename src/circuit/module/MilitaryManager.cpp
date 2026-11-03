@@ -34,6 +34,7 @@
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathMulti.h"
 #include "terrain/path/QueryCostMap.h"
+#include "unit/ally/AllyUnit.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/enemy/EnemyManager.h"
 #include "CircuitAI.h"
@@ -712,10 +713,6 @@ void CMilitaryManager::Init()
 	for (unsigned i = 0; i < spots.size(); ++i) {
 		scoutPath.push_back(i);
 	}
-	scoutSeen.assign(spots.size(), -1);
-	scoutClaim.assign(spots.size(), -1);
-	scoutClaimUnit.assign(spots.size(), -1);
-	scoutBlocked.assign(spots.size(), -1);
 
 	raidPath.reserve(clusters.size());
 	for (unsigned i = 0; i < clusters.size(); ++i) {
@@ -1216,23 +1213,66 @@ AIFloat3 CMilitaryManager::GetScoutPosition(CCircuitUnit* unit)
 	return -RgtVector;
 }
 
+void CMilitaryManager::UpdateScoutSpots()
+{
+	const CMetalData::Metals& metals = circuit->GetMetalManager()->GetSpots();
+	const std::vector<AIFloat3>& geos = circuit->GetEconomyManager()->GetGeoSpots();
+	if ((scoutMetalCount == metals.size()) && (scoutSpots.size() == metals.size() + geos.size())) {
+		return;
+	}
+	if (scoutMetalCount != metals.size()) {  // metal spots changed (not expected mid-game): start over
+		scoutSpots.clear();
+		scoutSeen.clear();
+		scoutClaim.clear();
+		scoutClaimUnit.clear();
+		scoutBlocked.clear();
+		for (const CMetalData::SMetal& m : metals) {
+			scoutSpots.push_back(m.position);
+		}
+		scoutMetalCount = metals.size();
+	}
+	// New vents only ever get appended, so the per-spot history of earlier spots is kept
+	for (size_t i = scoutSpots.size() - scoutMetalCount; i < geos.size(); ++i) {
+		scoutSpots.push_back(geos[i]);
+	}
+	scoutSeen.resize(scoutSpots.size(), -1);
+	scoutClaim.resize(scoutSpots.size(), -1);
+	scoutClaimUnit.resize(scoutSpots.size(), -1);
+	scoutBlocked.resize(scoutSpots.size(), -1);
+}
+
+bool CMilitaryManager::IsScoutSpotOurs(unsigned idx) const
+{
+	if (idx < scoutMetalCount) {
+		return circuit->GetMetalManager()->IsMexInFinished(idx);
+	}
+	bool isOurs = false;
+	auto units = circuit->GetCallback()->GetFriendlyUnitsIn(scoutSpots[idx], SQUARE_SIZE * 4);
+	for (springai::Unit* u : units) {
+		if (u == nullptr) {
+			continue;
+		}
+		CAllyUnit* ally = circuit->GetFriendlyUnit(u);
+		if ((ally != nullptr) && ally->GetCircuitDef()->GetDef()->IsNeedGeo() && !u->IsBeingBuilt()) {
+			isOurs = true;
+			break;
+		}
+	}
+	utils::free_clear(units);
+	return isOurs;
+}
+
 AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CMetalManager* metalMgr = circuit->GetMetalManager();
 	CMapManager* mapMgr = circuit->GetMapManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	STerrainMapArea* area = unit->GetArea();
-	const CMetalData::Metals& spots = metalMgr->GetSpots();
+	UpdateScoutSpots();
+	const std::vector<AIFloat3>& spots = scoutSpots;
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
-	if (scoutSeen.size() != spots.size()) {
-		scoutSeen.assign(spots.size(), -1);
-		scoutClaim.assign(spots.size(), -1);
-		scoutClaimUnit.assign(spots.size(), -1);
-		scoutBlocked.assign(spots.size(), -1);
-	}
 	// A scout holds one claim: release its previous spot so re-picks don't reserve spots for nobody
 	const ICoreUnit::Id unitId = unit->GetId();
 	for (unsigned i = 0; i < spots.size(); ++i) {
@@ -1285,12 +1325,12 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 	int bestClaimedIdx = -1;
 	float bestClaimedScore = -std::numeric_limits<float>::max();
 	for (unsigned i = 0; i < spots.size(); ++i) {
-		const AIFloat3& spot = spots[i].position;
+		const AIFloat3& spot = spots[i];
 		if (mapMgr->IsInLOS(spot)) {
 			scoutSeen[i] = frame;
 			continue;  // already watched
 		}
-		if ((frame < scoutBlocked[i]) || metalMgr->IsMexInFinished(i) || !terrainMgr->CanMoveToPos(area, spot)) {
+		if ((frame < scoutBlocked[i]) || IsScoutSpotOurs(i) || !terrainMgr->CanMoveToPos(area, spot)) {
 			continue;  // our territory, or unreachable
 		}
 		float danger = 0.f;
@@ -1337,7 +1377,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 	}
 	scoutClaim[bestIdx] = frame;
 	scoutClaimUnit[bestIdx] = unitId;
-	return spots[bestIdx].position;
+	return spots[bestIdx];
 }
 
 // Piecewise-linear [x, y] curve sorted by x, flat beyond its ends; empty = 1
@@ -1454,12 +1494,12 @@ void CMilitaryManager::UpdateScoutQuota()
 
 void CMilitaryManager::BlockScoutSpot(const AIFloat3& spot, int frames)
 {
-	const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
+	const std::vector<AIFloat3>& spots = scoutSpots;
 	if (scoutBlocked.size() != spots.size()) {
 		return;
 	}
 	for (unsigned i = 0; i < spots.size(); ++i) {
-		if ((spots[i].position.x == spot.x) && (spots[i].position.z == spot.z)) {
+		if ((spots[i].x == spot.x) && (spots[i].z == spot.z)) {
 			scoutBlocked[i] = circuit->GetLastFrame() + frames;
 			return;
 		}

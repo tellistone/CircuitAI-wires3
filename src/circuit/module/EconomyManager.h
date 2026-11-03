@@ -113,6 +113,8 @@ public:
 	// Nearest free geothermal vent for cdef (a def that needs one) that is safe and,
 	// with a unit, reachable by it; -RgtVector if none
 	springai::AIFloat3 FindGeoSpot(CCircuitDef* cdef, const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	// Known geothermal vents (refreshed at most once a minute; vents are added as they are seen, never removed)
+	const std::vector<springai::AIFloat3>& GetGeoSpots();
 
 	void AddMorphee(CCircuitUnit* unit);
 	void RemoveMorphee(CCircuitUnit* unit) { morphees.erase(unit); }
