@@ -8,6 +8,7 @@
 #include "map/InfluenceMap.h"
 #include "map/MapManager.h"
 #include "module/EconomyManager.h"
+#include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "unit/ally/AllyUnit.h"
@@ -297,6 +298,26 @@ bool CInfluenceMap::IsFrontLineAt(const AIFloat3& position) const
 	return frontLine[z * width + x] > 0.5f;
 }
 
+bool CInfluenceMap::IsFrontLineCluster(int clusterIndex) const
+{
+	CMetalManager* metalMgr = manager->GetCircuit()->GetMetalManager();
+	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
+	if ((clusterIndex < 0) || (clusterIndex >= (int)clusters.size())) {
+		return false;
+	}
+	const CMetalData::SCluster& cluster = clusters[clusterIndex];
+	if (GetEnemyStructAt(cluster.position) > 0.f) {
+		return true;
+	}
+	const CMetalData::Metals& spots = metalMgr->GetSpots();
+	for (int idx : cluster.idxSpots) {
+		if (GetEnemyStructAt(spots[idx].position) > 0.f) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void CInfluenceMap::ToggleFrontLineDraw()
 {
 	Drawer* drawer = manager->GetCircuit()->GetDrawer();
@@ -317,6 +338,13 @@ void CInfluenceMap::ToggleFrontLineDraw()
 			p.y = map->GetElevationAt(p.x, p.z);
 			drawer->AddPoint(p, "");
 			frontMarks.push_back(p);
+		}
+	}
+	const CMetalData::Clusters& clusters = manager->GetCircuit()->GetMetalManager()->GetClusters();
+	for (int i = 0; i < (int)clusters.size(); ++i) {
+		if (IsFrontLineCluster(i)) {
+			drawer->AddPoint(clusters[i].position, "front cluster");
+			frontMarks.push_back(clusters[i].position);
 		}
 	}
 }

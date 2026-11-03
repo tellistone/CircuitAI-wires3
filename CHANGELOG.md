@@ -13,6 +13,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   A cell is front line when both counts are above 0 and both ally armed influence and enemy influence are at most
   `front_max_threat` (default 0.01). `CInfluenceMap::IsFrontLineAt(pos)` reads it; nothing uses it yet. The chat command
   `~front <teamId>` (release builds too) toggles map markers on the front-line cells of that AI, as of that moment.
+  A metal cluster is a front-line cluster when its centre or any of its mex spots is in a cell covered by enemy structures
+  (`CInfluenceMap::IsFrontLineCluster(index)`); armed influence doesn't matter there. `~front` also marks these clusters as "front cluster".
 - **Guards interpose** (`guard.interpose`, default `[120, 600]`). While a mobile armed ground enemy or an unknown radar dot, seen now, is
   within 600 of the guarded unit, its guard moves to a spot 120 towards the nearest one (at most halfway), instead of
   only following with the engine Guard order. A Guard order is queued behind the move, so from the spot it follows the

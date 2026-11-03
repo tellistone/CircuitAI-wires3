@@ -51,6 +51,8 @@ public:
 	float GetEnemyStructAt(const springai::AIFloat3& position) const;
 	// Covered by both ally and enemy structures, with no armed influence from either side
 	bool IsFrontLineAt(const springai::AIFloat3& position) const;
+	// Metal cluster whose centre or any mex spot lies in enemy structure influence (GetEnemyStructAt > 0)
+	bool IsFrontLineCluster(int clusterIndex) const;
 	void ToggleFrontLineDraw();
 	// What one mobile armed ally adds to allyInfl at position, by the same formula as AddMobileArmed
 	float GetMobileArmedInflAt(CAllyUnit* u, const springai::AIFloat3& position) const;
