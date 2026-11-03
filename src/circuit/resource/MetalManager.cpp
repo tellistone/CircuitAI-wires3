@@ -384,7 +384,7 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 }
 
 int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate& predicate,
-								 unsigned maxClusters, const SpotScore& score)
+								 unsigned maxClusters, const ClusterScore& score)
 {
 	const int frame = circuit->GetLastFrame();
 	int index = FindNearestCluster(pos);
@@ -413,17 +413,34 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 	}
 	MarkWalkWalls(frame);
 
+	// Nearest open spot per found cluster (at most maxClusters of them)
+	static std::vector<std::pair<int, std::pair<int, float>>> nearest;  // cluster, (spot, sqDist); NOTE: micro-opt
+	nearest.clear();
+	for (int idx : indices) {
+		const int cluster = GetCluster(idx);
+		const float sqDist = GetSpots()[idx].position.SqDistance2D(pos);
+		auto it = std::find_if(nearest.begin(), nearest.end(), [cluster](const std::pair<int, std::pair<int, float>>& n) {
+			return n.first == cluster;
+		});
+		if (it == nearest.end()) {
+			nearest.push_back(std::make_pair(cluster, std::make_pair(idx, sqDist)));
+		} else if (sqDist < it->second.second) {
+			it->second = std::make_pair(idx, sqDist);
+		}
+	}
+
 	int result = -1;
 	float minScore = std::numeric_limits<float>::max();
-	for (int idx : indices) {
-		const float s = score(idx);
+	for (const auto& n : nearest) {
+		const float s = score(n.first, std::sqrt(n.second.second));
 		if (s < minScore) {
 			minScore = s;
-			result = idx;
+			result = n.second.first;
 		}
 	}
 
 	indices.clear();
+	nearest.clear();
 	return result;
 }
 

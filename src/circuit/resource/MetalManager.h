@@ -80,14 +80,19 @@ public:
 		return clusterInfos[index].queuedCount >= GetClusters()[index].idxSpots.size();
 	}
 	bool IsMexInFinished(int index) const;
+	// Some spot of the cluster is queued or built by the ally team (counts as of the last MarkAllyMexes)
+	bool IsClusterStarted(int index) const {
+		return (clusterInfos[index].queuedCount > 0) || (clusterInfos[index].finishedCount > 0);
+	}
 	int GetCluster(int index) const { return metalInfos[index].clusterId; }
 
 	int GetMexToBuild(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate);
-	// Same walk over safe clusters, but collects open spots from up to maxClusters nearest clusters (by graph
-	// distance) and returns the spot with the lowest score(spotIndex); -1 if none
-	using SpotScore = std::function<float (int index)>;
+	// Same walk over safe clusters, but goes on to the first maxClusters clusters with open spots (by graph
+	// distance), picks the cluster with the lowest score(cluster, distance from pos to its nearest open spot),
+	// and returns that nearest open spot; -1 if none
+	using ClusterScore = std::function<float (int cluster, float dist)>;
 	int GetMexToBuild(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate,
-					  unsigned maxClusters, const SpotScore& score);
+					  unsigned maxClusters, const ClusterScore& score);
 	// Contested clusters: ones with threat at their centre that the last GetMexToBuild walks ran into
 	// (the start cluster, or a neighbour of a cluster the walk crossed). They act as walls: mexes behind
 	// them can't be found even if safe. A mark lasts maxAge frames unless the walk crosses it safely.
