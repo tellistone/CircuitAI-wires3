@@ -186,6 +186,15 @@ public:
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
 	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
+	// Highest value of the task's thr_mod.distance curve (1 if it has none)
+	float GetThrDistModMax(IFighterTask::FightType type) const {
+		const ThrDistCurve& curve = thrDistCurves[static_cast<IFighterTask::FT>(type)];
+		float result = curve.empty() ? 1.f : 0.f;
+		for (const auto& pt : curve) {
+			result = std::max(result, pt.second);
+		}
+		return result;
+	}
 	// Courage bonus inside the base defence radius: quota.thr_mod.base_bonus at the base centre, falling to 1 at the radius edge
 	float GetBaseThrBonus(float sqDistToBase) const;
 
