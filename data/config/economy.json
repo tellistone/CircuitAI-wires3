@@ -48,6 +48,10 @@
 	// Mobile buildpower to metal income ratio
 	"buildpower": 1.25,
 
+	// Also build constructors while their metal value is below <ratio> of the mobile army's metal value.
+	// Off before <since> seconds of game time; ratio 0 disables. Commanders don't count as constructors.
+	"buildpower_army": {"ratio": 0.10, "since": 600},
+
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,
 
