@@ -607,8 +607,9 @@ void CMilitaryManager::ReadConfig()
 	antiAir.isOwnGround = aaCfg.get("own_ground", false).asBool();
 	antiAir.fireSpot = aaCfg.get("fire_spot", -1.f).asFloat();
 	antiAir.fleeMargin = aaCfg.get("flee_margin", -1.f).asFloat();
-	antiAir.fleeAllyThreat = aaCfg.get("flee_ally_threat", -1.f).asFloat();
-	antiAir.fleeAllyRadius = aaCfg.get("flee_ally_radius", 500.f).asFloat();
+	// With the flee on and no cover key, cover defaults to 10: else AA flees even inside an army
+	antiAir.fleeAllyThreat = aaCfg.get("flee_ally_threat", (antiAir.fleeMargin >= 0.f) ? 10.f : -1.f).asFloat();
+	antiAir.fleeAllyRadius = std::max(0.f, aaCfg.get("flee_ally_radius", 500.f).asFloat());
 	if (antiAir.fireSpot > 1.f) {
 		circuit->LOG("CONFIG %s: antiair.fire_spot must be <= 1 (fraction of weapon range), using 1", cfgName.c_str());
 		antiAir.fireSpot = 1.f;

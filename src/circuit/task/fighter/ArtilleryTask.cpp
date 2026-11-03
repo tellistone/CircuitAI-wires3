@@ -623,6 +623,7 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 	const AIFloat3& pos = unit->GetPos(frame);
 	CEnemyInfo* danger = nullptr;
 	float minSqDist = std::numeric_limits<float>::max();
+	float dangerThreat = 0.f;  // every enemy that would make us flee, counted once
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		// Only enemies we see now (not last-known ghosts) that can act
@@ -642,12 +643,16 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 		}
 		const float reach = ((edef != nullptr) ? edef->GetMaxRange() : 0.f) + fleeMargin;
 		const float sqDist = pos.SqDistance2D(enemy->GetPos());
-		if ((sqDist <= SQUARE(reach)) && (sqDist < minSqDist)) {
-			minSqDist = sqDist;
-			danger = enemy;
+		if (sqDist <= SQUARE(reach)) {
+			dangerThreat += enemy->GetThreat();
+			if (sqDist < minSqDist) {
+				minSqDist = sqDist;
+				danger = enemy;
+			}
 		}
 	}
-	if ((danger == nullptr) || ((artyCfg.allyThreat >= 0.f) && HasCover(unit, pos))) {
+	// Cover net of those enemies: an escort they outweigh doesn't hold the artillery in place
+	if ((danger == nullptr) || ((artyCfg.allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat))) {
 		isFleeing = false;
 		return false;
 	}
@@ -759,7 +764,7 @@ void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
 	}
 }
 
-bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot)
+bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float enemyThreat)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
@@ -774,7 +779,7 @@ bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot)
 			cover += escort.second;
 		}
 	}
-	return cover >= artyCfg.allyThreat;
+	return cover - enemyThreat >= artyCfg.allyThreat;
 }
 
 } // namespace circuit
