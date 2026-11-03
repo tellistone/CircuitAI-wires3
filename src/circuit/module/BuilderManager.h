@@ -165,6 +165,8 @@ public:
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
+	// Priority used to rank a job for a builder: mex drops to NORMAL during an energy stall
+	IBuilderTask::Priority GetTaskPriority(const IBuilderTask* task, bool isEnergyStalling) const;
 	IBuilderTask* MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
 	IBuilderTask* MakeBuilderTask(CCircuitUnit* unit, const CQueryCostMap* query);
 	IBuilderTask* CreateBuilderTask(const springai::AIFloat3& position, CCircuitUnit* unit);

@@ -92,6 +92,12 @@ public:
 	// Cached per terrain area for 10s.
 	float GetReclaimMetal(CCircuitDef* builderDef, const springai::AIFloat3& position);
 	IBuilderTask* UpdateReclaimTasks(const springai::AIFloat3& position, CCircuitUnit* unit, bool isNear = true);
+	// Reclaim target rank: lower is better. Distance over (metal left)^reclaimValueExp
+	float GetReclaimRank(float sqDist, float metalLeft) const;
+	// Reclaim job takes another constructor while its metal is above reclaimHelperSec of the build power on it
+	float GetReclaimHelperSec() const { return reclaimHelperSec; }
+	// Before this frame a non-combat constructor needs an escort (or a defended cluster) to build a mex
+	int GetMexEscortFrame() const { return mexEscortFrame; }
 	IBuilderTask* UpdateEnergyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateFactoryTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateFactoryTasks();
@@ -181,6 +187,11 @@ private:
 	float metalMod;
 	int mexMax;
 	bool isAllyMexMax;
+	int mexEscortFrame;
+	float mexJobMod;
+	float reclaimValueExp;
+	float reclaimHelperSec;
+	float reclaimStoreAt;
 
 	struct SPullMtoS {
 		float pull;

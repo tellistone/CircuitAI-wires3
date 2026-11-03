@@ -49,6 +49,13 @@ void CBReclaimTask::AssignTo(CCircuitUnit* unit)
 	lastTouched = manager->GetCircuit()->GetLastFrame();
 }
 
+bool CBReclaimTask::CanAssignTo(CCircuitUnit* unit) const
+{
+	// Takes helpers while its metal is above <helper_sec> seconds of the build power already on it
+	return unit->GetCircuitDef()->IsAbleToReclaim()
+			&& (cost > buildPower * manager->GetCircuit()->GetEconomyManager()->GetReclaimHelperSec());
+}
+
 bool CBReclaimTask::Reevaluate(CCircuitUnit* unit)
 {
 	if (!isMetal) {
@@ -56,10 +63,8 @@ bool CBReclaimTask::Reevaluate(CCircuitUnit* unit)
 	}
 
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (circuit->GetEconomyManager()->IsMetalFull()) {
-		manager->AbortTask(this);
-		return false;
-	} else if (!units.empty()) {
+	// NOTE: Full metal storage doesn't abort a running job, it only stops new ones (CEconomyManager::UpdateReclaimTasks)
+	if (!units.empty()) {
 		/*
 		 * Update reclaim position
 		 */
@@ -83,7 +88,8 @@ bool CBReclaimTask::Reevaluate(CCircuitUnit* unit)
 		if (!features.empty()) {
 			CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 			circuit->GetThreatMap()->SetThreatType(unit);
-			float minSqDist = std::numeric_limits<float>::max();
+			CEconomyManager* economyMgr = circuit->GetEconomyManager();
+			float minRank = std::numeric_limits<float>::max();
 			Resource* metalRes = circuit->GetEconomyManager()->GetMetalRes();
 			for (Feature* feature : features) {
 				AIFloat3 featPos = feature->GetPosition();
@@ -96,15 +102,16 @@ bool CBReclaimTask::Reevaluate(CCircuitUnit* unit)
 					delete featDef;
 					continue;
 				}
-				float reclaimValue = featDef->GetContainedResource(metalRes)/* * feature->GetReclaimLeft()*/;
+				float reclaimValue = featDef->GetContainedResource(metalRes);
 				delete featDef;
-				if (reclaimValue < 1.0f) {
+				const float metalLeft = reclaimValue * feature->GetReclaimLeft();
+				if ((reclaimValue < 1.0f) || (metalLeft < 1.0f)) {
 					continue;
 				}
-				float sqDist = pos.SqDistance2D(featPos);
-				if (sqDist < minSqDist) {
+				const float rank = economyMgr->GetReclaimRank(pos.SqDistance2D(featPos), metalLeft);
+				if (rank < minRank) {
 					position = featPos;
-					minSqDist = sqDist;
+					minRank = rank;
 				}
 			}
 			utils::free_clear(features);
