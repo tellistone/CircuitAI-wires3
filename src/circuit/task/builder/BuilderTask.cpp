@@ -578,7 +578,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
 			}
 			if (isValid) {
-				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::LOW, energyDef, buildPos,
+				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
 														  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
 			}
 		}

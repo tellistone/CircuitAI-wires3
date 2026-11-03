@@ -918,6 +918,14 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 	// A full job doesn't stop the search, the next spot is tried.
 	const std::set<IBuilderTask*>& reclaimTasks = builderMgr->GetTasks(IBuilderTask::BuildType::RECLAIM);
 	const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
+	// Jobs with constructors on them are uncapped; jobs nobody took yet are capped at max(1, constructors / 2)
+	unsigned emptyCount = 0;
+	for (IBuilderTask* t : reclaimTasks) {
+		if (t->GetAssignees().empty()) {
+			++emptyCount;
+		}
+	}
+	const bool canOpenJob = emptyCount < std::max(1u, builderMgr->GetWorkerCount() / 2);
 	for (const SReclaimSpot& spot : spots) {
 		IBuilderTask* existing = nullptr;
 		for (IBuilderTask* t : reclaimTasks) {
@@ -934,6 +942,9 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 		}
 		if (existing != nullptr) {
 			return existing;
+		}
+		if (!canOpenJob) {
+			continue;  // too many untaken jobs: only join existing ones
 		}
 		return builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, spot.pos, spot.cost, FRAMES_PER_SEC * 300,
 										  8.0f/*unit->GetCircuitDef()->GetBuildDistance()*/);
@@ -1390,14 +1401,12 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 		return nullptr;
 	}
 
-	if ((storeDef == nullptr) ||
-		!builderMgr->GetTasks(IBuilderTask::BuildType::STORE).empty() ||
-		!storeDef->IsAvailable(circuit->GetLastFrame()))
-	{
+	if ((storeDef == nullptr) || !storeDef->IsAvailable(circuit->GetLastFrame())) {
 		return UpdatePylonTasks();
 	}
 
-	// Constructors reclaiming and metal close to full: storage even if storage is already 10x income
+	// Constructors reclaiming and metal close to full: storage at NOW, even if storage is already 10x income.
+	// Running reclaim isn't stopped by full storage (it still denies the metal to the enemy).
 	bool isReclaiming = false;
 	for (IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::RECLAIM)) {
 		if (!t->GetAssignees().empty()) {
@@ -1407,6 +1416,16 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 	}
 	const bool isReclaimStore = isReclaiming && (reclaimStoreAt > 0.f)
 			&& (GetMetalCur() > GetStorage(metalRes) * reclaimStoreAt);
+
+	const std::set<IBuilderTask*>& storeTasks = builderMgr->GetTasks(IBuilderTask::BuildType::STORE);
+	if (!storeTasks.empty()) {
+		if (isReclaimStore) {
+			for (IBuilderTask* t : storeTasks) {
+				t->SetPriority(IBuilderTask::Priority::NOW);  // upgrade the one already queued
+			}
+		}
+		return UpdatePylonTasks();
+	}
 
 	const float metalIncome = std::min(GetAvgMetalIncome(), GetAvgEnergyIncome());
 	if (!isReclaimStore && (GetStorage(metalRes) > 10 * metalIncome)) {
@@ -1428,7 +1447,8 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 		float z = terHeight / 4 + rand() % (int)(terHeight / 2);
 		buildPos = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
 	}
-	return builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, storeDef, buildPos, IBuilderTask::BuildType::STORE);
+	return builderMgr->EnqueueTask(isReclaimStore ? IBuilderTask::Priority::NOW : IBuilderTask::Priority::HIGH,
+								   storeDef, buildPos, IBuilderTask::BuildType::STORE);
 }
 
 IBuilderTask* CEconomyManager::UpdatePylonTasks()
