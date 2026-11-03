@@ -17,17 +17,25 @@
 			// "<energy_def>": [<lower limit>, <upper limit>]
 			// limit = random(<lower limit>..<upper limit>)
 			"energysingu": [6],
+			"energygeo": [3, 6],  // also capped by free vents; skipped (doesn't block cheaper energy) when none is free
 			"energyfusion": [6, 10],
 			"energysolar": [10, 20]
 		},
 		"water": {
 			"energysingu": [1],
+			"energygeo": [2, 4],
 			"energyfusion": [4],
 			"energywind": [20]
 		},
 		// income factor for energy, time is in seconds
 		// [[<start_factor>, <start_time>], [<end_factor>, <end_time>]]
 		"factor": [[0.15, 1], [7.0, 3600]],
+
+		// Geothermal (energygeo): built exactly on the nearest free vent our builder can reach
+		"geo": {
+			"threat": 1.0,  // skip vents (and don't morph geos) where enemy surface threat is above this
+			"morph": [30.0, 900]  // [<min avg metal income>, <earliest second>]: morph one finished energygeo at a time into energyheavygeo; income -1 = never
+		},
 
 		"link_inc": 16.0,  // minimum metal-income for energy linking
 		"pylon": ["energypylon", "energysolar", "energywind"]

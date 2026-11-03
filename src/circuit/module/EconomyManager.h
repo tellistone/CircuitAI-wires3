@@ -93,6 +93,10 @@ public:
 	IBuilderTask* UpdateStorageTasks();
 	IBuilderTask* UpdatePylonTasks();
 
+	// Nearest free geothermal vent for cdef (a def that needs one) that is safe and,
+	// with a unit, reachable by it; -RgtVector if none
+	springai::AIFloat3 FindGeoSpot(CCircuitDef* cdef, const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+
 	void AddMorphee(CCircuitUnit* unit);
 	void RemoveMorphee(CCircuitUnit* unit) { morphees.erase(unit); }
 	void UpdateMorph();
@@ -102,6 +106,8 @@ public:
 private:
 	float GetStorage(springai::Resource* res);
 	void UpdateEconomy();
+	void UpdateGeoSpots();
+	void UpdateGeoMorph();
 
 	Handlers2 createdHandler;
 	Handlers1 finishedHandler;
@@ -200,6 +206,16 @@ private:
 
 	std::shared_ptr<CGameTask> morph;
 	std::set<CCircuitUnit*> morphees;
+
+	// Geothermal
+	std::vector<springai::AIFloat3> geoSpots;  // known geothermal vents
+	int geoSpotsFrame;  // next refresh of geoSpots
+	float geoThreat;  // max enemy threat at a vent to build there
+	float geoMorphIncome;  // min avg metal income to morph a geothermal into its upgrade, <0 = never
+	int geoMorphFrame;  // earliest frame for geothermal morph
+	std::set<CCircuitUnit*> geoMorphees;  // finished geothermals that can morph
+	CCircuitUnit* geoMorphing;  // geothermal being morphed (one at a time)
+	int geoMorphStart;
 };
 
 } // namespace circuit

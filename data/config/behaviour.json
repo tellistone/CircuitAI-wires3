@@ -1020,6 +1020,14 @@
 		"attribute": ["support"],  // build at home
 		"since": 280
 	},
+	"energygeo": {
+		"role": ["static", "mine"],  // built only on geothermal vents (economy.energy), wherever they are
+		"since": 180
+	},
+	"energyheavygeo": {
+		// not buildable: a finished energygeo morphs into it (economy.energy.geo.morph); explodes like a nuke
+		"role": ["static", "mine", "heavy"]
+	},
 	"turretaalaser": {
 		"role": ["anti_air"],
 		"attribute": ["siege", "ret_hold"],
