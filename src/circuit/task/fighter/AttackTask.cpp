@@ -911,13 +911,14 @@ void CAttackTask::SetPathThreatFloor(IPathQuery* query) const
 {
 	// Capped routes (target, front, reinforce) ignore light threat: at or below quota.attack_path_ignore_threat x
 	// the group's current strength it costs nothing, so the route goes straight through it instead of around.
-	// Never above half the lowest per-spot allowance anywhere (strength / the attack thr_mod.distance curve's
-	// highest value; base bonus >= 1, near-base scale <= 1), or the path-ahead check and the escape would flag
-	// ground the route treats as free
+	// Never above half the lowest per-spot allowance anywhere (strength x the lowest base bonus / the attack
+	// thr_mod.distance curve's highest value; near-base scale <= 1), or the path-ahead check and the escape would
+	// flag ground the route treats as free
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	const float frac = militaryMgr->GetAttackPathIgnoreThreat();
 	if (frac > 0.f) {
-		const float maxFrac = 0.5f / militaryMgr->GetThrDistModMax(IFighterTask::FightType::ATTACK);
+		const float maxFrac = 0.5f * militaryMgr->GetBaseThrBonusMin()
+				/ militaryMgr->GetThrDistModMax(IFighterTask::FightType::ATTACK);
 		query->SetThreatFloor(GetSafeThreat() * std::min(frac, maxFrac));
 	}
 }

@@ -197,6 +197,8 @@ public:
 	}
 	// Courage bonus inside the base defence radius: quota.thr_mod.base_bonus at the base centre, falling to 1 at the radius edge
 	float GetBaseThrBonus(float sqDistToBase) const;
+	// Lowest value GetBaseThrBonus can return: 1, or quota.thr_mod.base_bonus if that is below 1
+	float GetBaseThrBonusMin() const { return std::min(baseThrBonus, 1.f); }
 
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
