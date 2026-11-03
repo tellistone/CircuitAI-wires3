@@ -85,6 +85,16 @@
 	// bias 0 and clusters 1 = old behaviour (nearest spot in the nearest cluster with an open spot).
 	"mex_front": {"bias": 0.15, "clusters": 3, "started": 0.3},
 
+	// How constructors choose between open jobs: travel cost / <weight> of the job's priority, lowest wins (NOW always wins).
+	// travel: seconds of travel per priority; a job beyond its cap is taken only when no job is within its cap. 0 = no cap.
+	// switch: a constructor walking to a job takes a job of the same kind that is nearer than <switch> x its current
+	//   distance (0.5 = less than half as far); 0 disables.
+	"builder_jobs": {
+		"weight": {"low": 1, "normal": 2, "high": 4},
+		"travel": {"low": 10, "normal": 20, "high": 30},
+		"switch": 0.5
+	},
+
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,
 

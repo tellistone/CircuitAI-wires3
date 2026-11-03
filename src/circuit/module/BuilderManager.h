@@ -55,6 +55,7 @@ public:
 	CCircuitDef* GetTerraDef() const { return terraDef; }
 
 	unsigned int GetWorkerCount() const { return workers.size(); }
+	float GetJobSwitch() const { return jobSwitch; }
 	void AddBuildPower(CCircuitUnit* unit);
 	void DelBuildPower(CCircuitUnit* unit);
 	float GetBuildPower() const { return buildPower; }
@@ -165,6 +166,8 @@ public:
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
+	float GetTaskWeight(IBuilderTask::Priority priority) const;
+	float GetTaskTravelSec(IBuilderTask::Priority priority) const;
 	// Priority used to rank a job for a builder: mex drops to NORMAL during an energy stall
 	IBuilderTask::Priority GetTaskPriority(const IBuilderTask* task, bool isEnergyStalling) const;
 	IBuilderTask* MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
@@ -198,6 +201,9 @@ private:
 	std::set<CCircuitUnit*> workers;
 	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
+	float jobWeight[3];  // LOW, NORMAL, HIGH: travel cost is divided by this when ranking jobs
+	float jobTravel[3];  // LOW, NORMAL, HIGH: seconds of travel beyond which a job is only a fallback
+	float jobSwitch;  // walking builder switches to a same-type job nearer than this share of its current one; 0 = off
 	bool isPrioRepairSafe;  // apply builder threat check to NOW repair of mobile units
 	bool isPrioRepairSafeStatic;  // same for static units
 	float prioRepairLeash;  // cancel started priority repair if target gets this far beyond build range, 0 = off
