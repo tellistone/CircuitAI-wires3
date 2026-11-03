@@ -6,6 +6,7 @@
  */
 
 #include "task/fighter/ArtilleryTask.h"
+#include "map/InfluenceMap.h"
 #include "task/TaskManager.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
@@ -652,7 +653,7 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 		}
 	}
 	// Cover net of those enemies: an escort they outweigh doesn't hold the artillery in place
-	if ((danger == nullptr) || ((artyCfg.allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat))) {
+	if ((danger == nullptr) || ((artyCfg.allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat, true))) {
 		isFleeing = false;
 		return false;
 	}
@@ -764,7 +765,7 @@ void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
 	}
 }
 
-bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float enemyThreat)
+bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float enemyThreat, bool isFlee)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SArtilleryCfg& artyCfg = circuit->GetMilitaryManager()->GetArtilleryCfg();
@@ -773,7 +774,8 @@ bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float en
 	const float slack = circuit->GetPathfinder()->GetSquareSize() * 2;
 	const float sqAllyRadius = SQUARE(artyCfg.allyRadius + slack);
 	CollectEscorts(unit);
-	float cover = 0.f;
+	// Flee check: static defences and buildings count too, via the influence map (no per-unit scan)
+	float cover = isFlee ? std::max(circuit->GetInflMap()->GetAllyDefendInflAt(spot), 0.f) : 0.f;
 	for (const auto& escort : escorts) {
 		if (escort.first.SqDistance2D(spot) <= sqAllyRadius) {
 			cover += escort.second;
