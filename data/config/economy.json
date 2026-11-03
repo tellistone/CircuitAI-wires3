@@ -57,6 +57,26 @@
 	// no enemy threat on them. Off before <since> seconds; ratio 0 disables.
 	"buildpower_reclaim": {"ratio": 0.10, "since": 300},
 
+	// Constructor reclaim jobs.
+	// value_exp: features rank by distance / (metal left)^value_exp, lower first; 0 = nearest only, 1 = metal per distance.
+	// helper_sec: a job takes another constructor while its metal is above <helper_sec> seconds of the build power on it.
+	// store_at: while any constructor reclaims and metal is above this share of storage, queue a storage at HIGH; 0 disables.
+	// New reclaim jobs stop above 80% metal storage; running ones carry on.
+	// travel: how far a constructor looks for new reclaim, in seconds of travel at its speed, by the feature's metal left.
+	//   Linear from <sec>[0] at 1 metal to <sec>[1] at <metal> and above, never below <floor>.
+	//   <starved_sec> replaces <sec> while metal pull x 0.8 is above income. An idle constructor with no other job
+	//   still searches the whole map.
+	"reclaim": {"value_exp": 0.5, "helper_sec": 20.0, "store_at": 0.7,
+	            "travel": {"metal": 2000, "sec": [1, 30], "starved_sec": [1, 60], "floor": 5}},
+
+	// Seconds before a non-combat constructor may build a mex at an undefended cluster without an escort,
+	// by map size: [[<map size>, <seconds>], ...], linear between points and clamped at the ends.
+	// Map size is sqrt(width * height) in map units, so 8x8 = 8 and 16x16 = 16.
+	"mex_escort": [[8, 300], [16, 0]],
+
+	// Multiplier on the open mex job cap, (build power / mex cost * 8 + 2) * <mex_jobs>
+	"mex_jobs": 1.5,
+
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,
 
