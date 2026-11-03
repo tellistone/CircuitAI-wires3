@@ -1057,8 +1057,8 @@ void CAttackTask::PullBackEndangered(int frame)
 
 bool CAttackTask::Flee(int frame)
 {
-	// Run to the nearest stronger attack group (fight beside it, then merge), else the nearest front position,
-	// else the closest haven, else base
+	// Run to the nearest stronger attack group (fight beside it, then merge), else the nearest safe ground we
+	// hold (a defence point of one of our metal clusters), else the closest haven, else base
 	CCircuitAI* circuit = manager->GetCircuit();
 	AIFloat3 dest = -RgtVector;
 	CAttackTask* squad = static_cast<CMilitaryManager*>(manager)->FindReinforceSquad(leader, attackPower, this);
@@ -1071,23 +1071,30 @@ bool CAttackTask::Flee(int frame)
 		}
 	}
 	if (!utils::is_valid(dest)) {
-		// Nearest front position (FillFrontPos: our cluster nearest the enemy lane) that we can stand at alone,
-		// and not right here (within 400 we'd count as arrived and stop running)
-		static F3Vec frontPositions;  // NOTE: micro-opt
-		circuit->GetMilitaryManager()->FillFrontPos(leader, frontPositions);
+		// Nearest defence point of a metal cluster we hold (FillFriendlyClusterPos) where we can stand alone,
+		// not farther from our base than we are (never run forward), and not right here (within 400 we'd count
+		// as arrived and stop running)
+		static F3Vec clusterPositions;  // NOTE: micro-opt
+		circuit->GetMilitaryManager()->FillFriendlyClusterPos(leader, clusterPositions);
 		const AIFloat3& pos = leader->GetPos(frame);
+		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+		const float sqBaseDist = pos.SqDistance2D(basePos);
 		const float strength = GetSafeThreat();
 		CThreatMap* threatMap = circuit->GetThreatMap();
+		// Judged at full value, like the escape itself: no near-base discount from the fight we're leaving
+		const float prevRef = scaleRefSqDist;
+		scaleRefSqDist = 0.f;
 		float minSqDist = std::numeric_limits<float>::max();
-		for (const AIFloat3& p : frontPositions) {
+		for (const AIFloat3& p : clusterPositions) {
 			const float sqDist = pos.SqDistance2D(p);
-			if ((sqDist >= SQUARE(400.f)) && (sqDist < minSqDist)
+			if ((sqDist >= SQUARE(400.f)) && (sqDist < minSqDist) && (p.SqDistance2D(basePos) <= sqBaseDist)
 				&& (threatMap->GetThreatAt(leader, p) < GetAllowedThreatAt(p, strength)))
 			{
 				minSqDist = sqDist;
 				dest = p;
 			}
 		}
+		scaleRefSqDist = prevRef;
 	}
 	if (!utils::is_valid(dest)) {
 		dest = circuit->GetFactoryManager()->GetClosestHaven(leader);

@@ -79,6 +79,8 @@ public:
 	void BlockScoutSpot(const springai::AIFloat3& spot, int frames);
 	springai::AIFloat3 GetRaidPosition(CCircuitUnit* unit);
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
+	// Defence points of every metal cluster we hold (queued or finished, not on enemy ground) the unit can reach
+	void FillFriendlyClusterPos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillAttackSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillStaticSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillSafePos(CCircuitUnit* unit, F3Vec& outPositions);

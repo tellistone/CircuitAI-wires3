@@ -1517,6 +1517,28 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 	}
 }
 
+void CMilitaryManager::FillFriendlyClusterPos(CCircuitUnit* unit, F3Vec& outPositions)
+{
+	outPositions.clear();
+
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	STerrainMapArea* area = unit->GetArea();
+	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
+	for (int index = 0; index < (int)clusters.size(); ++index) {
+		// Same test as FillFrontPos
+		if ((inflMap->GetInfluenceAt(clusters[index].position) > -INFL_EPS)
+			&& (metalMgr->IsClusterQueued(index) || metalMgr->IsClusterFinished(index))
+			&& terrainMgr->CanMoveToPos(area, clusters[index].position))
+		{
+			for (const CDefenceMatrix::SDefPoint& defPoint : defence->GetDefPoints(index)) {
+				outPositions.push_back(defPoint.position);
+			}
+		}
+	}
+}
+
 void CMilitaryManager::FillAttackSafePos(CCircuitUnit* unit, F3Vec& outPositions)
 {
 	outPositions.clear();
