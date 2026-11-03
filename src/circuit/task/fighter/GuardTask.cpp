@@ -12,9 +12,11 @@
 #include "task/builder/BuilderTask.h"
 #include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
+#include "unit/enemy/EnemyUnit.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
+#include "AISCommands.h"
 #include "Log.h"
 
 #include <set>
@@ -35,6 +37,8 @@ CFGuardTask::CFGuardTask(ITaskManager* mgr, CCircuitUnit* vip, float maxPower)
 		, lastAlly(0.f)
 		, lastEnemy(0.f)
 		, nextDebugFrame(0)
+		, isInterposing(false)
+		, interposeSpot(-RgtVector)
 {
 }
 
@@ -80,6 +84,7 @@ void CFGuardTask::Start(CCircuitUnit* unit)
 	CCircuitAI* circuit = manager->GetCircuit();
 	CCircuitUnit* vip = circuit->GetTeamUnit(vipId);
 	if (vip != nullptr) {
+		isInterposing = false;  // a new guard starts on the engine Guard; Update moves it in front when an enemy comes
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Guard(vip->GetUnit());
 			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
@@ -121,6 +126,8 @@ void CFGuardTask::Update()
 			if (!terrainMgr->CanReachAt(unit, vipPos, unit->GetCircuitDef()->GetMaxRange())) {
 				DebugLog(vip, "vip unreachable");
 				ReleaseUnit(unit);
+			} else {
+				Interpose(unit, vip);
 			}
 		}
 	} else {
@@ -170,9 +177,9 @@ void CFGuardTask::OnUnitIdle(CCircuitUnit* unit)
 	CCircuitAI* circuit = manager->GetCircuit();
 	CCircuitUnit* vip = circuit->GetTeamUnit(vipId);
 	if (vip != nullptr) {
-		TRY_UNIT(circuit, unit,
-			unit->GetUnit()->Guard(vip->GetUnit());
-		)
+		// The move to an interpose spot has a Guard queued behind it, so going idle means the queue ended
+		// (or a move failed): follow the vip again, and let the next Update send a fresh spot if still needed
+		GuardVip(unit, vip);
 	} else {
 		manager->AbortTask(this);
 	}
@@ -336,6 +343,87 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 	if (best != nullptr) {
 		manager->AssignTask(best, this);
 	}
+}
+
+void CFGuardTask::GuardVip(CCircuitUnit* unit, CCircuitUnit* vip)
+{
+	isInterposing = false;
+	TRY_UNIT(manager->GetCircuit(), unit,
+		unit->GetUnit()->Guard(vip->GetUnit());
+	)
+}
+
+void CFGuardTask::Interpose(CCircuitUnit* unit, CCircuitUnit* vip)
+{
+	// Stand between the vip and the nearest armed ground enemy, instead of the engine Guard
+	// (which only follows the vip and shoots back at whatever last hit it)
+	const CMilitaryManager::SGuardCfg& cfg = static_cast<CMilitaryManager*>(manager)->GetGuardCfg();
+	if ((cfg.interposeDist <= 0.f) || (unit->Blocker() != nullptr)) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& vipPos = vip->GetPos(frame);
+
+	const CEnemyInfo* nearest = nullptr;
+	float minSqDist = SQUARE(cfg.interposeRange);
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		const CEnemyInfo* enemy = kv.second;
+		// Only what is seen now: a last-known position would send the guard after a ghost
+		if (!enemy->IsInRadarOrLOS() || enemy->IsHidden()
+			|| enemy->IsBeingBuilt() || enemy->IsParalyzed() || enemy->IsDisarmed())
+		{
+			continue;
+		}
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		// Unknown radar dots count; known enemies only if they can shoot, move (a turret doesn't come closer,
+		// standing in front of it only draws its fire) and a ground guard can stand in their way
+		if ((edef != nullptr) && (!edef->IsAttacker() || !edef->IsMobile() || edef->IsAbleToFly())) {
+			continue;
+		}
+		const float sqDist = vipPos.SqDistance2D(enemy->GetPos());
+		if (sqDist < minSqDist) {
+			minSqDist = sqDist;
+			nearest = enemy;
+		}
+	}
+	if (nearest == nullptr) {
+		if (isInterposing) {
+			GuardVip(unit, vip);  // threat gone: back to following
+		}
+		return;
+	}
+
+	// A spot on the line vip -> enemy, never more than halfway to the enemy
+	AIFloat3 dir = nearest->GetPos() - vipPos;
+	dir.y = 0.f;
+	const float len = dir.Length2D();
+	if (len < 1.f) {
+		return;
+	}
+	dir /= len;
+	AIFloat3 spot = vipPos + dir * std::min(cfg.interposeDist, len * 0.5f);
+	CTerrainManager::CorrectPosition(spot);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	if (!terrainMgr->CanMoveToPos(unit->GetArea(), spot)) {
+		if (isInterposing) {
+			GuardVip(unit, vip);
+		}
+		return;
+	}
+	// Re-order only when the spot moved noticeably, so the guard isn't spammed with commands
+	if (isInterposing && (spot.SqDistance2D(interposeSpot) < SQUARE(SQUARE_SIZE * 4))) {
+		return;
+	}
+	isInterposing = true;
+	interposeSpot = spot;
+	TRY_UNIT(circuit, unit,
+		unit->CmdMoveTo(spot, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		// Queued after the move: from the spot the guard follows the vip (the engine keeps a stopped guard on
+		// the side it came from, i.e. the enemy's side) instead of standing still until the next Update
+		unit->GetUnit()->Guard(vip->GetUnit(), UNIT_COMMAND_OPTION_SHIFT_KEY);
+		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
 }
 
 float CFGuardTask::GetExcludedInflAt(CCircuitUnit* vip, const AIFloat3& pos) const

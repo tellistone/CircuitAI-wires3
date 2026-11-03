@@ -153,6 +153,10 @@ private:
 	};
 	std::unordered_map<CCircuitDef::Id, SFactoryDef> factoryDefs;
 	float bpRatio;
+	float bpArmyRatio;  // constructor metal value to mobile army metal value, 0 = off
+	int bpArmyFrame;  // bpArmyRatio applies from this frame on
+	float bpReclaimRatio;  // constructor metal value to visible reclaim metal, 0 = off
+	int bpReclaimFrame;  // bpReclaimRatio applies from this frame on
 	float reWeight;
 };
 

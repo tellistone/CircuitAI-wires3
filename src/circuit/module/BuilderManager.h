@@ -58,6 +58,7 @@ public:
 	void AddBuildPower(CCircuitUnit* unit);
 	void DelBuildPower(CCircuitUnit* unit);
 	float GetBuildPower() const { return buildPower; }
+	float GetWorkerCost() const { return workerCost; }  // metal value of mobile constructors, commanders excluded
 	bool CanEnqueueTask(const unsigned mod = 8) const { return buildTasksCount < workers.size() * mod; }
 	const std::set<IBuilderTask*>& GetTasks(IBuilderTask::BuildType type) const;
 	void ActivateTask(IBuilderTask* task);
@@ -188,6 +189,7 @@ private:
 	std::vector<std::set<IBuilderTask*>> buildTasks;  // UnitDef based tasks
 	unsigned int buildTasksCount;
 	float buildPower;
+	float workerCost;
 	std::vector<IUnitTask*> buildUpdates;  // owner
 	unsigned int buildIterator;
 

@@ -761,6 +761,43 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	return task;
 }
 
+float CEconomyManager::GetReclaimMetal(CCircuitDef* builderDef, const AIFloat3& position)
+{
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	STerrainMapArea* area = terrainMgr->GetCurrentMapArea(builderDef, position).first;  // nullptr = flying
+	const int frame = circuit->GetLastFrame();
+	auto it = reclaimMetal.find(area);
+	if ((it != reclaimMetal.end()) && (frame < it->second.second)) {
+		return it->second.first;
+	}
+
+	// Same reach + threat test as UpdateReclaimTasks (CanReachAtSafe), but by area: no unit at hand
+	const float range = builderDef->GetBuildDistance();
+	float metal = 0.f;
+	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
+	for (Feature* feature : features) {
+		FeatureDef* featDef = feature->GetDef();
+		if (featDef == nullptr) {
+			continue;
+		}
+		const float value = featDef->IsReclaimable() ? featDef->GetContainedResource(metalRes) : 0.f;
+		delete featDef;
+		if (value < 1.0f) {
+			continue;
+		}
+		AIFloat3 featPos = feature->GetPosition();
+		CTerrainManager::CorrectPosition(featPos);
+		if (!terrainMgr->CanMobileReachAtSafe(area, featPos, range)) {
+			continue;
+		}
+		metal += value * feature->GetReclaimLeft();
+	}
+	utils::free_clear(features);
+
+	reclaimMetal[area] = std::make_pair(metal, frame + FRAMES_PER_SEC * 10);
+	return metal;
+}
+
 IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCircuitUnit* unit, bool isNear)
 {
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();

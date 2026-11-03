@@ -105,6 +105,8 @@ public:
 		float safeAlly;  // builder is safe (guard leaves) if allied influence minus guards >= this, <= 0 = never safe
 		float safeEnemy;  // ... and enemy influence <= this
 		int safeFrames;  // builder must stay safe this long before its guard leaves
+		float interposeDist;  // guard stands this far from its vip towards the nearest armed enemy, <= 0 = plain engine Guard
+		float interposeRange;  // ... for enemies within this distance of the vip
 		float pullRange;  // empty active slot pulls the nearest eligible unit within this range, <= 0 = no pull
 		float threatRatio;  // ... only when threat at the guard > this * guard's own threat (0 = any threat)
 		float guardedMaxShare;  // same as maxShare, separate pool for slots of "guarded" units

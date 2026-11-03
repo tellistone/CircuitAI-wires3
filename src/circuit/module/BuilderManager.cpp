@@ -57,6 +57,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
 		, buildTasksCount(0)
 		, buildPower(.0f)
+		, workerCost(.0f)
 		, buildIterator(0)
 		, prioRepairRange(0.f)
 		, prioRepairShare(0.f)
@@ -89,6 +90,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 
 		AddBuildPower(unit);
 		workers.insert(unit);
+		if (!unit->GetCircuitDef()->IsRoleComm()) {
+			workerCost += unit->GetCircuitDef()->GetCostM();
+		}
 
 		AddBuildList(unit);
 
@@ -124,6 +128,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 
 		DelBuildPower(unit);
 		workers.erase(unit);
+		if (!unit->GetCircuitDef()->IsRoleComm()) {
+			workerCost = std::max(workerCost - unit->GetCircuitDef()->GetCostM(), .0f);
+		}
 		costQueries.erase(unit);
 
 		RemoveBuildList(unit);
