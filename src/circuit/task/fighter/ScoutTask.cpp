@@ -140,19 +140,38 @@ void CScoutTask::Execute(CCircuitUnit* unit, bool isUpdating)
 		position = target->GetPos();
 		CThreatMap* threatMap = circuit->GetThreatMap();
 		const float fireRange = std::max(unit->GetCircuitDef()->GetMaxRange(), (float)threatMap->GetSquareSize());
-		// Only shoot from where we stand if it is in range and safe; otherwise approach along a threat-aware path
-		if ((pos.SqDistance2D(position) <= SQUARE(fireRange))
-			&& (threatMap->GetThreatAt(unit, pos) < GetSafeThreat(unit) / GetThrDistModAt(pos)))
-		{
+		const float safeThreat = GetSafeThreat(unit);
+		auto isSafeAt = [&](const AIFloat3& p) {
+			return threatMap->GetThreatAt(unit, p) < safeThreat / GetThrDistModAt(p);
+		};
+		auto attackFrom = [&](const AIFloat3& firePos) {
 			const bool wasTravel = unit->GetTravelAct()->IsActive();
 			unit->GetTravelAct()->StateWait();
 			// Re-issue only when something changed: avoids command spam at the faster update rate
 			if (wasTravel || (lastAttackId != target->GetId()) || (frame >= lastAttackFrame + FRAMES_PER_SEC)) {
 				lastAttackId = target->GetId();
 				lastAttackFrame = frame;
-				AttackTarget(unit, pos, frame);
+				AttackTarget(unit, firePos, frame);
 			}
+		};
+		const float sqDist = pos.SqDistance2D(position);
+		// Only shoot from where we stand if it is in range and safe; otherwise approach along a threat-aware path
+		if ((sqDist <= SQUARE(fireRange)) && isSafeAt(pos)) {
+			attackFrom(pos);
 			return;
+		}
+		// Just out of range: the approach path works on a coarse grid, so it can end (or count as arrived) a little
+		// outside real weapon range, and a new path from here would be empty. If we stand safe and the spot inside
+		// range towards the target is safe too, let the engine's attack order close the last stretch itself.
+		const float closeRange = fireRange + circuit->GetPathfinder()->GetSquareSize() * 2;
+		if ((sqDist > SQUARE(fireRange)) && (sqDist <= SQUARE(closeRange)) && isSafeAt(pos)) {
+			const float dist = sqrtf(sqDist);
+			AIFloat3 firePos = position + (pos - position) * (fireRange * 0.9f / dist);
+			firePos.y = circuit->GetMap()->GetElevationAt(firePos.x, firePos.z);
+			if (isSafeAt(firePos)) {
+				attackFrom(firePos);
+				return;
+			}
 		}
 		lastAttackId = -1;
 		if (!IsQueryReady(unit) || !NeedRepath(unit, target->GetId())) {
