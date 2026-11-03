@@ -197,6 +197,8 @@ private:
 	bool isAllyMexMax;
 	int mexEscortFrame;
 	float mexJobMod;
+	float mexFrontBias;
+	unsigned mexFrontClusters;
 	float reclaimValueExp;
 	float reclaimHelperSec;
 	float reclaimStoreAt;

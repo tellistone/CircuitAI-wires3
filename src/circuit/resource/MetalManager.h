@@ -13,6 +13,8 @@
 #include "lemon/adaptors.h"
 #include "lemon/dijkstra.h"
 
+#include <functional>
+
 namespace circuit {
 
 class CCircuitAI;
@@ -81,6 +83,11 @@ public:
 	int GetCluster(int index) const { return metalInfos[index].clusterId; }
 
 	int GetMexToBuild(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate);
+	// Same walk over safe clusters, but collects open spots from up to maxClusters nearest clusters (by graph
+	// distance) and returns the spot with the lowest score(spotIndex); -1 if none
+	using SpotScore = std::function<float (int index)>;
+	int GetMexToBuild(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate,
+					  unsigned maxClusters, const SpotScore& score);
 
 	float GetMinIncome() const { return metalData->GetMinIncome(); }
 	float GetAvgIncome() const { return metalData->GetAvgIncome(); }
@@ -110,6 +117,7 @@ private:
 
 	class SafeCluster;
 	class DetectCluster;
+	class DetectClusters;
 	using ClusterGraph = lemon::FilterNodes<const CMetalData::ClusterGraph, SafeCluster>;
 	using ShortPath = lemon::Dijkstra<ClusterGraph, CMetalData::ClusterCostMap>;
 

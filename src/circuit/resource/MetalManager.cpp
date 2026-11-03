@@ -66,6 +66,35 @@ private:
 	std::vector<int>& indices;
 };
 
+// Goal for the cluster walk that records open spots per cluster: true for a cluster with any open spot.
+// Unlike DetectCluster it doesn't stay true once something was found, so the walk can go on to the next cluster.
+class CMetalManager::DetectClusters : public lemon::MapBase<ClusterGraph::Node, bool> {
+public:
+	DetectClusters(CMetalManager* mgr, CMetalData::PointPredicate& pred, std::vector<int>& outIdxs)
+		: manager(mgr)
+		, predicate(pred)
+		, indices(outIdxs)
+	{}
+	Value operator[](Key k) const {
+		const int u = CMetalData::ClusterGraph::id(k);
+		if (manager->IsClusterQueued(u) || manager->IsClusterFinished(u)) {
+			return false;
+		}
+		bool isFound = false;
+		for (int index : manager->GetClusters()[u].idxSpots) {
+			if (predicate(index)) {
+				indices.push_back(index);
+				isFound = true;
+			}
+		}
+		return isFound;
+	}
+private:
+	CMetalManager* manager;
+	CMetalData::PointPredicate predicate;
+	std::vector<int>& indices;
+};
+
 CMetalManager::CMetalManager(CCircuitAI* circuit, CMetalData* metalData)
 		: circuit(circuit)
 		, metalData(metalData)
@@ -336,6 +365,44 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 				sqMinDist = sqDist;
 				result = index;
 			}
+		}
+	}
+
+	indices.clear();
+	return result;
+}
+
+int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate& predicate,
+								 unsigned maxClusters, const SpotScore& score)
+{
+	int index = FindNearestCluster(pos);
+	if (index < 0 || !(*threatFilter)[index]) {
+		return -1;
+	}
+	MarkAllyMexes();
+
+	static std::vector<int> indices;  // NOTE: micro-opt
+	indices.clear();
+
+	DetectClusters goal(this, predicate, indices);
+	shortPath->init();
+	shortPath->addSource(filteredGraph->nodeFromId(index));
+	// Each start() stops with the next cluster that has an open spot on top of the heap; process it so the
+	// next start() goes on from there
+	for (unsigned found = 0; found < std::max(maxClusters, 1u); ++found) {
+		if (shortPath->start(goal) == lemon::INVALID) {
+			break;
+		}
+		shortPath->processNextNode();
+	}
+
+	int result = -1;
+	float minScore = std::numeric_limits<float>::max();
+	for (int idx : indices) {
+		const float s = score(idx);
+		if (s < minScore) {
+			minScore = s;
+			result = idx;
 		}
 	}
 

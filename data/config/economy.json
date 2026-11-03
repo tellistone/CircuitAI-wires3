@@ -77,6 +77,12 @@
 	// Multiplier on the open mex job cap, (build power / mex cost * 8 + 2) * <mex_jobs>
 	"mex_jobs": 1.5,
 
+	// Mex spot choice leans towards the front (the lane point between our base and the enemy).
+	// Open spots from the <clusters> nearest safe clusters are scored by distance x (1 - <bias> x progress),
+	// progress = how far the spot is along base -> lane (0 at base, 1 at the lane, clamped to [-1, 1]); lowest wins.
+	// bias 0 and clusters 1 = old behaviour (nearest spot in the nearest cluster with an open spot).
+	"mex_front": {"bias": 0.15, "clusters": 3},
+
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,
 

@@ -393,6 +393,9 @@ void CEconomyManager::Init()
 	mexMax = (mm < 1.f) ? decltype(mexMax)(mm * spSize) : std::numeric_limits<decltype(mexMax)>::max();
 	isAllyMexMax = mexCap.get((unsigned)1, true).asBool();
 	mexJobMod = std::max(econ.get("mex_jobs", 1.5f).asFloat(), 0.f);
+	const Json::Value& mexFront = econ["mex_front"];
+	mexFrontBias = utils::clamp(mexFront.get("bias", 0.15f).asFloat(), -0.9f, 0.9f);
+	mexFrontClusters = std::max(mexFront.get("clusters", 3).asInt(), 1);
 
 	// [[<map size>, <seconds>], ...]: linear between points, clamped at the ends.
 	// Map size is sqrt(width * height) in 512-elmo map units, so 8x8 = 8 and 16x16 = 16.
@@ -795,7 +798,26 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 							&& map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING));
 				};
 			}
-			int index = metalMgr->GetMexToBuild(position, predicate);
+			int index;
+			const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+			const AIFloat3& lanePos = circuit->GetSetupManager()->GetLanePos();
+			if (((mexFrontBias != 0.f) || (mexFrontClusters > 1)) && utils::is_valid(basePos) && utils::is_valid(lanePos)
+				&& (basePos.SqDistance2D(lanePos) > SQUARE(SQUARE_SIZE)))
+			{
+				// Favour spots further towards the front: distance x (1 - bias x progress), where progress is the
+				// spot's projection on base->lane over the base-lane distance, clamped to [-1, 1] (lane = 1)
+				const AIFloat3 laneDir = (lanePos - basePos);
+				const float sqLaneLen = laneDir.SqLength2D();
+				const float bias = mexFrontBias;
+				CMetalManager::SpotScore score = [&spots, &position, &basePos, laneDir, sqLaneLen, bias](int idx) {
+					const AIFloat3& sp = spots[idx].position;
+					const float progress = utils::clamp((sp - basePos).dot2D(laneDir) / sqLaneLen, -1.f, 1.f);
+					return sp.distance2D(position) * (1.f - bias * progress);
+				};
+				index = metalMgr->GetMexToBuild(position, predicate, mexFrontClusters, score);
+			} else {
+				index = metalMgr->GetMexToBuild(position, predicate);
+			}
 			if (index != -1) {
 				const AIFloat3& pos = spots[index].position;
 				IBuilderTask* mexTask = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos, IBuilderTask::BuildType::MEX, cost, .0f);
