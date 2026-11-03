@@ -1003,7 +1003,8 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 
 void CEconomyManager::UpdateGeoSpots()
 {
-	// Vents may only be visible once in LOS, so known spots are merged with whatever is visible now
+	// Zero-K keeps Gaia features (map vents) visible through fog (featureLOS.featureVisibility = 1), so this
+	// normally finds every vent at once; merging with known spots covers games where features need LOS
 	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
 	for (Feature* feature : features) {
 		FeatureDef* featDef = feature->GetDef();
