@@ -177,7 +177,10 @@ void CFGuardTask::OnUnitIdle(CCircuitUnit* unit)
 	CCircuitAI* circuit = manager->GetCircuit();
 	CCircuitUnit* vip = circuit->GetTeamUnit(vipId);
 	if (vip != nullptr) {
-		if (!isInterposing) {  // an interposing guard that reached its spot holds it until the next Update
+		// An interposing guard that reached its spot holds it until the next Update. One that stopped short
+		// (move failed or blocked) goes back to Guard, so it isn't left standing where the spot never re-orders it
+		const float sqSlack = SQUARE(SQUARE_SIZE * 8);
+		if (!isInterposing || (unit->GetPos(circuit->GetLastFrame()).SqDistance2D(interposeSpot) > sqSlack)) {
 			GuardVip(unit, vip);
 		}
 	} else {
@@ -369,12 +372,16 @@ void CFGuardTask::Interpose(CCircuitUnit* unit, CCircuitUnit* vip)
 	float minSqDist = SQUARE(cfg.interposeRange);
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		const CEnemyInfo* enemy = kv.second;
-		if (enemy->IsHidden()) {
+		// Only what is seen now: a last-known position would send the guard after a ghost
+		if (!enemy->IsInRadarOrLOS() || enemy->IsHidden()
+			|| enemy->IsBeingBuilt() || enemy->IsParalyzed() || enemy->IsDisarmed())
+		{
 			continue;
 		}
 		const CCircuitDef* edef = enemy->GetCircuitDef();
-		// Unknown radar dots count; known enemies only if they can shoot and a ground guard can stand in the way
-		if ((edef != nullptr) && (!edef->IsAttacker() || edef->IsAbleToFly())) {
+		// Unknown radar dots count; known enemies only if they can shoot, move (a turret doesn't come closer,
+		// standing in front of it only draws its fire) and a ground guard can stand in their way
+		if ((edef != nullptr) && (!edef->IsAttacker() || !edef->IsMobile() || edef->IsAbleToFly())) {
 			continue;
 		}
 		const float sqDist = vipPos.SqDistance2D(enemy->GetPos());
