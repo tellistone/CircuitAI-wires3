@@ -45,6 +45,14 @@ public:
 	// Threat at or below this counts as none: no route cost, and the path is straightened across it.
 	// Call after creating the query, before running it. The threat cap (maxThreat) is unchanged
 	void SetThreatFloor(float value);
+	// Dynamic threat cost: the usual 2x threat weight becomes (1 + threat / allowance), where allowance is the
+	// threat the group tolerates at that cell, so a cell costs threat x (1 + threat / allowance) instead of
+	// 2 x threat: cheaper below the allowance, the same at it, steeper above. Units pathed on the cloak array
+	// (weight 1x) get half of that. allowance depends only on distance from basePos: allowByDist[i] is the
+	// allowance at i x step elmos (the last entry beyond). Call after creating the query, before running it
+	// (SetThreatFloor in either order). maxWeight caps (1 + threat / allowance) (0 or less = no cap)
+	void SetThreatAllowance(std::vector<float>&& allowByDist, float step, const springai::AIFloat3& basePos,
+			int pathMapXSize, int squareSize, float maxWeight = 0.f);
 	float GetThreatFloor() const { return threatFloor; }
 	const FloatVec& GetHeightMap() const { return heightMap; }
 
