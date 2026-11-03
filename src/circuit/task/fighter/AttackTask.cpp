@@ -1057,7 +1057,8 @@ void CAttackTask::PullBackEndangered(int frame)
 
 bool CAttackTask::Flee(int frame)
 {
-	// Run to the nearest stronger attack group (fight beside it, then merge), else the closest haven, else base
+	// Run to the nearest stronger attack group (fight beside it, then merge), else the nearest front position,
+	// else the closest haven, else base
 	CCircuitAI* circuit = manager->GetCircuit();
 	AIFloat3 dest = -RgtVector;
 	CAttackTask* squad = static_cast<CMilitaryManager*>(manager)->FindReinforceSquad(leader, attackPower, this);
@@ -1067,6 +1068,25 @@ bool CAttackTask::Flee(int frame)
 		const float together = GetSafeThreat() + squad->GetSafeThreat();
 		if (circuit->GetThreatMap()->GetThreatAt(leader, squadPos) < GetAllowedThreatAt(squadPos, together)) {
 			dest = squadPos;
+		}
+	}
+	if (!utils::is_valid(dest)) {
+		// Nearest front position (FillFrontPos: our cluster nearest the enemy lane) that we can stand at alone,
+		// and not right here (within 400 we'd count as arrived and stop running)
+		static F3Vec frontPositions;  // NOTE: micro-opt
+		circuit->GetMilitaryManager()->FillFrontPos(leader, frontPositions);
+		const AIFloat3& pos = leader->GetPos(frame);
+		const float strength = GetSafeThreat();
+		CThreatMap* threatMap = circuit->GetThreatMap();
+		float minSqDist = std::numeric_limits<float>::max();
+		for (const AIFloat3& p : frontPositions) {
+			const float sqDist = pos.SqDistance2D(p);
+			if ((sqDist >= SQUARE(400.f)) && (sqDist < minSqDist)
+				&& (threatMap->GetThreatAt(leader, p) < GetAllowedThreatAt(p, strength)))
+			{
+				minSqDist = sqDist;
+				dest = p;
+			}
 		}
 	}
 	if (!utils::is_valid(dest)) {
