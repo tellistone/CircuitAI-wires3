@@ -14,6 +14,7 @@
 #include "unit/CircuitDef.h"
 
 #include <vector>
+#include <functional>
 #include <set>
 
 namespace circuit {
@@ -172,6 +173,21 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
+	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
+	struct SContested {
+		float bonus;  // enemies there count as this many times closer (attack) / more valuable (raid); 1 = off
+		int maxAge;  // frames a wall mark lasts without being seen again
+		float range;  // elmos beyond the cluster's radius that still count as "there"
+	};
+	const SContested& GetContested() const { return contested; }
+	struct SContestedSpot {
+		springai::AIFloat3 pos;
+		float sqRadius;
+	};
+	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below allowedAt(centre),
+	// reachable within 'reach'. Call after threatMap->SetThreatType(unit). Empty when quota.contested.bonus <= 1
+	void GetTakeableContested(CCircuitUnit* unit, float reach, const std::function<float (const springai::AIFloat3&)>& allowedAt,
+			std::vector<SContestedSpot>& outSpots);
 	float GetAttackPathIgnoreThreat() const { return attackPathIgnoreThreat; }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / group strength)
 	enum class AttackPath: int { TARGET = 0, REINFORCE, FRONT, FLEE, CORNERED, _SIZE_ };
@@ -306,6 +322,7 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackKeepThreat;  // quota.attack_keep_threat
+	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	bool attackPathDynamic[static_cast<int>(AttackPath::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
