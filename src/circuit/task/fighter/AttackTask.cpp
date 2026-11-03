@@ -58,6 +58,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, hitFrame(-1)
 		, scaleRefSqDist(0.f)
 		, anchorTargetId(-1)
+		, fleeTargetId(-1)
 		, targetRouteTries(0)
 		, corneredFrame(-1)
 		, isReplanForced(false)
@@ -687,7 +688,11 @@ void CAttackTask::FindTarget()
 	pickSqDist = isEnemyGround ? 0.f : sqOBDist;  // 0: ApplyTargetPath keeps no anchor either
 	std::vector<std::pair<float, CEnemyInfo*>> candidates;  // (scaled distance, enemy)
 
-	const ICoreUnit::Id prevTargetId = (target != nullptr) ? target->GetId() : -1;
+	// After an escape the target was let go (other groups may take it while we run), but it is still ours at this
+	// pick: same stickiness (quota.attack_keep_threat) as if we had kept it. During the cautious window that is
+	// 0.75 x 1.34 ~ the usual allowance, so we don't walk straight back into what we ran from
+	const ICoreUnit::Id prevTargetId = (target != nullptr) ? target->GetId() : fleeTargetId;
+	fleeTargetId = -1;
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
 	threatMap->SetThreatType(leader);
 	// Targets whose route approach was unsafe are skipped for a while (else stickiness picks them again)
@@ -1142,6 +1147,9 @@ bool CAttackTask::Flee(int frame)
 		return false;  // already there: running gets us nowhere
 	}
 
+	if (target != nullptr) {
+		fleeTargetId = target->GetId();  // kept for the next pick (FindTarget)
+	}
 	SetTarget(nullptr);
 	state = State::ROAM;
 	isHolding = false;

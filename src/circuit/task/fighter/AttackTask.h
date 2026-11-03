@@ -124,6 +124,7 @@ private:
 	int hitFrame;
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
+	ICoreUnit::Id fleeTargetId;  // target dropped by the last escape: still counts as current at the next pick (-1: none)
 	int targetRouteTries;  // routes so far in this target decision (MAX_TARGET_ROUTES)
 	std::map<ICoreUnit::Id, int> rejectedUntil;  // targets dropped for an unsafe route approach -> skip until frame
 	int corneredFrame;  // last cornered check
