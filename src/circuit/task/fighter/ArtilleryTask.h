@@ -48,11 +48,9 @@ private:
 	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackNoSpot(CCircuitUnit* unit, bool isUpdating);  // no acceptable firing spot
 	float FillCoveredSpots(CCircuitUnit* unit, float range);  // fills firePositions, returns goal range
-	// Fills escorts, health-scaled; isFlee also counts static defences that can hit ground
-	void CollectEscorts(CCircuitUnit* unit, bool isFlee = false);
-	// Enough escort power near spot; for the flee check (isFlee), net of the threat of the enemies that set
-	// it off, and static defences count too
-	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot, float enemyThreat = 0.f, bool isFlee = false);
+	void CollectEscorts(CCircuitUnit* unit);  // fills escorts
+	// Enough escort power near spot; for the flee check, net of the threat of the enemies that set it off
+	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot, float enemyThreat = 0.f);
 
 	F3Vec safePositions;
 	bool isFleeing = false;

@@ -450,24 +450,17 @@ void IFighterTask::Log()
 }
 #endif
 
-float IFighterTask::GetCoverPower(CAllyUnit* ally, bool isStaticAllowed)
+float IFighterTask::GetCoverPower(CAllyUnit* ally)
 {
-	// Armed units; static ones (isStaticAllowed) only if they can hit ground or water, so anti-air turrets
-	// don't count. Nanoframes don't count. The caller filters aircraft and its own role (AA, artillery).
-	CCircuitDef* adef = ally->GetCircuitDef();
-	if ((adef == nullptr) || !adef->IsAttacker()) {
-		return 0.f;
-	}
-	if (!adef->IsMobile() && (!isStaticAllowed || !(adef->HasAntiLand() || adef->HasAntiWater()))) {
-		return 0.f;
-	}
+	// Power scaled by sqrt(health %), as squad strength is; nanoframes don't count.
+	// The caller filters which units count (mobile, armed, not aircraft, its own role)
 	springai::Unit* u = ally->GetUnit();
 	if (u->IsBeingBuilt()) {
 		return 0.f;
 	}
 	const float maxHealth = u->GetMaxHealth();
 	const float healthPerc = (maxHealth > 0.f) ? u->GetHealth() / maxHealth : 0.f;
-	return adef->GetPower() * sqrtf(std::max(healthPerc, 0.f));  // ally strength: pwr_mod, not thr_mod
+	return ally->GetCircuitDef()->GetPower() * sqrtf(std::max(healthPerc, 0.f));  // ally strength: pwr_mod, not thr_mod
 }
 
 } // namespace circuit

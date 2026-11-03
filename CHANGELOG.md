@@ -25,15 +25,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   safe spot further from it: an attack/defend group leader, a defended mex cluster or the base. It re-plans every 2 s
   while the danger stays and goes back to normal work once it is gone. With `antiair.flee_ally_threat` (default -1 = off; shipped 10)
   and `flee_ally_radius` (500) there is no early flee while our and allied mobile armed units (not AA, not aircraft)
-  and static defences that can hit ground within that radius of the leader, each at its power × √(health %), minus the threat of the enemies that set off the flee, add up to that much power
+  within that radius of the leader, each at its power × √(health %) (nanoframes don't count), minus the threat of the enemies that set off the flee, add up to that much power
   (artillery's `ally_threat`, net of the enemy): AA moving with an army stays with it, and flees once the army leaves,
   dies or is outweighed. If `flee_margin` is set and `flee_ally_threat` is missing, it defaults to 10.
 - **Artillery flee cover is net of the enemy.** The `artillery_flee_margin` check now needs the `ally_threat` escort
   power at the artillery's spot minus the summed threat of the enemies that set off the flee (each counted once) to
-  reach `ally_threat`, so an escort the enemy outweighs no longer holds artillery in place. For this check, static
-  defences that can hit ground count as cover too.
-- **Escort cover is health-scaled.** Artillery cover (firing spots and flee) and AA flee cover count each escort at
-  power × √(health %), as squad strength already does, so damaged escorts count for less and nanoframes not at all.
+  reach `ally_threat`, so an escort the enemy outweighs no longer holds artillery in place. Firing-spot cover is
+  unchanged.
 - **Mobile AA no longer joins attack groups.** In the shipped `behaviour.json`, cloakaa, amphaa, shieldaa, vehaa,
   jumpaa and tankaa had the `support` attribute, which adds the support role. Support units walk to the nearest attack
   or defend group and join it, so these AA never entered the anti-air task and never chased aircraft. The attribute is

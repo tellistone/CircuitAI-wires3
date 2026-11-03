@@ -833,11 +833,10 @@ bool CAntiAirTask::CheckFlee()
 
 bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat) const
 {
-	// Net escort power next to the squad: our and allied armed units within flee_ally_radius (as
-	// CArtilleryTask::HasCover; mobile ones but not AA (main role) or aircraft, so AA squads can't cover each
-	// other, plus static defences that can hit ground; each unit's power with its pwr_mod, scaled by
-	// sqrt(health %) as squad strength is) minus enemyThreat (the enemies that set off the flee) must reach
-	// flee_ally_threat. When the army leaves or dies, or the enemy outgrows it, the cover goes.
+	// Net escort power next to the squad: our and allied mobile armed units within flee_ally_radius (as
+	// CArtilleryTask::HasCover; not AA (main role) or aircraft, so AA squads can't cover each other; each
+	// unit's power with its pwr_mod, scaled by sqrt(health %) as squad strength is) minus enemyThreat (the
+	// enemies that set off the flee) must reach flee_ally_threat. When the army leaves or dies, or the enemy outgrows it, the cover goes.
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
 	const int frame = circuit->GetLastFrame();
@@ -847,14 +846,14 @@ bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat) const
 	for (auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* ally = kv.second;
 		CCircuitDef* adef = ally->GetCircuitDef();
-		if ((adef == nullptr) || !adef->IsAttacker() || adef->IsAbleToFly()
-			|| (adef->IsMobile() && (adef->GetMainRole() == ROLE_TYPE(AA))))
+		if ((adef == nullptr) || !adef->IsMobile() || !adef->IsAttacker() || adef->IsAbleToFly()
+			|| (adef->GetMainRole() == ROLE_TYPE(AA)))
 		{
 			continue;
 		}
 		const AIFloat3& allyPos = ally->GetPos(frame);
 		if (utils::is_valid(allyPos) && (allyPos.SqDistance2D(pos) <= sqRadius)) {
-			cover += GetCoverPower(ally, true);
+			cover += GetCoverPower(ally);
 			if (cover - enemyThreat >= aaCfg.fleeAllyThreat) {
 				return true;
 			}
