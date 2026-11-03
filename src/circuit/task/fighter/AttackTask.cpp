@@ -927,17 +927,34 @@ void CAttackTask::SetPathThreatFloor(IPathQuery* query) const
 
 void CAttackTask::SetPathThreatStrength(IPathQuery* query, int kind) const
 {
-	// Light threat (well below our strength) costs about half the flat 2x, threat equal to it the same, heavier
-	// threat more (quadratic). Big groups walk through what small ones go around
+	// Threat is weighed against the allowance at each cell (what the escape and the path-ahead check use): light
+	// threat costs less than the flat 2x, threat at the allowance the same, heavier threat more (quadratic).
+	// Big groups walk through what small ones go around
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	const CMilitaryManager::AttackPath pathKind = static_cast<CMilitaryManager::AttackPath>(kind);
-	if (militaryMgr->IsAttackPathDynamic(pathKind)) {
-		// Escapes: capped, so a weak group under heavy fire doesn't trade a short run through the worst of it
-		// for a much longer one through moderate threat (more time under fire, and a wider search)
-		const bool isEscape = (pathKind == CMilitaryManager::AttackPath::FLEE)
-				|| (pathKind == CMilitaryManager::AttackPath::CORNERED);
-		query->SetThreatStrength(GetSafeThreat(), isEscape ? militaryMgr->GetAttackFleePathMaxWeight() : 0.f);
+	if (!militaryMgr->IsAttackPathDynamic(pathKind)) {
+		return;
 	}
+	// The allowance depends only on distance from our base (base bonus, distance curve, near-base scale): sample
+	// it here, on this thread, at half-cell steps out to the map diagonal; the route runs on a worker thread
+	CCircuitAI* circuit = manager->GetCircuit();
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float safeThreat = GetSafeThreat();
+	const float step = std::max(pathfinder->GetSquareSize() * 0.5f, 1.f);
+	const float width = CTerrainManager::GetTerrainWidth();
+	const float height = CTerrainManager::GetTerrainHeight();
+	const int count = static_cast<int>(sqrtf(width * width + height * height) / step) + 2;
+	std::vector<float> allowByDist(count);
+	for (int i = 0; i < count; ++i) {
+		allowByDist[i] = GetAllowedThreatAt(basePos + AIFloat3((i + 0.5f) * step, 0.f, 0.f), safeThreat);
+	}
+	// Escapes: capped, so a weak group under heavy fire doesn't trade a short run through the worst of it
+	// for a much longer one through moderate threat (more time under fire, and a wider search)
+	const bool isEscape = (pathKind == CMilitaryManager::AttackPath::FLEE)
+			|| (pathKind == CMilitaryManager::AttackPath::CORNERED);
+	query->SetThreatAllowance(std::move(allowByDist), step, basePos, pathfinder->GetPathMapXSize(),
+			pathfinder->GetSquareSize(), isEscape ? militaryMgr->GetAttackFleePathMaxWeight() : 0.f);
 }
 
 bool CAttackTask::IsKeepAllowedAt(const AIFloat3& pos) const
