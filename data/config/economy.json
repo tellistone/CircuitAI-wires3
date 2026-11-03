@@ -62,7 +62,7 @@
 	// helper_sec: a job takes another constructor while its metal is above <helper_sec> seconds of the build power on it.
 	// store_at: while any constructor reclaims and metal is above this share of storage, queue a storage at HIGH; 0 disables.
 	// New reclaim jobs stop above 80% metal storage; running ones carry on.
-	"reclaim": {"value_exp": 0.5, "helper_sec": 10.0, "store_at": 0.7},
+	"reclaim": {"value_exp": 0.5, "helper_sec": 20.0, "store_at": 0.7},
 
 	// Seconds before a non-combat constructor may build a mex at an undefended cluster without an escort,
 	// by map size: [[<map size>, <seconds>], ...], linear between points and clamped at the ends.

@@ -298,7 +298,7 @@ void CEconomyManager::ReadConfig()
 	metalMod = (1.f - econ.get("excess", -1.f).asFloat());
 	const Json::Value& recl = econ["reclaim"];
 	reclaimValueExp = recl.get("value_exp", 0.5f).asFloat();
-	reclaimHelperSec = std::max(recl.get("helper_sec", 10.f).asFloat(), 0.f);
+	reclaimHelperSec = std::max(recl.get("helper_sec", 20.f).asFloat(), 0.f);
 	reclaimStoreAt = recl.get("store_at", 0.7f).asFloat();
 	const Json::Value& swch = econ["switch"];
 	const int minSwitch = swch.get((unsigned)0, 800).asInt();
