@@ -14,8 +14,6 @@
 
 namespace circuit {
 
-class CAttackTask;
-
 class CAntiAirTask: public ISquadTask {
 public:
 	CAntiAirTask(ITaskManager* mgr, float powerMod);
@@ -55,10 +53,8 @@ private:
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
 	bool CheckFlee();  // antiair.flee_margin; true while fleeing
-	bool IsFleeCovered(const springai::AIFloat3& pos) const;  // antiair.flee_cover
+	bool IsFleeCovered(const springai::AIFloat3& pos) const;  // antiair.flee_ally_threat / flee_ally_radius
 	void Flee(const springai::AIFloat3& dangerPos);
-	void FleeTo(const springai::AIFloat3& goal);
-	CAttackTask* FindEscortedGroup(int frame) const;  // antiair.group_escape: nearest attack group leader in reach
 	void ApplyFleePath(const CQueryPathSingle* query);
 
 	float GetAirRange() const;  // the squad's range against aircraft

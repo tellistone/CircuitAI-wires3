@@ -106,8 +106,8 @@
 	"own_ground": true,  // also counts as near home: the spot the squad would shoot from is covered by our buildings or static defences (defence.infl_rad), or our other armed units beat the enemy (not counting the plane) under the aircraft
 	"fire_spot": 0.9,  // check enemy threat where the squad would stand to shoot (this fraction of its shortest weapon range short of the aircraft, towards the squad) instead of under the aircraft; -1 = old check under the aircraft
 	"flee_margin": 300.0,  // flee when an armed mobile ground enemy we see now (or a moving low radar blip) is within its weapon range + this of a squad unit: to the nearest attack/defend group, defended mex cluster or base further from it; -1 = off (flee only once hit)
-	"flee_cover": true,  // no early flee while our other armed units' influence at the squad leader beats the enemy's (it stands with an army or defences)
-	"group_escape": 600.0  // within this distance of an attack group leader the squad follows the group's call instead of flee_margin/flee_cover: no flee of its own, and when the group escapes it runs to the same spot; -1 = off
+	"flee_ally_threat": 10.0,  // no early flee while our and allied mobile armed units (not AA, not aircraft) within flee_ally_radius of the squad leader add up to at least this power (pwr_mod included), as artillery's ally_threat; -1 = flee regardless of escorts
+	"flee_ally_radius": 500.0  // see flee_ally_threat
 },
 
 "artillery": {

@@ -120,8 +120,8 @@ public:
 		bool isOwnGround;  // aircraft over ground where our influence beats the enemy's also count as near home
 		float fireSpot;  // threat is checked where the AA would shoot from: this fraction of its range short of the aircraft; < 0 = at the aircraft
 		float fleeMargin;  // flee when an armed mobile ground enemy is within its range + this of a squad unit; < 0 = off
-		bool isFleeCover;  // no flee while our other armed units' influence at the leader beats the enemy's
-		float groupEscape;  // within this of an attack group leader: no own flee, run with the group's escape; < 0 = off
+		float fleeAllyThreat;  // no flee while our mobile armed units (not AA, not aircraft) within fleeAllyRadius of the leader have this much power; < 0 = always flee
+		float fleeAllyRadius;
 	};
 	const SAntiAirCfg& GetAntiAirCfg() const { return antiAir; }
 	bool IsGuardRole(CCircuitDef* cdef) const;

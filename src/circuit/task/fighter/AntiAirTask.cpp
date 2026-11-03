@@ -6,7 +6,6 @@
  */
 
 #include "task/fighter/AntiAirTask.h"
-#include "task/fighter/AttackTask.h"
 #include "task/TaskManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -755,29 +754,13 @@ void CAntiAirTask::HoldAll()
 bool CAntiAirTask::CheckFlee()
 {
 	// antiair.flee_margin: flee when an armed mobile ground enemy we see now (or a moving low radar blip)
-	// is within its weapon range + margin of any squad unit, unless (flee_cover) our other armed units hold
-	// the ground at the leader. Returns true while fleeing
+	// is within its weapon range + margin of any squad unit, unless (flee_ally_threat) enough of our mobile
+	// armed units stand next to the leader, as artillery does. Returns true while fleeing
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
 	CEnemyInfo* danger = nullptr;
 	const int frame = circuit->GetLastFrame();
-
-	// antiair.group_escape: next to an attack group, follow its call instead of judging alone. While it doesn't
-	// escape the squad counts as covered (no own flee, so it doesn't run off and come back at the front); when
-	// it escapes, run to the same spot
-	CAttackTask* group = (leader != nullptr) ? FindEscortedGroup(frame) : nullptr;
-	if (group != nullptr) {
-		const AIFloat3& dest = group->GetFleeDest();
-		if (group->IsEscaping(frame) && utils::is_valid(dest)) {
-			if ((isFleeing && (frame < fleeFrame)) || !IsQueryReady(leader)) {
-				return true;  // already on the way
-			}
-			isFleeing = true;
-			fleeFrame = frame + FRAMES_PER_SEC * 2;  // re-plan every 2 s: the group may pick another spot
-			FleeTo(dest);
-			return true;
-		}
-	} else if ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) {
+	if ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) {
 		CMap* map = circuit->GetMap();
 		float minSqDist = std::numeric_limits<float>::max();
 		for (auto& kv : circuit->GetEnemyInfos()) {
@@ -815,7 +798,7 @@ bool CAntiAirTask::CheckFlee()
 				}
 			}
 		}
-		if ((danger != nullptr) && aaCfg.isFleeCover && IsFleeCovered(leader->GetPos(frame))) {
+		if ((danger != nullptr) && (aaCfg.fleeAllyThreat >= 0.f) && IsFleeCovered(leader->GetPos(frame))) {
 			danger = nullptr;
 		}
 	}
@@ -842,13 +825,32 @@ bool CAntiAirTask::CheckFlee()
 
 bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos) const
 {
-	// Our armed influence at pos without the squad's own share beats the enemy's: an army or defences stand here
-	CInfluenceMap* inflMap = manager->GetCircuit()->GetInflMap();
-	float allyInfl = inflMap->GetAllyInflAt(pos);
-	for (CCircuitUnit* u : units) {
-		allyInfl -= inflMap->GetMobileArmedInflAt(u, pos);
+	// Escort power next to the squad, as CArtilleryTask::HasCover: our and allied mobile armed units within
+	// flee_ally_radius, not counting AA (main role) or aircraft, so AA squads can't cover each other.
+	// Power is each unit's power with its pwr_mod. When the army leaves or dies, the cover goes with it.
+	CCircuitAI* circuit = manager->GetCircuit();
+	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
+	const int frame = circuit->GetLastFrame();
+	const float sqRadius = SQUARE(aaCfg.fleeAllyRadius);
+	circuit->UpdateFriendlyUnits();  // drop units that died since the last refresh
+	float cover = 0.f;
+	for (auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* ally = kv.second;
+		CCircuitDef* adef = ally->GetCircuitDef();
+		if ((adef == nullptr) || !adef->IsMobile() || !adef->IsAttacker() || adef->IsAbleToFly()
+			|| (adef->GetMainRole() == ROLE_TYPE(AA)))
+		{
+			continue;
+		}
+		const AIFloat3& allyPos = ally->GetPos(frame);
+		if (utils::is_valid(allyPos) && (allyPos.SqDistance2D(pos) <= sqRadius)) {
+			cover += adef->GetPower();
+			if (cover >= aaCfg.fleeAllyThreat) {
+				return true;
+			}
+		}
 	}
-	return (allyInfl > INFL_EPS) && (allyInfl > inflMap->GetEnemyInflAt(pos));
+	return false;
 }
 
 void CAntiAirTask::Flee(const AIFloat3& dangerPos)
@@ -889,38 +891,7 @@ void CAntiAirTask::Flee(const AIFloat3& dangerPos)
 		FallbackBasePos(true);
 		return;
 	}
-	FleeTo(*best);
-}
-
-CAttackTask* CAntiAirTask::FindEscortedGroup(int frame) const
-{
-	const CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
-	const float reach = militaryMgr->GetAntiAirCfg().groupEscape;
-	if (reach < 0.f) {
-		return nullptr;
-	}
-	const AIFloat3& pos = leader->GetPos(frame);
-	CAttackTask* best = nullptr;
-	float minSqDist = SQUARE(reach);
-	for (IFighterTask* task : militaryMgr->GetTasks(IFighterTask::FightType::ATTACK)) {
-		CAttackTask* attack = static_cast<CAttackTask*>(task);
-		if (attack->GetLeader() == nullptr) {
-			continue;
-		}
-		const float sqDist = pos.SqDistance2D(attack->GetLeaderPos(frame));
-		if (sqDist <= minSqDist) {
-			minSqDist = sqDist;
-			best = attack;
-		}
-	}
-	return best;
-}
-
-void CAntiAirTask::FleeTo(const AIFloat3& goal)
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& startPos = leader->GetPos(frame);
+	const AIFloat3 goal = *best;
 	const float pathRange = DEFAULT_SLACK * 4;
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();

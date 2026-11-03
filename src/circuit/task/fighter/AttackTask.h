@@ -35,10 +35,6 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
-	// The group's escape, for units that follow it without being members (anti-air)
-	bool IsEscaping(int frame) const { return (frame < fleeFrame) && !isAtFleeDest; }
-	const springai::AIFloat3& GetFleeDest() const { return fleeDest; }  // -RgtVector before the first escape
-
 private:
 	ISquadTask* GetAttackMergeTask();
 	// Attack (firing spots), and walk stragglers (IsOutOfReach) to the leader if they have no path
