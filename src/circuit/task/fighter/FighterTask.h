@@ -112,6 +112,14 @@ protected:
 	// Flee cover: a static unit that defends against ground or water units nearby. The threat map's rule:
 	// a ground/water threat range, which static AA and superweapons (range over 2000) don't get
 	static bool IsStaticDefence(CCircuitDef* cdef);
+	// Flee: an enemy we see now (not a last-known ghost) that can act and hit ground or water units: a mobile
+	// armed unit with a ground/water weapon, not flying (isGunship: gunships count, planes never do), or an
+	// unidentified radar blip that moves (a parked building blip is no danger).
+	// outRange: its ground/water weapon range, 0 for a blip
+	static bool IsGroundDanger(CEnemyInfo* enemy, bool isGunship, float& outRange);
+	// Flee: the nearest spot further from the danger than pos is, else the one furthest from it; nullptr if none
+	static const springai::AIFloat3* PickFleeSpot(const springai::AIFloat3& pos, const springai::AIFloat3& dangerPos,
+			const F3Vec& spots);
 
 #ifdef DEBUG_VIS
 public:

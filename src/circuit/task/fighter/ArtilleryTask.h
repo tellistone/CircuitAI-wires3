@@ -9,6 +9,10 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_ARTILLERYTASK_H_
 
 #include "task/fighter/FighterTask.h"
+#include "module/MilitaryManager.h"
+
+#include <memory>
+#include <vector>
 
 namespace circuit {
 
@@ -27,40 +31,52 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 
 private:
+	const CMilitaryManager::SArtilleryCfg& GetCfg() const;  // artillery block of behaviour.json
+	float GetMaxPathThreat(CCircuitUnit* unit) const;  // max_path_threat x own power, or no limit
+
+	// Shooting and walking to firing spots
 	void Execute(CCircuitUnit* unit, bool isUpdating);
-	CEnemyInfo* FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);
+	CEnemyInfo* FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);  // in range, else fills enemyPositions
 	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating);
+	float FillCoveredSpots(CCircuitUnit* unit, float range);  // ally_threat: fills firePositions, returns goal range
+
+	// Nothing to shoot or walk to
+	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // no known building
+	void FallbackNoSpot(CCircuitUnit* unit, bool isUpdating);  // no acceptable firing spot
+	void FallbackStay(CCircuitUnit* unit, bool isUpdating);  // no_scout: hold if safe and covered, else FallbackSafePos
+	void HoldHere(CCircuitUnit* unit);  // stop walking (incl. queued engine waypoints) and wait
+	void ApplyPathOrHold(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath);  // walk, or hold if already there
+	void FillSafeSpots(CCircuitUnit* unit);  // safePositions: FillSafePos pulled back by follow_dist
+	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // move to the nearest safety spot
+	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackBasePos(CCircuitUnit* unit, bool isUpdating);
 	void ApplyBasePos(const CQueryPathSingle* query, bool isUpdating);
+	// Old fallbacks (no_scout false)
 	void FallbackScout(CCircuitUnit* unit, bool isUpdating);
 	void ApplyScoutPath(const CQueryPathSingle* query);
 	void Fallback(CCircuitUnit* unit, bool proceed);
 
-	// artillery block of behaviour.json
-	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // nothing to walk to
-	void FallbackStay(CCircuitUnit* unit, bool isUpdating);  // no_scout: hold if safe and covered, else FallbackSafePos
-	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // move to the nearest group
-	void HoldHere(CCircuitUnit* unit);
-	void FillSafeSpots(CCircuitUnit* unit);  // safePositions: FillSafePos pulled back by follow_dist
-	bool CheckFlee(CCircuitUnit* unit);  // artillery_flee_margin; true while fleeing
+	// Early flee (artillery_flee_margin)
+	bool CheckFlee(CCircuitUnit* unit);  // true while fleeing
+	CEnemyInfo* FindDanger(const springai::AIFloat3& pos, float fleeMargin, float& outThreat) const;
 	void Flee(CCircuitUnit* unit, const springai::AIFloat3& dangerPos);
-	void ApplyFleePath(const CQueryPathSingle* query);  // stop walking (incl. queued engine waypoints) and wait
-	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
-	void FallbackNoSpot(CCircuitUnit* unit, bool isUpdating);  // no acceptable firing spot
-	float FillCoveredSpots(CCircuitUnit* unit, float range);  // fills firePositions, returns goal range
-	// Fills escorts; isFlee also counts static defences that can hit ground
-	void CollectEscorts(CCircuitUnit* unit, bool isFlee = false);
-	// Enough escort power near spot; for the flee check (isFlee), net of the threat of the enemies that set
-	// it off, and static defences count too
+	void ApplyFleePath(const CQueryPathSingle* query);
+
+	// Cover (ally_threat, ally_radius)
+	static bool IsEscort(CCircuitUnit* unit, CAllyUnit* ally, bool isFlee);  // isFlee: static defences count too
+	void CollectEscorts(CCircuitUnit* unit);  // fills escorts (mobile only)
+	// Escort power near spot, net of enemyThreat, reaches ally_threat
 	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot, float enemyThreat = 0.f, bool isFlee = false);
 
-	F3Vec safePositions;
 	bool isFleeing = false;
 	int fleeFrame = 0;  // re-plan the flee after this frame
-	F3Vec firePositions;  // covered firing cells (ally_threat)
-	std::vector<float> coverGrid;  // FillCoveredSpots scratch
-	std::vector<char> cellAdded;
-	std::vector<std::pair<springai::AIFloat3, float>> escorts;  // position, threat
+
+	// Scratch shared by all artillery tasks (micro-opt, as IFighterTask::enemyPositions)
+	static F3Vec safePositions;
+	static F3Vec firePositions;  // covered firing cells
+	static std::vector<std::pair<springai::AIFloat3, float>> escorts;  // position, power
+	static std::vector<float> coverGrid;  // FillCoveredSpots: cover per cell of the escorts' area
+	static std::vector<char> cellAdded;  // FillCoveredSpots: cell already checked
 };
 
 } // namespace circuit
