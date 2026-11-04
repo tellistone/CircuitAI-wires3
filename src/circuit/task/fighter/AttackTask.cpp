@@ -157,6 +157,7 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 	unit->PushTravelAct(travelAction);
 	travelAction->StateWait();
 	unit->SetAllowedToJump(cdef->IsAbleToJump() && cdef->IsAttrJump());
+	lastRoute.path = nullptr;  // the group changed: next decision plans anew (speed, strength)
 }
 
 void CAttackTask::RemoveAssignee(CCircuitUnit* unit)
@@ -167,6 +168,7 @@ void CAttackTask::RemoveAssignee(CCircuitUnit* unit)
 		return;
 	}
 	UpdateHighestRange();
+	lastRoute.path = nullptr;  // the group changed: next decision plans anew (speed, strength)
 	// Under quota.attack after a loss the group stays together (it used to break up and walk home
 	// to gather); Update() looks for a stronger group to reinforce while it is not engaged.
 }
@@ -175,6 +177,7 @@ void CAttackTask::Merge(ISquadTask* task)
 {
 	ISquadTask::Merge(task);
 	UpdateHighestRange();
+	lastRoute.path = nullptr;  // the group changed: next decision plans anew (speed, strength)
 	// The newcomers usually start a regroup. A leader standing where the last regroup began counts as stuck
 	// (IsMustRegroup), which would drop the leader of a group that holds still while taking in several groups
 	prevGroupPos = -RgtVector;

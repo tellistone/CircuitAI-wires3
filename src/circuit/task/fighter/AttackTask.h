@@ -191,7 +191,7 @@ private:
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget (0: on enemy-held ground)
-	SRoute lastRoute;
+	SRoute lastRoute;  // dropped when a unit joins or leaves: a fresh route re-sends the path at the group's new speed
 
 	// Holding
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)

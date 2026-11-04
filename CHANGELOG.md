@@ -162,7 +162,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   keeps the route it is walking for up to 3 s, while the target moved less than one path square (64 elmos on most
   maps), no unit is in danger, nothing unsafe lies just ahead and the ground it would fight the target from is still
   safe for its current strength. A moving target is re-planned as before, and so is any decision where a unit asked
-  for a re-plan (danger ahead, a sudden threat).
+  for a re-plan (danger ahead, a sudden threat) or right after a unit joined or left the group.
 - Attack group target picking checks the cheap things (type, speed) before threat, reachability and height, and the
   front search no longer copies the map's cluster list on every call. Same picks.
 - Attack group code reorganised for reading: the near-base threat reference is passed explicitly instead of being
