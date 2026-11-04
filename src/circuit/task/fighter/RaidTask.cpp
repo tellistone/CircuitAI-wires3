@@ -344,18 +344,10 @@ bool CRaidTask::FindTarget()
 	threatMap->SetThreatType(leader);
 	// Contested clusters (threat there blocks our mex expansion) that this group can take: an enemy there counts
 	// quota.contested.bonus times closer as a route goal
-	std::vector<CMilitaryManager::SContestedSpot> contested;
+	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	militaryMgr->GetTakeableContested(leader, highestRange,
 			[this, maxPower](const AIFloat3& p) { return GetSafeThreatAt(p, maxPower); }, contested);
 	const float contestedBonus = militaryMgr->GetContested().bonus;
-	auto isContested = [&contested](const AIFloat3& ePos) {
-		for (const CMilitaryManager::SContestedSpot& c : contested) {
-			if (ePos.SqDistance2D(c.pos) <= c.sqRadius) {
-				return true;
-			}
-		}
-		return false;
-	};
 	F3Vec contestedPositions;
 	float sqContestedDist = std::numeric_limits<float>::max();
 	float sqOtherDist = std::numeric_limits<float>::max();
@@ -454,7 +446,7 @@ bool CRaidTask::FindTarget()
 			urgentPositions.push_back(ePos);
 		} else {
 			enemyPositions.push_back(ePos);
-			if (!contested.empty() && isContested(ePos)) {
+			if (CMilitaryManager::IsInContested(contested, ePos)) {
 				contestedPositions.push_back(ePos);
 				sqContestedDist = std::min(sqContestedDist, sqDist);
 			} else {
@@ -516,7 +508,8 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
 	// unless we're already there; else the usual mex-spot roaming
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	std::vector<CMilitaryManager::SContestedSpot> contested;
+	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
+	contested.clear();
 	threatMap->SetThreatType(leader);
 	if (isContestedAllowed) {
 		const float cautionMod = (frame < fleeFrame + FRAMES_PER_SEC * 4) ? 0.75f : 1.f;  // same as FindTarget

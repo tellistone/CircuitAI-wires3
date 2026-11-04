@@ -686,7 +686,12 @@ void CAttackTask::FindTarget()
 		return isEnemyGround ? 0.f : (((prevAnchorId >= 0) && (e->GetId() == prevAnchorId)) ? prevRef : sqOBDist);
 	};
 	pickSqDist = isEnemyGround ? 0.f : sqOBDist;  // 0: ApplyTargetPath keeps no anchor either
-	std::vector<std::pair<float, CEnemyInfo*>> candidates;  // (scaled distance, enemy)
+	struct SCandidate {
+		float key;  // rawKey x target_dist_mod^2, / quota.contested.bonus^2 in a contested cluster: the ranking
+		float rawKey;  // squared distance x near-base scale: about what the route sees
+		CEnemyInfo* enemy;
+	};
+	std::vector<SCandidate> candidates;
 
 	// After an escape the target was let go (other groups may take it while we run), but it is still ours at this
 	// pick: same stickiness (quota.attack_keep_threat) as if we had kept it. During the cautious window that is
@@ -698,7 +703,7 @@ void CAttackTask::FindTarget()
 	// Contested clusters (threat there blocks our mex expansion) that this group can take: enemies there count as
 	// quota.contested.bonus times closer. Judged at the full allowance from where we stand (no near-base anchor)
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	std::vector<CMilitaryManager::SContestedSpot> contested;
+	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	{
 		const float prevScaleRef = scaleRefSqDist;
 		scaleRefSqDist = 0.f;
@@ -706,22 +711,8 @@ void CAttackTask::FindTarget()
 				[this, maxPower](const AIFloat3& p) { return GetAllowedThreatAt(p, maxPower); }, contested);
 		scaleRefSqDist = prevScaleRef;
 	}
-	const float contestedBonus = militaryMgr->GetContested().bonus;
-	auto isContested = [&contested](const CEnemyInfo* enemy) {
-		const AIFloat3& ePos = enemy->GetPos();
-		for (const CMilitaryManager::SContestedSpot& c : contested) {
-			if (ePos.SqDistance2D(c.pos) <= c.sqRadius) {
-				return true;
-			}
-		}
-		return false;
-	};
 	// Off while any candidate is already within range: don't walk off from a fight for a contested target
 	bool isContestedOn = !contested.empty();
-	auto keyModFor = [&](const CEnemyInfo* enemy) {  // key = squared distance x SQUARE(this)
-		const float distMod = distModFor(enemy);
-		return (isContestedOn && isContested(enemy)) ? distMod / contestedBonus : distMod;
-	};
 	// Targets whose route approach was unsafe are skipped for a while (else stickiness picks them again)
 	for (auto it = rejectedUntil.begin(); it != rejectedUntil.end();) {
 		it = (it->second <= frame) ? rejectedUntil.erase(it) : std::next(it);
@@ -772,17 +763,18 @@ void CAttackTask::FindTarget()
 		}
 
 		// Own to Enemy distance, times the type's target_dist_mod (behaviour.json) so unwanted types count as farther
-		const float sqOEDist = pos.SqDistance2D(ePos) * scale * SQUARE(distModFor(enemy));
-		candidates.emplace_back(sqOEDist, enemy);
-		if (pos.SqDistance2D(ePos) < SQUARE(highestRange)) {
+		const float sqOEDist = pos.SqDistance2D(ePos);
+		candidates.push_back({sqOEDist * scale * SQUARE(distModFor(enemy)), sqOEDist * scale, enemy});
+		if (sqOEDist < SQUARE(highestRange)) {
 			isContestedOn = false;
 		}
 	}
 	// Enemies in a contested cluster we can take count quota.contested.bonus times closer
 	if (isContestedOn) {
-		for (auto& c : candidates) {
-			if (isContested(c.second)) {
-				c.first /= SQUARE(contestedBonus);
+		const float contestedMod = 1.f / SQUARE(militaryMgr->GetContested().bonus);
+		for (SCandidate& c : candidates) {
+			if (CMilitaryManager::IsInContested(contested, c.enemy->GetPos())) {
+				c.key *= contestedMod;
 			}
 		}
 	}
@@ -790,7 +782,7 @@ void CAttackTask::FindTarget()
 	// Nearest candidates first. A target within range must pass the straight-line screen here; one beyond
 	// range is checked on its route instead, when that comes back (ApplyTargetPath / IsApproachSafe)
 	std::sort(candidates.begin(), candidates.end(),
-			[](const std::pair<float, CEnemyInfo*>& a, const std::pair<float, CEnemyInfo*>& b) { return a.first < b.first; });
+			[](const SCandidate& a, const SCandidate& b) { return a.key < b.key; });
 	// Keep the nearest 16 as goals of one route query (Update); the nearest is the target until
 	// the route says which one we can actually reach under the threat cap, with a safe approach
 	candidateIds.clear();
@@ -805,34 +797,34 @@ void CAttackTask::FindTarget()
 	for (const auto& c : candidates) {
 		// A target within range is engaged at once, without a route: the straight line from it towards us is
 		// its approach check. One beyond range gets no line check: its route's approach is checked instead
-		if (c.second->GetPos().SqDistance2D(pos) < SQUARE(highestRange)) {
-			scaleRefSqDist = anchorFor(c.second);
-			const float power = ((c.second->GetId() == prevTargetId) && IsKeepAllowedAt(c.second->GetPos()))
+		if (c.enemy->GetPos().SqDistance2D(pos) < SQUARE(highestRange)) {
+			scaleRefSqDist = anchorFor(c.enemy);
+			const float power = ((c.enemy->GetId() == prevTargetId) && IsKeepAllowedAt(c.enemy->GetPos()))
 					? keepPower : maxPower;
-			if (!IsLineSafe(c.second->GetPos(), pos, highestRange, power, power, 0.f)) {
+			if (!IsLineSafe(c.enemy->GetPos(), pos, highestRange, power, power, 0.f)) {
 				continue;
 			}
 		}
 		// The route goes to whichever goal it reaches first, i.e. about the really nearest. So leave out a
 		// candidate really nearer than the best but ranked behind it by target_dist_mod or quota.contested: it would
 		// take the route (kept if it is our current target, for stickiness)
-		const float rawKey = c.first / SQUARE(keyModFor(c.second));
-		if ((bestTarget != nullptr) && (rawKey < bestRawKey) && (c.second->GetId() != prevTargetId)) {
+		const float rawKey = c.rawKey;
+		if ((bestTarget != nullptr) && (rawKey < bestRawKey) && (c.enemy->GetId() != prevTargetId)) {
 			continue;
 		}
 		if (bestTarget == nullptr) {
-			bestTarget = c.second;
-			bestKey = c.first;
+			bestTarget = c.enemy;
+			bestKey = c.key;
 			bestRawKey = rawKey;
 		}
-		if (c.second->GetId() == prevTargetId) {
-			prevTarget = c.second;
-			prevKey = c.first;
+		if (c.enemy->GetId() == prevTargetId) {
+			prevTarget = c.enemy;
+			prevKey = c.key;
 			prevRawKey = rawKey;
 		}
-		candidateKeys.push_back(c.first);
-		candidateIds.push_back(c.second->GetId());
-		candidatePos.push_back(c.second->GetPos());
+		candidateKeys.push_back(c.key);
+		candidateIds.push_back(c.enemy->GetId());
+		candidatePos.push_back(c.enemy->GetPos());
 		if (candidateIds.size() >= 16) {
 			break;
 		}
