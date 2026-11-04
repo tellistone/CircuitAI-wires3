@@ -367,6 +367,8 @@ void CFactoryManager::ReadConfig()
 
 		cdef->SetRetreat(behaviour.get("retreat", cdef->GetRetreat()).asFloat());
 
+		cdef->SetCaptureHide(behaviour.get("capture_hide", cdef->GetCaptureHide()).asFloat());
+
 		const Json::Value& artyFlee = behaviour["artillery_flee_margin"];
 		if (!artyFlee.isNull()) {
 			cdef->SetArtyFleeMargin(artyFlee.asFloat());

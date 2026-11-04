@@ -46,6 +46,7 @@ public:
 	virtual int UnitIdle(CCircuitUnit* unit) override;
 	virtual int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 	virtual int UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
+	virtual int UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId) override;
 
 	const std::set<IFighterTask*>& GetTasks(IFighterTask::FightType type) const {
 		return fightTasks[static_cast<IFighterTask::FT>(type)];
@@ -264,6 +265,7 @@ private:
 	void Watchdog();
 	void UpdateIdle();
 	void UpdateFight();
+	void UpdateCaptureHide();
 
 	void AddArmyCost(CCircuitUnit* unit);
 	void DelArmyCost(CCircuitUnit* unit);
@@ -337,6 +339,7 @@ private:
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;
+	std::set<int> givenUnitIds;  // units we got from another team (captured ones among them), for "capture_hide"
 	SArtilleryCfg artillery;
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;

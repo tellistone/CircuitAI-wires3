@@ -804,6 +804,14 @@ void CMilitaryManager::Init()
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateScoutQuota, this), FRAMES_PER_SEC * 15, offset + 3);
 		}
 
+		bool isCaptureHide = false;
+		for (CCircuitDef& cdef : this->circuit->GetCircuitDefs()) {
+			isCaptureHide |= (cdef.GetCaptureHide() > 0.f);
+		}
+		if (isCaptureHide) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
+		}
+
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
 								FRAMES_PER_SEC * 60,
 								circuit->GetSkirmishAIId() * WATCHDOG_COUNT + 12);
@@ -874,6 +882,13 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	}
 
 	return 0; //signaling: OK
+}
+
+int CMilitaryManager::UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId)
+{
+	// Captured units arrive as given units; UpdateCaptureHide reads their controller
+	givenUnitIds.insert(unit->GetId());
+	return IModule::UnitGiven(unit, oldTeamId, newTeamId);
 }
 
 IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
@@ -1035,6 +1050,9 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 
 IUnitTask* CMilitaryManager::MakeTask(CCircuitUnit* unit)
 {
+	if (unit->IsCaptureHide()) {
+		return EnqueueRetreat();  // hide at base until enough captured units are gone
+	}
 	return DefaultMakeTask(unit);
 }
 
@@ -2246,6 +2264,49 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	}
 
 	return task;
+}
+
+/*
+ * "capture_hide" (behaviour.json, per unit): a capturer whose captured units cost more than
+ * capture_hide x its own cost goes home and hides. If it dies the captured units go back to the enemy.
+ * It stays hidden until enough captured units die (or are lost) to drop below that line.
+ */
+void CMilitaryManager::UpdateCaptureHide()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	// Cost captured per controller. Zero-K's unit_capture gadget sets "capture_controller" on each captured unit.
+	std::map<int, float> capturedCost;
+	for (auto it = givenUnitIds.begin(); it != givenUnitIds.end();) {
+		CCircuitUnit* unit = circuit->GetTeamUnit(*it);
+		if (unit == nullptr) {  // dead, or taken back
+			it = givenUnitIds.erase(it);
+			continue;
+		}
+		++it;
+		const int controllerId = (int)unit->GetUnit()->GetRulesParamFloat("capture_controller", -1.f);
+		if (controllerId >= 0) {
+			capturedCost[controllerId] += unit->GetCircuitDef()->GetCostM();
+		}
+	}
+
+	for (CCircuitUnit* unit : army) {
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		if (cdef->GetCaptureHide() <= 0.f) {
+			continue;
+		}
+		auto it = capturedCost.find(unit->GetId());
+		const float cost = (it != capturedCost.end()) ? it->second : 0.f;
+		const bool isHide = (cost > cdef->GetCaptureHide() * cdef->GetCostM());
+		unit->SetCaptureHide(isHide);
+		if (!isHide) {
+			continue;  // a retreat task lets it go once it is repaired
+		}
+		const IUnitTask::Type type = unit->GetTask()->GetType();
+		if ((type == IUnitTask::Type::RETREAT) || (type == IUnitTask::Type::PLAYER) || (type == IUnitTask::Type::NIL)) {
+			continue;
+		}
+		AssignTask(unit, EnqueueRetreat());
+	}
 }
 
 void CMilitaryManager::Watchdog()
