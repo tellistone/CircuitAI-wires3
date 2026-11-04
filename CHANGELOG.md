@@ -136,6 +136,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Builders stop chasing units they can't catch** (`retreat.repair_flee: [speed share, sec]`, default `[0, ...]` = off;
+  shipped `[0.5, 2]`). A mobile repair target that is not retreating and is moving away from a builder (outside build
+  range) faster than 0.5 x its max speed is no longer picked for repair or pulled onto, and a repair job is dropped once
+  its target keeps moving away from all of its builders for 2 s. The old leash only fired after a builder had reached
+  build range and then fell 300 elmos behind, so a builder as fast as or faster than the target chased it forever.
+  A new job is taken once the unit stops or turns back.
+- **Repair leash covers retreat repairs.** `repair_leash` now also applies to HIGH repair jobs (made when a unit
+  retreats) once the unit is no longer retreating; before, it only covered priority (NOW) repairs.
+- **Retreat repair ends with the retreat.** When a unit leaves its retreat (repaired, or its haven wait timed out), its
+  leftover HIGH repair job is dropped, so its builder doesn't follow it back to the front. Priority (NOW) repairs stay,
+  under the leash and flee checks.
+
 - **Cheaper anti-air checks, same decisions except one.** AA target choice now judges aircraft nearest first and stops
   at the first that passes the leash and firing-spot threat checks, instead of judging every aircraft; leash home
   points and squad strength are only gathered once a candidate gets past the cheap checks (blip height, walkable). The ground-height check for

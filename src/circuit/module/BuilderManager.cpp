@@ -65,6 +65,8 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, isPrioRepairSafeStatic(false)
 		, prioRepairLeash(0.f)
 		, prioRepairCooldown(0)
+		, repairFleeShare(0.f)
+		, repairFleeFrames(0)
 		, escort({0.f, 0.f, 0.f, 0.f, 0.f, false, static_cast<int>(IBuilderTask::Priority::HIGH)})
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CBuilderManager::Init, this));
@@ -177,6 +179,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	const Json::Value& leash = root["retreat"]["repair_leash"];
 	prioRepairLeash = leash.get((unsigned)0, 0.f).asFloat();
 	prioRepairCooldown = leash.get((unsigned)1, 20.f).asFloat() * FRAMES_PER_SEC;
+	const Json::Value& flee = root["retreat"]["repair_flee"];
+	repairFleeShare = flee.get((unsigned)0, 0.f).asFloat();
+	repairFleeFrames = flee.get((unsigned)1, 2.f).asFloat() * FRAMES_PER_SEC;
 	const Json::Value& escortCfg = root["escort"];
 	escort.minPower = escortCfg.get("min_power", 0.f).asFloat();
 	escort.share = escortCfg.get("share", 0.2f).asFloat();
@@ -747,7 +752,8 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 		}
 		const float sqDist = pos.SqDistance2D(worker->GetPos(frame));
 		if ((sqDist < minSqDist) && terrainMgr->CanReachAt(worker, pos, worker->GetCircuitDef()->GetBuildDistance())
-			&& !IsUnsafePrioRepair(task, worker, pos))
+			&& !IsUnsafePrioRepair(task, worker, pos)
+			&& !IsRepairTargetFleeing(task, worker->GetPos(frame), worker->GetCircuitDef()->GetBuildDistance()))
 		{
 			minSqDist = sqDist;
 			bestWorker = worker;
@@ -761,6 +767,39 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 void CBuilderManager::OnPrioRepairLeash(ICoreUnit::Id unitId)
 {
 	leashUntil[unitId] = circuit->GetLastFrame() + prioRepairCooldown;
+}
+
+bool CBuilderManager::IsRepairTargetFleeing(const IBuilderTask* task, const AIFloat3& pos, float range) const
+{
+	if ((repairFleeShare <= 0.f) || (task->GetBuildType() != IBuilderTask::BuildType::REPAIR)) {
+		return false;
+	}
+	CCircuitUnit* target = task->GetTarget();
+	if ((target == nullptr) || !target->GetCircuitDef()->IsMobile()
+		|| (target->GetTask()->GetType() == IUnitTask::Type::RETREAT))  // heading home to be repaired
+	{
+		return false;
+	}
+	const AIFloat3& targetPos = target->GetPos(circuit->GetLastFrame());
+	AIFloat3 dir = targetPos - pos;
+	dir.y = 0.f;
+	const float dist = dir.Length2D();
+	if (dist <= range + SQUARE_SIZE * 8) {
+		return false;  // in reach: repair works even while it moves
+	}
+	const AIFloat3& vel = target->GetUnit()->GetVel();  // elmos per frame
+	const float awaySpeed = (vel.x * dir.x + vel.z * dir.z) / dist;
+	return awaySpeed > repairFleeShare * target->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;
+}
+
+void CBuilderManager::OnRetreatEnd(CCircuitUnit* unit)
+{
+	auto it = repairedUnits.find(unit->GetId());
+	if ((it == repairedUnits.end()) || (it->second->GetPriority() == IBuilderTask::Priority::NOW)) {
+		return;  // priority repair stays, under the leash and flee checks
+	}
+	// Back on duty: builders would follow it to the front
+	AbortTask(it->second);
 }
 
 bool CBuilderManager::IsRepairAssigned(ICoreUnit::Id unitId) const
@@ -1195,6 +1234,11 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 				}
 			}
 
+			// Don't start a chase: the target is driving away from this builder
+			if (IsRepairTargetFleeing(candidate, pos, cdef->GetBuildDistance())) {
+				continue;
+			}
+
 			if ((target == nullptr) || IsWorthTrip(candidate, distCost, maxSpeed)) {
 				task = candidate;
 				metric = jobMetric;
@@ -1295,6 +1339,11 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 				{
 					continue;
 				}
+			}
+
+			// Don't start a chase: the target is driving away from this builder
+			if (IsRepairTargetFleeing(candidate, pos, cdef->GetBuildDistance())) {
+				continue;
 			}
 
 			if (isFar) {

@@ -20,6 +20,7 @@ using namespace springai;
 
 CBRepairTask::CBRepairTask(ITaskManager* mgr, Priority priority, CAllyUnit* target, int timeout)
 		: IRepairTask(mgr, priority, Type::BUILDER, target, timeout)
+		, fleeFrame(-1)
 {
 }
 
@@ -46,32 +47,49 @@ void CBRepairTask::Update()
 
 bool CBRepairTask::IsLeashBroken()
 {
-	if ((priority != Priority::NOW) || units.empty() || (target == nullptr) || !target->GetCircuitDef()->IsMobile()) {
-		return false;
-	}
-	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
-	const float leash = builderMgr->GetPrioRepairLeash();
-	if (leash <= 0.f) {
+	// Builder repair of a mobile unit is NOW (heavy/prio_repair) or HIGH (left from a retreat)
+	if (units.empty() || (target == nullptr) || !target->GetCircuitDef()->IsMobile()
+		|| ((priority != Priority::NOW) && (priority != Priority::HIGH)))
+	{
+		fleeFrame = -1;
 		return false;
 	}
 	// A retreating unit is heading home to be repaired: keep following it
-	CCircuitUnit* teamUnit = manager->GetCircuit()->GetTeamUnit(targetId);
-	if ((teamUnit != nullptr) && (teamUnit->GetTask()->GetType() == IUnitTask::Type::RETREAT)) {
+	if (target->GetTask()->GetType() == IUnitTask::Type::RETREAT) {
+		fleeFrame = -1;
 		return false;
 	}
-	const int frame = manager->GetCircuit()->GetLastFrame();
+	CCircuitAI* circuit = manager->GetCircuit();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const float leash = builderMgr->GetPrioRepairLeash();
+	const int frame = circuit->GetLastFrame();
 	const AIFloat3& targetPos = target->GetPos(frame);
+	bool isFleeing = true;  // from every assignee
 	for (CCircuitUnit* unit : units) {
 		const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
-		const float sqDist = targetPos.SqDistance2D(unit->GetPos(frame));
+		const AIFloat3& pos = unit->GetPos(frame);
+		const float sqDist = targetPos.SqDistance2D(pos);
 		if (sqDist < SQUARE(buildDist + SQUARE_SIZE * 8)) {
 			inRange.insert(unit);  // repair has started
-		} else if ((inRange.find(unit) != inRange.end()) && (sqDist > SQUARE(buildDist + leash))) {
+		} else if ((leash > 0.f) && (inRange.find(unit) != inRange.end()) && (sqDist > SQUARE(buildDist + leash))) {
 			// Target drove off half-repaired: stop chasing it
 			builderMgr->OnPrioRepairLeash(targetId);
 			manager->AbortTask(this);
 			return true;
 		}
+		if (isFleeing && !builderMgr->IsRepairTargetFleeing(this, pos, buildDist)) {
+			isFleeing = false;
+		}
+	}
+	// Target keeps driving away from all its repairers (as fast or faster than them): don't chase it.
+	// Job selection skips it while it moves away, a new job is taken once it stops or turns back.
+	if (!isFleeing) {
+		fleeFrame = -1;
+	} else if (fleeFrame < 0) {
+		fleeFrame = frame;
+	} else if (frame - fleeFrame >= builderMgr->GetRepairFleeFrames()) {
+		manager->AbortTask(this);
+		return true;
 	}
 	return false;
 }
