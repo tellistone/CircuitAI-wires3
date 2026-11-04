@@ -47,9 +47,6 @@ private:
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override {
 		return GetSafeThreatAt(pos, strength);
 	}
-	bool IsInDanger(int frame, bool& isPathUnsafe);  // fills 'endangered'
-	float GetUnitPower(CCircuitUnit* unit) const;
-	void PullBackEndangered(int frame);
 	bool Flee(int frame);  // false: nowhere better to go (already home), fight instead
 	bool IsFleeQueryPending() const;  // our escape path request is still in flight
 	void ApplyFleePath(const CQueryPathSingle* query);
@@ -59,8 +56,6 @@ private:
 	int fleePathFrame;  // last escape path request
 	int fleeQueryId;  // pending escape path request (-1: none), not superseded by the 1 s refresh
 	springai::AIFloat3 fleeDest;  // haven (or base) of the current escape: straight-move fallback when no path is found
-	int pullFrame;  // last pull-back of endangered stragglers
-	std::vector<CCircuitUnit*> endangered;
 	bool isFightPending;
 	std::map<ICoreUnit::Id, int> heldTargets;  // targets with no safe firing spot in reach, and when: skipped for 10 s
 	bool isContestedRoute;  // the pending target route goes only to enemies in contested clusters
@@ -71,13 +66,12 @@ private:
 	springai::AIFloat3 raidSpot;
 	springai::AIFloat3 raidSpotPos;
 	int raidSpotFailFrame;  // last frame no spot qualified: wait 5 s before scoring all spots again
-	bool isPathAheadUnsafe;  // from the last IsInDanger: the stretch of path ahead crosses too much threat
 	int roamPathFrame;  // when FallbackRaid last asked for a roam route
 	springai::AIFloat3 roamGoal;  // ...and to where: re-planned only every 3 s while walking it safely
 	std::shared_ptr<PathInfo> roamPath;  // the route to roamGoal once it arrived (kept only while the leader walks it)
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
-	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach  // short roam path: Fight order to send from Update() (not from the path callback)
-	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger
+	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach
+	void SendPendingFight(int frame);  // short roam path: the Fight order sent from Update() (not from the path callback)
 };
 
 } // namespace circuit
