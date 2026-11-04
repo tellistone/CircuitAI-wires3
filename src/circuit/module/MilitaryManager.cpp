@@ -65,6 +65,10 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, sonarDef(nullptr)
 		, bigGunDef(nullptr)
 {
+	const float width = CTerrainManager::GetTerrainWidth();
+	const float height = CTerrainManager::GetTerrainHeight();
+	invMapDiagonal = 1.f / std::max(sqrtf(width * width + height * height), 1.f);
+
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CMilitaryManager::Init, this));
 
 	/*
@@ -416,16 +420,22 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.raid_flee_share must be a number 0..1, using 0.5", cfgName.c_str());
 	}
 	raidFleeShare = utils::clamp(qfleeShare.isNumeric() ? qfleeShare.asFloat() : 0.5f, 0.f, 1.f);
-	const Json::Value& qatkFleeShare = quotas.get("attack_flee_share", 0.5f);
-	if (!qatkFleeShare.isNumeric()) {
-		circuit->LOG("CONFIG %s: quota.attack_flee_share must be a number 0..1, using 0.5", cfgName.c_str());
-	}
-	attackFleeShare = utils::clamp(qatkFleeShare.isNumeric() ? qatkFleeShare.asFloat() : 0.5f, 0.f, 1.f);
-	const Json::Value& qkeepThreat = quotas.get("attack_keep_threat", 1.34f);
-	if (!qkeepThreat.isNumeric()) {
-		circuit->LOG("CONFIG %s: quota.attack_keep_threat must be a number >= 1, using 1.34", cfgName.c_str());
-	}
-	attackKeepThreat = qkeepThreat.isNumeric() ? std::max(qkeepThreat.asFloat(), 1.f) : 1.34f;  // below 1 = off
+	// Attack group numbers: a missing key uses the default, a non-number logs and uses it, others are clamped
+	auto readAttackNum = [&](const char* key, float def, float lo, float hi) {
+		const Json::Value& v = quotas.get(key, def);
+		if (v.isNumeric()) {
+			return utils::clamp(v.asFloat(), lo, hi);
+		}
+		if (hi < std::numeric_limits<float>::max()) {
+			circuit->LOG("CONFIG %s: quota.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
+		} else {
+			circuit->LOG("CONFIG %s: quota.%s must be a number >= %g, using %g", cfgName.c_str(), key, lo, def);
+		}
+		return def;
+	};
+	const float noMax = std::numeric_limits<float>::max();
+	attackFleeShare = readAttackNum("attack_flee_share", 0.5f, 0.f, 1.f);
+	attackKeepThreat = readAttackNum("attack_keep_threat", 1.34f, 1.f, noMax);  // below 1 = off
 	{
 		const Json::Value& qcont = quotas["contested"];
 		if (!qcont.isNull() && !qcont.isObject()) {
@@ -445,16 +455,12 @@ void CMilitaryManager::ReadConfig()
 		contested.range = num("range", 300.f, 0.f);
 		circuit->GetMetalManager()->SetWallThreat(std::max(num("wall", THREAT_MIN, 0.f), THREAT_MIN));
 	}
-	const Json::Value& qignoreThreat = quotas.get("attack_path_ignore_threat", 0.25f);
-	if (!qignoreThreat.isNumeric()) {
-		circuit->LOG("CONFIG %s: quota.attack_path_ignore_threat must be a number 0..1, using 0.25", cfgName.c_str());
-	}
-	attackPathIgnoreThreat = utils::clamp(qignoreThreat.isNumeric() ? qignoreThreat.asFloat() : 0.25f, 0.f, 1.f);
+	attackPathIgnoreThreat = readAttackNum("attack_path_ignore_threat", 0.25f, 0.f, 1.f);
 	{
 		// Each route kind on or off (default on); a bare true/false sets them all
 		static const char* const kinds[] = {"target", "reinforce", "front", "flee", "cornered"};
 		const Json::Value& qdyn = quotas["attack_path_dynamic_cost"];
-		for (int i = 0; i < static_cast<int>(AttackPath::_SIZE_); ++i) {
+		for (int i = 0; i < static_cast<int>(AttackRoute::_SIZE_); ++i) {
 			bool value = true;
 			if (qdyn.isBool()) {
 				value = qdyn.asBool();
@@ -473,11 +479,7 @@ void CMilitaryManager::ReadConfig()
 			attackPathDynamic[i] = value;
 		}
 	}
-	const Json::Value& qfleeWeight = quotas.get("attack_flee_path_max_weight", 3.f);
-	if (!qfleeWeight.isNumeric()) {
-		circuit->LOG("CONFIG %s: quota.attack_flee_path_max_weight must be a number >= 1, using 3.0", cfgName.c_str());
-	}
-	attackFleePathMaxWeight = qfleeWeight.isNumeric() ? std::max(qfleeWeight.asFloat(), 1.f) : 3.f;
+	attackFleePathMaxWeight = readAttackNum("attack_flee_path_max_weight", 3.f, 1.f, noMax);
 	const Json::Value& qspotThreat = quotas.get("attack_spot_threat", 1.f);
 	if (!qspotThreat.isNumeric() || (qspotThreat.asFloat() < 0.f)) {
 		circuit->LOG("CONFIG %s: quota.attack_spot_threat must be a number >= 0, using 1.0", cfgName.c_str());
@@ -1620,10 +1622,7 @@ float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloa
 	if (thrDistCurve.empty()) {
 		return 1.f;
 	}
-	const float width = CTerrainManager::GetTerrainWidth();
-	const float height = CTerrainManager::GetTerrainHeight();
-	const float diagonal = sqrtf(width * width + height * height);
-	const float frac = circuit->GetSetupManager()->GetBasePos().distance2D(pos) / diagonal;
+	const float frac = circuit->GetSetupManager()->GetBasePos().distance2D(pos) * invMapDiagonal;
 	return EvalCurve(thrDistCurve, frac);
 }
 
@@ -1698,7 +1697,7 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 	STerrainMapArea* area = unit->GetArea();
 	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
 
-	CMetalData::PointPredicate predicate = [inflMap, metalMgr, terrainMgr, area, clusters](const int index) {
+	CMetalData::PointPredicate predicate = [inflMap, metalMgr, terrainMgr, area, &clusters](const int index) {
 		return ((inflMap->GetInfluenceAt(clusters[index].position) > -INFL_EPS)
 			&& (metalMgr->IsClusterQueued(index) || metalMgr->IsClusterFinished(index))
 			&& terrainMgr->CanMoveToPos(area, clusters[index].position));

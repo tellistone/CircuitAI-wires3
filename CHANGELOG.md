@@ -129,6 +129,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Roaming raid groups re-plan their route less often.** A group roaming with no enemies known asked for a new
   route to the same destination about every second. It now keeps the route it is walking for up to 3 s, unless there
   is danger at the destination, on the stretch just ahead or to any of its units, or the destination changed.
+- **Attack groups re-plan their target and front routes less often.** A group planned a new route at every decision
+  (about every 2 s), even when it was still walking to the same target or front. It now keeps the route it is walking
+  for up to 3 s, while the target moved less than one path square and no unit is in danger and nothing unsafe lies
+  just ahead. A forced re-plan (danger ahead, a sudden threat) still plans at once.
+- Attack group target picking checks the cheap things (type, speed) before threat, reachability and height, and the
+  front search no longer copies the map's cluster list on every call. Same picks.
+- Attack group code reorganised for reading: the near-base threat reference is passed explicitly instead of being
+  swapped in and out of the task, one helper runs every route, and the escape, flee destination and target
+  selection are separate steps. Same behaviour.
 - Scout quota config errors (a negative or non-number `scout` or `scout_max`, a non-number `scout_per_mex`, or a
   `scout_spot` that isn't an object) now log and use the default instead of raising a JSON error. A negative
   `scout_per_mex` used to turn the mex bonus off; it now logs and uses the default 1.0 (use 0 for off), the same
