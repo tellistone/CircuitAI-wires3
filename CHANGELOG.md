@@ -134,7 +134,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Cheaper anti-air checks, same decisions except one.** AA target choice now judges aircraft nearest first and stops
   at the first that passes the leash and firing-spot threat checks, instead of judging every aircraft; leash home
-  points and squad strength are only gathered when there is an aircraft to judge. The ground-height check for
+  points and squad strength are only gathered once a candidate gets past the cheap checks (blip height, walkable). The ground-height check for
   unidentified radar blips (up to 9 elevation reads) stops at the first read that shows the blip is low, so a blip
   near sea level needs none and most ground blips one; the flee scan runs it only for blips within reach. The
   early-flee scan skips enemies too far from the leader before checking each squad unit. Path requests share one

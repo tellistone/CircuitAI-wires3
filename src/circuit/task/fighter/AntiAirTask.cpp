@@ -306,7 +306,7 @@ void CAntiAirTask::FindTarget()
 	const int canTargetCat = leader->GetCircuitDef()->GetTargetCategory();
 	const int noChaseCat = leader->GetCircuitDef()->GetNoChaseCategory();
 
-	circuit->GetThreatMap()->SetThreatType(leader);  // shared threat-map state: set on every pick, as before
+	circuit->GetThreatMap()->SetThreatType(leader);  // shared threat-map state: set on every pick
 
 	targetCandidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
@@ -322,49 +322,52 @@ void CAntiAirTask::FindTarget()
 		}
 		targetCandidates.emplace_back(pos.SqDistance2D(enemy->GetPos()), enemy);
 	}
-	// Stable: of equally near candidates the first in enemy order wins, as before the sort
-	std::stable_sort(targetCandidates.begin(), targetCandidates.end(),
-			[](const auto& a, const auto& b) { return a.first < b.first; });
+	// Equally near candidates in enemy id order (the order of GetEnemyInfos): the first wins, as before the sort
+	std::sort(targetCandidates.begin(), targetCandidates.end(), [](const auto& a, const auto& b) {
+		return (a.first < b.first) || ((a.first == b.first) && (a.second->GetId() < b.second->GetId()));
+	});
 
+	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CMap* map = circuit->GetMap();
+	STerrainMapArea* area = leader->GetArea();
+	const float sqRange = SQUARE(GetAirRange());
+	const bool isLeash = (aaCfg.leash >= 0.f);
+	bool isPrepared = false;  // squad strength and home points wait for a candidate past the cheap checks
+	float maxPower = 0.f;
 	CEnemyInfo* bestTarget = nullptr;
-	if (!targetCandidates.empty()) {
-		const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		CThreatMap* threatMap = circuit->GetThreatMap();
-		CMap* map = circuit->GetMap();
-		STerrainMapArea* area = leader->GetArea();
-		const float sqRange = SQUARE(GetAirRange());
-		const bool isLeash = (aaCfg.leash >= 0.f);
-		const float maxPower = GetSafeThreat();  // health-scaled, same as firing spots; judged with GetAllowedThreatAt
-		if (isLeash) {
-			FillHomePoints();
+	for (const auto& [sqDist, enemy] : targetCandidates) {
+		const AIFloat3& ePos = enemy->GetPos();
+		// Unknown radar blip: skipped the category check, so only one flying high enough is taken for
+		// a plane; a ground raider's dot in our mex field is not an AA target
+		if ((enemy->GetCircuitDef() == nullptr) && !IsHighBlip(map, ePos)) {
+			continue;
 		}
-
-		for (const auto& [sqDist, enemy] : targetCandidates) {
-			const AIFloat3& ePos = enemy->GetPos();
-			// Unknown radar blip: skipped the category check, so only one flying high enough is taken for
-			// a plane; a ground raider's dot in our mex field is not an AA target
-			if ((enemy->GetCircuitDef() == nullptr) && !IsHighBlip(map, ePos)) {
-				continue;
-			}
-			if (!terrainMgr->CanMoveToPos(area, ePos)) {
-				continue;
-			}
-			bool isCoverSpot;  // checkPos may be judged for building cover
-			const AIFloat3 checkPos = GetFireSpot(pos, ePos, sqDist, isCoverSpot);
-			// Leash: aircraft already in range is always fair game; otherwise it must be near home
-			if (isLeash && (sqDist > sqRange) && !IsNearHome(enemy, checkPos, isCoverSpot)) {
-				continue;
-			}
-			// Threat where the AA would stand to shoot, without the plane's own share
-			const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - GetPlaneThreatAt(enemy, checkPos));
-			if (threat >= GetAllowedThreatAt(checkPos, maxPower)) {
-				continue;
-			}
-			bestTarget = enemy;
-			approachPos = checkPos;
-			break;
+		if (!terrainMgr->CanMoveToPos(area, ePos)) {
+			continue;
 		}
+		if (!isPrepared) {
+			isPrepared = true;
+			maxPower = GetSafeThreat();  // health-scaled, same as firing spots; judged with GetAllowedThreatAt
+			if (isLeash) {
+				FillHomePoints();
+			}
+		}
+		bool isCoverSpot;  // checkPos may be judged for building cover
+		const AIFloat3 checkPos = GetFireSpot(pos, ePos, sqDist, isCoverSpot);
+		// Leash: aircraft already in range is always fair game; otherwise it must be near home
+		if (isLeash && (sqDist > sqRange) && !IsNearHome(enemy, checkPos, isCoverSpot)) {
+			continue;
+		}
+		// Threat where the AA would stand to shoot, without the plane's own share
+		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - GetPlaneThreatAt(enemy, checkPos));
+		if (threat >= GetAllowedThreatAt(checkPos, maxPower)) {
+			continue;
+		}
+		bestTarget = enemy;
+		approachPos = checkPos;
+		break;
 	}
 
 	SetTarget(bestTarget);
