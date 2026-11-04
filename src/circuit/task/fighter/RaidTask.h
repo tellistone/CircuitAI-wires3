@@ -67,6 +67,7 @@ private:
 	// Re-picked once the spot is in our LOS, turns dangerous, or 'position' was changed by something else
 	springai::AIFloat3 raidSpot;
 	springai::AIFloat3 raidSpotPos;
+	int raidSpotFailFrame;  // last frame no spot qualified: wait 5 s before scoring all spots again
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach  // short roam path: Fight order to send from Update() (not from the path callback)
 	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger

@@ -50,6 +50,7 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, isContestedDest(false)
 		, raidSpot(-RgtVector)
 		, raidSpotPos(-RgtVector)
+		, raidSpotFailFrame(-FRAMES_PER_SEC * 60)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -545,7 +546,11 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 		if (isOwnDest && isDanger) {
 			militaryMgr->BlockRaidSpot(raidSpot, FRAMES_PER_SEC * 10);  // don't re-pick it straight away
 		}
-		if (!isOwnDest || mustRepick || isDanger || circuit->GetMapManager()->IsInLOS(raidSpot)) {
+		const bool mustPick = !isOwnDest || mustRepick || isDanger || circuit->GetMapManager()->IsInLOS(raidSpot);
+		// After a failed pick, re-score only every 5 s unless the current destination must change
+		if (mustPick && !isOwnDest && !mustRepick && !isDanger && (frame < raidSpotFailFrame + FRAMES_PER_SEC * 5)) {
+			// keep the current destination (old roaming rules below)
+		} else if (mustPick) {
 			const AIFloat3 spot = militaryMgr->PickRaidSpot(leader, safeThreat);
 			raidSpot = spot;
 			raidSpotPos = utils::is_valid(spot) ? terrainMgr->GetMovePosition(leader->GetArea(), spot) : AIFloat3(-RgtVector);
@@ -554,6 +559,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 				isSpotPicked = true;
 			} else {
 				raidSpot = -RgtVector;
+				raidSpotFailFrame = frame;
 				isSpotFailed = isOwnDest;  // we were at (or heading to) a spot that is done: move on, the old way
 			}
 		} else {

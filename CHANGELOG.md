@@ -9,7 +9,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Raider production floor** (`quota.raider`, `raider_per_mex`, `raider_max`; all default 0 = off; shipped 1, 1.0, 12).
   The scout quota's twin for production: while we have fewer raider units (main role `raider` or a role bound to it,
-  alive plus queued in factories) than `raider` + bonus, a factory that can build a raider builds one, picked by its
+  alive and not on a scout task, plus queued in factories) than `raider` + bonus, a factory that can build a raider builds one, picked by its
   `factory.json` tier weights. The bonus is the scout formula (reachable enemy mexes / enemy players x `scout_map_size`
   curve / all players x `raider_per_mex`), with reachability judged for a starting raid group (`quota.raid[0]` power,
   `thr_mod.raid`, `thr_mod.distance.raid`). `raider_max` caps `raider` + bonus but never cuts `raider` itself.

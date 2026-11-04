@@ -159,11 +159,11 @@ private:
 	void UpdateMexBonus(bool isRaider);  // UpdateScoutQuota's count for scouts (false) or raiders (true)
 public:
 	// quota.raider (+ raider_per_mex bonus, capped by raider_max): factories build a raider while we have fewer
-	// raider units (main role raider or bound to it; alive plus queued) than this. 0 = no floor
+	// raider units (main role raider or bound to it, not scouting; alive plus queued) than this. 0 = no floor
 	unsigned int GetMinRaiders(const CCircuitDef* cdef) const;
 	bool IsRaiderQuotaOn() const { return (minRaiders > 0) || (raiderPerMex > 0.f); }
 	bool IsRaider(const CCircuitDef* cdef) const;
-	unsigned int GetRaiderCount() const;  // raider units in the army (factory tasks are counted by the caller)
+	unsigned int GetRaiderCount() const;  // raider units in the army not scouting (factory tasks are counted by the caller)
 	void UpdateDefence();
 	void MakeBaseDefence(const springai::AIFloat3& pos);
 

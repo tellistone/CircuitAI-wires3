@@ -14,7 +14,7 @@
 		"static_range_mult": 1.0  // scales enemy defence ranges when judging if a spot is defended (default 1.0)
 	},  
 	// Raider production floor: while we have fewer raider units (main role "raider" or a role bound to it, e.g.
-	// "cloaked_raider"; alive plus queued in factories) than "raider" + bonus, a factory that can build a raider
+	// "cloaked_raider"; alive and not scouting, plus queued in factories) than "raider" + bonus, a factory that can build a raider
 	// builds one (picked by its factory.json tier weights). The bonus is the scout formula (scout_map_size curve too),
 	// counting enemy mexes a starting raid group (quota.raid[0] power) can reach. All three missing = no floor
 	"raider": 1,  // min raider units

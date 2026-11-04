@@ -1494,9 +1494,17 @@ unsigned int CMilitaryManager::GetRaiderCount() const
 {
 	unsigned int count = 0;
 	for (CCircuitUnit* unit : army) {
-		if (IsRaider(unit->GetCircuitDef())) {
-			++count;
+		if (!IsRaider(unit->GetCircuitDef())) {
+			continue;
 		}
+		// Raiders taken as scouts (quota.scout) don't raid, so they don't fill the floor
+		IUnitTask* task = unit->GetTask();
+		if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+			&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::SCOUT))
+		{
+			continue;
+		}
+		++count;
 	}
 	return count;
 }
