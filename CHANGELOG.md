@@ -128,9 +128,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   and did about a fifth of those checks.
 - **Roaming raid groups re-plan their route less often.** A group roaming with no enemies known asked for a new
   route to the same destination about every second. It now keeps the route it is walking for up to 3 s, unless there
-  is danger at the destination or on the stretch just ahead, or the destination changed.
-- Scout and raider quota config errors (a negative or non-number `scout`, `scout_max`, `scout_per_mex`, or a
-  `scout_spot` that isn't an object) now log and use the default instead of raising a JSON error.
+  is danger at the destination, on the stretch just ahead or to any of its units, or the destination changed.
+- Scout quota config errors (a negative or non-number `scout` or `scout_max`, a non-number `scout_per_mex`, or a
+  `scout_spot` that isn't an object) now log and use the default instead of raising a JSON error. A negative
+  `scout_per_mex` used to turn the mex bonus off; it now logs and uses the default 1.0 (use 0 for off), the same
+  rule as the raider keys.
 
 - Retreated units waiting to be repaired (at a haven or by builders) now patrol in place instead of back and forth
   between two points, so they stay in range of whatever is repairing them. They still return fire.

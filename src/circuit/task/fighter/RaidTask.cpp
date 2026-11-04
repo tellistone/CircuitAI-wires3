@@ -577,16 +577,18 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
 	}
 
-	// Still walking the roam route to this same destination, planned under 3 s ago, with no danger here or on the
-	// stretch ahead: keep it instead of planning the same route again at every decision
-	if (!isDanger && !isPathAheadUnsafe && (position.SqDistance2D(roamGoal) < 1.f)
+	// Still walking the roam route to this same destination, planned under 3 s ago, with no danger at the
+	// destination, on the stretch ahead or to any unit: keep it instead of planning the same route again
+	if (!isDanger && !isPathAheadUnsafe && endangered.empty() && (position.SqDistance2D(roamGoal) < 1.f)
 		&& (frame < roamPathFrame + FRAMES_PER_SEC * 3) && (roamPath != nullptr)
 		&& leader->GetTravelAct()->IsActive() && (leader->GetTravelAct()->GetPath() == roamPath))
 	{
+		pPath = roamPath;  // a failed target route may have replaced it, and Start() and regrouping re-send pPath
 		return;
 	}
 	roamGoal = position;
 	roamPathFrame = frame;
+	roamPath = nullptr;  // set again when this route arrives: an older route must not pass for it
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(

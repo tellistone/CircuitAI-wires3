@@ -1574,7 +1574,9 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 		CTerrainManager::CorrectPosition(startPos);
 
 		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true);
-		pathfinder->RunQuery(query, [this, &mexBonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
+		// The quota is a member: it outlives the query (a pointer, so that is plain to see)
+		std::map<int, unsigned int>* bonus = &mexBonus;
+		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
 			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
 			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
 			unsigned int count = 0;
@@ -1598,7 +1600,7 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 				}
 			}
 			// (reachable mexes / enemy players) x (map size curve / all players) x *_per_mex, rounded down
-			mexBonus[mobileId] = (unsigned int)(perMex * mapMult * count / enemyPlayers);
+			(*bonus)[mobileId] = (unsigned int)(perMex * mapMult * count / enemyPlayers);
 		});
 	}
 }

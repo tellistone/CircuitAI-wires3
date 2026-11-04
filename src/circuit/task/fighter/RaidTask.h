@@ -74,7 +74,7 @@ private:
 	bool isPathAheadUnsafe;  // from the last IsInDanger: the stretch of path ahead crosses too much threat
 	int roamPathFrame;  // when FallbackRaid last asked for a roam route
 	springai::AIFloat3 roamGoal;  // ...and to where: re-planned only every 3 s while walking it safely
-	std::shared_ptr<PathInfo> roamPath;  // the last roam route walked (FallbackRaid keeps it only while the leader is on it)
+	std::shared_ptr<PathInfo> roamPath;  // the route to roamGoal once it arrived (kept only while the leader walks it)
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach  // short roam path: Fight order to send from Update() (not from the path callback)
 	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger
