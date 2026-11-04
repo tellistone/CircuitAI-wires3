@@ -3,14 +3,16 @@
 "economy": {
 	// Plain list of energy UnitDef and its limit. AI sorts list by efficiency (inverse)
 	// which is = cost * sizeX * sizeZ / make^2
-	// With ZK v1.8.5.2:
+	// With current ZK stats:
 	//   energysingu = 15.486420
-	//   energygeo = 65.306122
-	//   energyfusion = 80.000000
+	//   energyfusion = 65.306122
+	//   energygeo = 80.000000
 	//   energywind = 874.999939
 	//   energysolar = 1750.000000
 	// When e-stalling AI will build bottom-most energy that didn't reach its limit.
 	// On normal AI will select top-most energy that it can build under 40 seconds.
+	// Geothermal (energygeo) is not part of that order: it is checked first and built on a free vent whenever it is
+	// under its limit and can be built in time (see "geo" below); no free vent or its limit never blocks other energy.
 	"energy": {
 		// If land area >= 40% of the map then "land" config used, "water" otherwise
 		"land": {

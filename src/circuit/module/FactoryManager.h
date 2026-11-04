@@ -72,6 +72,8 @@ public:
 	springai::AIFloat3 GetClosestHaven(const springai::AIFloat3& position) const;
 
 	CRecruitTask* UpdateBuildPower(CCircuitUnit* unit);
+	// Any of the economy.json constructor rules asks for one more (buildDef from its factory at pos)
+	bool IsBuilderNeeded(CCircuitDef* buildDef, const springai::AIFloat3& pos) const;
 	CRecruitTask* UpdateFirePower(CCircuitUnit* unit);
 	bool IsHighPriority(CAllyUnit* unit) const;
 
@@ -152,11 +154,14 @@ private:
 		unsigned int nanoCount;
 	};
 	std::unordered_map<CCircuitDef::Id, SFactoryDef> factoryDefs;
-	float bpRatio;
-	float bpArmyRatio;  // constructor metal value to mobile army metal value, 0 = off
-	int bpArmyFrame;  // bpArmyRatio applies from this frame on
-	float bpReclaimRatio;  // constructor metal value to visible reclaim metal, 0 = off
-	int bpReclaimFrame;  // bpReclaimRatio applies from this frame on
+	float bpRatio;  // mobile buildpower to metal income
+	// Constructors' metal value (commanders excluded) to some other metal value, from a game frame on
+	struct SBuilderRatio {
+		float ratio = 0.f;  // 0 = off
+		int frame = 0;
+	};
+	SBuilderRatio bpArmy;  // to the mobile army's metal value
+	SBuilderRatio bpReclaim;  // to the reclaim a factory's constructor can safely reach
 	float reWeight;
 };
 

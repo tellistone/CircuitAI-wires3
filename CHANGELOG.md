@@ -119,9 +119,37 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     `threat_cooldown` seconds (default 10, -1 turns this off).
 - **Guard damage exit** (`guard.damage_exit`, default `true`). A guard that takes damage is released at once, and its
   builder gets no guard for `threat_cooldown` seconds.
+- **Geothermal plants** ([#29](https://github.com/tellistone/CircuitAI-wires3/pull/29)). The energy pick used to skip
+  every building that needs a vent, so `energygeo` was never built. Now, when a known vent is free, has no more enemy
+  surface threat than `economy.energy.geo.threat` (default 1.0), is outside allied zones and the builder can reach it,
+  and the geo is under its `economy.energy` limit and quick enough to build, it is built exactly on that vent, before
+  fusion and singu are considered. No free vent, or the limit reached, never stops other energy. Every 10 s one finished
+  geo at a time morphs into `energyheavygeo` once average metal income and game time pass `economy.energy.geo.morph`
+  (`[<income>, <second>]`, default off; shipped `[30.0, 900]`), metal isn't empty, energy isn't stalling, and the geo
+  is at 90% health or more with no more threat on it than `geo.threat`. A morph still running after 5 minutes stops
+  blocking the next one.
+  `behaviour.json` gains `energygeo` and `energyheavygeo` entries.
 
 ### Changed
 
+- **Cheaper geothermal checks, same decisions except one 10 s delay.** Geo buildings are recognised from a list read
+  once at start instead of an engine call per energy type, job and scout check. Vent search tries vents nearest
+  first and stops at the first one that passes, and a vent the engine says can't be built on (a geo already stands
+  there) is skipped for 10 s instead of being asked again on every energy pick, so a vent that frees up is noticed up
+  to 10 s later. The vent scan reads features by id and checks each feature type once per game: one engine call per
+  feature, where before it cost two wrapper objects and two calls (ZK maps have thousands of trees). A randomised model
+  of old against new (200,000 cases each) picked the same vent and the same energy every time, and the vent search
+  made about 70% of the old engine calls before the 10 s skip.
+- **Faster constructor job choice and reclaim scans, same decisions.**
+  - Job choice works out a job's travel cost first, and runs the reach and threat checks only for a job that
+    would beat the best so far (nearby or far fallback). A randomised model of old against new picked the same
+    job in all 200,000 cases, and in that model ran about a third of those checks (a sixth for a hiding commander).
+  - Reclaim scans (new reclaim jobs, a running job picking its next wreck, and the constructor-count reclaim rule)
+    read features by id and look up each feature type's metal once per game. Before, every feature cost two wrapper
+    objects and up to five engine calls; one with no metal (ZK map trees) now costs one call. A running job checks reach only for a wreck that
+    would beat its current pick, so it no longer runs a threat and path check on every tree around it.
+  - No reclaim scan when every reclaim job is full and the cap on untaken jobs is reached.
+  - `mex_escort` points that aren't `[number, number]` are skipped instead of raising a JSON error.
 - **Faster spot picking for scouts and raid groups.** The score of every candidate spot is worked out first, and
   only a spot that would beat the best so far is checked for being ours (an engine query for geothermal vents) and
   for enemy defences. The pick is the same; in a randomised check of old against new it matched in all 200,000 cases

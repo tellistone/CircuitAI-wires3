@@ -68,6 +68,15 @@ public:
 	bool Unit_HasCommands(int unitId) const;
 
 	bool Feature_IsResurrectable(int featureId) const;
+	// Id-only feature access: no wrapper object per feature. Def id -1 = feature not visible.
+	std::vector<int> GetFeatureIds() const;
+	std::vector<int> GetFeatureIdsIn(const springai::AIFloat3& pos, float radius, bool spherical = true) const;
+	int Feature_GetDefId(int featureId) const;
+	float Feature_GetReclaimLeft(int featureId) const;
+	springai::AIFloat3 Feature_GetPosition(int featureId) const;
+	bool FeatureDef_IsReclaimable(int featureDefId) const;
+	float FeatureDef_GetContainedResource(int featureDefId, int resourceId) const;
+	bool FeatureDef_IsGeoThermal(int featureDefId) const;
 
 	bool UnitDef_HasYardMap(int unitDefId) const;
 

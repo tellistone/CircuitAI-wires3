@@ -30,6 +30,8 @@
 #include "Team.h"
 #include "Log.h"
 
+#include <algorithm>
+
 namespace circuit {
 
 using namespace springai;
@@ -200,6 +202,10 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		const std::map<std::string, std::string>& customParams = cdef.GetDef()->GetCustomParams();
 
 		if (!cdef.IsMobile()) {
+			if (cdef.GetDef()->IsNeedGeo()) {
+				geoDefIds.insert(cdef.GetId());
+			}
+
 			if (commDef->CanBuild(&cdef)) {
 				// pylon
 				auto it = customParams.find("pylonrange");
@@ -246,7 +252,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 				energyDefs.AddDef(&cdef);
 
 				// geothermal that morphs into an upgrade (energygeo -> energyheavygeo)
-				if (cdef.GetDef()->IsNeedGeo() && (customParams.find("morphto") != customParams.end())) {
+				if (IsGeoDef(&cdef) && (customParams.find("morphto") != customParams.end())) {
 					finishedHandler[cdef.GetId()] = [this, energyFinishedHandler](CCircuitUnit* unit) {
 						energyFinishedHandler(unit);
 						geoMorphees.insert(unit);
@@ -303,12 +309,12 @@ void CEconomyManager::ReadConfig()
 	const Json::Value& travel = recl["travel"];
 	reclaimTravelMetal = travel.get("metal", 2000.f).asFloat();
 	reclaimTravelFloor = travel.get("floor", 5.f).asFloat();
-	const Json::Value& tSec = travel["sec"];
-	reclaimTravel.minSec = tSec.get((unsigned)0, 1.f).asFloat();
-	reclaimTravel.maxSec = tSec.get((unsigned)1, 30.f).asFloat();
-	const Json::Value& tStarved = travel["starved_sec"];
-	reclaimTravelStarved.minSec = tStarved.get((unsigned)0, 1.f).asFloat();
-	reclaimTravelStarved.maxSec = tStarved.get((unsigned)1, 60.f).asFloat();
+	auto readTravel = [&travel](const char* key, float defMaxSec) {
+		const Json::Value& sec = travel[key];  // [<seconds at 1 metal>, <seconds at travel.metal>]
+		return SReclaimTravel{sec.get((unsigned)0, 1.f).asFloat(), sec.get((unsigned)1, defMaxSec).asFloat()};
+	};
+	reclaimTravel = readTravel("sec", 30.f);
+	reclaimTravelStarved = readTravel("starved_sec", 60.f);
 	const Json::Value& swch = econ["switch"];
 	const int minSwitch = swch.get((unsigned)0, 800).asInt();
 	const int maxSwitch = swch.get((unsigned)1, 900).asInt();
@@ -398,34 +404,22 @@ void CEconomyManager::Init()
 	mexFrontClusters = std::max(mexFront.get("clusters", 3).asInt(), 1);
 	mexFrontStarted = utils::clamp(mexFront.get("started", 0.3f).asFloat(), 0.f, 0.9f);
 
-	// [[<map size>, <seconds>], ...]: linear between points, clamped at the ends.
+	// mex_escort: [[<map size>, <seconds>], ...], linear between points, flat beyond the ends; missing = 300 s.
 	// Map size is sqrt(width * height) in 512-elmo map units, so 8x8 = 8 and 16x16 = 16.
 	{
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		const float mapSize = std::sqrt(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
+		std::vector<std::pair<float, float>> curve;
 		const Json::Value& escort = econ["mex_escort"];
-		float escortSec = 300.f;
-		if (escort.isArray() && !escort.empty()) {
-			std::vector<std::pair<float, float>> curve;
+		if (escort.isArray()) {
 			for (const Json::Value& pt : escort) {
-				curve.emplace_back(pt.get((unsigned)0, 0.f).asFloat(), pt.get((unsigned)1, 300.f).asFloat());
-			}
-			std::sort(curve.begin(), curve.end());
-			if (mapSize <= curve.front().first) {
-				escortSec = curve.front().second;
-			} else if (mapSize >= curve.back().first) {
-				escortSec = curve.back().second;
-			} else {
-				for (unsigned i = 1; i < curve.size(); ++i) {
-					if (mapSize <= curve[i].first) {
-						const float t = (mapSize - curve[i - 1].first) / std::max(curve[i].first - curve[i - 1].first, 1e-3f);
-						escortSec = curve[i - 1].second + (curve[i].second - curve[i - 1].second) * t;
-						break;
-					}
+				if (pt.isArray() && (pt.size() >= 2) && pt[0].isNumeric() && pt[1].isNumeric()) {
+					curve.emplace_back(pt[0].asFloat(), pt[1].asFloat());
 				}
 			}
 		}
-		mexEscortFrame = std::max(escortSec, 0.f) * FRAMES_PER_SEC;
+		std::sort(curve.begin(), curve.end());
+		const float mapSize = std::sqrt(float(CTerrainManager::GetTerrainWidth()) * CTerrainManager::GetTerrainHeight()) / 512.f;
+		const float escortSec = std::max(utils::eval_curve(curve, mapSize, 300.f), 0.f);
+		mexEscortFrame = escortSec * FRAMES_PER_SEC;
 		circuit->LOG("mex_escort: map size %.1f -> %.0f seconds", mapSize, escortSec);
 	}
 
@@ -551,8 +545,8 @@ CCircuitDef* CEconomyManager::GetLowEnergy(const AIFloat3& pos, float& outMake) 
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
-	return energyDefs.GetWorstDef([frame, terrainMgr, &pos, &outMake](CCircuitDef* cdef, const SEnergyExt& data) {
-		if (cdef->IsAvailable(frame) && !cdef->GetDef()->IsNeedGeo() && terrainMgr->CanBeBuiltAtSafe(cdef, pos)) {
+	return energyDefs.GetWorstDef([this, frame, terrainMgr, &pos, &outMake](CCircuitDef* cdef, const SEnergyExt& data) {
+		if (cdef->IsAvailable(frame) && !IsGeoDef(cdef) && terrainMgr->CanBeBuiltAtSafe(cdef, pos)) {
 			outMake = data.make;
 			return true;
 		}
@@ -747,97 +741,131 @@ IBuilderTask* CEconomyManager::MakeEconomyTasks(const AIFloat3& position, CCircu
 	}
 	clusterInfos[index].metalFrame = circuit->GetLastFrame();
 
-	IBuilderTask* task = UpdateMetalTasks(position, unit);
-	if (task != nullptr) {
-		return task;
-	}
-
-	return task;
+	return UpdateMetalTasks(position, unit);
 }
 
 IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircuitUnit* unit)
 {
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	if (!builderMgr->CanEnqueueTask(16)) {
+	if (!circuit->GetBuilderManager()->CanEnqueueTask(16)) {
 		return nullptr;
 	}
 
-	IBuilderTask* task = nullptr;
+	// Energy stall: queue energy, but keep expanding. Mex jobs then rank as NORMAL (CBuilderManager::GetJobRank).
+	const bool isEnergyStalling = IsEnergyStalling();
+	IBuilderTask* task = isEnergyStalling ? UpdateEnergyTasks(position, unit) : nullptr;
 
-	// Energy stall: queue energy, but keep expanding. Mex jobs then rank as NORMAL (CBuilderManager::GetTaskPriority).
-	bool isEnergyStalling = IsEnergyStalling();
-	if (isEnergyStalling) {
-		task = UpdateEnergyTasks(position, unit);
+	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
+	if (mexTask != nullptr) {
+		return (task != nullptr) ? task : mexTask;
 	}
 
-	// check uncolonized mexes
-	if (mexDef->IsAvailable(circuit->GetLastFrame())) {
-		float cost = mexDef->GetCostM();
-		unsigned maxCount = (builderMgr->GetBuildPower() / cost * 8 + 2) * mexJobMod;
-		if (builderMgr->GetTasks(IBuilderTask::BuildType::MEX).size() < maxCount) {
-			CMetalManager* metalMgr = circuit->GetMetalManager();
-			CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-			const CMetalData::Metals& spots = metalMgr->GetSpots();
-			CMap* map = circuit->GetMap();
-			CMetalData::PointPredicate predicate;
-			if (unit != nullptr) {
-				CCircuitDef* mexDef = this->mexDef;
-				predicate = [this, &spots, map, mexDef, terrainMgr, unit](int index) {
-					const AIFloat3& pos = spots[index].position;
-					return (IsAllyOpenSpot(index) && !terrainMgr->IsZoneAlly(pos)
-							&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
-							&& terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
-							&& map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING));
-				};
-			} else {
-				CCircuitDef* mexDef = this->mexDef;
-				predicate = [this, &spots, map, mexDef, terrainMgr, builderMgr](int index) {
-					const AIFloat3& pos = spots[index].position;
-					return (IsAllyOpenSpot(index) && !terrainMgr->IsZoneAlly(pos)
-							&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
-							&& builderMgr->IsBuilderInArea(mexDef, pos)
-							&& map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING));
-				};
-			}
-			int index;
-			const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-			const AIFloat3& lanePos = circuit->GetSetupManager()->GetLanePos();
-			if (((mexFrontBias != 0.f) || (mexFrontClusters > 1)) && utils::is_valid(basePos) && utils::is_valid(lanePos)
-				&& (basePos.SqDistance2D(lanePos) > SQUARE(SQUARE_SIZE)))
-			{
-				// Pick the cluster, then its nearest open spot. Cluster score: distance to its nearest open spot
-				// x (1 - bias x progress) x (1 - started) if we already queued or built a mex there.
-				// progress = the cluster centre's projection on base->lane over the base-lane distance,
-				// clamped to [-1, 1] (base = 0, lane = 1). The started bonus keeps clusters finishing one at a time.
-				const CMetalData::Clusters& clusters = metalMgr->GetClusters();
-				const AIFloat3 laneDir = (lanePos - basePos);
-				const float sqLaneLen = laneDir.SqLength2D();
-				const float bias = mexFrontBias;
-				const float startedMod = 1.f - mexFrontStarted;
-				CMetalManager::ClusterScore score = [metalMgr, &clusters, &basePos, laneDir, sqLaneLen, bias, startedMod](int cluster, float dist) {
-					const float progress = utils::clamp((clusters[cluster].position - basePos).dot2D(laneDir) / sqLaneLen, -1.f, 1.f);
-					const float mod = metalMgr->IsClusterStarted(cluster) ? startedMod : 1.f;
-					return dist * (1.f - bias * progress) * mod;
-				};
-				index = metalMgr->GetMexToBuild(position, predicate, mexFrontClusters, score);
-			} else {
-				index = metalMgr->GetMexToBuild(position, predicate);
-			}
-			if (index != -1) {
-				const AIFloat3& pos = spots[index].position;
-				IBuilderTask* mexTask = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos, IBuilderTask::BuildType::MEX, cost, .0f);
-				mexTask->SetBuildPos(pos);
-				SetOpenSpot(index, false);
-				return (task != nullptr) ? task : mexTask;
-			}
-		}
+	return isEnergyStalling ? task : UpdateReclaimTasks(position, unit);
+}
+
+IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuitUnit* unit)
+{
+	if (!mexDef->IsAvailable(circuit->GetLastFrame())) {
+		return nullptr;
+	}
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const float cost = mexDef->GetCostM();
+	const unsigned maxCount = (builderMgr->GetBuildPower() / cost * 8 + 2) * mexJobMod;
+	if (builderMgr->GetTasks(IBuilderTask::BuildType::MEX).size() >= maxCount) {
+		return nullptr;
 	}
 
-	if (!isEnergyStalling) {
-		task = UpdateReclaimTasks(position, unit);
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const CMetalData::Metals& spots = metalMgr->GetSpots();
+	CMap* map = circuit->GetMap();
+	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on
+	CMetalData::PointPredicate predicate = [this, &spots, map, terrainMgr, builderMgr, unit](int index) {
+		const AIFloat3& pos = spots[index].position;
+		return (IsAllyOpenSpot(index) && !terrainMgr->IsZoneAlly(pos)
+				&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
+				&& ((unit != nullptr)
+					? terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
+					: builderMgr->IsBuilderInArea(mexDef, pos))
+				&& map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING));
+	};
+	const CMetalManager::ClusterScore score = GetMexFrontScore();
+	const int index = score
+			? metalMgr->GetMexToBuild(position, predicate, mexFrontClusters, score)
+			: metalMgr->GetMexToBuild(position, predicate);
+	if (index == -1) {
+		return nullptr;
 	}
 
+	const AIFloat3& pos = spots[index].position;
+	IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos, IBuilderTask::BuildType::MEX, cost, .0f);
+	task->SetBuildPos(pos);
+	SetOpenSpot(index, false);
 	return task;
+}
+
+CMetalManager::ClusterScore CEconomyManager::GetMexFrontScore() const
+{
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const AIFloat3& lanePos = circuit->GetSetupManager()->GetLanePos();
+	if (((mexFrontBias == 0.f) && (mexFrontClusters <= 1)) || !utils::is_valid(basePos) || !utils::is_valid(lanePos)
+		|| (basePos.SqDistance2D(lanePos) <= SQUARE(SQUARE_SIZE)))
+	{
+		return nullptr;
+	}
+	// Pick the cluster, then its nearest open spot. Cluster score: distance to its nearest open spot
+	// x (1 - bias x progress) x (1 - started) if we already queued or built a mex there.
+	// progress = the cluster centre's projection on base->lane over the base-lane distance,
+	// clamped to [-1, 1] (base = 0, lane = 1). The started bonus keeps clusters finishing one at a time.
+	const CMetalManager* metalMgr = circuit->GetMetalManager();
+	const AIFloat3 laneDir = lanePos - basePos;
+	const float sqLaneLen = laneDir.SqLength2D();
+	const float bias = mexFrontBias;
+	const float startedMod = 1.f - mexFrontStarted;
+	return [metalMgr, basePos, laneDir, sqLaneLen, bias, startedMod](int cluster, float dist) {
+		const AIFloat3& center = metalMgr->GetClusters()[cluster].position;
+		const float progress = utils::clamp((center - basePos).dot2D(laneDir) / sqLaneLen, -1.f, 1.f);
+		const float mod = metalMgr->IsClusterStarted(cluster) ? startedMod : 1.f;
+		return dist * (1.f - bias * progress) * mod;
+	};
+}
+
+std::vector<CEconomyManager::SReclaimFeature> CEconomyManager::GetReclaimFeatures(const std::vector<int>& featureIds)
+{
+	// Id-only callbacks and the per-def metal cache: no wrapper objects, and trees cost one call each
+	COOAICallback* clb = circuit->GetCallback();
+	std::vector<SReclaimFeature> features;
+	for (int featureId : featureIds) {
+		const float metal = GetFeatureDefMetal(clb->Feature_GetDefId(featureId));
+		if (metal < 1.0f) {
+			continue;
+		}
+		const float metalLeft = metal * clb->Feature_GetReclaimLeft(featureId);
+		if (metalLeft < 1.0f) {
+			continue;
+		}
+		AIFloat3 pos = clb->Feature_GetPosition(featureId);
+		CTerrainManager::CorrectPosition(pos);  // Impulsed flying feature
+		features.push_back({pos, metal, metalLeft});
+	}
+	return features;
+}
+
+float CEconomyManager::GetFeatureDefMetal(int featureDefId)
+{
+	if (featureDefId < 0) {
+		return 0.f;  // not visible
+	}
+	if ((size_t)featureDefId >= featureDefMetal.size()) {
+		featureDefMetal.resize(featureDefId + 1, -1.f);
+	}
+	float& metal = featureDefMetal[featureDefId];
+	if (metal < 0.f) {  // defs don't change during a game
+		COOAICallback* clb = circuit->GetCallback();
+		metal = clb->FeatureDef_IsReclaimable(featureDefId)
+				? std::max(clb->FeatureDef_GetContainedResource(featureDefId, metalRes->GetResourceId()), 0.f)
+				: 0.f;
+	}
+	return metal;
 }
 
 float CEconomyManager::GetReclaimMetal(CCircuitDef* builderDef, const AIFloat3& position)
@@ -853,25 +881,11 @@ float CEconomyManager::GetReclaimMetal(CCircuitDef* builderDef, const AIFloat3& 
 	// Same reach + threat test as UpdateReclaimTasks (CanReachAtSafe), but by area: no unit at hand
 	const float range = builderDef->GetBuildDistance();
 	float metal = 0.f;
-	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
-	for (Feature* feature : features) {
-		FeatureDef* featDef = feature->GetDef();
-		if (featDef == nullptr) {
-			continue;
+	for (const SReclaimFeature& feature : GetReclaimFeatures(circuit->GetCallback()->GetFeatureIds())) {
+		if (terrainMgr->CanMobileReachAtSafe(area, feature.pos, range)) {
+			metal += feature.metalLeft;
 		}
-		const float value = featDef->IsReclaimable() ? featDef->GetContainedResource(metalRes) : 0.f;
-		delete featDef;
-		if (value < 1.0f) {
-			continue;
-		}
-		AIFloat3 featPos = feature->GetPosition();
-		CTerrainManager::CorrectPosition(featPos);
-		if (!terrainMgr->CanMobileReachAtSafe(area, featPos, range)) {
-			continue;
-		}
-		metal += value * feature->GetReclaimLeft();
 	}
-	utils::free_clear(features);
 
 	reclaimMetal[area] = std::make_pair(metal, frame + FRAMES_PER_SEC * 10);
 	return metal;
@@ -879,102 +893,62 @@ float CEconomyManager::GetReclaimMetal(CCircuitDef* builderDef, const AIFloat3& 
 
 IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCircuitUnit* unit, bool isNear)
 {
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	if (/*!builderManager->CanEnqueueTask() || */(unit == nullptr)) {
-		return nullptr;
-	}
-
 	// No new reclaim jobs while metal storage is nearly full; running jobs carry on
-	if (IsMetalFull()) {
+	if ((unit == nullptr) || IsMetalFull()) {
 		return nullptr;
 	}
 
-	std::vector<Feature*> features;
+	// Jobs with constructors on them are uncapped; jobs nobody took yet are capped at max(1, constructors / 2)
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const std::set<IBuilderTask*>& reclaimTasks = builderMgr->GetTasks(IBuilderTask::BuildType::RECLAIM);
+	const unsigned untakenCount = std::count_if(reclaimTasks.begin(), reclaimTasks.end(),
+			[](const IBuilderTask* t) { return t->GetAssignees().empty(); });
+	const bool canOpenJob = untakenCount < std::max(1u, builderMgr->GetWorkerCount() / 2);
+	if (!canOpenJob && std::none_of(reclaimTasks.begin(), reclaimTasks.end(),
+			[unit](const IBuilderTask* t) { return t->CanAssignTo(unit); }))
+	{
+		return nullptr;  // nothing to open or join: skip the feature scan
+	}
+
 	// Near search: each feature's allowed travel (seconds at the unit's speed) scales with its metal left
 	const float speed = unit->GetCircuitDef()->GetSpeed();  // elmos per second
 	const bool isStarved = (GetMetalPull() * 0.8f > GetAvgMetalIncome());
 	const SReclaimTravel& travel = isStarved ? reclaimTravelStarved : reclaimTravel;
-	if (isNear) {
-		const float distance = speed * std::max(travel.maxSec, reclaimTravelFloor);
-		features = std::move(circuit->GetCallback()->GetFeaturesIn(position, distance));
-	} else {
-		features = std::move(circuit->GetCallback()->GetFeatures());
-	}
-	if (features.empty()) {
-		return nullptr;
-	}
+	COOAICallback* clb = circuit->GetCallback();
+	const std::vector<SReclaimFeature> features = GetReclaimFeatures(isNear
+			? clb->GetFeatureIdsIn(position, speed * std::max(travel.maxSec, reclaimTravelFloor))
+			: clb->GetFeatureIds());
 
-	// Rank every safe reclaimable feature by distance and metal left (lower rank first)
-	struct SReclaimSpot {
-		float rank;
-		float cost;
-		AIFloat3 pos;
-	};
-	std::vector<SReclaimSpot> spots;
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	for (Feature* feature : features) {
-		FeatureDef* featDef = feature->GetDef();
-		if (featDef == nullptr) {
-			continue;
-		}
-		if (!featDef->IsReclaimable()) {
-			delete featDef;
-			continue;
-		}
-		float reclaimValue = featDef->GetContainedResource(metalRes);
-		delete featDef;
-		if (reclaimValue < 1.0f) {
-			continue;
-		}
-		const float metalLeft = reclaimValue * feature->GetReclaimLeft();
-		if (metalLeft < 1.0f) {
-			continue;
-		}
-		AIFloat3 featPos = feature->GetPosition();
-		CTerrainManager::CorrectPosition(featPos);  // Impulsed flying feature
-		const float sqDist = position.SqDistance2D(featPos);
-		if (isNear && (sqDist > SQUARE(speed * GetReclaimTravelSec(travel, metalLeft)))) {
+	// Rank by distance and metal left, lower first
+	std::vector<std::pair<float, const SReclaimFeature*>> spots;  // rank, feature
+	spots.reserve(features.size());
+	for (const SReclaimFeature& feature : features) {
+		const float sqDist = position.SqDistance2D(feature.pos);
+		if (isNear && (sqDist > SQUARE(speed * GetReclaimTravelSec(travel, feature.metalLeft)))) {
 			continue;  // too far for its metal
 		}
-		spots.push_back({GetReclaimRank(sqDist, metalLeft), reclaimValue, featPos});
+		spots.emplace_back(GetReclaimRank(sqDist, feature.metalLeft), &feature);
 	}
-	utils::free_clear(features);
-	std::sort(spots.begin(), spots.end(), [](const SReclaimSpot& a, const SReclaimSpot& b) { return a.rank < b.rank; });
+	std::sort(spots.begin(), spots.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 
 	// Best reachable spot whose job can still take this unit: join it, or open a new job there.
 	// A full job doesn't stop the search, the next spot is tried.
-	const std::set<IBuilderTask*>& reclaimTasks = builderMgr->GetTasks(IBuilderTask::BuildType::RECLAIM);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
-	// Jobs with constructors on them are uncapped; jobs nobody took yet are capped at max(1, constructors / 2)
-	unsigned emptyCount = 0;
-	for (IBuilderTask* t : reclaimTasks) {
-		if (t->GetAssignees().empty()) {
-			++emptyCount;
+	for (const auto& spot : spots) {
+		const AIFloat3& pos = spot.second->pos;
+		auto it = std::find_if(reclaimTasks.begin(), reclaimTasks.end(),
+				[&pos](const IBuilderTask* t) { return utils::is_equal_pos(pos, t->GetTaskPos()); });
+		IBuilderTask* job = (it != reclaimTasks.end()) ? *it : nullptr;
+		if ((job != nullptr) ? !job->CanAssignTo(unit) : !canOpenJob) {
+			continue;  // full, or too many untaken jobs to open another
 		}
-	}
-	const bool canOpenJob = emptyCount < std::max(1u, builderMgr->GetWorkerCount() / 2);
-	for (const SReclaimSpot& spot : spots) {
-		IBuilderTask* existing = nullptr;
-		for (IBuilderTask* t : reclaimTasks) {
-			if (utils::is_equal_pos(spot.pos, t->GetTaskPos())) {
-				existing = t;
-				break;
-			}
-		}
-		if ((existing != nullptr) && !existing->CanAssignTo(unit)) {
-			continue;  // full
-		}
-		if (!terrainMgr->CanReachAtSafe(unit, spot.pos, buildDist)) {
+		if (!terrainMgr->CanReachAtSafe(unit, pos, buildDist)) {
 			continue;
 		}
-		if (existing != nullptr) {
-			return existing;
-		}
-		if (!canOpenJob) {
-			continue;  // too many untaken jobs: only join existing ones
-		}
-		return builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, spot.pos, spot.cost, FRAMES_PER_SEC * 300,
-										  8.0f/*unit->GetCircuitDef()->GetBuildDistance()*/);
+		return (job != nullptr) ? job
+				: builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, pos, spot.second->metal, FRAMES_PER_SEC * 300,
+											 8.0f/*unit->GetCircuitDef()->GetBuildDistance()*/);
 	}
 
 	return nullptr;
@@ -1007,60 +981,59 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 
 	// Select proper energy UnitDef to build
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CCircuitDef* bestDef = nullptr;
-	CCircuitDef* hopeDef = nullptr;
-	bool isLastHope = isEnergyStalling;
 	metalIncome = std::min(metalIncome, energyIncome) * energyFactor;
 	const float buildPower = std::min(builderMgr->GetBuildPower(), metalIncome);
 	const int taskSize = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
 	const float maxBuildTime = MAX_BUILD_SEC * (isEnergyStalling ? 0.25f : 1.f);
+	// Room for one more job of this def: about 8 jobs per buildPower/cost
+	auto canQueue = [taskSize, buildPower](CCircuitDef* cdef) {
+		return taskSize < (int)(buildPower / cdef->GetCostM() * 8 + 1);
+	};
+	// TODO: Select proper scale/quadratic function (x*x) and smoothing coefficient (8).
+	//       МЕТОД НАИМЕНЬШИХ КВАДРАТОВ ! (income|buildPower, make/cost) - points
+	//       solar       geothermal    fusion         singu           ...
+	//       (10, 2/70), (15, 25/500), (20, 35/1000), (30, 225/4000), ...
+	auto isQuickToBuild = [maxBuildTime, metalIncome](CCircuitDef* cdef) {
+		return cdef->GetCostM() * 16.0f < maxBuildTime * SQUARE(metalIncome);
+	};
+	const IBuilderTask::Priority priority = isEnergyStalling ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
 
 	const int frame = circuit->GetLastFrame();
 	// Geothermal first: by the efficiency sort it ranks below fusion, and fusion at its limit stops the
 	// loop below, so geo would hardly ever be built. A free vent is cheaper energy per metal than fusion,
 	// so take it whenever it can be built in time and a free, safe, reachable vent exists.
-	CCircuitDef* geoDef = nullptr;
-	AIFloat3 geoPos = -RgtVector;
 	for (const auto& engy : energyDefs.GetInfos()) {
-		if (!engy.cdef->GetDef()->IsNeedGeo() || !engy.cdef->IsAvailable(frame) ||
-			(engy.cdef->GetCount() >= engy.data.limit) ||
-			(taskSize >= (int)(buildPower / engy.cdef->GetCostM() * 8 + 1)) ||
-			(engy.cdef->GetCostM() * 16.0f >= maxBuildTime * SQUARE(metalIncome)))
+		if (!IsGeoDef(engy.cdef) || !engy.cdef->IsAvailable(frame) || (engy.cdef->GetCount() >= engy.data.limit) ||
+			!canQueue(engy.cdef) || !isQuickToBuild(engy.cdef))
 		{
 			continue;
 		}
-		const AIFloat3 pos = FindGeoSpot(engy.cdef, position, unit);
-		if (utils::is_valid(pos)) {
-			geoDef = engy.cdef;
-			geoPos = pos;
-			break;
+		const AIFloat3 ventPos = FindGeoSpot(engy.cdef, position, unit);  // also checks safety and reach
+		if (utils::is_valid(ventPos)) {
+			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
+			IBuilderTask* task = builderMgr->EnqueueTask(priority, engy.cdef, ventPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
+			task->SetBuildPos(ventPos);
+			return task;
 		}
 	}
 
-	if (geoDef != nullptr) {
-		bestDef = geoDef;
-		isLastHope = false;
-	} else for (const auto& engy : energyDefs.GetInfos()) {  // sorted by high-tech first
+	CCircuitDef* bestDef = nullptr;
+	CCircuitDef* hopeDef = nullptr;
+	bool isLastHope = isEnergyStalling;
+	for (const auto& engy : energyDefs.GetInfos()) {  // sorted by high-tech first
 		// Geothermal is handled above; skipping it here means its limit or a missing vent never blocks other energy
-		if (!engy.cdef->IsAvailable(frame) ||
-			engy.cdef->GetDef()->IsNeedGeo() ||
-			!terrainMgr->CanBeBuiltAtSafe(engy.cdef, position))
-		{
+		if (!engy.cdef->IsAvailable(frame) || IsGeoDef(engy.cdef) || !terrainMgr->CanBeBuiltAtSafe(engy.cdef, position)) {
 			continue;
 		}
 
 		if (engy.cdef->GetCount() < engy.data.limit) {
 			isLastHope = false;
-			if (taskSize < (int)(buildPower / engy.cdef->GetCostM() * 8 + 1)) {
+			if (canQueue(engy.cdef)) {
 				bestDef = engy.cdef;
-				// TODO: Select proper scale/quadratic function (x*x) and smoothing coefficient (8).
-				//       МЕТОД НАИМЕНЬШИХ КВАДРАТОВ ! (income|buildPower, make/cost) - points
-				//       solar       geothermal    fusion         singu           ...
-				//       (10, 2/70), (15, 25/500), (20, 35/1000), (30, 225/4000), ...
-				if (engy.cdef->GetCostM() * 16.0f < maxBuildTime * SQUARE(metalIncome)) {
+				if (isQuickToBuild(engy.cdef)) {
 					break;
 				}
-			} else if (engy.cdef->GetCostM() * 16.0f < maxBuildTime * SQUARE(metalIncome)) {
+			} else if (isQuickToBuild(engy.cdef)) {
 				bestDef = nullptr;
 				break;
 			}
@@ -1069,7 +1042,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 			break;
 		} else if (hopeDef == nullptr) {
 			hopeDef = engy.cdef;
-			isLastHope = isLastHope && (taskSize < (int)(buildPower / hopeDef->GetCostM() * 8 + 1));
+			isLastHope = isLastHope && canQueue(hopeDef);
 		}
 	}
 	if (isLastHope) {
@@ -1083,10 +1056,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// Find place to build
 	AIFloat3 buildPos = -RgtVector;
 	CMetalManager* metalMgr = circuit->GetMetalManager();
-	const bool isGeo = (bestDef == geoDef);
-	if (isGeo) {
-		buildPos = geoPos;
-	} else if (!bestDef->IsRoleSupport()) {
+	if (!bestDef->IsRoleSupport()) {
 		const CMetalData::Metals& spots = metalMgr->GetSpots();
 		CMetalData::PointPredicate predicate = [&spots, terrainMgr](int index) {
 			return !terrainMgr->IsZoneAlly(spots[index].position);
@@ -1115,13 +1085,6 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	if (utils::is_valid(buildPos) && terrainMgr->CanBeBuiltAtSafe(bestDef, buildPos) &&
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
-		IBuilderTask::Priority priority = isEnergyStalling ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
-		if (isGeo) {
-			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
-			IBuilderTask* task = builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
-			task->SetBuildPos(buildPos);
-			return task;
-		}
 		return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 16.0f, true);
 	}
 
@@ -1131,31 +1094,37 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 void CEconomyManager::UpdateGeoSpots()
 {
 	// Zero-K keeps Gaia features (map vents) visible through fog (featureLOS.featureVisibility = 1), so this
-	// normally finds every vent at once; merging with known spots covers games where features need LOS
-	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
-	for (Feature* feature : features) {
-		FeatureDef* featDef = feature->GetDef();
-		if (featDef == nullptr) {
+	// normally finds every vent at once; merging with known spots covers games where features need LOS.
+	// Id-only calls: one engine call per feature (its def), position only for vents.
+	COOAICallback* clb = circuit->GetCallback();
+	for (int featureId : clb->GetFeatureIds()) {
+		if (!IsGeoFeatureDef(clb->Feature_GetDefId(featureId))) {
 			continue;
 		}
-		const bool isGeo = featDef->IsGeoThermal();
-		delete featDef;
-		if (!isGeo) {
-			continue;
-		}
-		const AIFloat3 pos = feature->GetPosition();
-		bool isKnown = false;
-		for (const AIFloat3& spot : geoSpots) {
-			if (spot.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 2)) {
-				isKnown = true;
-				break;
-			}
-		}
+		const AIFloat3 pos = clb->Feature_GetPosition(featureId);
+		const bool isKnown = std::any_of(geoSpots.begin(), geoSpots.end(), [&pos](const AIFloat3& spot) {
+			return spot.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 2);
+		});
 		if (!isKnown) {
 			geoSpots.push_back(pos);
+			geoBlockedFrame.push_back(-1);
 		}
 	}
-	utils::free_clear(features);
+}
+
+bool CEconomyManager::IsGeoFeatureDef(int featureDefId)
+{
+	if (featureDefId < 0) {
+		return false;  // not visible
+	}
+	if ((size_t)featureDefId >= featureDefIsGeo.size()) {
+		featureDefIsGeo.resize(featureDefId + 1, -1);
+	}
+	int8_t& isGeo = featureDefIsGeo[featureDefId];
+	if (isGeo < 0) {  // defs don't change during a game
+		isGeo = circuit->GetCallback()->FeatureDef_IsGeoThermal(featureDefId) ? 1 : 0;
+	}
+	return isGeo == 1;
 }
 
 const std::vector<AIFloat3>& CEconomyManager::GetGeoSpots()
@@ -1168,45 +1137,54 @@ const std::vector<AIFloat3>& CEconomyManager::GetGeoSpots()
 	return geoSpots;
 }
 
+bool CEconomyManager::IsGeoSpotTaken(const AIFloat3& spot) const
+{
+	for (IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY)) {
+		if (IsGeoDef(t->GetBuildDef()) && (t->GetPosition().SqDistance2D(spot) < SQUARE(SQUARE_SIZE * 4))) {
+			return true;
+		}
+	}
+	return false;
+}
+
 AIFloat3 CEconomyManager::FindGeoSpot(CCircuitDef* cdef, const AIFloat3& position, CCircuitUnit* unit)
 {
-	GetGeoSpots();  // refresh
-	if (geoSpots.empty()) {
+	const std::vector<AIFloat3>& spots = GetGeoSpots();
+	if (spots.empty()) {
 		return -RgtVector;
 	}
 
+	// Nearest first, so the checks below stop at the first vent that passes
+	std::vector<std::pair<float, unsigned>> byDist;
+	byDist.reserve(spots.size());
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		byDist.emplace_back(position.SqDistance2D(spots[i]), i);
+	}
+	std::sort(byDist.begin(), byDist.end());
+
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
-	CMap* map = circuit->GetMap();
-	const std::set<IBuilderTask*>& tasks = circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY);
-	AIFloat3 bestPos = -RgtVector;
-	float minSqDist = std::numeric_limits<float>::max();
-	for (const AIFloat3& spot : geoSpots) {
-		const float sqDist = position.SqDistance2D(spot);
-		if (sqDist >= minSqDist) {
-			continue;
-		}
-		if (terrainMgr->IsZoneAlly(spot) ||
+	const int frame = circuit->GetLastFrame();
+	for (const auto& [sqDist, i] : byDist) {
+		const AIFloat3& spot = spots[i];
+		if ((geoBlockedFrame[i] > frame) ||
+			terrainMgr->IsZoneAlly(spot) ||
 			!terrainMgr->CanBeBuiltAtSafe(cdef, spot) ||
 			(threatMap->GetAllThreatAt(spot) > geoThreat) ||
-			((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, spot, unit->GetCircuitDef()->GetBuildDistance())))
+			((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, spot, unit->GetCircuitDef()->GetBuildDistance())) ||
+			IsGeoSpotTaken(spot))
 		{
 			continue;
 		}
-		bool isTaken = false;  // another geothermal task already went for this vent
-		for (IBuilderTask* t : tasks) {
-			if (t->GetBuildDef()->GetDef()->IsNeedGeo() && (t->GetPosition().SqDistance2D(spot) < SQUARE(SQUARE_SIZE * 4))) {
-				isTaken = true;
-				break;
-			}
-		}
-		if (isTaken || !map->IsPossibleToBuildAt(cdef->GetDef(), spot, UNIT_COMMAND_BUILD_NO_FACING)) {
+		// Engine call last. A vent it rejects (almost always: a geo stands on it) is skipped for 10 s,
+		// so taken vents don't cost an engine call on every energy pick
+		if (!circuit->GetMap()->IsPossibleToBuildAt(cdef->GetDef(), spot, UNIT_COMMAND_BUILD_NO_FACING)) {
+			geoBlockedFrame[i] = frame + FRAMES_PER_SEC * 10;
 			continue;
 		}
-		bestPos = spot;
-		minSqDist = sqDist;
+		return spot;
 	}
-	return bestPos;
+	return -RgtVector;
 }
 
 void CEconomyManager::UpdateGeoMorph()
@@ -1441,14 +1419,11 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 
 	// Constructors reclaiming and metal close to full: storage at NOW, even if storage is already 10x income.
 	// Running reclaim isn't stopped by full storage (it still denies the metal to the enemy).
-	bool isReclaiming = false;
-	for (IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::RECLAIM)) {
-		if (!t->GetAssignees().empty()) {
-			isReclaiming = true;
-			break;
-		}
-	}
-	const bool isReclaimStore = isReclaiming && (reclaimStoreAt > 0.f)
+	// The job scan first: it's cheaper than the storage engine call
+	const std::set<IBuilderTask*>& reclaimTasks = builderMgr->GetTasks(IBuilderTask::BuildType::RECLAIM);
+	const bool isReclaimStore = (reclaimStoreAt > 0.f)
+			&& std::any_of(reclaimTasks.begin(), reclaimTasks.end(),
+						   [](const IBuilderTask* t) { return !t->GetAssignees().empty(); })
 			&& (GetMetalCur() > GetStorage(metalRes) * reclaimStoreAt);
 
 	const std::set<IBuilderTask*>& storeTasks = builderMgr->GetTasks(IBuilderTask::BuildType::STORE);
