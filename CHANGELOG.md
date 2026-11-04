@@ -124,11 +124,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Faster constructor job choice and reclaim scans, same decisions.**
   - Job choice works out a job's travel cost first, and runs the reach and threat checks only for a job that
-    would beat the best so far (nearby or far fallback). In a randomised check of old against new it picked the same
-    job in all 200,000 cases and did about a third of those checks (a sixth for a hiding commander).
+    would beat the best so far (nearby or far fallback). A randomised model of old against new picked the same
+    job in all 200,000 cases, and in that model ran about a third of those checks (a sixth for a hiding commander).
   - Reclaim scans (new reclaim jobs, a running job picking its next wreck, and the constructor-count reclaim rule)
     read features by id and look up each feature type's metal once per game. Before, every feature cost two wrapper
-    objects and up to five engine calls; a tree now costs one call. A running job checks reach only for a wreck that
+    objects and up to five engine calls; one with no metal (ZK map trees) now costs one call. A running job checks reach only for a wreck that
     would beat its current pick, so it no longer runs a threat and path check on every tree around it.
   - No reclaim scan when every reclaim job is full and the cap on untaken jobs is reached.
   - `mex_escort` points that aren't `[number, number]` are skipped instead of raising a JSON error.
