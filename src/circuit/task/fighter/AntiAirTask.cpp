@@ -30,6 +30,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace circuit {
 
@@ -37,25 +38,59 @@ using namespace springai;
 
 static constexpr float UNKNOWN_AIR_HEIGHT = 50.f;  // an unidentified blip this far above ground counts as a plane
 static constexpr float BLIP_POS_ERROR = 96.f;  // engine default radar error size (ZK keeps it): sideways shift of a blip
+static constexpr float FALLBACK_PATH_RANGE = DEFAULT_SLACK * 4;  // goal tolerance of safety, base, commander and flee paths
+static const int SPLIT_MERGE_COOLDOWN = FRAMES_PER_SEC * 30;  // a unit split off a blocked regroup doesn't merge for this long
+static const int FLEE_REPLAN_FRAMES = FRAMES_PER_SEC * 2;  // re-plan the flee this often while the danger stays
 
-// Ground (or water surface) a radar blip stands on, as high as it can be: the blip is shifted sideways by up
-// to BLIP_POS_ERROR, so take the highest ground around it, else a ground unit near a cliff reads as flying
-static float GetBlipGroundHeight(CMap* map, const AIFloat3& p)
+// Is an unidentified radar blip at p high enough above the ground (or water surface) to be a plane? The blip is
+// shifted sideways by up to BLIP_POS_ERROR, so it must clear the highest ground around it, else a ground unit
+// near a cliff reads as flying. Each read can only make the answer "no", so stop at the first that does: a blip
+// near sea level needs no read, most ground blips one
+static bool IsHighBlip(CMap* map, const AIFloat3& p)
 {
+	if (p.y < UNKNOWN_AIR_HEIGHT) {
+		return false;  // not above the water surface: a ship or hover floats at 0 over a deep sea floor
+	}
 	const float maxX = CTerrainManager::GetTerrainWidth() - 1.f;
 	const float maxZ = CTerrainManager::GetTerrainHeight() - 1.f;
 	const float offsets[][2] = {{0.f, 0.f}, {1.f, 0.f}, {-1.f, 0.f}, {0.f, 1.f}, {0.f, -1.f},
 								{0.7f, 0.7f}, {0.7f, -0.7f}, {-0.7f, 0.7f}, {-0.7f, -0.7f}};
-	float height = 0.f;  // water surface: a ship or hover floats at 0 over a deep sea floor
 	for (const auto& o : offsets) {
 		const float x = std::min(std::max(p.x + o[0] * BLIP_POS_ERROR, 0.f), maxX);
 		const float z = std::min(std::max(p.z + o[1] * BLIP_POS_ERROR, 0.f), maxZ);
-		height = std::max(height, map->GetElevationAt(x, z));
+		if (p.y - map->GetElevationAt(x, z) < UNKNOWN_AIR_HEIGHT) {
+			return false;
+		}
 	}
-	return height;
+	return true;
 }
 
-static const int SPLIT_MERGE_COOLDOWN = FRAMES_PER_SEC * 30;  // a unit split off a blocked regroup doesn't merge for this long
+// Nearest spot further from the danger than pos is, else the one furthest from the danger; nullptr if none
+static const AIFloat3* PickFleeSpot(const AIFloat3& pos, const AIFloat3& dangerPos, const F3Vec& spots)
+{
+	const float sqDangerDist = pos.SqDistance2D(dangerPos);
+	const AIFloat3* best = nullptr;
+	float bestSqDist = std::numeric_limits<float>::max();
+	for (const AIFloat3& spot : spots) {
+		const float sqDist = pos.SqDistance2D(spot);
+		if ((spot.SqDistance2D(dangerPos) > sqDangerDist) && (sqDist < bestSqDist)) {
+			bestSqDist = sqDist;
+			best = &spot;
+		}
+	}
+	if (best != nullptr) {
+		return best;
+	}
+	float maxSqDist = -1.f;
+	for (const AIFloat3& spot : spots) {
+		const float sqDist = spot.SqDistance2D(dangerPos);
+		if (sqDist > maxSqDist) {
+			maxSqDist = sqDist;
+			best = &spot;
+		}
+	}
+	return best;
+}
 
 CAntiAirTask::CAntiAirTask(ITaskManager* mgr, float powerMod)
 		: ISquadTask(mgr, FightType::AA, powerMod)
@@ -132,9 +167,6 @@ void CAntiAirTask::Update()
 {
 	++updCount;
 
-	/*
-	 * Check safety
-	 */
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 
@@ -147,25 +179,20 @@ void CAntiAirTask::Update()
 		return;
 	}
 
+	// Disengaging: keep walking until the spot is reached (checked every update, so the squad hunts again on
+	// arrival), re-planning the path every 32 updates
 	if (State::DISENGAGE == state) {
-		if (updCount % 32 == 1) {
-			const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
-			if (position.SqDistance2D(leader->GetPos(frame)) < SQUARE(maxDist)) {
-				state = State::ROAM;
-			} else {
-				if (IsQueryReady(leader)) {
-					FallbackDisengage();
-				}
-				return;
+		const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
+		if (position.SqDistance2D(leader->GetPos(frame)) >= SQUARE(maxDist)) {
+			if ((updCount % 32 == 1) && IsQueryReady(leader)) {
+				FallbackDisengage();
 			}
-		} else {
 			return;
 		}
+		state = State::ROAM;
 	}
 
-	/*
-	 * Merge tasks if possible
-	 */
+	// Merge into a nearby squad of the same type
 	ISquadTask* task = (frame >= mergeFrame) ? GetMergeTask() : nullptr;
 	if (task != nullptr) {
 		task->Merge(this);
@@ -174,11 +201,9 @@ void CAntiAirTask::Update()
 		return;
 	}
 
-	/*
-	 * Regroup if required
-	 */
-	bool wasRegroup = (State::REGROUP == state);
-	bool mustRegroup = IsMustRegroup();
+	// Regroup if required
+	const bool wasRegroup = (State::REGROUP == state);
+	const bool mustRegroup = IsMustRegroup();
 	if (leader == nullptr) {  // all units released as stuck: task aborted
 		return;
 	}
@@ -198,57 +223,35 @@ void CAntiAirTask::Update()
 		return;
 	}
 
-	bool isExecute = (updCount % 4 == 2);
+	// Pick a target every 4th update, or sooner when a unit asks for it
+	const bool isExecute = (updCount % 4 == 2)
+			|| std::any_of(units.begin(), units.end(), [frame](CCircuitUnit* u) { return u->IsForceUpdate(frame); });
 	if (!isExecute) {
-		for (CCircuitUnit* unit : units) {
-			isExecute |= unit->IsForceUpdate(frame);
+		if (wasRegroup && !pPath->posPath.empty()) {
+			ActivePath();
 		}
-		if (!isExecute) {
-			if (wasRegroup && !pPath->posPath.empty()) {
-				ActivePath();
-			}
-			return;
-		}
+		return;
 	}
 
-	/*
-	 * Update target
-	 */
 	FindTarget();
 
-	const AIFloat3& startPos = leader->GetPos(frame);
 	state = State::ROAM;
-	if (target != nullptr) {
-		const float sqRange = SQUARE(GetAirRange());
-		if (position.SqDistance2D(startPos) < sqRange) {
-			state = State::ENGAGE;
-			retargetMove = GetAirRange() * 0.25f;  // a plane changes tile nearly every update: re-order only when it moved this far
-			Attack(frame);
-			return;
-		}
+	if ((target != nullptr) && (position.SqDistance2D(leader->GetPos(frame)) < SQUARE(GetAirRange()))) {
+		state = State::ENGAGE;
+		retargetMove = GetAirRange() * 0.25f;  // a plane changes tile nearly every update: re-order only when it moved this far
+		Attack(frame);
+		return;
 	}
 
 	if (!IsQueryReady(leader)) {
 		return;
 	}
-
 	if (target == nullptr) {
 		FallbackSafePos();
 		return;
 	}
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, approachPos, pathfinder->GetSquareSize(), nullptr, GetPathThreatCap(leader, startPos, {approachPos}));
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyTargetPath(static_cast<const CQueryPathSingle*>(query));
-		}
-	});
+	QueryPath(leader, approachPos, circuit->GetPathfinder()->GetSquareSize(), true,
+			[this](const CQueryPathSingle* query) { ApplyTargetPath(query); });
 }
 
 void CAntiAirTask::OnUnitIdle(CCircuitUnit* unit)
@@ -283,195 +286,231 @@ void CAntiAirTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 		return;
 	}
 
-	if (!IsQueryReady(unit)) {
+	// The path is the leader's: one in flight (from an earlier hit, or a flee) is not replaced on every hit
+	if (!IsQueryReady(leader)) {
 		return;
 	}
-
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& startPos = leader->GetPos(frame);
-	circuit->GetMilitaryManager()->FillSafePos(leader, urgentPositions);
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(leader, startPos, urgentPositions));
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyDamagedPath(static_cast<const CQueryPathMulti*>(query));
-		}
-	});
+	manager->GetCircuit()->GetMilitaryManager()->FillSafePos(leader, urgentPositions);
+	QueryPathMulti(urgentPositions, [this](const CQueryPathMulti* query) { ApplyDamagedPath(query); });
 }
 
 void CAntiAirTask::FindTarget()
 {
+	// The nearest aircraft that passes the leash and whose firing spot is safe enough. Candidates are judged
+	// nearest first, so the costly checks stop at the first that passes
 	CCircuitAI* circuit = manager->GetCircuit();
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	CInfluenceMap* inflMap = circuit->GetInflMap();
-	CMap* map = circuit->GetMap();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = leader->GetPos(frame);
-	STerrainMapArea* area = leader->GetArea();
-	CCircuitDef* cdef = leader->GetCircuitDef();
-	const int canTargetCat = cdef->GetTargetCategory();
-	const int noChaseCat = cdef->GetNoChaseCategory();
-	const float maxPower = GetSafeThreat();  // health-scaled, same as firing spots; judged with GetAllowedThreatAt
+	const int canTargetCat = leader->GetCircuitDef()->GetTargetCategory();
+	const int noChaseCat = leader->GetCircuitDef()->GetNoChaseCategory();
 
-	// antiair block of behaviour.json
-	const CMilitaryManager::SAntiAirCfg& aaCfg = militaryMgr->GetAntiAirCfg();
-	const float airRange = GetAirRange();
-	const float sqRange = SQUARE(airRange);
-	const bool isLeash = (aaCfg.leash >= 0.f);
-	const float sqLeash = SQUARE(aaCfg.leash);
-	const bool isFireSpot = (aaCfg.fireSpot >= 0.f);
-	const float fireDist = airRange * aaCfg.fireSpot;
-	// Home points: our attack and defend group leaders, and the base
-	homePoints.clear();
-	if (isLeash) {
-		const std::array<IFighterTask::FightType, 2> types = {IFighterTask::FightType::ATTACK, IFighterTask::FightType::DEFEND};
-		for (IFighterTask::FightType type : types) {
-			for (IFighterTask* task : militaryMgr->GetTasks(type)) {
-				homePoints.push_back(static_cast<ISquadTask*>(task)->GetLeaderPos(frame));
-			}
-		}
-		homePoints.push_back(circuit->GetSetupManager()->GetBasePos());
-	}
+	circuit->GetThreatMap()->SetThreatType(leader);  // shared threat-map state: set on every pick
 
-	CEnemyInfo* bestTarget = nullptr;
-	float minSqDist = std::numeric_limits<float>::max();
-
-	threatMap->SetThreatType(leader);
-	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
-	for (auto& kv : enemies) {
+	targetCandidates.clear();
+	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		if (enemy->IsHidden()) {
 			continue;
 		}
-		const AIFloat3& ePos = enemy->GetPos();
-
 		CCircuitDef* edef = enemy->GetCircuitDef();
-		if (edef != nullptr) {
-			if (((edef->GetCategory() & canTargetCat) == 0)
-				|| ((edef->GetCategory() & noChaseCat) != 0))
-			{
-				continue;
-			}
-		} else if (ePos.y - GetBlipGroundHeight(map, ePos) < UNKNOWN_AIR_HEIGHT) {
-			// Unknown radar blip: skips the category check above, so only one flying high enough
-			// is taken for a plane; a ground raider's dot in our mex field is not an AA target
-			continue;
-		}
-
-		const float sqDist = pos.SqDistance2D(ePos);
-		if (sqDist >= minSqDist) {
-			continue;
-		}
-
-		// Threat where the AA would stand to shoot, not under the aircraft
-		AIFloat3 checkPos = ePos;
-		bool isCoverSpot = true;  // checkPos may be judged for building cover
-		if (isFireSpot) {
-			if (sqDist <= sqRange) {
-				checkPos = pos;
-			} else {
-				checkPos = ePos + (pos - ePos).Normalize2D() * fireDist;
-				CTerrainManager::CorrectPosition(checkPos);
-				if (!terrainMgr->CanMoveToPos(area, checkPos)) {
-					checkPos = ePos;  // can't stand there: judge and approach as before
-					isCoverSpot = false;  // but don't let cover under the plane stand in for the spot
-				}
-			}
-		}
-
-		// Leash: aircraft already in range is always fair game; otherwise it must be near home
-		if (isLeash && (sqDist > sqRange)) {
-			bool isNearHome = false;
-			if (aaCfg.isOwnGround) {
-				// Ground our buildings and static defences cover is ours, judged where the AA would stand.
-				// The plain influence map counts armed units only, so a mex field or the back of the base
-				// with no army nearby reads as neutral.
-				isNearHome = isCoverSpot && (inflMap->GetAllyDefendInflAt(checkPos) > INFL_EPS);
-				if (!isNearHome) {
-					// Else our armed influence under the plane, without the squad's own share (else AA in enemy
-					// land makes its surroundings "ours" and creeps forward one plane at a time), must be real
-					// and beat the enemy's without the plane's own share. The plane's share is at most its
-					// threat, and none for a plane with no ground range (a pure fighter adds no influence),
-					// so it is taken off the enemy side only when it has one, clamped, never added to ours.
-					// Without the range check a fighter's threat would erase a real enemy army under it.
-					float allyInfl = inflMap->GetAllyInflAt(ePos);
-					for (CCircuitUnit* u : units) {
-						allyInfl -= inflMap->GetMobileArmedInflAt(u, ePos);
-					}
-					const float planeShare = (enemy->GetData()->GetRange(CCircuitDef::ThreatType::LAND) > 0) ? enemy->GetThreat() : 0.f;
-					const float enemyInfl = std::max(0.f, inflMap->GetEnemyInflAt(ePos) - planeShare);
-					isNearHome = (allyInfl > INFL_EPS) && (allyInfl - enemyInfl > INFL_EPS);
-				}
-			}
-			for (const AIFloat3& hp : homePoints) {
-				if (isNearHome) {
-					break;
-				}
-				isNearHome = (hp.SqDistance2D(ePos) <= sqLeash);
-			}
-			if (!isNearHome) {
-				continue;
-			}
-		}
-
-		// Take off only the plane's own threat at checkPos, as the threat map drew it: none outside
-		// its ground range (a pure fighter has none), so it can't erase real ground threat there
-		float planeThreat = 0.f;
-		const int planeRange = enemy->GetData()->GetRange(CCircuitDef::ThreatType::LAND);  // threat map cells
-		if (planeRange > 0) {
-			const float cells = checkPos.distance2D(ePos) / threatMap->GetSquareSize();
-			if (cells <= planeRange) {
-				const bool isConst = (edef != nullptr) && edef->IsAlwaysHit();
-				planeThreat = isConst ? enemy->GetThreat() : enemy->GetThreat() * (1.f - 0.5f * cells / planeRange);
-			}
-		}
-		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - planeThreat);
-		if ((threat >= GetAllowedThreatAt(checkPos, maxPower)) ||
-			!terrainMgr->CanMoveToPos(area, ePos))
+		if ((edef != nullptr)
+			&& (((edef->GetCategory() & canTargetCat) == 0) || ((edef->GetCategory() & noChaseCat) != 0)))
 		{
 			continue;
 		}
+		targetCandidates.emplace_back(pos.SqDistance2D(enemy->GetPos()), enemy);
+	}
+	// Equally near candidates in enemy id order (the order of GetEnemyInfos): the first wins, as before the sort
+	std::sort(targetCandidates.begin(), targetCandidates.end(), [](const auto& a, const auto& b) {
+		return (a.first < b.first) || ((a.first == b.first) && (a.second->GetId() < b.second->GetId()));
+	});
 
-		minSqDist = sqDist;
+	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CMap* map = circuit->GetMap();
+	STerrainMapArea* area = leader->GetArea();
+	const float sqRange = SQUARE(GetAirRange());
+	const bool isLeash = (aaCfg.leash >= 0.f);
+	bool isPrepared = false;  // squad strength and home points wait for a candidate past the cheap checks
+	float maxPower = 0.f;
+	CEnemyInfo* bestTarget = nullptr;
+	for (const auto& [sqDist, enemy] : targetCandidates) {
+		const AIFloat3& ePos = enemy->GetPos();
+		// Unknown radar blip: skipped the category check, so only one flying high enough is taken for
+		// a plane; a ground raider's dot in our mex field is not an AA target
+		if ((enemy->GetCircuitDef() == nullptr) && !IsHighBlip(map, ePos)) {
+			continue;
+		}
+		if (!terrainMgr->CanMoveToPos(area, ePos)) {
+			continue;
+		}
+		if (!isPrepared) {
+			isPrepared = true;
+			maxPower = GetSafeThreat();  // health-scaled, same as firing spots; judged with GetAllowedThreatAt
+			if (isLeash) {
+				FillHomePoints();
+			}
+		}
+		bool isCoverSpot;  // checkPos may be judged for building cover
+		const AIFloat3 checkPos = GetFireSpot(pos, ePos, sqDist, isCoverSpot);
+		// Leash: aircraft already in range is always fair game; otherwise it must be near home
+		if (isLeash && (sqDist > sqRange) && !IsNearHome(enemy, checkPos, isCoverSpot)) {
+			continue;
+		}
+		// Threat where the AA would stand to shoot, without the plane's own share
+		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - GetPlaneThreatAt(enemy, checkPos));
+		if (threat >= GetAllowedThreatAt(checkPos, maxPower)) {
+			continue;
+		}
 		bestTarget = enemy;
 		approachPos = checkPos;
+		break;
 	}
 
 	SetTarget(bestTarget);
 	if (bestTarget != nullptr) {
 		position = target->GetPos();
 	}
-	// Return: target, startPos=leader->pos, endPos=position
 }
 
-void CAntiAirTask::FallbackDisengage()
+void CAntiAirTask::FillHomePoints()
+{
+	// Leash anchors: our attack and defend group leaders, and the base
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const int frame = circuit->GetLastFrame();
+	homePoints.clear();
+	const std::array<IFighterTask::FightType, 2> types = {IFighterTask::FightType::ATTACK, IFighterTask::FightType::DEFEND};
+	for (IFighterTask::FightType type : types) {
+		for (IFighterTask* task : militaryMgr->GetTasks(type)) {
+			homePoints.push_back(static_cast<ISquadTask*>(task)->GetLeaderPos(frame));
+		}
+	}
+	homePoints.push_back(circuit->GetSetupManager()->GetBasePos());
+}
+
+AIFloat3 CAntiAirTask::GetFireSpot(const AIFloat3& pos, const AIFloat3& ePos, float sqDist, bool& isCoverSpot) const
+{
+	// antiair.fire_spot: where the squad would stand to shoot the aircraft at ePos. In range already: here.
+	// Else fire_spot x air range short of it, towards the squad; where the squad can't stand, under the plane.
+	isCoverSpot = true;
+	CCircuitAI* circuit = manager->GetCircuit();
+	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
+	if (aaCfg.fireSpot < 0.f) {
+		return ePos;  // old check under the aircraft
+	}
+	const float airRange = GetAirRange();
+	if (sqDist <= SQUARE(airRange)) {
+		return pos;
+	}
+	AIFloat3 spot = ePos + (pos - ePos).Normalize2D() * (airRange * aaCfg.fireSpot);
+	CTerrainManager::CorrectPosition(spot);
+	if (!circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), spot)) {
+		isCoverSpot = false;  // judge and approach under the plane, but its building cover doesn't count
+		return ePos;
+	}
+	return spot;
+}
+
+bool CAntiAirTask::IsNearHome(CEnemyInfo* enemy, const AIFloat3& checkPos, bool isCoverSpot) const
+{
+	// antiair.leash: the aircraft is within leash of a home point (FillHomePoints), or (own_ground) over our ground
+	const CMilitaryManager::SAntiAirCfg& aaCfg = manager->GetCircuit()->GetMilitaryManager()->GetAntiAirCfg();
+	const AIFloat3& ePos = enemy->GetPos();
+	const float sqLeash = SQUARE(aaCfg.leash);
+	for (const AIFloat3& hp : homePoints) {
+		if (hp.SqDistance2D(ePos) <= sqLeash) {
+			return true;
+		}
+	}
+	if (!aaCfg.isOwnGround) {
+		return false;
+	}
+
+	// Ground our buildings and static defences cover is ours, judged where the AA would stand.
+	// The plain influence map counts armed units only, so a mex field or the back of the base
+	// with no army nearby reads as neutral.
+	CInfluenceMap* inflMap = manager->GetCircuit()->GetInflMap();
+	if (isCoverSpot && (inflMap->GetAllyDefendInflAt(checkPos) > INFL_EPS)) {
+		return true;
+	}
+	// Else our armed influence under the plane, without the squad's own share (else AA in enemy land makes
+	// its surroundings "ours" and creeps forward one plane at a time), must be real and beat the enemy's
+	// without the plane's own share. The plane's share is at most its threat, and none for a plane with no
+	// ground range (a pure fighter adds no influence), so it is taken off the enemy side only when it has one,
+	// clamped, never added to ours. Without the range check a fighter's threat would erase a real enemy army.
+	float allyInfl = inflMap->GetAllyInflAt(ePos);
+	for (CCircuitUnit* u : units) {
+		allyInfl -= inflMap->GetMobileArmedInflAt(u, ePos);
+	}
+	const float planeShare = (enemy->GetData()->GetRange(CCircuitDef::ThreatType::LAND) > 0) ? enemy->GetThreat() : 0.f;
+	const float enemyInfl = std::max(0.f, inflMap->GetEnemyInflAt(ePos) - planeShare);
+	return (allyInfl > INFL_EPS) && (allyInfl - enemyInfl > INFL_EPS);
+}
+
+float CAntiAirTask::GetPlaneThreatAt(CEnemyInfo* enemy, const AIFloat3& pos) const
+{
+	// The plane's own threat at pos, as the threat map drew it: none outside its ground range (a pure fighter
+	// has none), so taking it off can't erase real ground threat there
+	const int planeRange = enemy->GetData()->GetRange(CCircuitDef::ThreatType::LAND);  // threat map cells
+	if (planeRange <= 0) {
+		return 0.f;
+	}
+	const float cells = pos.distance2D(enemy->GetPos()) / manager->GetCircuit()->GetThreatMap()->GetSquareSize();
+	if (cells > planeRange) {
+		return 0.f;
+	}
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	const bool isConst = (edef != nullptr) && edef->IsAlwaysHit();
+	return isConst ? enemy->GetThreat() : enemy->GetThreat() * (1.f - 0.5f * cells / planeRange);
+}
+
+void CAntiAirTask::QueryPath(CCircuitUnit* unit, const AIFloat3& goal, float range, bool isCapped,
+		std::function<void (const CQueryPathSingle*)>&& apply)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& startPos = unit->GetPos(frame);
+	const float maxThreat = isCapped ? GetPathThreatCap(unit, startPos, {goal}) : std::numeric_limits<float>::max();
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			unit, circuit->GetThreatMap(), frame, startPos, goal, range, nullptr, maxThreat);
+	pathQueries[unit] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this, apply = std::move(apply)](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			apply(static_cast<const CQueryPathSingle*>(query));
+		}
+	});
+}
+
+void CAntiAirTask::QueryPathMulti(const F3Vec& goals, std::function<void (const CQueryPathMulti*)>&& apply)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& startPos = leader->GetPos(frame);
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathfinder->GetSquareSize(), nullptr, GetPathThreatCap(leader, startPos, {position}));
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
+			leader, circuit->GetThreatMap(), frame, startPos, FALLBACK_PATH_RANGE, goals, nullptr,
+			GetPathThreatCap(leader, startPos, goals));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+	pathfinder->RunQuery(query, [this, apply = std::move(apply)](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
-			this->ApplyDisengagePath(static_cast<const CQueryPathSingle*>(query));
+			apply(static_cast<const CQueryPathMulti*>(query));
 		}
 	});
+}
+
+void CAntiAirTask::FallbackDisengage()
+{
+	QueryPath(leader, position, manager->GetCircuit()->GetPathfinder()->GetSquareSize(), true,
+			[this](const CQueryPathSingle* query) { ApplyDisengagePath(query); });
 }
 
 void CAntiAirTask::ApplyDisengagePath(const CQueryPathSingle* query)
@@ -497,35 +536,18 @@ void CAntiAirTask::ApplyTargetPath(const CQueryPathSingle* query)
 	if (!pPath->posPath.empty()) {
 		ActivePath();
 	} else {
-		FallbackSafePos();  // was: fight-move straight at the target
+		FallbackSafePos();
 	}
 }
 
 void CAntiAirTask::FallbackSafePos()
 {
-	CCircuitAI* circuit = manager->GetCircuit();
-	circuit->GetMilitaryManager()->FillSafePos(leader, urgentPositions);
+	manager->GetCircuit()->GetMilitaryManager()->FillSafePos(leader, urgentPositions);
 	if (urgentPositions.empty()) {
 		FallbackCommPos();
 		return;
 	}
-
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& startPos = leader->GetPos(frame);
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(leader, startPos, urgentPositions));
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplySafePos(static_cast<const CQueryPathMulti*>(query));
-		}
-	});
+	QueryPathMulti(urgentPositions, [this](const CQueryPathMulti* query) { ApplySafePos(query); });
 }
 
 void CAntiAirTask::ApplySafePos(const CQueryPathMulti* query)
@@ -542,55 +564,23 @@ void CAntiAirTask::ApplySafePos(const CQueryPathMulti* query)
 
 void CAntiAirTask::FallbackCommPos()
 {
+	// Go to the commander along a threat-aware path
 	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
 	CCircuitUnit* commander = circuit->GetSetupManager()->GetCommander();
 	if ((commander == nullptr) ||
-		!circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), commander->GetPos(frame)))
+		!circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), commander->GetPos(circuit->GetLastFrame())))
 	{
 		HoldAll();
 		return;
 	}
-
-	// Go to the commander along a threat-aware path (was: plain Guard order)
-	const AIFloat3& startPos = leader->GetPos(frame);
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, commander->GetPos(frame), pathRange, nullptr, GetPathThreatCap(leader, startPos, {commander->GetPos(frame)}));
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyFallbackPath(static_cast<const CQueryPathSingle*>(query), false, true);
-		}
-	});
+	QueryPath(leader, commander->GetPos(circuit->GetLastFrame()), FALLBACK_PATH_RANGE, true,
+			[this](const CQueryPathSingle* query) { ApplyFallbackPath(query, false, true); });
 }
 
 void CAntiAirTask::FallbackBasePos(bool isCapped)
 {
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& startPos = leader->GetPos(frame);
-	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, basePos, pathRange, nullptr,
-			isCapped ? GetPathThreatCap(leader, startPos, {basePos}) : std::numeric_limits<float>::max());
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this, isCapped](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyFallbackPath(static_cast<const CQueryPathSingle*>(query), true, isCapped);
-		}
-	});
+	QueryPath(leader, manager->GetCircuit()->GetSetupManager()->GetBasePos(), FALLBACK_PATH_RANGE, isCapped,
+			[this, isCapped](const CQueryPathSingle* query) { ApplyFallbackPath(query, true, isCapped); });
 }
 
 void CAntiAirTask::ApplyFallbackPath(const CQueryPathSingle* query, bool isDisengage, bool isCapped)
@@ -612,22 +602,8 @@ void CAntiAirTask::ApplyFallbackPath(const CQueryPathSingle* query, bool isDisen
 
 void CAntiAirTask::RegroupUnit(CCircuitUnit* unit)
 {
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& startPos = unit->GetPos(frame);
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			unit, circuit->GetThreatMap(), frame,
-			startPos, groupPos, DEFAULT_SLACK, nullptr, GetPathThreatCap(unit, startPos, {groupPos}));
-	pathQueries[unit] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyRegroupPath(static_cast<const CQueryPathSingle*>(query));
-		}
-	});
+	QueryPath(unit, groupPos, DEFAULT_SLACK, true,
+			[this](const CQueryPathSingle* query) { ApplyRegroupPath(query); });
 }
 
 void CAntiAirTask::ApplyRegroupPath(const CQueryPathSingle* query)
@@ -753,62 +729,15 @@ void CAntiAirTask::HoldAll()
 
 bool CAntiAirTask::CheckFlee()
 {
-	// antiair.flee_margin: flee when an armed mobile ground enemy we see now (or a moving low radar blip)
-	// is within its weapon range + margin of any squad unit, unless (flee_ally_threat) our mobile armed units
-	// next to the leader outweigh those enemies by enough. Returns true while fleeing
+	// antiair.flee_margin: flee from ground enemies in reach (FindFleeDanger), unless (flee_ally_threat)
+	// our units next to the leader outweigh them by enough. Returns true while fleeing
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
-	CEnemyInfo* danger = nullptr;
 	const int frame = circuit->GetLastFrame();
-	if ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) {
-		CMap* map = circuit->GetMap();
-		float minSqDist = std::numeric_limits<float>::max();
-		float dangerThreat = 0.f;
-		for (auto& kv : circuit->GetEnemyInfos()) {
-			CEnemyInfo* enemy = kv.second;
-			// Only enemies we see now (not last-known ghosts) that can act
-			if (enemy->IsHidden() || !enemy->IsInRadarOrLOS()
-				|| enemy->IsBeingBuilt() || enemy->IsParalyzed() || enemy->IsDisarmed())
-			{
-				continue;
-			}
-			const AIFloat3& ePos = enemy->GetPos();
-			CCircuitDef* edef = enemy->GetCircuitDef();
-			if (edef == nullptr) {
-				// Unidentified radar blip: only a moving one on the ground (a high one is a plane, our target)
-				if ((enemy->GetVel().SqLength2D() < 0.01f)
-					|| (ePos.y - GetBlipGroundHeight(map, ePos) >= UNKNOWN_AIR_HEIGHT))
-				{
-					continue;
-				}
-			} else if (!edef->IsMobile() || !edef->IsAttacker() || edef->IsAbleToFly()
-				|| !(edef->HasAntiLand() || edef->HasAntiWater()))
-			{
-				continue;  // enemy AA can't shoot the squad: no reason to run from it
-			}
-			// Its reach against the squad: ground (or water) weapon range, not its anti-air range
-			const float eRange = (edef != nullptr)
-					? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
-					: 0.f;
-			const float sqReach = SQUARE(eRange + aaCfg.fleeMargin);
-			bool isInReach = false;
-			for (CCircuitUnit* unit : units) {
-				const float sqDist = unit->GetPos(frame).SqDistance2D(ePos);
-				if (sqDist <= sqReach) {
-					isInReach = true;
-					if (sqDist < minSqDist) {
-						minSqDist = sqDist;
-						danger = enemy;
-					}
-				}
-			}
-			if (isInReach) {
-				dangerThreat += enemy->GetThreat();  // every enemy that would make us flee, counted once
-			}
-		}
-		if ((danger != nullptr) && (aaCfg.fleeAllyThreat >= 0.f) && IsFleeCovered(leader->GetPos(frame), dangerThreat)) {
-			danger = nullptr;
-		}
+	float dangerThreat = 0.f;
+	CEnemyInfo* danger = ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) ? FindFleeDanger(dangerThreat) : nullptr;
+	if ((danger != nullptr) && (aaCfg.fleeAllyThreat >= 0.f) && IsFleeCovered(leader->GetPos(frame), dangerThreat)) {
+		danger = nullptr;
 	}
 
 	if (danger == nullptr) {
@@ -826,9 +755,70 @@ bool CAntiAirTask::CheckFlee()
 		return true;  // already on the way
 	}
 	isFleeing = true;
-	fleeFrame = frame + FRAMES_PER_SEC * 2;  // re-plan the flee every 2 s while the danger stays
+	fleeFrame = frame + FLEE_REPLAN_FRAMES;
 	Flee(danger->GetPos());
 	return true;
+}
+
+CEnemyInfo* CAntiAirTask::FindFleeDanger(float& dangerThreat) const
+{
+	// The nearest enemy we see now (not a last-known ghost) that can act and shoot the squad, within its ground
+	// (or water) weapon range + flee_margin of any squad unit (for a mobile bomb, its blast radius). Enemy AA and
+	// aircraft don't count; an unidentified blip counts while it moves and sits low. dangerThreat: the threat of
+	// every such enemy, each counted once
+	CCircuitAI* circuit = manager->GetCircuit();
+	const float fleeMargin = circuit->GetMilitaryManager()->GetAntiAirCfg().fleeMargin;
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	float squadRadius = 0.f;  // no unit is further than this from the leader
+	for (CCircuitUnit* unit : units) {
+		squadRadius = std::max(squadRadius, leaderPos.distance2D(unit->GetPos(frame)));
+	}
+
+	CEnemyInfo* danger = nullptr;
+	float minSqDist = std::numeric_limits<float>::max();
+	dangerThreat = 0.f;
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		CEnemyInfo* enemy = kv.second;
+		if (enemy->IsHidden() || !enemy->IsInRadarOrLOS()
+			|| enemy->IsBeingBuilt() || enemy->IsParalyzed() || enemy->IsDisarmed())
+		{
+			continue;
+		}
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		float range = 0.f;  // unidentified blip: the margin only
+		if (edef == nullptr) {
+			if (enemy->GetVel().SqLength2D() < 0.01f) {
+				continue;  // a parked blip is no danger
+			}
+		} else if (!edef->IsMobile() || !edef->IsAttacker() || edef->IsAbleToFly()
+			|| (edef->HasAntiAir() && !edef->HasAntiLand() && !edef->HasAntiWater()))
+		{
+			// Enemy AA can't shoot the squad: no reason to run from it. A mobile bomb (no weapon, only its
+			// death explosion) has no anti-land flag either, but it is a danger
+			continue;
+		} else {
+			range = std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER));
+		}
+		const AIFloat3& ePos = enemy->GetPos();
+		const float reach = range + fleeMargin;
+		if (leaderPos.SqDistance2D(ePos) > SQUARE(reach + squadRadius)) {
+			continue;  // out of reach of every unit
+		}
+		float sqDist = std::numeric_limits<float>::max();  // to the nearest squad unit
+		for (CCircuitUnit* unit : units) {
+			sqDist = std::min(sqDist, unit->GetPos(frame).SqDistance2D(ePos));
+		}
+		if ((sqDist > SQUARE(reach)) || ((edef == nullptr) && IsHighBlip(circuit->GetMap(), ePos))) {
+			continue;  // out of reach, or a high blip: a plane, our target
+		}
+		dangerThreat += enemy->GetThreat();
+		if (sqDist < minSqDist) {
+			minSqDist = sqDist;
+			danger = enemy;
+		}
+	}
+	return danger;
 }
 
 bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat) const
@@ -866,57 +856,20 @@ bool CAntiAirTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat) const
 
 void CAntiAirTask::Flee(const AIFloat3& dangerPos)
 {
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& startPos = leader->GetPos(frame);
-
 	// Candidates: safe spots (attack/defend group leaders, else a defended mex cluster, else base) and the base
+	CCircuitAI* circuit = manager->GetCircuit();
 	circuit->GetMilitaryManager()->FillSafePos(leader, fleeSpots);
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	if (circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), basePos)) {
 		fleeSpots.push_back(basePos);
 	}
 
-	// Nearest spot further from the danger than we are, else the one furthest from it
-	const float sqDangerDist = startPos.SqDistance2D(dangerPos);
-	const AIFloat3* best = nullptr;
-	float bestSqDist = std::numeric_limits<float>::max();
-	for (const AIFloat3& spot : fleeSpots) {
-		const float sqDist = startPos.SqDistance2D(spot);
-		if ((spot.SqDistance2D(dangerPos) > sqDangerDist) && (sqDist < bestSqDist)) {
-			bestSqDist = sqDist;
-			best = &spot;
-		}
-	}
-	if (best == nullptr) {
-		float maxSqDist = -1.f;
-		for (const AIFloat3& spot : fleeSpots) {
-			const float sqDist = spot.SqDistance2D(dangerPos);
-			if (sqDist > maxSqDist) {
-				maxSqDist = sqDist;
-				best = &spot;
-			}
-		}
-	}
-	if (best == nullptr) {
+	const AIFloat3* goal = PickFleeSpot(leader->GetPos(circuit->GetLastFrame()), dangerPos, fleeSpots);
+	if (goal == nullptr) {
 		FallbackBasePos(true);
 		return;
 	}
-	const AIFloat3 goal = *best;
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, goal, pathRange, nullptr, GetPathThreatCap(leader, startPos, {goal}));
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyFleePath(static_cast<const CQueryPathSingle*>(query));
-		}
-	});
+	QueryPath(leader, *goal, FALLBACK_PATH_RANGE, true, [this](const CQueryPathSingle* query) { ApplyFleePath(query); });
 }
 
 void CAntiAirTask::ApplyFleePath(const CQueryPathSingle* query)
@@ -944,7 +897,7 @@ void CAntiAirTask::ApplyDamagedPath(const CQueryPathMulti* query)
 		ActivePath();
 		state = State::DISENGAGE;
 	} else {
-		FallbackBasePos(true);  // was: fight-move straight to base
+		FallbackBasePos(true);
 	}
 }
 

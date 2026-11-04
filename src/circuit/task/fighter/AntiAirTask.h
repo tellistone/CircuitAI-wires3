@@ -10,7 +10,10 @@
 
 #include "task/fighter/SquadTask.h"
 
+#include <functional>
 #include <set>
+#include <utility>
+#include <vector>
 
 namespace circuit {
 
@@ -37,6 +40,18 @@ protected:
 
 private:
 	void FindTarget();
+	void FillHomePoints();  // leash anchors
+	// Where the squad would stand to shoot an aircraft at ePos (antiair.fire_spot); isCoverSpot: its building cover counts
+	springai::AIFloat3 GetFireSpot(const springai::AIFloat3& pos, const springai::AIFloat3& ePos, float sqDist,
+			bool& isCoverSpot) const;
+	bool IsNearHome(CEnemyInfo* enemy, const springai::AIFloat3& checkPos, bool isCoverSpot) const;  // antiair.leash
+	float GetPlaneThreatAt(CEnemyInfo* enemy, const springai::AIFloat3& pos) const;  // its own share of the threat map
+
+	// Path for unit to goal (isCapped: under GetPathThreatCap, else through any threat); apply runs if still current
+	void QueryPath(CCircuitUnit* unit, const springai::AIFloat3& goal, float range, bool isCapped,
+			std::function<void (const CQueryPathSingle*)>&& apply);
+	// Path for the leader to the nearest of goals, under GetPathThreatCap
+	void QueryPathMulti(const F3Vec& goals, std::function<void (const CQueryPathMulti*)>&& apply);
 	void FallbackDisengage();
 	void ApplyDisengagePath(const CQueryPathSingle* query);
 	void ApplyTargetPath(const CQueryPathSingle* query);
@@ -53,6 +68,7 @@ private:
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
 	bool CheckFlee();  // antiair.flee_margin; true while fleeing
+	CEnemyInfo* FindFleeDanger(float& dangerThreat) const;  // nearest enemy to flee from, or nullptr
 	bool IsFleeCovered(const springai::AIFloat3& pos, float enemyThreat) const;  // antiair.flee_ally_threat / flee_ally_radius
 	void Flee(const springai::AIFloat3& dangerPos);
 	void ApplyFleePath(const CQueryPathSingle* query);
@@ -65,6 +81,7 @@ private:
 	bool FlushSplits();  // true: the task was aborted (no units left)
 
 	F3Vec homePoints;  // FindTarget scratch: leash anchors
+	std::vector<std::pair<float, CEnemyInfo*>> targetCandidates;  // FindTarget scratch: sq distance, enemy
 	// Hold orders are queued by path callbacks and sent from Update(), next to the squad's other orders
 	std::set<CCircuitUnit*> holdPending;
 	std::set<CCircuitUnit*> splitPending;  // can't rejoin the squad safely: leaves for its own task (from Update)
