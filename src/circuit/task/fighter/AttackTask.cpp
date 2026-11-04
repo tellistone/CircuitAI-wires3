@@ -762,7 +762,8 @@ void CAttackTask::FindTarget()
 			}
 		}
 
-		// Own to Enemy distance, times the type's target_dist_mod (behaviour.json) so unwanted types count as farther
+		// Ranked by Own to Enemy distance x near-base scale, times the type's target_dist_mod (behaviour.json)
+		// so unwanted types count as farther
 		const float sqOEDist = pos.SqDistance2D(ePos);
 		candidates.push_back({sqOEDist * scale * SQUARE(distModFor(enemy)), sqOEDist * scale, enemy});
 		if (sqOEDist < SQUARE(highestRange)) {

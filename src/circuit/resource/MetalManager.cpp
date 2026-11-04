@@ -450,7 +450,9 @@ void CMetalManager::MarkWalkWalls(int frame)
 	// Every cluster the walk crossed is clear now; every neighbour of one over the wall threshold blocked it there
 	const CMetalData::ClusterGraph& graph = GetClusterGraph();
 	for (CMetalData::ClusterGraph::NodeIt n(graph); n != lemon::INVALID; ++n) {
-		if (!shortPath->processed(n)) {  // only nodes of the filtered graph get processed
+		// init() resets only the nodes the filter passes now: a cluster crossed by an earlier walk that is a wall
+		// now still reads as processed, so the filter check must come first
+		if (!(*threatFilter)[n] || !shortPath->processed(n)) {
 			continue;
 		}
 		clusterInfos[graph.id(n)].contestedFrame = -1;
