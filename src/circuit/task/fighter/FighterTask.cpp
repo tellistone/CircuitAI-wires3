@@ -482,8 +482,10 @@ bool IFighterTask::IsGroundDanger(CEnemyInfo* enemy, bool isGunship, float& outR
 	if (edef == nullptr) {
 		return enemy->GetVel().SqLength2D() >= 0.01f;
 	}
+	// Anti-air only: has an air weapon and no ground or water one. Not "no ground/water weapon": mobile bombs
+	// (imp, snitch, skuttle) have no weapon at all, only a death explosion, and must still count
 	if (!edef->IsMobile() || !edef->IsAttacker() || (isGunship ? edef->IsPlane() : edef->IsAbleToFly())
-		|| !(edef->HasAntiLand() || edef->HasAntiWater()))
+		|| (edef->HasAntiAir() && !edef->HasAntiLand() && !edef->HasAntiWater()))
 	{
 		return false;  // static, unarmed, flying or anti-air only
 	}
