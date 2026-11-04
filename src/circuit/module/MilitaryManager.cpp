@@ -1318,7 +1318,7 @@ bool CMilitaryManager::IsScoutSpotOurs(unsigned idx) const
 			continue;
 		}
 		CAllyUnit* ally = circuit->GetFriendlyUnit(u);
-		if ((ally != nullptr) && ally->GetCircuitDef()->GetDef()->IsNeedGeo() && !u->IsBeingBuilt()) {
+		if ((ally != nullptr) && circuit->GetEconomyManager()->IsGeoDef(ally->GetCircuitDef()) && !u->IsBeingBuilt()) {
 			isOurs = true;
 			break;
 		}
