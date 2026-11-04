@@ -341,6 +341,7 @@ private:
 	std::map<int, unsigned int> raiderMexBonus;  // by mobile type id (-1 = air)
 	// quota.scout_map_size: [<map side in Spring map units (512 elmos)>, <multiplier>] points
 	std::vector<std::pair<float, float>> scoutMapCurve;
+	std::vector<std::pair<float, float>> raiderMapCurve;  // quota.raider_map_size (missing = scoutMapCurve)
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;

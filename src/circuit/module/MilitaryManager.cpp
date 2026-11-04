@@ -335,22 +335,28 @@ void CMilitaryManager::ReadConfig()
 	maxScouts = quotas.get("scout", 3).asUInt();
 	scoutPerMex = quotas.get("scout_per_mex", 1.f).asFloat();
 	scoutMax = quotas.get("scout_max", 12).asUInt();
-	scoutMapCurve.clear();
-	const Json::Value& qmap = quotas["scout_map_size"];
-	if (qmap.isArray()) {
-		for (const Json::Value& pt : qmap) {
-			if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
-				circuit->LOG("CONFIG %s: quota.scout_map_size points must be [<map size>, <multiplier >= 0>]", cfgName.c_str());
-				continue;
+	// quota.scout_map_size / raider_map_size: [<map size>, <multiplier>] points; a missing raider curve copies the scout one
+	auto readMapCurve = [&](const char* key, std::vector<std::pair<float, float>>& curve,
+			const std::vector<std::pair<float, float>>& def) {
+		curve.clear();
+		const Json::Value& qmap = quotas[key];
+		if (qmap.isArray()) {
+			for (const Json::Value& pt : qmap) {
+				if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
+					circuit->LOG("CONFIG %s: quota.%s points must be [<map size>, <multiplier >= 0>]", cfgName.c_str(), key);
+					continue;
+				}
+				curve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
 			}
-			scoutMapCurve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+			std::sort(curve.begin(), curve.end());
+		} else if (qmap.isNull()) {
+			curve = def;
+		} else {
+			circuit->LOG("CONFIG %s: quota.%s must be a list of [<map size>, <multiplier>] points", cfgName.c_str(), key);
 		}
-		std::sort(scoutMapCurve.begin(), scoutMapCurve.end());
-	} else if (qmap.isNull()) {
-		scoutMapCurve = {{8.f, 1.f}, {20.f, 4.f}};
-	} else {
-		circuit->LOG("CONFIG %s: quota.scout_map_size must be a list of [<map size>, <multiplier>] points", cfgName.c_str());
-	}
+	};
+	readMapCurve("scout_map_size", scoutMapCurve, {{8.f, 1.f}, {20.f, 4.f}});
+	readMapCurve("raider_map_size", raiderMapCurve, scoutMapCurve);
 	const Json::Value& qspot = quotas["scout_spot"];
 	scoutSpot.enemy = qspot.get("enemy", 1.f).asFloat();
 	scoutSpot.stale = qspot.get("stale", 1.f).asFloat();
@@ -1576,7 +1582,7 @@ void CMilitaryManager::UpdateMexBonus(bool isRaider)
 	// Second multiplier: map size curve / all players. Size = side of a square map with the same area,
 	// in Spring map units (512 elmos), so 8x8 -> 8 and a 10x16 map -> ~12.6
 	const float mapSize = sqrtf(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
-	const float mapMult = EvalCurve(scoutMapCurve, mapSize) / players;
+	const float mapMult = EvalCurve(isRaider ? raiderMapCurve : scoutMapCurve, mapSize) / players;
 
 	for (auto& kv : refUnits) {
 		const int mobileId = kv.first;

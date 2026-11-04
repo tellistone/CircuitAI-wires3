@@ -15,11 +15,12 @@
 	},  
 	// Raider production floor: while we have fewer raider units (main role "raider" or a role bound to it, e.g.
 	// "cloaked_raider"; alive and not scouting, plus queued in factories) than "raider" + bonus, a factory that can build a raider
-	// builds one (picked by its factory.json tier weights). The bonus is the scout formula (scout_map_size curve too),
+	// builds one (picked by its factory.json tier weights). The bonus is the scout formula (with raider_map_size),
 	// counting enemy mexes a starting raid group (quota.raid[0] power) can reach. All three missing = no floor
 	"raider": 1,  // min raider units
 	"raider_per_mex": 1.0,  // 0 = no bonus (default 0)
 	"raider_max": 12,  // cap on "raider" + bonus ("raider" itself is never cut); 0 = no cap
+	"raider_map_size": [[8, 1.0], [20, 4.0]],  // the raider bonus's map size curve, as scout_map_size; missing = use scout_map_size
 	// Raid groups with no enemies known roam between scored spots (same scoring as scout_spot, own claims; the
 	// group's leader holds the claim) instead of the old mex list; contested clusters still come first. Missing = old roaming
 	"raider_spot": {
