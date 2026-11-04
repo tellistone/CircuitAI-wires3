@@ -335,22 +335,28 @@ void CMilitaryManager::ReadConfig()
 	maxScouts = quotas.get("scout", 3).asUInt();
 	scoutPerMex = quotas.get("scout_per_mex", 1.f).asFloat();
 	scoutMax = quotas.get("scout_max", 12).asUInt();
-	scoutMapCurve.clear();
-	const Json::Value& qmap = quotas["scout_map_size"];
-	if (qmap.isArray()) {
-		for (const Json::Value& pt : qmap) {
-			if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
-				circuit->LOG("CONFIG %s: quota.scout_map_size points must be [<map size>, <multiplier >= 0>]", cfgName.c_str());
-				continue;
+	// quota.scout_map_size / raider_map_size: [<map size>, <multiplier>] points; a missing raider curve copies the scout one
+	auto readMapCurve = [&](const char* key, std::vector<std::pair<float, float>>& curve,
+			const std::vector<std::pair<float, float>>& def) {
+		curve.clear();
+		const Json::Value& qmap = quotas[key];
+		if (qmap.isArray()) {
+			for (const Json::Value& pt : qmap) {
+				if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
+					circuit->LOG("CONFIG %s: quota.%s points must be [<map size>, <multiplier >= 0>]", cfgName.c_str(), key);
+					continue;
+				}
+				curve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
 			}
-			scoutMapCurve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+			std::sort(curve.begin(), curve.end());
+		} else if (qmap.isNull()) {
+			curve = def;
+		} else {
+			circuit->LOG("CONFIG %s: quota.%s must be a list of [<map size>, <multiplier>] points", cfgName.c_str(), key);
 		}
-		std::sort(scoutMapCurve.begin(), scoutMapCurve.end());
-	} else if (qmap.isNull()) {
-		scoutMapCurve = {{8.f, 1.f}, {20.f, 4.f}};
-	} else {
-		circuit->LOG("CONFIG %s: quota.scout_map_size must be a list of [<map size>, <multiplier>] points", cfgName.c_str());
-	}
+	};
+	readMapCurve("scout_map_size", scoutMapCurve, {{8.f, 1.f}, {20.f, 4.f}});
+	readMapCurve("raider_map_size", raiderMapCurve, scoutMapCurve);
 	const Json::Value& qspot = quotas["scout_spot"];
 	scoutSpot.enemy = qspot.get("enemy", 1.f).asFloat();
 	scoutSpot.stale = qspot.get("stale", 1.f).asFloat();
@@ -359,6 +365,45 @@ void CMilitaryManager::ReadConfig()
 	scoutSpot.claimTime = qspot.get("claim_time", 20.f).asFloat() * FRAMES_PER_SEC;
 	scoutSpot.rangeMult = qspot.get("static_range_mult", 1.f).asFloat();
 	scoutSpot.homeRatio = qspot.get("home_ratio", 0.5f).asFloat();
+	{
+		// Raider production floor and raid roaming spots (the scout fields' twins). All missing = off
+		auto num = [&](const Json::Value& v, const char* key, float def) {
+			if (v.isNull()) {
+				return def;
+			}
+			if (!v.isNumeric() || (v.asFloat() < 0.f)) {
+				circuit->LOG("CONFIG %s: quota.%s must be a number >= 0, using %g", cfgName.c_str(), key, def);
+				return def;
+			}
+			return v.asFloat();
+		};
+		minRaiders = static_cast<unsigned int>(num(quotas["raider"], "raider", 0.f));
+		raiderPerMex = num(quotas["raider_per_mex"], "raider_per_mex", 0.f);
+		raiderMax = static_cast<unsigned int>(num(quotas["raider_max"], "raider_max", 0.f));
+		const Json::Value& rspot = quotas["raider_spot"];
+		isRaiderSpot = rspot.isObject();
+		if (!rspot.isNull() && !isRaiderSpot) {
+			circuit->LOG("CONFIG %s: quota.raider_spot must be an object, raid roaming unchanged", cfgName.c_str());
+		}
+		auto sub = [&](const char* key, float def) {
+			const Json::Value& v = isRaiderSpot ? rspot[key] : Json::Value::nullSingleton();
+			if (v.isNull()) {
+				return def;
+			}
+			if (!v.isNumeric()) {
+				circuit->LOG("CONFIG %s: quota.raider_spot.%s must be a number, using %g", cfgName.c_str(), key, def);
+				return def;
+			}
+			return v.asFloat();
+		};
+		raiderSpot.enemy = sub("enemy", 1.f);
+		raiderSpot.stale = sub("stale", 1.f);
+		raiderSpot.travel = sub("travel", 0.5f);
+		raiderSpot.staleTime = sub("stale_time", 90.f) * FRAMES_PER_SEC;
+		raiderSpot.claimTime = sub("claim_time", 20.f) * FRAMES_PER_SEC;
+		raiderSpot.rangeMult = sub("static_range_mult", 1.f);
+		raiderSpot.homeRatio = sub("home_ratio", 0.5f);
+	}
 	const Json::Value& qraid = quotas["raid"];
 	raid.min = qraid.get((unsigned)0, 3.f).asFloat();
 	raid.avg = qraid.get((unsigned)1, 5.f).asFloat();
@@ -750,7 +795,7 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateIdle, this), interval, offset + 0);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateFight, this), 1/*interval / 2*/, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDefenceTasks, this), FRAMES_PER_SEC * 5, offset + 2);
-		if (scoutPerMex > 0.f) {
+		if ((scoutPerMex > 0.f) || (raiderPerMex > 0.f)) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateScoutQuota, this), FRAMES_PER_SEC * 15, offset + 3);
 		}
 
@@ -1245,6 +1290,9 @@ void CMilitaryManager::UpdateScoutSpots()
 		scoutClaim.clear();
 		scoutClaimUnit.clear();
 		scoutBlocked.clear();
+		raidClaim.clear();
+		raidClaimUnit.clear();
+		raidBlocked.clear();
 		for (const CMetalData::SMetal& m : metals) {
 			scoutSpots.push_back(m.position);
 		}
@@ -1258,6 +1306,9 @@ void CMilitaryManager::UpdateScoutSpots()
 	scoutClaim.resize(scoutSpots.size(), -1);
 	scoutClaimUnit.resize(scoutSpots.size(), -1);
 	scoutBlocked.resize(scoutSpots.size(), -1);
+	raidClaim.resize(scoutSpots.size(), -1);
+	raidClaimUnit.resize(scoutSpots.size(), -1);
+	raidBlocked.resize(scoutSpots.size(), -1);
 }
 
 bool CMilitaryManager::IsScoutSpotOurs(unsigned idx) const
@@ -1283,6 +1334,18 @@ bool CMilitaryManager::IsScoutSpotOurs(unsigned idx) const
 
 AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 {
+	return PickSpot(unit, safeThreat, scoutSpot, IFighterTask::FightType::SCOUT, scoutClaim, scoutClaimUnit, scoutBlocked);
+}
+
+AIFloat3 CMilitaryManager::PickRaidSpot(CCircuitUnit* leader, float safeThreat)
+{
+	// Claims are held by the group's leader at pick time; a new leader's re-pick just lets the old claim expire
+	return PickSpot(leader, safeThreat, raiderSpot, IFighterTask::FightType::RAID, raidClaim, raidClaimUnit, raidBlocked);
+}
+
+AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const SScoutSpot& cfg, IFighterTask::FightType type,
+		std::vector<int>& claim, std::vector<int>& claimUnit, const std::vector<int>& blocked)
+{
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CMapManager* mapMgr = circuit->GetMapManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
@@ -1292,12 +1355,12 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 	const std::vector<AIFloat3>& spots = scoutSpots;
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
-	// A scout holds one claim: release its previous spot so re-picks don't reserve spots for nobody
+	// A scout (or raid leader) holds one claim: release its previous spot so re-picks don't reserve spots for nobody
 	const ICoreUnit::Id unitId = unit->GetId();
 	for (unsigned i = 0; i < spots.size(); ++i) {
-		if (scoutClaimUnit[i] == unitId) {
-			scoutClaim[i] = -1;
-			scoutClaimUnit[i] = -1;
+		if (claimUnit[i] == unitId) {
+			claim[i] = -1;
+			claimUnit[i] = -1;
 		}
 	}
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
@@ -1323,7 +1386,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 		const int rangeSq = isAir ? data->GetRange(CCircuitDef::ThreatType::AIR)
 				: isAmph ? std::max(data->GetRange(CCircuitDef::ThreatType::LAND), data->GetRange(CCircuitDef::ThreatType::WATER))
 				: data->GetRange(CCircuitDef::ThreatType::LAND);
-		const float range = rangeSq * threatMap->GetSquareSize() * scoutSpot.rangeMult;
+		const float range = rangeSq * threatMap->GetSquareSize() * cfg.rangeMult;
 		if ((threat > 0.f) && (range > 0.f) && !enemy->IsBeingBuilt()) {
 			defences.push_back({enemy->GetPos(), SQUARE(range), range, threat});
 		}
@@ -1349,7 +1412,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 			scoutSeen[i] = frame;
 			continue;  // already watched
 		}
-		if ((frame < scoutBlocked[i]) || IsScoutSpotOurs(i) || !terrainMgr->CanMoveToPos(area, spot)) {
+		if ((frame < blocked[i]) || IsScoutSpotOurs(i) || !terrainMgr->CanMoveToPos(area, spot)) {
 			continue;  // our territory, or unreachable
 		}
 		float danger = 0.f;
@@ -1359,7 +1422,7 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 				danger += d.threat * (1.f - 0.5f * sqrtf(sqDist) / d.range);  // same falloff as the threat map
 			}
 		}
-		if (danger >= safeThreat / GetThrDistMod(IFighterTask::FightType::SCOUT, spot)) {  // thr_mod.distance.scout at the spot
+		if (danger >= safeThreat / GetThrDistMod(type, spot)) {  // thr_mod.distance.<scout|raid> at the spot
 			continue;
 		}
 
@@ -1368,16 +1431,16 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 			minSqAnchor = std::min(minSqAnchor, a.SqDistance2D(spot));
 		}
 		const float anchorDist = sqrtf(minSqAnchor);
-		if (basePos.distance2D(spot) < scoutSpot.homeRatio * anchorDist) {
+		if (basePos.distance2D(spot) < cfg.homeRatio * anchorDist) {
 			continue;  // our side of the map: much nearer our base than any sign of the enemy
 		}
 		const float enemyTerm = 1.f - std::min(anchorDist / mapDiag, 1.f);
 		const float staleTerm = (scoutSeen[i] < 0) ? 1.f
-				: std::min(float(frame - scoutSeen[i]) / std::max(scoutSpot.staleTime, 1), 1.f);
+				: std::min(float(frame - scoutSeen[i]) / std::max(cfg.staleTime, 1), 1.f);
 		const float travelTerm = pos.distance2D(spot) / mapDiag;
-		const float score = scoutSpot.enemy * enemyTerm + scoutSpot.stale * staleTerm - scoutSpot.travel * travelTerm;
+		const float score = cfg.enemy * enemyTerm + cfg.stale * staleTerm - cfg.travel * travelTerm;
 
-		const bool isClaimed = (scoutClaim[i] >= 0) && (frame < scoutClaim[i] + scoutSpot.claimTime);
+		const bool isClaimed = (claim[i] >= 0) && (frame < claim[i] + cfg.claimTime);
 		if (isClaimed) {
 			if (bestClaimedScore < score) {
 				bestClaimedScore = score;
@@ -1394,8 +1457,8 @@ AIFloat3 CMilitaryManager::PickScoutSpot(CCircuitUnit* unit, float safeThreat)
 	if (bestIdx < 0) {
 		return -RgtVector;
 	}
-	scoutClaim[bestIdx] = frame;
-	scoutClaimUnit[bestIdx] = unitId;
+	claim[bestIdx] = frame;
+	claimUnit[bestIdx] = unitId;
 	return spots[bestIdx];
 }
 
@@ -1427,31 +1490,82 @@ unsigned int CMilitaryManager::GetMaxScouts(const CCircuitDef* cdef) const
 	return (scoutMax > 0) ? std::max(std::min(count, scoutMax), maxScouts) : count;
 }
 
+bool CMilitaryManager::IsRaider(const CCircuitDef* cdef) const
+{
+	// Same test DefaultMakeTask uses to send a unit raiding: its main role, or the base role it is bound to
+	return circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(RAIDER);
+}
+
+unsigned int CMilitaryManager::GetRaiderCount() const
+{
+	unsigned int count = 0;
+	for (CCircuitUnit* unit : army) {
+		if (!IsRaider(unit->GetCircuitDef())) {
+			continue;
+		}
+		// Raiders taken as scouts (quota.scout) don't raid, so they don't fill the floor
+		IUnitTask* task = unit->GetTask();
+		if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+			&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::SCOUT))
+		{
+			continue;
+		}
+		++count;
+	}
+	return count;
+}
+
+unsigned int CMilitaryManager::GetMinRaiders(const CCircuitDef* cdef) const
+{
+	auto it = raiderMexBonus.find(cdef->GetMobileId());
+	const unsigned int count = minRaiders + ((it == raiderMexBonus.end()) ? 0 : it->second);
+	// quota.raider_max caps the bonus; quota.raider stays the minimum even above it; 0 = no cap
+	return (raiderMax > 0) ? std::max(std::min(count, raiderMax), minRaiders) : count;
+}
+
 void CMilitaryManager::UpdateScoutQuota()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
-	// One scout-capable unit per movement type stands in for that type (its move map and threat layer;
+	// Same count twice: for scouts (scout-capable units, one scout's courage) and for raiders (raider units,
+	// a starting raid group's courage, quota.raid[0]); each only when its *_per_mex is on
+	UpdateMexBonus(false);
+	UpdateMexBonus(true);
+}
+
+void CMilitaryManager::UpdateMexBonus(bool isRaider)
+{
+	const float perMex = isRaider ? raiderPerMex : scoutPerMex;
+	std::map<int, unsigned int>& mexBonus = isRaider ? raiderMexBonus : scoutMexBonus;
+	if (perMex <= 0.f) {
+		mexBonus.clear();
+		return;
+	}
+	const IFighterTask::FightType fightType = isRaider ? IFighterTask::FightType::RAID : IFighterTask::FightType::SCOUT;
+	auto isCapable = [this, isRaider](const CCircuitDef* cdef) {
+		return isRaider ? IsRaider(cdef) : cdef->IsRoleScout();
+	};
+	// One capable unit per movement type stands in for that type (its move map and threat layer;
 	// the bottleneck query never uses the cloak layer, which is on a different scale).
 	std::map<int, CCircuitUnit*> refUnits;
 	for (CCircuitUnit* unit : army) {
 		CCircuitDef* cdef = unit->GetCircuitDef();
-		if (!cdef->IsRoleScout() || (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER)) {
+		if (!isCapable(cdef) || (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER)) {
 			continue;
 		}
 		auto it = refUnits.find(cdef->GetMobileId());
 		if (it == refUnits.end()) {
 			refUnits[cdef->GetMobileId()] = unit;
 		} else if ((unit->GetTask()->GetType() == IUnitTask::Type::FIGHTER)
-			&& (static_cast<IFighterTask*>(unit->GetTask())->GetFightType() == IFighterTask::FightType::SCOUT)
+			&& (static_cast<IFighterTask*>(unit->GetTask())->GetFightType() == fightType)
 			&& !((it->second->GetTask()->GetType() == IUnitTask::Type::FIGHTER)
-				&& (static_cast<IFighterTask*>(it->second->GetTask())->GetFightType() == IFighterTask::FightType::SCOUT)))
+				&& (static_cast<IFighterTask*>(it->second->GetTask())->GetFightType() == fightType)))
 		{
-			it->second = unit;  // a unit already scouting is the best stand-in
+			it->second = unit;  // a unit already on that task is the best stand-in
 		}
 	}
-	// Only movement types we actually have a scout-capable unit of get a bonus
-	for (auto it = scoutMexBonus.begin(); it != scoutMexBonus.end();) {
-		it = (refUnits.find(it->first) == refUnits.end()) ? scoutMexBonus.erase(it) : std::next(it);
+	// Only movement types we actually have a capable unit of get a bonus
+	for (auto it = mexBonus.begin(); it != mexBonus.end();) {
+		it = (refUnits.find(it->first) == refUnits.end()) ? mexBonus.erase(it) : std::next(it);
 	}
 
 	// All players: enemy teams (engine count, minus Gaia) plus our ally team's players that haven't resigned
@@ -1462,19 +1576,22 @@ void CMilitaryManager::UpdateScoutQuota()
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	// Average of the random powerMod ScoutTask gets (0.75 / thr_mod.scout)
-	const float powerMod = 0.75f / std::max(scoutMod.min + 0.5f * scoutMod.len, 1e-3f);
+	// Average of the random powerMod the task gets (0.75 / thr_mod.scout or thr_mod.raid)
+	const SThreatQuota& thrMod = isRaider ? raidMod : scoutMod;
+	const float powerMod = 0.75f / std::max(thrMod.min + 0.5f * thrMod.len, 1e-3f);
 	// Second multiplier: map size curve / all players. Size = side of a square map with the same area,
 	// in Spring map units (512 elmos), so 8x8 -> 8 and a 10x16 map -> ~12.6
 	const float mapSize = sqrtf(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
-	const float mapMult = EvalCurve(scoutMapCurve, mapSize) / players;
+	const float mapMult = EvalCurve(isRaider ? raiderMapCurve : scoutMapCurve, mapSize) / players;
 
 	for (auto& kv : refUnits) {
 		const int mobileId = kv.first;
 		CCircuitUnit* unit = kv.second;
 		CCircuitDef* cdef = unit->GetCircuitDef();
-		// Fresh unit of this type, same scale as ScoutTask::GetSafeThreat
-		const float safeThreat = std::max(cdef->GetPower(), THREAT_MIN) * powerMod;
+		// Fresh unit of this type (scouts, same scale as ScoutTask::GetSafeThreat), or a starting raid group
+		// of quota.raid[0] power (raiders, as CRaidTask::GetSafeThreat)
+		const float power = isRaider ? std::max(cdef->GetPower(), raid.min) : cdef->GetPower();
+		const float safeThreat = std::max(power, THREAT_MIN) * powerMod;
 		AIFloat3 startPos = basePos;
 		if ((unit->GetArea() != nullptr) && !terrainMgr->CanMoveToPos(unit->GetArea(), startPos)) {
 			startPos = unit->GetPos(frame);  // our base is not in its area (e.g. ships): flood from where it is
@@ -1482,7 +1599,7 @@ void CMilitaryManager::UpdateScoutQuota()
 		CTerrainManager::CorrectPosition(startPos);
 
 		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true);
-		pathfinder->RunQuery(query, [this, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
+		pathfinder->RunQuery(query, [this, isRaider, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
 			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
 			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
 			unsigned int count = 0;
@@ -1500,13 +1617,13 @@ void CMilitaryManager::UpdateScoutQuota()
 					bottleneck = q->GetCostAt(pos, sqSize);  // blocked by the mex itself: the squares around it
 				}
 				if ((bottleneck >= 0.f)
-					&& (bottleneck - THREAT_BASE < safeThreat / GetThrDistMod(IFighterTask::FightType::SCOUT, pos)))
+					&& (bottleneck - THREAT_BASE < safeThreat / GetThrDistMod(fightType, pos)))
 				{
 					++count;
 				}
 			}
-			// (reachable mexes / enemy players) x (map size curve / all players) x scout_per_mex, rounded down
-			scoutMexBonus[mobileId] = (unsigned int)(scoutPerMex * mapMult * count / enemyPlayers);
+			// (reachable mexes / enemy players) x (map size curve / all players) x *_per_mex, rounded down
+			(isRaider ? raiderMexBonus : scoutMexBonus)[mobileId] = (unsigned int)(perMex * mapMult * count / enemyPlayers);
 		});
 	}
 }
@@ -1520,6 +1637,20 @@ void CMilitaryManager::BlockScoutSpot(const AIFloat3& spot, int frames)
 	for (unsigned i = 0; i < spots.size(); ++i) {
 		if ((spots[i].x == spot.x) && (spots[i].z == spot.z)) {
 			scoutBlocked[i] = circuit->GetLastFrame() + frames;
+			return;
+		}
+	}
+}
+
+void CMilitaryManager::BlockRaidSpot(const AIFloat3& spot, int frames)
+{
+	const std::vector<AIFloat3>& spots = scoutSpots;
+	if (raidBlocked.size() != spots.size()) {
+		return;
+	}
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		if ((spots[i].x == spot.x) && (spots[i].z == spot.z)) {
+			raidBlocked[i] = circuit->GetLastFrame() + frames;
 			return;
 		}
 	}

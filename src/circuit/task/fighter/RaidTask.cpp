@@ -9,6 +9,7 @@
 #include "task/TaskManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
+#include "map/MapManager.h"
 #include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
@@ -47,6 +48,9 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, isContestedRoute(false)
 		, contestedFailFrame(-FRAMES_PER_SEC * 60)
 		, isContestedDest(false)
+		, raidSpot(-RgtVector)
+		, raidSpotPos(-RgtVector)
+		, raidSpotFailFrame(-FRAMES_PER_SEC * 60)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -291,6 +295,7 @@ void CRaidTask::OnUnitIdle(CCircuitUnit* unit)
 		position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
 		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
 		isContestedDest = false;
+		raidSpot = -RgtVector;  // arrived: quota.raider_spot (if on) picks the next spot instead of this random point
 	}
 
 	if (units.find(unit) != units.end()) {
@@ -531,9 +536,43 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// A contested destination from before is dropped too when contested ones aren't allowed now
 	const bool mustRepick = !isContestedAllowed && isContestedDest;
 	isContestedDest = (bestContested != nullptr);
+	const bool isDanger = (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos));
+	// quota.raider_spot: roam between scored spots (near the enemy, unseen for longest, not defended by known
+	// static enemies) instead of the shared mex list; the old roaming below is the fallback when none qualifies
+	bool isSpotPicked = false;
+	bool isSpotFailed = false;  // no spot qualifies and the current one is done: the old roaming picks now
+	if ((bestContested == nullptr) && militaryMgr->IsRaidSpotOn()) {
+		const bool isOwnDest = utils::is_valid(raidSpot) && (position.SqDistance2D(raidSpotPos) < 1.f);
+		if (isOwnDest && isDanger) {
+			militaryMgr->BlockRaidSpot(raidSpot, FRAMES_PER_SEC * 10);  // don't re-pick it straight away
+		}
+		const bool mustPick = !isOwnDest || mustRepick || isDanger || circuit->GetMapManager()->IsInLOS(raidSpot);
+		// After a failed pick, re-score only every 5 s unless the current destination must change
+		if (mustPick && !isOwnDest && !mustRepick && !isDanger && (frame < raidSpotFailFrame + FRAMES_PER_SEC * 5)) {
+			// keep the current destination (old roaming rules below)
+		} else if (mustPick) {
+			const AIFloat3 spot = militaryMgr->PickRaidSpot(leader, safeThreat);
+			raidSpot = spot;
+			raidSpotPos = utils::is_valid(spot) ? terrainMgr->GetMovePosition(leader->GetArea(), spot) : AIFloat3(-RgtVector);
+			if (utils::is_valid(raidSpotPos)) {
+				position = raidSpotPos;
+				isSpotPicked = true;
+			} else {
+				raidSpot = -RgtVector;
+				raidSpotFailFrame = frame;
+				isSpotFailed = isOwnDest;  // we were at (or heading to) a spot that is done: move on, the old way
+			}
+		} else {
+			isSpotPicked = true;  // keep heading to the current spot
+		}
+	} else {
+		raidSpot = -RgtVector;
+	}
 	if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);
-	} else if (mustRepick || (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos))) {
+	} else if (isSpotPicked) {
+		// spot picked above
+	} else if (mustRepick || isDanger || isSpotFailed) {
 		// Try a few candidates and keep the first one that passes the same check. Taking the next spot
 		// unchecked made raids hop to a new (often equally dangerous, far = strict curve) spot every update.
 		AIFloat3 candidate = -RgtVector;
