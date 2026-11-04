@@ -246,21 +246,28 @@ void CAttackTask::Update()
 	 * Decide every 2 updates (~2 s), or sooner when a unit asks for it (re-plan, sudden threat)
 	 */
 	const bool isDecision = (updCount % 2 == 0);
-	bool isForced = false;  // also read on a normal decision, which then re-plans too (no route reuse)
-	for (CCircuitUnit* unit : units) {
-		isForced |= unit->IsForceUpdate(frame);
-	}
+	bool isForced = false;  // a unit asked for a re-plan (unsafe path ahead, sudden threat)
 	if (isDecision) {
 		isReplanForced = false;  // a forced re-plan is allowed again
 		ISquadTask::Update();
 		if (leader == nullptr) {  // task aborted
 			return;
 		}
-	} else if (!isForced) {
-		if (wasRegroup && !pPath->posPath.empty()) {
-			ActivePath(lowestSpeed);
+		// Only looked at, not cleared: this decision may plan no route (one still being worked out, or engaging),
+		// so the request still re-plans at the next update; but this decision doesn't reuse a route either
+		for (CCircuitUnit* unit : units) {
+			isForced |= unit->IsForceUpdatePending(frame);
 		}
-		return;
+	} else {
+		for (CCircuitUnit* unit : units) {
+			isForced |= unit->IsForceUpdate(frame);
+		}
+		if (!isForced) {
+			if (wasRegroup && !pPath->posPath.empty()) {
+				ActivePath(lowestSpeed);
+			}
+			return;
+		}
 	}
 	// A normal decision that no unit asked to re-plan may keep a fresh route to the same goal (ReuseRoute)
 	const bool isReuse = isDecision && !isForced;

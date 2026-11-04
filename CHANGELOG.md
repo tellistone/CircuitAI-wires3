@@ -157,12 +157,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Roaming raid groups re-plan their route less often.** A group roaming with no enemies known asked for a new
   route to the same destination about every second. It now keeps the route it is walking for up to 3 s, unless there
   is danger at the destination, on the stretch just ahead or to any of its units, or the destination changed.
-- **Attack groups re-plan their target and front routes less often.** A group planned a new route at every decision
-  (about every 2 s), even when it was still walking to the same target or front. It now keeps the route it is walking
-  for up to 3 s, while the target moved less than one path square, no unit is in danger, nothing unsafe lies just
-  ahead and the ground it would fight the target from is still safe for its current strength. A decision where a
-  unit asked for a re-plan (danger ahead, a sudden threat) always plans anew, and no longer plans a second time at
-  the next update.
+- **Attack groups re-plan routes to buildings, units standing still and the front less often.** A group planned a
+  new route at every decision (about every 2 s), even when it was still walking to the same target or front. It now
+  keeps the route it is walking for up to 3 s, while the target moved less than one path square (64 elmos on most
+  maps), no unit is in danger, nothing unsafe lies just ahead and the ground it would fight the target from is still
+  safe for its current strength. A moving target is re-planned as before, and so is any decision where a unit asked
+  for a re-plan (danger ahead, a sudden threat).
 - Attack group target picking checks the cheap things (type, speed) before threat, reachability and height, and the
   front search no longer copies the map's cluster list on every call. Same picks.
 - Attack group code reorganised for reading: the near-base threat reference is passed explicitly instead of being
