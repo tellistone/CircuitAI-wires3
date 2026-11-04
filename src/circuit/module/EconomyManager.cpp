@@ -202,6 +202,10 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		const std::map<std::string, std::string>& customParams = cdef.GetDef()->GetCustomParams();
 
 		if (!cdef.IsMobile()) {
+			if (cdef.GetDef()->IsNeedGeo()) {
+				geoDefs.insert(&cdef);
+			}
+
 			if (commDef->CanBuild(&cdef)) {
 				// pylon
 				auto it = customParams.find("pylonrange");
@@ -248,7 +252,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 				energyDefs.AddDef(&cdef);
 
 				// geothermal that morphs into an upgrade (energygeo -> energyheavygeo)
-				if (cdef.GetDef()->IsNeedGeo() && (customParams.find("morphto") != customParams.end())) {
+				if (IsGeoDef(&cdef) && (customParams.find("morphto") != customParams.end())) {
 					finishedHandler[cdef.GetId()] = [this, energyFinishedHandler](CCircuitUnit* unit) {
 						energyFinishedHandler(unit);
 						geoMorphees.insert(unit);
@@ -541,8 +545,8 @@ CCircuitDef* CEconomyManager::GetLowEnergy(const AIFloat3& pos, float& outMake) 
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
-	return energyDefs.GetWorstDef([frame, terrainMgr, &pos, &outMake](CCircuitDef* cdef, const SEnergyExt& data) {
-		if (cdef->IsAvailable(frame) && !cdef->GetDef()->IsNeedGeo() && terrainMgr->CanBeBuiltAtSafe(cdef, pos)) {
+	return energyDefs.GetWorstDef([this, frame, terrainMgr, &pos, &outMake](CCircuitDef* cdef, const SEnergyExt& data) {
+		if (cdef->IsAvailable(frame) && !IsGeoDef(cdef) && terrainMgr->CanBeBuiltAtSafe(cdef, pos)) {
 			outMake = data.make;
 			return true;
 		}
@@ -977,60 +981,59 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 
 	// Select proper energy UnitDef to build
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CCircuitDef* bestDef = nullptr;
-	CCircuitDef* hopeDef = nullptr;
-	bool isLastHope = isEnergyStalling;
 	metalIncome = std::min(metalIncome, energyIncome) * energyFactor;
 	const float buildPower = std::min(builderMgr->GetBuildPower(), metalIncome);
 	const int taskSize = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
 	const float maxBuildTime = MAX_BUILD_SEC * (isEnergyStalling ? 0.25f : 1.f);
+	// Room for one more job of this def: about 8 jobs per buildPower/cost
+	auto canQueue = [taskSize, buildPower](CCircuitDef* cdef) {
+		return taskSize < (int)(buildPower / cdef->GetCostM() * 8 + 1);
+	};
+	// TODO: Select proper scale/quadratic function (x*x) and smoothing coefficient (8).
+	//       МЕТОД НАИМЕНЬШИХ КВАДРАТОВ ! (income|buildPower, make/cost) - points
+	//       solar       geothermal    fusion         singu           ...
+	//       (10, 2/70), (15, 25/500), (20, 35/1000), (30, 225/4000), ...
+	auto isQuickToBuild = [maxBuildTime, metalIncome](CCircuitDef* cdef) {
+		return cdef->GetCostM() * 16.0f < maxBuildTime * SQUARE(metalIncome);
+	};
+	const IBuilderTask::Priority priority = isEnergyStalling ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
 
 	const int frame = circuit->GetLastFrame();
 	// Geothermal first: by the efficiency sort it ranks below fusion, and fusion at its limit stops the
 	// loop below, so geo would hardly ever be built. A free vent is cheaper energy per metal than fusion,
 	// so take it whenever it can be built in time and a free, safe, reachable vent exists.
-	CCircuitDef* geoDef = nullptr;
-	AIFloat3 geoPos = -RgtVector;
 	for (const auto& engy : energyDefs.GetInfos()) {
-		if (!engy.cdef->GetDef()->IsNeedGeo() || !engy.cdef->IsAvailable(frame) ||
-			(engy.cdef->GetCount() >= engy.data.limit) ||
-			(taskSize >= (int)(buildPower / engy.cdef->GetCostM() * 8 + 1)) ||
-			(engy.cdef->GetCostM() * 16.0f >= maxBuildTime * SQUARE(metalIncome)))
+		if (!IsGeoDef(engy.cdef) || !engy.cdef->IsAvailable(frame) || (engy.cdef->GetCount() >= engy.data.limit) ||
+			!canQueue(engy.cdef) || !isQuickToBuild(engy.cdef))
 		{
 			continue;
 		}
-		const AIFloat3 pos = FindGeoSpot(engy.cdef, position, unit);
-		if (utils::is_valid(pos)) {
-			geoDef = engy.cdef;
-			geoPos = pos;
-			break;
+		const AIFloat3 ventPos = FindGeoSpot(engy.cdef, position, unit);  // also checks safety and reach
+		if (utils::is_valid(ventPos)) {
+			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
+			IBuilderTask* task = builderMgr->EnqueueTask(priority, engy.cdef, ventPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
+			task->SetBuildPos(ventPos);
+			return task;
 		}
 	}
 
-	if (geoDef != nullptr) {
-		bestDef = geoDef;
-		isLastHope = false;
-	} else for (const auto& engy : energyDefs.GetInfos()) {  // sorted by high-tech first
+	CCircuitDef* bestDef = nullptr;
+	CCircuitDef* hopeDef = nullptr;
+	bool isLastHope = isEnergyStalling;
+	for (const auto& engy : energyDefs.GetInfos()) {  // sorted by high-tech first
 		// Geothermal is handled above; skipping it here means its limit or a missing vent never blocks other energy
-		if (!engy.cdef->IsAvailable(frame) ||
-			engy.cdef->GetDef()->IsNeedGeo() ||
-			!terrainMgr->CanBeBuiltAtSafe(engy.cdef, position))
-		{
+		if (!engy.cdef->IsAvailable(frame) || IsGeoDef(engy.cdef) || !terrainMgr->CanBeBuiltAtSafe(engy.cdef, position)) {
 			continue;
 		}
 
 		if (engy.cdef->GetCount() < engy.data.limit) {
 			isLastHope = false;
-			if (taskSize < (int)(buildPower / engy.cdef->GetCostM() * 8 + 1)) {
+			if (canQueue(engy.cdef)) {
 				bestDef = engy.cdef;
-				// TODO: Select proper scale/quadratic function (x*x) and smoothing coefficient (8).
-				//       МЕТОД НАИМЕНЬШИХ КВАДРАТОВ ! (income|buildPower, make/cost) - points
-				//       solar       geothermal    fusion         singu           ...
-				//       (10, 2/70), (15, 25/500), (20, 35/1000), (30, 225/4000), ...
-				if (engy.cdef->GetCostM() * 16.0f < maxBuildTime * SQUARE(metalIncome)) {
+				if (isQuickToBuild(engy.cdef)) {
 					break;
 				}
-			} else if (engy.cdef->GetCostM() * 16.0f < maxBuildTime * SQUARE(metalIncome)) {
+			} else if (isQuickToBuild(engy.cdef)) {
 				bestDef = nullptr;
 				break;
 			}
@@ -1039,7 +1042,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 			break;
 		} else if (hopeDef == nullptr) {
 			hopeDef = engy.cdef;
-			isLastHope = isLastHope && (taskSize < (int)(buildPower / hopeDef->GetCostM() * 8 + 1));
+			isLastHope = isLastHope && canQueue(hopeDef);
 		}
 	}
 	if (isLastHope) {
@@ -1053,10 +1056,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// Find place to build
 	AIFloat3 buildPos = -RgtVector;
 	CMetalManager* metalMgr = circuit->GetMetalManager();
-	const bool isGeo = (bestDef == geoDef);
-	if (isGeo) {
-		buildPos = geoPos;
-	} else if (!bestDef->IsRoleSupport()) {
+	if (!bestDef->IsRoleSupport()) {
 		const CMetalData::Metals& spots = metalMgr->GetSpots();
 		CMetalData::PointPredicate predicate = [&spots, terrainMgr](int index) {
 			return !terrainMgr->IsZoneAlly(spots[index].position);
@@ -1085,13 +1085,6 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	if (utils::is_valid(buildPos) && terrainMgr->CanBeBuiltAtSafe(bestDef, buildPos) &&
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
-		IBuilderTask::Priority priority = isEnergyStalling ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
-		if (isGeo) {
-			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
-			IBuilderTask* task = builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
-			task->SetBuildPos(buildPos);
-			return task;
-		}
 		return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 16.0f, true);
 	}
 
@@ -1101,31 +1094,37 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 void CEconomyManager::UpdateGeoSpots()
 {
 	// Zero-K keeps Gaia features (map vents) visible through fog (featureLOS.featureVisibility = 1), so this
-	// normally finds every vent at once; merging with known spots covers games where features need LOS
-	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
-	for (Feature* feature : features) {
-		FeatureDef* featDef = feature->GetDef();
-		if (featDef == nullptr) {
+	// normally finds every vent at once; merging with known spots covers games where features need LOS.
+	// Id-only calls: one engine call per feature (its def), position only for vents.
+	COOAICallback* clb = circuit->GetCallback();
+	for (int featureId : clb->GetFeatureIds()) {
+		if (!IsGeoFeatureDef(clb->Feature_GetDefId(featureId))) {
 			continue;
 		}
-		const bool isGeo = featDef->IsGeoThermal();
-		delete featDef;
-		if (!isGeo) {
-			continue;
-		}
-		const AIFloat3 pos = feature->GetPosition();
-		bool isKnown = false;
-		for (const AIFloat3& spot : geoSpots) {
-			if (spot.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 2)) {
-				isKnown = true;
-				break;
-			}
-		}
+		const AIFloat3 pos = clb->Feature_GetPosition(featureId);
+		const bool isKnown = std::any_of(geoSpots.begin(), geoSpots.end(), [&pos](const AIFloat3& spot) {
+			return spot.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 2);
+		});
 		if (!isKnown) {
 			geoSpots.push_back(pos);
+			geoBlockedFrame.push_back(-1);
 		}
 	}
-	utils::free_clear(features);
+}
+
+bool CEconomyManager::IsGeoFeatureDef(int featureDefId)
+{
+	if (featureDefId < 0) {
+		return false;  // not visible
+	}
+	if ((size_t)featureDefId >= featureDefIsGeo.size()) {
+		featureDefIsGeo.resize(featureDefId + 1, -1);
+	}
+	int8_t& isGeo = featureDefIsGeo[featureDefId];
+	if (isGeo < 0) {  // defs don't change during a game
+		isGeo = circuit->GetCallback()->FeatureDef_IsGeoThermal(featureDefId) ? 1 : 0;
+	}
+	return isGeo == 1;
 }
 
 const std::vector<AIFloat3>& CEconomyManager::GetGeoSpots()
@@ -1138,45 +1137,54 @@ const std::vector<AIFloat3>& CEconomyManager::GetGeoSpots()
 	return geoSpots;
 }
 
+bool CEconomyManager::IsGeoSpotTaken(const AIFloat3& spot) const
+{
+	for (IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY)) {
+		if (IsGeoDef(t->GetBuildDef()) && (t->GetPosition().SqDistance2D(spot) < SQUARE(SQUARE_SIZE * 4))) {
+			return true;
+		}
+	}
+	return false;
+}
+
 AIFloat3 CEconomyManager::FindGeoSpot(CCircuitDef* cdef, const AIFloat3& position, CCircuitUnit* unit)
 {
-	GetGeoSpots();  // refresh
-	if (geoSpots.empty()) {
+	const std::vector<AIFloat3>& spots = GetGeoSpots();
+	if (spots.empty()) {
 		return -RgtVector;
 	}
 
+	// Nearest first, so the checks below stop at the first vent that passes
+	std::vector<std::pair<float, unsigned>> byDist;
+	byDist.reserve(spots.size());
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		byDist.emplace_back(position.SqDistance2D(spots[i]), i);
+	}
+	std::sort(byDist.begin(), byDist.end());
+
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
-	CMap* map = circuit->GetMap();
-	const std::set<IBuilderTask*>& tasks = circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY);
-	AIFloat3 bestPos = -RgtVector;
-	float minSqDist = std::numeric_limits<float>::max();
-	for (const AIFloat3& spot : geoSpots) {
-		const float sqDist = position.SqDistance2D(spot);
-		if (sqDist >= minSqDist) {
-			continue;
-		}
-		if (terrainMgr->IsZoneAlly(spot) ||
+	const int frame = circuit->GetLastFrame();
+	for (const auto& [sqDist, i] : byDist) {
+		const AIFloat3& spot = spots[i];
+		if ((geoBlockedFrame[i] > frame) ||
+			terrainMgr->IsZoneAlly(spot) ||
 			!terrainMgr->CanBeBuiltAtSafe(cdef, spot) ||
 			(threatMap->GetAllThreatAt(spot) > geoThreat) ||
-			((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, spot, unit->GetCircuitDef()->GetBuildDistance())))
+			((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, spot, unit->GetCircuitDef()->GetBuildDistance())) ||
+			IsGeoSpotTaken(spot))
 		{
 			continue;
 		}
-		bool isTaken = false;  // another geothermal task already went for this vent
-		for (IBuilderTask* t : tasks) {
-			if (t->GetBuildDef()->GetDef()->IsNeedGeo() && (t->GetPosition().SqDistance2D(spot) < SQUARE(SQUARE_SIZE * 4))) {
-				isTaken = true;
-				break;
-			}
-		}
-		if (isTaken || !map->IsPossibleToBuildAt(cdef->GetDef(), spot, UNIT_COMMAND_BUILD_NO_FACING)) {
+		// Engine call last. A vent it rejects (almost always: a geo stands on it) is skipped for 10 s,
+		// so taken vents don't cost an engine call on every energy pick
+		if (!circuit->GetMap()->IsPossibleToBuildAt(cdef->GetDef(), spot, UNIT_COMMAND_BUILD_NO_FACING)) {
+			geoBlockedFrame[i] = frame + FRAMES_PER_SEC * 10;
 			continue;
 		}
-		bestPos = spot;
-		minSqDist = sqDist;
+		return spot;
 	}
-	return bestPos;
+	return -RgtVector;
 }
 
 void CEconomyManager::UpdateGeoMorph()

@@ -17,6 +17,8 @@
 #include <map>
 #include <memory>
 #include <functional>
+#include <vector>
+#include <cstdint>
 
 namespace springai {
 	class Resource;
@@ -119,7 +121,9 @@ public:
 	IBuilderTask* UpdateStorageTasks();
 	IBuilderTask* UpdatePylonTasks();
 
-	// Nearest free geothermal vent for cdef (a def that needs one) that is safe and,
+	// Needs a geothermal vent (energygeo, energyheavygeo); read once per def, no engine call
+	bool IsGeoDef(const CCircuitDef* cdef) const { return geoDefs.find(cdef) != geoDefs.end(); }
+	// Nearest free geothermal vent for cdef (a geo def) that is safe and,
 	// with a unit, reachable by it; -RgtVector if none
 	springai::AIFloat3 FindGeoSpot(CCircuitDef* cdef, const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	// Known geothermal vents (refreshed at most once a minute; vents are added as they are seen, never removed)
@@ -141,6 +145,8 @@ private:
 	float GetFeatureDefMetal(int featureDefId);
 	void UpdateEconomy();
 	void UpdateGeoSpots();
+	bool IsGeoFeatureDef(int featureDefId);  // cached per def, like GetFeatureDefMetal
+	bool IsGeoSpotTaken(const springai::AIFloat3& spot) const;  // one of our geo jobs already went for it
 	void UpdateGeoMorph();
 
 	Handlers2 createdHandler;
@@ -254,7 +260,10 @@ private:
 	std::set<CCircuitUnit*> morphees;
 
 	// Geothermal
+	std::set<const CCircuitDef*> geoDefs;  // see IsGeoDef
 	std::vector<springai::AIFloat3> geoSpots;  // known geothermal vents
+	std::vector<int> geoBlockedFrame;  // per geoSpots: the engine said "can't build" there, don't ask again until this frame
+	std::vector<int8_t> featureDefIsGeo;  // by FeatureDef id: 1 = vent, 0 = not, -1 = not read yet
 	int geoSpotsFrame;  // next refresh of geoSpots
 	std::map<STerrainMapArea*, std::pair<float, int>> reclaimMetal;  // area: <metal, next refresh frame>
 	std::vector<float> featureDefMetal;  // by FeatureDef id, see GetFeatureDefMetal; < 0 = not read yet

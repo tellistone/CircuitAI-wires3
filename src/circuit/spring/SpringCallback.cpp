@@ -236,6 +236,11 @@ float COOAICallback::FeatureDef_GetContainedResource(int featureDefId, int resou
 	return sAICallback->FeatureDef_getContainedResource(skirmishAIId, featureDefId, resourceId);
 }
 
+bool COOAICallback::FeatureDef_IsGeoThermal(int featureDefId) const
+{
+	return sAICallback->FeatureDef_isGeoThermal(skirmishAIId, featureDefId);
+}
+
 bool COOAICallback::UnitDef_HasYardMap(int unitDefId) const
 {
 	return sAICallback->UnitDef_getYardMap(skirmishAIId, unitDefId, UNIT_FACING_SOUTH, nullptr, -1) > 0;

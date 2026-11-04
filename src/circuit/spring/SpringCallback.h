@@ -76,6 +76,7 @@ public:
 	springai::AIFloat3 Feature_GetPosition(int featureId) const;
 	bool FeatureDef_IsReclaimable(int featureDefId) const;
 	float FeatureDef_GetContainedResource(int featureDefId, int resourceId) const;
+	bool FeatureDef_IsGeoThermal(int featureDefId) const;
 
 	bool UnitDef_HasYardMap(int unitDefId) const;
 

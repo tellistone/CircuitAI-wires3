@@ -50,13 +50,13 @@ void CBEnergyTask::Update()
 
 void CBEnergyTask::Execute(CCircuitUnit* unit)
 {
-	if ((target != nullptr) || !buildDef->GetDef()->IsNeedGeo()) {
+	CCircuitAI* circuit = manager->GetCircuit();
+	if ((target != nullptr) || !circuit->GetEconomyManager()->IsGeoDef(buildDef)) {
 		IBuilderTask::Execute(unit);
 		return;
 	}
 
 	// Geothermal: must stay exactly on a vent, never search around the position
-	CCircuitAI* circuit = manager->GetCircuit();
 	if (!utils::is_valid(buildPos) || !circuit->GetMap()->IsPossibleToBuildAt(buildDef->GetDef(), buildPos, facing)) {
 		SetBuildPos(-RgtVector);
 		const AIFloat3 pos = circuit->GetEconomyManager()->FindGeoSpot(buildDef, position, unit);
