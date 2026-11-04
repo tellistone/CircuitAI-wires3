@@ -25,6 +25,9 @@ class CBDefenceTask;
 class CRetreatTask;
 class CAttackTask;
 
+// Attack group route kinds (quota.attack_path_dynamic_cost)
+enum class AttackRoute: int { TARGET = 0, REINFORCE, FRONT, FLEE, CORNERED, _SIZE_ };
+
 class CMilitaryManager: public IUnitModule {
 public:
 	friend class CMilitaryScript;
@@ -214,9 +217,8 @@ public:
 		return false;
 	}
 	float GetAttackPathIgnoreThreat() const { return attackPathIgnoreThreat; }
-	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / group strength)
-	enum class AttackPath: int { TARGET = 0, REINFORCE, FRONT, FLEE, CORNERED, _SIZE_ };
-	bool IsAttackPathDynamic(AttackPath kind) const { return attackPathDynamic[static_cast<int>(kind)]; }
+	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
+	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
@@ -369,13 +371,14 @@ private:
 	float attackKeepThreat;  // quota.attack_keep_threat
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
-	bool attackPathDynamic[static_cast<int>(AttackPath::_SIZE_)];  // quota.attack_path_dynamic_cost
+	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
 	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
+	float invMapDiagonal;  // 1 / the map's diagonal (thr_mod.distance curves take a fraction of it)
 	float baseThrBonus;  // quota.thr_mod.base_bonus
 	float thrScaleMin;  // quota.thr_mod.scale_min
 	struct SThreatQuota {

@@ -84,7 +84,8 @@ public:
 	bool IsMoveFailed(int frame);
 
 	void ForceUpdate(int frame) { execFrame = frame; }
-	bool IsForceUpdate(int frame);
+	bool IsForceUpdate(int frame);  // true once the requested frame is reached; clears the request
+	bool IsForceUpdatePending(int frame) const { return (execFrame > 0) && (execFrame <= frame); }  // not cleared
 
 	void Dead() { isDead = true; }
 	bool IsDead() const { return isDead; }
