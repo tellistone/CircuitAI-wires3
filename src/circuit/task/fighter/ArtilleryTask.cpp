@@ -32,8 +32,10 @@ using namespace springai;
 // Scratch shared by all artillery tasks: only used within one synchronous call (path queries copy their goals)
 F3Vec CArtilleryTask::safePositions;
 F3Vec CArtilleryTask::firePositions;
-std::vector<std::pair<AIFloat3, float>> CArtilleryTask::escorts;
+std::vector<CArtilleryTask::SEscort> CArtilleryTask::escorts;
+std::vector<CArtilleryTask::SDanger> CArtilleryTask::dangers;
 std::vector<float> CArtilleryTask::coverGrid;
+std::vector<float> CArtilleryTask::fleeCoverGrid;
 std::vector<char> CArtilleryTask::cellAdded;
 
 CArtilleryTask::CArtilleryTask(ITaskManager* mgr)
@@ -82,7 +84,9 @@ void CArtilleryTask::RemoveAssignee(CCircuitUnit* unit)
 
 void CArtilleryTask::Start(CCircuitUnit* unit)
 {
-	Execute(unit, false);
+	if (!CheckFlee(unit)) {  // a (re)started task must not walk towards an enemy first
+		Execute(unit, false);
+	}
 }
 
 void CArtilleryTask::Update()
@@ -120,6 +124,11 @@ float CArtilleryTask::GetMaxPathThreat(CCircuitUnit* unit) const
 	return (maxPathThreat >= 0.f)
 			? std::max(maxPathThreat * unit->GetCircuitDef()->GetPower(), THREAT_MIN)
 			: std::numeric_limits<float>::max();
+}
+
+float CArtilleryTask::GetFleeMargin(CCircuitUnit* unit) const
+{
+	return unit->GetCircuitDef()->GetArtyFleeMargin(GetCfg().fleeMargin);
 }
 
 /*
@@ -286,9 +295,9 @@ void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdati
 float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 {
 	// firePositions: cells (one per pathfinder square, 64 elmos) within range of a building in enemyPositions
-	// that have ally_threat cover, no threat and can be reached. Returns the goal range for the path query:
-	// the pathfinder accepts any square within one square of a cell centre.
-	// The work is bounded to the area around our escorts: no cell elsewhere can be covered
+	// that have ally_threat cover, no threat, can be reached and won't set off the flee on arrival.
+	// Returns the goal range for the path query: the pathfinder accepts any square within one square of a cell centre.
+	// The work is bounded to the area around our mobile escorts: no cell elsewhere can be covered
 	firePositions.clear();
 
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -304,26 +313,36 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 	const float sqFireRange = SQUARE(fireRange);
 	const int fireRad = int(fireRange / cellSize) + 1;
 
-	// Cover grid over the escorts' area; ally_threat 0 needs no cover, so the area is the whole map
+	// Escorts: mobile ones cover a firing spot; against the flee static defences count too, as in CheckFlee
 	const bool isCoverNeeded = (artyCfg.allyThreat > 0.f);
+	const float fleeMargin = GetFleeMargin(unit);
+	const bool isFleeOn = (fleeMargin >= 0.f);
+	if (isCoverNeeded || isFleeOn) {
+		CollectEscorts(unit, isFleeOn);
+	} else {
+		escorts.clear();
+	}
+
+	// Area, in cells, inclusive: around the mobile escorts; ally_threat 0 needs no cover, so the whole map
 	const float allyRadius = artyCfg.allyRadius;
 	const float sqAllyRadius = SQUARE(allyRadius);
 	const int allyRad = int(allyRadius / cellSize) + 1;
-	int x0 = 0, z0 = 0, x1 = mapWidth - 1, z1 = mapHeight - 1;  // area, in cells, inclusive
+	int x0 = 0, z0 = 0, x1 = mapWidth - 1, z1 = mapHeight - 1;
 	if (isCoverNeeded) {
-		CollectEscorts(unit);
-		if (escorts.empty()) {
-			return goalRange;
-		}
 		x0 = mapWidth; z0 = mapHeight; x1 = -1; z1 = -1;
-		for (const auto& escort : escorts) {
-			const int ax = int(escort.first.x) / cellSize;
-			const int az = int(escort.first.z) / cellSize;
-			x0 = std::min(x0, ax - allyRad);  x1 = std::max(x1, ax + allyRad);
-			z0 = std::min(z0, az - allyRad);  z1 = std::max(z1, az + allyRad);
+		for (const SEscort& escort : escorts) {
+			if (escort.isMobile) {
+				const int ax = int(escort.pos.x) / cellSize;
+				const int az = int(escort.pos.z) / cellSize;
+				x0 = std::min(x0, ax - allyRad);  x1 = std::max(x1, ax + allyRad);
+				z0 = std::min(z0, az - allyRad);  z1 = std::max(z1, az + allyRad);
+			}
 		}
 		x0 = std::max(x0, 0);  x1 = std::min(x1, mapWidth - 1);
 		z0 = std::max(z0, 0);  z1 = std::min(z1, mapHeight - 1);
+		if ((x0 > x1) || (z0 > z1)) {
+			return goalRange;  // no mobile escort
+		}
 	}
 	const int width = x1 - x0 + 1;
 	const int height = z1 - z0 + 1;
@@ -332,16 +351,33 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 		return AIFloat3((x + 0.5f) * cellSize, 0.f, (z + 0.5f) * cellSize);
 	};
 
-	if (isCoverNeeded) {
+	// Flee zones over the area. Reach + 2 cells: the unit may stop up to ~1.5 cells from a cell centre
+	if (isFleeOn) {
+		CollectDangers(fleeMargin + 2 * cellSize,
+				AIFloat3(x0 * cellSize, 0.f, z0 * cellSize), AIFloat3((x1 + 1) * cellSize, 0.f, (z1 + 1) * cellSize));
+	} else {
+		dangers.clear();
+	}
+	const bool isFleeCheck = !dangers.empty();
+
+	// Escort power per cell, by cell centre
+	if (isCoverNeeded || isFleeCheck) {
 		coverGrid.assign(width * height, 0.f);
-		for (const auto& escort : escorts) {
-			const AIFloat3& allyPos = escort.first;
-			const int ax = int(allyPos.x) / cellSize;
-			const int az = int(allyPos.z) / cellSize;
+		fleeCoverGrid.assign(isFleeCheck ? width * height : 0, 0.f);
+		for (const SEscort& escort : escorts) {
+			const int ax = int(escort.pos.x) / cellSize;
+			const int az = int(escort.pos.z) / cellSize;
 			for (int z = std::max(az - allyRad, z0); z <= std::min(az + allyRad, z1); ++z) {
 				for (int x = std::max(ax - allyRad, x0); x <= std::min(ax + allyRad, x1); ++x) {
-					if (cellCentre(x, z).SqDistance2D(allyPos) <= sqAllyRadius) {
-						coverGrid[cellIndex(x, z)] += escort.second;
+					if (cellCentre(x, z).SqDistance2D(escort.pos) > sqAllyRadius) {
+						continue;
+					}
+					const int index = cellIndex(x, z);
+					if (escort.isMobile) {
+						coverGrid[index] += escort.power;
+					}
+					if (isFleeCheck) {
+						fleeCoverGrid[index] += escort.power;
 					}
 				}
 			}
@@ -356,8 +392,8 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 	for (const AIFloat3& target : enemyPositions) {
 		if (isCoverNeeded) {
 			bool isNearEscort = false;
-			for (const auto& escort : escorts) {
-				if (escort.first.SqDistance2D(target) <= sqReach) {
+			for (const SEscort& escort : escorts) {
+				if (escort.isMobile && (escort.pos.SqDistance2D(target) <= sqReach)) {
 					isNearEscort = true;
 					break;
 				}
@@ -379,6 +415,13 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 					continue;
 				}
 				cellAdded[index] = 1;  // checked once, whatever the outcome
+				// A spot inside a flee zone without the cover to hold there: walk in, flee, walk back
+				float dangerThreat;
+				if (isFleeCheck && (FindDanger(cellPos, dangerThreat) != nullptr)
+					&& (fleeCoverGrid[index] < artyCfg.allyThreat + dangerThreat))
+				{
+					continue;
+				}
 				CTerrainManager::CorrectPosition(cellPos);
 				// Only threat-free cells the unit can reach: otherwise the nearest goal may be one that
 				// gets rejected afterwards (threat), or the search may sweep the whole map (unreachable)
@@ -625,8 +668,7 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 {
 	// Flee when an enemy that can hit us comes within its weapon range + margin, unless (ally_threat) our cover
 	// here outweighs the enemies that set it off. Returns true while fleeing
-	const CMilitaryManager::SArtilleryCfg& artyCfg = GetCfg();
-	const float fleeMargin = unit->GetCircuitDef()->GetArtyFleeMargin(artyCfg.fleeMargin);  // per unit type, else the block's
+	const float fleeMargin = GetFleeMargin(unit);
 	if ((fleeMargin < 0.f) || (unit->Blocker() != nullptr)) {
 		isFleeing = false;
 		return false;
@@ -634,46 +676,62 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
+	CollectDangers(fleeMargin, pos, pos);
 	float dangerThreat;
-	CEnemyInfo* danger = FindDanger(pos, fleeMargin, dangerThreat);
+	const SDanger* danger = FindDanger(pos, dangerThreat);
 	// Cover net of those enemies: an escort they outweigh doesn't hold the artillery in place
-	if ((danger == nullptr) || ((artyCfg.allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat, true))) {
+	if ((danger == nullptr) || ((GetCfg().allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat, true))) {
 		isFleeing = false;
 		return false;
 	}
 
-	if ((isFleeing && (frame < fleeFrame)) || !IsQueryReady(unit)) {
+	// The first flee replaces any path being planned (it may lead towards the enemy); a re-plan waits for its own
+	if (isFleeing && ((frame < fleeFrame) || !IsQueryReady(unit))) {
 		return true;  // already on the way
 	}
 	isFleeing = true;
 	fleeFrame = frame + FRAMES_PER_SEC * 2;  // re-plan the flee every 2 s while the danger stays
-	Flee(unit, danger->GetPos());
+	const AIFloat3 dangerPos = danger->pos;
+	Flee(unit, dangerPos);
 	return true;
 }
 
-CEnemyInfo* CArtilleryTask::FindDanger(const AIFloat3& pos, float fleeMargin, float& outThreat) const
+void CArtilleryTask::CollectDangers(float margin, const AIFloat3& minPos, const AIFloat3& maxPos)
 {
-	// Nearest enemy that can hit us (IsGroundDanger, gunships included) within its weapon range + fleeMargin.
-	// outThreat: the threat of every such enemy
-	CEnemyInfo* danger = nullptr;
-	float minSqDist = std::numeric_limits<float>::max();
-	outThreat = 0.f;
+	dangers.clear();
 	for (auto& kv : manager->GetCircuit()->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		float eRange;
-		if (!IsGroundDanger(enemy, true, eRange)) {
+		if (!IsGroundDanger(enemy, true, eRange)) {  // gunships count for artillery
 			continue;
 		}
-		const float sqDist = pos.SqDistance2D(enemy->GetPos());
-		if (sqDist <= SQUARE(eRange + fleeMargin)) {
-			outThreat += enemy->GetThreat();
+		const AIFloat3& ePos = enemy->GetPos();
+		const float sqReach = SQUARE(eRange + margin);
+		// Distance to the rectangle (0 inside)
+		const float dx = std::max(std::max(minPos.x - ePos.x, ePos.x - maxPos.x), 0.f);
+		const float dz = std::max(std::max(minPos.z - ePos.z, ePos.z - maxPos.z), 0.f);
+		if (SQUARE(dx) + SQUARE(dz) <= sqReach) {
+			dangers.push_back({ePos, sqReach, enemy->GetThreat()});
+		}
+	}
+}
+
+const CArtilleryTask::SDanger* CArtilleryTask::FindDanger(const AIFloat3& pos, float& outThreat)
+{
+	const SDanger* nearest = nullptr;
+	float minSqDist = std::numeric_limits<float>::max();
+	outThreat = 0.f;
+	for (const SDanger& danger : dangers) {
+		const float sqDist = pos.SqDistance2D(danger.pos);
+		if (sqDist <= danger.sqReach) {
+			outThreat += danger.threat;
 			if (sqDist < minSqDist) {
 				minSqDist = sqDist;
-				danger = enemy;
+				nearest = &danger;
 			}
 		}
 	}
-	return danger;
+	return nearest;
 }
 
 void CArtilleryTask::Flee(CCircuitUnit* unit, const AIFloat3& dangerPos)
@@ -726,17 +784,21 @@ void CArtilleryTask::ApplyFleePath(const CQueryPathSingle* query)
 
 bool CArtilleryTask::IsEscort(CCircuitUnit* unit, CAllyUnit* ally, bool isFlee)
 {
-	// Allied armed units, mobile ones but not artillery (main role) or aircraft, so artillery can't escort itself.
+	// Allied armed units that can fight ground or water units: mobile ones but not artillery (main role, so
+	// artillery can't escort itself), planes, anti-air only units or mobile bombs (no ground/water weapon).
 	// For the flee check, static defences that can hit ground count too (firing spots look for a mobile escort)
 	CCircuitDef* adef = ally->GetCircuitDef();
-	return (ally->GetId() != unit->GetId()) && (adef != nullptr) && adef->IsAttacker() && !adef->IsPlane()
-			&& (adef->IsMobile() ? (adef->GetMainRole() != ROLE_TYPE(ARTY))
-				: (isFlee && IsStaticDefence(adef)));
+	if ((ally->GetId() == unit->GetId()) || (adef == nullptr) || !adef->IsAttacker() || adef->IsPlane()) {
+		return false;
+	}
+	return adef->IsMobile()
+			? ((adef->GetMainRole() != ROLE_TYPE(ARTY)) && (adef->HasAntiLand() || adef->HasAntiWater()))
+			: (isFlee && IsStaticDefence(adef));
 }
 
-void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
+void CArtilleryTask::CollectEscorts(CCircuitUnit* unit, bool isFlee)
 {
-	// Mobile escorts with their power (pwr_mod, not thr_mod) at full health: no per-unit health reads,
+	// Escorts (IsEscort) with their power (pwr_mod, not thr_mod) at full health: no per-unit health reads,
 	// this runs over every friendly unit
 	escorts.clear();
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -744,12 +806,13 @@ void CArtilleryTask::CollectEscorts(CCircuitUnit* unit)
 	circuit->UpdateFriendlyUnits();  // drop units that died since the last refresh
 	for (auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* ally = kv.second;
-		if (!IsEscort(unit, ally, false)) {
+		if (!IsEscort(unit, ally, isFlee)) {
 			continue;
 		}
 		const AIFloat3& allyPos = ally->GetPos(frame);
 		if (utils::is_valid(allyPos)) {
-			escorts.emplace_back(allyPos, ally->GetCircuitDef()->GetPower());
+			CCircuitDef* adef = ally->GetCircuitDef();
+			escorts.push_back({allyPos, adef->GetPower(), adef->IsMobile()});
 		}
 	}
 }

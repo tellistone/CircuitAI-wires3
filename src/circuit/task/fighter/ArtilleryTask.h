@@ -33,12 +33,14 @@ public:
 private:
 	const CMilitaryManager::SArtilleryCfg& GetCfg() const;  // artillery block of behaviour.json
 	float GetMaxPathThreat(CCircuitUnit* unit) const;  // max_path_threat x own power, or no limit
+	float GetFleeMargin(CCircuitUnit* unit) const;  // artillery_flee_margin of this unit type, else the block's; < 0 = off
 
 	// Shooting and walking to firing spots
 	void Execute(CCircuitUnit* unit, bool isUpdating);
 	CEnemyInfo* FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);  // in range, else fills enemyPositions
 	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating);
-	float FillCoveredSpots(CCircuitUnit* unit, float range);  // ally_threat: fills firePositions, returns goal range
+	// ally_threat: fills firePositions (covered, safe, reachable, and not where the flee would fire), returns goal range
+	float FillCoveredSpots(CCircuitUnit* unit, float range);
 
 	// Nothing to shoot or walk to
 	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // no known building
@@ -57,14 +59,27 @@ private:
 	void Fallback(CCircuitUnit* unit, bool proceed);
 
 	// Early flee (artillery_flee_margin)
+	struct SDanger {  // flee zone: an enemy that can hit us, and how far that sets off the flee
+		springai::AIFloat3 pos;
+		float sqReach;  // (weapon range + margin)^2
+		float threat;
+	};
 	bool CheckFlee(CCircuitUnit* unit);  // true while fleeing
-	CEnemyInfo* FindDanger(const springai::AIFloat3& pos, float fleeMargin, float& outThreat) const;
+	// Fills dangers: flee zones (IsGroundDanger, reach = weapon range + margin) that touch the x/z rectangle
+	void CollectDangers(float margin, const springai::AIFloat3& minPos, const springai::AIFloat3& maxPos);
+	// The nearest flee zone in dangers that reaches pos, nullptr if none; outThreat: all of them that reach it
+	static const SDanger* FindDanger(const springai::AIFloat3& pos, float& outThreat);
 	void Flee(CCircuitUnit* unit, const springai::AIFloat3& dangerPos);
 	void ApplyFleePath(const CQueryPathSingle* query);
 
 	// Cover (ally_threat, ally_radius)
+	struct SEscort {
+		springai::AIFloat3 pos;
+		float power;
+		bool isMobile;  // only mobile escorts cover a firing spot; static defences only count against the flee
+	};
 	static bool IsEscort(CCircuitUnit* unit, CAllyUnit* ally, bool isFlee);  // isFlee: static defences count too
-	void CollectEscorts(CCircuitUnit* unit);  // fills escorts (mobile only)
+	void CollectEscorts(CCircuitUnit* unit, bool isFlee);  // fills escorts
 	// Escort power near spot, net of enemyThreat, reaches ally_threat
 	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot, float enemyThreat = 0.f, bool isFlee = false);
 
@@ -74,8 +89,10 @@ private:
 	// Scratch shared by all artillery tasks (micro-opt, as IFighterTask::enemyPositions)
 	static F3Vec safePositions;
 	static F3Vec firePositions;  // covered firing cells
-	static std::vector<std::pair<springai::AIFloat3, float>> escorts;  // position, power
-	static std::vector<float> coverGrid;  // FillCoveredSpots: cover per cell of the escorts' area
+	static std::vector<SEscort> escorts;
+	static std::vector<SDanger> dangers;
+	static std::vector<float> coverGrid;  // FillCoveredSpots: mobile escort power per cell of the escorts' area
+	static std::vector<float> fleeCoverGrid;  // FillCoveredSpots: the same with static defences, against the flee
 	static std::vector<char> cellAdded;  // FillCoveredSpots: cell already checked
 };
 
