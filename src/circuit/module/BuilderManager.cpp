@@ -753,7 +753,7 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 		const float sqDist = pos.SqDistance2D(worker->GetPos(frame));
 		if ((sqDist < minSqDist) && terrainMgr->CanReachAt(worker, pos, worker->GetCircuitDef()->GetBuildDistance())
 			&& !IsUnsafePrioRepair(task, worker, pos)
-			&& !IsRepairTargetFleeing(task, worker->GetPos(frame), worker->GetCircuitDef()->GetBuildDistance()))
+			&& !IsRepairTargetFleeing(task, worker, worker->GetPos(frame)))
 		{
 			minSqDist = sqDist;
 			bestWorker = worker;
@@ -769,7 +769,8 @@ void CBuilderManager::OnPrioRepairLeash(ICoreUnit::Id unitId)
 	leashUntil[unitId] = circuit->GetLastFrame() + prioRepairCooldown;
 }
 
-bool CBuilderManager::IsRepairTargetFleeing(const IBuilderTask* task, const AIFloat3& pos, float range) const
+bool CBuilderManager::IsRepairTargetFleeing(const IBuilderTask* task, CCircuitUnit* builder, const AIFloat3& pos,
+										   const AIFloat3* targetVel) const
 {
 	if ((repairFleeShare <= 0.f) || (task->GetBuildType() != IBuilderTask::BuildType::REPAIR)) {
 		return false;
@@ -781,15 +782,21 @@ bool CBuilderManager::IsRepairTargetFleeing(const IBuilderTask* task, const AIFl
 		return false;
 	}
 	const AIFloat3& targetPos = target->GetPos(circuit->GetLastFrame());
-	AIFloat3 dir = targetPos - pos;
-	dir.y = 0.f;
-	const float dist = dir.Length2D();
-	if (dist <= range + SQUARE_SIZE * 8) {
+	const float dx = targetPos.x - pos.x;
+	const float dz = targetPos.z - pos.z;
+	const float sqDist = dx * dx + dz * dz;
+	const float range = builder->GetCircuitDef()->GetBuildDistance() + SQUARE_SIZE * 8;
+	if (sqDist <= SQUARE(range)) {
 		return false;  // in reach: repair works even while it moves
 	}
-	const AIFloat3& vel = target->GetUnit()->GetVel();  // elmos per frame
-	const float awaySpeed = (vel.x * dir.x + vel.z * dir.z) / dist;
-	return awaySpeed > repairFleeShare * target->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;
+	// Speed away from the builder vs builder's speed: above the share the builder closes the gap too slowly, or never
+	const AIFloat3 vel = (targetVel != nullptr) ? *targetVel : target->GetUnit()->GetVel();  // elmos per frame
+	const float awayDot = vel.x * dx + vel.z * dz;  // awaySpeed * dist
+	if (awayDot <= 0.f) {
+		return false;
+	}
+	const float minAway = repairFleeShare * builder->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;
+	return SQUARE(awayDot) > SQUARE(minAway) * sqDist;
 }
 
 void CBuilderManager::OnRetreatEnd(CCircuitUnit* unit)
@@ -1216,6 +1223,11 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 				continue;
 			}
 
+			// Don't start a chase this builder can't win; cheaper than the reach and safety tests below
+			if (IsRepairTargetFleeing(candidate, unit, pos)) {
+				continue;
+			}
+
 			if (isNow) {
 				// Disregard safety (unless configured for priority repair)
 				if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
@@ -1232,11 +1244,6 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 				{
 					continue;
 				}
-			}
-
-			// Don't start a chase: the target is driving away from this builder
-			if (IsRepairTargetFleeing(candidate, pos, cdef->GetBuildDistance())) {
-				continue;
 			}
 
 			if ((target == nullptr) || IsWorthTrip(candidate, distCost, maxSpeed)) {
@@ -1321,6 +1328,11 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 				continue;  // can't beat the best job so far
 			}
 
+			// Don't start a chase this builder can't win; cheaper than the reach and safety tests below
+			if (IsRepairTargetFleeing(candidate, unit, pos)) {
+				continue;
+			}
+
 			if (isNow) {
 				// Disregard safety (unless configured for priority repair)
 				if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
@@ -1339,11 +1351,6 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 				{
 					continue;
 				}
-			}
-
-			// Don't start a chase: the target is driving away from this builder
-			if (IsRepairTargetFleeing(candidate, pos, cdef->GetBuildDistance())) {
-				continue;
 			}
 
 			if (isFar) {

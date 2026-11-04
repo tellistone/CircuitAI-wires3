@@ -64,30 +64,35 @@ bool CBRepairTask::IsLeashBroken()
 	const float leash = builderMgr->GetPrioRepairLeash();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& targetPos = target->GetPos(frame);
-	bool isFleeing = true;  // from every assignee
+	bool isAnyInRange = false;
 	for (CCircuitUnit* unit : units) {
 		const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
-		const AIFloat3& pos = unit->GetPos(frame);
-		const float sqDist = targetPos.SqDistance2D(pos);
+		const float sqDist = targetPos.SqDistance2D(unit->GetPos(frame));
 		if (sqDist < SQUARE(buildDist + SQUARE_SIZE * 8)) {
 			inRange.insert(unit);  // repair has started
+			isAnyInRange = true;
 		} else if ((leash > 0.f) && (inRange.find(unit) != inRange.end()) && (sqDist > SQUARE(buildDist + leash))) {
 			// Target drove off half-repaired: stop chasing it
 			builderMgr->OnPrioRepairLeash(targetId);
 			manager->AbortTask(this);
 			return true;
 		}
-		if (isFleeing && !builderMgr->IsRepairTargetFleeing(this, pos, buildDist)) {
-			isFleeing = false;
+	}
+	// Target keeps driving away from all its repairers faster than they close in: don't chase it.
+	// Job selection skips it while it does, a new job is taken once it stops or turns back.
+	bool isFleeing = !isAnyInRange && builderMgr->IsRepairFleeOn();
+	if (isFleeing) {
+		const AIFloat3 vel = target->GetUnit()->GetVel();  // one engine call for all assignees
+		for (auto it = units.begin(); isFleeing && (it != units.end()); ++it) {
+			isFleeing = builderMgr->IsRepairTargetFleeing(this, *it, (*it)->GetPos(frame), &vel);
 		}
 	}
-	// Target keeps driving away from all its repairers (as fast or faster than them): don't chase it.
-	// Job selection skips it while it moves away, a new job is taken once it stops or turns back.
 	if (!isFleeing) {
 		fleeFrame = -1;
 	} else if (fleeFrame < 0) {
 		fleeFrame = frame;
 	} else if (frame - fleeFrame >= builderMgr->GetRepairFleeFrames()) {
+		builderMgr->OnPrioRepairLeash(targetId);  // same cooldown as the leash: a unit in a fight stops and starts
 		manager->AbortTask(this);
 		return true;
 	}

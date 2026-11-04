@@ -137,11 +137,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Changed
 
 - **Builders stop chasing units they can't catch** (`retreat.repair_flee: [speed share, sec]`, default `[0, ...]` = off;
-  shipped `[0.5, 2]`). A mobile repair target that is not retreating and is moving away from a builder (outside build
-  range) faster than 0.5 x its max speed is no longer picked for repair or pulled onto, and a repair job is dropped once
-  its target keeps moving away from all of its builders for 2 s. The old leash only fired after a builder had reached
-  build range and then fell 300 elmos behind, so a builder as fast as or faster than the target chased it forever.
-  A new job is taken once the unit stops or turns back.
+  shipped `[0.7, 2]`). A mobile repair target that is not retreating, is out of a builder's reach and is moving away
+  from it faster than 0.7 x the builder's speed (so the builder closes in too slowly, or never) is no longer picked for
+  repair or pulled onto. A repair job is dropped once its target keeps doing that to all of its builders for 2 s, and
+  then no new priority repair is made for it during the `repair_leash` cooldown. The old leash only fired after a
+  builder had reached build range and then fell 300 elmos behind, so a builder as fast as or faster than the target
+  chased it forever.
 - **Repair leash covers retreat repairs.** `repair_leash` now also applies to HIGH repair jobs (made when a unit
   retreats) once the unit is no longer retreating; before, it only covered priority (NOW) repairs.
 - **Retreat repair ends with the retreat.** When a unit leaves its retreat (repaired, or its haven wait timed out), its
