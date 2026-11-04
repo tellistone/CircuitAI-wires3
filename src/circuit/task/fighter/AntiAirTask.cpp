@@ -65,33 +65,6 @@ static bool IsHighBlip(CMap* map, const AIFloat3& p)
 	return true;
 }
 
-// Nearest spot further from the danger than pos is, else the one furthest from the danger; nullptr if none
-static const AIFloat3* PickFleeSpot(const AIFloat3& pos, const AIFloat3& dangerPos, const F3Vec& spots)
-{
-	const float sqDangerDist = pos.SqDistance2D(dangerPos);
-	const AIFloat3* best = nullptr;
-	float bestSqDist = std::numeric_limits<float>::max();
-	for (const AIFloat3& spot : spots) {
-		const float sqDist = pos.SqDistance2D(spot);
-		if ((spot.SqDistance2D(dangerPos) > sqDangerDist) && (sqDist < bestSqDist)) {
-			bestSqDist = sqDist;
-			best = &spot;
-		}
-	}
-	if (best != nullptr) {
-		return best;
-	}
-	float maxSqDist = -1.f;
-	for (const AIFloat3& spot : spots) {
-		const float sqDist = spot.SqDistance2D(dangerPos);
-		if (sqDist > maxSqDist) {
-			maxSqDist = sqDist;
-			best = &spot;
-		}
-	}
-	return best;
-}
-
 CAntiAirTask::CAntiAirTask(ITaskManager* mgr, float powerMod)
 		: ISquadTask(mgr, FightType::AA, powerMod)
 {
@@ -776,25 +749,9 @@ CEnemyInfo* CAntiAirTask::FindFleeDanger(float& dangerThreat) const
 	dangerThreat = 0.f;
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
-		if (enemy->IsHidden() || !enemy->IsInRadarOrLOS()
-			|| enemy->IsBeingBuilt() || enemy->IsParalyzed() || enemy->IsDisarmed())
-		{
-			continue;
-		}
-		CCircuitDef* edef = enemy->GetCircuitDef();
-		float range = 0.f;  // unidentified blip: the margin only
-		if (edef == nullptr) {
-			if (enemy->GetVel().SqLength2D() < 0.01f) {
-				continue;  // a parked blip is no danger
-			}
-		} else if (!edef->IsMobile() || !edef->IsAttacker() || edef->IsAbleToFly()
-			|| (edef->HasAntiAir() && !edef->HasAntiLand() && !edef->HasAntiWater()))
-		{
-			// Enemy AA can't shoot the squad: no reason to run from it. A mobile bomb (no weapon, only its
-			// death explosion) has no anti-land flag either, but it is a danger
-			continue;
-		} else {
-			range = std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER));
+		float range;  // its ground/water weapon range; 0 for an unidentified blip (the margin only)
+		if (!IsGroundDanger(enemy, false, range)) {
+			continue;  // can't act or shoot the squad: enemy AA, aircraft, a parked blip, ...
 		}
 		const AIFloat3& ePos = enemy->GetPos();
 		const float reach = range + fleeMargin;
@@ -805,7 +762,7 @@ CEnemyInfo* CAntiAirTask::FindFleeDanger(float& dangerThreat) const
 		for (CCircuitUnit* unit : units) {
 			sqDist = std::min(sqDist, unit->GetPos(frame).SqDistance2D(ePos));
 		}
-		if ((sqDist > SQUARE(reach)) || ((edef == nullptr) && IsHighBlip(circuit->GetMap(), ePos))) {
+		if ((sqDist > SQUARE(reach)) || ((enemy->GetCircuitDef() == nullptr) && IsHighBlip(circuit->GetMap(), ePos))) {
 			continue;  // out of reach, or a high blip: a plane, our target
 		}
 		dangerThreat += enemy->GetThreat();
