@@ -900,6 +900,26 @@ CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 	return nullptr;
 }
 
+// Weighted random pick (weights >= 0; all 0 = an even pick). nullptr if there are no candidates, or (rarely)
+// when rounding leaves the dice unspent
+static CCircuitDef* RollCandidate(const std::vector<std::pair<CCircuitDef*, float>>& candidates, float magnitude)
+{
+	if (candidates.empty()) {
+		return nullptr;
+	}
+	if (magnitude <= 0.f) {  // workaround for disabled units
+		return candidates[rand() % candidates.size()].first;
+	}
+	float dice = (float)rand() / RAND_MAX * magnitude;
+	for (const auto& pair : candidates) {
+		dice -= pair.second;
+		if (dice < 0.f) {
+			return pair.first;
+		}
+	}
+	return nullptr;
+}
+
 CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 {
 	if (!CanEnqueueTask()) {
@@ -911,8 +931,6 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 		return nullptr;
 	}
 	const SFactoryDef& facDef = it->second;
-
-	CCircuitDef* buildDef = nullptr;
 
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	const float metalIncome = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome()) * economyMgr->GetEcoFactor();
@@ -954,8 +972,22 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 //		return isValid && ((area == nullptr) || terrainMgr->IsEnemyInArea(area));
 //	};
 
-	// quota.raider floor: while we have fewer raider units (army plus queued here) than the quota, build a raider
-	// this factory can make, weighted by its tier's probabilities (equal if those are all 0)
+	// The factory can start it now: cloak upkeep we can pay, unlocked, room to build it
+	auto isBuildable = [&](CCircuitDef* bd) {
+		return !((bd->GetCloakCost() > .1f) && (energyNet < bd->GetCloakCost()))
+			&& bd->IsAvailable(frame)
+			&& terrainMgr->CanBeBuiltAt(bd, pos, range)
+			/*&& isEnemyInArea(frame, bd)*/;
+	};
+	auto enqueue = [&](CCircuitDef* bd, CRecruitTask::Priority priority) {
+		UnitDef* def = unit->GetCircuitDef()->GetDef();
+		float radius = std::max(def->GetXSize(), def->GetZSize()) * SQUARE_SIZE / 2;
+		// FIXME CCircuitDef::RoleType <-> CRecruitTask::RecruitType relations
+		return EnqueueTask(priority, bd, pos, CRecruitTask::RecruitType::FIREPOWER, radius);
+	};
+
+	// quota.raider floor first: while we have fewer raider units (army plus queued) than the quota, build one of
+	// this factory's raiders, picked by its tier weights
 	if (militaryMgr->IsRaiderQuotaOn()) {
 		unsigned int raiders = militaryMgr->GetRaiderCount();
 		for (const CRecruitTask* t : factoryTasks) {
@@ -963,53 +995,31 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 				++raiders;
 			}
 		}
-		float raidMagnitude = 0.f;
+		float magnitude = 0.f;
 		for (unsigned i = 0; i < facDef.buildDefs.size(); ++i) {
 			CCircuitDef* bd = facDef.buildDefs[i];
-			if (!militaryMgr->IsRaider(bd)
-				|| (raiders >= militaryMgr->GetMinRaiders(bd))
-				|| ((bd->GetCloakCost() > .1f) && (energyNet < bd->GetCloakCost()))
-				|| !bd->IsAvailable(frame)
-				|| !terrainMgr->CanBeBuiltAt(bd, pos, range))
-			{
-				continue;
+			if (militaryMgr->IsRaider(bd) && (raiders < militaryMgr->GetMinRaiders(bd)) && isBuildable(bd)) {
+				candidates.push_back(std::make_pair(bd, probs[i]));
+				magnitude += probs[i];
 			}
-			candidates.push_back(std::make_pair(bd, probs[i]));
-			raidMagnitude += probs[i];
 		}
 		if (!candidates.empty()) {
-			CCircuitDef* raidDef = candidates.back().first;
-			if (raidMagnitude > 0.f) {
-				float dice = (float)rand() / RAND_MAX * raidMagnitude;
-				for (auto& pair : candidates) {
-					dice -= pair.second;
-					if (dice < 0.f) {
-						raidDef = pair.first;
-						break;
-					}
-				}
-			} else {
-				raidDef = candidates[rand() % candidates.size()].first;
+			CCircuitDef* raidDef = RollCandidate(candidates, magnitude);
+			if (raidDef == nullptr) {
+				raidDef = candidates.back().first;
 			}
 			candidates.clear();
-			UnitDef* def = unit->GetCircuitDef()->GetDef();
-			float radius = std::max(def->GetXSize(), def->GetZSize()) * SQUARE_SIZE / 2;
-			return EnqueueTask(CRecruitTask::Priority::NORMAL, raidDef, pos, CRecruitTask::RecruitType::FIREPOWER, radius);
+			return enqueue(raidDef, CRecruitTask::Priority::NORMAL);
 		}
 	}
 
+	// Response: units the enemy's army calls for (response.json), hinted by the tier weights within a role
 	float magnitude = 0.f;
 	for (unsigned i = 0; i < facDef.buildDefs.size(); ++i) {
 		CCircuitDef* bd = facDef.buildDefs[i];
-		if (((bd->GetCloakCost() > .1f) && (energyNet < bd->GetCloakCost()))
-			|| (bd->GetCostM() > maxCost)
-			|| !bd->IsAvailable(frame)
-			|| !terrainMgr->CanBeBuiltAt(bd, pos, range)
-			/*|| !isEnemyInArea(frame, bd)*/)
-		{
+		if ((bd->GetCostM() > maxCost) || !isBuildable(bd)) {
 			continue;
 		}
-
 		// (probs[i] + response_weight) hints preferable buildDef within same role
 		float prob = militaryMgr->RoleProbability(bd) * (probs[i] + reWeight);
 		if (prob > 0.f) {
@@ -1018,46 +1028,23 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 		}
 	}
 
+	// Otherwise the tier weights alone
 	bool isResponse = !candidates.empty();
 	if (!isResponse) {
-		// When isResponse==false: candidates.empty() and magnitude==0
 		for (unsigned i = 0; i < facDef.buildDefs.size(); ++i) {
 			CCircuitDef* bd = facDef.buildDefs[i];
-			if (((bd->GetCloakCost() > .1f) && (energyNet < bd->GetCloakCost()))
-				|| !bd->IsAvailable(frame)
-				|| !terrainMgr->CanBeBuiltAt(bd, pos, range)
-				/*|| !isEnemyInArea(frame, bd)*/)
-			{
-				continue;
-			}
-
-			candidates.push_back(std::make_pair(bd, probs[i]));
-			magnitude += probs[i];
-		}
-	}
-
-	if (magnitude == 0.f) {  // workaround for disabled units
-		if (!candidates.empty()) {
-			buildDef = candidates[rand() % candidates.size()].first;
-		}
-	} else {
-		float dice = (float)rand() / RAND_MAX * magnitude;
-		for (auto& pair : candidates) {
-			dice -= pair.second;
-			if (dice < 0.f) {
-				buildDef = pair.first;
-				break;
+			if (isBuildable(bd)) {
+				candidates.push_back(std::make_pair(bd, probs[i]));
+				magnitude += probs[i];
 			}
 		}
 	}
+
+	CCircuitDef* buildDef = RollCandidate(candidates, magnitude);
 	candidates.clear();
 
 	if ((buildDef != nullptr) && buildDef->IsAvailable(frame)) {
-		UnitDef* def = unit->GetCircuitDef()->GetDef();
-		float radius = std::max(def->GetXSize(), def->GetZSize()) * SQUARE_SIZE / 2;
-		// FIXME CCircuitDef::RoleType <-> CRecruitTask::RecruitType relations
-		return EnqueueTask(isResponse ? CRecruitTask::Priority::HIGH : CRecruitTask::Priority::NORMAL,
-						   buildDef, pos, CRecruitTask::RecruitType::FIREPOWER, radius);
+		return enqueue(buildDef, isResponse ? CRecruitTask::Priority::HIGH : CRecruitTask::Priority::NORMAL);
 	}
 	return nullptr;
 }

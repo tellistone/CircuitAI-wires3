@@ -122,6 +122,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Faster spot picking for scouts and raid groups.** The score of every candidate spot is worked out first, and
+  only a spot that would beat the best so far is checked for being ours (an engine query for geothermal vents) and
+  for enemy defences. The pick is the same; in a randomised check of old against new it matched in all 200,000 cases
+  and did about a fifth of those checks.
+- **Roaming raid groups re-plan their route less often.** A group roaming with no enemies known asked for a new
+  route to the same destination about every second. It now keeps the route it is walking for up to 3 s, unless there
+  is danger at the destination, on the stretch just ahead or to any of its units, or the destination changed.
+- Scout quota config errors (a negative or non-number `scout` or `scout_max`, a non-number `scout_per_mex`, or a
+  `scout_spot` that isn't an object) now log and use the default instead of raising a JSON error. A negative
+  `scout_per_mex` used to turn the mex bonus off; it now logs and uses the default 1.0 (use 0 for off), the same
+  rule as the raider keys. An explicit `null` for a scout key now means its default too (it used to read as 0, so
+  `"scout_max": null` meant no cap), and `true`/`false` are no longer read as 1/0.
+
 - Retreated units waiting to be repaired (at a haven or by builders) now patrol in place instead of back and forth
   between two points, so they stay in range of whatever is repairing them. They still return fire.
 - Retreated units now stop well inside the repairer's range (60% of it plus the unit's own radius) before waiting.

@@ -13,6 +13,7 @@
 #include "task/fighter/FighterTask.h"
 #include "unit/CircuitDef.h"
 
+#include <algorithm>
 #include <vector>
 #include <functional>
 #include <set>
@@ -74,15 +75,20 @@ public:
 	void AbortDefence(const CBDefenceTask* task);
 	bool HasDefence(int cluster);
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
-	// Best scouting spot by score (near enemy, unseen, not stale-visited, not defended by known static enemies)
-	springai::AIFloat3 PickScoutSpot(CCircuitUnit* unit, float safeThreat);
-	// A scout gave up on this spot (danger at it or no safe route): no scout picks it for a while
-	void BlockScoutSpot(const springai::AIFloat3& spot, int frames);
+	// Best spot by score (near the enemy, unseen for longest, not defended by known static enemies, not on our side);
+	// -RgtVector if none. Scouts (quota.scout_spot) and raid groups (quota.raider_spot) score the same spots but
+	// keep their own claims; a raid group's claim is held by its leader at pick time
+	springai::AIFloat3 PickScoutSpot(CCircuitUnit* unit, float safeThreat) {
+		return PickSpot(unit, safeThreat, scoutSpot, IFighterTask::FightType::SCOUT, scoutClaims);
+	}
+	springai::AIFloat3 PickRaidSpot(CCircuitUnit* leader, float safeThreat) {
+		return PickSpot(leader, safeThreat, raiderSpot, IFighterTask::FightType::RAID, raidClaims);
+	}
+	// Gave up on this spot (danger at it or no safe route): nobody of that kind picks it for a while
+	void BlockScoutSpot(const springai::AIFloat3& spot, int frames) { BlockSpot(scoutClaims, spot, frames); }
+	void BlockRaidSpot(const springai::AIFloat3& spot, int frames) { BlockSpot(raidClaims, spot, frames); }
+	bool IsRaidSpotOn() const { return isRaiderSpot; }  // quota.raider_spot given
 	springai::AIFloat3 GetRaidPosition(CCircuitUnit* unit);
-	// quota.raider_spot: scored roaming spot for a raid group (same scoring as scout spots, own claims); -RgtVector if none
-	bool IsRaidSpotOn() const { return isRaiderSpot; }
-	springai::AIFloat3 PickRaidSpot(CCircuitUnit* leader, float safeThreat);
-	void BlockRaidSpot(const springai::AIFloat3& spot, int frames);
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
 	// Defence points of every metal cluster we hold (queued or finished, not on enemy ground) the unit can reach
 	void FillFriendlyClusterPos(CCircuitUnit* unit, F3Vec& outPositions);
@@ -151,17 +157,15 @@ public:
 	void DiceBigGun();
 	float ClampMobileCostRatio() const;
 	void UpdateDefenceTasks();
-	// Every 15s: count known enemy mexes each scout movement type can reach from our base without crossing
-	// threat it couldn't take, divided by the number of enemy players; added on top of quota.scout
+	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without
+	// crossing threat it couldn't take, divided by the number of enemy players: the mex bonus of each quota
 	void UpdateScoutQuota();
-	unsigned int GetMaxScouts(const CCircuitDef* cdef) const;
-private:
-	void UpdateMexBonus(bool isRaider);  // UpdateScoutQuota's count for scouts (false) or raiders (true)
-public:
-	// quota.raider (+ raider_per_mex bonus, capped by raider_max): factories build a raider while we have fewer
-	// raider units (main role raider or bound to it, not scouting; alive plus queued) than this. 0 = no floor
-	unsigned int GetMinRaiders(const CCircuitDef* cdef) const;
-	bool IsRaiderQuotaOn() const { return (minRaiders > 0) || (raiderPerMex > 0.f); }
+	// Most scout tasks at once (quota.scout + bonus)
+	unsigned int GetMaxScouts(const CCircuitDef* cdef) const { return scoutQuota.Get(cdef->GetMobileId()); }
+	// quota.raider (+ bonus): factories build a raider while we have fewer raider units (main role raider or bound
+	// to it, not scouting; alive plus queued) than this. 0 = no floor
+	unsigned int GetMinRaiders(const CCircuitDef* cdef) const { return raiderQuota.Get(cdef->GetMobileId()); }
+	bool IsRaiderQuotaOn() const { return raiderQuota.IsOn(); }
 	bool IsRaider(const CCircuitDef* cdef) const;
 	unsigned int GetRaiderCount() const;  // raider units in the army not scouting (factory tasks are counted by the caller)
 	void UpdateDefence();
@@ -282,26 +286,29 @@ private:
 	bool IsScoutSpotOurs(unsigned idx) const;  // our side holds it: finished mex / any geothermal on the vent
 	std::vector<springai::AIFloat3> scoutSpots;
 	unsigned scoutMetalCount = 0;
-	std::vector<int> scoutSeen;   // per spot: last frame it was in our LOS (-1 never)
-	std::vector<int> scoutClaim;  // per spot: last frame a scout picked it (-1 never)
-	std::vector<int> scoutClaimUnit;  // per spot: id of the scout that picked it
-	std::vector<int> scoutBlocked;  // per spot: frame until which no scout picks it
-	// Raid groups' claims on the same spots (scoutSeen is shared: it is our LOS history)
-	std::vector<int> raidClaim;
-	std::vector<int> raidClaimUnit;
-	std::vector<int> raidBlocked;
-	struct SScoutSpot {
+	std::vector<int> scoutSeen;   // per spot: last frame it was in our LOS (-1 never); shared, it is our LOS history
+	// One kind of picker's hold on the spots (scouts, raid groups)
+	struct SSpotClaims {
+		std::vector<int> frame;    // per spot: last frame it was picked (-1 never)
+		std::vector<int> unitId;   // per spot: who picked it (a scout, or a raid group's leader)
+		std::vector<int> blocked;  // per spot: frame until which nobody of this kind picks it
+		void Clear() { frame.clear(); unitId.clear(); blocked.clear(); }
+		void Resize(size_t n) { frame.resize(n, -1); unitId.resize(n, -1); blocked.resize(n, -1); }
+	} scoutClaims, raidClaims;
+	// quota.scout_spot / raider_spot: spot scoring
+	struct SSpotCfg {
 		float enemy;      // weight: closeness to enemy
 		float stale;      // weight: time since last seen
-		float travel;     // weight (penalty): distance from the scout
+		float travel;     // weight (penalty): distance from the picker
 		int staleTime;    // frames until a seen spot is fully stale again
-		int claimTime;    // frames a picked spot is reserved for its scout
+		int claimTime;    // frames a picked spot is reserved for its picker
 		float rangeMult;  // static enemy weapon range multiplier for danger
 		float homeRatio;  // skip spots nearer to our base than this fraction of their distance to the enemy
 	} scoutSpot, raiderSpot;
 	bool isRaiderSpot = false;  // quota.raider_spot given
-	springai::AIFloat3 PickSpot(CCircuitUnit* unit, float safeThreat, const SScoutSpot& cfg, IFighterTask::FightType type,
-			std::vector<int>& claim, std::vector<int>& claimUnit, const std::vector<int>& blocked);
+	springai::AIFloat3 PickSpot(CCircuitUnit* unit, float safeThreat, const SSpotCfg& cfg, IFighterTask::FightType type,
+			SSpotClaims& claims);
+	void BlockSpot(SSpotClaims& claims, const springai::AIFloat3& spot, int frames);
 
 	struct SRaidPoint {
 		unsigned int idx;
@@ -339,17 +346,22 @@ private:
 		float min;
 		float avg;
 	} raid;
-	unsigned int maxScouts;  // quota.scout: the minimum
-	unsigned int scoutMax;  // quota.scout_max: cap on minimum + bonus (0 = none)
-	float scoutPerMex;  // quota.scout_per_mex: multiplier on the reachable-mex bonus (0 = off)
-	std::map<int, unsigned int> scoutMexBonus;  // by mobile type id (-1 = air)
-	unsigned int minRaiders;  // quota.raider: the minimum (0 = no floor)
-	unsigned int raiderMax;  // quota.raider_max: cap on minimum + bonus (0 = none)
-	float raiderPerMex;  // quota.raider_per_mex: multiplier on the reachable-mex bonus (0 = off)
-	std::map<int, unsigned int> raiderMexBonus;  // by mobile type id (-1 = air)
-	// quota.scout_map_size: [<map side in Spring map units (512 elmos)>, <multiplier>] points
-	std::vector<std::pair<float, float>> scoutMapCurve;
-	std::vector<std::pair<float, float>> raiderMapCurve;  // quota.raider_map_size (missing = scoutMapCurve)
+	// quota.scout / quota.raider and their _per_mex, _max and _map_size keys
+	struct SUnitQuota {
+		unsigned int min = 0;  // never cut, even above max
+		unsigned int max = 0;  // cap on min + bonus (0 = none)
+		float perMex = 0.f;    // multiplier on the reachable-mex bonus (0 = off)
+		// [<map side in Spring map units (512 elmos)>, <multiplier>] points: second multiplier on the bonus
+		std::vector<std::pair<float, float>> mapCurve;
+		std::map<int, unsigned int> mexBonus;  // by mobile type id (-1 = air), from UpdateScoutQuota
+		bool IsOn() const { return (min > 0) || (perMex > 0.f); }
+		unsigned int Get(int mobileId) const {
+			auto it = mexBonus.find(mobileId);
+			const unsigned int count = min + ((it == mexBonus.end()) ? 0 : it->second);
+			return (max > 0) ? std::max(std::min(count, max), min) : count;
+		}
+	} scoutQuota, raiderQuota;
+	void UpdateMexBonus(SUnitQuota& quota, bool isRaider);  // UpdateScoutQuota for one quota
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;

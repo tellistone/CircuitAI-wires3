@@ -51,6 +51,9 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, raidSpot(-RgtVector)
 		, raidSpotPos(-RgtVector)
 		, raidSpotFailFrame(-FRAMES_PER_SEC * 60)
+		, isPathAheadUnsafe(false)
+		, roamPathFrame(-FRAMES_PER_SEC * 60)
+		, roamGoal(-RgtVector)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -142,7 +145,9 @@ void CRaidTask::Update()
 	 * Escape: checked on every update (not just every decision), also while engaging or regrouping
 	 */
 	bool isPathUnsafe = false;
-	if (IsInDanger(frame, isPathUnsafe) && Flee(frame)) {
+	const bool isInDanger = IsInDanger(frame, isPathUnsafe);
+	isPathAheadUnsafe = isPathUnsafe;
+	if (isInDanger && Flee(frame)) {
 		return;
 	}
 	if (isFightPending) {
@@ -530,42 +535,19 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	const bool mustRepick = !isContestedAllowed && isContestedDest;
 	isContestedDest = (bestContested != nullptr);
 	const bool isDanger = (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos));
-	// quota.raider_spot: roam between scored spots (near the enemy, unseen for longest, not defended by known
-	// static enemies) instead of the shared mex list; the old roaming below is the fallback when none qualifies
-	bool isSpotPicked = false;
-	bool isSpotFailed = false;  // no spot qualifies and the current one is done: the old roaming picks now
+	// quota.raider_spot: roam between scored spots instead of the shared mex list
+	bool isSpotDest = false;
+	bool isSpotDone = false;
 	if ((bestContested == nullptr) && militaryMgr->IsRaidSpotOn()) {
-		const bool isOwnDest = utils::is_valid(raidSpot) && (position.SqDistance2D(raidSpotPos) < 1.f);
-		if (isOwnDest && isDanger) {
-			militaryMgr->BlockRaidSpot(raidSpot, FRAMES_PER_SEC * 10);  // don't re-pick it straight away
-		}
-		const bool mustPick = !isOwnDest || mustRepick || isDanger || circuit->GetMapManager()->IsInLOS(raidSpot);
-		// After a failed pick, re-score only every 5 s unless the current destination must change
-		if (mustPick && !isOwnDest && !mustRepick && !isDanger && (frame < raidSpotFailFrame + FRAMES_PER_SEC * 5)) {
-			// keep the current destination (old roaming rules below)
-		} else if (mustPick) {
-			const AIFloat3 spot = militaryMgr->PickRaidSpot(leader, safeThreat);
-			raidSpot = spot;
-			raidSpotPos = utils::is_valid(spot) ? terrainMgr->GetMovePosition(leader->GetArea(), spot) : AIFloat3(-RgtVector);
-			if (utils::is_valid(raidSpotPos)) {
-				position = raidSpotPos;
-				isSpotPicked = true;
-			} else {
-				raidSpot = -RgtVector;
-				raidSpotFailFrame = frame;
-				isSpotFailed = isOwnDest;  // we were at (or heading to) a spot that is done: move on, the old way
-			}
-		} else {
-			isSpotPicked = true;  // keep heading to the current spot
-		}
+		isSpotDest = UpdateRaidSpot(safeThreat, mustRepick, isDanger, isSpotDone);
 	} else {
 		raidSpot = -RgtVector;
 	}
 	if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);
-	} else if (isSpotPicked) {
-		// spot picked above
-	} else if (mustRepick || isDanger || isSpotFailed) {
+	} else if (isSpotDest) {
+		// heading to a scored spot (UpdateRaidSpot)
+	} else if (mustRepick || isDanger || isSpotDone) {
 		// Try a few candidates and keep the first one that passes the same check. Taking the next spot
 		// unchecked made raids hop to a new (often equally dangerous, far = strict curve) spot every update.
 		AIFloat3 candidate = -RgtVector;
@@ -588,6 +570,19 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
 	}
 
+	// Still walking the roam route to this same destination, planned under 3 s ago, with no danger at the
+	// destination, on the stretch ahead or to any unit: keep it instead of planning the same route again
+	if (!isDanger && !isPathAheadUnsafe && endangered.empty() && (position.SqDistance2D(roamGoal) < 1.f)
+		&& (frame < roamPathFrame + FRAMES_PER_SEC * 3) && (roamPath != nullptr)
+		&& leader->GetTravelAct()->IsActive() && (leader->GetTravelAct()->GetPath() == roamPath))
+	{
+		pPath = roamPath;  // a failed target route may have replaced it, and Start() and regrouping re-send pPath
+		return;
+	}
+	roamGoal = position;
+	roamPathFrame = frame;
+	roamPath = nullptr;  // set again when this route arrives: an older route must not pass for it
+
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, threatMap, frame,
@@ -602,6 +597,37 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	});
 }
 
+bool CRaidTask::UpdateRaidSpot(float safeThreat, bool mustRepick, bool isDanger, bool& isSpotDone)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const int frame = circuit->GetLastFrame();
+	isSpotDone = false;
+	const bool isOwnDest = utils::is_valid(raidSpot) && (position.SqDistance2D(raidSpotPos) < 1.f);
+	if (isOwnDest) {
+		if (isDanger) {
+			militaryMgr->BlockRaidSpot(raidSpot, FRAMES_PER_SEC * 10);  // don't re-pick it straight away
+		} else if (!mustRepick && !circuit->GetMapManager()->IsInLOS(raidSpot)) {
+			return true;  // keep heading to it
+		}
+	} else if (!mustRepick && !isDanger && (frame < raidSpotFailFrame + FRAMES_PER_SEC * 5)) {
+		return false;  // no spot qualified a moment ago: keep the current destination, score again in a while
+	}
+
+	const AIFloat3 spot = militaryMgr->PickRaidSpot(leader, safeThreat);
+	raidSpotPos = utils::is_valid(spot)
+			? circuit->GetTerrainManager()->GetMovePosition(leader->GetArea(), spot) : AIFloat3(-RgtVector);
+	if (utils::is_valid(raidSpotPos)) {
+		raidSpot = spot;
+		position = raidSpotPos;
+		return true;
+	}
+	raidSpot = -RgtVector;
+	raidSpotFailFrame = frame;
+	isSpotDone = isOwnDest;  // the spot we were heading to is done and there's no next one: move on the old way
+	return false;
+}
+
 void CRaidTask::ApplyRaidPath(const CQueryPathSingle* query)
 {
 	pPath = query->GetPathInfo();
@@ -609,6 +635,7 @@ void CRaidTask::ApplyRaidPath(const CQueryPathSingle* query)
 	if (pPath->path.size() > 2) {
 //		position = path.back();
 		ActivePath();
+		roamPath = pPath;  // FallbackRaid may keep walking it for a while
 		return;
 	}
 
