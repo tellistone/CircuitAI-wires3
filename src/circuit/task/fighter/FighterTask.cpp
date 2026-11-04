@@ -470,4 +470,50 @@ bool IFighterTask::IsStaticDefence(CCircuitDef* cdef)
 			|| (cdef->GetThreatRange(CCircuitDef::ThreatType::WATER) > 0);
 }
 
+bool IFighterTask::IsGroundDanger(CEnemyInfo* enemy, bool isGunship, float& outRange)
+{
+	outRange = 0.f;
+	if (enemy->IsHidden() || !enemy->IsInRadarOrLOS()
+		|| enemy->IsBeingBuilt() || enemy->IsParalyzed() || enemy->IsDisarmed())
+	{
+		return false;
+	}
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	if (edef == nullptr) {
+		return enemy->GetVel().SqLength2D() >= 0.01f;
+	}
+	// Anti-air only: has an air weapon and no ground or water one. Not "no ground/water weapon": mobile bombs
+	// (imp, snitch, skuttle) have no weapon at all, only a death explosion, and must still count
+	if (!edef->IsMobile() || !edef->IsAttacker() || (isGunship ? edef->IsPlane() : edef->IsAbleToFly())
+		|| (edef->HasAntiAir() && !edef->HasAntiLand() && !edef->HasAntiWater()))
+	{
+		return false;  // static, unarmed, flying or anti-air only
+	}
+	outRange = std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER));
+	return true;
+}
+
+const springai::AIFloat3* IFighterTask::PickFleeSpot(const springai::AIFloat3& pos, const springai::AIFloat3& dangerPos,
+		const F3Vec& spots)
+{
+	const float sqDangerDist = pos.SqDistance2D(dangerPos);
+	const springai::AIFloat3* nearestAway = nullptr;
+	const springai::AIFloat3* furthest = nullptr;
+	float minSqDist = std::numeric_limits<float>::max();
+	float maxSqDangerDist = -1.f;
+	for (const springai::AIFloat3& spot : spots) {
+		const float sqSpotDanger = spot.SqDistance2D(dangerPos);
+		if (sqSpotDanger > maxSqDangerDist) {
+			maxSqDangerDist = sqSpotDanger;
+			furthest = &spot;
+		}
+		const float sqDist = pos.SqDistance2D(spot);
+		if ((sqSpotDanger > sqDangerDist) && (sqDist < minSqDist)) {
+			minSqDist = sqDist;
+			nearestAway = &spot;
+		}
+	}
+	return (nearestAway != nullptr) ? nearestAway : furthest;
+}
+
 } // namespace circuit
