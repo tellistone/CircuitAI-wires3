@@ -132,7 +132,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - Scout quota config errors (a negative or non-number `scout` or `scout_max`, a non-number `scout_per_mex`, or a
   `scout_spot` that isn't an object) now log and use the default instead of raising a JSON error. A negative
   `scout_per_mex` used to turn the mex bonus off; it now logs and uses the default 1.0 (use 0 for off), the same
-  rule as the raider keys.
+  rule as the raider keys. An explicit `null` for a scout key now means its default too (it used to read as 0, so
+  `"scout_max": null` meant no cap), and `true`/`false` are no longer read as 1/0.
 
 - Retreated units waiting to be repaired (at a haven or by builders) now patrol in place instead of back and forth
   between two points, so they stay in range of whatever is repairing them. They still return fire.
