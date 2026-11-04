@@ -40,10 +40,6 @@ CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 		, factoryPower(.0f)
 		, assistDef(nullptr)
 		, bpRatio(1.f)
-		, bpArmyRatio(0.f)
-		, bpArmyFrame(0)
-		, bpReclaimRatio(0.f)
-		, bpReclaimFrame(0)
 		, reWeight(.5f)
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CFactoryManager::Init, this));
@@ -538,12 +534,15 @@ void CFactoryManager::ReadConfig()
 	}
 
 	bpRatio = root["economy"].get("buildpower", 1.f).asFloat();
-	const Json::Value& bpArmy = root["economy"]["buildpower_army"];
-	bpArmyRatio = bpArmy.get("ratio", 0.f).asFloat();
-	bpArmyFrame = bpArmy.get("since", 0.f).asFloat() * FRAMES_PER_SEC;
-	const Json::Value& bpReclaim = root["economy"]["buildpower_reclaim"];
-	bpReclaimRatio = bpReclaim.get("ratio", 0.f).asFloat();
-	bpReclaimFrame = bpReclaim.get("since", 0.f).asFloat() * FRAMES_PER_SEC;
+	auto readBuilderRatio = [&root](const char* name) {
+		const Json::Value& cfg = root["economy"][name];
+		SBuilderRatio br;
+		br.ratio = cfg.get("ratio", 0.f).asFloat();
+		br.frame = cfg.get("since", 0.f).asFloat() * FRAMES_PER_SEC;
+		return br;
+	};
+	bpArmy = readBuilderRatio("buildpower_army");
+	bpReclaim = readBuilderRatio("buildpower_reclaim");
 	reWeight = root["response"].get("_weight_", .5f).asFloat();
 }
 
@@ -861,19 +860,8 @@ AIFloat3 CFactoryManager::GetClosestHaven(const AIFloat3& position) const
 
 CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 {
-	if (!CanEnqueueTask()) {
-		return nullptr;
-	}
-
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const float metalIncome = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome());
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	const bool isLowBuildPower = builderMgr->GetBuildPower() < metalIncome * bpRatio;
-	// Mid/late game: keep constructors' metal value at bpArmyRatio of the mobile army's
-	const bool isLowWorkerCost = (bpArmyRatio > 0.f) && (circuit->GetLastFrame() >= bpArmyFrame)
-		&& (builderMgr->GetWorkerCost() < circuit->GetMilitaryManager()->GetArmyCost() * bpArmyRatio);
-	const bool isReclaimRule = (bpReclaimRatio > 0.f) && (circuit->GetLastFrame() >= bpReclaimFrame);
-	if (!(isLowBuildPower || isLowWorkerCost || isReclaimRule) || (rand() >= RAND_MAX / 2)) {
+	// Coin flip first: every other factory job is left to UpdateFirePower whatever the rules say
+	if (!CanEnqueueTask() || (rand() >= RAND_MAX / 2)) {
 		return nullptr;
 	}
 
@@ -882,22 +870,38 @@ CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 		return nullptr;
 	}
 	CCircuitDef* buildDef = it->second.GetRoleDef(ROLE_TYPE(BUILDER));
-
-	if ((buildDef != nullptr) && buildDef->IsAvailable(circuit->GetLastFrame())) {
-		const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
-		// Keep constructors' metal value at bpReclaimRatio of the reclaim this factory's constructor can safely reach
-		if (!isLowBuildPower && !isLowWorkerCost
-			&& (builderMgr->GetWorkerCost() >= economyMgr->GetReclaimMetal(buildDef, pos) * bpReclaimRatio))
-		{
-			return nullptr;
-		}
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		if (!terrainMgr->CanBeBuiltAt(buildDef, pos, unit->GetCircuitDef()->GetBuildDistance())) {
-			return nullptr;
-		}
-		return EnqueueTask(CRecruitTask::Priority::NORMAL, buildDef, pos, CRecruitTask::RecruitType::BUILDPOWER, 64.f);
+	const int frame = circuit->GetLastFrame();
+	if ((buildDef == nullptr) || !buildDef->IsAvailable(frame)) {
+		return nullptr;
 	}
-	return nullptr;
+
+	const AIFloat3& pos = unit->GetPos(frame);
+	if (!IsBuilderNeeded(buildDef, pos)
+		|| !circuit->GetTerrainManager()->CanBeBuiltAt(buildDef, pos, unit->GetCircuitDef()->GetBuildDistance()))
+	{
+		return nullptr;
+	}
+	return EnqueueTask(CRecruitTask::Priority::NORMAL, buildDef, pos, CRecruitTask::RecruitType::BUILDPOWER, 64.f);
+}
+
+bool CFactoryManager::IsBuilderNeeded(CCircuitDef* buildDef, const AIFloat3& pos) const
+{
+	// Cheapest rule first; the reclaim rule's feature scan (cached) runs only when the others are met
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const float metalIncome = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome());
+	if (builderMgr->GetBuildPower() < metalIncome * bpRatio) {
+		return true;
+	}
+
+	// A ratio of 0 never asks: workerCost >= 0
+	const int frame = circuit->GetLastFrame();
+	const float workerCost = builderMgr->GetWorkerCost();
+	if ((frame >= bpArmy.frame) && (workerCost < circuit->GetMilitaryManager()->GetArmyCost() * bpArmy.ratio)) {
+		return true;
+	}
+	return (bpReclaim.ratio > 0.f) && (frame >= bpReclaim.frame)
+		&& (workerCost < economyMgr->GetReclaimMetal(buildDef, pos) * bpReclaim.ratio);
 }
 
 // Weighted random pick (weights >= 0; all 0 = an even pick). nullptr if there are no candidates, or (rarely)
