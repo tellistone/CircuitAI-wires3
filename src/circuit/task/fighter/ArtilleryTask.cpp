@@ -307,7 +307,7 @@ bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
 	const int frame = circuit->GetLastFrame();
 	ITravelAction* travelAct = unit->GetTravelAct();
 	if ((firePath == nullptr) || (frame >= replanFrame) || (travelAct->GetPath() != firePath)
-		|| !(travelAct->IsActive() || travelAct->IsFinishing()))  // finishing: the last waypoint is ordered, still walking
+		|| !(travelAct->IsActive() || travelAct->IsFinished()))  // finished: the last waypoint is ordered, still walking
 	{
 		return false;
 	}
@@ -326,10 +326,13 @@ bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
 		return false;
 	}
 
+	// The waypoints left stay under the cap. Not for a cloaked unit: the pathfinder plans its route on the
+	// decloak layer, which GetThreatAt doesn't read (cloak doesn't work under water: there it uses the usual layer)
+	const AIFloat3& pos = unit->GetPos(frame);
+	const bool isCloakRoute = ((pos.y >= 0.f) || unit->GetCircuitDef()->IsSonarStealth()) && unit->GetUnit()->IsCloaked();
 	const float maxPathThreat = GetMaxPathThreat(unit);
-	if (maxPathThreat < std::numeric_limits<float>::max()) {
-		// The waypoints left: from the one nearest to us
-		const AIFloat3& pos = unit->GetPos(frame);
+	if ((maxPathThreat < std::numeric_limits<float>::max()) && !isCloakRoute) {
+		// From the waypoint nearest to us
 		size_t next = 0;
 		float minSqDist = std::numeric_limits<float>::max();
 		for (size_t i = 0; i < route.size(); ++i) {
@@ -553,7 +556,9 @@ void CArtilleryTask::FallbackStay(CCircuitUnit* unit, bool isUpdating)
 void CArtilleryTask::HoldHere(CCircuitUnit* unit)
 {
 	ITravelAction* travelAct = unit->GetTravelAct();
-	if (travelAct->IsActive() || travelAct->IsFinishing()) {  // finishing: the last waypoint is ordered, still walking
+	// Finished: the last waypoint is ordered and the unit may still be walking (the action list ends a finishing
+	// travel at once, so its state is HALT by now, not FINISH)
+	if (travelAct->IsActive() || travelAct->IsFinished()) {
 		// Walking somewhere that is no longer wanted: the engine still holds queued waypoints, stop here
 		CCircuitAI* circuit = manager->GetCircuit();
 		TRY_UNIT(circuit, unit,
@@ -766,9 +771,11 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 		return false;
 	}
 
-	// The first flee replaces any path being planned (it may lead towards the enemy); a re-plan waits for its own
-	if (isFleeing && ((frame < fleeFrame) || !IsQueryReady(unit))) {
-		return true;  // already on the way
+	// On the way: a flee planned in the last 2 s, or a flee path still being planned (also after a moment of
+	// cover). Any other path still being planned (Execute's: it may lead towards the enemy) is replaced at once
+	const bool isRecentFlee = (frame < fleeFrame);
+	if ((isFleeing && isRecentFlee) || ((isFleeing || isRecentFlee) && !IsQueryReady(unit))) {
+		return true;
 	}
 	isFleeing = true;
 	fleeFrame = frame + FRAMES_PER_SEC * 2;  // re-plan the flee every 2 s while the danger stays
