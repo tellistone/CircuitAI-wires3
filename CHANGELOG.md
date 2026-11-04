@@ -132,6 +132,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Cheaper anti-air checks, same decisions except one.** AA target choice now judges aircraft nearest first and stops
+  at the first that passes the leash and firing-spot threat checks, instead of judging every aircraft; leash home
+  points and squad strength are only gathered when there is an aircraft to judge. The 9-point ground-height read for
+  unidentified radar blips runs only for blips that are next in line as a target or already within flee reach. The
+  early-flee scan skips enemies too far from the leader before checking each squad unit. Path requests share one
+  helper. One behaviour change: a hit on a squad unit no longer replaces the leader's path while one is still being
+  computed (it checked the hit unit's query, so every hit on a non-leader sent a new path request and could drop an
+  in-flight flee path).
+
 - **Cheaper geothermal checks, same decisions except one 10 s delay.** Geo buildings are recognised from a list read
   once at start instead of an engine call per energy type, job and scout check. Vent search tries vents nearest
   first and stops at the first one that passes, and a vent the engine says can't be built on (a geo already stands
