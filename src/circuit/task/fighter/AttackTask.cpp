@@ -64,8 +64,6 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, fleeDest(-RgtVector)
 		, isAtFleeDest(false)
 		, fleeTargetId(-1)
-		, pullFrame(0)
-		, isPathAheadUnsafe(false)
 		, isReplanForced(false)
 		, corneredFrame(-1)
 		, corneredPos(-RgtVector)
@@ -589,7 +587,7 @@ bool CAttackTask::UpdateEscape(int frame)
 {
 	// Checked on every update (not just every decision), also while engaging or reinforcing.
 	// Not while defending: a fight with a target inside the base defence radius is held (no flee, no pull-back)
-	const bool isDanger = IsInDanger(frame);
+	const bool isDanger = IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
 	isAtFleeDest = false;
 	const bool isFleeing = isDanger && !isHoldGround && Flee(frame);
@@ -627,90 +625,11 @@ bool CAttackTask::UpdateEscape(int frame)
 	return false;
 }
 
-bool CAttackTask::IsInDanger(int frame)
-{
-	isPathAheadUnsafe = false;
-	endangered.clear();
-	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
-	const float safeThreat = GetSafeThreat();
-	float dangerPower = 0.f;
-	for (const SUnitStrength& s : GetUnitStrengths()) {
-		CCircuitUnit* unit = s.unit;
-		if (unit->GetUnit()->IsCloaked()) {
-			continue;  // unseen: enemies in range can't shoot it
-		}
-		const AIFloat3& pos = unit->GetPos(frame);
-		if (threatMap->GetThreatAt(unit, pos) >= GetAllowedThreatAt(pos, safeThreat)) {
-			endangered.push_back(unit);
-			dangerPower += s.power;
-		}
-	}
-	// Flee only when the units in danger hold at least quota.attack_flee_share of the group's current strength
-	if (!endangered.empty() && (dangerPower >= GetMilitaryMgr()->GetAttackFleeShare() * GetStrengthSum())) {
-		return true;
-	}
-
-	if (!leader->GetTravelAct()->IsActive() || leader->GetUnit()->IsCloaked()) {
-		return false;
-	}
-	const std::shared_ptr<PathInfo>& path = leader->GetTravelAct()->GetPath();
-	if (path == nullptr) {
-		return false;
-	}
-	// The stretch of path the group covers in the next ~2s
-	const AIFloat3& pos = leader->GetPos(frame);
-	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
-	const float sqLookAhead = SQUARE(lookAhead);
-	for (const AIFloat3& p : path->posPath) {
-		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, safeThreat))) {
-			isPathAheadUnsafe = true;
-			break;
-		}
-	}
-	return false;
-}
-
 bool CAttackTask::IsHoldingGround(int frame) const
 {
 	// Only inside the base defence radius (where thr_mod.base_bonus applies): out in the field the enemy
 	// is nearer our base than we are in about half of all fights, and those should still be escapable
 	return (State::ENGAGE == state) && (target != nullptr) && IsInBaseRadius(target->GetPos());
-}
-
-void CAttackTask::PullBackEndangered(int frame)
-{
-	// Units in danger that didn't make the whole group flee: send them to the strength-weighted centre
-	// of the units that are safe
-	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {
-		return;
-	}
-	AIFloat3 safePos(ZeroVector);
-	float safePower = 0.f;
-	for (const SUnitStrength& s : GetUnitStrengths()) {
-		if (std::find(endangered.begin(), endangered.end(), s.unit) != endangered.end()) {
-			continue;
-		}
-		const float power = std::max(s.power, 1e-3f);
-		safePos += s.unit->GetPos(frame) * power;
-		safePower += power;
-	}
-	if (safePower <= 0.f) {
-		return;
-	}
-	safePos /= safePower;
-	CTerrainManager::CorrectPosition(safePos);
-	pullFrame = frame;
-
-	for (CCircuitUnit* unit : endangered) {
-		if (unit->Blocker() != nullptr) {
-			continue;
-		}
-		if (IsOnRiskySpot(unit, frame)) {
-			continue;  // just sent to the least dangerous firing spot: don't bounce it back
-		}
-		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
-		MoveUnitTo(unit, safePos, frame);
-	}
 }
 
 bool CAttackTask::Flee(int frame)

@@ -78,15 +78,13 @@ protected:
 			springai::AIFloat3& outPos) const;
 
 	// Each unit's health-scaled power (pwr_mod power x sqrt(health %)), in the order of 'units'. Health takes engine
-	// calls, so it is read once per frame, and again after the group changed or a unit was hit
+	// calls, so it is read once per frame, and again when the group changed or a unit was hit
 	struct SUnitStrength {
 		CCircuitUnit* unit;
 		float power;
 	};
 	const std::vector<SUnitStrength>& GetUnitStrengths() const;
 	float GetStrengthSum() const;  // sum of GetUnitStrengths
-	// Call after changing 'units' other than by AssignTo/RemoveAssignee
-	void ResetStrengths() { strengthFrame = STALE_FRAME; }
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)

@@ -54,7 +54,6 @@ IFighterTask::~IFighterTask()
 void IFighterTask::AssignTo(CCircuitUnit* unit)
 {
 	IUnitTask::AssignTo(unit);
-	ResetStrengths();
 
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	attackPower += cdef->GetPower();
@@ -75,7 +74,6 @@ void IFighterTask::AssignTo(CCircuitUnit* unit)
 void IFighterTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IUnitTask::RemoveAssignee(unit);
-	ResetStrengths();
 
 	attackPower -= unit->GetCircuitDef()->GetPower();
 	cowards.erase(unit);
@@ -113,7 +111,7 @@ void IFighterTask::OnUnitIdle(CCircuitUnit* unit)
 
 void IFighterTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
-	ResetStrengths();  // its health changed
+	strengthFrame = STALE_FRAME;  // its health changed: GetUnitStrengths reads again
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	CCircuitDef* cdef = unit->GetCircuitDef();
@@ -183,14 +181,20 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	const AIFloat3& tPos = target->GetPos();
 	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
+	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
+	// Longest range picks first; each pick replaces that unit's claim.
+	std::vector<SFireClaim> claims;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		AIFloat3 keptPos;
+		claims.push_back({s.unit, GetKeptFireSpot(s.unit, keptPos) ? keptPos : s.unit->GetPos(frame), s.power});
+	}
 	struct SOrder {
-		size_t index;  // in 'units'
+		size_t claim;  // index in claims
 		float range;
 	};
 	std::vector<SOrder> orders;  // units to order
-	size_t index = 0;
-	for (CCircuitUnit* unit : units) {
-		const size_t i = index++;
+	for (size_t i = 0; i < claims.size(); ++i) {
+		CCircuitUnit* unit = claims[i].unit;
 		if (unit->Blocker() != nullptr) {
 			continue;  // Do not interrupt current action
 		}
@@ -210,23 +214,15 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		return;
 	}
 	lastOrderTargetPos = tPos;
-
-	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
-	// Longest range picks first; each pick replaces that unit's claim.
-	std::vector<SFireClaim> claims;
-	for (const SUnitStrength& s : GetUnitStrengths()) {  // in 'units' order
-		AIFloat3 p;
-		claims.push_back({s.unit, GetKeptFireSpot(s.unit, p) ? p : s.unit->GetPos(frame), s.power});
-	}
 	std::stable_sort(orders.begin(), orders.end(), [](const SOrder& a, const SOrder& b) { return a.range > b.range; });
 	const float safeThreat = GetEscapeSafeThreat();
 	const int timeout = frame + FRAMES_PER_SEC * 60;
 	for (const SOrder& order : orders) {
-		SFireClaim& claim = claims[order.index];
+		SFireClaim& claim = claims[order.claim];
 		CCircuitUnit* unit = claim.unit;
 		AIFloat3 firePos;
 		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
-				: FindFireSpot(claims, order.index, safeThreat, firePos);
+				: FindFireSpot(claims, order.claim, safeThreat, firePos);
 		switch (spot) {
 			case FireSpot::SPOT:
 			case FireSpot::RISKY: {  // RISKY: nowhere safe, not here either: the least dangerous spot
@@ -457,8 +453,14 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 
 const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths() const
 {
+	// Still valid: read this frame, for the same units
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	if ((strengthFrame != frame) || (unitStrengths.size() != units.size())) {
+	bool isValid = (strengthFrame == frame) && (unitStrengths.size() == units.size());
+	auto it = units.begin();
+	for (size_t i = 0; isValid && (i < unitStrengths.size()); ++i, ++it) {
+		isValid = (unitStrengths[i].unit == *it);
+	}
+	if (!isValid) {
 		strengthFrame = frame;
 		strengthSum = 0.f;
 		unitStrengths.clear();

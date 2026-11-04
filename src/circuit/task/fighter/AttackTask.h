@@ -98,10 +98,8 @@ private:
 	 * Escape: checked on every update. True: this update is done (running, or cornered)
 	 */
 	bool UpdateEscape(int frame);
-	bool IsInDanger(int frame);  // fills 'endangered' and 'isPathAheadUnsafe'
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
-	void PullBackEndangered(int frame);
 	bool Flee(int frame);  // false: nowhere better to go, fight instead
 	// Nearest stronger attack group we can stand beside, else the nearest safe defence point of a cluster we hold,
 	// else the closest haven, else base
@@ -178,9 +176,6 @@ private:
 	springai::AIFloat3 fleeDest;  // where the current escape runs to (straight-move fallback when no path)
 	bool isAtFleeDest;  // flee gave up: already within FLEE_ARRIVE_DIST of where it would run to
 	ICoreUnit::Id fleeTargetId;  // target dropped by the last escape: still counts as current at the next pick (-1: none)
-	int pullFrame;  // last pull-back of endangered stragglers
-	std::vector<CCircuitUnit*> endangered;  // units standing in danger, from the last IsInDanger
-	bool isPathAheadUnsafe;  // the leader's path just ahead is above the allowance, from the last IsInDanger
 	bool isReplanForced;  // a forced re-plan (unsafe path ahead) was used since the last normal decision
 	int corneredFrame;  // last cornered check
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)

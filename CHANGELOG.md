@@ -137,8 +137,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   every unit in the group for each unit it ordered. Firing spots are tried cheapest first, and the walk check (the
   costly part) only runs until a spot passes, so it usually runs once per unit instead of for all ~15 candidates; the
   pick is the same. Threat checks skip working out the allowance where there is no threat (it is always above 0).
-  In the attack task, `Update()` is split into the per-update part and `Decide()`, the route helpers take the group's
-  strength themselves, and the approach check reuses the line check.
+  Attack and raid groups share one escape check (`ISquadTask::IsInDanger`, `PullBackEndangered`; they were copies),
+  which asks the engine whether a unit is cloaked only for units standing in danger. Raid and anti-air use the shared
+  strength sum. In the attack task, `Update()` is split into the per-update part and `Decide()`, the route helpers
+  take the group's strength themselves, and the approach check reuses the line check.
 - **Cheaper anti-air checks, same decisions except one.** AA target choice now judges aircraft nearest first and stops
   at the first that passes the leash and firing-spot threat checks, instead of judging every aircraft; leash home
   points and squad strength are only gathered once a candidate gets past the cheap checks (blip height, walkable). The ground-height check for

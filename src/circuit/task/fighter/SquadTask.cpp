@@ -8,6 +8,7 @@
 #include "task/fighter/SquadTask.h"
 #include "task/TaskManager.h"
 #include "map/InfluenceMap.h"
+#include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
 #include "terrain/TerrainManager.h"
@@ -16,6 +17,8 @@
 #include "unit/action/TravelAction.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
+
+#include "AISCommands.h"
 
 namespace circuit {
 
@@ -93,7 +96,6 @@ void ISquadTask::Merge(ISquadTask* task)
 		unit->GetTravelAct()->SetState(state);
 	}
 	units.insert(rookies.begin(), rookies.end());
-	ResetStrengths();
 	attackPower += task->GetAttackPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
 	shields.insert(sh.begin(), sh.end());
@@ -343,6 +345,82 @@ NSMicroPather::TestFunc ISquadTask::GetHitTest() const
 		}
 		return true;
 	};
+}
+
+bool ISquadTask::IsInDanger(int frame, float fleeShare)
+{
+	isPathAheadUnsafe = false;
+	endangered.clear();
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	const float safeThreat = GetEscapeSafeThreat();
+	float dangerPower = 0.f;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		const AIFloat3& pos = s.unit->GetPos(frame);
+		// Cloaked: unseen, enemies in range can't shoot it (asked last: an engine call)
+		if ((threatMap->GetThreatAt(s.unit, pos) >= GetAllowedThreatAt(pos, safeThreat))
+			&& !s.unit->GetUnit()->IsCloaked())
+		{
+			endangered.push_back(s.unit);
+			dangerPower += s.power;
+		}
+	}
+	if (!endangered.empty() && (dangerPower >= fleeShare * GetStrengthSum())) {
+		return true;
+	}
+
+	if (!leader->GetTravelAct()->IsActive()) {
+		return false;
+	}
+	const std::shared_ptr<PathInfo>& path = leader->GetTravelAct()->GetPath();
+	if (path == nullptr) {
+		return false;
+	}
+	// The stretch of path the group covers in the next ~2s
+	const AIFloat3& pos = leader->GetPos(frame);
+	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
+	const float sqLookAhead = SQUARE(lookAhead);
+	for (const AIFloat3& p : path->posPath) {
+		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, safeThreat))) {
+			isPathAheadUnsafe = !leader->GetUnit()->IsCloaked();  // a cloaked leader walks through unseen
+			break;
+		}
+	}
+	return false;
+}
+
+void ISquadTask::PullBackEndangered(int frame)
+{
+	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {
+		return;
+	}
+	AIFloat3 safePos(ZeroVector);
+	float safePower = 0.f;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		if (std::find(endangered.begin(), endangered.end(), s.unit) != endangered.end()) {
+			continue;
+		}
+		const float power = std::max(s.power, 1e-3f);
+		safePos += s.unit->GetPos(frame) * power;
+		safePower += power;
+	}
+	if (safePower <= 0.f) {
+		return;  // nobody is safe (cloaked-only remainder etc.): nothing to fall back to
+	}
+	safePos /= safePower;
+	CTerrainManager::CorrectPosition(safePos);
+	pullFrame = frame;
+
+	CCircuitAI* circuit = manager->GetCircuit();
+	for (CCircuitUnit* unit : endangered) {
+		if ((unit->Blocker() != nullptr) || IsOnRiskySpot(unit, frame)) {
+			continue;  // busy, or just sent to the least dangerous firing spot: don't bounce it back
+		}
+		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
+		TRY_UNIT(circuit, unit,
+			unit->CmdMoveTo(safePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+		)
+	}
 }
 
 #ifdef DEBUG_VIS

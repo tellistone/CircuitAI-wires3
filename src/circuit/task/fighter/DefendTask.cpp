@@ -207,7 +207,6 @@ void CDefendTask::Merge(ISquadTask* task)
 		unit->SetTask(this);
 	}
 	units.insert(rookies.begin(), rookies.end());
-	ResetStrengths();
 	maxPower = std::max(maxPower, static_cast<CDefendTask*>(task)->GetMaxPower());
 	attackPower += task->GetAttackPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
