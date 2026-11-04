@@ -34,6 +34,9 @@ private:
 	void ApplyTargetPath(const CQueryPathMulti* query);
 	// isContestedAllowed: may head for a contested cluster (not after a failed route to targets: its path is uncapped)
 	void FallbackRaid(bool isContestedAllowed = true);
+	// quota.raider_spot: keep or pick the scored spot to roam to. true = 'position' is that spot; false = roam the
+	// old way, which must pick a new destination now if isSpotDone (the spot we were heading to is done, no next one)
+	bool UpdateRaidSpot(float safeThreat, bool mustRepick, bool isDanger, bool& isSpotDone);
 	void ApplyRaidPath(const CQueryPathSingle* query);
 
 	// Escape: current group strength vs threat where the units are and just ahead on the path
@@ -68,6 +71,10 @@ private:
 	springai::AIFloat3 raidSpot;
 	springai::AIFloat3 raidSpotPos;
 	int raidSpotFailFrame;  // last frame no spot qualified: wait 5 s before scoring all spots again
+	bool isPathAheadUnsafe;  // from the last IsInDanger: the stretch of path ahead crosses too much threat
+	int roamPathFrame;  // when FallbackRaid last asked for a roam route
+	springai::AIFloat3 roamGoal;  // ...and to where: re-planned only every 3 s while walking it safely
+	std::shared_ptr<PathInfo> roamPath;  // the last roam route walked (FallbackRaid keeps it only while the leader is on it)
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach  // short roam path: Fight order to send from Update() (not from the path callback)
 	void SendPendingFight(int frame);  // units standing in danger, from the last IsInDanger
