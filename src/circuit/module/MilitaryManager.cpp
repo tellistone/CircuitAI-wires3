@@ -1453,26 +1453,6 @@ void CMilitaryManager::BlockSpot(SSpotClaims& claims, const AIFloat3& spot, int 
 	}
 }
 
-// Piecewise-linear [x, y] curve sorted by x, flat beyond its ends; empty = 1
-static float EvalCurve(const std::vector<std::pair<float, float>>& curve, float x)
-{
-	if (curve.empty()) {
-		return 1.f;
-	}
-	if (x <= curve.front().first) {
-		return curve.front().second;
-	}
-	for (size_t i = 1; i < curve.size(); ++i) {
-		const auto& b = curve[i];
-		if (x <= b.first) {
-			const auto& a = curve[i - 1];
-			const float t = (b.first > a.first) ? (x - a.first) / (b.first - a.first) : 1.f;
-			return a.second + (b.second - a.second) * t;
-		}
-	}
-	return curve.back().second;
-}
-
 bool CMilitaryManager::IsRaider(const CCircuitDef* cdef) const
 {
 	// Same test DefaultMakeTask uses to send a unit raiding: its main role, or the base role it is bound to
@@ -1556,7 +1536,7 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 	// Second multiplier: map size curve / all players. Size = side of a square map with the same area,
 	// in Spring map units (512 elmos), so 8x8 -> 8 and a 10x16 map -> ~12.6
 	const float mapSize = sqrtf(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
-	const float mapMult = EvalCurve(quota.mapCurve, mapSize) / players;
+	const float mapMult = utils::eval_curve(quota.mapCurve, mapSize) / players;
 	const float perMex = quota.perMex;
 
 	for (auto& kv : refUnits) {
@@ -1624,7 +1604,7 @@ float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloa
 	const float height = CTerrainManager::GetTerrainHeight();
 	const float diagonal = sqrtf(width * width + height * height);
 	const float frac = circuit->GetSetupManager()->GetBasePos().distance2D(pos) / diagonal;
-	return EvalCurve(thrDistCurve, frac);
+	return utils::eval_curve(thrDistCurve, frac);
 }
 
 void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,

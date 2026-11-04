@@ -17,8 +17,6 @@
 #include "spring/SpringCallback.h"
 
 #include "AISCommands.h"
-#include "Feature.h"
-#include "FeatureDef.h"
 
 namespace circuit {
 
@@ -84,37 +82,21 @@ bool CBReclaimTask::Reevaluate(CCircuitUnit* unit)
 			utils::free_clear(enemies);
 		}
 
-		auto features = circuit->GetCallback()->GetFeaturesIn(pos, 500.0f);
+		// Best-ranked safe reclaimable feature nearby (rank first: the reach test costs more)
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
+		const auto features = economyMgr->GetReclaimFeatures(circuit->GetCallback()->GetFeatureIdsIn(pos, 500.0f));
 		if (!features.empty()) {
 			CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 			circuit->GetThreatMap()->SetThreatType(unit);
-			CEconomyManager* economyMgr = circuit->GetEconomyManager();
+			const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
 			float minRank = std::numeric_limits<float>::max();
-			Resource* metalRes = circuit->GetEconomyManager()->GetMetalRes();
-			for (Feature* feature : features) {
-				AIFloat3 featPos = feature->GetPosition();
-				CTerrainManager::CorrectPosition(featPos);  // Impulsed flying feature
-				if (!terrainMgr->CanReachAtSafe(unit, featPos, unit->GetCircuitDef()->GetBuildDistance())) {
-					continue;
-				}
-				FeatureDef* featDef = feature->GetDef();
-				if (!featDef->IsReclaimable()) {
-					delete featDef;
-					continue;
-				}
-				float reclaimValue = featDef->GetContainedResource(metalRes);
-				delete featDef;
-				const float metalLeft = reclaimValue * feature->GetReclaimLeft();
-				if ((reclaimValue < 1.0f) || (metalLeft < 1.0f)) {
-					continue;
-				}
-				const float rank = economyMgr->GetReclaimRank(pos.SqDistance2D(featPos), metalLeft);
-				if (rank < minRank) {
-					position = featPos;
+			for (const CEconomyManager::SReclaimFeature& feature : features) {
+				const float rank = economyMgr->GetReclaimRank(pos.SqDistance2D(feature.pos), feature.metalLeft);
+				if ((rank < minRank) && terrainMgr->CanReachAtSafe(unit, feature.pos, buildDist)) {
+					position = feature.pos;
 					minRank = rank;
 				}
 			}
-			utils::free_clear(features);
 		}
 	}
 

@@ -18,6 +18,8 @@
 #include <string.h>
 #include <stdarg.h>  // for va_start, etc
 #include <memory>    // for std::unique_ptr
+#include <vector>
+#include <utility>   // for std::pair
 //#include <random>
 //#include <iterator>
 
@@ -178,6 +180,26 @@ static inline std::string::const_iterator EndInBraces(const std::string::const_i
 template<class T> static inline constexpr T clamp(const T v, const T vmin, const T vmax)
 {
 	return std::min(vmax, std::max(vmin, v));
+}
+
+// Piecewise-linear [x, y] curve sorted by x, flat beyond its ends; empty = def
+static inline float eval_curve(const std::vector<std::pair<float, float>>& curve, float x, float def = 1.f)
+{
+	if (curve.empty()) {
+		return def;
+	}
+	if (x <= curve.front().first) {
+		return curve.front().second;
+	}
+	for (size_t i = 1; i < curve.size(); ++i) {
+		const auto& b = curve[i];
+		if (x <= b.first) {
+			const auto& a = curve[i - 1];
+			const float t = (b.first > a.first) ? (x - a.first) / (b.first - a.first) : 1.f;
+			return a.second + (b.second - a.second) * t;
+		}
+	}
+	return curve.back().second;
 }
 
 template<typename T> static inline std::ostream& binary_write(std::ostream& stream, const T& value)
