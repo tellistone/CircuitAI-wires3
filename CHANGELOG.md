@@ -141,6 +141,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   helper. One behaviour change: a hit on a squad unit no longer replaces the leader's path while one is still being
   computed (it checked the hit unit's query, so every hit on a non-leader sent a new path request and could drop an
   in-flight flee path).
+- **Anti-air resumes hunting as soon as it reaches its retreat spot.** After retreating from a hit, an AA squad
+  checked whether it had arrived only every 32 updates (about 30 s), and picked no targets until then. It now checks
+  arrival on every update; only the re-plan of the path stays on the 32-update timer.
 - **Anti-air flees from mobile bombs.** The early-flee check skipped enemies without an anti-land or anti-water
   weapon, meant for enemy AA, but mobile bombs (imp, snitch, skuttle) have no weapon either, only a death explosion.
   It now skips only units that can shoot aircraft and nothing else, so AA runs from a bomb within its blast radius

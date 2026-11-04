@@ -179,14 +179,12 @@ void CAntiAirTask::Update()
 		return;
 	}
 
-	// Disengaging: keep walking until the spot is reached, checked every 32 updates
+	// Disengaging: keep walking until the spot is reached (checked every update, so the squad hunts again on
+	// arrival), re-planning the path every 32 updates
 	if (State::DISENGAGE == state) {
-		if (updCount % 32 != 1) {
-			return;
-		}
 		const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
 		if (position.SqDistance2D(leader->GetPos(frame)) >= SQUARE(maxDist)) {
-			if (IsQueryReady(leader)) {
+			if ((updCount % 32 == 1) && IsQueryReady(leader)) {
 				FallbackDisengage();
 			}
 			return;
