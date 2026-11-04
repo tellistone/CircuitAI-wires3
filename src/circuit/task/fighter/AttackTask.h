@@ -34,6 +34,7 @@ public:
 	virtual void Merge(ISquadTask* task) override;
 
 	virtual void Start(CCircuitUnit* unit) override;
+	// Merging, escape and regrouping on every update; a decision (Decide) every 2 updates, or when a unit asks
 	virtual void Update() override;
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
@@ -59,10 +60,9 @@ private:
 	/*
 	 * Group strength and the threat it tolerates
 	 */
-	// Like attackPower (def power incl. pwr_mod) but scaled by current health, times the task's powerMod
+	// Like attackPower (def power incl. pwr_mod) but scaled by current health (GetStrengthSum), times the task's powerMod
 	float GetSafeThreat() const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
-	float GetUnitPower(CCircuitUnit* unit) const;
 	// Strength for picking a target and checking its approach: lower for a few seconds after an escape
 	float GetPickStrength(int frame) const;
 	// The one threat allowance used everywhere (picking, approach line, escape, path ahead, firing spots,
@@ -117,6 +117,9 @@ private:
 	/*
 	 * Targets and routes
 	 */
+	// One decision: reinforce a stronger group, or pick a target and engage it or route to it, else go to the
+	// front. isReuse: a normal decision no unit asked to re-plan, which may keep a fresh route to the same goal
+	void Decide(int frame, bool isReuse);
 	// Picks the target and fills routeGoals (and screenedGoals)
 	void FindTarget();
 	bool IsOnEnemyGround() const;  // influence at the leader < 0
@@ -131,9 +134,9 @@ private:
 	void FallbackFrontPos(bool isReuse = false);
 	void ApplyFrontPos(const CQueryPathMulti* query, const springai::AIFloat3& goal);
 	// Threat cap for capped routes (target, front, reinforce): never above what the escape tolerates
-	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals, float strength) const;
+	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	// Threat cost of a route: quota.attack_path_dynamic_cost, and on capped routes quota.attack_path_ignore_threat
-	void SetRouteThreat(IPathQuery* query, AttackRoute route, float strength) const;
+	void SetRouteThreat(IPathQuery* query, AttackRoute route) const;
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
 	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal);
 	// Still walking the last route to this same goal, planned under ROUTE_REUSE_FRAMES ago, with no unit in danger,

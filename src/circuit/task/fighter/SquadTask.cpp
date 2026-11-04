@@ -93,6 +93,7 @@ void ISquadTask::Merge(ISquadTask* task)
 		unit->GetTravelAct()->SetState(state);
 	}
 	units.insert(rookies.begin(), rookies.end());
+	ResetStrengths();
 	attackPower += task->GetAttackPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
 	shields.insert(sh.begin(), sh.end());

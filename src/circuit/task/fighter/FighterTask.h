@@ -62,12 +62,31 @@ protected:
 	// NONE: no usable range (old orders); SPOT: a safe spot; HOLD: every spot dangerous but the unit's own
 	// spot is safe; RISKY: nowhere safe, the unit's spot neither: the least dangerous spot
 	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
+	// Where a unit of the group is heading (its last firing spot if still usable, else where it stands) and its
+	// health-scaled power (GetUnitStrengths): it backs up spots near there
+	struct SFireClaim {
+		CCircuitUnit* unit;
+		springai::AIFloat3 pos;
+		float power;
+	};
 	float GetFireRange(CCircuitUnit* unit) const;  // max range against the current target's kind
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x range from the target
 	bool GetKeptFireSpot(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // last spot, if still usable
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
-	FireSpot FindFireSpot(CCircuitUnit* unit, const std::map<CCircuitUnit*, springai::AIFloat3>& claims,
-			float safeThreat, springai::AIFloat3& outPos) const;
+	// For the unit of claims[self]; the other claims crowd spots and back them up
+	FireSpot FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
+			springai::AIFloat3& outPos) const;
+
+	// Each unit's health-scaled power (pwr_mod power x sqrt(health %)), in the order of 'units'. Health takes engine
+	// calls, so it is read once per frame, and again after the group changed or a unit was hit
+	struct SUnitStrength {
+		CCircuitUnit* unit;
+		float power;
+	};
+	const std::vector<SUnitStrength>& GetUnitStrengths() const;
+	float GetStrengthSum() const;  // sum of GetUnitStrengths
+	// Call after changing 'units' other than by AssignTo/RemoveAssignee
+	void ResetStrengths() { strengthFrame = STALE_FRAME; }
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)
@@ -120,6 +139,12 @@ protected:
 	// Flee: the nearest spot further from the danger than pos is, else the one furthest from it; nullptr if none
 	static const springai::AIFloat3* PickFleeSpot(const springai::AIFloat3& pos, const springai::AIFloat3& dangerPos,
 			const F3Vec& spots);
+
+private:
+	static constexpr int STALE_FRAME = std::numeric_limits<int>::min();  // never a frame
+	mutable std::vector<SUnitStrength> unitStrengths;  // GetUnitStrengths cache
+	mutable float strengthSum = 0.f;
+	mutable int strengthFrame = STALE_FRAME;  // frame it was read at
 
 #ifdef DEBUG_VIS
 public:
