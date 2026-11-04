@@ -203,7 +203,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 
 		if (!cdef.IsMobile()) {
 			if (cdef.GetDef()->IsNeedGeo()) {
-				geoDefs.insert(&cdef);
+				geoDefIds.insert(cdef.GetId());
 			}
 
 			if (commDef->CanBuild(&cdef)) {
