@@ -134,12 +134,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Cheaper anti-air checks, same decisions except one.** AA target choice now judges aircraft nearest first and stops
   at the first that passes the leash and firing-spot threat checks, instead of judging every aircraft; leash home
-  points and squad strength are only gathered when there is an aircraft to judge. The 9-point ground-height read for
-  unidentified radar blips runs only for blips that are next in line as a target or already within flee reach. The
+  points and squad strength are only gathered when there is an aircraft to judge. The ground-height check for
+  unidentified radar blips (up to 9 elevation reads) stops at the first read that shows the blip is low, so a blip
+  near sea level needs none and most ground blips one; the flee scan runs it only for blips within reach. The
   early-flee scan skips enemies too far from the leader before checking each squad unit. Path requests share one
   helper. One behaviour change: a hit on a squad unit no longer replaces the leader's path while one is still being
   computed (it checked the hit unit's query, so every hit on a non-leader sent a new path request and could drop an
   in-flight flee path).
+- **Anti-air flees from mobile bombs.** The early-flee check skipped enemies without an anti-land or anti-water
+  weapon, meant for enemy AA, but mobile bombs (imp, snitch, skuttle) have no weapon either, only a death explosion.
+  It now skips only units that can shoot aircraft and nothing else, so AA runs from a bomb within its blast radius
+  + `flee_margin`.
 
 - **Cheaper geothermal checks, same decisions except one 10 s delay.** Geo buildings are recognised from a list read
   once at start instead of an engine call per energy type, job and scout check. Vent search tries vents nearest

@@ -42,27 +42,27 @@ static constexpr float FALLBACK_PATH_RANGE = DEFAULT_SLACK * 4;  // goal toleran
 static const int SPLIT_MERGE_COOLDOWN = FRAMES_PER_SEC * 30;  // a unit split off a blocked regroup doesn't merge for this long
 static const int FLEE_REPLAN_FRAMES = FRAMES_PER_SEC * 2;  // re-plan the flee this often while the danger stays
 
-// Ground (or water surface) a radar blip stands on, as high as it can be: the blip is shifted sideways by up
-// to BLIP_POS_ERROR, so take the highest ground around it, else a ground unit near a cliff reads as flying.
-// 9 elevation reads: call it only for blips that matter
-static float GetBlipGroundHeight(CMap* map, const AIFloat3& p)
+// Is an unidentified radar blip at p high enough above the ground (or water surface) to be a plane? The blip is
+// shifted sideways by up to BLIP_POS_ERROR, so it must clear the highest ground around it, else a ground unit
+// near a cliff reads as flying. Each read can only make the answer "no", so stop at the first that does: a blip
+// near sea level needs no read, most ground blips one
+static bool IsHighBlip(CMap* map, const AIFloat3& p)
 {
+	if (p.y < UNKNOWN_AIR_HEIGHT) {
+		return false;  // not above the water surface: a ship or hover floats at 0 over a deep sea floor
+	}
 	const float maxX = CTerrainManager::GetTerrainWidth() - 1.f;
 	const float maxZ = CTerrainManager::GetTerrainHeight() - 1.f;
 	const float offsets[][2] = {{0.f, 0.f}, {1.f, 0.f}, {-1.f, 0.f}, {0.f, 1.f}, {0.f, -1.f},
 								{0.7f, 0.7f}, {0.7f, -0.7f}, {-0.7f, 0.7f}, {-0.7f, -0.7f}};
-	float height = 0.f;  // water surface: a ship or hover floats at 0 over a deep sea floor
 	for (const auto& o : offsets) {
 		const float x = std::min(std::max(p.x + o[0] * BLIP_POS_ERROR, 0.f), maxX);
 		const float z = std::min(std::max(p.z + o[1] * BLIP_POS_ERROR, 0.f), maxZ);
-		height = std::max(height, map->GetElevationAt(x, z));
+		if (p.y - map->GetElevationAt(x, z) < UNKNOWN_AIR_HEIGHT) {
+			return false;
+		}
 	}
-	return height;
-}
-
-static bool IsHighBlip(CMap* map, const AIFloat3& p)
-{
-	return p.y - GetBlipGroundHeight(map, p) >= UNKNOWN_AIR_HEIGHT;
+	return true;
 }
 
 // Nearest spot further from the danger than pos is, else the one furthest from the danger; nullptr if none
@@ -306,6 +306,8 @@ void CAntiAirTask::FindTarget()
 	const int canTargetCat = leader->GetCircuitDef()->GetTargetCategory();
 	const int noChaseCat = leader->GetCircuitDef()->GetNoChaseCategory();
 
+	circuit->GetThreatMap()->SetThreatType(leader);  // shared threat-map state: set on every pick, as before
+
 	targetCandidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -337,7 +339,6 @@ void CAntiAirTask::FindTarget()
 		if (isLeash) {
 			FillHomePoints();
 		}
-		threatMap->SetThreatType(leader);
 
 		for (const auto& [sqDist, enemy] : targetCandidates) {
 			const AIFloat3& ePos = enemy->GetPos();
@@ -761,8 +762,9 @@ bool CAntiAirTask::CheckFlee()
 CEnemyInfo* CAntiAirTask::FindFleeDanger(float& dangerThreat) const
 {
 	// The nearest enemy we see now (not a last-known ghost) that can act and shoot the squad, within its ground
-	// (or water) weapon range + flee_margin of any squad unit. Enemy AA and aircraft don't count; an unidentified
-	// blip counts while it moves and sits low. dangerThreat: the threat of every such enemy, each counted once
+	// (or water) weapon range + flee_margin of any squad unit (for a mobile bomb, its blast radius). Enemy AA and
+	// aircraft don't count; an unidentified blip counts while it moves and sits low. dangerThreat: the threat of
+	// every such enemy, each counted once
 	CCircuitAI* circuit = manager->GetCircuit();
 	const float fleeMargin = circuit->GetMilitaryManager()->GetAntiAirCfg().fleeMargin;
 	const int frame = circuit->GetLastFrame();
@@ -789,9 +791,11 @@ CEnemyInfo* CAntiAirTask::FindFleeDanger(float& dangerThreat) const
 				continue;  // a parked blip is no danger
 			}
 		} else if (!edef->IsMobile() || !edef->IsAttacker() || edef->IsAbleToFly()
-			|| !(edef->HasAntiLand() || edef->HasAntiWater()))
+			|| (edef->HasAntiAir() && !edef->HasAntiLand() && !edef->HasAntiWater()))
 		{
-			continue;  // enemy AA can't shoot the squad: no reason to run from it
+			// Enemy AA can't shoot the squad: no reason to run from it. A mobile bomb (no weapon, only its
+			// death explosion) has no anti-land flag either, but it is a danger
+			continue;
 		} else {
 			range = std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER));
 		}
