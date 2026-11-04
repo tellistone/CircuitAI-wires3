@@ -789,13 +789,13 @@ bool CBuilderManager::IsRepairTargetFleeing(const IBuilderTask* task, CCircuitUn
 	if (sqDist <= SQUARE(range)) {
 		return false;  // in reach: repair works even while it moves
 	}
-	// Speed away from the builder vs builder's speed: above the share the builder closes the gap too slowly, or never
+	// Speed away from the builder vs target's own max speed
 	const AIFloat3 vel = (targetVel != nullptr) ? *targetVel : target->GetUnit()->GetVel();  // elmos per frame
 	const float awayDot = vel.x * dx + vel.z * dz;  // awaySpeed * dist
 	if (awayDot <= 0.f) {
 		return false;
 	}
-	const float minAway = repairFleeShare * builder->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;
+	const float minAway = repairFleeShare * target->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;
 	return SQUARE(awayDot) > SQUARE(minAway) * sqDist;
 }
 
@@ -1223,7 +1223,7 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 				continue;
 			}
 
-			// Don't start a chase this builder can't win; cheaper than the reach and safety tests below
+			// Don't start a chase: the target is driving away from this builder; cheaper than the reach and safety tests below
 			if (IsRepairTargetFleeing(candidate, unit, pos)) {
 				continue;
 			}
@@ -1328,7 +1328,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 				continue;  // can't beat the best job so far
 			}
 
-			// Don't start a chase this builder can't win; cheaper than the reach and safety tests below
+			// Don't start a chase: the target is driving away from this builder; cheaper than the reach and safety tests below
 			if (IsRepairTargetFleeing(candidate, unit, pos)) {
 				continue;
 			}

@@ -137,12 +137,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Changed
 
 - **Builders stop chasing units they can't catch** (`retreat.repair_flee: [speed share, sec]`, default `[0, ...]` = off;
-  shipped `[0.7, 2]`). A mobile repair target that is not retreating, is out of a builder's reach and is moving away
-  from it faster than 0.7 x the builder's speed (so the builder closes in too slowly, or never) is no longer picked for
-  repair or pulled onto. A repair job is dropped once its target keeps doing that to all of its builders for 2 s, and
-  then no new priority repair is made for it during the `repair_leash` cooldown. The old leash only fired after a
-  builder had reached build range and then fell 300 elmos behind, so a builder as fast as or faster than the target
-  chased it forever.
+  shipped `[0.5, 2]`). A mobile repair target that is not retreating, is out of a builder's reach and is moving away
+  from it faster than 0.5 x its own max speed is no longer picked for repair or pulled onto. A repair job is dropped
+  once its target keeps doing that to all of its builders for 2 s, and then no new priority repair is made for it
+  during the `repair_leash` cooldown, so a unit that stops and starts in a fight doesn't make builders take and drop
+  its job over and over. The old leash only fired after a builder had reached build range and then fell 300 elmos
+  behind, so a builder as fast as or faster than the target chased it forever.
+- **Builders don't follow a repair target into a fight** (with `retreat.repair_safe`). While a builder repairs a
+  mobile unit that is not retreating (priority or retreat repair), it leaves the job once the unit's spot has threat
+  above the builder's strength in enemy-held area, the same rule job selection already used. The job stays open and
+  is picked up again once the spot is safe.
 - **Repair leash covers retreat repairs.** `repair_leash` now also applies to HIGH repair jobs (made when a unit
   retreats) once the unit is no longer retreating; before, it only covered priority (NOW) repairs.
 - **Retreat repair ends with the retreat.** When a unit leaves its retreat (repaired, or its haven wait timed out), its

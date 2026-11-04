@@ -65,7 +65,13 @@ bool CBRepairTask::IsLeashBroken()
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& targetPos = target->GetPos(frame);
 	bool isAnyInRange = false;
+	std::vector<CCircuitUnit*> unsafe;
 	for (CCircuitUnit* unit : units) {
+		// Don't follow the target into a fight the builder can't survive (retreat.repair_safe, same rule as job selection)
+		if (builderMgr->IsUnsafePrioRepair(this, unit, targetPos)) {
+			unsafe.push_back(unit);
+			continue;
+		}
 		const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
 		const float sqDist = targetPos.SqDistance2D(unit->GetPos(frame));
 		if (sqDist < SQUARE(buildDist + SQUARE_SIZE * 8)) {
@@ -78,7 +84,17 @@ bool CBRepairTask::IsLeashBroken()
 			return true;
 		}
 	}
-	// Target keeps driving away from all its repairers faster than they close in: don't chase it.
+	if (!unsafe.empty()) {
+		// Job selection skips the job while it stays unsafe; it is picked up again once it isn't
+		for (CCircuitUnit* unit : unsafe) {
+			RemoveAssignee(unit);
+		}
+		if (units.empty()) {
+			fleeFrame = -1;
+			return true;
+		}
+	}
+	// Target keeps driving away from all its repairers: don't chase it.
 	// Job selection skips it while it does, a new job is taken once it stops or turns back.
 	bool isFleeing = !isAnyInRange && builderMgr->IsRepairFleeOn();
 	if (isFleeing) {

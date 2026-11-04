@@ -101,7 +101,7 @@ public:
 	float GetPrioRepairLeash() const { return prioRepairLeash; }
 	void OnPrioRepairLeash(ICoreUnit::Id unitId);  // target drove off mid-repair: hold off new priority jobs
 	// Mobile, not retreating repair target out of builder's reach (builder at pos) and moving away from it
-	// faster than repair_flee share of builder's speed
+	// faster than repair_flee share of its own max speed
 	bool IsRepairTargetFleeing(const IBuilderTask* task, CCircuitUnit* builder, const springai::AIFloat3& pos,
 							   const springai::AIFloat3* targetVel = nullptr) const;  // targetVel: already read by caller
 	bool IsRepairFleeOn() const { return repairFleeShare > 0.f; }
@@ -217,7 +217,7 @@ private:
 	bool isPrioRepairSafeStatic;  // same for static units
 	float prioRepairLeash;  // cancel started priority repair if target gets this far beyond build range, 0 = off
 	int prioRepairCooldown;  // frames without new priority repair job after leash break
-	float repairFleeShare;  // target moving away faster than this share of builder's speed counts as fleeing, 0 = off
+	float repairFleeShare;  // target moving away faster than this share of its max speed counts as fleeing, 0 = off
 	int repairFleeFrames;  // frames a target may keep fleeing from all its repairers before the job is dropped
 	std::map<ICoreUnit::Id, int> leashUntil;  // unitId: frame until which priority repair is held off
 	SEscort escort;
