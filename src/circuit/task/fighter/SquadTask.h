@@ -48,6 +48,20 @@ protected:
 	void ActivePath(float speed = NO_SPEED_LIMIT);
 	NSMicroPather::TestFunc GetHitTest() const;
 
+	/*
+	 * Escape check of attack and raid groups. Danger: threat at or above GetAllowedThreatAt for GetEscapeSafeThreat
+	 */
+	// Fills 'endangered' (units standing in danger; cloaked ones can't be shot) and 'isPathAheadUnsafe' (danger on the
+	// leader's path within ~2 s of walking). True: the endangered units hold at least fleeShare of the group's strength
+	bool IsInDanger(int frame, float fleeShare);
+	// Endangered units that didn't make the whole group flee go to the strength-weighted centre of the safe ones, at
+	// most once a second. Also when the leader is the one in danger (the group follows its path, so a stuck leader would
+	// keep everyone heading into it). A unit sent to a RISKY firing spot in the last 3 s stays.
+	void PullBackEndangered(int frame);
+	std::vector<CCircuitUnit*> endangered;  // from the last IsInDanger
+	bool isPathAheadUnsafe = false;  // from the last IsInDanger
+	int pullFrame = 0;  // last pull-back
+
 	float lowestRange;
 	float highestRange;
 	float lowestSpeed;

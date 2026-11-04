@@ -43,7 +43,6 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, fleePathFrame(0)
 		, fleeQueryId(-1)
 		, fleeDest(-RgtVector)
-		, pullFrame(0)
 		, isFightPending(false)
 		, isContestedRoute(false)
 		, contestedFailFrame(-FRAMES_PER_SEC * 60)
@@ -51,7 +50,6 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, raidSpot(-RgtVector)
 		, raidSpotPos(-RgtVector)
 		, raidSpotFailFrame(-FRAMES_PER_SEC * 60)
-		, isPathAheadUnsafe(false)
 		, roamPathFrame(-FRAMES_PER_SEC * 60)
 		, roamGoal(-RgtVector)
 {
@@ -144,9 +142,7 @@ void CRaidTask::Update()
 	/*
 	 * Escape: checked on every update (not just every decision), also while engaging or regrouping
 	 */
-	bool isPathUnsafe = false;
-	const bool isInDanger = IsInDanger(frame, isPathUnsafe);
-	isPathAheadUnsafe = isPathUnsafe;
+	const bool isInDanger = IsInDanger(frame, static_cast<CMilitaryManager*>(manager)->GetRaidFleeShare());
 	if (isInDanger && Flee(frame)) {
 		return;
 	}
@@ -183,7 +179,7 @@ void CRaidTask::Update()
 
 	// Decide about once a second (was every 2nd update and at least 1s), sooner when the path ahead turned dangerous
 	bool isExecute = (frame >= lastTouched + FRAMES_PER_SEC)
-		|| (isPathUnsafe && (frame >= lastTouched + FRAMES_PER_SEC / 2));
+		|| (isPathAheadUnsafe && (frame >= lastTouched + FRAMES_PER_SEC / 2));
 	if (!isExecute) {
 		for (CCircuitUnit* unit : units) {
 			isExecute |= unit->IsForceUpdate(frame);
@@ -697,17 +693,8 @@ void CRaidTask::SendPendingFight(int frame)
 float CRaidTask::GetSafeThreat() const
 {
 	// Like attackPower (def power incl. pwr_mod) but scaled by current health, times the task's powerMod
-	float power = 0.f;
-	for (CCircuitUnit* unit : units) {
-		power += GetUnitPower(unit);
-	}
 	// Courage also depends on how far from home the group is (quota.thr_mod.distance)
-	return std::max(power, THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
-}
-
-float CRaidTask::GetUnitPower(CCircuitUnit* unit) const
-{
-	return unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
 }
 
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
@@ -717,93 +704,6 @@ float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float sqDist = basePos.SqDistance2D(pos);
 	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist) / GetThrDistModAt(pos);
-}
-
-bool CRaidTask::IsInDanger(int frame, bool& isPathUnsafe)
-{
-	isPathUnsafe = false;
-	endangered.clear();
-	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
-	const float safeThreat = GetSafeThreat();
-	float totalPower = 0.f;
-	float dangerPower = 0.f;
-	for (CCircuitUnit* unit : units) {
-		const float power = GetUnitPower(unit);
-		totalPower += power;
-		if (unit->GetUnit()->IsCloaked()) {
-			continue;  // unseen: enemies in range can't shoot it
-		}
-		const AIFloat3& pos = unit->GetPos(frame);
-		if (threatMap->GetThreatAt(unit, pos) >= GetSafeThreatAt(pos, safeThreat)) {
-			endangered.push_back(unit);
-			dangerPower += power;
-		}
-	}
-	// Flee only when the units in danger hold at least quota.raid_flee_share of the group's current strength
-	const float fleeShare = static_cast<CMilitaryManager*>(manager)->GetRaidFleeShare();
-	if (!endangered.empty() && (dangerPower >= fleeShare * totalPower)) {
-		return true;
-	}
-
-	if (!leader->GetTravelAct()->IsActive() || leader->GetUnit()->IsCloaked()) {
-		return false;
-	}
-	const std::shared_ptr<PathInfo>& path = leader->GetTravelAct()->GetPath();
-	if (path == nullptr) {
-		return false;
-	}
-	// The stretch of path the group covers in the next ~2s
-	const AIFloat3& pos = leader->GetPos(frame);
-	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
-	const float sqLookAhead = SQUARE(lookAhead);
-	for (const AIFloat3& p : path->posPath) {
-		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetSafeThreatAt(p, safeThreat))) {
-			isPathUnsafe = true;
-			break;
-		}
-	}
-	return false;
-}
-
-void CRaidTask::PullBackEndangered(int frame)
-{
-	// Units in danger that didn't make the whole group flee: send them to the strength-weighted centre
-	// of the units that are safe. Works when the leader itself is the one in danger (the group follows
-	// the leader's path, so a stuck leader would otherwise keep everyone heading into the danger).
-	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {
-		return;
-	}
-	AIFloat3 safePos(ZeroVector);
-	float safePower = 0.f;
-	for (CCircuitUnit* unit : units) {
-		if (std::find(endangered.begin(), endangered.end(), unit) != endangered.end()) {
-			continue;
-		}
-		const float power = std::max(GetUnitPower(unit), 1e-3f);
-		safePos += unit->GetPos(frame) * power;
-		safePower += power;
-	}
-	if (safePower <= 0.f) {
-		return;  // nobody is safe (cloaked-only remainder etc.): nothing to fall back to
-	}
-	safePos /= safePower;
-	CTerrainManager::CorrectPosition(safePos);
-	pullFrame = frame;
-
-	CCircuitAI* circuit = manager->GetCircuit();
-	for (CCircuitUnit* unit : endangered) {
-		if (unit->Blocker() != nullptr) {
-			continue;
-		}
-		if (IsOnRiskySpot(unit, frame)) {
-			continue;  // sent to the least dangerous firing spot on purpose: don't undo it for 3 s
-		}
-		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
-		TRY_UNIT(circuit, unit,
-			unit->CmdMoveTo(safePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
-		)
-	}
 }
 
 bool CRaidTask::Flee(int frame)

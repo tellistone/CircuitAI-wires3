@@ -64,8 +64,6 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, fleeDest(-RgtVector)
 		, isAtFleeDest(false)
 		, fleeTargetId(-1)
-		, pullFrame(0)
-		, isPathAheadUnsafe(false)
 		, isReplanForced(false)
 		, corneredFrame(-1)
 		, corneredPos(-RgtVector)
@@ -273,7 +271,11 @@ void CAttackTask::Update()
 		}
 	}
 	// A normal decision that no unit asked to re-plan may keep a fresh route to the same goal (ReuseRoute)
-	const bool isReuse = isDecision && !isForced;
+	Decide(frame, isDecision && !isForced);
+}
+
+void CAttackTask::Decide(int frame, bool isReuse)
+{
 	isHolding = false;  // re-set by HoldPosition if this decision finds nothing to go to
 
 	/*
@@ -339,16 +341,7 @@ void CAttackTask::Update()
 
 float CAttackTask::GetSafeThreat() const
 {
-	float power = 0.f;
-	for (CCircuitUnit* unit : units) {
-		power += GetUnitPower(unit);
-	}
-	return std::max(power, THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
-}
-
-float CAttackTask::GetUnitPower(CCircuitUnit* unit) const
-{
-	return unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
 }
 
 float CAttackTask::GetPickStrength(int frame) const
@@ -428,7 +421,8 @@ bool CAttackTask::IsLineSafe(const AIFloat3& from, const AIFloat3& to, float max
 	for (float d = step; d <= reach; d += step) {
 		AIFloat3 p = from + dir * d;
 		CTerrainManager::CorrectPosition(p);
-		if (threatMap->GetThreatAt(leader, p) >= allowedAt(p)) {
+		const float threat = threatMap->GetThreatAt(leader, p);
+		if ((threat > 0.f) && (threat >= allowedAt(p))) {  // allowances are above 0: no threat is always safe
 			return false;
 		}
 	}
@@ -554,11 +548,10 @@ void CAttackTask::Reinforce(const int frame)
 	const float pathRange = std::max(std::min(cfg.reinforceRange, mergeReach * 0.8f),
 			static_cast<float>(pathfinder->GetSquareSize()));
 
-	const float strength = GetSafeThreat();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, {position}, strength));
-	SetRouteThreat(query.get(), AttackRoute::REINFORCE, strength);
+			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, {position}));
+	SetRouteThreat(query.get(), AttackRoute::REINFORCE);
 	RunRoute(query, [this](const IPathQuery* query) {
 		this->ApplyReinforcePath(static_cast<const CQueryPathSingle*>(query));
 	});
@@ -594,7 +587,7 @@ bool CAttackTask::UpdateEscape(int frame)
 {
 	// Checked on every update (not just every decision), also while engaging or reinforcing.
 	// Not while defending: a fight with a target inside the base defence radius is held (no flee, no pull-back)
-	const bool isDanger = IsInDanger(frame);
+	const bool isDanger = IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
 	isAtFleeDest = false;
 	const bool isFleeing = isDanger && !isHoldGround && Flee(frame);
@@ -632,92 +625,11 @@ bool CAttackTask::UpdateEscape(int frame)
 	return false;
 }
 
-bool CAttackTask::IsInDanger(int frame)
-{
-	isPathAheadUnsafe = false;
-	endangered.clear();
-	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
-	const float safeThreat = GetSafeThreat();
-	float totalPower = 0.f;
-	float dangerPower = 0.f;
-	for (CCircuitUnit* unit : units) {
-		const float power = GetUnitPower(unit);
-		totalPower += power;
-		if (unit->GetUnit()->IsCloaked()) {
-			continue;  // unseen: enemies in range can't shoot it
-		}
-		const AIFloat3& pos = unit->GetPos(frame);
-		if (threatMap->GetThreatAt(unit, pos) >= GetAllowedThreatAt(pos, safeThreat)) {
-			endangered.push_back(unit);
-			dangerPower += power;
-		}
-	}
-	// Flee only when the units in danger hold at least quota.attack_flee_share of the group's current strength
-	if (!endangered.empty() && (dangerPower >= GetMilitaryMgr()->GetAttackFleeShare() * totalPower)) {
-		return true;
-	}
-
-	if (!leader->GetTravelAct()->IsActive() || leader->GetUnit()->IsCloaked()) {
-		return false;
-	}
-	const std::shared_ptr<PathInfo>& path = leader->GetTravelAct()->GetPath();
-	if (path == nullptr) {
-		return false;
-	}
-	// The stretch of path the group covers in the next ~2s
-	const AIFloat3& pos = leader->GetPos(frame);
-	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
-	const float sqLookAhead = SQUARE(lookAhead);
-	for (const AIFloat3& p : path->posPath) {
-		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, safeThreat))) {
-			isPathAheadUnsafe = true;
-			break;
-		}
-	}
-	return false;
-}
-
 bool CAttackTask::IsHoldingGround(int frame) const
 {
 	// Only inside the base defence radius (where thr_mod.base_bonus applies): out in the field the enemy
 	// is nearer our base than we are in about half of all fights, and those should still be escapable
 	return (State::ENGAGE == state) && (target != nullptr) && IsInBaseRadius(target->GetPos());
-}
-
-void CAttackTask::PullBackEndangered(int frame)
-{
-	// Units in danger that didn't make the whole group flee: send them to the strength-weighted centre
-	// of the units that are safe
-	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {
-		return;
-	}
-	AIFloat3 safePos(ZeroVector);
-	float safePower = 0.f;
-	for (CCircuitUnit* unit : units) {
-		if (std::find(endangered.begin(), endangered.end(), unit) != endangered.end()) {
-			continue;
-		}
-		const float power = std::max(GetUnitPower(unit), 1e-3f);
-		safePos += unit->GetPos(frame) * power;
-		safePower += power;
-	}
-	if (safePower <= 0.f) {
-		return;
-	}
-	safePos /= safePower;
-	CTerrainManager::CorrectPosition(safePos);
-	pullFrame = frame;
-
-	for (CCircuitUnit* unit : endangered) {
-		if (unit->Blocker() != nullptr) {
-			continue;
-		}
-		if (IsOnRiskySpot(unit, frame)) {
-			continue;  // just sent to the least dangerous firing spot: don't bounce it back
-		}
-		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
-		MoveUnitTo(unit, safePos, frame);
-	}
 }
 
 bool CAttackTask::Flee(int frame)
@@ -756,7 +668,7 @@ bool CAttackTask::Flee(int frame)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
 			leader->GetPos(frame), dest, pathfinder->GetSquareSize());  // threat as cost, no cap: least-threat way out
-	SetRouteThreat(query.get(), AttackRoute::FLEE, GetSafeThreat());
+	SetRouteThreat(query.get(), AttackRoute::FLEE);
 	fleeQueryId = query->GetId();
 	RunRoute(query, [this](const IPathQuery* query) {  // supersedes any pending target/reinforce path
 		this->fleeQueryId = -1;
@@ -857,7 +769,7 @@ void CAttackTask::Cornered(int frame)
 		CPathFinder* pathfinder = circuit->GetPathfinder();
 		std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 				leader, threatMap, frame, pos, quietPos, pathfinder->GetSquareSize());  // threat as cost, no cap
-		SetRouteThreat(query.get(), AttackRoute::CORNERED, GetSafeThreat());
+		SetRouteThreat(query.get(), AttackRoute::CORNERED);
 		RunRoute(query, [this](const IPathQuery* query) {
 			this->ApplyCorneredPath(static_cast<const CQueryPathSingle*>(query));
 		});
@@ -1154,11 +1066,10 @@ void CAttackTask::RequestTargetPath(const std::vector<STargetGoal>& goals)
 		ids.push_back(g.id);
 		goalPos.push_back(g.pos);
 	}
-	const float strength = GetSafeThreat();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, goalPos, GetHitTest(), GetPathThreatCap(startPos, goalPos, strength));
-	SetRouteThreat(query.get(), AttackRoute::TARGET, strength);
+			startPos, pathRange, goalPos, GetHitTest(), GetPathThreatCap(startPos, goalPos));
+	SetRouteThreat(query.get(), AttackRoute::TARGET);
 	// The route reports back later; a later FindTarget may have rewritten the candidates by then
 	RunRoute(query, [this, ids = std::move(ids)](const IPathQuery* query) {
 		this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query), ids);
@@ -1258,27 +1169,12 @@ bool CAttackTask::IsApproachSafe(const F3Vec& path, const AIFloat3& targetPos, f
 		return false;
 	}
 	// 2. the route's last stretch, as long as our range, walked back from its end
-	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
-	const float step = threatMap->GetSquareSize();
 	float left = highestRange;
 	for (size_t i = path.size() - 1; (i > 0) && (left > 0.f); --i) {
-		const AIFloat3& b = path[i];
-		AIFloat3 dir = path[i - 1] - b;
-		dir.y = 0.f;
-		const float len = dir.Length2D();
-		if (len < 1.f) {
-			continue;
+		if (!IsLineSafe(path[i], path[i - 1], left, allowedAt)) {
+			return false;
 		}
-		dir /= len;
-		const float reach = std::min(len, left);
-		for (float d = step; d <= reach; d += step) {
-			AIFloat3 p = b + dir * d;
-			CTerrainManager::CorrectPosition(p);
-			if (threatMap->GetThreatAt(leader, p) >= allowedAt(p)) {
-				return false;
-			}
-		}
-		left -= len;
+		left -= path[i].distance2D(path[i - 1]);
 	}
 	return true;
 }
@@ -1315,11 +1211,10 @@ void CAttackTask::FallbackFrontPos(bool isReuse)
 	const float pathRange = DEFAULT_SLACK * 4;
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
-	const float strength = GetSafeThreat();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(startPos, urgentPositions, strength));
-	SetRouteThreat(query.get(), AttackRoute::FRONT, strength);
+			startPos, pathRange, urgentPositions, nullptr, GetPathThreatCap(startPos, urgentPositions));
+	SetRouteThreat(query.get(), AttackRoute::FRONT);
 	RunRoute(query, [this, goal](const IPathQuery* query) {
 		this->ApplyFrontPos(static_cast<const CQueryPathMulti*>(query), goal);
 	});
@@ -1337,7 +1232,7 @@ void CAttackTask::ApplyFrontPos(const CQueryPathMulti* query, const AIFloat3& go
 	}
 }
 
-float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals, float strength) const
+float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals) const
 {
 	// One cap for the whole route (the pathfinder takes a single value): the common allowance with the
 	// strictest thr_mod.distance value of start and goals, but the loosest base_bonus and near-base scale,
@@ -1354,12 +1249,13 @@ float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals
 		bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(g)));
 		scale = std::min(scale, GetNearBaseScaleAt(g, scaleRefSqDist));
 	}
-	return strength * bonus / curve / std::max(scale, 1e-3f);
+	return GetSafeThreat() * bonus / curve / std::max(scale, 1e-3f);
 }
 
-void CAttackTask::SetRouteThreat(IPathQuery* query, AttackRoute route, float strength) const
+void CAttackTask::SetRouteThreat(IPathQuery* query, AttackRoute route) const
 {
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	const float strength = GetSafeThreat();
 	if (militaryMgr->IsAttackRouteDynamic(route)) {
 		// Threat is weighed against the allowance at each cell (what the escape and the path-ahead check use):
 		// light threat costs less than the flat 2x, threat at the allowance the same, heavier threat more

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace circuit {
 
@@ -110,6 +111,7 @@ void IFighterTask::OnUnitIdle(CCircuitUnit* unit)
 
 void IFighterTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
+	strengthFrame = STALE_FRAME;  // its health changed: GetUnitStrengths reads again
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	CCircuitDef* cdef = unit->GetCircuitDef();
@@ -179,8 +181,20 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	const AIFloat3& tPos = target->GetPos();
 	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
-	std::vector<CCircuitUnit*> orderUnits;
-	for (CCircuitUnit* unit : units) {
+	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
+	// Longest range picks first; each pick replaces that unit's claim.
+	std::vector<SFireClaim> claims;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		AIFloat3 keptPos;
+		claims.push_back({s.unit, GetKeptFireSpot(s.unit, keptPos) ? keptPos : s.unit->GetPos(frame), s.power});
+	}
+	struct SOrder {
+		size_t claim;  // index in claims
+		float range;
+	};
+	std::vector<SOrder> orders;  // units to order
+	for (size_t i = 0; i < claims.size(); ++i) {
+		CCircuitUnit* unit = claims[i].unit;
 		if (unit->Blocker() != nullptr) {
 			continue;  // Do not interrupt current action
 		}
@@ -193,36 +207,26 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			|| (unit->GetTarget() != target)
 			|| ((unit->GetTargetTile() != targetTile) && isTileMoveOrder))
 		{
-			orderUnits.push_back(unit);
+			orders.push_back({i, GetFireRange(unit)});
 		}
 	}
-	if (!orderUnits.empty()) {
-		lastOrderTargetPos = tPos;
+	if (orders.empty()) {
+		return;
 	}
-	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
-	// Longest range picks first; each pick replaces that unit's claim.
-	std::map<CCircuitUnit*, AIFloat3> claims;
-	for (CCircuitUnit* unit : units) {
-		AIFloat3 p;
-		claims[unit] = GetKeptFireSpot(unit, p) ? p : unit->GetPos(frame);
-	}
-	std::map<CCircuitUnit*, float> ranges;
-	for (CCircuitUnit* unit : orderUnits) {
-		ranges[unit] = GetFireRange(unit);
-	}
-	std::sort(orderUnits.begin(), orderUnits.end(), [&](CCircuitUnit* a, CCircuitUnit* b) {
-		return ranges[a] > ranges[b];
-	});
+	lastOrderTargetPos = tPos;
+	std::stable_sort(orders.begin(), orders.end(), [](const SOrder& a, const SOrder& b) { return a.range > b.range; });
 	const float safeThreat = GetEscapeSafeThreat();
 	const int timeout = frame + FRAMES_PER_SEC * 60;
-	for (CCircuitUnit* unit : orderUnits) {
+	for (const SOrder& order : orders) {
+		SFireClaim& claim = claims[order.claim];
+		CCircuitUnit* unit = claim.unit;
 		AIFloat3 firePos;
 		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
-				: FindFireSpot(unit, claims, safeThreat, firePos);
+				: FindFireSpot(claims, order.claim, safeThreat, firePos);
 		switch (spot) {
 			case FireSpot::SPOT:
 			case FireSpot::RISKY: {  // RISKY: nowhere safe, not here either: the least dangerous spot
-				claims[unit] = firePos;
+				claim.pos = firePos;
 				fireSpots[unit] = {firePos, frame, FireSpot::RISKY == spot};
 				if (isFireSpotChase) {
 					unit->AttackFrom(firePos, target, targetTile, timeout);
@@ -231,7 +235,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 				}
 			} break;
 			case FireSpot::HOLD: {  // every spot dangerous, here is safe: stay, fight what comes into range
-				claims[unit] = firePos;
+				claim.pos = firePos;
 				fireSpots.erase(unit);
 				unit->HoldFire(firePos, target, targetTile, timeout);
 			} break;
@@ -301,47 +305,38 @@ bool IFighterTask::IsOnRiskySpot(CCircuitUnit* unit, int frame) const
 	return (it != fireSpots.end()) && it->second.isRisky && (frame < it->second.frame + RISKY_GRACE);
 }
 
-IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const std::map<CCircuitUnit*, AIFloat3>& claims,
-		float safeThreat, AIFloat3& outPos) const
+IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
+		AIFloat3& outPos) const
 {
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	const AIFloat3& tPos = target->GetPos();
+	CCircuitUnit* unit = claims[self].unit;
 	const float range = GetFireRange(unit);
 	if (range < SQUARE_SIZE * 4) {
 		return FireSpot::NONE;
 	}
-	const AIFloat3& uPos = unit->GetPos(frame);
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& tPos = target->GetPos();
+	const AIFloat3& uPos = unit->GetPos(circuit->GetLastFrame());
 	CThreatMap* threatMap = circuit->GetThreatMap();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const float strength = std::max(cdef->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f)), THREAT_MIN);
+	const float strength = std::max(claims[self].power, THREAT_MIN);
 	const float wThreat = circuit->GetMilitaryManager()->GetAttackSpotThreat();
 	const float step = threatMap->GetSquareSize();
 	const bool hasDangerLine = (safeThreat > 0.f);
+
 	// Local support: the unit stands alone at its spot, so a spot is judged against the strength of our units
 	// heading to within SUPPORT_RADIUS of it (itself included), not the whole group's; never more than that
-	std::vector<std::pair<AIFloat3, float>> backers;  // (where each unit is heading, its current strength)
-	for (const auto& kv : claims) {
-		if (kv.first != unit) {
-			CCircuitUnit* u = kv.first;
-			backers.emplace_back(kv.second,
-					u->GetCircuitDef()->GetPower() * sqrtf(std::max(u->GetHealthPercent(), 0.f)) * powerMod);
-		}
-	}
-	const float ownStrength = strength * powerMod;
 	auto supportAt = [&](const AIFloat3& p) {
-		float s = ownStrength;
-		for (const auto& b : backers) {
-			if (b.first.SqDistance2D(p) < SQUARE(SUPPORT_RADIUS)) {
-				s += b.second;
+		float s = strength * powerMod;
+		for (size_t i = 0; i < claims.size(); ++i) {
+			if ((i != self) && (claims[i].pos.SqDistance2D(p) < SQUARE(SUPPORT_RADIUS))) {
+				s += claims[i].power * powerMod;
 			}
 		}
 		return std::min(s, safeThreat);
 	};
-	// Danger = what the task's escape calls dangerous (same allowance as its IsInDanger), for the local support
+	// Danger = what the task's escape calls dangerous (same allowance as its IsInDanger), for the local support.
+	// The allowance is always above 0, so where there is no threat there is no danger (no need to work it out)
 	auto isDanger = [&](const AIFloat3& p, float threat) {
-		return hasDangerLine && (threat >= GetAllowedThreatAt(p, supportAt(p)));
+		return hasDangerLine && (threat > 0.f) && (threat >= GetAllowedThreatAt(p, supportAt(p)));
 	};
 	const float startThreat = threatMap->GetThreatAt(unit, uPos);
 	const bool isSafeHere = hasDangerLine && !isDanger(uPos, startThreat);
@@ -373,44 +368,40 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const std:
 		return isWalkDanger;
 	};
 
-	bool isFound = false;
-	float bestScore = std::numeric_limits<float>::max();
-	AIFloat3 riskyPos = -RgtVector;  // best among dangerous spots, judged by the worse of walk and spot
-	float riskyScore = std::numeric_limits<float>::max();
-	auto consider = [&](const AIFloat3& p) {
+	// Candidate spots. Cost: threat (the worse of spot and walk), crowding by other claims, walking distance
+	struct SCandidate {
+		AIFloat3 pos;
+		float threat;
+		int crowd;  // other claims within CROWD_RADIUS
+		float dist;  // walking distance / range
+		float walkPeak = -1.f;  // worst threat of a dangerous walk there, 0: safe walk; < 0: not walked yet
+		float cost = 0.f;  // with a safe walk
+	};
+	auto costOf = [&](const SCandidate& c, float worst) {
+		return wThreat * (worst / strength + CROWD_WEIGHT * c.crowd) + c.dist;
+	};
+	std::vector<SCandidate> cands;
+	auto add = [&](const AIFloat3& p) {
 		int crowd = 0;
-		for (const auto& kv : claims) {
-			if ((kv.first != unit) && (kv.second.SqDistance2D(p) < SQUARE(CROWD_RADIUS))) {
+		for (size_t i = 0; i < claims.size(); ++i) {
+			if ((i != self) && (claims[i].pos.SqDistance2D(p) < SQUARE(CROWD_RADIUS))) {
 				++crowd;
 			}
 		}
-		const float threat = threatMap->GetThreatAt(unit, p);
-		float walkPeak;
-		const bool isWalkDanger = checkWalk(p, walkPeak);
-		const bool isSpotDanger = isDanger(p, threat);
-		const float worst = std::max(threat, walkPeak);
-		const float s = wThreat * (worst / strength + CROWD_WEIGHT * crowd) + p.distance2D(uPos) / range;
-		if (isSpotDanger || isWalkDanger) {
-			if (s < riskyScore) {
-				riskyScore = s;
-				riskyPos = p;
-			}
-		} else if (s < bestScore) {
-			bestScore = s;
-			outPos = p;
-			isFound = true;
-		}
+		SCandidate c{p, threatMap->GetThreatAt(unit, p), crowd, p.distance2D(uPos) / range};
+		c.cost = costOf(c, std::max(c.threat, 0.f));
+		cands.push_back(c);
 	};
-
 	// Where it stands, and its last spot, while in the fire band: the distance term favours them
 	if (IsInFireBand(unit, uPos)) {
-		consider(uPos);
+		add(uPos);
 	}
 	AIFloat3 keptPos;
 	if (GetKeptFireSpot(unit, keptPos)) {
-		consider(keptPos);
+		add(keptPos);
 	}
 	// Spots on an arc around the target, facing us (+-45 degrees: keeps the group together)
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	AIFloat3 dir = uPos - tPos;
 	const float bearing = (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
 	const float radius = range * FIRE_RADIUS;
@@ -419,22 +410,73 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(CCircuitUnit* unit, const std:
 		AIFloat3 p(tPos.x + radius * cosf(angle), tPos.y, tPos.z + radius * sinf(angle));
 		CTerrainManager::CorrectPosition(p);
 		if (terrainMgr->CanMoveToPos(unit->GetArea(), p)) {
-			consider(p);
+			add(p);
 		}
 	}
 
-	if (isFound) {
-		return FireSpot::SPOT;
+	// SPOT: the cheapest spot with a safe walk there (ties: the earlier candidate). The walk is the costly check,
+	// so spots are tried cheapest first and only until one passes
+	std::vector<size_t> order(cands.size());
+	std::iota(order.begin(), order.end(), 0);
+	std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return cands[a].cost < cands[b].cost; });
+	for (size_t i : order) {
+		SCandidate& c = cands[i];
+		if (!isDanger(c.pos, c.threat) && !checkWalk(c.pos, c.walkPeak)) {
+			outPos = c.pos;
+			return FireSpot::SPOT;
+		}
 	}
+	// HOLD: every spot is dangerous, here isn't
 	if (isSafeHere) {
 		outPos = uPos;
 		return FireSpot::HOLD;
 	}
-	if (utils::is_valid(riskyPos)) {
-		outPos = riskyPos;
+	// RISKY: the least dangerous spot, judged by the worse of walk and spot
+	const SCandidate* risky = nullptr;
+	float riskyCost = std::numeric_limits<float>::max();
+	for (SCandidate& c : cands) {
+		if (c.walkPeak < 0.f) {
+			checkWalk(c.pos, c.walkPeak);
+		}
+		const float cost = costOf(c, std::max(c.threat, c.walkPeak));
+		if (cost < riskyCost) {
+			riskyCost = cost;
+			risky = &c;
+		}
+	}
+	if (risky != nullptr) {
+		outPos = risky->pos;
 		return FireSpot::RISKY;
 	}
 	return FireSpot::NONE;
+}
+
+const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths() const
+{
+	// Still valid: read this frame, for the same units
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	bool isValid = (strengthFrame == frame) && (unitStrengths.size() == units.size());
+	auto it = units.begin();
+	for (size_t i = 0; isValid && (i < unitStrengths.size()); ++i, ++it) {
+		isValid = (unitStrengths[i].unit == *it);
+	}
+	if (!isValid) {
+		strengthFrame = frame;
+		strengthSum = 0.f;
+		unitStrengths.clear();
+		for (CCircuitUnit* unit : units) {
+			const float power = unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+			unitStrengths.push_back({unit, power});
+			strengthSum += power;
+		}
+	}
+	return unitStrengths;
+}
+
+float IFighterTask::GetStrengthSum() const
+{
+	GetUnitStrengths();
+	return strengthSum;
 }
 
 #ifdef DEBUG_VIS

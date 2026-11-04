@@ -682,11 +682,7 @@ float CAntiAirTask::GetAirRange() const
 
 float CAntiAirTask::GetSafeThreat() const
 {
-	float power = 0.f;
-	for (CCircuitUnit* unit : units) {
-		power += unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
-	}
-	return std::max(power, THREAT_MIN) * powerMod;
+	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;
 }
 
 float CAntiAirTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
