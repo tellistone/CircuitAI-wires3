@@ -246,24 +246,24 @@ void CAttackTask::Update()
 	 * Decide every 2 updates (~2 s), or sooner when a unit asks for it (re-plan, sudden threat)
 	 */
 	const bool isDecision = (updCount % 2 == 0);
+	bool isForced = false;  // also read on a normal decision, which then re-plans too (no route reuse)
+	for (CCircuitUnit* unit : units) {
+		isForced |= unit->IsForceUpdate(frame);
+	}
 	if (isDecision) {
 		isReplanForced = false;  // a forced re-plan is allowed again
 		ISquadTask::Update();
 		if (leader == nullptr) {  // task aborted
 			return;
 		}
-	} else {
-		bool isForced = false;
-		for (CCircuitUnit* unit : units) {
-			isForced |= unit->IsForceUpdate(frame);
+	} else if (!isForced) {
+		if (wasRegroup && !pPath->posPath.empty()) {
+			ActivePath(lowestSpeed);
 		}
-		if (!isForced) {
-			if (wasRegroup && !pPath->posPath.empty()) {
-				ActivePath(lowestSpeed);
-			}
-			return;
-		}
+		return;
 	}
+	// A normal decision that no unit asked to re-plan may keep a fresh route to the same goal (ReuseRoute)
+	const bool isReuse = isDecision && !isForced;
 	isHolding = false;  // re-set by HoldPosition if this decision finds nothing to go to
 
 	/*
@@ -311,10 +311,10 @@ void CAttackTask::Update()
 		return;
 	}
 	if (target == nullptr) {
-		FallbackFrontPos(isDecision);
+		FallbackFrontPos(isReuse);
 		return;
 	}
-	if (isDecision && ReuseRoute(target->GetId(), target->GetPos(), frame)) {
+	if (isReuse && ReuseRoute(target->GetId(), target->GetPos(), frame)) {
 		return;
 	}
 	// Route-aware pick: one capped route to all candidates; whichever it reaches first becomes the target,
@@ -1103,19 +1103,12 @@ void CAttackTask::FindTarget()
 	// The full screened list: if the route's approach to the pick is rejected, the next route goes to these
 	screenedGoals = routeGoals;
 
-	// Stickiness: the route then only gets the kept target (first) plus candidates clearly nearer than it, so it
-	// can't swap to a near-equal one either
+	// Stickiness: the route then only gets the kept target, so it can't swap to a near-equal one either. No other
+	// goal could be clearly nearer than it: every screened one ranks at or behind the best, and sticky means the
+	// best isn't clearly nearer
 	if (isSticky) {
 		best = prev;
-		const float sqClear = prev->key * sqSticky;
-		const ICoreUnit::Id prevId = prev->enemy->GetId();
-		std::vector<STargetGoal> goals = {{prevId, prev->enemy->GetPos(), prev->key}};
-		for (const STargetGoal& g : routeGoals) {
-			if ((g.key < sqClear) && (g.id != prevId)) {
-				goals.push_back(g);
-			}
-		}
-		routeGoals.swap(goals);
+		routeGoals = {{prev->enemy->GetId(), prev->enemy->GetPos(), prev->key}};
 	}
 
 	if (best != nullptr) {
@@ -1216,7 +1209,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 			// Not our target any more, while the next route runs (nor counted against its group limit)
 			SetTarget(nullptr);
 			// Next route: every screened candidate of the last decision, not just this route's goals (when the
-			// current target was kept, those were only it and the clearly nearer ones), minus rejected and dead
+			// current target was kept, that was only it), minus rejected and dead
 			std::vector<STargetGoal> rest;
 			for (const STargetGoal& g : screenedGoals) {
 				auto it = rejectedUntil.find(g.id);
@@ -1416,13 +1409,19 @@ bool CAttackTask::ReuseRoute(ICoreUnit::Id targetId, const AIFloat3& goal, int f
 	// Same goal: the same target (or front) that moved less than one path square. The units pulled back from
 	// danger would wait for a new route, so not while any unit is in danger
 	const float sqMoved = SQUARE(manager->GetCircuit()->GetPathfinder()->GetSquareSize());
-	if ((lastRoute.path == nullptr) || (lastRoute.targetId != targetId)
+	if ((lastRoute.path == nullptr) || lastRoute.path->posPath.empty() || (lastRoute.targetId != targetId)
 		|| (frame >= lastRoute.frame + ROUTE_REUSE_FRAMES)
 		|| (goal.SqDistance2D(lastRoute.goal) >= sqMoved)
 		|| isPathAheadUnsafe || !endangered.empty()
 		|| !leader->GetTravelAct()->IsActive() || (leader->GetTravelAct()->GetPath() != lastRoute.path))
 	{
 		return false;
+	}
+	// A target route's approach is judged again (a few threat lookups, far cheaper than a new route): the group may
+	// have lost strength, or threat moved onto the ground it would fight from. Same reference as ApplyTargetPath:
+	// FindTarget just anchored this target, or cleared the anchor (0)
+	if ((targetId >= 0) && !IsApproachSafe(lastRoute.path->posPath, goal, GetPickStrength(frame), scaleRefSqDist)) {
+		return false;  // the new route's ApplyTargetPath rejects it, or finds a safe approach
 	}
 	pPath = lastRoute.path;  // Start() and regrouping re-send pPath
 	return true;

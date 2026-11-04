@@ -127,7 +127,7 @@ private:
 	// and the route's last stretch as long as our range; every spot below the allowance for 'strength'
 	bool IsApproachSafe(const F3Vec& path, const springai::AIFloat3& targetPos, float strength, float refSqDist) const;
 	// No target: route to the front line, or hold nearby when past it on enemy-held ground (or no front / no safe
-	// route). isReuse: a normal decision, which may keep a fresh route to the same front
+	// route). isReuse: a normal decision no unit asked to re-plan, which may keep a fresh route to the same front
 	void FallbackFrontPos(bool isReuse = false);
 	void ApplyFrontPos(const CQueryPathMulti* query, const springai::AIFloat3& goal);
 	// Threat cap for capped routes (target, front, reinforce): never above what the escape tolerates
@@ -136,8 +136,8 @@ private:
 	void SetRouteThreat(IPathQuery* query, AttackRoute route, float strength) const;
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
 	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal);
-	// Still walking the last route to this same goal, planned under ROUTE_REUSE_FRAMES ago, with no unit in danger
-	// and nothing unsafe just ahead: keep it (pPath) instead of planning the same route again
+	// Still walking the last route to this same goal, planned under ROUTE_REUSE_FRAMES ago, with no unit in danger,
+	// nothing unsafe just ahead and (target) a safe approach still: keep it (pPath) instead of planning it again
 	bool ReuseRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, int frame);
 
 	/*
