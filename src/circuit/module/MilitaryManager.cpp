@@ -804,13 +804,7 @@ void CMilitaryManager::Init()
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateScoutQuota, this), FRAMES_PER_SEC * 15, offset + 3);
 		}
 
-		bool isCaptureHide = false;
-		for (CCircuitDef& cdef : this->circuit->GetCircuitDefs()) {
-			isCaptureHide |= (cdef.GetCaptureHide() > 0.f);
-		}
-		if (isCaptureHide) {
-			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
-		}
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
 								FRAMES_PER_SEC * 60,
@@ -876,6 +870,8 @@ int CMilitaryManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 
 int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
+	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
+
 	auto search = destroyedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != destroyedHandler.end()) {
 		search->second(unit, attacker);
@@ -886,8 +882,11 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 
 int CMilitaryManager::UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId)
 {
-	// Captured units arrive as given units; UpdateCaptureHide reads their controller
-	givenUnitIds.insert(unit->GetId());
+	// Zero-K's unit_capture gadget sets "capture_controller" before it hands a captured unit over
+	const int controllerId = (int)unit->GetUnit()->GetRulesParamFloat("capture_controller", -1.f);
+	if (controllerId >= 0) {
+		capturedUnits[unit->GetId()] = {controllerId, unit->GetCircuitDef()->GetCostM()};
+	}
 	return IModule::UnitGiven(unit, oldTeamId, newTeamId);
 }
 
@@ -2268,25 +2267,15 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 
 /*
  * "capture_hide" (behaviour.json, per unit): a capturer whose captured units cost more than
- * capture_hide x its own cost goes home and hides. If it dies the captured units go back to the enemy.
- * It stays hidden until enough captured units die (or are lost) to drop below that line.
+ * capture_hide x its own cost goes home and hides, because if it dies they go back to the enemy.
+ * Its retreat task keeps it there until enough of them are gone to drop it below the line.
  */
 void CMilitaryManager::UpdateCaptureHide()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
-	// Cost captured per controller. Zero-K's unit_capture gadget sets "capture_controller" on each captured unit.
-	std::map<int, float> capturedCost;
-	for (auto it = givenUnitIds.begin(); it != givenUnitIds.end();) {
-		CCircuitUnit* unit = circuit->GetTeamUnit(*it);
-		if (unit == nullptr) {  // dead, or taken back
-			it = givenUnitIds.erase(it);
-			continue;
-		}
-		++it;
-		const int controllerId = (int)unit->GetUnit()->GetRulesParamFloat("capture_controller", -1.f);
-		if (controllerId >= 0) {
-			capturedCost[controllerId] += unit->GetCircuitDef()->GetCostM();
-		}
+	std::unordered_map<int, float> costByController;
+	for (const auto& kv : capturedUnits) {
+		costByController[kv.second.controllerId] += kv.second.cost;
 	}
 
 	for (CCircuitUnit* unit : army) {
@@ -2294,18 +2283,14 @@ void CMilitaryManager::UpdateCaptureHide()
 		if (cdef->GetCaptureHide() <= 0.f) {
 			continue;
 		}
-		auto it = capturedCost.find(unit->GetId());
-		const float cost = (it != capturedCost.end()) ? it->second : 0.f;
-		const bool isHide = (cost > cdef->GetCaptureHide() * cdef->GetCostM());
-		unit->SetCaptureHide(isHide);
-		if (!isHide) {
-			continue;  // a retreat task lets it go once it is repaired
-		}
+		auto it = costByController.find(unit->GetId());
+		const float capturedCost = (it != costByController.end()) ? it->second : 0.f;
+		unit->SetCaptureHide(capturedCost > cdef->GetCaptureHide() * cdef->GetCostM());
+
 		const IUnitTask::Type type = unit->GetTask()->GetType();
-		if ((type == IUnitTask::Type::RETREAT) || (type == IUnitTask::Type::PLAYER) || (type == IUnitTask::Type::NIL)) {
-			continue;
+		if (unit->IsCaptureHide() && (type != IUnitTask::Type::RETREAT) && (type != IUnitTask::Type::PLAYER)) {
+			AssignTask(unit, EnqueueRetreat());
 		}
-		AssignTask(unit, EnqueueRetreat());
 	}
 }
 

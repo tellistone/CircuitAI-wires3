@@ -17,6 +17,7 @@
 #include <vector>
 #include <functional>
 #include <set>
+#include <unordered_map>
 
 namespace circuit {
 
@@ -339,7 +340,11 @@ private:
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;
-	std::set<int> givenUnitIds;  // units we got from another team (captured ones among them), for "capture_hide"
+	struct SCapturedUnit {
+		int controllerId;  // our unit that captured it
+		float cost;
+	};
+	std::unordered_map<int, SCapturedUnit> capturedUnits;  // captured unit id -> who holds it, for "capture_hide"
 	SArtilleryCfg artillery;
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
