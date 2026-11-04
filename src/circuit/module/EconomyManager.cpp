@@ -1411,10 +1411,12 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 
 	// Constructors reclaiming and metal close to full: storage at NOW, even if storage is already 10x income.
 	// Running reclaim isn't stopped by full storage (it still denies the metal to the enemy).
+	// The job scan first: it's cheaper than the storage engine call
 	const std::set<IBuilderTask*>& reclaimTasks = builderMgr->GetTasks(IBuilderTask::BuildType::RECLAIM);
-	const bool isReclaimStore = (reclaimStoreAt > 0.f) && (GetMetalCur() > GetStorage(metalRes) * reclaimStoreAt)
+	const bool isReclaimStore = (reclaimStoreAt > 0.f)
 			&& std::any_of(reclaimTasks.begin(), reclaimTasks.end(),
-						   [](const IBuilderTask* t) { return !t->GetAssignees().empty(); });
+						   [](const IBuilderTask* t) { return !t->GetAssignees().empty(); })
+			&& (GetMetalCur() > GetStorage(metalRes) * reclaimStoreAt);
 
 	const std::set<IBuilderTask*>& storeTasks = builderMgr->GetTasks(IBuilderTask::BuildType::STORE);
 	if (!storeTasks.empty()) {
