@@ -99,6 +99,9 @@ public:
 	void ManualFire(CEnemyInfo* target, int timeout);
 	bool IsDGunHigh() const;
 	bool IsDisarmed(int frame);
+	// Set by the military manager: units captured by this one are worth too much to risk it ("capture_hide")
+	void SetCaptureHide(bool value) { isCaptureHide = value; }
+	bool IsCaptureHide() const { return isCaptureHide; }
 	bool IsWeaponReady(int frame);
 	bool IsDGunReady(int frame, float energy);
 	bool IsShieldCharged(float percent);
@@ -174,6 +177,7 @@ private:
 	bool isWeaponReady : 1;
 	bool isMorphing : 1;
 	bool isAllowedToJump : 1;
+	bool isCaptureHide : 1;
 	// ---- Bit fields ---- END
 
 	CWeaponDef* dgunDef;

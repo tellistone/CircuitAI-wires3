@@ -17,6 +17,7 @@
 #include <vector>
 #include <functional>
 #include <set>
+#include <unordered_map>
 
 namespace circuit {
 
@@ -46,6 +47,7 @@ public:
 	virtual int UnitIdle(CCircuitUnit* unit) override;
 	virtual int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 	virtual int UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
+	virtual int UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId) override;
 
 	const std::set<IFighterTask*>& GetTasks(IFighterTask::FightType type) const {
 		return fightTasks[static_cast<IFighterTask::FT>(type)];
@@ -264,6 +266,7 @@ private:
 	void Watchdog();
 	void UpdateIdle();
 	void UpdateFight();
+	void UpdateCaptureHide();
 
 	void AddArmyCost(CCircuitUnit* unit);
 	void DelArmyCost(CCircuitUnit* unit);
@@ -337,6 +340,11 @@ private:
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;
+	struct SCapturedUnit {
+		int controllerId;  // our unit that captured it
+		float cost;
+	};
+	std::unordered_map<int, SCapturedUnit> capturedUnits;  // captured unit id -> who holds it, for "capture_hide"
 	SArtilleryCfg artillery;
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;

@@ -46,6 +46,7 @@ CCircuitUnit::CCircuitUnit(CCircuitAI* circuit, Id unitId, Unit* unit, CCircuitD
 		, isWeaponReady(true)
 		, isMorphing(false)
 		, isAllowedToJump(false)
+		, isCaptureHide(false)
 		, dgunDef(nullptr)
 		, dgun(nullptr)
 		, target(nullptr)

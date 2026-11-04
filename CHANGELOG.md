@@ -7,6 +7,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Capturer hides when loaded** (per unit `capture_hide`, default 0 = off; shipped 2.0 on `vehcapture`). A unit whose
+  captured units (Zero-K's `capture_controller` rules param) cost more than `capture_hide` x its own metal cost retreats
+  to the closest haven and stays there, ignoring the retreat wait timeout, until enough of them die or are lost to drop it
+  back under that line. Its captured units go back to the enemy if it dies.
 - **Raider production floor** (`quota.raider`, `raider_per_mex`, `raider_max`; all default 0 = off; shipped 1, 1.0, 12).
   The scout quota's twin for production: while we have fewer raider units (main role `raider` or a role bound to it,
   alive and not on a scout task, plus queued in factories) than `raider` + bonus, a factory that can build a raider builds one, picked by its

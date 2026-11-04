@@ -80,8 +80,8 @@ void CRetreatTask::AssignTo(CCircuitUnit* unit)
 	unit->PushTravelAct(travelAction);
 	unit->SetAllowedToJump(cdef->IsAbleToJump() && !cdef->IsAttrNoJump());
 
-	// Mobile repair
-	if (!cdef->IsPlane()) {
+	// Mobile repair. A capturer sent home to hide ("capture_hide") at full health needs none.
+	if (!cdef->IsPlane() && !(unit->IsCaptureHide() && (unit->GetHealthPercent() > 0.98f))) {
 		circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
 	}
 }
@@ -170,7 +170,8 @@ void CRetreatTask::Update()
 			}
 		}
 
-		if ((isRepaired || isWaitOver) && !unit->IsDisarmed(frame)) {
+		// "capture_hide": stays at the haven while its captured units are worth too much to risk it
+		if ((isRepaired || isWaitOver) && !unit->IsDisarmed(frame) && !unit->IsCaptureHide()) {
 			RemoveAssignee(unit);
 		} else if (unit->IsForceUpdate(frame) || isExecute) {
 			Start(unit);
@@ -261,6 +262,10 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 
 void CRetreatTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
+	if (unit->IsCaptureHide()) {
+		// Skipped on AssignTo while it was unhurt
+		manager->GetCircuit()->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
+	}
 	if (State::REGROUP != state) {
 		return;
 	}

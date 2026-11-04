@@ -665,7 +665,9 @@
 	        "target_dist_mod": 0.5,
 		"pwr_mod": 1,
 		"thr_mod": 1,
-		"retreat": 0.8
+		"retreat": 0.8,
+		// Go home and hide while the units it captured cost more than 2x its own cost (0 or missing = off)
+		"capture_hide": 2.0
 	},
 	"veharty": {
 		// threat 2.01 at full health (raw, before pwr_mod/thr_mod)
