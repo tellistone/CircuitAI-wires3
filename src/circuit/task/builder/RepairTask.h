@@ -32,6 +32,7 @@ private:
 	bool IsLeashBroken();
 
 	std::set<CCircuitUnit*> inRange;  // builders that got within build range of the target
+	int fleeFrame;  // frame since the target keeps driving away from all assignees, -1 = not fleeing
 };
 
 } // namespace circuit

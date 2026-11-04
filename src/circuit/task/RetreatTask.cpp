@@ -173,6 +173,7 @@ void CRetreatTask::Update()
 		// "capture_hide": stays at the haven while its captured units are worth too much to risk it
 		if ((isRepaired || isWaitOver) && !unit->IsDisarmed(frame) && !unit->IsCaptureHide()) {
 			RemoveAssignee(unit);
+			circuit->GetBuilderManager()->OnRetreatEnd(unit);
 		} else if (unit->IsForceUpdate(frame) || isExecute) {
 			Start(unit);
 		}

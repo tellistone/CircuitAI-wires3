@@ -20,6 +20,7 @@ using namespace springai;
 
 CBRepairTask::CBRepairTask(ITaskManager* mgr, Priority priority, CAllyUnit* target, int timeout)
 		: IRepairTask(mgr, priority, Type::BUILDER, target, timeout)
+		, fleeFrame(-1)
 {
 }
 
@@ -46,32 +47,70 @@ void CBRepairTask::Update()
 
 bool CBRepairTask::IsLeashBroken()
 {
-	if ((priority != Priority::NOW) || units.empty() || (target == nullptr) || !target->GetCircuitDef()->IsMobile()) {
-		return false;
-	}
-	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
-	const float leash = builderMgr->GetPrioRepairLeash();
-	if (leash <= 0.f) {
+	// Builder repair of a mobile unit is NOW (heavy/prio_repair) or HIGH (left from a retreat)
+	if (units.empty() || (target == nullptr) || !target->GetCircuitDef()->IsMobile()
+		|| ((priority != Priority::NOW) && (priority != Priority::HIGH)))
+	{
+		fleeFrame = -1;
 		return false;
 	}
 	// A retreating unit is heading home to be repaired: keep following it
-	CCircuitUnit* teamUnit = manager->GetCircuit()->GetTeamUnit(targetId);
-	if ((teamUnit != nullptr) && (teamUnit->GetTask()->GetType() == IUnitTask::Type::RETREAT)) {
+	if (target->GetTask()->GetType() == IUnitTask::Type::RETREAT) {
+		fleeFrame = -1;
 		return false;
 	}
-	const int frame = manager->GetCircuit()->GetLastFrame();
+	CCircuitAI* circuit = manager->GetCircuit();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const float leash = builderMgr->GetPrioRepairLeash();
+	const int frame = circuit->GetLastFrame();
 	const AIFloat3& targetPos = target->GetPos(frame);
+	bool isAnyInRange = false;
+	std::vector<CCircuitUnit*> unsafe;
 	for (CCircuitUnit* unit : units) {
+		// Don't follow the target into a fight the builder can't survive (retreat.repair_safe, same rule as job selection)
+		if (builderMgr->IsUnsafePrioRepair(this, unit, targetPos)) {
+			unsafe.push_back(unit);
+			continue;
+		}
 		const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
 		const float sqDist = targetPos.SqDistance2D(unit->GetPos(frame));
 		if (sqDist < SQUARE(buildDist + SQUARE_SIZE * 8)) {
 			inRange.insert(unit);  // repair has started
-		} else if ((inRange.find(unit) != inRange.end()) && (sqDist > SQUARE(buildDist + leash))) {
+			isAnyInRange = true;
+		} else if ((leash > 0.f) && (inRange.find(unit) != inRange.end()) && (sqDist > SQUARE(buildDist + leash))) {
 			// Target drove off half-repaired: stop chasing it
 			builderMgr->OnPrioRepairLeash(targetId);
 			manager->AbortTask(this);
 			return true;
 		}
+	}
+	if (!unsafe.empty()) {
+		// Job selection skips the job while it stays unsafe; it is picked up again once it isn't
+		for (CCircuitUnit* unit : unsafe) {
+			RemoveAssignee(unit);
+		}
+		if (units.empty()) {
+			fleeFrame = -1;
+			return true;
+		}
+	}
+	// Target keeps driving away from all its repairers: don't chase it.
+	// Job selection skips it while it does, a new job is taken once it stops or turns back.
+	bool isFleeing = !isAnyInRange && builderMgr->IsRepairFleeOn();
+	if (isFleeing) {
+		const AIFloat3 vel = target->GetUnit()->GetVel();  // one engine call for all assignees
+		for (auto it = units.begin(); isFleeing && (it != units.end()); ++it) {
+			isFleeing = builderMgr->IsRepairTargetFleeing(this, *it, (*it)->GetPos(frame), &vel);
+		}
+	}
+	if (!isFleeing) {
+		fleeFrame = -1;
+	} else if (fleeFrame < 0) {
+		fleeFrame = frame;
+	} else if (frame - fleeFrame >= builderMgr->GetRepairFleeFrames()) {
+		builderMgr->OnPrioRepairLeash(targetId);  // same cooldown as the leash: a unit in a fight stops and starts
+		manager->AbortTask(this);
+		return true;
 	}
 	return false;
 }
