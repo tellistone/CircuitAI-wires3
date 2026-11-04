@@ -129,9 +129,12 @@ private:
 		int index;
 	};
 	std::deque<SMex> markedMexes;  // sorted by insertion
-	std::vector<int> contestedIds;  // clusters with contestedFrame >= 0
+	std::vector<int> contestedIds;  // GetContestedClusters result, rebuilt at most once per frame
+	int contestedIdsFrame;
 
-	void MarkContested(int index, int frame);
+	// Start of both GetMexToBuild walks: the nearest cluster to pos as the source, or -1 if there is none or
+	// it is a wall itself (then marked contested)
+	int StartWalk(const springai::AIFloat3& pos, int frame);
 	void MarkWalkWalls(int frame);
 
 	class SafeCluster;

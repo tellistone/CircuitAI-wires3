@@ -188,7 +188,7 @@ public:
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
 	struct SContested {
-		float bonus;  // enemies there count as this many times closer (attack) / more valuable (raid); 1 = off
+		float bonus;  // enemies there count as this many times closer (attack ranking, raid route goals); 1 = off
 		int maxAge;  // frames a wall mark lasts without being seen again
 		float range;  // elmos beyond the cluster's radius that still count as "there"
 	};
@@ -201,6 +201,14 @@ public:
 	// reachable within 'reach'. Call after threatMap->SetThreatType(unit). Empty when quota.contested.bonus <= 1
 	void GetTakeableContested(CCircuitUnit* unit, float reach, const std::function<float (const springai::AIFloat3&)>& allowedAt,
 			std::vector<SContestedSpot>& outSpots);
+	static bool IsInContested(const std::vector<SContestedSpot>& spots, const springai::AIFloat3& pos) {
+		for (const SContestedSpot& c : spots) {
+			if (pos.SqDistance2D(c.pos) <= c.sqRadius) {
+				return true;
+			}
+		}
+		return false;
+	}
 	float GetAttackPathIgnoreThreat() const { return attackPathIgnoreThreat; }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / group strength)
 	enum class AttackPath: int { TARGET = 0, REINFORCE, FRONT, FLEE, CORNERED, _SIZE_ };

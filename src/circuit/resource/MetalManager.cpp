@@ -104,6 +104,7 @@ CMetalManager::CMetalManager(CCircuitAI* circuit, CMetalData* metalData)
 		, metalData(metalData)
 		, markFrame(-1)
 		, wallThreat(THREAT_MIN)
+		, contestedIdsFrame(-1)
 		, threatFilter(nullptr)
 		, filteredGraph(nullptr)
 		, shortPath(nullptr)
@@ -346,25 +347,33 @@ bool CMetalManager::IsMexInFinished(int index) const
 	return clusterInfos[idx].finishedCount >= GetClusters()[idx].idxSpots.size();
 }
 
-int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate& predicate)
+int CMetalManager::StartWalk(const AIFloat3& pos, int frame)
 {
-	const int frame = circuit->GetLastFrame();
-	int index = FindNearestCluster(pos);
+	const int index = FindNearestCluster(pos);
 	if (index < 0) {
 		return -1;
 	}
 	if (!(*threatFilter)[index]) {
-		MarkContested(index, frame);  // the walk can't even start: our own cluster is the wall
+		clusterInfos[index].contestedFrame = frame;  // the walk can't even start: our own cluster is the wall
 		return -1;
 	}
 	MarkAllyMexes();
+	shortPath->init();
+	shortPath->addSource(filteredGraph->nodeFromId(index));
+	return index;
+}
+
+int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate& predicate)
+{
+	const int frame = circuit->GetLastFrame();
+	if (StartWalk(pos, frame) < 0) {
+		return -1;
+	}
 
 	static std::vector<int> indices;  // NOTE: micro-opt
 	int result = -1;
 
 	DetectCluster goal(this, predicate, indices);
-	shortPath->init();
-	shortPath->addSource(filteredGraph->nodeFromId(index));
 	CMetalData::ClusterGraph::Node target = shortPath->start(goal);
 	MarkWalkWalls(frame);
 
@@ -387,22 +396,14 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 								 unsigned maxClusters, const ClusterScore& score)
 {
 	const int frame = circuit->GetLastFrame();
-	int index = FindNearestCluster(pos);
-	if (index < 0) {
+	if (StartWalk(pos, frame) < 0) {
 		return -1;
 	}
-	if (!(*threatFilter)[index]) {
-		MarkContested(index, frame);  // the walk can't even start: our own cluster is the wall
-		return -1;
-	}
-	MarkAllyMexes();
 
 	static std::vector<int> indices;  // NOTE: micro-opt
 	indices.clear();
 
 	DetectClusters goal(this, predicate, indices);
-	shortPath->init();
-	shortPath->addSource(filteredGraph->nodeFromId(index));
 	// Each start() stops with the next cluster that has an open spot on top of the heap; process it so the
 	// next start() goes on from there
 	for (unsigned found = 0; found < std::max(maxClusters, 1u); ++found) {
@@ -444,28 +445,21 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 	return result;
 }
 
-void CMetalManager::MarkContested(int index, int frame)
-{
-	SClusterInfo& info = clusterInfos[index];
-	if (std::find(contestedIds.begin(), contestedIds.end(), index) == contestedIds.end()) {
-		contestedIds.push_back(index);
-	}
-	info.contestedFrame = frame;
-}
-
 void CMetalManager::MarkWalkWalls(int frame)
 {
-	// Every cluster the walk crossed is safe now; every threatened neighbour of one blocked the walk there
+	// Every cluster the walk crossed is clear now; every neighbour of one over the wall threshold blocked it there
 	const CMetalData::ClusterGraph& graph = GetClusterGraph();
 	for (CMetalData::ClusterGraph::NodeIt n(graph); n != lemon::INVALID; ++n) {
+		// init() resets only the nodes the filter passes now: a cluster crossed by an earlier walk that is a wall
+		// now still reads as processed, so the filter check must come first
 		if (!(*threatFilter)[n] || !shortPath->processed(n)) {
 			continue;
 		}
-		clusterInfos[graph.id(n)].contestedFrame = -1;  // pruned from contestedIds on the next read
+		clusterInfos[graph.id(n)].contestedFrame = -1;
 		for (CMetalData::ClusterGraph::IncEdgeIt e(graph, n); e != lemon::INVALID; ++e) {
 			CMetalData::ClusterGraph::Node v = graph.oppositeNode(n, e);
 			if (!(*threatFilter)[v]) {
-				MarkContested(graph.id(v), frame);
+				clusterInfos[graph.id(v)].contestedFrame = frame;
 			}
 		}
 	}
@@ -473,15 +467,16 @@ void CMetalManager::MarkWalkWalls(int frame)
 
 const std::vector<int>& CMetalManager::GetContestedClusters(int frame, int maxAge)
 {
-	auto it = std::remove_if(contestedIds.begin(), contestedIds.end(), [this, frame, maxAge](int index) {
-		SClusterInfo& info = clusterInfos[index];
-		if ((info.contestedFrame >= 0) && (frame - info.contestedFrame <= maxAge)) {
-			return false;
+	if (contestedIdsFrame != frame) {  // every attack and raid decision asks: one scan per frame
+		contestedIdsFrame = frame;
+		contestedIds.clear();
+		for (unsigned i = 0; i < clusterInfos.size(); ++i) {
+			const int markFrame = clusterInfos[i].contestedFrame;
+			if ((markFrame >= 0) && (frame - markFrame <= maxAge)) {
+				contestedIds.push_back(i);
+			}
 		}
-		info.contestedFrame = -1;
-		return true;
-	});
-	contestedIds.erase(it, contestedIds.end());
+	}
 	return contestedIds;
 }
 
