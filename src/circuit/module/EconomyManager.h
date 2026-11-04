@@ -16,6 +16,7 @@
 #include <set>
 #include <map>
 #include <memory>
+#include <functional>
 
 namespace springai {
 	class Resource;
@@ -88,6 +89,14 @@ public:
 
 	IBuilderTask* MakeEconomyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateMetalTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	// A visible reclaimable feature with at least 1 metal left
+	struct SReclaimFeature {
+		springai::AIFloat3 pos;  // corrected onto the map (impulsed flying wrecks)
+		float metal;      // of the whole feature
+		float metalLeft;
+	};
+	// Of the given feature ids (COOAICallback::GetFeatureIds/GetFeatureIdsIn)
+	std::vector<SReclaimFeature> GetReclaimFeatures(const std::vector<int>& featureIds);
 	// Metal left in visible reclaimable features that builderDef from position can reach with no threat on them.
 	// Cached per terrain area for 10s.
 	float GetReclaimMetal(CCircuitDef* builderDef, const springai::AIFloat3& position);
@@ -124,6 +133,12 @@ public:
 
 private:
 	float GetStorage(springai::Resource* res);
+	// Mex job at the best open spot for a builder at position (unit = nullptr: any builder that can reach it)
+	IBuilderTask* UpdateMexTasks(const springai::AIFloat3& position, CCircuitUnit* unit);
+	// mex_front cluster score for CMetalManager::GetMexToBuild; empty = plain nearest-spot search
+	std::function<float (int cluster, float dist)> GetMexFrontScore() const;
+	// Metal of a whole feature of this def, 0 = none or not reclaimable; read once per def
+	float GetFeatureDefMetal(int featureDefId);
 	void UpdateEconomy();
 	void UpdateGeoSpots();
 	void UpdateGeoMorph();
@@ -242,6 +257,7 @@ private:
 	std::vector<springai::AIFloat3> geoSpots;  // known geothermal vents
 	int geoSpotsFrame;  // next refresh of geoSpots
 	std::map<STerrainMapArea*, std::pair<float, int>> reclaimMetal;  // area: <metal, next refresh frame>
+	std::vector<float> featureDefMetal;  // by FeatureDef id, see GetFeatureDefMetal; < 0 = not read yet
 	float geoThreat;  // max enemy threat at a vent to build there
 	float geoMorphIncome;  // min avg metal income to morph a geothermal into its upgrade, <0 = never
 	int geoMorphFrame;  // earliest frame for geothermal morph

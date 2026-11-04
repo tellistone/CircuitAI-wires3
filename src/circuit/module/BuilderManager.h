@@ -166,10 +166,13 @@ public:
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
-	float GetTaskWeight(IBuilderTask::Priority priority) const;
-	float GetTaskTravelSec(IBuilderTask::Priority priority) const;
-	// Priority used to rank a job for a builder: mex drops to NORMAL during an energy stall
-	IBuilderTask::Priority GetTaskPriority(const IBuilderTask* task, bool isEnergyStalling) const;
+	// How a job ranks for a builder: travel cost x invWeight, lowest wins; beyond travelSec only as a fallback
+	struct SJobRank {
+		float invWeight;  // 1 / economy.builder_jobs.weight of the priority
+		float travelSec;  // economy.builder_jobs.travel of the priority; max = no cap
+	};
+	// By the job's priority, except mex drops to NORMAL during an energy stall
+	const SJobRank& GetJobRank(const IBuilderTask* task, bool isEnergyStalling) const;
 	IBuilderTask* MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
 	IBuilderTask* MakeBuilderTask(CCircuitUnit* unit, const CQueryCostMap* query);
 	IBuilderTask* CreateBuilderTask(const springai::AIFloat3& position, CCircuitUnit* unit);
@@ -201,8 +204,7 @@ private:
 	std::set<CCircuitUnit*> workers;
 	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
-	float jobWeight[3];  // LOW, NORMAL, HIGH: travel cost is divided by this when ranking jobs
-	float jobTravel[3];  // LOW, NORMAL, HIGH: seconds of travel beyond which a job is only a fallback
+	SJobRank jobRanks[4];  // LOW, NORMAL, HIGH, NOW
 	float jobSwitch;  // walking builder switches to a same-type job nearer than this share of its current one; 0 = off
 	bool isPrioRepairSafe;  // apply builder threat check to NOW repair of mobile units
 	bool isPrioRepairSafeStatic;  // same for static units
