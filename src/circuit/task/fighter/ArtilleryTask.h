@@ -39,6 +39,9 @@ private:
 	void Execute(CCircuitUnit* unit, bool isUpdating);
 	CEnemyInfo* FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);  // in range, else fills enemyPositions
 	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating);
+	// Walking to a firing spot: keep the route between full re-plans (every 6 s) while it's still good
+	bool IsFireRouteValid(CCircuitUnit* unit, float range);
+	bool IsFireSpotValid(CCircuitUnit* unit, const springai::AIFloat3& spot);  // FillCoveredSpots' rules for one spot
 	// ally_threat: fills firePositions (covered, safe, reachable, and not where the flee would fire), returns goal range
 	float FillCoveredSpots(CCircuitUnit* unit, float range);
 
@@ -83,6 +86,8 @@ private:
 	// Escort power near spot, net of enemyThreat, reaches ally_threat
 	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot, float enemyThreat = 0.f, bool isFlee = false);
 
+	std::shared_ptr<PathInfo> firePath;  // route to the current firing spot
+	int replanFrame = 0;  // re-plan that route in full after this frame
 	bool isFleeing = false;
 	int fleeFrame = 0;  // re-plan the flee after this frame
 

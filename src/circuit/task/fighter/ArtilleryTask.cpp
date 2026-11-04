@@ -176,6 +176,11 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const float range = std::max(unit->GetCircuitDef()->GetMaxRange(), (float)threatMap->GetSquareSize());
 
+	// Walking to a firing spot: cheap checks on every Execute, a full search and path query every 6 s
+	if (IsFireRouteValid(unit, range)) {
+		return;
+	}
+
 	// Goals: any cell within range of a building (old), or only covered firing cells (ally_threat)
 	const F3Vec* goals = &enemyPositions;
 	float goalRange = range;
@@ -287,9 +292,84 @@ void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdati
 		position = pPath->posPath.back();
 		unit->GetTravelAct()->SetPath(pPath);
 		unit->GetTravelAct()->StateActivate();
+		firePath = pPath;
+		replanFrame = manager->GetCircuit()->GetLastFrame() + FRAMES_PER_SEC * 6;
 	} else {
 		FallbackNoSpot(unit, isUpdating);
 	}
+}
+
+bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
+{
+	// Until the next full re-plan, keep walking while the firing spot still is one (in range of a known building,
+	// IsFireSpotValid) and the waypoints left stay under max_path_threat. Uses enemyPositions from FindTarget
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	ITravelAction* travelAct = unit->GetTravelAct();
+	if ((firePath == nullptr) || (frame >= replanFrame) || (travelAct->GetPath() != firePath)
+		|| !(travelAct->IsActive() || travelAct->IsFinishing()))  // finishing: the last waypoint is ordered, still walking
+	{
+		return false;
+	}
+	const F3Vec& route = firePath->posPath;
+	const AIFloat3& spot = route.back();
+
+	const float sqReach = SQUARE(range + 2 * circuit->GetPathfinder()->GetSquareSize());  // with the pathfinder's slack
+	bool isInRange = false;
+	for (const AIFloat3& target : enemyPositions) {
+		if (spot.SqDistance2D(target) <= sqReach) {
+			isInRange = true;
+			break;
+		}
+	}
+	if (!isInRange || !IsFireSpotValid(unit, spot)) {
+		return false;
+	}
+
+	const float maxPathThreat = GetMaxPathThreat(unit);
+	if (maxPathThreat < std::numeric_limits<float>::max()) {
+		// The waypoints left: from the one nearest to us
+		const AIFloat3& pos = unit->GetPos(frame);
+		size_t next = 0;
+		float minSqDist = std::numeric_limits<float>::max();
+		for (size_t i = 0; i < route.size(); ++i) {
+			const float sqDist = pos.SqDistance2D(route[i]);
+			if (sqDist < minSqDist) {
+				minSqDist = sqDist;
+				next = i;
+			}
+		}
+		CThreatMap* threatMap = circuit->GetThreatMap();
+		for (size_t i = next; i < route.size(); ++i) {
+			if (threatMap->GetThreatAt(unit, route[i]) > maxPathThreat) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+bool CArtilleryTask::IsFireSpotValid(CCircuitUnit* unit, const AIFloat3& spot)
+{
+	// Threat-free; with ally_threat on, also covered and not where the flee would fire on arrival.
+	// FillCoveredSpots applies the same rules to many cells at once with grids
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (circuit->GetThreatMap()->GetThreatAt(unit, spot) > THREAT_MIN) {
+		return false;
+	}
+	if (GetCfg().allyThreat < 0.f) {
+		return true;  // any spot (old behaviour)
+	}
+	if (!HasCover(unit, spot)) {
+		return false;
+	}
+	const float fleeMargin = GetFleeMargin(unit);
+	if (fleeMargin < 0.f) {
+		return true;
+	}
+	CollectDangers(fleeMargin + 2 * circuit->GetPathfinder()->GetSquareSize(), spot, spot);
+	float dangerThreat;
+	return (FindDanger(spot, dangerThreat) == nullptr) || HasCover(unit, spot, dangerThreat, true);
 }
 
 float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
@@ -472,14 +552,15 @@ void CArtilleryTask::FallbackStay(CCircuitUnit* unit, bool isUpdating)
 
 void CArtilleryTask::HoldHere(CCircuitUnit* unit)
 {
-	if (unit->GetTravelAct()->IsActive()) {
+	ITravelAction* travelAct = unit->GetTravelAct();
+	if (travelAct->IsActive() || travelAct->IsFinishing()) {  // finishing: the last waypoint is ordered, still walking
 		// Walking somewhere that is no longer wanted: the engine still holds queued waypoints, stop here
 		CCircuitAI* circuit = manager->GetCircuit();
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Stop();
 		)
 	}
-	unit->GetTravelAct()->StateWait();
+	travelAct->StateWait();
 }
 
 void CArtilleryTask::ApplyPathOrHold(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath)
