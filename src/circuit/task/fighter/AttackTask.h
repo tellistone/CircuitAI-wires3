@@ -220,7 +220,9 @@ private:
 	std::vector<STargetGoal> screenedGoals;  // FindTarget: all screened targets before stickiness trims them (retry goals)
 	std::map<ICoreUnit::Id, int> rejectedUntil;  // targets dropped for an unsafe route approach -> skip until frame
 	std::map<ICoreUnit::Id, SStaticBan> staticBans;  // static targets with no safe firing cell (beyond LOS range only)
-	// Power-weighted median of the non-support units' weapon ranges, against land and under-water targets
+	// This target decision's firing cells (target, sector) dropped for an unsafe walk in (ApplyTargetPath)
+	std::vector<std::pair<ICoreUnit::Id, int>> rejectedCells;
+	// Power-weighted median of the weapon ranges of the non-support units that can hit land / under-water targets
 	float fireRangeLand;
 	float fireRangeWater;
 	int targetRouteTries;  // routes so far in this target decision (MAX_TARGET_ROUTES)
