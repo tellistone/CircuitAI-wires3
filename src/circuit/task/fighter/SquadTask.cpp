@@ -464,12 +464,11 @@ float ISquadTask::GetSafeThreat() const
 	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;
 }
 
-float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals,
-		float extraThreat) const
+float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
 {
 	// The pathfinder skips cells hotter than this. One value for the whole route: the squad's strength with
 	// the strictest thr_mod.distance and the loosest base_bonus of start and goals (as attack groups do), times
-	// GetPathThreatMod, plus extraThreat. Never below the threat where the unit stands, so a squad already in
+	// GetPathThreatMod. Never below the threat where the unit stands, so a squad already in
 	// danger can still walk out through ground no hotter than here.
 	const float capMod = GetPathThreatMod();
 	if ((capMod < 0.f) || unit->GetUnit()->IsCloaked()) {
@@ -484,7 +483,7 @@ float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos,
 		curve = std::max(curve, GetThrDistModAt(g));
 		bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(g)));
 	}
-	const float cap = GetSafeThreat() * bonus / curve * capMod + extraThreat;
+	const float cap = GetSafeThreat() * bonus / curve * capMod;
 	return std::max(cap, circuit->GetThreatMap()->GetThreatAt(unit, startPos) + THREAT_MIN);
 }
 
@@ -509,8 +508,7 @@ void ISquadTask::QueryPath(CCircuitUnit* unit, const AIFloat3& goal, float range
 	});
 }
 
-void ISquadTask::QueryPathMulti(const F3Vec& goals, float range, std::function<void (const CQueryPathMulti*)>&& apply,
-		float extraThreat)
+void ISquadTask::QueryPathMulti(const F3Vec& goals, float range, std::function<void (const CQueryPathMulti*)>&& apply)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
@@ -519,7 +517,7 @@ void ISquadTask::QueryPathMulti(const F3Vec& goals, float range, std::function<v
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame, startPos, range, goals, nullptr,
-			GetPathThreatCap(leader, startPos, goals, extraThreat));
+			GetPathThreatCap(leader, startPos, goals));
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 

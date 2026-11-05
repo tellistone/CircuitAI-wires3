@@ -78,16 +78,13 @@ protected:
 	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
 	// Multiplier on GetPathThreatCap's squad allowance; < 0 = no cap at all
 	virtual float GetPathThreatMod() const { return 1.f; }
-	// Pathfinder threat cap for a route from startPos to goals (see .cpp). extraThreat: added to the squad's
-	// allowance (anti-heavy: the threat of the heavy it walks to, which its own cells carry)
-	float GetPathThreatCap(CCircuitUnit* unit, const springai::AIFloat3& startPos, const F3Vec& goals,
-			float extraThreat = 0.f) const;
+	// Pathfinder threat cap for a route from startPos to goals (see .cpp)
+	float GetPathThreatCap(CCircuitUnit* unit, const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	// Path for unit to goal (isCapped: under GetPathThreatCap, else through any threat); apply runs if still current
 	void QueryPath(CCircuitUnit* unit, const springai::AIFloat3& goal, float range, bool isCapped,
 			std::function<void (const CQueryPathSingle*)>&& apply);
-	// Path for the leader to the nearest of goals within range, under GetPathThreatCap (with extraThreat)
-	void QueryPathMulti(const F3Vec& goals, float range, std::function<void (const CQueryPathMulti*)>&& apply,
-			float extraThreat = 0.f);
+	// Path for the leader to the nearest of goals within range, under GetPathThreatCap
+	void QueryPathMulti(const F3Vec& goals, float range, std::function<void (const CQueryPathMulti*)>&& apply);
 	// The nearest enemy we see now that can act and shoot the squad (IsGroundDanger; isGunship: gunships count),
 	// within its ground (or water) weapon range + margin of any squad unit; IsFleeIgnored enemies and high radar
 	// blips (planes) don't count. dangerThreat: the threat of every such enemy, each counted once
