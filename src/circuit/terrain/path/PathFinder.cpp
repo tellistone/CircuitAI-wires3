@@ -535,34 +535,23 @@ void CPathFinder::MakePath(IPathQuery* query, NSMicroPather::CMicroPather* micro
 	}
 }
 
-void CPathFinder::AddWedgeEndNodes(const AIFloat3& wedgeAnchor, float wedgeRadius, float bearing, float halfAngle,
-		std::vector<void*>& outNodes) const
+void CPathFinder::AddWedgeEndNodes(const SGoalShape& wedge, std::vector<void*>& outNodes) const
 {
-	// Squares within radius of the anchor, at a bearing within halfAngle of the wedge's (no line-of-sight test:
-	// the caller checked its goal position against the target)
-	AIFloat3 anchor = wedgeAnchor;
+	// No line-of-sight test: the caller checked its goal position against the target. Offsets are measured from the
+	// anchor's square, in elmos
+	AIFloat3 anchor = wedge.anchor;
 	CTerrainData::CorrectPosition(anchor);
 	int ax, ay;
 	Pos2MoveXY(anchor, &ax, &ay);
-	const int radius = std::max(int(wedgeRadius / squareSize), 1);
-	const int sqRadius = radius * radius;
-	const float dirX = cosf(bearing);
-	const float dirY = sinf(bearing);
-	const float cosHalf = cosf(std::min(halfAngle, float(M_PI)));
-	for (int dy = -radius; dy <= radius; ++dy) {
-		const int sy = ay + dy;
-		if ((sy < 1) || (sy >= moveMapYSize - 1)) {
-			continue;
-		}
-		for (int dx = -radius; dx <= radius; ++dx) {
-			const int sx = ax + dx;
-			const int sqLen = dx * dx + dy * dy;
-			if ((sx < 1) || (sx >= moveMapXSize - 1) || (sqLen > sqRadius) || (sqLen == 0)) {
-				continue;
-			}
-			// Inside the wedge: (d . dir) >= |d| cos(halfAngle)
-			const float dot = dx * dirX + dy * dirY;
-			if (dot >= sqrtf(float(sqLen)) * cosHalf) {
+	const int radius = std::max(int(wedge.radius / squareSize), 1);  // whole squares: stays inside the radius
+	SGoalShape w = wedge;
+	w.radius = float(radius * squareSize);
+	const int minY = std::max(ay - radius, 1), maxY = std::min(ay + radius, moveMapYSize - 2);
+	const int minX = std::max(ax - radius, 1), maxX = std::min(ax + radius, moveMapXSize - 2);
+	for (int sy = minY; sy <= maxY; ++sy) {
+		for (int sx = minX; sx <= maxX; ++sx) {
+			const int dx = sx - ax, dy = sy - ay;
+			if (((dx != 0) || (dy != 0)) && w.Contains(float(dx * squareSize), float(dy * squareSize))) {
 				outNodes.push_back(MoveXY2MoveNode(sx, sy));
 			}
 		}
@@ -673,17 +662,16 @@ void CPathFinder::FindBestPath(IPathQuery* query, NSMicroPather::CMicroPather* m
 
 	std::vector<void*>& nodeTargets = micropather->nodeTargets;  // NOTE: micro-opt
 //	nodeTargets.reserve(possibleTargets.size());
-	const std::vector<CQueryPathMulti::SGoalShape>& goalShapes = q->GetGoalShapes();
+	const std::vector<SGoalShape>& goalShapes = q->GetGoalShapes();
 	for (unsigned int i = 0; i < possibleTargets.size(); i++) {
 		AIFloat3& f = possibleTargets[i];
 
 		CTerrainData::CorrectPosition(f);
 		void* node = Pos2MoveNode(f);
-		if ((i < goalShapes.size()) && (goalShapes[i].halfAngle >= 0.f)) {
+		if ((i < goalShapes.size()) && goalShapes[i].isWedge) {
 			// Wedge goal: never skipped as a duplicate (two goals may share a heuristic node). Its end nodes are not
 			// marked here: isEndNode is the duplicate flag of disc goals, and duplicate end nodes are harmless
-			const CQueryPathMulti::SGoalShape& shape = goalShapes[i];
-			AddWedgeEndNodes(shape.anchor, shape.radius, shape.bearing, shape.halfAngle, endNodes);
+			AddWedgeEndNodes(goalShapes[i], endNodes);
 			nodeTargets.push_back(node);
 			endNodes.push_back(node);
 			continue;

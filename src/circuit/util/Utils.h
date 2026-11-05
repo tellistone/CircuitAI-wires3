@@ -14,6 +14,7 @@
 #include "System/StringUtil.h"
 #include "System/Threading/SpringThreading.h"
 #include <chrono>
+#include <cmath>
 
 #include <string.h>
 #include <stdarg.h>  // for va_start, etc
@@ -200,6 +201,13 @@ static inline float eval_curve(const std::vector<std::pair<float, float>>& curve
 		}
 	}
 	return curve.back().second;
+}
+
+// Absolute difference of two angles in radians, in [0, PI]
+static inline float angle_diff(float a, float b)
+{
+	const float d = fmodf(fabsf(a - b), 2.f * static_cast<float>(M_PI));
+	return std::min(d, 2.f * static_cast<float>(M_PI) - d);
 }
 
 template<typename T> static inline std::ostream& binary_write(std::ostream& stream, const T& value)

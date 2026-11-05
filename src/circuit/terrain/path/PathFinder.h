@@ -10,6 +10,7 @@
 #define SRC_CIRCUIT_TERRAIN_PATHFINDER_H_
 
 #include "terrain/path/MicroPather.h"
+#include "terrain/path/GoalShape.h"
 #include "util/Defines.h"
 
 #include <atomic>
@@ -105,10 +106,8 @@ private:
 
 	void MakePath(IPathQuery* query, NSMicroPather::CMicroPather* micropather);
 	void FindBestPath(IPathQuery* query, NSMicroPather::CMicroPather* micropather);
-	// End nodes of a wedge goal (CQueryPathMulti::SGoalShape): squares within wedgeRadius of wedgeAnchor whose bearing
-	// from it is within halfAngle of bearing
-	void AddWedgeEndNodes(const springai::AIFloat3& wedgeAnchor, float wedgeRadius, float bearing, float halfAngle,
-			std::vector<void*>& outNodes) const;
+	// End nodes of a wedge goal (SGoalShape): its squares, except the anchor's own
+	void AddWedgeEndNodes(const SGoalShape& wedge, std::vector<void*>& outNodes) const;
 	void MakeCostMap(IPathQuery* query, NSMicroPather::CMicroPather* micropather);
 
 	CTerrainData* terrainData;

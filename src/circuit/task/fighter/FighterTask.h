@@ -73,12 +73,13 @@ protected:
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x range from the target
 	bool GetKeptFireSpot(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // last spot, if still usable
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
-	// Centre of the firing-spot arc around the target (radians, atan2(z, x)), for the whole group; false (default):
-	// each unit's own bearing from the target. Its own and kept spots then count only if on that arc
+	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
+	// each unit's own bearing from the target
 	virtual bool GetFireArcBearing(float& outBearing) const { return false; }
-	// For the unit of claims[self]; the other claims crowd spots and back them up
+	// For the unit of claims[self]; the other claims crowd spots and back them up. arcBearing: GetFireArcBearing
+	// (nullptr: none), then the unit's own and kept spots count only if on that arc
 	FireSpot FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
-			springai::AIFloat3& outPos) const;
+			const float* arcBearing, springai::AIFloat3& outPos) const;
 
 	// Each unit's health-scaled power (pwr_mod power x sqrt(health %)), in the order of 'units'. Health takes engine
 	// calls, so it is read once per frame, and again when the group changed or a unit was hit

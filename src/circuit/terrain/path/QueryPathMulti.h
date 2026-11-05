@@ -9,20 +9,13 @@
 #define SRC_CIRCUIT_TERRAIN_PATH_QUERYPATHMULTI_H_
 
 #include "terrain/path/PathQuery.h"
+#include "terrain/path/GoalShape.h"
 
 namespace circuit {
 
 class CQueryPathMulti: public IPathQuery {
 public:
-	// Optional shape of one goal (parallel to targets). A wedge: its end nodes are the squares within radius of
-	// anchor whose bearing from anchor is within halfAngle of bearing (radians, atan2(z, x)); the goal's own
-	// position (targets[i]) is only its heuristic node. halfAngle < 0: a plain disc of maxRange around targets[i]
-	struct SGoalShape {
-		springai::AIFloat3 anchor;
-		float radius;
-		float bearing;
-		float halfAngle;
-	};
+	using SGoalShape = circuit::SGoalShape;  // optional shape of each goal, parallel to targets
 
 	CQueryPathMulti(const CPathFinder& pathfinder, int id);
 	virtual ~CQueryPathMulti();
