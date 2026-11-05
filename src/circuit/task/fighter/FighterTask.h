@@ -73,6 +73,9 @@ protected:
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x range from the target
 	bool GetKeptFireSpot(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // last spot, if still usable
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
+	// Centre of the firing-spot arc around the target (radians, atan2(z, x)), for the whole group; false (default):
+	// each unit's own bearing from the target. Its own and kept spots then count only if on that arc
+	virtual bool GetFireArcBearing(float& outBearing) const { return false; }
 	// For the unit of claims[self]; the other claims crowd spots and back them up
 	FireSpot FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
 			springai::AIFloat3& outPos) const;

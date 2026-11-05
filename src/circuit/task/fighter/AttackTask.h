@@ -40,6 +40,10 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
+protected:
+	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
+	virtual bool GetFireArcBearing(float& outBearing) const override;
+
 private:
 	// A target route goal: one candidate target, or one firing cell of a static target (quota.attack_static_cells)
 	struct STargetGoal {
@@ -146,6 +150,9 @@ private:
 	// power and near-base reference; hitTest: line of sight from a cell to the target (MakeHitTest)
 	CellResult FillFiringCells(const CEnemyInfo* enemy, float power, float ref, const NSMicroPather::TestFunc& hitTest,
 			std::vector<SFiringCell>& outCells) const;
+	// The firing cell this target's accepted route led to (ApplyTargetPath), if under PLANNED_CELL_FRAMES old and
+	// still below the allowance for strength (the caller's: the keep allowance for the current target)
+	bool GetPlannedCell(const CEnemyInfo* enemy, float strength, float refSqDist, springai::AIFloat3& outCell) const;
 	bool IsStaticBanned(ICoreUnit::Id id, int frame) const;
 	void BanStatic(const CEnemyInfo* enemy, int frame);
 	// Drops bans whose target died, whose threat changed by more than 25%, or that started over 60 s ago.
@@ -220,6 +227,11 @@ private:
 	std::vector<STargetGoal> screenedGoals;  // FindTarget: all screened targets before stickiness trims them (retry goals)
 	std::map<ICoreUnit::Id, int> rejectedUntil;  // targets dropped for an unsafe route approach -> skip until frame
 	std::map<ICoreUnit::Id, SStaticBan> staticBans;  // static targets with no safe firing cell (beyond LOS range only)
+	// The side we plan to fight a static target from: the firing cell its accepted route led to. Engaging (in-range
+	// check, firing spots) keeps to it; -1: none
+	ICoreUnit::Id plannedTargetId;
+	springai::AIFloat3 plannedCell;
+	int plannedFrame;
 	// This target decision's firing cells (target, sector) dropped for an unsafe walk in (ApplyTargetPath)
 	std::vector<std::pair<ICoreUnit::Id, int>> rejectedCells;
 	// Power-weighted median of the weapon ranges of the non-support units that can hit land / under-water targets

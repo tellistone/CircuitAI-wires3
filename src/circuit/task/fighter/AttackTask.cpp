@@ -61,6 +61,8 @@ static constexpr int STATIC_BAN_MAX_LEVEL = 2;
 // changes by more than STATIC_BAN_THREAT_CHANGE (fraction)
 static constexpr int STATIC_BAN_RESET_FRAMES = FRAMES_PER_SEC * 60;
 static constexpr float STATIC_BAN_THREAT_CHANGE = 0.25f;
+// A planned firing cell guides the engagement (in-range check, firing-spot arc) for this long after its route
+static constexpr int PLANNED_CELL_FRAMES = FRAMES_PER_SEC * 30;
 
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
@@ -78,6 +80,9 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, corneredFrame(-1)
 		, corneredPos(-RgtVector)
 		, isCorneredHold(false)
+		, plannedTargetId(-1)
+		, plannedCell(-RgtVector)
+		, plannedFrame(0)
 		, fireRangeLand(0.f)
 		, fireRangeWater(0.f)
 		, targetRouteTries(0)
@@ -1041,7 +1046,14 @@ void CAttackTask::FindTarget()
 		if (isInRange) {
 			const float power = powerFor(c.enemy);
 			const float ref = refFor(c.enemy);
-			if (!IsLineSafe(ePos, pos, highestRange, [&](const AIFloat3& p) { return GetAllowedThreatAt(p, power, ref); })) {
+			auto allowedAt = [&](const AIFloat3& p) { return GetAllowedThreatAt(p, power, ref); };
+			// The current target with a planned firing cell: judged on the side we plan to fight from, as its route
+			// was (the line from it to the cell, and our walk there). Else, or that side went hot: the line towards us
+			AIFloat3 cell;
+			const bool isPlannedSide = isPrev && GetPlannedCell(c.enemy, power, ref, cell)
+					&& IsLineSafe(ePos, cell, highestRange, allowedAt)
+					&& IsLineSafe(pos, cell, std::numeric_limits<float>::max(), allowedAt);
+			if (!isPlannedSide && !IsLineSafe(ePos, pos, highestRange, allowedAt)) {
 				continue;
 			}
 		}
@@ -1249,6 +1261,38 @@ CAttackTask::CellResult CAttackTask::FillFiringCells(const CEnemyInfo* enemy, fl
 	// allowance somewhere but no line of sight (a pessimistic test): route to it as before. Too hot everywhere we
 	// can reach: ban
 	return (!isReachable || isThreatOk) ? CellResult::DISC : CellResult::NONE;
+}
+
+bool CAttackTask::GetPlannedCell(const CEnemyInfo* enemy, float strength, float refSqDist, AIFloat3& outCell) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	if ((enemy == nullptr) || (enemy->GetId() != plannedTargetId)
+		|| (circuit->GetLastFrame() >= plannedFrame + PLANNED_CELL_FRAMES)
+		|| (circuit->GetThreatMap()->GetThreatAt(leader, plannedCell) >= GetAllowedThreatAt(plannedCell, strength, refSqDist)))
+	{
+		return false;
+	}
+	outCell = plannedCell;
+	return true;
+}
+
+bool CAttackTask::GetFireArcBearing(float& outBearing) const
+{
+	if (target == nullptr) {
+		return false;
+	}
+	const AIFloat3& tPos = target->GetPos();
+	const float keep = IsInBaseRadius(tPos) ? 1.f : GetMilitaryMgr()->GetAttackKeepThreat();
+	AIFloat3 cell;
+	if (!GetPlannedCell(target, GetPickStrength(manager->GetCircuit()->GetLastFrame()) * keep, scaleRefSqDist, cell)) {
+		return false;
+	}
+	const AIFloat3 d = cell - tPos;
+	if (d.Length2D() < 1.f) {
+		return false;
+	}
+	outBearing = atan2f(d.z, d.x);
+	return true;
 }
 
 bool CAttackTask::IsStaticBanned(ICoreUnit::Id id, int frame) const
@@ -1465,6 +1509,10 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		}
 		SetTarget(reached);
 		position = reached->GetPos();
+		// The side we'll fight it from (or none: a disc route, fight from wherever we arrive)
+		plannedTargetId = isCell ? reached->GetId() : -1;
+		plannedCell = cellPos;
+		plannedFrame = frame;
 	}
 	pPath = path;
 	ActivePath(lowestSpeed);

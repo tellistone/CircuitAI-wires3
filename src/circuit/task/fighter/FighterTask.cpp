@@ -392,18 +392,34 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		c.cost = costOf(c, std::max(c.threat, 0.f));
 		cands.push_back(c);
 	};
-	// Where it stands, and its last spot, while in the fire band: the distance term favours them
-	if (IsInFireBand(unit, uPos)) {
+	// The arc's centre: the group's planned side if the task has one (GetFireArcBearing), else facing the unit
+	float arcBearing = 0.f;
+	const bool isArcSet = GetFireArcBearing(arcBearing);
+	auto isOnArc = [&](const AIFloat3& p) {
+		if (!isArcSet) {
+			return true;
+		}
+		const AIFloat3 d = p - tPos;
+		if (d.Length2D() < 1.f) {
+			return true;
+		}
+		float diff = fmodf(fabsf(atan2f(d.z, d.x) - arcBearing), 2.f * static_cast<float>(M_PI));
+		diff = std::min(diff, 2.f * static_cast<float>(M_PI) - diff);
+		return diff <= static_cast<float>(M_PI) * ARC_SPAN + 1e-3f;
+	};
+	// Where it stands, and its last spot, while in the fire band (and on the planned arc): the distance term
+	// favours them
+	if (IsInFireBand(unit, uPos) && isOnArc(uPos)) {
 		add(uPos);
 	}
 	AIFloat3 keptPos;
-	if (GetKeptFireSpot(unit, keptPos)) {
+	if (GetKeptFireSpot(unit, keptPos) && isOnArc(keptPos)) {
 		add(keptPos);
 	}
-	// Spots on an arc around the target, facing us (+-45 degrees: keeps the group together)
+	// Spots on an arc around the target, facing us or the planned side (+-45 degrees: keeps the group together)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	AIFloat3 dir = uPos - tPos;
-	const float bearing = (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
+	const float bearing = isArcSet ? arcBearing : (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
 	const float radius = range * FIRE_RADIUS;
 	for (int i = -ARC_STEPS; i <= ARC_STEPS; ++i) {
 		const float angle = bearing + i * static_cast<float>(M_PI) * ARC_SPAN / ARC_STEPS;
