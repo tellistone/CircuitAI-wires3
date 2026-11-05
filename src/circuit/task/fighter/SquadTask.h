@@ -85,14 +85,19 @@ protected:
 	virtual float GetScootMargin(CCircuitUnit* unit) const;
 	// Should this unit (GetScootMargin >= 0) be out of reach now? Default: main weapon below reload_scoot reloaded
 	virtual bool IsUnitReloading(CCircuitUnit* unit, int frame) const;
-	// A scooting unit is reloaded enough. Default: drop its old target so the next Attack re-orders it, and ask for an
-	// update now
+	// A scooting unit is reloaded enough. Default: drop its old target so the next Attack re-orders it, and (engaged)
+	// ask for an update now, or (not engaged) Start it on the squad's path
 	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged);
-	// Every update: scoot reloading units while engaged (re-sent once a second while still in ground threat; one
-	// outside all ground threat stops there), and end the scoot of units reloaded enough (also after the fight ended)
+	// Every update: scoot reloading units while engaged, and end the scoot of units reloaded enough (also after the
+	// fight ended). A unit outside all ground threat doesn't start a scoot (it fights on); a scooting one stops once
+	// it gets there. Re-checked once a second while scooting
 	void UpdateScoots(int frame);
 	void Scoot(CCircuitUnit* unit, int frame, float margin);
-	std::map<CCircuitUnit*, int> scoots;  // reloading units stepping out of reach: frame of their last scoot order
+	struct SScoot {
+		int frame;  // last scoot check
+		bool isSafe;  // stopped outside all ground threat
+	};
+	std::map<CCircuitUnit*, SScoot> scoots;  // reloading units stepping out of reach
 
 	/*
 	 * Threat-capped paths and the squad flee (anti-air, anti-heavy)

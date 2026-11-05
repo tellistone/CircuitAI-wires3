@@ -386,7 +386,7 @@ void CFactoryManager::ReadConfig()
 		}
 		const Json::Value& scootMargin = behaviour["reload_scoot_margin"];
 		if (!scootMargin.isNull()) {
-			cdef->SetReloadScootMargin(scootMargin.asFloat());
+			cdef->SetReloadScootMargin(std::max(0.f, scootMargin.asFloat()));  // < 0 would read as "never scoots"
 		}
 
 		const Json::Value& pwrMod = behaviour["pwr_mod"];

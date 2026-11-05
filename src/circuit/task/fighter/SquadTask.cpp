@@ -455,7 +455,11 @@ bool ISquadTask::IsUnitReloading(CCircuitUnit* unit, int frame) const
 void ISquadTask::OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged)
 {
 	unit->ClearTarget();  // IFighterTask::Attack re-orders a unit whose target differs
-	unit->ForceUpdate(frame);
+	if (isEngaged) {
+		unit->ForceUpdate(frame);  // Attack now (defend squads only run it every 16 updates otherwise)
+	} else {
+		Start(unit);  // back on the squad's path; no forced re-plan (attack squads would drop their route)
+	}
 }
 
 void ISquadTask::UpdateScoots(int frame)
@@ -464,8 +468,7 @@ void ISquadTask::UpdateScoots(int frame)
 	if (!isEngaged && scoots.empty()) {
 		return;
 	}
-	decltype(units) tmpUnits = units;  // OnScootEnd may issue orders
-	for (CCircuitUnit* unit : tmpUnits) {
+	for (CCircuitUnit* unit : units) {  // NOTE: orders can't remove units here (TRY_UNIT defers to Garbage)
 		auto it = scoots.find(unit);
 		const float margin = GetScootMargin(unit);
 		if ((margin < 0.f) || !IsUnitReloading(unit, frame)) {
@@ -477,7 +480,7 @@ void ISquadTask::UpdateScoots(int frame)
 		}
 		// Reloading. After the target is lost, a scooting unit stays out of the regroup check until it's reloaded
 		if (isEngaged && (unit->Blocker() == nullptr)
-			&& ((it == scoots.end()) || (frame >= it->second + FRAMES_PER_SEC)))
+			&& ((it == scoots.end()) || (frame >= it->second.frame + FRAMES_PER_SEC)))
 		{
 			Scoot(unit, frame, margin);
 		}
@@ -487,25 +490,22 @@ void ISquadTask::UpdateScoots(int frame)
 void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	const bool isNew = (scoots.find(unit) == scoots.end());
-	scoots[unit] = frame;
+	auto it = scoots.find(unit);
+	const bool isNew = (it == scoots.end());
 
-	const AIFloat3& tPos = target->GetPos();
+	// Outside every ground threat (this unit's threat layer), whatever the target's range or kind (planes count
+	// through their ground threat): no scoot, the unit fights on. A scooting unit that got there stops, rather than
+	// walking on to its spot and having further to come back
 	const AIFloat3& uPos = unit->GetPos(frame);
-	CCircuitDef* edef = target->GetCircuitDef();
-	const float tRange = (edef != nullptr)
-			? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
-			: 0.f;  // unknown type (radar blip): the margin alone
-	const float reach = tRange + margin;
-	AIFloat3 dir = uPos - tPos;
-	dir.y = 0.f;
-	const float len = dir.Length2D();
-	// Safe already: outside every ground threat (this unit's threat layer), whatever the target's range or kind
-	// (planes count through their ground threat). Stay, don't walk back in on the old order
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const float hereThreat = threatMap->GetThreatAt(unit, uPos);
 	if (hereThreat <= THREAT_MIN) {
 		if (isNew) {
+			return;
+		}
+		it->second.frame = frame;
+		if (!it->second.isSafe) {
+			it->second.isSafe = true;
 			unit->GetTravelAct()->StateWait();
 			TRY_UNIT(circuit, unit,
 				unit->GetUnit()->Stop();
@@ -514,6 +514,15 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 		return;
 	}
 
+	const AIFloat3& tPos = target->GetPos();
+	CCircuitDef* edef = target->GetCircuitDef();
+	const float tRange = (edef != nullptr)
+			? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
+			: 0.f;  // unknown type (radar blip): the margin alone
+	const float reach = tRange + margin;
+	AIFloat3 dir = uPos - tPos;
+	dir.y = 0.f;
+	const float len = dir.Length2D();
 	if (len < 1.f) {
 		dir = circuit->GetSetupManager()->GetBasePos() - tPos;  // on top of it: towards our base
 		dir.y = 0.f;
@@ -521,8 +530,8 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 	const float dirLen = dir.Length2D();
 	AIFloat3 dest = uPos;
 	if (dirLen > 1.f) {
-		// Just outside the target's ground range + margin; already past that (other enemies, or a target whose
-		// threat reaches further than its range): another margin further back. Re-sent each second while in threat
+		// Just outside the target's ground range + margin; already past that (other enemies, or the threat ring's
+		// slack beyond the target's range): another margin further back. Re-sent each second while in threat
 		const float dist = std::max(reach, len + std::max(margin, (float)SQUARE_SIZE * 8)) + 50.f;
 		dest = tPos + dir * (dist / dirLen);
 	}
@@ -535,11 +544,12 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 	// where the target's own threat still counts. Else a new scoot doesn't start (the unit fights on), and a
 	// running one keeps its last order
 	if (threatMap->GetThreatAt(unit, dest) > hereThreat) {
-		if (isNew) {
-			scoots.erase(unit);
+		if (!isNew) {
+			it->second.frame = frame;
 		}
 		return;
 	}
+	scoots[unit] = {frame, false};
 	unit->GetTravelAct()->StateWait();
 	TRY_UNIT(circuit, unit,
 		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
