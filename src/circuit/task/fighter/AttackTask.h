@@ -74,9 +74,12 @@ private:
 		ICoreUnit::Id targetId;  // -1: front route
 		int frame;  // when it arrived
 		int reuseFrames;  // kept for this long (longer for a static target's firing cell: buildings don't move)
-		// The firing cell it leads to (isCell only): the side we plan to fight the target from (GetPlannedCell)
+		// The firing cell it leads to and its sector (IsCell only): the side we plan to fight the target from, for as
+		// long as it stays our target (GetPlannedCell)
 		springai::AIFloat3 cell;
-		bool isCell;
+		int sector;  // -1: no cell
+
+		bool IsCell() const { return sector >= 0; }
 	};
 
 	CMilitaryManager* GetMilitaryMgr() const;
@@ -152,8 +155,8 @@ private:
 	// (undefended, melee group, nothing reachable, or no line of sight)
 	bool FillFiringCells(const CEnemyInfo* enemy, float power, float ref, const NSMicroPather::TestFunc& hitTest,
 			std::vector<SFiringCell>& outCells) const;
-	// The firing cell the last accepted route to this target led to, if under PLANNED_CELL_FRAMES old and still
-	// below the allowance for strength (the caller's: the keep allowance for the current target)
+	// The firing cell the last accepted route to this target led to (lastRoute: dropped when the target changes), if
+	// its side isn't rejected and it is still below the allowance for strength (the caller's: the keep allowance)
 	bool GetPlannedCell(ICoreUnit::Id targetId, float strength, float refSqDist, springai::AIFloat3& outCell) const;
 	bool IsStaticBanned(ICoreUnit::Id id, int frame) const;
 	void BanStatic(const CEnemyInfo* enemy, int frame);
@@ -186,7 +189,8 @@ private:
 	// Threat cost of a route: quota.attack_path_dynamic_cost, and on capped routes quota.attack_path_ignore_threat
 	void SetRouteThreat(IPathQuery* query, AttackRoute route) const;
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
-	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, const springai::AIFloat3* cell = nullptr);
+	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, const springai::AIFloat3* cell = nullptr,
+			int sector = -1);
 	// Still walking the last route to this same goal, planned under ROUTE_REUSE_FRAMES ago, with no unit in danger,
 	// nothing unsafe just ahead and (target) a safe approach still: keep it (pPath) instead of planning it again
 	bool ReuseRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, int frame);
