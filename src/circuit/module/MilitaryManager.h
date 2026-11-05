@@ -142,6 +142,13 @@ public:
 		float fleeAllyRadius;
 	};
 	const SAntiAirCfg& GetAntiAirCfg() const { return antiAir; }
+	struct SAntiHeavyCfg {
+		float pathThreat;  // routes may not cross threat above this x the squad's allowance (as anti-air's cap); < 0 = no cap
+		float fleeMargin;  // flee when an armed mobile enemy (not the heavy being hunted, unless reloading) is within its range + this; < 0 = off
+		float fleeAllyThreat;  // no flee while escorts within fleeAllyRadius of the leader, net of the enemies, have this much power; < 0 = always flee
+		float fleeAllyRadius;
+	};
+	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
 	bool IsGuardRole(CCircuitDef* cdef) const;
 	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
 	bool IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const;
@@ -351,6 +358,7 @@ private:
 	SGuardCfg guard;
 	std::map<int, int> guardBanUntil;  // unit id -> frame
 	SAntiAirCfg antiAir;
+	SAntiHeavyCfg antiHeavy;
 
 	struct SRaidQuota {
 		float min;

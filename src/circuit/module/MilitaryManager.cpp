@@ -688,6 +688,12 @@ void CMilitaryManager::ReadConfig()
 		antiAir.fireSpot = 1.f;
 	}
 
+	const Json::Value& ahCfg = root["antiheavy"];
+	antiHeavy.pathThreat = ahCfg.get("path_threat", -1.f).asFloat();
+	antiHeavy.fleeMargin = ahCfg.get("flee_margin", -1.f).asFloat();
+	antiHeavy.fleeAllyThreat = ahCfg.get("flee_ally_threat", (antiHeavy.fleeMargin >= 0.f) ? 10.f : -1.f).asFloat();
+	antiHeavy.fleeAllyRadius = std::max(0.f, ahCfg.get("flee_ally_radius", 500.f).asFloat());
+
 	const Json::Value& porc = root["porcupine"];
 	const Json::Value& defs = porc["unit"];
 	defenderDefs.reserve(defs.size());

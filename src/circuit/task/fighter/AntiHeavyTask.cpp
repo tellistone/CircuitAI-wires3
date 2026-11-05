@@ -26,6 +26,8 @@
 
 #include "AISCommands.h"
 
+#include <limits>
+
 namespace circuit {
 
 using namespace springai;
@@ -131,6 +133,13 @@ void CAntiHeavyTask::Update()
 	}
 
 	/*
+	 * Flee from approaching enemies before anything else (every update)
+	 */
+	if (CheckFlee()) {
+		return;
+	}
+
+	/*
 	 * Merge tasks if possible
 	 */
 	ISquadTask* task = GetMergeTask();
@@ -182,12 +191,12 @@ void CAntiHeavyTask::Update()
 	/*
 	 * Update target
 	 */
-	if (!leader->GetCircuitDef()->IsRoleMine()
-		&& (leader->GetCircuitDef()->GetReloadTime() >= FRAMES_PER_SEC * 5)
-		&& !leader->IsWeaponReady(frame))
-	{
+	if (IsReloading(frame)) {
+		if (GetFleeMargin() >= 0.f) {
+			return;  // shoot and scoot: CheckFlee runs from whatever is in reach, else the squad stays on its orders
+		}
 		if (IsQueryReady(leader)) {
-			FallbackAttackSafe();
+			FallbackAttackSafe();  // no flee: old blind pull-back to the attack groups
 		}
 		return;
 	}
@@ -242,27 +251,15 @@ void CAntiHeavyTask::Update()
 		return;
 	}
 
-	const AIFloat3& startPos = leader->GetPos(frame);
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, pathfinder->GetSquareSize(), enemyPositions);
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query));
-		}
-	});
+	QueryPathMulti(enemyPositions, circuit->GetPathfinder()->GetSquareSize(),
+			[this](const CQueryPathMulti* query) { ApplyTargetPath(query); }, quarryThreat);
 }
 
 void CAntiHeavyTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	ISquadTask::OnUnitIdle(unit);
-	if (units.empty()) {
-		return;
+	if (units.empty() || (State::DISENGAGE == state)) {
+		return;  // fleeing: CheckFlee re-plans
 	}
 
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -296,6 +293,112 @@ void CAntiHeavyTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	}
 }
 
+const CMilitaryManager::SAntiHeavyCfg& CAntiHeavyTask::GetCfg() const
+{
+	return manager->GetCircuit()->GetMilitaryManager()->GetAntiHeavyCfg();
+}
+
+float CAntiHeavyTask::GetPathThreatMod() const
+{
+	return GetCfg().pathThreat;
+}
+
+float CAntiHeavyTask::GetFleeMargin() const
+{
+	CCircuitDef* cdef = leader->GetCircuitDef();
+	if (cdef->IsRoleMine() || cdef->IsAbleToFly()) {
+		return -1.f;  // mines hide (cloak) instead; aircraft don't walk the ground paths the flee plans
+	}
+	return cdef->GetAhFleeMargin(GetCfg().fleeMargin);
+}
+
+bool CAntiHeavyTask::IsReloading(int frame) const
+{
+	CCircuitDef* cdef = leader->GetCircuitDef();
+	return !cdef->IsRoleMine() && (cdef->GetReloadTime() >= FRAMES_PER_SEC * 5) && !leader->IsWeaponReady(frame);
+}
+
+bool CAntiHeavyTask::IsQuarry(CEnemyInfo* enemy) const
+{
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	if ((edef == nullptr) || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY | CCircuitDef::RoleMask::COMM)) {
+		return false;
+	}
+	CCircuitDef* cdef = leader->GetCircuitDef();
+	return !(cdef->IsAttrAntiStat() && edef->IsMobile())
+		&& ((edef->GetCategory() & cdef->GetTargetCategory()) != 0)
+		&& !(edef->IsAbleToFly() && !cdef->HasAntiAir());
+}
+
+bool CAntiHeavyTask::IsFleeIgnored(CEnemyInfo* enemy) const
+{
+	if (IsReloading(manager->GetCircuit()->GetLastFrame())) {
+		return false;  // just fired: get out of reach of everything, the target too
+	}
+	return (enemy == target) || IsQuarry(enemy);
+}
+
+bool CAntiHeavyTask::CheckFlee()
+{
+	// antiheavy.flee_margin: flee from enemies in reach (FindFleeDanger, IsFleeIgnored), unless (flee_ally_threat)
+	// escorts next to the leader outweigh them by enough. Returns true while fleeing
+	if (leader == nullptr) {
+		return false;
+	}
+	const CMilitaryManager::SAntiHeavyCfg& ahCfg = GetCfg();
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const float fleeMargin = GetFleeMargin();
+	float dangerThreat = 0.f;
+	CEnemyInfo* danger = (fleeMargin >= 0.f) ? FindFleeDanger(fleeMargin, true, dangerThreat) : nullptr;  // gunships count
+	if ((danger != nullptr) && (ahCfg.fleeAllyThreat >= 0.f) && IsFleeCovered(leader->GetPos(frame), dangerThreat,
+			ahCfg.fleeAllyThreat, ahCfg.fleeAllyRadius, ROLE_TYPE(AH)))
+	{
+		danger = nullptr;
+	}
+
+	if (danger == nullptr) {
+		if (isFleeing) {
+			isFleeing = false;
+			pathQueries.erase(leader);  // drop a flee path still in flight: it must not send the squad off afterwards
+			if (State::DISENGAGE == state) {
+				state = State::ROAM;  // danger gone: back to normal work on this update
+			}
+		}
+		return false;
+	}
+
+	if ((isFleeing && (frame < fleeFrame)) || !IsQueryReady(leader)) {
+		return true;  // already on the way
+	}
+	isFleeing = true;
+	fleeFrame = frame + FLEE_REPLAN_FRAMES;
+	Flee(danger->GetPos());
+	return true;
+}
+
+void CAntiHeavyTask::Flee(const AIFloat3& dangerPos)
+{
+	const AIFloat3* goal = FindFleeGoal(dangerPos);
+	if (goal == nullptr) {
+		FallbackBasePos(true);
+		return;
+	}
+	QueryPath(leader, *goal, FALLBACK_PATH_RANGE, true, [this](const CQueryPathSingle* query) { ApplyFleePath(query); });
+}
+
+void CAntiHeavyTask::ApplyFleePath(const CQueryPathSingle* query)
+{
+	pPath = query->GetPathInfo();
+
+	if (!pPath->posPath.empty()) {
+		position = pPath->posPath.back();
+		ActivePath();
+		state = State::DISENGAGE;
+	} else {
+		FallbackBasePos(true);  // no path under the cap: base, then (last resort) through any threat
+	}
+}
+
 bool CAntiHeavyTask::FindTarget()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -305,9 +408,6 @@ bool CAntiHeavyTask::FindTarget()
 	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
 	STerrainMapArea* area = leader->GetArea();
 	CCircuitDef* cdef = leader->GetCircuitDef();
-	const bool isAntiStatic = cdef->IsAttrAntiStat();
-	const bool notAA = !cdef->HasAntiAir();
-	const int canTargetCat = cdef->GetTargetCategory();
 	const float maxPower = attackPower * powerMod;  // divided by the thr_mod.distance curve at each enemy's spot
 	const float weaponRange = cdef->GetMaxRange();
 	const float range = std::max(highestRange, threatMap->GetSquareSize() * 2.0f);
@@ -316,6 +416,7 @@ bool CAntiHeavyTask::FindTarget()
 
 	CEnemyInfo* bestTarget = nullptr;
 	enemyPositions.clear();
+	quarryThreat = std::numeric_limits<float>::max();
 	threatMap->SetThreatType(leader);
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
@@ -330,13 +431,7 @@ bool CAntiHeavyTask::FindTarget()
 			continue;
 		}
 
-		CCircuitDef* edef = enemy->GetCircuitDef();
-		if ((edef == nullptr) || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY | CCircuitDef::RoleMask::COMM)
-			|| (isAntiStatic && edef->IsMobile())
-			|| ((edef->GetCategory() & canTargetCat) == 0)
-			|| (edef->IsAbleToFly() && notAA)
-			|| (ePos.y - map->GetElevationAt(ePos.x, ePos.z) > weaponRange))
-		{
+		if (!IsQuarry(enemy) || (ePos.y - map->GetElevationAt(ePos.x, ePos.z) > weaponRange)) {
 			continue;
 		}
 
@@ -346,7 +441,11 @@ bool CAntiHeavyTask::FindTarget()
 			bestTarget = enemy;
 		} else if (losSqDist <= sqDist) {
 			enemyPositions.push_back(ePos);
+			quarryThreat = std::min(quarryThreat, enemy->GetThreat());
 		}
+	}
+	if (enemyPositions.empty()) {
+		quarryThreat = 0.f;
 	}
 
 	SetTarget(bestTarget);
@@ -388,7 +487,7 @@ void CAntiHeavyTask::FallbackTargetEmpty()
 void CAntiHeavyTask::FallbackAttackSafe()
 {
 	if (leader->GetCircuitDef()->IsRoleMine()) {
-		FallbackBasePos();
+		FallbackBasePos(true);
 		return;
 	}
 
@@ -399,22 +498,7 @@ void CAntiHeavyTask::FallbackAttackSafe()
 		return;
 	}
 
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& startPos = leader->GetPos(frame);
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, urgentPositions);
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyAttackSafe(static_cast<const CQueryPathMulti*>(query));
-		}
-	});
+	QueryPathMulti(urgentPositions, FALLBACK_PATH_RANGE, [this](const CQueryPathMulti* query) { ApplyAttackSafe(query); });
 }
 
 void CAntiHeavyTask::ApplyAttackSafe(const CQueryPathMulti* query)
@@ -434,26 +518,11 @@ void CAntiHeavyTask::FallbackStaticSafe()
 	CCircuitAI* circuit = manager->GetCircuit();
 	circuit->GetMilitaryManager()->FillStaticSafePos(leader, urgentPositions);
 	if (urgentPositions.empty()) {
-		FallbackBasePos();
+		FallbackBasePos(true);
 		return;
 	}
 
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& startPos = leader->GetPos(frame);
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, pathRange, urgentPositions);
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyStaticSafe(static_cast<const CQueryPathMulti*>(query));
-		}
-	});
+	QueryPathMulti(urgentPositions, FALLBACK_PATH_RANGE, [this](const CQueryPathMulti* query) { ApplyStaticSafe(query); });
 }
 
 void CAntiHeavyTask::ApplyStaticSafe(const CQueryPathMulti* query)
@@ -464,42 +533,27 @@ void CAntiHeavyTask::ApplyStaticSafe(const CQueryPathMulti* query)
 		position = pPath->posPath.back();
 		ActivePath();
 	} else {
-		FallbackBasePos();
+		FallbackBasePos(true);
 	}
 }
 
-void CAntiHeavyTask::FallbackBasePos()
+void CAntiHeavyTask::FallbackBasePos(bool isCapped)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	CSetupManager* setupMgr = circuit->GetSetupManager();
-
-	position = setupMgr->GetBasePos();
-
-	const AIFloat3& startPos = leader->GetPos(frame);
-	const float pathRange = DEFAULT_SLACK * 4;
-
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathRange);
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyBasePos(static_cast<const CQueryPathSingle*>(query));
-		}
-	});
+	position = circuit->GetSetupManager()->GetBasePos();
+	QueryPath(leader, position, FALLBACK_PATH_RANGE, isCapped,
+			[this, isCapped](const CQueryPathSingle* query) { ApplyBasePos(query, isCapped); });
 }
 
-void CAntiHeavyTask::ApplyBasePos(const CQueryPathSingle* query)
+void CAntiHeavyTask::ApplyBasePos(const CQueryPathSingle* query, bool isCapped)
 {
 	pPath = query->GetPathInfo();
 
 	if (!pPath->posPath.empty()) {
 		position = pPath->posPath.back();
 		ActivePath();
+	} else if (isCapped && (GetPathThreatMod() >= 0.f)) {
+		FallbackBasePos(false);  // getting home matters more than the cap: last try through any threat
 	} else {
 		FallbackCommPos();
 	}

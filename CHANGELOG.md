@@ -7,6 +7,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Anti-heavy threat-capped routes and flee** (`antiheavy` block in `behaviour.json`; code defaults off, shipped
+  `path_threat` 1.0, `flee_margin` 200, `flee_ally_threat` 10, `flee_ally_radius` 500; per unit `antiheavy_flee_margin`).
+  Anti-heavy squads used to path to heavies, safety and home with no threat cap, and had no flee. Their routes now use
+  anti-air's cap (squad strength x base bonus / `thr_mod.distance`, x `path_threat`; the route to a heavy may also cross
+  that heavy's own threat), and they flee like anti-air squads from armed enemies in reach (gunships included), unless
+  escorts cover them. While the weapon is ready the heavies they hunt don't set off the flee; after a shot with a long
+  reload (5 s or more) everything does, so Lance-like units shoot and then step out of reach instead of walking back
+  to the attack group. Mines and aircraft never flee. The path cap, squad flee check and cover check are now shared by
+  anti-air and anti-heavy (`ISquadTask`); anti-air behaves as before.
 - **Capturer hides when loaded** (per unit `capture_hide`, default 0 = off; shipped 2.0 on `vehcapture`). A unit whose
   captured units (Zero-K's `capture_controller` rules param) cost more than `capture_hide` x its own metal cost retreats
   to the closest haven and stays there, ignoring the retreat wait timeout, until enough of them die or are lost to drop it

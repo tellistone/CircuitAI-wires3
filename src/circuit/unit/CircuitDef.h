@@ -275,6 +275,9 @@ public:
 	// behaviour.json per unit "artillery_flee_margin"; unset = use the "artillery" block's value
 	void SetArtyFleeMargin(float value) { artyFleeMargin = value; isArtyFleeMarginSet = true; }
 	float GetArtyFleeMargin(float defaultValue) const { return isArtyFleeMarginSet ? artyFleeMargin : defaultValue; }
+	// behaviour.json per unit "antiheavy_flee_margin"; unset = use the "antiheavy" block's value
+	void SetAhFleeMargin(float value) { ahFleeMargin = value; isAhFleeMarginSet = true; }
+	float GetAhFleeMargin(float defaultValue) const { return isAhFleeMarginSet ? ahFleeMargin : defaultValue; }
 	// behaviour.json per unit "capture_hide": hide at base while units captured by this one cost more than
 	// this many times its own cost; 0 = off
 	void SetCaptureHide(float value) { captureHide = value; }
@@ -381,6 +384,8 @@ private:
 	float retreat;
 	float artyFleeMargin = -1.f;
 	bool isArtyFleeMarginSet = false;
+	float ahFleeMargin = -1.f;
+	bool isAhFleeMarginSet = false;
 	float captureHide = 0.f;
 	float targetDistMod = 1.f;
 

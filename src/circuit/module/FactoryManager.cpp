@@ -373,6 +373,10 @@ void CFactoryManager::ReadConfig()
 		if (!artyFlee.isNull()) {
 			cdef->SetArtyFleeMargin(artyFlee.asFloat());
 		}
+		const Json::Value& ahFlee = behaviour["antiheavy_flee_margin"];
+		if (!ahFlee.isNull()) {
+			cdef->SetAhFleeMargin(ahFlee.asFloat());
+		}
 
 		const Json::Value& pwrMod = behaviour["pwr_mod"];
 		if (!pwrMod.isNull()) {
