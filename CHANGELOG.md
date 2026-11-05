@@ -9,8 +9,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit
   `reload_scoot_margin`, default 100, or the anti-heavy flee margin in anti-heavy squads). While engaged, a unit whose
-  main weapon is less than `reload_scoot` reloaded steps straight away from the target to just outside the target's
-  ground range + margin, and fights again once reloaded that far; the rest of the squad fights on. Works in attack,
+  main weapon is less than `reload_scoot` reloaded and that stands in ground threat steps straight away from the
+  target to just outside the target's ground range + margin (a margin further back each second while still in
+  threat), but never to a hotter spot, and fights again once reloaded that far; the rest of the squad fights on. Out
+  of all ground threat it stays put. Anti-heavy's scoot uses the same rule now. Works in attack,
   raid, defend, anti-air and anti-heavy squads (not mines or aircraft). It is anti-heavy's shoot and scoot, moved to
   `ISquadTask`; anti-heavy units without `reload_scoot` behave as before. No unit has it set yet.
 - **Anti-heavy threat-capped routes and flee** (`antiheavy` block in `behaviour.json`; code defaults off, shipped

@@ -73,8 +73,9 @@ protected:
 	int pullFrame = 0;  // last pull-back
 
 	/*
-	 * Shoot and scoot: while engaged, a unit whose weapon is still reloading steps straight away from the target to
-	 * just outside the target's ground range + its scoot margin, and fights again once reloaded enough. The rest of
+	 * Shoot and scoot: while engaged, a unit whose weapon is still reloading and that stands in ground threat steps
+	 * straight away from the target to just outside the target's ground range + its scoot margin (or a margin further
+	 * back, if already past that), and fights again once reloaded enough. The rest of
 	 * the squad fights on. Call UpdateScoots every update; Attack, ActivePath and the regroup check skip scooting units
 	 */
 	static constexpr float DEFAULT_SCOOT_MARGIN = 100.f;  // reload_scoot_margin when unset (tasks may override)
@@ -87,8 +88,8 @@ protected:
 	// A scooting unit is reloaded enough. Default: drop its old target so the next Attack re-orders it, and ask for an
 	// update now
 	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged);
-	// Every update: scoot reloading units while engaged (re-sent once a second while still in reach; one out of reach
-	// stops there), and end the scoot of units reloaded enough (also after the fight ended)
+	// Every update: scoot reloading units while engaged (re-sent once a second while still in ground threat; one
+	// outside all ground threat stops there), and end the scoot of units reloaded enough (also after the fight ended)
 	void UpdateScoots(int frame);
 	void Scoot(CCircuitUnit* unit, int frame, float margin);
 	std::map<CCircuitUnit*, int> scoots;  // reloading units stepping out of reach: frame of their last scoot order

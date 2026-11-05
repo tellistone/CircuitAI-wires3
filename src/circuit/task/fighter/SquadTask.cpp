@@ -500,8 +500,12 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 	AIFloat3 dir = uPos - tPos;
 	dir.y = 0.f;
 	const float len = dir.Length2D();
-	if (len >= reach) {
-		if (isNew) {  // out of reach already (outranges the target): stay, don't walk back in on the old order
+	// Safe already: outside every ground threat (this unit's threat layer), whatever the target's range or kind
+	// (planes count through their ground threat). Stay, don't walk back in on the old order
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const float hereThreat = threatMap->GetThreatAt(unit, uPos);
+	if (hereThreat <= THREAT_MIN) {
+		if (isNew) {
 			unit->GetTravelAct()->StateWait();
 			TRY_UNIT(circuit, unit,
 				unit->GetUnit()->Stop();
@@ -517,7 +521,10 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 	const float dirLen = dir.Length2D();
 	AIFloat3 dest = uPos;
 	if (dirLen > 1.f) {
-		dest = tPos + dir * ((reach + 50.f) / dirLen);
+		// Just outside the target's ground range + margin; already past that (other enemies, or a target whose
+		// threat reaches further than its range): another margin further back. Re-sent each second while in threat
+		const float dist = std::max(reach, len + std::max(margin, (float)SQUARE_SIZE * 8)) + 50.f;
+		dest = tPos + dir * (dist / dirLen);
 	}
 	CTerrainManager::CorrectPosition(dest);
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -527,8 +534,7 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 	// Straight back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here,
 	// where the target's own threat still counts. Else a new scoot doesn't start (the unit fights on), and a
 	// running one keeps its last order
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	if (threatMap->GetThreatAt(unit, dest) > threatMap->GetThreatAt(unit, uPos)) {
+	if (threatMap->GetThreatAt(unit, dest) > hereThreat) {
 		if (isNew) {
 			scoots.erase(unit);
 		}
