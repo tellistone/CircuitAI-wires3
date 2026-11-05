@@ -103,7 +103,6 @@ void CAntiHeavyTask::AssignTo(CCircuitUnit* unit)
 void CAntiHeavyTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	ISquadTask::RemoveAssignee(unit);
-	scoots.erase(unit);
 	if (leader == nullptr) {
 		manager->AbortTask(this);
 	} else {
@@ -220,7 +219,7 @@ void CAntiHeavyTask::Update()
 		position = target->GetPos();
 		float power = 0.f;
 		for (CCircuitUnit* unit : units) {
-			if (scoots.find(unit) == scoots.end()) {  // a scooting unit comes back once its weapon is ready
+			if (!IsScooting(unit)) {  // a scooting unit comes back once its weapon is ready
 				AttackTarget(unit, frame, power);
 			}
 		}
@@ -306,11 +305,34 @@ bool CAntiHeavyTask::IsReloading(int frame) const
 	return !cdef->IsRoleMine() && (cdef->GetReloadTime() >= FRAMES_PER_SEC * 5) && !leader->IsWeaponReady(frame);
 }
 
+float CAntiHeavyTask::GetScootMargin(CCircuitUnit* unit) const
+{
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	if (cdef->IsRoleMine() || cdef->IsAbleToFly()) {
+		return -1.f;
+	}
+	const float fleeMargin = GetFleeMargin();
+	if (cdef->IsReloadScoot()) {
+		return cdef->GetReloadScootMargin((fleeMargin < 0.f) ? DEFAULT_SCOOT_MARGIN : fleeMargin);
+	}
+	return fleeMargin;  // flee off (< 0): no scoot, the old leader pull-back instead
+}
+
 bool CAntiHeavyTask::IsUnitReloading(CCircuitUnit* unit, int frame) const
 {
 	CCircuitDef* cdef = unit->GetCircuitDef();
-	return !cdef->IsRoleMine() && (cdef->GetReloadTime() >= FRAMES_PER_SEC * 5) && unit->HasWeapon()
-		&& !unit->IsWeaponReady(frame);
+	if (cdef->IsReloadScoot()) {
+		return ISquadTask::IsUnitReloading(unit, frame);
+	}
+	return (cdef->GetReloadTime() >= FRAMES_PER_SEC * 5) && unit->HasWeapon() && !unit->IsWeaponReady(frame);
+}
+
+void CAntiHeavyTask::OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged)
+{
+	if (isEngaged) {
+		float minePower = 0.f;  // mines never scoot
+		AttackTarget(unit, frame, minePower);
+	}
 }
 
 bool CAntiHeavyTask::AttackTarget(CCircuitUnit* unit, int frame, float& minePower)
@@ -336,84 +358,6 @@ bool CAntiHeavyTask::AttackTarget(CCircuitUnit* unit, int frame, float& minePowe
 		unit->Attack(target, frame + FRAMES_PER_SEC * 60);
 	}
 	return true;
-}
-
-void CAntiHeavyTask::UpdateScoots(int frame)
-{
-	if (GetFleeMargin() < 0.f) {
-		scoots.clear();
-		return;
-	}
-	const bool isEngaged = (State::ENGAGE == state) && (target != nullptr);
-	if (!isEngaged && scoots.empty()) {
-		return;
-	}
-	float minePower = 0.f;  // mines never scoot
-	for (CCircuitUnit* unit : units) {
-		auto it = scoots.find(unit);
-		if (!IsUnitReloading(unit, frame)) {
-			if (it != scoots.end()) {
-				scoots.erase(it);  // ready again: back to the fight
-				if (isEngaged) {
-					AttackTarget(unit, frame, minePower);
-				}
-			}
-			continue;
-		}
-		// Reloading. After the target is lost, a scooting unit stays out of the regroup check until it's ready
-		if (isEngaged && (unit->Blocker() == nullptr)
-			&& ((it == scoots.end()) || (frame >= it->second + FRAMES_PER_SEC)))
-		{
-			Scoot(unit, frame);
-		}
-	}
-}
-
-void CAntiHeavyTask::Scoot(CCircuitUnit* unit, int frame)
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	const bool isNew = (scoots.find(unit) == scoots.end());
-	scoots[unit] = frame;
-
-	const AIFloat3& tPos = target->GetPos();
-	const AIFloat3& uPos = unit->GetPos(frame);
-	CCircuitDef* edef = target->GetCircuitDef();  // a quarry: known type
-	const float tRange = (edef != nullptr)
-			? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
-			: 0.f;
-	const float reach = tRange + GetFleeMargin();
-	AIFloat3 dir = uPos - tPos;
-	dir.y = 0.f;
-	const float len = dir.Length2D();
-	if (len >= reach) {
-		if (isNew) {  // out of reach already (outranges the target): stay, don't walk back in on the old order
-			unit->GetTravelAct()->StateWait();
-			TRY_UNIT(circuit, unit,
-				unit->GetUnit()->Stop();
-			)
-		}
-		return;
-	}
-
-	if (len < 1.f) {
-		dir = circuit->GetSetupManager()->GetBasePos() - tPos;  // on top of it: towards our base
-		dir.y = 0.f;
-	}
-	const float dirLen = dir.Length2D();
-	AIFloat3 dest = uPos;
-	if (dirLen > 1.f) {
-		dest = tPos + dir * ((reach + 50.f) / dirLen);
-	}
-	CTerrainManager::CorrectPosition(dest);
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	if (!terrainMgr->CanMoveToPos(unit->GetArea(), dest)) {
-		dest = terrainMgr->GetMovePosition(unit->GetArea(), dest);
-	}
-	unit->GetTravelAct()->StateWait();
-	TRY_UNIT(circuit, unit,
-		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
-	)
 }
 
 bool CAntiHeavyTask::IsQuarry(CEnemyInfo* enemy) const

@@ -189,6 +189,15 @@ bool CCircuitUnit::IsWeaponReady(int frame)
 	return isWeaponReady;
 }
 
+bool CCircuitUnit::IsWeaponReloaded(int frame, float fraction)
+{
+	if ((fraction >= 1.f) || circuitDef->IsPlane() || (weapon == nullptr)) {
+		return IsWeaponReady(frame);
+	}
+	const float left = (1.f - std::max(fraction, 0.f)) * circuitDef->GetReloadTime();  // frames still allowed
+	return weapon->GetReloadFrame() <= frame + left;
+}
+
 bool CCircuitUnit::IsDGunReady(int frame, float energy)
 {
 	return (dgun->GetReloadFrame() <= frame) && (dgunDef->GetCostE() < energy)

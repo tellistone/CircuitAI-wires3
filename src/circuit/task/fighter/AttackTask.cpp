@@ -223,6 +223,7 @@ void CAttackTask::Update()
 	if (UpdateEscape(frame)) {
 		return;
 	}
+	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot
 
 	/*
 	 * Regroup if required
@@ -1380,7 +1381,9 @@ void CAttackTask::Engage(int frame)
 	// line the merge check judged safe, rather than straight to a firing spot next to the enemy
 	const AIFloat3& leaderPos = leader->GetPos(frame);
 	for (CCircuitUnit* unit : units) {
-		if ((unit->Blocker() == nullptr) && !unit->GetTravelAct()->IsActive() && IsOutOfReach(unit, frame)) {
+		if ((unit->Blocker() == nullptr) && !unit->GetTravelAct()->IsActive() && !IsScooting(unit)
+			&& IsOutOfReach(unit, frame))
+		{
 			MoveUnitTo(unit, leaderPos, frame);
 		}
 	}

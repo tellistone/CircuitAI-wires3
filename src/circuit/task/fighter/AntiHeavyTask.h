@@ -35,7 +35,12 @@ protected:
 	virtual bool IsFleeIgnored(CEnemyInfo* enemy) const override;
 	// antiheavy_max_group of the squad's unit type: a merge may not take it over that size
 	virtual bool IsRoomFor(size_t count) const override;
-	virtual bool IsRegroupExempt(CCircuitUnit* unit) const override { return scoots.find(unit) != scoots.end(); }
+	// Shoot and scoot (ISquadTask). reload_scoot units use their own threshold and margin (default: the flee
+	// margin); others scoot while their long-reload weapon (5 s or more) isn't ready, when the flee is on.
+	// Never mines or aircraft
+	virtual float GetScootMargin(CCircuitUnit* unit) const override;
+	virtual bool IsUnitReloading(CCircuitUnit* unit, int frame) const override;
+	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged) override;  // attacks again at once
 
 private:
 	const CMilitaryManager::SAntiHeavyCfg& GetCfg() const;  // antiheavy block of behaviour.json
@@ -43,13 +48,6 @@ private:
 	float GetFleeMargin() const;
 	// Flee off: the leader's long-reload weapon (5 s or more) isn't ready (old blind pull-back to the attack groups)
 	bool IsReloading(int frame) const;
-	// Shoot and scoot (flee on): this unit's long-reload weapon isn't ready. Not mines or units without a weapon
-	bool IsUnitReloading(CCircuitUnit* unit, int frame) const;
-	// Every update while engaged: a reloading unit within the target's ground range + flee margin moves straight
-	// away to just outside it (re-sent once a second while still in reach), one out of reach stops there; a unit
-	// whose weapon is ready again attacks at once
-	void UpdateScoots(int frame);
-	void Scoot(CCircuitUnit* unit, int frame);
 	bool AttackTarget(CCircuitUnit* unit, int frame, float& minePower);  // the engage orders for one unit
 	// A heavy or commander the squad can shoot (role, target category, anti-static, air)
 	bool IsQuarry(CEnemyInfo* enemy) const;
@@ -86,7 +84,6 @@ private:
 
 	bool isFleeing = false;
 	int fleeFrame = 0;  // re-plan the flee after this frame
-	std::map<CCircuitUnit*, int> scoots;  // reloading units stepping out of reach: frame of their last scoot order
 
 	struct SDanger {
 		springai::AIFloat3 pos;

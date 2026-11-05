@@ -52,8 +52,8 @@ protected:
 	bool IsMustRegroup();
 	// Can this squad take count more units by merging (CheckMergeTask asks the host)? Default: always
 	virtual bool IsRoomFor(size_t count) const { return true; }
-	// IsMustRegroup ignores this unit (anti-heavy: stepping out of reach while it reloads)
-	virtual bool IsRegroupExempt(CCircuitUnit* unit) const { return false; }
+	// IsMustRegroup ignores this unit. Default: it is scooting (stepping out of reach while it reloads)
+	virtual bool IsRegroupExempt(CCircuitUnit* unit) const { return IsScooting(unit); }
 	void ReleaseStuck(std::vector<CCircuitUnit*>& stuck);
 	void ActivePath(float speed = NO_SPEED_LIMIT);
 	NSMicroPather::TestFunc GetHitTest() const;
@@ -71,6 +71,27 @@ protected:
 	std::vector<CCircuitUnit*> endangered;  // from the last IsInDanger
 	bool isPathAheadUnsafe = false;  // from the last IsInDanger
 	int pullFrame = 0;  // last pull-back
+
+	/*
+	 * Shoot and scoot: while engaged, a unit whose weapon is still reloading steps straight away from the target to
+	 * just outside the target's ground range + its scoot margin, and fights again once reloaded enough. The rest of
+	 * the squad fights on. Call UpdateScoots every update; Attack, ActivePath and the regroup check skip scooting units
+	 */
+	static constexpr float DEFAULT_SCOOT_MARGIN = 100.f;  // reload_scoot_margin when unset (tasks may override)
+	virtual bool IsScooting(CCircuitUnit* unit) const override { return scoots.find(unit) != scoots.end(); }
+	// Elmos beyond the target's range a scooting unit steps to; < 0 = this unit never scoots.
+	// Default: reload_scoot units (not mines or aircraft): reload_scoot_margin, else DEFAULT_SCOOT_MARGIN
+	virtual float GetScootMargin(CCircuitUnit* unit) const;
+	// Should this unit (GetScootMargin >= 0) be out of reach now? Default: main weapon below reload_scoot reloaded
+	virtual bool IsUnitReloading(CCircuitUnit* unit, int frame) const;
+	// A scooting unit is reloaded enough. Default: drop its old target so the next Attack re-orders it, and ask for an
+	// update now
+	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged);
+	// Every update: scoot reloading units while engaged (re-sent once a second while still in reach; one out of reach
+	// stops there), and end the scoot of units reloaded enough (also after the fight ended)
+	void UpdateScoots(int frame);
+	void Scoot(CCircuitUnit* unit, int frame, float margin);
+	std::map<CCircuitUnit*, int> scoots;  // reloading units stepping out of reach: frame of their last scoot order
 
 	/*
 	 * Threat-capped paths and the squad flee (anti-air, anti-heavy)

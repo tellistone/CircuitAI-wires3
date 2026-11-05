@@ -124,6 +124,7 @@ void CAntiAirTask::Update()
 	if (CheckFlee()) {  // every update: run from approaching ground enemies before anything else
 		return;
 	}
+	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot
 
 	// Disengaging: keep walking until the spot is reached (checked every update, so the squad hunts again on
 	// arrival), re-planning the path every 32 updates

@@ -79,6 +79,7 @@ void ISquadTask::AssignTo(CCircuitUnit* unit)
 void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IFighterTask::RemoveAssignee(unit);
+	scoots.erase(unit);
 	leader = nullptr;
 	lowestRange = lowestSpeed = std::numeric_limits<float>::max();
 	highestRange = highestSpeed = .0f;
@@ -422,8 +423,8 @@ void ISquadTask::PullBackEndangered(int frame)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	for (CCircuitUnit* unit : endangered) {
-		if ((unit->Blocker() != nullptr) || IsOnRiskySpot(unit, frame)) {
-			continue;  // busy, or just sent to the least dangerous firing spot: don't bounce it back
+		if ((unit->Blocker() != nullptr) || IsOnRiskySpot(unit, frame) || IsScooting(unit)) {
+			continue;  // busy, just sent to the least dangerous firing spot (don't bounce it back), or stepping back already
 		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
 		TRY_UNIT(circuit, unit,
@@ -431,6 +432,103 @@ void ISquadTask::PullBackEndangered(int frame)
 			unit->CmdWantedSpeed(NO_SPEED_LIMIT);
 		)
 	}
+}
+
+/*
+ * Shoot and scoot
+ */
+
+float ISquadTask::GetScootMargin(CCircuitUnit* unit) const
+{
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	if (!cdef->IsReloadScoot() || cdef->IsRoleMine() || cdef->IsAbleToFly()) {
+		return -1.f;  // mines hide (cloak) instead; aircraft don't walk
+	}
+	return cdef->GetReloadScootMargin(DEFAULT_SCOOT_MARGIN);
+}
+
+bool ISquadTask::IsUnitReloading(CCircuitUnit* unit, int frame) const
+{
+	return unit->HasWeapon() && !unit->IsWeaponReloaded(frame, unit->GetCircuitDef()->GetReloadScoot());
+}
+
+void ISquadTask::OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged)
+{
+	unit->ClearTarget();  // IFighterTask::Attack re-orders a unit whose target differs
+	unit->ForceUpdate(frame);
+}
+
+void ISquadTask::UpdateScoots(int frame)
+{
+	const bool isEngaged = (State::ENGAGE == state) && (target != nullptr);
+	if (!isEngaged && scoots.empty()) {
+		return;
+	}
+	decltype(units) tmpUnits = units;  // OnScootEnd may issue orders
+	for (CCircuitUnit* unit : tmpUnits) {
+		auto it = scoots.find(unit);
+		const float margin = GetScootMargin(unit);
+		if ((margin < 0.f) || !IsUnitReloading(unit, frame)) {
+			if (it != scoots.end()) {
+				scoots.erase(it);  // reloaded enough: back to the fight
+				OnScootEnd(unit, frame, isEngaged);
+			}
+			continue;
+		}
+		// Reloading. After the target is lost, a scooting unit stays out of the regroup check until it's reloaded
+		if (isEngaged && (unit->Blocker() == nullptr)
+			&& ((it == scoots.end()) || (frame >= it->second + FRAMES_PER_SEC)))
+		{
+			Scoot(unit, frame, margin);
+		}
+	}
+}
+
+void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const bool isNew = (scoots.find(unit) == scoots.end());
+	scoots[unit] = frame;
+
+	const AIFloat3& tPos = target->GetPos();
+	const AIFloat3& uPos = unit->GetPos(frame);
+	CCircuitDef* edef = target->GetCircuitDef();
+	const float tRange = (edef != nullptr)
+			? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
+			: 0.f;  // unknown type (radar blip): the margin alone
+	const float reach = tRange + margin;
+	AIFloat3 dir = uPos - tPos;
+	dir.y = 0.f;
+	const float len = dir.Length2D();
+	if (len >= reach) {
+		if (isNew) {  // out of reach already (outranges the target): stay, don't walk back in on the old order
+			unit->GetTravelAct()->StateWait();
+			TRY_UNIT(circuit, unit,
+				unit->GetUnit()->Stop();
+			)
+		}
+		return;
+	}
+
+	if (len < 1.f) {
+		dir = circuit->GetSetupManager()->GetBasePos() - tPos;  // on top of it: towards our base
+		dir.y = 0.f;
+	}
+	const float dirLen = dir.Length2D();
+	AIFloat3 dest = uPos;
+	if (dirLen > 1.f) {
+		dest = tPos + dir * ((reach + 50.f) / dirLen);
+	}
+	CTerrainManager::CorrectPosition(dest);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	if (!terrainMgr->CanMoveToPos(unit->GetArea(), dest)) {
+		dest = terrainMgr->GetMovePosition(unit->GetArea(), dest);
+	}
+	unit->GetTravelAct()->StateWait();
+	TRY_UNIT(circuit, unit,
+		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
 }
 
 /*

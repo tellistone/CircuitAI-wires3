@@ -142,6 +142,7 @@ void CDefendTask::Update()
 	 */
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot
 	bool isExecute = (updCount % 16 == 2);
 	if (!isExecute) {
 		for (CCircuitUnit* unit : units) {
