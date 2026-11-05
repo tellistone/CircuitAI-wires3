@@ -177,6 +177,9 @@ ISquadTask* ISquadTask::CheckMergeTask()
 			continue;
 		}
 		const ISquadTask* candy = static_cast<const ISquadTask*>(candidate);
+		if (!candy->IsRoomFor(units.size())) {
+			continue;  // anti-heavy: the merged squad would be over its unit type's limit
+		}
 
 		const AIFloat3& tp = candy->GetLeaderPos(frame);
 		const AIFloat3& taskPos = utils::is_valid(tp) ? tp : pos;

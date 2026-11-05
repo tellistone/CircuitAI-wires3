@@ -278,6 +278,9 @@ public:
 	// behaviour.json per unit "antiheavy_flee_margin"; unset = use the "antiheavy" block's value
 	void SetAhFleeMargin(float value) { ahFleeMargin = value; isAhFleeMarginSet = true; }
 	float GetAhFleeMargin(float defaultValue) const { return isAhFleeMarginSet ? ahFleeMargin : defaultValue; }
+	// behaviour.json per unit "antiheavy_max_group": most units of this type in one anti-heavy squad; 0 = no limit
+	void SetAhMaxGroup(int value) { ahMaxGroup = value; }
+	int GetAhMaxGroup() const { return ahMaxGroup; }
 	// behaviour.json per unit "capture_hide": hide at base while units captured by this one cost more than
 	// this many times its own cost; 0 = off
 	void SetCaptureHide(float value) { captureHide = value; }
@@ -386,6 +389,7 @@ private:
 	bool isArtyFleeMarginSet = false;
 	float ahFleeMargin = -1.f;
 	bool isAhFleeMarginSet = false;
+	int ahMaxGroup = 0;
 	float captureHide = 0.f;
 	float targetDistMod = 1.f;
 

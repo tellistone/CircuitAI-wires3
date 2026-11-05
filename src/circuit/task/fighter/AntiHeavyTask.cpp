@@ -54,11 +54,20 @@ bool CAntiHeavyTask::CanAssignTo(CCircuitUnit* unit) const
 	{
 		return false;
 	}
+	if (!IsRoomFor(1)) {
+		return false;  // full: antiheavy_max_group
+	}
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
 		return false;
 	}
 	return true;
+}
+
+bool CAntiHeavyTask::IsRoomFor(size_t count) const
+{
+	const int maxGroup = (leader != nullptr) ? leader->GetCircuitDef()->GetAhMaxGroup() : 0;
+	return (maxGroup <= 0) || (units.size() + count <= (size_t)maxGroup);
 }
 
 void CAntiHeavyTask::AssignTo(CCircuitUnit* unit)

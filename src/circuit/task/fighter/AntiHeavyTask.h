@@ -33,6 +33,8 @@ protected:
 	// The squad flee doesn't run from the heavies it hunts (IsQuarry); reloading units step away from the target
 	// on their own (Scoot)
 	virtual bool IsFleeIgnored(CEnemyInfo* enemy) const override;
+	// antiheavy_max_group of the squad's unit type: a merge may not take it over that size
+	virtual bool IsRoomFor(size_t count) const override;
 	virtual bool IsRegroupExempt(CCircuitUnit* unit) const override { return scoots.find(unit) != scoots.end(); }
 
 private:
