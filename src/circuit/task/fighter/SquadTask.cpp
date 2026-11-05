@@ -79,7 +79,10 @@ void ISquadTask::AssignTo(CCircuitUnit* unit)
 void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IFighterTask::RemoveAssignee(unit);
-	scoots.erase(unit);
+	if (scoots.erase(unit) > 0) {
+		SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
+	}
+	scootReturns.erase(unit);
 	leader = nullptr;
 	lowestRange = lowestSpeed = std::numeric_limits<float>::max();
 	highestRange = highestSpeed = .0f;
@@ -104,6 +107,8 @@ void ISquadTask::Merge(ISquadTask* task)
 		unit->GetTravelAct()->SetState(state);
 	}
 	units.insert(rookies.begin(), rookies.end());
+	scoots.insert(task->scoots.begin(), task->scoots.end());  // still on hold position: ended (and released) here
+	task->scoots.clear();
 	attackPower += task->GetAttackPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
 	shields.insert(sh.begin(), sh.end());
@@ -465,18 +470,32 @@ void ISquadTask::OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged)
 void ISquadTask::UpdateScoots(int frame)
 {
 	const bool isEngaged = (State::ENGAGE == state) && (target != nullptr);
-	if (!isEngaged && scoots.empty()) {
+	if (!isEngaged && scoots.empty() && scootReturns.empty()) {
 		return;
 	}
 	for (CCircuitUnit* unit : units) {  // NOTE: orders can't remove units here (TRY_UNIT defers to Garbage)
 		auto it = scoots.find(unit);
 		const float margin = GetScootMargin(unit);
 		if ((margin < 0.f) || !IsUnitReloading(unit, frame)) {
+			scootReturns.erase(unit);
 			if (it != scoots.end()) {
-				scoots.erase(it);  // reloaded enough: back to the fight
-				OnScootEnd(unit, frame, isEngaged);
+				EndScoot(unit, frame, isEngaged);  // reloaded enough: back to the fight
 			}
 			continue;
+		}
+		if (scootReturns.find(unit) != scootReturns.end()) {
+			continue;  // on its way back in already
+		}
+		if (isEngaged && (it != scoots.end())) {
+			// Turn back once walking into fire range takes as long as the reload left, so the unit shoots again as
+			// soon as it's ready (a slow unit far back would otherwise lose time on every cycle)
+			const float speed = unit->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
+			const float walk = unit->GetPos(frame).distance2D(target->GetPos()) - GetFireRange(unit);
+			if ((speed > 0.f) && (walk / speed >= unit->GetWeaponReloadLeft(frame))) {
+				scootReturns.insert(unit);
+				EndScoot(unit, frame, isEngaged);
+				continue;
+			}
 		}
 		// Reloading. After the target is lost, a scooting unit stays out of the regroup check until it's reloaded
 		if (isEngaged && (unit->Blocker() == nullptr)
@@ -485,6 +504,23 @@ void ISquadTask::UpdateScoots(int frame)
 			Scoot(unit, frame, margin);
 		}
 	}
+}
+
+void ISquadTask::SetScootHold(CCircuitUnit* unit, bool isHold)
+{
+	// Back to the def's move state (maneuver when it has none, as artillery does)
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	TRY_UNIT(manager->GetCircuit(), unit,
+		const int defState = cdef->GetDef()->GetMoveState();
+		unit->GetUnit()->SetMoveState(isHold ? 0 : ((defState >= 0) ? defState : 1));
+	)
+}
+
+void ISquadTask::EndScoot(CCircuitUnit* unit, int frame, bool isEngaged)
+{
+	scoots.erase(unit);
+	SetScootHold(unit, false);
+	OnScootEnd(unit, frame, isEngaged);
 }
 
 void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
@@ -550,6 +586,9 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 		return;
 	}
 	scoots[unit] = {frame, false};
+	if (isNew) {
+		SetScootHold(unit, true);
+	}
 	unit->GetTravelAct()->StateWait();
 	TRY_UNIT(circuit, unit,
 		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);

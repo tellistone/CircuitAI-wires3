@@ -106,6 +106,7 @@ public:
 	// Main weapon at least this much (0..1] reloaded, out of its current reload time; 1 = IsWeaponReady.
 	// No weapon: false. Planes: IsWeaponReady (ammo)
 	bool IsWeaponReloaded(int frame, float fraction);
+	int GetWeaponReloadLeft(int frame);  // frames until the main weapon is ready; 0 if ready or none (planes: 0)
 	bool IsDGunReady(int frame, float energy);
 	bool IsShieldCharged(float percent);
 	bool IsJumpReady();

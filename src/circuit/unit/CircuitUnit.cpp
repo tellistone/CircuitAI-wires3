@@ -200,6 +200,14 @@ bool CCircuitUnit::IsWeaponReloaded(int frame, float fraction)
 	return weapon->GetReloadFrame() <= frame + left;
 }
 
+int CCircuitUnit::GetWeaponReloadLeft(int frame)
+{
+	if (circuitDef->IsPlane() || (weapon == nullptr)) {
+		return 0;
+	}
+	return std::max(weapon->GetReloadFrame() - frame, 0);
+}
+
 bool CCircuitUnit::IsDGunReady(int frame, float energy)
 {
 	return (dgun->GetReloadFrame() <= frame) && (dgunDef->GetCostE() < energy)

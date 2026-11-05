@@ -75,8 +75,8 @@ protected:
 	/*
 	 * Shoot and scoot: while engaged, a unit whose weapon is still reloading and that stands in ground threat steps
 	 * straight away from the target to just outside the target's ground range + its scoot margin (or a margin further
-	 * back, if already past that), and fights again once reloaded enough. The rest of
-	 * the squad fights on. Call UpdateScoots every update; Attack, ActivePath and the regroup check skip scooting units
+	 * back, if already past that), and fights again once reloaded enough, or sooner if walking back into range would
+	 * take longer than the reload it has left. The rest of the squad fights on. Call UpdateScoots every update; Attack, ActivePath and the regroup check skip scooting units
 	 */
 	static constexpr float DEFAULT_SCOOT_MARGIN = 100.f;  // reload_scoot_margin when unset (tasks may override)
 	virtual bool IsScooting(CCircuitUnit* unit) const override { return scoots.find(unit) != scoots.end(); }
@@ -89,15 +89,23 @@ protected:
 	// ask for an update now, or (not engaged) Start it on the squad's path
 	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged);
 	// Every update: scoot reloading units while engaged, and end the scoot of units reloaded enough (also after the
-	// fight ended). A unit outside all ground threat doesn't start a scoot (it fights on); a scooting one stops once
-	// it gets there. Re-checked once a second while scooting
+	// fight ended), or (engaged) of units whose walk back into range takes as long as the reload they have left.
+	// A unit outside all ground threat doesn't start a scoot (it fights on); a scooting one stops once it gets there.
+	// Re-checked once a second while scooting
 	void UpdateScoots(int frame);
 	void Scoot(CCircuitUnit* unit, int frame, float margin);
+	// While scooting a unit is on hold position: the engine's idle auto-attack (weapon range + 200 elmos on
+	// maneuver) would otherwise walk it straight back in after its scoot move ends or it stops
+	void SetScootHold(CCircuitUnit* unit, bool isHold);
+	void EndScoot(CCircuitUnit* unit, int frame, bool isEngaged);  // restores the move state, then OnScootEnd
 	struct SScoot {
 		int frame;  // last scoot check
 		bool isSafe;  // stopped outside all ground threat
 	};
 	std::map<CCircuitUnit*, SScoot> scoots;  // reloading units stepping out of reach
+	// Turned back before the reload threshold (walk back in takes as long as the reload left): no new scoot
+	// until the weapon is ready
+	std::set<CCircuitUnit*> scootReturns;
 
 	/*
 	 * Threat-capped paths and the squad flee (anti-air, anti-heavy)
