@@ -11,11 +11,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `path_threat` 1.0, `flee_margin` 200, `flee_ally_threat` 10, `flee_ally_radius` 500; per unit `antiheavy_flee_margin`).
   Anti-heavy squads used to path to heavies, safety and home with no threat cap, and had no flee. Their routes now use
   anti-air's cap (squad strength x base bonus / `thr_mod.distance`, x `path_threat`); the route to a heavy ends at its
-  stand-off point, just outside the heavy's own threat ring, and the squad attacks from there. They flee like anti-air
+  stand-off point (the first spot outside the heavy's own threat ring that is under the cap, read from the threat map),
+  and the squad attacks from there. They flee like anti-air
   squads from armed enemies in reach (gunships included), unless escorts cover them, and stop once out of reach (with
-  a little hysteresis). While the weapon is ready the heavies they hunt don't set off the flee; after a shot with a
-  long reload (5 s or more, any squad unit) everything does, so Lance-like units shoot and then step out of reach
-  instead of walking back to the attack group. Heavies that could only be attacked from inside an uncovered flee zone
+  a little hysteresis). The heavies they hunt don't set off the flee; instead, after a shot with a long reload
+  (5 s or more), each unit steps out of the target's reach on its own and comes back once reloaded while the rest of
+  the squad fights on (shoot and scoot), instead of the whole squad walking back to the attack group. Heavies that could only be attacked from inside an uncovered flee zone
   aren't picked, so escorted heavies wait for the army. Mines and aircraft never flee; aircraft get no cap. The path cap, squad flee check and cover check are now shared by
   anti-air and anti-heavy (`ISquadTask`); anti-air behaves as before.
 - **Capturer hides when loaded** (per unit `capture_hide`, default 0 = off; shipped 2.0 on `vehcapture`). A unit whose

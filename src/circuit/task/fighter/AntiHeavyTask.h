@@ -30,16 +30,25 @@ public:
 
 protected:
 	virtual float GetPathThreatMod() const override;  // antiheavy.path_threat; < 0 = no cap (old behaviour, and aircraft)
-	// The flee doesn't run from the heavies it hunts (IsQuarry) while the weapon is ready; while reloading it
-	// runs from everything in reach (shoot and scoot)
+	// The squad flee doesn't run from the heavies it hunts (IsQuarry); reloading units step away from the target
+	// on their own (Scoot)
 	virtual bool IsFleeIgnored(CEnemyInfo* enemy) const override;
+	virtual bool IsRegroupExempt(CCircuitUnit* unit) const override { return scoots.find(unit) != scoots.end(); }
 
 private:
 	const CMilitaryManager::SAntiHeavyCfg& GetCfg() const;  // antiheavy block of behaviour.json
 	// The leader type's antiheavy_flee_margin, else the block's; -1 (off) for mines and aircraft
 	float GetFleeMargin() const;
-	// A long-reload weapon (5 s or more) that isn't ready on any squad unit: the squad has just fired
+	// Flee off: the leader's long-reload weapon (5 s or more) isn't ready (old blind pull-back to the attack groups)
 	bool IsReloading(int frame) const;
+	// Shoot and scoot (flee on): this unit's long-reload weapon isn't ready. Not mines or units without a weapon
+	bool IsUnitReloading(CCircuitUnit* unit, int frame) const;
+	// Every update while engaged: a reloading unit within the target's ground range + flee margin moves straight
+	// away to just outside it (re-sent once a second while still in reach), one out of reach stops there; a unit
+	// whose weapon is ready again attacks at once
+	void UpdateScoots(int frame);
+	void Scoot(CCircuitUnit* unit, int frame);
+	bool AttackTarget(CCircuitUnit* unit, int frame, float& minePower);  // the engage orders for one unit
 	// A heavy or commander the squad can shoot (role, target category, anti-static, air)
 	bool IsQuarry(CEnemyInfo* enemy) const;
 
@@ -53,6 +62,10 @@ private:
 	// No flee zone reaches spot, or (flee_ally_threat) escorts there cover the enemies that reach it
 	bool IsSpotSafe(const springai::AIFloat3& spot) const;
 	void StopAll();  // a flee ended: stop walking its path
+	// Stand-off point for a heavy at ePos: the first walkable point from standOff outwards (one threat cell at a
+	// time, a few cells at most) towards pos whose threat is under the route cap; false if none
+	bool ProbeStandOff(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float standOff,
+			springai::AIFloat3& outPos) const;
 
 	bool FindTarget();
 	void ApplyTargetPath(const CQueryPathMulti* query);
@@ -71,8 +84,7 @@ private:
 
 	bool isFleeing = false;
 	int fleeFrame = 0;  // re-plan the flee after this frame
-	mutable int reloadFrame = -1;  // IsReloading cache
-	mutable bool isReloading = false;
+	std::map<CCircuitUnit*, int> scoots;  // reloading units stepping out of reach: frame of their last scoot order
 
 	struct SDanger {
 		springai::AIFloat3 pos;

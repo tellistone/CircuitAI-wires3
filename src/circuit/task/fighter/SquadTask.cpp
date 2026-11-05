@@ -240,7 +240,7 @@ bool ISquadTask::IsMustRegroup()
 //	validUnits.reserve(units.size());
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();;
 	for (CCircuitUnit* unit : units) {
-		if (!unit->GetCircuitDef()->IsPlane() &&
+		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) &&
 			terrainMgr->CanMoveToPos(unit->GetArea(), unit->GetPos(frame)))
 		{
 			validUnits.push_back(unit);
@@ -258,7 +258,7 @@ bool ISquadTask::IsMustRegroup()
 		// eliminate buggy units
 		const float sqMaxDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
 		for (CCircuitUnit* unit : units) {
-			if (unit->GetCircuitDef()->IsPlane()) {
+			if (unit->GetCircuitDef()->IsPlane() || IsRegroupExempt(unit)) {
 				continue;
 			}
 			const AIFloat3& pos = unit->GetPos(frame);

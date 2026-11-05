@@ -50,6 +50,8 @@ protected:
 	// Also releases stuck units (far from the regroup spot after 60 s, or a leader that didn't move between
 	// regroups) to the idle pool; leader == nullptr afterwards if none are left
 	bool IsMustRegroup();
+	// IsMustRegroup ignores this unit (anti-heavy: stepping out of reach while it reloads)
+	virtual bool IsRegroupExempt(CCircuitUnit* unit) const { return false; }
 	void ReleaseStuck(std::vector<CCircuitUnit*>& stuck);
 	void ActivePath(float speed = NO_SPEED_LIMIT);
 	NSMicroPather::TestFunc GetHitTest() const;
