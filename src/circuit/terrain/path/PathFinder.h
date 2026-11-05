@@ -105,6 +105,10 @@ private:
 
 	void MakePath(IPathQuery* query, NSMicroPather::CMicroPather* micropather);
 	void FindBestPath(IPathQuery* query, NSMicroPather::CMicroPather* micropather);
+	// End nodes of a wedge goal (CQueryPathMulti::SGoalShape): squares within wedgeRadius of wedgeAnchor whose bearing
+	// from it is within halfAngle of bearing
+	void AddWedgeEndNodes(const springai::AIFloat3& wedgeAnchor, float wedgeRadius, float bearing, float halfAngle,
+			std::vector<void*>& outNodes) const;
 	void MakeCostMap(IPathQuery* query, NSMicroPather::CMicroPather* micropather);
 
 	CTerrainData* terrainData;

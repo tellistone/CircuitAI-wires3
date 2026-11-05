@@ -41,11 +41,30 @@ public:
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 private:
-	// A target route goal: one candidate target
+	// A target route goal: one candidate target, or one firing cell of a static target (quota.attack_static_cells)
 	struct STargetGoal {
 		ICoreUnit::Id id;
-		springai::AIFloat3 pos;
+		springai::AIFloat3 pos;  // the target's position
 		float key;  // ranking: squared distance x near-base scale x target_dist_mod^2 (/ quota.contested.bonus^2)
+		springai::AIFloat3 cell = springai::AIFloat3();  // firing cell (sector >= 0 only)
+		int sector = -1;  // >= 0: a firing cell's goal, a wedge of that sector around the target; -1: a disc around it
+	};
+	// A firing cell of a static target: where the group can shoot it from, under the threat allowance
+	struct SFiringCell {
+		springai::AIFloat3 pos;
+		int sector;
+	};
+	enum class CellResult {
+		DISC,  // route to it like any target: undefended (fast path), melee group, or no cell with line of sight
+		CELLS,  // route to its firing cells
+		NONE  // every reachable cell is above the allowance: ban it for a while
+	};
+	// A static target with no safe firing cell: skipped beyond LOS range until 'until' (growing while nothing changes)
+	struct SStaticBan {
+		int until;  // frame
+		int since;  // frame of the first ban in a row: the ban and its level reset 60 s after it
+		float threat;  // threat at the target's spot at the last ban: a change of more than 25% resets the ban
+		int level;  // 0, 1, 2: 6, 12, 24 s
 	};
 	// The last target or front route that was walked, so the next decision can keep it (ReuseRoute)
 	struct SRoute {
@@ -53,6 +72,9 @@ private:
 		springai::AIFloat3 goal;  // the target's position, or the front's first position
 		ICoreUnit::Id targetId;  // -1: front route
 		int frame;  // when it arrived
+		int reuseFrames;  // kept for this long (longer for a static target's firing cell: buildings don't move)
+		springai::AIFloat3 cell;  // the firing cell it leads to (isCell only)
+		bool isCell;
 	};
 
 	CMilitaryManager* GetMilitaryMgr() const;
@@ -120,13 +142,24 @@ private:
 	void Decide(int frame, bool isReuse);
 	// Picks the target and fills routeGoals (and screenedGoals)
 	void FindTarget();
+	// quota.attack_static_cells: the firing cells of a static target, at most one per sector, judged with the pick's
+	// power and near-base reference; hitTest: line of sight from a cell to the target (MakeHitTest)
+	CellResult FillFiringCells(const CEnemyInfo* enemy, float power, float ref, const NSMicroPather::TestFunc& hitTest,
+			std::vector<SFiringCell>& outCells) const;
+	bool IsStaticBanned(ICoreUnit::Id id, int frame) const;
+	void BanStatic(const CEnemyInfo* enemy, int frame);
+	// Drops bans whose target died, whose threat changed by more than 25%, or that started over 60 s ago.
+	// Call after threatMap->SetThreatType(leader)
+	void UpdateStaticBans(int frame);
 	bool IsOnEnemyGround() const;  // influence at the leader < 0
 	// One capped route to all candidate targets
 	void RequestTargetPath(const std::vector<STargetGoal>& goals);
-	void ApplyTargetPath(const CQueryPathMulti* query, const std::vector<ICoreUnit::Id>& ids);
-	// The ground we'd fight the target from, along this route: the line from the target to the route's end,
-	// and the route's last stretch as long as our range; every spot below the allowance for 'strength'
-	bool IsApproachSafe(const F3Vec& path, const springai::AIFloat3& targetPos, float strength, float refSqDist) const;
+	void ApplyTargetPath(const CQueryPathMulti* query, const std::vector<STargetGoal>& goals);
+	// The ground we'd fight the target from, along this route: the line from the target to the route's end (or, for
+	// a firing cell, from the route's end to the cell), and the route's last stretch as long as our range; every spot
+	// below the allowance for 'strength'
+	bool IsApproachSafe(const F3Vec& path, const springai::AIFloat3& targetPos, float strength, float refSqDist,
+			const springai::AIFloat3* cell = nullptr) const;
 	// No target: route to the front line, or hold nearby when past it on enemy-held ground (or no front / no safe
 	// route). isReuse: a normal decision no unit asked to re-plan, which may keep a fresh route to the same front
 	void FallbackFrontPos(bool isReuse = false);
@@ -136,7 +169,7 @@ private:
 	// Threat cost of a route: quota.attack_path_dynamic_cost, and on capped routes quota.attack_path_ignore_threat
 	void SetRouteThreat(IPathQuery* query, AttackRoute route) const;
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
-	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal);
+	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, const springai::AIFloat3* cell = nullptr);
 	// Still walking the last route to this same goal, planned under ROUTE_REUSE_FRAMES ago, with no unit in danger,
 	// nothing unsafe just ahead and (target) a safe approach still: keep it (pPath) instead of planning it again
 	bool ReuseRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, int frame);
@@ -144,7 +177,8 @@ private:
 	/*
 	 * Moving and holding
 	 */
-	// highestRange = max over all units of (weapon range, sight radius), rebuilt the same way on join, leave, merge
+	// highestRange = max over all units of (weapon range, sight radius), rebuilt the same way on join, leave, merge;
+	// also the group fire ranges (fireRangeLand, fireRangeWater)
 	void UpdateHighestRange();
 	float GetGroupRadius() const;  // quota.attack_group_radius
 	// Straggler: farther from the leader than GetGroupRadius and the target out of its weapon range.
@@ -185,6 +219,10 @@ private:
 	std::vector<STargetGoal> routeGoals;  // FindTarget: goals of the next target route, nearest first (max 16)
 	std::vector<STargetGoal> screenedGoals;  // FindTarget: all screened targets before stickiness trims them (retry goals)
 	std::map<ICoreUnit::Id, int> rejectedUntil;  // targets dropped for an unsafe route approach -> skip until frame
+	std::map<ICoreUnit::Id, SStaticBan> staticBans;  // static targets with no safe firing cell (beyond LOS range only)
+	// Power-weighted median of the non-support units' weapon ranges, against land and under-water targets
+	float fireRangeLand;
+	float fireRangeWater;
 	int targetRouteTries;  // routes so far in this target decision (MAX_TARGET_ROUTES)
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)

@@ -240,6 +240,17 @@ public:
 	const SAttackMerge& GetAttackMerge() const { return attackMerge; }
 	// quota.attack_group_radius: [<x the group's range>, <min elmos>]; units farther from the leader are stragglers
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
+	// quota.attack_static_cells: attack groups route to safe firing cells around static targets
+	struct SAttackStaticCells {
+		bool isOn;  // false: static targets are routed to like any other (a disc of the group's range)
+		float rings[2];  // ring radii, x the group's fire range: the first is sampled first, the second only if it yields nothing
+		int angles;  // points per ring
+		int sectors;  // sectors around the target: one cell each at most; a route goal is a wedge of 180 / sectors degrees each side
+		float threatWeight;  // cell score = threatWeight x threat / group strength + distance from the leader / fire range
+		float scoreSlack;  // cells scoring worse than the best by more than this are left out
+		float aimHeight;  // elmos above the ground the line-of-sight test aims from
+	};
+	const SAttackStaticCells& GetAttackStaticCells() const { return attackStaticCells; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
 	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
 	// Highest value of the task's thr_mod.distance curve (1 if it has none)
@@ -384,6 +395,7 @@ private:
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
+	SAttackStaticCells attackStaticCells;  // quota.attack_static_cells
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
 	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
 	float invMapDiagonal;  // 1 / the map's diagonal (thr_mod.distance curves take a fraction of it)

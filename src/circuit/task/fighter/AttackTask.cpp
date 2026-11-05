@@ -51,6 +51,16 @@ static constexpr float STICKY_DIST = 0.8f;
 static constexpr int ROUTE_REUSE_FRAMES = FRAMES_PER_SEC * 3;
 // Within this of the flee destination the group counts as arrived (and the destination must be farther than this)
 static constexpr float FLEE_ARRIVE_DIST = 400.f;
+// quota.attack_static_cells: a route to a static target's firing cell is kept this long (buildings don't move)
+static constexpr int STATIC_ROUTE_REUSE_FRAMES = FRAMES_PER_SEC * 6;
+// Static targets checked for firing cells per target decision; beyond that they are routed to as discs
+static constexpr int MAX_STATIC_CHECKS = 32;
+// A static target with no safe firing cell is banned for REJECTED_TARGET_FRAMES << level, level up to this
+static constexpr int STATIC_BAN_MAX_LEVEL = 2;
+// ... and the ban and its level are dropped this long after the first ban in a row, or when the threat at the target
+// changes by more than STATIC_BAN_THREAT_CHANGE (fraction)
+static constexpr int STATIC_BAN_RESET_FRAMES = FRAMES_PER_SEC * 60;
+static constexpr float STATIC_BAN_THREAT_CHANGE = 0.25f;
 
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
@@ -68,11 +78,13 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, corneredFrame(-1)
 		, corneredPos(-RgtVector)
 		, isCorneredHold(false)
+		, fireRangeLand(0.f)
+		, fireRangeWater(0.f)
 		, targetRouteTries(0)
 		, scaleRefSqDist(0.f)
 		, anchorTargetId(-1)
 		, pickSqDist(0.f)
-		, lastRoute({nullptr, -RgtVector, -1, 0})
+		, lastRoute({nullptr, -RgtVector, -1, 0, ROUTE_REUSE_FRAMES, AIFloat3(-RgtVector), false})
 		, isHolding(false)
 		, stepFrame(0)
 		, hitPos(-RgtVector)
@@ -188,6 +200,36 @@ void CAttackTask::UpdateHighestRange()
 		CCircuitDef* cdef = unit->GetCircuitDef();
 		highestRange = std::max(highestRange, std::max(cdef->GetMaxRange(), cdef->GetLosRadius()));
 	}
+
+	// Group fire range (quota.attack_static_cells): power-weighted median of the non-support units' weapon ranges
+	// (all units if the group is support only)
+	auto medianRange = [this](CCircuitDef::RangeType rt) {
+		static std::vector<std::pair<float, float>> ranges;  // range, power; NOTE: micro-opt
+		ranges.clear();
+		float total = 0.f;
+		for (int pass = 0; (pass < 2) && ranges.empty(); ++pass) {
+			for (CCircuitUnit* unit : units) {
+				CCircuitDef* cdef = unit->GetCircuitDef();
+				if ((pass == 0) && cdef->IsRoleSupport()) {
+					continue;
+				}
+				const float power = std::max(cdef->GetPower(), 1e-3f);
+				ranges.push_back({cdef->GetMaxRange(rt), power});
+				total += power;
+			}
+		}
+		std::sort(ranges.begin(), ranges.end());
+		float sum = 0.f;
+		for (const auto& r : ranges) {
+			sum += r.second;
+			if (sum >= total * 0.5f) {
+				return r.first;
+			}
+		}
+		return ranges.empty() ? 0.f : ranges.back().first;
+	};
+	fireRangeLand = medianRange(CCircuitDef::RangeType::LAND);
+	fireRangeWater = medianRange(CCircuitDef::RangeType::WATER);
 }
 
 void CAttackTask::Start(CCircuitUnit* unit)
@@ -887,6 +929,7 @@ void CAttackTask::FindTarget()
 
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
 	threatMap->SetThreatType(leader);
+	UpdateStaticBans(frame);
 
 	// Contested clusters (threat there blocks our mex expansion) that this group can take: enemies there count as
 	// quota.contested.bonus times closer. Judged at the full allowance from where we stand (no near-base anchor)
@@ -972,20 +1015,27 @@ void CAttackTask::FindTarget()
 		}
 	}
 
-	// Nearest candidates first. Keep the nearest MAX_TARGET_GOALS as goals of one route query (Update); the nearest
-	// is the target until the route says which one we can actually reach under the threat cap, with a safe approach
+	// Nearest candidates first. Keep the nearest MAX_TARGET_GOALS targets as goals of one route query (Update); the
+	// nearest is the target until the route says which one we can actually reach under the threat cap, with a safe approach
 	std::sort(candidates.begin(), candidates.end(),
 			[](const SCandidate& a, const SCandidate& b) { return a.key < b.key; });
 	routeGoals.clear();
 	const SCandidate* best = nullptr;
 	const SCandidate* prev = nullptr;  // the current target, if still a candidate
+	// quota.attack_static_cells: a static target beyond range is routed to its safe firing cells (one goal per cell)
+	const CMilitaryManager::SAttackStaticCells& cellCfg = militaryMgr->GetAttackStaticCells();
+	NSMicroPather::TestFunc cellHitTest;  // made on first use
+	static std::vector<SFiringCell> cells;  // NOTE: micro-opt
+	int staticChecks = 0;
+	size_t targetCount = 0;  // goals are counted by target: a static target may bring several cells
 	for (const SCandidate& c : candidates) {
 		const AIFloat3& ePos = c.enemy->GetPos();
 		const bool isPrev = (c.enemy->GetId() == prevTargetId);
+		const bool isInRange = (ePos.SqDistance2D(pos) < sqHighestRange);
 		// A target within range is engaged at once, without a route: the straight line from it towards us is
 		// its approach check. One beyond range gets no line check: its route's approach is checked instead
 		// (ApplyTargetPath / IsApproachSafe)
-		if (ePos.SqDistance2D(pos) < sqHighestRange) {
+		if (isInRange) {
 			const float power = powerFor(c.enemy);
 			const float ref = refFor(c.enemy);
 			if (!IsLineSafe(ePos, pos, highestRange, [&](const AIFloat3& p) { return GetAllowedThreatAt(p, power, ref); })) {
@@ -998,14 +1048,38 @@ void CAttackTask::FindTarget()
 		if ((best != nullptr) && (c.rawKey < best->rawKey) && !isPrev) {
 			continue;
 		}
+		// Static target beyond range: its firing cells. Only in addition to the check at its own spot above, so
+		// never more aggressive than without; refused only when every place we could shoot from is too hot
+		CellResult cellResult = CellResult::DISC;
+		const CCircuitDef* edef = c.enemy->GetCircuitDef();
+		if (cellCfg.isOn && !isInRange && (edef != nullptr) && !edef->IsMobile() && (staticChecks < MAX_STATIC_CHECKS)) {
+			if (IsStaticBanned(c.enemy->GetId(), frame)) {
+				continue;
+			}
+			++staticChecks;
+			if (cellHitTest == nullptr) {
+				cellHitTest = ISquadTask::MakeHitTest(terrainMgr, cellCfg.aimHeight);
+			}
+			cellResult = FillFiringCells(c.enemy, powerFor(c.enemy), refFor(c.enemy), cellHitTest, cells);
+			if (CellResult::NONE == cellResult) {
+				BanStatic(c.enemy, frame);
+				continue;
+			}
+		}
 		if (best == nullptr) {
 			best = &c;
 		}
 		if (isPrev) {
 			prev = &c;
 		}
-		routeGoals.push_back({c.enemy->GetId(), ePos, c.key});
-		if (routeGoals.size() >= MAX_TARGET_GOALS) {
+		if (CellResult::CELLS == cellResult) {
+			for (const SFiringCell& cell : cells) {
+				routeGoals.push_back({c.enemy->GetId(), ePos, c.key, cell.pos, cell.sector});
+			}
+		} else {
+			routeGoals.push_back({c.enemy->GetId(), ePos, c.key});
+		}
+		if (++targetCount >= MAX_TARGET_GOALS) {
 			break;
 		}
 	}
@@ -1015,22 +1089,24 @@ void CAttackTask::FindTarget()
 	const float sqSticky = SQUARE(STICKY_DIST);
 	const bool isSticky = (prev != nullptr) && (best->key >= prev->key * sqSticky);
 	// The current target was kept above although really nearer than the best; if stickiness won't keep it
-	// either, leave it out too, or it would take the route
+	// either, leave it out too (all of its goals), or it would take the route
 	if ((prev != nullptr) && !isSticky && (prev != best) && (prev->rawKey < best->rawKey)) {
 		const ICoreUnit::Id prevId = prev->enemy->GetId();
-		routeGoals.erase(std::find_if(routeGoals.begin(), routeGoals.end(),
-				[prevId](const STargetGoal& g) { return g.id == prevId; }));
+		routeGoals.erase(std::remove_if(routeGoals.begin(), routeGoals.end(),
+				[prevId](const STargetGoal& g) { return g.id == prevId; }), routeGoals.end());
 	}
 
 	// The full screened list: if the route's approach to the pick is rejected, the next route goes to these
 	screenedGoals = routeGoals;
 
-	// Stickiness: the route then only gets the kept target, so it can't swap to a near-equal one either. No other
-	// goal could be clearly nearer than it: every screened one ranks at or behind the best, and sticky means the
-	// best isn't clearly nearer
+	// Stickiness: the route then only gets the kept target (all of its goals), so it can't swap to a near-equal one
+	// either. No other goal could be clearly nearer than it: every screened one ranks at or behind the best, and
+	// sticky means the best isn't clearly nearer
 	if (isSticky) {
 		best = prev;
-		routeGoals = {{prev->enemy->GetId(), prev->enemy->GetPos(), prev->key}};
+		const ICoreUnit::Id prevId = prev->enemy->GetId();
+		routeGoals.erase(std::remove_if(routeGoals.begin(), routeGoals.end(),
+				[prevId](const STargetGoal& g) { return g.id != prevId; }), routeGoals.end());
 	}
 
 	if (best != nullptr) {
@@ -1049,6 +1125,162 @@ bool CAttackTask::IsOnEnemyGround() const
 	return circuit->GetInflMap()->GetInfluenceAt(leader->GetPos(circuit->GetLastFrame())) < -INFL_EPS;
 }
 
+CAttackTask::CellResult CAttackTask::FillFiringCells(const CEnemyInfo* enemy, float power, float ref,
+		const NSMicroPather::TestFunc& hitTest, std::vector<SFiringCell>& outCells) const
+{
+	// Points on rings around the target (the outer ring first, the inner only if the outer yields nothing), the
+	// sectors facing us first (the far ones only if fewer than 2 near sectors yield a cell). A point is a cell if
+	// we can reach it, its threat is below the allowance (the pick's power and reference), and it sees the target.
+	// Best point per sector by score; cells scoring more than score_slack worse than the best are left out.
+	// Call after threatMap->SetThreatType(leader)
+	outCells.clear();
+	const CMilitaryManager::SAttackStaticCells& cfg = GetMilitaryMgr()->GetAttackStaticCells();
+	CCircuitAI* circuit = manager->GetCircuit();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& tPos = enemy->GetPos();
+	const AIFloat3& lPos = leader->GetPos(frame);
+	const float fireRange = (tPos.y < -SQUARE_SIZE * 5) ? fireRangeWater : fireRangeLand;
+	if (fireRange < SQUARE_SIZE * 4) {
+		return CellResult::DISC;  // melee group: as close as it gets
+	}
+
+	AIFloat3 toUs = lPos - tPos;
+	const float bearingUs = (toUs.Length2D() > 1.f) ? atan2f(toUs.z, toUs.x) : 0.f;
+	auto pointAt = [&](float angle, float radius) {
+		AIFloat3 p(tPos.x + radius * cosf(angle), tPos.y, tPos.z + radius * sinf(angle));
+		CTerrainManager::CorrectPosition(p);
+		return p;
+	};
+	// Fast path: undefended (no threat at it, nor at the outer ring point facing us)
+	if ((threatMap->GetThreatAt(tPos) <= THREAT_MIN)
+		&& (threatMap->GetThreatAt(pointAt(bearingUs, fireRange * cfg.rings[0])) <= THREAT_MIN))
+	{
+		return CellResult::DISC;
+	}
+
+	const int sqSize = circuit->GetPathfinder()->GetSquareSize();
+	const int maxX = terrainMgr->GetSectorXSize() - 1;
+	const int maxZ = terrainMgr->GetSectorZSize() - 1;
+	auto toPathXY = [sqSize, maxX, maxZ](const AIFloat3& p) {
+		return int2(utils::clamp(int(p.x) / sqSize, 0, maxX), utils::clamp(int(p.z) / sqSize, 0, maxZ));
+	};
+	const int2 targetXY = toPathXY(tPos);
+	STerrainMapArea* area = leader->GetArea();
+	const float strength = std::max(power, THREAT_MIN);
+	const int sectors = cfg.sectors;
+	const int angles = cfg.angles;
+	const float sectorArc = 2.f * static_cast<float>(M_PI) / sectors;
+
+	struct SBest {
+		AIFloat3 pos;
+		float score;
+		bool isSet;
+	};
+	static std::vector<SBest> best;  // by sector; NOTE: micro-opt
+	static std::vector<char> isNear;  // by sector: its middle within 90 degrees of our bearing
+	isNear.resize(sectors);
+	for (int sec = 0; sec < sectors; ++sec) {
+		float diff = fabsf((sec + 0.5f) * sectorArc - bearingUs);
+		diff = fmodf(diff, 2.f * static_cast<float>(M_PI));
+		diff = std::min(diff, 2.f * static_cast<float>(M_PI) - diff);
+		isNear[sec] = (diff <= static_cast<float>(M_PI) * 0.5f);
+	}
+
+	bool isThreatOk = false;  // some reachable point is below the allowance (a "no line of sight" miss, not a ban)
+	for (int ring = 0; ring < 2; ++ring) {
+		const float radius = fireRange * cfg.rings[ring];
+		best.assign(sectors, {AIFloat3(), 0.f, false});
+		for (int pass = 0; pass < 2; ++pass) {  // 0: near sectors, 1: far sectors
+			if (pass == 1) {
+				int nearCells = 0;
+				for (int sec = 0; sec < sectors; ++sec) {
+					nearCells += (isNear[sec] && best[sec].isSet) ? 1 : 0;
+				}
+				if (nearCells >= 2) {
+					break;
+				}
+			}
+			for (int i = 0; i < angles; ++i) {
+				const int sec = i * sectors / angles;
+				if ((isNear[sec] != 0) != (pass == 0)) {
+					continue;
+				}
+				const AIFloat3 p = pointAt(i * 2.f * static_cast<float>(M_PI) / angles, radius);
+				if (!terrainMgr->CanMoveToPos(area, p)) {
+					continue;
+				}
+				const float threat = threatMap->GetThreatAt(p);
+				if (threat >= GetAllowedThreatAt(p, power, ref)) {
+					continue;
+				}
+				isThreatOk = true;
+				if (!hitTest(toPathXY(p), targetXY)) {
+					continue;
+				}
+				const float score = cfg.threatWeight * std::max(threat, 0.f) / strength + p.distance2D(lPos) / fireRange;
+				if (!best[sec].isSet || (score < best[sec].score)) {
+					best[sec] = {p, score, true};
+				}
+			}
+		}
+		float bestScore = std::numeric_limits<float>::max();
+		for (const SBest& b : best) {
+			if (b.isSet) {
+				bestScore = std::min(bestScore, b.score);
+			}
+		}
+		for (int sec = 0; sec < sectors; ++sec) {
+			if (best[sec].isSet && (best[sec].score <= bestScore + cfg.scoreSlack)) {
+				outCells.push_back({best[sec].pos, sec});
+			}
+		}
+		if (!outCells.empty()) {
+			return CellResult::CELLS;
+		}
+	}
+	// No cell: below the allowance somewhere but no line of sight (a pessimistic test): route to it as before;
+	// too hot everywhere: ban
+	return isThreatOk ? CellResult::DISC : CellResult::NONE;
+}
+
+bool CAttackTask::IsStaticBanned(ICoreUnit::Id id, int frame) const
+{
+	auto it = staticBans.find(id);
+	return (it != staticBans.end()) && (frame < it->second.until);
+}
+
+void CAttackTask::BanStatic(const CEnemyInfo* enemy, int frame)
+{
+	const float threat = manager->GetCircuit()->GetThreatMap()->GetThreatAt(enemy->GetPos());
+	auto it = staticBans.find(enemy->GetId());
+	if (it == staticBans.end()) {
+		staticBans[enemy->GetId()] = {frame + REJECTED_TARGET_FRAMES, frame, threat, 0};
+		return;
+	}
+	SStaticBan& ban = it->second;  // banned again with nothing changed: longer
+	ban.level = std::min(ban.level + 1, STATIC_BAN_MAX_LEVEL);
+	ban.until = frame + (REJECTED_TARGET_FRAMES << ban.level);
+	ban.threat = threat;
+}
+
+void CAttackTask::UpdateStaticBans(int frame)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	for (auto it = staticBans.begin(); it != staticBans.end();) {
+		const SStaticBan& ban = it->second;
+		const CEnemyInfo* enemy = circuit->GetEnemyInfo(it->first);
+		bool isDrop = (enemy == nullptr) || (frame >= ban.since + STATIC_BAN_RESET_FRAMES);
+		if (!isDrop) {
+			const float threat = threatMap->GetThreatAt(enemy->GetPos());
+			isDrop = fabsf(threat - ban.threat) > STATIC_BAN_THREAT_CHANGE * std::max(ban.threat, THREAT_MIN);
+		}
+		it = isDrop ? staticBans.erase(it) : std::next(it);
+	}
+}
+
 void CAttackTask::RequestTargetPath(const std::vector<STargetGoal>& goals)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -1058,29 +1290,64 @@ void CAttackTask::RequestTargetPath(const std::vector<STargetGoal>& goals)
 	const float eps = pathfinder->GetSquareSize();
 	const float pathRange = std::max(highestRange - eps, eps);
 
-	std::vector<ICoreUnit::Id> ids;
+	// A firing cell's goal: the cell is its node (search heuristic, threat cap); its end nodes are a wedge of its
+	// sector around the target, out to our range, so the route stops about where we engage, on the cell's side
 	F3Vec goalPos;
-	ids.reserve(goals.size());
 	goalPos.reserve(goals.size());
+	bool isWedge = false;
 	for (const STargetGoal& g : goals) {
-		ids.push_back(g.id);
-		goalPos.push_back(g.pos);
+		goalPos.push_back((g.sector >= 0) ? g.cell : g.pos);
+		isWedge |= (g.sector >= 0);
+	}
+	std::vector<CQueryPathMulti::SGoalShape> shapes;
+	if (isWedge) {
+		const float halfAngle = static_cast<float>(M_PI) / GetMilitaryMgr()->GetAttackStaticCells().sectors;
+		shapes.reserve(goals.size());
+		for (const STargetGoal& g : goals) {
+			if (g.sector >= 0) {
+				shapes.push_back({g.pos, pathRange, atan2f(g.cell.z - g.pos.z, g.cell.x - g.pos.x), halfAngle});
+			} else {
+				shapes.push_back({g.pos, 0.f, 0.f, -1.f});
+			}
+		}
 	}
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, pathRange, goalPos, GetHitTest(), GetPathThreatCap(startPos, goalPos));
+	if (isWedge) {
+		static_cast<CQueryPathMulti*>(query.get())->SetGoalShapes(std::move(shapes));
+	}
 	SetRouteThreat(query.get(), AttackRoute::TARGET);
 	// The route reports back later; a later FindTarget may have rewritten the candidates by then
-	RunRoute(query, [this, ids = std::move(ids)](const IPathQuery* query) {
-		this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query), ids);
+	RunRoute(query, [this, goals](const IPathQuery* query) {
+		this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query), goals);
 	});
 }
 
-void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vector<ICoreUnit::Id>& ids)
+void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vector<STargetGoal>& goals)
 {
 	const std::shared_ptr<PathInfo> path = query->GetPathInfo();  // a copy: routing again may release the query
+	CCircuitAI* circuit = manager->GetCircuit();
 
 	if (path->posPath.empty()) {
+		// Firing cells' wedges may be cut off where a disc around the target is not: route once more with those
+		// targets as discs (as without quota.attack_static_cells), counted against MAX_TARGET_ROUTES
+		const bool isWedge = std::any_of(goals.begin(), goals.end(), [](const STargetGoal& g) { return g.sector >= 0; });
+		if (isWedge && (++targetRouteTries < MAX_TARGET_ROUTES)) {
+			std::vector<STargetGoal> discs;
+			for (const STargetGoal& g : goals) {
+				if ((circuit->GetEnemyInfo(g.id) == nullptr) || std::any_of(discs.begin(), discs.end(),
+					[&g](const STargetGoal& d) { return d.id == g.id; }))
+				{
+					continue;
+				}
+				discs.push_back({g.id, g.pos, g.key});
+			}
+			if (!discs.empty()) {
+				RequestTargetPath(discs);
+				return;
+			}
+		}
 		pPath = path;
 		// No candidate reachable within our threat cap: drop the target and head for the front
 		SetTarget(nullptr);
@@ -1089,33 +1356,56 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		return;
 	}
 
-	// The route reached the candidate it ends within range of (nearest first in the list, as FindTarget
-	// sorted it); if none is within range (moved, corrected), the one it ends nearest to
+	// The goal the route reached: a firing cell's wedge that holds the route's end (the one whose cell is nearest the
+	// end), else the first disc in range of the end (nearest first in the list, as FindTarget sorted it); if none
+	// holds it (moved, corrected), the goal it ends nearest to
 	const AIFloat3& endPos = path->posPath.back();
-	const F3Vec& goals = query->GetTargets();
-	CCircuitAI* circuit = manager->GetCircuit();
-	const float sqInRange = SQUARE(query->GetMaxRange() + circuit->GetPathfinder()->GetSquareSize());
-	CEnemyInfo* reached = nullptr;
-	CEnemyInfo* nearest = nullptr;
+	const float sqSize = circuit->GetPathfinder()->GetSquareSize();
+	const float reach = query->GetMaxRange() + sqSize;
+	const float sqInRange = SQUARE(reach);
+	const float cosHalf = cosf(static_cast<float>(M_PI) / GetMilitaryMgr()->GetAttackStaticCells().sectors);
+	const STargetGoal* wedgeHit = nullptr;
+	const STargetGoal* discHit = nullptr;
+	const STargetGoal* nearest = nullptr;
+	float minCellSqDist = std::numeric_limits<float>::max();
 	float minSqDist = std::numeric_limits<float>::max();
-	for (size_t i = 0; (i < goals.size()) && (i < ids.size()); ++i) {
-		CEnemyInfo* enemy = circuit->GetEnemyInfo(ids[i]);  // may have died since
-		if (enemy == nullptr) {
+	for (const STargetGoal& g : goals) {
+		if (circuit->GetEnemyInfo(g.id) == nullptr) {  // may have died since
 			continue;
 		}
-		const float sqDist = goals[i].SqDistance2D(endPos);
-		if (sqDist <= sqInRange) {
-			reached = enemy;
-			break;
-		}
-		if (sqDist < minSqDist) {
-			minSqDist = sqDist;
-			nearest = enemy;
+		if (g.sector >= 0) {
+			AIFloat3 toEnd = endPos - g.pos;
+			AIFloat3 toCell = g.cell - g.pos;
+			const float endLen = toEnd.Length2D();
+			const float cellLen = toCell.Length2D();
+			const bool isIn = (endLen <= reach) && ((endLen < sqSize) || (cellLen < 1.f)
+					|| (toEnd.dot2D(toCell) >= endLen * cellLen * cosHalf));
+			const float sqCellDist = g.cell.SqDistance2D(endPos);
+			if (isIn && (sqCellDist < minCellSqDist)) {
+				minCellSqDist = sqCellDist;
+				wedgeHit = &g;
+			}
+			if (sqCellDist < minSqDist) {
+				minSqDist = sqCellDist;
+				nearest = &g;
+			}
+		} else {
+			const float sqDist = g.pos.SqDistance2D(endPos);
+			if ((discHit == nullptr) && (sqDist <= sqInRange)) {
+				discHit = &g;
+			}
+			if (sqDist < minSqDist) {
+				minSqDist = sqDist;
+				nearest = &g;
+			}
 		}
 	}
-	if (reached == nullptr) {
-		reached = nearest;
-	}
+	const STargetGoal* hit = (wedgeHit != nullptr) ? wedgeHit : (discHit != nullptr) ? discHit : nearest;
+	CEnemyInfo* reached = (hit != nullptr) ? circuit->GetEnemyInfo(hit->id) : nullptr;
+	// Copied: routing again may release the query, and the goals with it
+	const bool isCell = (hit != nullptr) && (hit->sector >= 0);
+	const AIFloat3 cellPos = isCell ? hit->cell : AIFloat3(-RgtVector);
+	const AIFloat3* cell = isCell ? &cellPos : nullptr;
 	if (reached != nullptr) {
 		// Its approach on this route must be safe (same strength as picking), judged with the near-base reference
 		// it would get: its own if it is the anchored target, else the one from where the group stood at pick time.
@@ -1125,7 +1415,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 		const float ref = isAnchored ? scaleRefSqDist
 				: ((reached->GetPos().SqDistance2D(basePos) < pickSqDist) ? pickSqDist : 0.f);
-		if (!IsApproachSafe(path->posPath, reached->GetPos(), GetPickStrength(frame), ref)) {
+		if (!IsApproachSafe(path->posPath, reached->GetPos(), GetPickStrength(frame), ref, cell)) {
 			rejectedUntil[reached->GetId()] = frame + REJECTED_TARGET_FRAMES;
 			// Not our target any more, while the next route runs (nor counted against its group limit)
 			SetTarget(nullptr);
@@ -1155,17 +1445,24 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 	pPath = path;
 	ActivePath(lowestSpeed);
 	if (reached != nullptr) {
-		KeepRoute(reached->GetId(), reached->GetPos());
+		KeepRoute(reached->GetId(), reached->GetPos(), cell);
 	}
 }
 
-bool CAttackTask::IsApproachSafe(const F3Vec& path, const AIFloat3& targetPos, float strength, float refSqDist) const
+bool CAttackTask::IsApproachSafe(const F3Vec& path, const AIFloat3& targetPos, float strength, float refSqDist,
+		const AIFloat3* cell) const
 {
 	// The ground we'd fight from, judged spot by spot with the common allowance (no support)
 	auto allowedAt = [&](const AIFloat3& p) { return GetAllowedThreatAt(p, strength, refSqDist); };
-	// 1. the line from the target to where the route ends, out to our range: the firing spots lie on it. Capped:
-	//    a route cut short (or a target that moved) ends far away, and the ground in between is the route's job
-	if (!IsLineSafe(targetPos, path.back(), highestRange, allowedAt)) {
+	if (cell != nullptr) {
+		// 1. a firing cell (quota.attack_static_cells): the cell itself was judged when picked; the line from where the
+		//    route ends to it is the walk in (the route's last stretch below lies behind the end, not ahead of it)
+		if (!IsLineSafe(path.back(), *cell, std::numeric_limits<float>::max(), allowedAt)) {
+			return false;
+		}
+	} else if (!IsLineSafe(targetPos, path.back(), highestRange, allowedAt)) {
+		// 1. the line from the target to where the route ends, out to our range: the firing spots lie on it. Capped:
+		//    a route cut short (or a target that moved) ends far away, and the ground in between is the route's job
 		return false;
 	}
 	// 2. the route's last stretch, as long as our range, walked back from its end
@@ -1305,9 +1602,11 @@ void CAttackTask::RunRoute(const std::shared_ptr<IPathQuery>& query, std::functi
 	});
 }
 
-void CAttackTask::KeepRoute(ICoreUnit::Id targetId, const AIFloat3& goal)
+void CAttackTask::KeepRoute(ICoreUnit::Id targetId, const AIFloat3& goal, const AIFloat3* cell)
 {
-	lastRoute = {pPath, goal, targetId, manager->GetCircuit()->GetLastFrame()};
+	lastRoute = {pPath, goal, targetId, manager->GetCircuit()->GetLastFrame(),
+			(cell != nullptr) ? STATIC_ROUTE_REUSE_FRAMES : ROUTE_REUSE_FRAMES,
+			(cell != nullptr) ? *cell : AIFloat3(-RgtVector), cell != nullptr};
 }
 
 bool CAttackTask::ReuseRoute(ICoreUnit::Id targetId, const AIFloat3& goal, int frame)
@@ -1316,7 +1615,7 @@ bool CAttackTask::ReuseRoute(ICoreUnit::Id targetId, const AIFloat3& goal, int f
 	// danger would wait for a new route, so not while any unit is in danger
 	const float sqMoved = SQUARE(manager->GetCircuit()->GetPathfinder()->GetSquareSize());
 	if ((lastRoute.path == nullptr) || lastRoute.path->posPath.empty() || (lastRoute.targetId != targetId)
-		|| (frame >= lastRoute.frame + ROUTE_REUSE_FRAMES)
+		|| (frame >= lastRoute.frame + lastRoute.reuseFrames)
 		|| (goal.SqDistance2D(lastRoute.goal) >= sqMoved)
 		|| isPathAheadUnsafe || !endangered.empty()
 		|| !leader->GetTravelAct()->IsActive() || (leader->GetTravelAct()->GetPath() != lastRoute.path))
@@ -1326,8 +1625,19 @@ bool CAttackTask::ReuseRoute(ICoreUnit::Id targetId, const AIFloat3& goal, int f
 	// A target route's approach is judged again (a few threat lookups, far cheaper than a new route): the group may
 	// have lost strength, or threat moved onto the ground it would fight from. Same reference as ApplyTargetPath:
 	// FindTarget just anchored this target, or cleared the anchor (0)
-	if ((targetId >= 0) && !IsApproachSafe(lastRoute.path->posPath, goal, GetPickStrength(frame), scaleRefSqDist)) {
-		return false;  // the new route's ApplyTargetPath rejects it, or finds a safe approach
+	if (targetId >= 0) {
+		const float strength = GetPickStrength(frame);
+		const AIFloat3* cell = lastRoute.isCell ? &lastRoute.cell : nullptr;
+		if (!IsApproachSafe(lastRoute.path->posPath, goal, strength, scaleRefSqDist, cell)) {
+			return false;  // the new route's ApplyTargetPath rejects it, or finds a safe approach
+		}
+		// A firing cell must still be below the allowance (the current target's, quota.attack_keep_threat)
+		if ((cell != nullptr) && (manager->GetCircuit()->GetThreatMap()->GetThreatAt(leader, *cell)
+			>= GetAllowedThreatAt(*cell, strength * (IsInBaseRadius(goal) ? 1.f : GetMilitaryMgr()->GetAttackKeepThreat()),
+					scaleRefSqDist)))
+		{
+			return false;
+		}
 	}
 	pPath = lastRoute.path;  // Start() and regrouping re-send pPath
 	return true;
