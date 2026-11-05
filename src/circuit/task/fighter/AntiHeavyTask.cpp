@@ -211,7 +211,10 @@ void CAntiHeavyTask::Update()
 		return;
 	}
 
-	const bool isTargetsFound = FindTarget();
+	// A scooting leader stands past the stand-off distance FindTarget engages within: keep the fight (and the target)
+	// until it's back, else the whole squad would be routed in again while it reloads
+	const bool isLeaderScoot = (State::ENGAGE == state) && (target != nullptr) && IsScooting(leader);
+	const bool isTargetsFound = isLeaderScoot || FindTarget();
 
 	state = State::ROAM;
 	if (target != nullptr) {

@@ -76,7 +76,9 @@ protected:
 	 * Shoot and scoot: while engaged, a unit whose weapon is still reloading and that stands in ground threat steps
 	 * straight away from the target to just outside the target's ground range + its scoot margin (or a margin further
 	 * back, if already past that), and fights again once reloaded enough, or sooner if walking back into range would
-	 * take longer than the reload it has left. The rest of the squad fights on. Call UpdateScoots every update; Attack, ActivePath and the regroup check skip scooting units
+	 * take longer than the reload it has left. No scoot when there isn't time to get out and back before the weapon is
+	 * ready. The rest of the squad fights on. Scoots exist only while the squad is engaged: they end when it stops.
+	 * Call UpdateScoots every update; Attack, the pull-back and the regroup check skip scooting units
 	 */
 	static constexpr float DEFAULT_SCOOT_MARGIN = 100.f;  // reload_scoot_margin when unset (tasks may override)
 	virtual bool IsScooting(CCircuitUnit* unit) const override { return scoots.find(unit) != scoots.end(); }
@@ -88,8 +90,8 @@ protected:
 	// A scooting unit is reloaded enough. Default: drop its old target so the next Attack re-orders it, and (engaged)
 	// ask for an update now, or (not engaged) Start it on the squad's path
 	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged);
-	// Every update: scoot reloading units while engaged, and end the scoot of units reloaded enough (also after the
-	// fight ended), or (engaged) of units whose walk back into range takes as long as the reload they have left.
+	// Every update: scoot reloading units while engaged, and end the scoot of units reloaded enough, or whose walk back
+	// into range takes as long as the reload they have left. Not engaged: every scoot ends.
 	// A unit outside all ground threat doesn't start a scoot (it fights on); a scooting one stops once it gets there.
 	// Re-checked once a second while scooting
 	void UpdateScoots(int frame);

@@ -180,10 +180,17 @@ void CAntiAirTask::Update()
 		return;
 	}
 
-	FindTarget();
+	// A scooting leader may stand beyond air range of the target: keep the fight until it's back, else the squad
+	// would be routed in again while it reloads
+	const bool isLeaderScoot = (State::ENGAGE == state) && (target != nullptr) && IsScooting(leader);
+	if (!isLeaderScoot) {
+		FindTarget();
+	}
 
 	state = State::ROAM;
-	if ((target != nullptr) && (position.SqDistance2D(leader->GetPos(frame)) < SQUARE(GetAirRange()))) {
+	if ((target != nullptr)
+		&& (isLeaderScoot || (position.SqDistance2D(leader->GetPos(frame)) < SQUARE(GetAirRange()))))
+	{
 		state = State::ENGAGE;
 		retargetMove = GetAirRange() * 0.25f;  // a plane changes tile nearly every update: re-order only when it moved this far
 		Attack(frame);

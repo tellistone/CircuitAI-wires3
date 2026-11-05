@@ -470,7 +470,13 @@ void ISquadTask::OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged)
 void ISquadTask::UpdateScoots(int frame)
 {
 	const bool isEngaged = (State::ENGAGE == state) && (target != nullptr);
-	if (!isEngaged && scoots.empty() && scootReturns.empty()) {
+	if (!isEngaged) {
+		// Fight over (target lost, flee, regroup...): nothing to step away from. End the scoots now, so no unit is
+		// left behind on hold position while the squad walks off (a Lance would stay there ~20 s)
+		scootReturns.clear();
+		while (!scoots.empty()) {
+			EndScoot(scoots.begin()->first, frame, false);
+		}
 		return;
 	}
 	for (CCircuitUnit* unit : units) {  // NOTE: orders can't remove units here (TRY_UNIT defers to Garbage)
@@ -486,7 +492,7 @@ void ISquadTask::UpdateScoots(int frame)
 		if (scootReturns.find(unit) != scootReturns.end()) {
 			continue;  // on its way back in already
 		}
-		if (isEngaged && (it != scoots.end())) {
+		if (it != scoots.end()) {
 			// Turn back once walking into fire range takes as long as the reload left, so the unit shoots again as
 			// soon as it's ready (a slow unit far back would otherwise lose time on every cycle)
 			const float speed = unit->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
@@ -497,8 +503,7 @@ void ISquadTask::UpdateScoots(int frame)
 				continue;
 			}
 		}
-		// Reloading. After the target is lost, a scooting unit stays out of the regroup check until it's reloaded
-		if (isEngaged && (unit->Blocker() == nullptr)
+		if ((unit->Blocker() == nullptr)
 			&& ((it == scoots.end()) || (frame >= it->second.frame + FRAMES_PER_SEC)))
 		{
 			Scoot(unit, frame, margin);
@@ -584,6 +589,15 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 			it->second.frame = frame;
 		}
 		return;
+	}
+	// Too slow to get there and back into fire range before the weapon is ready (short reload, slow unit): it would
+	// only lose its spot. Fights on instead
+	const float speed = unit->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
+	if (isNew && (speed > 0.f)) {
+		const float walk = uPos.distance2D(dest) + std::max(dest.distance2D(tPos) - GetFireRange(unit), 0.f);
+		if (walk / speed >= unit->GetWeaponReloadLeft(frame)) {
+			return;
+		}
 	}
 	scoots[unit] = {frame, false};
 	if (isNew) {
