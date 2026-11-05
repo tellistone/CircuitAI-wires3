@@ -220,10 +220,10 @@ void CAttackTask::Update()
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot (before the escape: Cornered engages too)
 	if (UpdateEscape(frame)) {
 		return;
 	}
-	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot
 
 	/*
 	 * Regroup if required

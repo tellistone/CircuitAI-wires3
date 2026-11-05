@@ -524,6 +524,16 @@ void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
 	if (!terrainMgr->CanMoveToPos(unit->GetArea(), dest)) {
 		dest = terrainMgr->GetMovePosition(unit->GetArea(), dest);
 	}
+	// Straight back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here,
+	// where the target's own threat still counts. Else a new scoot doesn't start (the unit fights on), and a
+	// running one keeps its last order
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	if (threatMap->GetThreatAt(unit, dest) > threatMap->GetThreatAt(unit, uPos)) {
+		if (isNew) {
+			scoots.erase(unit);
+		}
+		return;
+	}
 	unit->GetTravelAct()->StateWait();
 	TRY_UNIT(circuit, unit,
 		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);

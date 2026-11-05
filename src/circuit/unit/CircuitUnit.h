@@ -103,7 +103,7 @@ public:
 	void SetCaptureHide(bool value) { isCaptureHide = value; }
 	bool IsCaptureHide() const { return isCaptureHide; }
 	bool IsWeaponReady(int frame);
-	// Main weapon at least this much (0..1] reloaded, out of its def's reload time; 1 = IsWeaponReady.
+	// Main weapon at least this much (0..1] reloaded, out of its current reload time; 1 = IsWeaponReady.
 	// No weapon: false. Planes: IsWeaponReady (ammo)
 	bool IsWeaponReloaded(int frame, float fraction);
 	bool IsDGunReady(int frame, float energy);
