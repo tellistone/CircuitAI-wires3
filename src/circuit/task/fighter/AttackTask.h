@@ -155,6 +155,11 @@ private:
 	// (undefended, melee group, nothing reachable, or no line of sight)
 	bool FillFiringCells(const CEnemyInfo* enemy, float power, float ref, const NSMicroPather::TestFunc& hitTest,
 			std::vector<SFiringCell>& outCells) const;
+	// The route goals of a static target beyond range: FillFiringCells minus its rejected sides, with the planned
+	// cell (if any; GetPlannedCell) in place of its sector's. false: skip the target (banned now, or every side
+	// rejected). Else outCells; empty: route to it as a disc
+	bool CollectFiringCells(const CEnemyInfo* enemy, float power, float ref, const springai::AIFloat3* planned,
+			const NSMicroPather::TestFunc& hitTest, int frame, std::vector<SFiringCell>& outCells);
 	// The firing cell the last accepted route to this target led to (lastRoute: dropped when the target changes), if
 	// its side isn't rejected and it is still below the allowance for strength (the caller's: the keep allowance)
 	bool GetPlannedCell(ICoreUnit::Id targetId, float strength, float refSqDist, springai::AIFloat3& outCell) const;
@@ -167,13 +172,14 @@ private:
 	// One capped route to all candidate targets
 	void RequestTargetPath(const std::vector<STargetGoal>& goals);
 	void ApplyTargetPath(const CQueryPathMulti* query, const std::vector<STargetGoal>& goals);
-	// The goal a route ended at: a firing cell whose wedge holds the end (outIsInWedge; its cell nearest the end),
-	// else the first disc in range of the end, else (moved, corrected) the goal it ends nearest to
-	const STargetGoal* FindReachedGoal(const CQueryPathMulti* query, const std::vector<STargetGoal>& goals,
-			bool& outIsInWedge) const;
-	// Unsafe approach to g: drop its firing cell's side (isCell) for REJECTED_TARGET_FRAMES, or the whole target when
-	// it is no cell or the target has no other screened side left
-	void RejectGoal(const STargetGoal& g, bool isCell, int frame);
+	// The goal a route ended at (a copy; false: none alive): a firing cell whose wedge holds the end (its cell nearest
+	// the end), else the first disc in range of the end, else (moved, corrected) the goal it ends nearest to, as a
+	// disc (sector -1): only a route that ends in the wedge is a cell route
+	bool FindReachedGoal(const CQueryPathMulti* query, const std::vector<STargetGoal>& goals,
+			STargetGoal& outGoal) const;
+	// Unsafe approach to g: drop its firing cell's side for REJECTED_TARGET_FRAMES, or the whole target when it is
+	// a disc or the target has no other screened side left
+	void RejectGoal(const STargetGoal& g, int frame);
 	bool IsRejected(ICoreUnit::Id id, int sector, int frame) const;  // sector -1: the whole target
 	// The ground we'd fight the target from, along this route: the line from the target to the route's end (or, for
 	// a firing cell, from the route's end to the cell), and the route's last stretch as long as our range; every spot
