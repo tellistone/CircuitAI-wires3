@@ -7,6 +7,21 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Anti-heavy threat-capped routes and flee** (`antiheavy` block in `behaviour.json`; code defaults off, shipped
+  `path_threat` 1.0, `flee_margin` 200, `flee_ally_threat` 10, `flee_ally_radius` 500; per unit `antiheavy_flee_margin`).
+  Anti-heavy squads used to path to heavies, safety and home with no threat cap, and had no flee. Their routes now use
+  anti-air's cap (squad strength x base bonus / `thr_mod.distance`, x `path_threat`); the route to a heavy ends at its
+  stand-off point (the first spot outside the heavy's own threat ring that is under the cap, read from the threat map),
+  and the squad attacks from there. They flee like anti-air
+  squads from armed enemies in reach (gunships included), unless escorts cover them, and stop once out of reach (with
+  a little hysteresis). The heavies they hunt don't set off the flee; instead, after a shot with a long reload
+  (5 s or more), each unit steps out of the target's reach on its own and comes back once reloaded while the rest of
+  the squad fights on (shoot and scoot), instead of the whole squad walking back to the attack group. Heavies that
+  could only be attacked from inside an uncovered flee zone aren't picked, so escorted heavies wait for the army.
+  Mines and aircraft never flee; aircraft get no cap. Per unit `antiheavy_max_group` (default 0 = no limit) caps how
+  many units of that type one anti-heavy squad holds: squads only grow by merging, and a merge that would go over it
+  is skipped. The path cap, squad flee check and cover check are now shared by anti-air and anti-heavy
+  (`ISquadTask`); anti-air behaves as before.
 - **Capturer hides when loaded** (per unit `capture_hide`, default 0 = off; shipped 2.0 on `vehcapture`). A unit whose
   captured units (Zero-K's `capture_controller` rules param) cost more than `capture_hide` x its own metal cost retreats
   to the closest haven and stays there, ignoring the retreat wait timeout, until enough of them die or are lost to drop it
