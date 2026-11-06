@@ -100,6 +100,8 @@ protected:
 	float fireSpotReach = -1.f;  // > 0: units farther than this x their fire range from the target get no attack order and keep travelling
 	// Attack skips this unit (no attack order, keeps travelling). Default: fireSpotReach
 	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const;
+	// Attack leaves this unit alone: it is stepping out of the target's reach while it reloads (ISquadTask scoot)
+	virtual bool IsScooting(CCircuitUnit* unit) const { return false; }
 	// Firing spot each unit was last sent to (pointers only compared, never dereferenced)
 	struct SFireSpot {
 		springai::AIFloat3 pos;

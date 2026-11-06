@@ -189,6 +189,25 @@ bool CCircuitUnit::IsWeaponReady(int frame)
 	return isWeaponReady;
 }
 
+bool CCircuitUnit::IsWeaponReloaded(int frame, float fraction)
+{
+	if ((fraction >= 1.f) || circuitDef->IsPlane() || (weapon == nullptr)) {
+		return IsWeaponReady(frame);
+	}
+	// The weapon's own reload time (frames; slow and other modifiers included). CCircuitDef's is the shortest over
+	// all weapons (or behaviour.json "reload"), which needn't be the main weapon's
+	const float left = (1.f - std::max(fraction, 0.f)) * weapon->GetReloadTime();  // frames still allowed
+	return weapon->GetReloadFrame() <= frame + left;
+}
+
+int CCircuitUnit::GetWeaponReloadLeft(int frame)
+{
+	if (circuitDef->IsPlane() || (weapon == nullptr)) {
+		return 0;
+	}
+	return std::max(weapon->GetReloadFrame() - frame, 0);
+}
+
 bool CCircuitUnit::IsDGunReady(int frame, float energy)
 {
 	return (dgun->GetReloadFrame() <= frame) && (dgunDef->GetCostE() < energy)

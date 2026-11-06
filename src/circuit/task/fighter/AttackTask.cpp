@@ -267,6 +267,7 @@ void CAttackTask::Update()
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot (before the escape: Cornered engages too)
 	if (UpdateEscape(frame)) {
 		return;
 	}
@@ -1780,7 +1781,9 @@ void CAttackTask::Engage(int frame)
 	// line the merge check judged safe, rather than straight to a firing spot next to the enemy
 	const AIFloat3& leaderPos = leader->GetPos(frame);
 	for (CCircuitUnit* unit : units) {
-		if ((unit->Blocker() == nullptr) && !unit->GetTravelAct()->IsActive() && IsOutOfReach(unit, frame)) {
+		if ((unit->Blocker() == nullptr) && !unit->GetTravelAct()->IsActive() && !IsScooting(unit)
+			&& IsOutOfReach(unit, frame))
+		{
 			MoveUnitTo(unit, leaderPos, frame);
 		}
 	}

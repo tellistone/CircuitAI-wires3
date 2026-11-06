@@ -195,8 +195,8 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	std::vector<SOrder> orders;  // units to order
 	for (size_t i = 0; i < claims.size(); ++i) {
 		CCircuitUnit* unit = claims[i].unit;
-		if (unit->Blocker() != nullptr) {
-			continue;  // Do not interrupt current action
+		if ((unit->Blocker() != nullptr) || IsScooting(unit)) {
+			continue;  // Do not interrupt current action (or a reloading unit's step back)
 		}
 		if (IsOutOfReach(unit, frame)) {
 			continue;  // far behind: keep following the squad's path instead of a straight walk to a spot
