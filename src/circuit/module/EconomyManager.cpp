@@ -401,6 +401,7 @@ void CEconomyManager::Init()
 	mexJobMod = std::max(econ.get("mex_jobs", 1.5f).asFloat(), 0.f);
 	const Json::Value& mexFront = econ["mex_front"];
 	mexFrontBias = utils::clamp(mexFront.get("bias", 0.15f).asFloat(), -0.9f, 0.9f);
+	mexFrontCommBias = utils::clamp(mexFront.get("comm_bias", mexFrontBias).asFloat(), -0.9f, 0.9f);  // missing = bias
 	mexFrontClusters = std::max(mexFront.get("clusters", 3).asInt(), 1);
 	mexFrontStarted = utils::clamp(mexFront.get("started", 0.3f).asFloat(), 0.f, 0.9f);
 
@@ -788,7 +789,9 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 					: builderMgr->IsBuilderInArea(mexDef, pos))
 				&& map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING));
 	};
-	const CMetalManager::ClusterScore score = GetMexFrontScore();
+	// A commander's search uses its own bias (mex_front.comm_bias)
+	const bool isComm = (unit != nullptr) && unit->GetCircuitDef()->IsRoleComm();
+	const CMetalManager::ClusterScore score = GetMexFrontScore(isComm ? mexFrontCommBias : mexFrontBias);
 	const int index = score
 			? metalMgr->GetMexToBuild(position, predicate, mexFrontClusters, score)
 			: metalMgr->GetMexToBuild(position, predicate);
@@ -803,11 +806,11 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	return task;
 }
 
-CMetalManager::ClusterScore CEconomyManager::GetMexFrontScore() const
+CMetalManager::ClusterScore CEconomyManager::GetMexFrontScore(float bias) const
 {
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const AIFloat3& lanePos = circuit->GetSetupManager()->GetLanePos();
-	if (((mexFrontBias == 0.f) && (mexFrontClusters <= 1)) || !utils::is_valid(basePos) || !utils::is_valid(lanePos)
+	if (((bias == 0.f) && (mexFrontClusters <= 1)) || !utils::is_valid(basePos) || !utils::is_valid(lanePos)
 		|| (basePos.SqDistance2D(lanePos) <= SQUARE(SQUARE_SIZE)))
 	{
 		return nullptr;
@@ -819,7 +822,6 @@ CMetalManager::ClusterScore CEconomyManager::GetMexFrontScore() const
 	const CMetalManager* metalMgr = circuit->GetMetalManager();
 	const AIFloat3 laneDir = lanePos - basePos;
 	const float sqLaneLen = laneDir.SqLength2D();
-	const float bias = mexFrontBias;
 	const float startedMod = 1.f - mexFrontStarted;
 	return [metalMgr, basePos, laneDir, sqLaneLen, bias, startedMod](int cluster, float dist) {
 		const AIFloat3& center = metalMgr->GetClusters()[cluster].position;
