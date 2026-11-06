@@ -1539,7 +1539,9 @@ void CEconomyManager::UpdateMorph()
 	while (it != morphees.end()) {
 		CCircuitUnit* unit = *it;
 		if ((unit->GetTask()->GetType() == IUnitTask::Type::PLAYER) ||
-			(unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth() * 0.8f))
+			(unit->GetTask()->GetType() == IUnitTask::Type::RETREAT) ||  // fleeing or off for repair
+			(unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth() * 0.8f) ||
+			circuit->GetBuilderManager()->IsCommInDanger(unit))  // it would only stop again to flee
 		{
 			++it;
 		} else {

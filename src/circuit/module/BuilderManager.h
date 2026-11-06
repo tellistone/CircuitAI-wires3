@@ -171,6 +171,14 @@ public:
 
 	bool IsReclaimed(CAllyUnit* unit) const { return reclaimedUnits.find(unit) != reclaimedUnits.end(); }
 
+	/*
+	 * Commander flee (always on) and hide (commander.json "hide")
+	 */
+	// Flee zones the commander should keep out of: visible ground dangers at their weapon range + margin
+	bool IsCommSafe(const springai::AIFloat3& pos, float margin);
+	// In a flee zone at the wide (stop-fleeing) line, or under threat: no morph now
+	bool IsCommInDanger(CCircuitUnit* unit);
+
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
 	// How a job ranks for a builder: travel cost x invWeight, lowest wins; beyond travelSec only as a fallback
@@ -181,6 +189,28 @@ private:
 	// By the job's priority, except mex drops to NORMAL during an energy stall
 	const SJobRank& GetJobRank(const IBuilderTask* task, bool isEnergyStalling) const;
 	IBuilderTask* MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
+
+	struct SCommDanger {
+		springai::AIFloat3 pos;
+		float range;  // its ground/water weapon range, 0 for a blip
+		float threat;
+		bool isAir;  // a gunship
+	};
+	static float GetCommWideMargin(float margin) { return margin + std::max(0.25f * margin, 50.f); }
+	float GetCommFleeMargin(CCircuitUnit* unit) const;  // hide.flee_margin, < 0 = no flee
+	void UpdateCommDangers();
+	// Number of flee zones (range + margin) reaching pos; outThreat their threat, outPos/outIsAir the nearest one
+	int GetCommDanger(const springai::AIFloat3& pos, float margin, float& outThreat,
+					  springai::AIFloat3* outPos = nullptr, bool* outIsAir = nullptr);
+	// The commander itself and ground-capable allies within radius of pos, minus enemyThreat, reach allyThreat
+	bool IsCommCovered(const springai::AIFloat3& pos, float enemyThreat, float allyThreat, float radius) const;
+	// Fight at home only if no flee zone (wide line) reaches the commander, or it is covered there
+	bool IsCommCombatSafe(CCircuitUnit* unit, float margin);
+	// Hide mode: allied strength (the commander's own left out) at pos at least matches the enemy's, on our ground
+	bool IsCommTerritory(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
+	springai::AIFloat3 FindCommFleeGoal(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir,
+										float margin);
+	void UpdateCommFlee();
 	IBuilderTask* MakeBuilderTask(CCircuitUnit* unit, const CQueryCostMap* query);
 	IBuilderTask* CreateBuilderTask(const springai::AIFloat3& position, CCircuitUnit* unit);
 
@@ -209,6 +239,13 @@ private:
 	unsigned int buildIterator;
 
 	std::set<CCircuitUnit*> workers;
+	std::set<CCircuitUnit*> comms;  // commanders among workers
+	std::vector<SCommDanger> commDangers;
+	int commDangerFrame;  // frame commDangers was built at
+	F3Vec commFleeSpots;  // FindCommFleeGoal scratch
+	float commThrMod;  // quota.thr_mod.comm: undone for enemy commanders' threat in the flee
+	bool isCommHide;  // hide mode, latched once triggered
+	bool isCommHideAir;  // triggered (or seen) with enemy air: only our buildings' ground counts as territory
 	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
 	SJobRank jobRanks[4];  // LOW, NORMAL, HIGH, NOW

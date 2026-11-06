@@ -424,7 +424,9 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 		&& (circuit->GetInflMap()->GetInfluenceAt(pos) > -INFL_EPS))
 	{
 		if (unit->GetCircuitDef()->IsRoleComm()) {  // FIXME: or any other builder-attacker
-			if (circuit->GetInflMap()->GetEnemyInflAt(circuit->GetSetupManager()->GetBasePos()) < INFL_EPS) {
+			// Re-plan (home to fight) only when enemy weapons reach the base: enemy influence spreads ~4x further,
+			// so a scout near base had the commander re-plan non-stop
+			if (circuit->GetThreatMap()->GetThreatAt(unit, circuit->GetSetupManager()->GetBasePos()) <= THREAT_MIN) {
 				return true;
 			}
 		} else {

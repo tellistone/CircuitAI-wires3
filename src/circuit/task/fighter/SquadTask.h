@@ -117,8 +117,10 @@ protected:
 	 */
 	static constexpr float FALLBACK_PATH_RANGE = DEFAULT_SLACK * 4;  // goal tolerance of safety, base, commander and flee paths
 	static const int FLEE_REPLAN_FRAMES = FRAMES_PER_SEC * 2;  // re-plan the flee this often while the danger stays
+public:  // also used by the commander flee (CBuilderManager::UpdateCommFlee)
 	// Is an unidentified radar blip at p high enough above the ground (or water surface) to be a plane?
 	static bool IsHighBlip(CMap* map, const springai::AIFloat3& p);
+protected:
 	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
 	// Multiplier on GetPathThreatCap's squad allowance; < 0 = no cap at all
 	virtual float GetPathThreatMod() const { return 1.f; }
