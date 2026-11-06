@@ -195,8 +195,8 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	std::vector<SOrder> orders;  // units to order
 	for (size_t i = 0; i < claims.size(); ++i) {
 		CCircuitUnit* unit = claims[i].unit;
-		if (unit->Blocker() != nullptr) {
-			continue;  // Do not interrupt current action
+		if ((unit->Blocker() != nullptr) || IsScooting(unit)) {
+			continue;  // Do not interrupt current action (or a reloading unit's step back)
 		}
 		if (IsOutOfReach(unit, frame)) {
 			continue;  // far behind: keep following the squad's path instead of a straight walk to a spot
@@ -216,13 +216,15 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	lastOrderTargetPos = tPos;
 	std::stable_sort(orders.begin(), orders.end(), [](const SOrder& a, const SOrder& b) { return a.range > b.range; });
 	const float safeThreat = GetEscapeSafeThreat();
+	float arcBearing;
+	const float* arc = GetFireArcBearing(arcBearing) ? &arcBearing : nullptr;  // once for the whole group
 	const int timeout = frame + FRAMES_PER_SEC * 60;
 	for (const SOrder& order : orders) {
 		SFireClaim& claim = claims[order.claim];
 		CCircuitUnit* unit = claim.unit;
 		AIFloat3 firePos;
 		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
-				: FindFireSpot(claims, order.claim, safeThreat, firePos);
+				: FindFireSpot(claims, order.claim, safeThreat, arc, firePos);
 		switch (spot) {
 			case FireSpot::SPOT:
 			case FireSpot::RISKY: {  // RISKY: nowhere safe, not here either: the least dangerous spot
@@ -306,7 +308,7 @@ bool IFighterTask::IsOnRiskySpot(CCircuitUnit* unit, int frame) const
 }
 
 IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
-		AIFloat3& outPos) const
+		const float* arcBearing, AIFloat3& outPos) const
 {
 	CCircuitUnit* unit = claims[self].unit;
 	const float range = GetFireRange(unit);
@@ -392,18 +394,25 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		c.cost = costOf(c, std::max(c.threat, 0.f));
 		cands.push_back(c);
 	};
-	// Where it stands, and its last spot, while in the fire band: the distance term favours them
-	if (IsInFireBand(unit, uPos)) {
+	// On the group's planned arc (arcBearing), if it has one
+	auto isOnArc = [&](const AIFloat3& p) {
+		const AIFloat3 d = p - tPos;
+		return (arcBearing == nullptr) || (d.Length2D() < 1.f)
+			|| (utils::angle_diff(atan2f(d.z, d.x), *arcBearing) <= static_cast<float>(M_PI) * ARC_SPAN + 1e-3f);
+	};
+	// Where it stands, and its last spot, while in the fire band (and on the planned arc): the distance term
+	// favours them
+	if (IsInFireBand(unit, uPos) && isOnArc(uPos)) {
 		add(uPos);
 	}
 	AIFloat3 keptPos;
-	if (GetKeptFireSpot(unit, keptPos)) {
+	if (GetKeptFireSpot(unit, keptPos) && isOnArc(keptPos)) {
 		add(keptPos);
 	}
-	// Spots on an arc around the target, facing us (+-45 degrees: keeps the group together)
+	// Spots on an arc around the target, facing us or the planned side (+-45 degrees: keeps the group together)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	AIFloat3 dir = uPos - tPos;
-	const float bearing = (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
+	const float bearing = (arcBearing != nullptr) ? *arcBearing : (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
 	const float radius = range * FIRE_RADIUS;
 	for (int i = -ARC_STEPS; i <= ARC_STEPS; ++i) {
 		const float angle = bearing + i * static_cast<float>(M_PI) * ARC_SPAN / ARC_STEPS;

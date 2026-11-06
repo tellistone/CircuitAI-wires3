@@ -7,6 +7,33 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit
+  `reload_scoot_margin`, default 100, or the anti-heavy flee margin in anti-heavy squads). While engaged, a unit whose
+  main weapon is less than `reload_scoot` reloaded and that stands in ground threat steps straight away from the
+  target to just outside the target's ground range + margin (a margin further back each second while still in
+  threat), but never to a hotter spot, and fights again once reloaded that far; the rest of the squad fights on. A unit
+  outside all ground threat doesn't scoot (it fights on), and a scooting unit stops once it gets there. It turns back
+  early when walking into range would take as long as the reload it has left, doesn't start when there isn't time to
+  get out and back, and stays on hold position while scooting (else the engine's idle auto-attack walks it straight
+  back in). Scoots end when the squad stops being engaged; a scooting leader keeps anti-air and anti-heavy squads
+  engaged on their target. Anti-heavy's scoot uses the same rules now. Works in attack,
+  raid, defend, anti-air and anti-heavy squads (not mines or aircraft). It is anti-heavy's shoot and scoot, moved to
+  `ISquadTask`; anti-heavy units without `reload_scoot` behave as before. No unit has it set yet.
+- **Anti-heavy threat-capped routes and flee** (`antiheavy` block in `behaviour.json`; code defaults off, shipped
+  `path_threat` 1.0, `flee_margin` 200, `flee_ally_threat` 10, `flee_ally_radius` 500; per unit `antiheavy_flee_margin`).
+  Anti-heavy squads used to path to heavies, safety and home with no threat cap, and had no flee. Their routes now use
+  anti-air's cap (squad strength x base bonus / `thr_mod.distance`, x `path_threat`); the route to a heavy ends at its
+  stand-off point (the first spot outside the heavy's own threat ring that is under the cap, read from the threat map),
+  and the squad attacks from there. They flee like anti-air
+  squads from armed enemies in reach (gunships included), unless escorts cover them, and stop once out of reach (with
+  a little hysteresis). The heavies they hunt don't set off the flee; instead, after a shot with a long reload
+  (5 s or more), each unit steps out of the target's reach on its own and comes back once reloaded while the rest of
+  the squad fights on (shoot and scoot), instead of the whole squad walking back to the attack group. Heavies that
+  could only be attacked from inside an uncovered flee zone aren't picked, so escorted heavies wait for the army.
+  Mines and aircraft never flee; aircraft get no cap. Per unit `antiheavy_max_group` (default 0 = no limit) caps how
+  many units of that type one anti-heavy squad holds: squads only grow by merging, and a merge that would go over it
+  is skipped. The path cap, squad flee check and cover check are now shared by anti-air and anti-heavy
+  (`ISquadTask`); anti-air behaves as before.
 - **Capturer hides when loaded** (per unit `capture_hide`, default 0 = off; shipped 2.0 on `vehcapture`). A unit whose
   captured units (Zero-K's `capture_controller` rules param) cost more than `capture_hide` x its own metal cost retreats
   to the closest haven and stays there, ignoring the retreat wait timeout, until enough of them die or are lost to drop it

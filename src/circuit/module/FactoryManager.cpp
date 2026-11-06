@@ -373,6 +373,21 @@ void CFactoryManager::ReadConfig()
 		if (!artyFlee.isNull()) {
 			cdef->SetArtyFleeMargin(artyFlee.asFloat());
 		}
+		const Json::Value& ahFlee = behaviour["antiheavy_flee_margin"];
+		if (!ahFlee.isNull()) {
+			cdef->SetAhFleeMargin(ahFlee.asFloat());
+		}
+		cdef->SetAhMaxGroup(std::max(0, behaviour.get("antiheavy_max_group", cdef->GetAhMaxGroup()).asInt()));
+		const Json::Value& scoot = behaviour["reload_scoot"];
+		if (scoot.isBool()) {
+			cdef->SetReloadScoot(scoot.asBool() ? 0.8f : 0.f);  // true: back once 80% reloaded
+		} else if (scoot.isNumeric()) {
+			cdef->SetReloadScoot(utils::clamp(scoot.asFloat(), 0.f, 1.f));
+		}
+		const Json::Value& scootMargin = behaviour["reload_scoot_margin"];
+		if (!scootMargin.isNull()) {
+			cdef->SetReloadScootMargin(std::max(0.f, scootMargin.asFloat()));  // < 0 would read as "never scoots"
+		}
 
 		const Json::Value& pwrMod = behaviour["pwr_mod"];
 		if (!pwrMod.isNull()) {

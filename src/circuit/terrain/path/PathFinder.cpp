@@ -535,6 +535,29 @@ void CPathFinder::MakePath(IPathQuery* query, NSMicroPather::CMicroPather* micro
 	}
 }
 
+void CPathFinder::AddWedgeEndNodes(const SGoalShape& wedge, std::vector<void*>& outNodes) const
+{
+	// No line-of-sight test: the caller checked its goal position against the target. Offsets are measured from the
+	// anchor's square, in elmos
+	AIFloat3 anchor = wedge.anchor;
+	CTerrainData::CorrectPosition(anchor);
+	int ax, ay;
+	Pos2MoveXY(anchor, &ax, &ay);
+	const int radius = std::max(int(wedge.radius / squareSize), 1);  // whole squares: stays inside the radius
+	SGoalShape w = wedge;
+	w.radius = float(radius * squareSize);
+	const int minY = std::max(ay - radius, 1), maxY = std::min(ay + radius, moveMapYSize - 2);
+	const int minX = std::max(ax - radius, 1), maxX = std::min(ax + radius, moveMapXSize - 2);
+	for (int sy = minY; sy <= maxY; ++sy) {
+		for (int sx = minX; sx <= maxX; ++sx) {
+			const int dx = sx - ax, dy = sy - ay;
+			if (((dx != 0) || (dy != 0)) && w.Contains(float(dx * squareSize), float(dy * squareSize))) {
+				outNodes.push_back(MoveXY2MoveNode(sx, sy));
+			}
+		}
+	}
+}
+
 void CPathFinder::FindBestPath(IPathQuery* query, NSMicroPather::CMicroPather* micropather)
 {
 	CQueryPathMulti* q = static_cast<CQueryPathMulti*>(query);
@@ -639,11 +662,20 @@ void CPathFinder::FindBestPath(IPathQuery* query, NSMicroPather::CMicroPather* m
 
 	std::vector<void*>& nodeTargets = micropather->nodeTargets;  // NOTE: micro-opt
 //	nodeTargets.reserve(possibleTargets.size());
+	const std::vector<SGoalShape>& goalShapes = q->GetGoalShapes();
 	for (unsigned int i = 0; i < possibleTargets.size(); i++) {
 		AIFloat3& f = possibleTargets[i];
 
 		CTerrainData::CorrectPosition(f);
 		void* node = Pos2MoveNode(f);
+		if ((i < goalShapes.size()) && goalShapes[i].isWedge) {
+			// Wedge goal: never skipped as a duplicate (two goals may share a heuristic node). Its end nodes are not
+			// marked here: isEndNode is the duplicate flag of disc goals, and duplicate end nodes are harmless
+			AddWedgeEndNodes(goalShapes[i], endNodes);
+			nodeTargets.push_back(node);
+			endNodes.push_back(node);
+			continue;
+		}
 		NSMicroPather::PathNode* pn = micropather->GetNode(node);
 		if (pn->isEndNode) {
 			continue;

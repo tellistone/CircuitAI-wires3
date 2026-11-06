@@ -532,6 +532,48 @@ void CMilitaryManager::ReadConfig()
 		}
 		attackGroupRadius = (isOk && !q.isNull()) ? std::make_pair(q[0u].asFloat(), q[1u].asFloat()) : std::make_pair(2.f, 800.f);
 	}
+	{
+		// Missing object or key: the default (off when the object is missing); a wrong value logs and uses the default
+		const Json::Value& q = quotas["attack_static_cells"];
+		if (!q.isNull() && !q.isObject()) {
+			circuit->LOG("CONFIG %s: quota.attack_static_cells must be an object, using defaults (off)", cfgName.c_str());
+		}
+		const Json::Value& qc = q.isObject() ? q : Json::Value::nullSingleton();
+		auto num = [&](const char* key, float def, float lo, float hi) {
+			const Json::Value& v = qc[key];
+			if (v.isNull()) {
+				return def;
+			}
+			if (!v.isNumeric() || (v.asFloat() < lo) || (v.asFloat() > hi)) {
+				circuit->LOG("CONFIG %s: quota.attack_static_cells.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
+				return def;
+			}
+			return v.asFloat();
+		};
+		SAttackStaticCells& c = attackStaticCells;
+		const Json::Value& qon = qc["on"];
+		if (!qon.isNull() && !qon.isBool()) {
+			circuit->LOG("CONFIG %s: quota.attack_static_cells.on must be true or false, using false", cfgName.c_str());
+		}
+		c.isOn = qon.isBool() && qon.asBool();
+		c.rings[0] = 0.9f;
+		c.rings[1] = 0.7f;
+		const Json::Value& qrings = qc["rings"];
+		if (qrings.isArray() && (qrings.size() == 2) && qrings[0u].isNumeric() && qrings[1u].isNumeric()
+			&& (qrings[0u].asFloat() > 0.f) && (qrings[0u].asFloat() <= 1.f)
+			&& (qrings[1u].asFloat() > 0.f) && (qrings[1u].asFloat() <= 1.f))
+		{
+			c.rings[0] = qrings[0u].asFloat();
+			c.rings[1] = qrings[1u].asFloat();
+		} else if (!qrings.isNull()) {
+			circuit->LOG("CONFIG %s: quota.attack_static_cells.rings must be [<0..1>, <0..1>], using [0.9, 0.7]", cfgName.c_str());
+		}
+		c.sectors = static_cast<int>(num("sectors", 8.f, 1.f, 32.f));
+		c.angles = std::max(static_cast<int>(num("angles", 16.f, 1.f, 128.f)), c.sectors);
+		c.threatWeight = num("threat_weight", 1.f, 0.f, std::numeric_limits<float>::max());
+		c.scoreSlack = num("score_slack", 0.5f, 0.f, std::numeric_limits<float>::max());
+		c.aimHeight = num("cell_aim_height", 16.f, 0.f, 1000.f);
+	}
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
 		if (!raidTargets.isNull()) {
@@ -687,6 +729,12 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: antiair.fire_spot must be <= 1 (fraction of weapon range), using 1", cfgName.c_str());
 		antiAir.fireSpot = 1.f;
 	}
+
+	const Json::Value& ahCfg = root["antiheavy"];
+	antiHeavy.pathThreat = ahCfg.get("path_threat", -1.f).asFloat();
+	antiHeavy.fleeMargin = ahCfg.get("flee_margin", -1.f).asFloat();
+	antiHeavy.fleeAllyThreat = ahCfg.get("flee_ally_threat", (antiHeavy.fleeMargin >= 0.f) ? 10.f : -1.f).asFloat();
+	antiHeavy.fleeAllyRadius = std::max(0.f, ahCfg.get("flee_ally_radius", 500.f).asFloat());
 
 	const Json::Value& porc = root["porcupine"];
 	const Json::Value& defs = porc["unit"];

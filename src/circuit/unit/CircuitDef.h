@@ -275,6 +275,20 @@ public:
 	// behaviour.json per unit "artillery_flee_margin"; unset = use the "artillery" block's value
 	void SetArtyFleeMargin(float value) { artyFleeMargin = value; isArtyFleeMarginSet = true; }
 	float GetArtyFleeMargin(float defaultValue) const { return isArtyFleeMarginSet ? artyFleeMargin : defaultValue; }
+	// behaviour.json per unit "antiheavy_flee_margin"; unset = use the "antiheavy" block's value
+	void SetAhFleeMargin(float value) { ahFleeMargin = value; isAhFleeMarginSet = true; }
+	float GetAhFleeMargin(float defaultValue) const { return isAhFleeMarginSet ? ahFleeMargin : defaultValue; }
+	// behaviour.json per unit "antiheavy_max_group": most units of this type in one anti-heavy squad; 0 = no limit
+	void SetAhMaxGroup(int value) { ahMaxGroup = value; }
+	int GetAhMaxGroup() const { return ahMaxGroup; }
+	// behaviour.json per unit "reload_scoot": while its main weapon is less than this much reloaded (0..1], a unit in
+	// a squad (attack, raid, defend, anti-air, anti-heavy) steps out of its target's reach, then fights again;
+	// 0 = off. "reload_scoot_margin": elmos beyond the target's range it steps to; unset = the task's default
+	void SetReloadScoot(float value) { reloadScoot = value; }
+	float GetReloadScoot() const { return reloadScoot; }
+	bool IsReloadScoot() const { return reloadScoot > 0.f; }
+	void SetReloadScootMargin(float value) { reloadScootMargin = value; isReloadScootMarginSet = true; }
+	float GetReloadScootMargin(float defaultValue) const { return isReloadScootMarginSet ? reloadScootMargin : defaultValue; }
 	// behaviour.json per unit "capture_hide": hide at base while units captured by this one cost more than
 	// this many times its own cost; 0 = off
 	void SetCaptureHide(float value) { captureHide = value; }
@@ -381,6 +395,12 @@ private:
 	float retreat;
 	float artyFleeMargin = -1.f;
 	bool isArtyFleeMarginSet = false;
+	float ahFleeMargin = -1.f;
+	bool isAhFleeMarginSet = false;
+	int ahMaxGroup = 0;
+	float reloadScoot = 0.f;
+	float reloadScootMargin = -1.f;
+	bool isReloadScootMarginSet = false;
 	float captureHide = 0.f;
 	float targetDistMod = 1.f;
 

@@ -146,6 +146,7 @@ void CRaidTask::Update()
 	if (isInDanger && Flee(frame)) {
 		return;
 	}
+	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot
 	if (isFightPending) {
 		SendPendingFight(frame);
 	}
@@ -647,7 +648,7 @@ void CRaidTask::AttackDirect(int frame)
 	const bool isRepeatAttack = (frame >= attackFrame + attackRepeat);
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	for (CCircuitUnit* unit : units) {
-		if (unit->Blocker() != nullptr) {
+		if ((unit->Blocker() != nullptr) || IsScooting(unit)) {
 			continue;
 		}
 		unit->GetTravelAct()->StateWait();
