@@ -100,6 +100,10 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, reinforce(nullptr)
 		, reinforceFails(0)
 		, reinforceRetryFrame(-1)
+		, reinforceHostFrame(-1)
+		, isMeeting(false)
+		, isMeetWalk(false)
+		, meetPos(-RgtVector)
 		, fleeFrame(0)
 		, fleePathFrame(0)
 		, fleeQueryId(-1)
@@ -275,8 +279,12 @@ void CAttackTask::Update()
 	/*
 	 * Regroup if required
 	 */
+	// A rally host walking to its meeting point doesn't stop to gather: its joiners walk in on their own routes
+	if (isMeetWalk && (State::REGROUP == state)) {
+		state = State::ROAM;
+	}
 	const bool wasRegroup = (State::REGROUP == state);
-	const bool mustRegroup = IsMustRegroup();
+	const bool mustRegroup = !isMeetWalk && IsMustRegroup();
 	if (leader == nullptr) {  // all units released as stuck: task aborted
 		return;
 	}
@@ -330,10 +338,24 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	 * Reinforce: a group under quota.attack walks to the nearest stronger group instead of hunting alone.
 	 * A small group that isn't fighting looks for one every decision (~2 s), unless it gave up recently.
 	 */
-	if (attackPower >= minPower) {
+	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	CAttackTask* rallyHost = militaryMgr->GetRallyHost();
+	isMeetWalk = false;  // re-set by UpdateMeet
+	if (rallyHost == this) {
+		reinforce = nullptr;  // quota.attack_merge.rally: the host meets its joiners (UpdateMeet below)
+	} else if (militaryMgr->IsRallyJoiner(this)) {
+		// Rally: every compatible group reinforces the host, whatever its size (no retry cooldown)
+		if (State::ENGAGE != state) {
+			reinforce = rallyHost;
+		}
+	} else if (attackPower >= minPower) {
 		reinforce = nullptr;  // an army itself (grown by merges)
 	} else if ((reinforce == nullptr) && (State::ENGAGE != state) && (frame >= reinforceRetryFrame)) {
-		reinforce = GetMilitaryMgr()->FindReinforceSquad(leader, attackPower, this);
+		reinforce = militaryMgr->FindReinforceSquad(leader, attackPower, this);
+	}
+	if (rallyHost != this) {
+		isMeeting = false;
+		meetPos = -RgtVector;
 	}
 	const AIFloat3& startPos = leader->GetPos(frame);
 	if ((reinforce != nullptr) && (GetReinforceSquad() != nullptr)) {
@@ -346,9 +368,12 @@ void CAttackTask::Decide(int frame, bool isReuse)
 			return;
 		}
 		ClearScaleAnchor();  // walking to a group, not into an accepted fight
-		Reinforce(frame);
+		Reinforce(frame, isReuse);
 		return;
 	}  // else: nothing to join, carry on as a small attack group
+	if ((rallyHost == this) && UpdateMeet(frame, isReuse)) {
+		return;
+	}
 
 	// A route is still being worked out: keep the current pick until it comes back, unless the target is
 	// already within range (then engage as usual)
@@ -494,7 +519,9 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 	// the straight line between the leaders must still be safe by the threat allowance (IsSafeMergeLine).
 	// Not while fighting: walking off to another group would leave a fight we accepted (absorbing skips us too)
 	const CMilitaryManager::SAttackMerge& cfg = GetMilitaryMgr()->GetAttackMerge();
-	const int interval = (attackPower < minPower) ? cfg.joinSmall : cfg.joinArmy;  // quota.attack_merge.join_interval
+	// During a rally (quota.attack_merge.rally) every group checks at the small-group interval
+	const bool isFast = (attackPower < minPower) || (GetMilitaryMgr()->GetRallyHost() != nullptr);
+	const int interval = isFast ? cfg.joinSmall : cfg.joinArmy;  // quota.attack_merge.join_interval
 	return ((updCount % interval == 1 % interval) && !IsFighting()) ? CheckMergeTask() : nullptr;
 }
 
@@ -528,8 +555,10 @@ void CAttackTask::AbsorbWeakerTasks()
 	// Same rules as joining (CanAssignTo: speed ratio, leaders within the merge distance, movement type,
 	// never a worse mover than our leader; reachable; IsSafeMergeLine incl. its travel limit), seen from the
 	// small group's side.
+	// The rally host (quota.attack_merge.rally) absorbs any compatible group, armies too, whatever its own size
 	const int absorbInterval = GetMilitaryMgr()->GetAttackMerge().absorb;
-	if ((attackPower < minPower) || (updCount % absorbInterval != 5 % absorbInterval)) {
+	const bool isHost = (GetMilitaryMgr()->GetRallyHost() == this);
+	if ((!isHost && (attackPower < minPower)) || (updCount % absorbInterval != 5 % absorbInterval)) {
 		return;
 	}
 
@@ -543,7 +572,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		CCircuitUnit* candyLeader = candy->GetLeader();
 		// Cheap checks first; the small group walks to us, so the line is judged from its side
 		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
-			|| (candy->GetAttackPower() >= minPower)
+			|| (!isHost && (candy->GetAttackPower() >= minPower))
 			|| !CanAssignTo(candyLeader)
 			|| candy->IsFighting()  // let it finish its fight (it doesn't join either)
 			|| !terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)
@@ -569,16 +598,17 @@ CAttackTask* CAttackTask::GetReinforceSquad()
 	// NOTE: the army may be deleted already, do not dereference before lookup
 	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(fightType);
 	if ((tasks.find(static_cast<IFighterTask*>(reinforce)) != tasks.end()) && !reinforce->IsDead()
-		&& (reinforce->GetLeader() != nullptr) && (reinforce->GetAttackPower() > attackPower))
+		&& (reinforce->GetLeader() != nullptr)
+		&& ((reinforce->GetAttackPower() > attackPower) || (reinforce == militaryMgr->GetRallyHost())))
 	{
-		return reinforce;
+		return reinforce;  // a rally host is kept whatever its size
 	}
 	// Group gone or no longer stronger: pick the nearest other stronger one
 	reinforce = militaryMgr->FindReinforceSquad(leader, attackPower, this);
 	return reinforce;
 }
 
-void CAttackTask::Reinforce(const int frame)
+void CAttackTask::Reinforce(const int frame, bool isReuse)
 {
 	SetTarget(nullptr);
 	state = State::ROAM;
@@ -590,10 +620,23 @@ void CAttackTask::Reinforce(const int frame)
 	// allowance). It only has to get within reinforce_range (800), so the hot zone around a fighting group doesn't block
 	// it; merging takes over inside the merge distance (CheckMergeTask from our side, AbsorbWeakerTasks from
 	// an army's side). Range: quota.attack_merge.reinforce_range.
+	// Rally (quota.attack_merge.rally): to the host's meeting point while it has one, so both sides converge
+	// instead of us chasing it
 	CCircuitAI* circuit = manager->GetCircuit();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const AIFloat3& startPos = leader->GetPos(frame);
-	position = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad this update
+	const bool isRally = (reinforce == GetMilitaryMgr()->GetRallyHost());
+	AIFloat3 goal;
+	const bool isToMeet = isRally && (frame >= reinforceHostFrame) && reinforce->GetMeetPoint(frame, goal);
+	if (!isToMeet) {
+		goal = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad this update
+	}
+	position = goal;
+	// The meeting point stays put for a while: keep walking the last route to it (REINFORCE_ROUTE_ID)
+	constexpr ICoreUnit::Id REINFORCE_ROUTE_ID = -2;
+	if (isReuse && ReuseRoute(REINFORCE_ROUTE_ID, goal, frame)) {
+		return;
+	}
 	// Never stop farther out than we can merge from (the merge distance, or travel_sec at our slowest speed), with
 	// a margin for the host moving: otherwise a slow group would park short of the host and never merge
 	const CMilitaryManager::SAttackMerge& cfg = GetMilitaryMgr()->GetAttackMerge();
@@ -603,14 +646,14 @@ void CAttackTask::Reinforce(const int frame)
 
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, position, pathRange, nullptr, GetPathThreatCap(startPos, {position}));
+			startPos, goal, pathRange, nullptr, GetPathThreatCap(startPos, {goal}));
 	SetRouteThreat(query.get(), AttackRoute::REINFORCE);
-	RunRoute(query, [this](const IPathQuery* query) {
-		this->ApplyReinforcePath(static_cast<const CQueryPathSingle*>(query));
+	RunRoute(query, [this, goal, isToMeet](const IPathQuery* query) {
+		this->ApplyReinforcePath(static_cast<const CQueryPathSingle*>(query), goal, isToMeet);
 	});
 }
 
-void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query)
+void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloat3& goal, bool isToMeet)
 {
 	pPath = query->GetPathInfo();
 
@@ -618,6 +661,18 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query)
 		reinforceFails = 0;
 		if (pPath->path.size() > 2) {
 			ActivePath(lowestSpeed);
+		}
+		KeepRoute(-2, goal);  // REINFORCE_ROUTE_ID
+		return;
+	}
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	if ((reinforce != nullptr) && (reinforce == GetMilitaryMgr()->GetRallyHost())) {
+		// Rally: never hunt alone. No route to the meeting point: try the host itself for a while; no route to the
+		// host either: hold, and try again next decision
+		if (isToMeet) {
+			reinforceHostFrame = frame + FRAMES_PER_SEC * 8;
+		} else {
+			HoldPosition();
 		}
 		return;
 	}
@@ -628,8 +683,213 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query)
 		// (merge checks and absorbing still apply meanwhile)
 		reinforce = nullptr;
 		reinforceFails = 0;
-		reinforceRetryFrame = manager->GetCircuit()->GetLastFrame() + cfg.reinforceRetry;
+		reinforceRetryFrame = frame + cfg.reinforceRetry;
 	}
+}
+
+/*
+ * Rally host: meeting the groups that reinforce it (quota.attack_merge.rally)
+ */
+
+bool CAttackTask::GetMeetPoint(int frame, AIFloat3& outPos) const
+{
+	if (!isMeeting || (State::ENGAGE == state) || (frame < fleeFrame) || !utils::is_valid(meetPos)) {
+		return false;  // engaged or fleeing: joiners go to the host itself
+	}
+	outPos = meetPos;
+	return true;
+}
+
+bool CAttackTask::UpdateMeet(int frame, bool isReuse)
+{
+	constexpr float SIGNIFICANT_SHARE = 0.25f;  // a joiner (or joiners together) with this share of our strength
+	constexpr float JOINER_MAX_SEC = 60.f;  // farther joiners still come, but don't move the meeting point
+	constexpr float MEET_START_SEC = 10.f;  // start meeting when the nearest significant joiner is farther away
+	constexpr float MEET_ARRIVE_DIST = 200.f;
+	constexpr ICoreUnit::Id MEET_ROUTE_ID = -3;
+
+	if (State::ENGAGE == state) {
+		isMeeting = false;  // fight as today; the meeting waits
+		return false;
+	}
+
+	// Joiners: groups reinforcing us, within JOINER_MAX_SEC of travel
+	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	const AIFloat3& pos = leader->GetPos(frame);
+	const float strength = GetRallyStrength();
+	static std::vector<CAttackTask*> joiners;  // NOTE: micro-opt
+	static std::vector<CAttackTask*> significant;
+	joiners.clear();
+	significant.clear();
+	float total = 0.f;
+	for (IFighterTask* t : militaryMgr->GetTasks(FightType::ATTACK)) {
+		CAttackTask* j = static_cast<CAttackTask*>(t);
+		if ((j == this) || j->IsDead() || (j->GetLeader() == nullptr) || (j->reinforce != this)) {
+			continue;
+		}
+		const float sec = j->GetLeaderPos(frame).distance2D(pos) / std::max(j->lowestSpeed, 1.f);
+		if (sec > JOINER_MAX_SEC) {
+			continue;
+		}
+		joiners.push_back(j);
+		total += j->GetRallyStrength();
+		if (j->GetRallyStrength() >= SIGNIFICANT_SHARE * strength) {
+			significant.push_back(j);
+		}
+	}
+	if (significant.empty() && (total >= SIGNIFICANT_SHARE * strength)) {
+		significant = joiners;  // several small joiners that add up
+	}
+	if (significant.empty()) {
+		isMeeting = false;
+		meetPos = -RgtVector;
+		return false;
+	}
+
+	const float mergeDist = militaryMgr->GetAttackMerge().distance;
+	if (isMeeting) {
+		// Keep meeting until every significant joiner is within the merge distance
+		isMeeting = std::any_of(significant.begin(), significant.end(), [&](CAttackTask* j) {
+			return j->GetLeaderPos(frame).SqDistance2D(pos) > SQUARE(mergeDist);
+		});
+	} else {
+		float nearestSec = std::numeric_limits<float>::max();
+		for (CAttackTask* j : significant) {
+			nearestSec = std::min(nearestSec, j->GetLeaderPos(frame).distance2D(pos) / std::max(j->lowestSpeed, 1.f));
+		}
+		isMeeting = (nearestSec > MEET_START_SEC);
+	}
+	if (!isMeeting) {
+		meetPos = -RgtVector;
+		return false;
+	}
+
+	// Fight back on the way, as reinforcing groups do
+	FindTarget();
+	if ((target != nullptr) && (target->GetPos().SqDistance2D(pos) < SQUARE(highestRange))) {
+		state = State::ENGAGE;
+		Engage(frame);
+		return true;
+	}
+	ClearScaleAnchor();
+	SetTarget(nullptr);
+	state = State::ROAM;
+
+	meetPos = FindMeetPoint(frame, significant);
+	if (meetPos.SqDistance2D(pos) < SQUARE(MEET_ARRIVE_DIST)) {
+		HoldPosition();  // there: wait for them (regrouping allowed)
+		return true;
+	}
+	isMeetWalk = true;
+	if (isReuse && ReuseRoute(MEET_ROUTE_ID, meetPos, frame)) {
+		return true;
+	}
+	if (!IsQueryReady(leader)) {
+		return true;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	const AIFloat3 goal = meetPos;
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			leader, circuit->GetThreatMap(), frame,
+			pos, goal, MEET_ARRIVE_DIST, nullptr, GetPathThreatCap(pos, {goal}));
+	SetRouteThreat(query.get(), AttackRoute::REINFORCE);
+	RunRoute(query, [this, goal](const IPathQuery* query) {
+		pPath = static_cast<const CQueryPathSingle*>(query)->GetPathInfo();
+		if (pPath->path.empty()) {
+			HoldPosition();  // no safe route there: wait here, the joiners still come to us
+			return;
+		}
+		if (pPath->path.size() > 2) {
+			ActivePath(lowestSpeed);
+		}
+		KeepRoute(-3, goal);  // MEET_ROUTE_ID
+	});
+	return true;
+}
+
+AIFloat3 CAttackTask::FindMeetPoint(int frame, const std::vector<CAttackTask*>& joiners) const
+{
+	constexpr float MAX_PULL_BACK = 1500.f;  // never more than this much nearer our base than we are
+	constexpr float STICKY_DIST = 400.f;
+	constexpr float STICKY_SEC = 5.f;
+	constexpr int STEPS = 5;
+
+	const AIFloat3& hostPos = leader->GetPos(frame);
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+
+	// Joiners' strength-weighted centroid and their slowest speed
+	AIFloat3 centroid = ZeroVector;
+	float weight = 0.f;
+	float joinSpeed = std::numeric_limits<float>::max();
+	for (CAttackTask* j : joiners) {
+		const float s = std::max(j->GetRallyStrength(), 1e-3f);
+		centroid += j->GetLeaderPos(frame) * s;
+		weight += s;
+		joinSpeed = std::min(joinSpeed, j->lowestSpeed);
+	}
+	centroid /= weight;
+	const float hostSpeed = std::max(lowestSpeed, 1.f);
+	joinSpeed = std::max(joinSpeed, 1.f);
+	// Slower side's travel time to p: what the meeting waits for
+	auto meetSec = [&](const AIFloat3& p) {
+		return std::max(p.distance2D(hostPos) / hostSpeed, p.distance2D(centroid) / joinSpeed);
+	};
+
+	AIFloat3 target;
+	if (IsInBaseRadius(GetMilitaryMgr()->GetRallyBlobPos())) {
+		target = basePos;  // the blob is at our base: meet there
+	} else {
+		// Both sides arrive together
+		target = hostPos + (centroid - hostPos) * (hostSpeed / (hostSpeed + joinSpeed));
+		// Not far back towards our base
+		const float hostBaseDist = hostPos.distance2D(basePos);
+		for (int i = 0; (i < STEPS) && (hostBaseDist - target.distance2D(basePos) > MAX_PULL_BACK); ++i) {
+			target = hostPos + (target - hostPos) * 0.8f;
+		}
+	}
+
+	// Step back towards the host until the spot is safe and reachable for everyone (the host's own spot always is)
+	AIFloat3 best = hostPos;
+	for (int k = 0; k < STEPS; ++k) {
+		AIFloat3 p = hostPos + (target - hostPos) * (1.f - static_cast<float>(k) / STEPS);
+		CTerrainManager::CorrectPosition(p);
+		if (IsMeetSpotOk(p, frame, joiners)) {
+			best = p;
+			break;
+		}
+	}
+
+	// Sticky: keep the current point while it is still fine, unless the new one is far off and saves real time
+	if (utils::is_valid(meetPos) && IsMeetSpotOk(meetPos, frame, joiners)
+		&& ((best.SqDistance2D(meetPos) <= SQUARE(STICKY_DIST)) || (meetSec(meetPos) - meetSec(best) <= STICKY_SEC)))
+	{
+		return meetPos;
+	}
+	return best;
+}
+
+bool CAttackTask::IsMeetSpotOk(const AIFloat3& pos, int frame, const std::vector<CAttackTask*>& joiners) const
+{
+	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
+	if (!terrainMgr->CanMoveToPos(leader->GetArea(), pos)) {
+		return false;
+	}
+	for (CAttackTask* j : joiners) {
+		if (!terrainMgr->CanMoveToPos(j->GetLeader()->GetArea(), pos)) {
+			return false;
+		}
+	}
+	const float own = GetSafeThreat();
+	const AIFloat3& hostPos = leader->GetPos(frame);
+	const float threat = manager->GetCircuit()->GetThreatMap()->GetThreatAt(leader, pos);
+	if ((threat > 0.f) && (threat >= GetAllowedThreatAt(pos, own))) {
+		return false;
+	}
+	return IsLineSafe(hostPos, pos, std::numeric_limits<float>::max(), [&](const AIFloat3& p) {
+		return GetAllowedThreatAt(p, own);
+	});
 }
 
 /*
