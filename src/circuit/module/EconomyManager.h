@@ -143,7 +143,7 @@ private:
 	// Mex job at the best open spot for a builder at position (unit = nullptr: any builder that can reach it)
 	IBuilderTask* UpdateMexTasks(const springai::AIFloat3& position, CCircuitUnit* unit);
 	// mex_front cluster score for CMetalManager::GetMexToBuild; empty = plain nearest-spot search
-	std::function<float (int cluster, float dist)> GetMexFrontScore() const;
+	std::function<float (int cluster, float dist)> GetMexFrontScore(float bias) const;
 	// Metal of a whole feature of this def, 0 = none or not reclaimable; read once per def
 	float GetFeatureDefMetal(int featureDefId);
 	void UpdateEconomy();
@@ -222,6 +222,7 @@ private:
 	int mexEscortFrame;
 	float mexJobMod;
 	float mexFrontBias;
+	float mexFrontCommBias;  // mex_front.comm_bias: bias when a commander starts the search
 	unsigned mexFrontClusters;
 	float mexFrontStarted;
 	float reclaimValueExp;

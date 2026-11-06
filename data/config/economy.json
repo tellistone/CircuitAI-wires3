@@ -85,7 +85,8 @@
 	// progress = how far the cluster centre is along base -> lane (0 at base, 1 at the lane, clamped to [-1, 1]).
 	// The lowest-scored cluster wins and its nearest open spot is built. <started> keeps clusters finishing one at a time.
 	// bias 0 and clusters 1 = old behaviour (nearest spot in the nearest cluster with an open spot).
-	"mex_front": {"bias": 0.15, "clusters": 3, "started": 0.3},
+	// comm_bias: the bias when a commander's search queues the job (missing = bias). Any constructor can still take the job.
+	"mex_front": {"bias": 0.15, "comm_bias": 0.34, "clusters": 3, "started": 0.3},
 
 	// How constructors choose between open jobs: travel cost / <weight> of the job's priority, lowest wins (NOW always wins).
 	// travel: seconds of travel per priority; a job beyond its cap is taken only when no job is within its cap. 0 = no cap.
