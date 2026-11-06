@@ -9,17 +9,23 @@
 #define SRC_CIRCUIT_TERRAIN_PATH_QUERYPATHMULTI_H_
 
 #include "terrain/path/PathQuery.h"
+#include "terrain/path/GoalShape.h"
 
 namespace circuit {
 
 class CQueryPathMulti: public IPathQuery {
 public:
+	using SGoalShape = circuit::SGoalShape;  // optional shape of each goal, parallel to targets
+
 	CQueryPathMulti(const CPathFinder& pathfinder, int id);
 	virtual ~CQueryPathMulti();
 
 	void InitQuery(const springai::AIFloat3& startPos, float maxRange,
 			const F3Vec& targets, NSMicroPather::TestFunc&& hitTest,
 			float maxThreat, bool endPosOnly);
+
+	// Call after InitQuery, before running; empty (default): every goal is a disc of maxRange
+	void SetGoalShapes(std::vector<SGoalShape>&& shapes) { goalShapes = std::move(shapes); }
 
 	void Prepare();
 
@@ -35,6 +41,7 @@ public:
 	const float GetMaxRange() const { return maxRange; }
 	const NSMicroPather::TestFunc& GetHitTest() const { return hitTest; }
 	const float GetMaxThreat() const { return maxThreat; }
+	const std::vector<SGoalShape>& GetGoalShapes() const { return goalShapes; }
 
 	// Result
 	const std::shared_ptr<PathInfo>& GetPathInfo() const { return pPath; }
@@ -50,6 +57,7 @@ private:
 	NSMicroPather::TestFunc hitTest;
 	float maxThreat = 0.f;
 	bool endPosOnly = false;
+	std::vector<SGoalShape> goalShapes;
 };
 
 } // namespace circuit
