@@ -1061,13 +1061,14 @@ float CMilitaryManager::GetAttackGatherPower() const
 	return std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
 }
 
-CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self) const
+CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self,
+		bool isRally) const
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
 	// Rally: everything compatible reinforces the host, whatever its size
-	CAttackTask* host = GetRallyHost();
+	CAttackTask* host = isRally ? GetRallyHost() : nullptr;
 	if ((host != nullptr) && (host != self) && host->IsCompatible(unit)
 		&& terrainMgr->CanMoveToPos(unit->GetArea(), host->GetLeader()->GetPos(frame)))
 	{

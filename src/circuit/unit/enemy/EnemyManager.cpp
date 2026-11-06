@@ -161,8 +161,13 @@ const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame,
 		const CEnemyUnit* e = kv.second;
 		const CCircuitDef* cdef = e->GetCircuitDef();
 		// Known type, mobile, armed, finished, not proven gone; seen in LOS or radar now, or left radar recently
-		// (lastSeen is set when an enemy leaves radar, -1 while it is in radar)
-		if ((cdef == nullptr) || !cdef->IsMobile() || e->IsHidden() || e->IsBeingBuilt() || (e->GetThreat() <= 0.f)) {
+		// (lastSeen is set when an enemy leaves radar, -1 while it is in radar).
+		// Surface fighters only: not aircraft, and able to shoot land or water (as the threat map's surface layer);
+		// merging ground groups doesn't answer gunships or AA
+		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsAbleToFly()
+			|| !(cdef->HasAntiLand() || cdef->HasAntiWater())
+			|| e->IsHidden() || e->IsBeingBuilt() || (e->GetThreat() <= 0.f))
+		{
 			continue;
 		}
 		const int lastSeen = e->GetLastSeen();

@@ -60,8 +60,10 @@ public:
 	// Power an attack-bound group gathers at base before it leaves: max(quota.attack, enemy threat / allies)
 	float GetAttackGatherPower() const;
 	// Nearest attack group stronger than `power` that the group led by `unit` may join and can reach;
-	// nullptr if none. `self` is skipped.
-	CAttackTask* FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self = nullptr) const;
+	// nullptr if none. `self` is skipped. With `isRally` the rally host comes first, wherever it is
+	// (quota.attack_merge.rally); fleeing passes false and keeps the nearest stronger group.
+	CAttackTask* FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self = nullptr,
+			bool isRally = true) const;
 	// New attack task that walks to FindReinforceSquad(unit, power) and merges into it; nullptr if there is none
 	IFighterTask* EnqueueReinforce(CCircuitUnit* unit, float power);
 	// An attack-bound unit's first task: a gathering group at base (quota.attack_merge.base_gather true), else

@@ -126,10 +126,12 @@ private:
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame, bool isReuse);
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, bool isToMeet);
+	springai::AIFloat3 FindFightEdge(int frame, const springai::AIFloat3& hostPos) const;
 	// Rally host, not engaged: walk to a meeting point with the significant joiners (>= 25% of our strength, alone or
 	// together, within 60 s), from when the nearest is over 10 s away until all are within the merge distance.
 	// true: this decision is done
 	bool UpdateMeet(int frame, bool isReuse);
+	bool IsMeetStalled(const CAttackTask* joiner, float gapSec, int frame);
 	// Where the host and its joiners arrive together, stepped back towards the host until safe and reachable
 	springai::AIFloat3 FindMeetPoint(int frame, const std::vector<CAttackTask*>& joiners) const;
 	bool IsMeetSpotOk(const springai::AIFloat3& pos, int frame, const std::vector<CAttackTask*>& joiners) const;
@@ -240,12 +242,20 @@ private:
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
-	int reinforceHostFrame;  // rally: no route to the meeting point, route to the host itself until this frame
+	springai::AIFloat3 meetFailPos;  // rally: the host's meeting point our last route to came back empty
 
 	// Rally host meeting its joiners (quota.attack_merge.rally)
 	bool isMeeting;
 	bool isMeetWalk;  // walking to the meeting point this decision: no regroup on the way
+	bool isMeetArrived;  // at the meeting point: stand there until pushed well away from it
 	springai::AIFloat3 meetPos;  // -RgtVector: none
+	struct SMeetTrack {  // progress of one joiner towards us: a joiner that stops closing in no longer holds us
+		const CAttackTask* task;  // compared only, never dereferenced (may be gone)
+		float bestSec;  // smallest gap (travel time at its speed) seen, in steps of MEET_PROGRESS_SEC
+		int bestFrame;  // when bestSec was set
+		int seenFrame;  // last decision that looked at it
+	};
+	std::vector<SMeetTrack> meetTracks;
 
 	// Escape
 	int fleeFrame;  // keep running until this frame
