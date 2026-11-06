@@ -332,10 +332,14 @@ void ISquadTask::ActivePath(float speed)
 
 NSMicroPather::TestFunc ISquadTask::GetHitTest() const
 {
-	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
+	const float aimLift = leader->GetCircuitDef()->GetHeight() / 2;  // TODO: Use aim-pos of attacker and enemy
+	return MakeHitTest(manager->GetCircuit()->GetTerrainManager(), aimLift);
+}
+
+NSMicroPather::TestFunc ISquadTask::MakeHitTest(CTerrainManager* terrainMgr, float aimLift)
+{
 	const std::vector<STerrainMapSector>& sectors = terrainMgr->GetAreaData()->sector;
 	const int sectorXSize = terrainMgr->GetSectorXSize();
-	const float aimLift = leader->GetCircuitDef()->GetHeight() / 2;  // TODO: Use aim-pos of attacker and enemy
 	return [&sectors, sectorXSize, aimLift](int2 start, int2 end) {  // losTest
 		float startHeight = sectors[start.y * sectorXSize + start.x].maxElevation + aimLift;
 		float diffHeight = sectors[end.y * sectorXSize + end.x].maxElevation + SQUARE_SIZE - startHeight;

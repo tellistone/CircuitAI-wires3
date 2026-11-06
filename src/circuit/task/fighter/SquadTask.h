@@ -20,6 +20,7 @@ namespace circuit {
 class CMap;
 class CQueryPathSingle;
 class CQueryPathMulti;
+class CTerrainManager;
 
 class ISquadTask: public IFighterTask {
 protected:
@@ -57,6 +58,8 @@ protected:
 	void ReleaseStuck(std::vector<CCircuitUnit*>& stuck);
 	void ActivePath(float speed = NO_SPEED_LIMIT);
 	NSMicroPather::TestFunc GetHitTest() const;
+	// Line of sight over terrain between two path-map squares (sector max elevation), aimed aimLift above the start
+	static NSMicroPather::TestFunc MakeHitTest(CTerrainManager* terrainMgr, float aimLift);
 
 	/*
 	 * Escape check of attack and raid groups. Danger: threat at or above GetAllowedThreatAt for GetEscapeSafeThreat
