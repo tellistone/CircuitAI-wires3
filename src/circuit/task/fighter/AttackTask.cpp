@@ -69,6 +69,9 @@ static constexpr float GROUP_ROUTE_SLACK = 0.1f;
 static constexpr int RALLY_ROUTE_RETRY_FRAMES = FRAMES_PER_SEC * 6;
 // Rally host: arrived at the meeting point within this; also how close its route there has to get
 static constexpr float MEET_ARRIVE_DIST = 200.f;
+// Rally host: counts as fighting this long after its last Engage, so a target blinking at the edge of its range
+// doesn't swap its joiners' goal (fight edge or meeting point) every decision
+static constexpr int RALLY_FIGHT_MEMORY_FRAMES = FRAMES_PER_SEC * 6;
 
 namespace {
 // Power-weighted median weapon range against one target type, of the non-support units that can hit it (or of all
@@ -113,6 +116,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, isMeetWalk(false)
 		, isMeetArrived(false)
 		, isJoinerNear(false)
+		, engageFrame(-RALLY_FIGHT_MEMORY_FRAMES)
 		, meetPos(-RgtVector)
 		, meetArrivePos(-RgtVector)
 		, fleeFrame(0)
@@ -373,14 +377,9 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	} else if ((reinforce == nullptr) && (State::ENGAGE != state) && (frame >= reinforceRetryFrame)) {
 		reinforce = militaryMgr->FindReinforceSquad(leader, attackPower, this);
 	}
-	const AIFloat3& startPos = leader->GetPos(frame);
 	if ((reinforce != nullptr) && (GetReinforceSquad() != nullptr)) {
-		// Fight back on the way: a target that passes the usual checks (FindTarget) and is already within range gets
-		// attacked; otherwise keep walking
-		FindTarget();
-		if ((target != nullptr) && (position.SqDistance2D(startPos) < SQUARE(highestRange))) {  // GetRangePos
-			state = State::ENGAGE;
-			Engage(frame);
+		// Fight back on the way; otherwise keep walking
+		if (EngageInRange(frame, true)) {
 			return;
 		}
 		ClearScaleAnchor();  // walking to a group, not into an accepted fight
@@ -391,6 +390,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		return;
 	}
 
+	const AIFloat3& startPos = leader->GetPos(frame);
 	// A route is still being worked out: keep the current pick until it comes back, unless the target is
 	// already within range (then engage as usual)
 	if (!IsQueryReady(leader) && (target != nullptr)
@@ -400,14 +400,10 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	}
 	// Also on enemy-held ground (influence < 0): FindTarget judges threat at the target and along the approach line.
 	// With nothing to go for there, FallbackFrontPos holds nearby instead of walking back.
-	FindTarget();
-
-	state = State::ROAM;
-	if ((target != nullptr) && (position.SqDistance2D(startPos) < SQUARE(highestRange))) {
-		state = State::ENGAGE;
-		Engage(frame);
+	if (EngageInRange(frame, false)) {
 		return;
 	}
+	state = State::ROAM;
 	if (!IsQueryReady(leader)) {
 		return;
 	}
@@ -422,6 +418,26 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	// if the route's approach to it is safe
 	targetRouteTries = 0;
 	RequestTargetPath(routeGoals);
+}
+
+bool CAttackTask::EngageInRange(int frame, bool isWalking)
+{
+	// A target that passes the usual checks (FindTarget) and whose range spot (GetRangePos: position) is already
+	// within our range: engage it.
+	// Walking to a group or a meeting point the pick is used only in range: with no enemy we could hit within 2x our
+	// range (a range spot is at most a fire range in front of its target) skip FindTarget, it couldn't engage
+	if (isWalking && (FindNearestHittable(frame, 2.f * highestRange) == nullptr)) {
+		SetTarget(nullptr);
+		fleeTargetId = -1;  // as FindTarget: the target we fled from is ours only at the next pick
+		return false;
+	}
+	FindTarget();
+	if ((target == nullptr) || (position.SqDistance2D(leader->GetPos(frame)) >= SQUARE(highestRange))) {
+		return false;
+	}
+	state = State::ENGAGE;
+	Engage(frame);
+	return true;
 }
 
 /*
@@ -681,7 +697,7 @@ bool CAttackTask::PickRallyGoal(int frame, AIFloat3& inOutGoal, bool& outIsToMee
 	// - otherwise: the host itself (inOutGoal as given; inside the merge distance, so the merge always fires).
 	// false: nothing safe near the fight and we are close already, stand still
 	outIsToMeet = false;
-	if (State::ENGAGE == reinforce->state) {
+	if (reinforce->IsRallyFighting(frame)) {
 		const AIFloat3 hostPos = inOutGoal;
 		return FindFightEdge(frame, hostPos, inOutGoal);
 	}
@@ -807,10 +823,15 @@ bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& ou
  * Rally host: meeting the groups that reinforce it (quota.attack_merge.rally)
  */
 
+bool CAttackTask::IsRallyFighting(int frame) const
+{
+	return (State::ENGAGE == state) || (frame - engageFrame < RALLY_FIGHT_MEMORY_FRAMES);
+}
+
 bool CAttackTask::GetMeetPoint(int frame, AIFloat3& outPos) const
 {
-	if (!utils::is_valid(meetPos) || (State::ENGAGE == state) || (frame < fleeFrame)) {
-		return false;  // engaged or fleeing: joiners go to the host itself
+	if (!utils::is_valid(meetPos) || IsRallyFighting(frame) || (frame < fleeFrame)) {
+		return false;  // fighting or fleeing: joiners go to the host (its fight edge) instead
 	}
 	outPos = meetPos;
 	return true;
@@ -838,12 +859,8 @@ bool CAttackTask::UpdateMeet(int frame, bool isReuse)
 
 	// Fight back on the way, as reinforcing groups do; the meeting goes on after the fight (GetMeetPoint gives
 	// joiners no point while we engage)
-	const AIFloat3& pos = leader->GetPos(frame);
-	FindTarget();
-	if ((target != nullptr) && (target->GetPos().SqDistance2D(pos) < SQUARE(highestRange))) {
-		state = State::ENGAGE;
+	if (EngageInRange(frame, true)) {
 		isMeetArrived = false;
-		Engage(frame);
 		return true;
 	}
 	ClearScaleAnchor();
@@ -852,7 +869,7 @@ bool CAttackTask::UpdateMeet(int frame, bool isReuse)
 
 	meetPos = FindMeetPoint(frame, significant);
 	position = meetPos;
-	if (IsAtMeetPoint(pos)) {
+	if (IsAtMeetPoint(leader->GetPos(frame))) {
 		// Wait at the point (regrouping allowed). No quiet-spot search: the point was judged safe, and the joiners
 		// aim at it
 		GatherAt(meetPos);
@@ -873,10 +890,8 @@ bool CAttackTask::UpdateMeet(int frame, bool isReuse)
 
 void CAttackTask::CollectSignificantJoiners(int frame, std::vector<CAttackTask*>& outSignificant)
 {
-	// Joiners: groups reinforcing us. Significant: within JOINER_MAX_SEC of travel, still closing in (TrackJoiner),
-	// with SIGNIFICANT_SHARE of our strength (KEEP_SHARE once counted). Also sets isJoinerNear (fast absorbing)
-	constexpr float SIGNIFICANT_SHARE = 0.25f;
-	constexpr float KEEP_SHARE = 0.20f;
+	// Joiners: groups reinforcing us. Significant: within JOINER_MAX_SEC of travel, with enough strength and still
+	// closing in (TrackJoiner). Also sets isJoinerNear (fast absorbing)
 	constexpr float JOINER_MAX_SEC = 60.f;
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
 	const AIFloat3& pos = leader->GetPos(frame);
@@ -893,14 +908,7 @@ void CAttackTask::CollectSignificantJoiners(int frame, std::vector<CAttackTask*>
 		const float sqDist = jPos.SqDistance2D(pos);
 		isJoinerNear |= (sqDist <= sqMergeDist);
 		const float sec = sqrtf(sqDist) / std::max(j->lowestSpeed, 1.f);
-		if (sec > JOINER_MAX_SEC) {
-			continue;
-		}
-		bool isStalled;
-		SMeetTrack& track = TrackJoiner(j, sec, frame, isStalled);
-		const float share = track.isSignificant ? KEEP_SHARE : SIGNIFICANT_SHARE;
-		track.isSignificant = !isStalled && (j->GetRallyStrength() >= share * strength);
-		if (track.isSignificant) {
+		if ((sec <= JOINER_MAX_SEC) && TrackJoiner(j, sec, strength, frame)) {
 			outSignificant.push_back(j);
 		}
 	}
@@ -929,41 +937,43 @@ bool CAttackTask::IsAtMeetPoint(const AIFloat3& pos)
 	return isMeetArrived;
 }
 
-CAttackTask::SMeetTrack& CAttackTask::TrackJoiner(const CAttackTask* joiner, float gapSec, int frame, bool& outIsStalled)
+bool CAttackTask::TrackJoiner(const CAttackTask* joiner, float gapSec, float ourStrength, int frame)
 {
+	// Significant: SIGNIFICANT_SHARE of our strength (KEEP_SHARE once counted) and not stalled.
 	// A joiner whose gap to us (its travel time) hasn't shrunk by MEET_PROGRESS_SEC within MEET_STALL_FRAMES is
 	// stalled: stuck behind a wall of threat, fighting on the way, or with no route. While stalled its best gap
 	// follows it up, so MEET_PROGRESS_SEC of fresh progress counts it again. A track not looked at for a while
 	// (it was too far) starts afresh
+	constexpr float SIGNIFICANT_SHARE = 0.25f;
+	constexpr float KEEP_SHARE = 0.20f;
 	constexpr float MEET_PROGRESS_SEC = 5.f;
 	constexpr int MEET_STALL_FRAMES = FRAMES_PER_SEC * 20;
 	constexpr int MEET_TRACK_GAP_FRAMES = FRAMES_PER_SEC * 6;
 	auto it = std::find_if(meetTracks.begin(), meetTracks.end(), [joiner](const SMeetTrack& m) {
 		return m.task == joiner;
 	});
-	if ((it == meetTracks.end()) || (frame - it->seenFrame > MEET_TRACK_GAP_FRAMES)) {
-		const SMeetTrack fresh = {joiner, gapSec, frame, frame, false};
-		outIsStalled = false;
-		if (it == meetTracks.end()) {
-			meetTracks.push_back(fresh);
-			return meetTracks.back();
-		}
+	const SMeetTrack fresh = {joiner, gapSec, frame, frame, false};
+	if (it == meetTracks.end()) {
+		it = meetTracks.insert(meetTracks.end(), fresh);
+	} else if (frame - it->seenFrame > MEET_TRACK_GAP_FRAMES) {
 		*it = fresh;
-		return *it;
 	}
-	it->seenFrame = frame;
-	if (State::ENGAGE == state) {
-		it->bestFrame = frame;  // we fight, joiners wait at its edge (FindFightEdge): no stall clock meanwhile
+	SMeetTrack& track = *it;
+	track.seenFrame = frame;
+	if (IsRallyFighting(frame)) {
+		track.bestFrame = frame;  // we fight, joiners wait at its edge (FindFightEdge): no stall clock meanwhile
 	}
-	if (gapSec <= it->bestSec - MEET_PROGRESS_SEC) {
-		it->bestSec = gapSec;
-		it->bestFrame = frame;
+	if (gapSec <= track.bestSec - MEET_PROGRESS_SEC) {
+		track.bestSec = gapSec;
+		track.bestFrame = frame;
 	}
-	outIsStalled = (frame - it->bestFrame > MEET_STALL_FRAMES);
-	if (outIsStalled) {
-		it->bestSec = std::max(it->bestSec, gapSec);
+	const bool isStalled = (frame - track.bestFrame > MEET_STALL_FRAMES);
+	if (isStalled) {
+		track.bestSec = std::max(track.bestSec, gapSec);
 	}
-	return *it;
+	const float share = track.isSignificant ? KEEP_SHARE : SIGNIFICANT_SHARE;
+	track.isSignificant = !isStalled && (joiner->GetRallyStrength() >= share * ourStrength);
+	return track.isSignificant;
 }
 
 AIFloat3 CAttackTask::FindMeetPoint(int frame, const std::vector<CAttackTask*>& joiners) const
@@ -996,7 +1006,8 @@ AIFloat3 CAttackTask::FindMeetPoint(int frame, const std::vector<CAttackTask*>& 
 	};
 
 	AIFloat3 target;
-	if (IsInBaseRadius(GetMilitaryMgr()->GetRallyBlobPos())) {
+	const bool isAtBase = IsInBaseRadius(GetMilitaryMgr()->GetRallyBlobPos());
+	if (isAtBase) {
 		target = basePos;  // the blob is at our base: meet there
 	} else {
 		// Both sides arrive together
@@ -1015,6 +1026,14 @@ AIFloat3 CAttackTask::FindMeetPoint(int frame, const std::vector<CAttackTask*>& 
 		}
 	}
 
+	// Sticky: keep the current point while it is still fine, unless the new one is far off and saves real time.
+	// Away from base no stepped-back spot arrives sooner than target (on host -> target the joiners are the slower
+	// side, and they get nearer all the way), so a current point within STICKY_SEC of target is kept without the steps
+	const bool isMeetOk = utils::is_valid(meetPos) && IsMeetSpotOk(meetPos, frame, joiners);
+	if (isMeetOk && !isAtBase && (meetSec(meetPos) - meetSec(target) <= STICKY_SEC)) {
+		return meetPos;
+	}
+
 	// Step back towards the host until the spot is safe and reachable for everyone (the host's own spot always is)
 	AIFloat3 best = hostPos;
 	for (int k = 0; k < STEPS; ++k) {
@@ -1026,8 +1045,7 @@ AIFloat3 CAttackTask::FindMeetPoint(int frame, const std::vector<CAttackTask*>& 
 		}
 	}
 
-	// Sticky: keep the current point while it is still fine, unless the new one is far off and saves real time
-	if (utils::is_valid(meetPos) && IsMeetSpotOk(meetPos, frame, joiners)
+	if (isMeetOk
 		&& ((best.SqDistance2D(meetPos) <= SQUARE(STICKY_DIST)) || (meetSec(meetPos) - meetSec(best) <= STICKY_SEC)))
 	{
 		return meetPos;
@@ -1260,7 +1278,7 @@ void CAttackTask::Cornered(int frame)
 
 	// Nowhere quieter: fight from here
 	CEnemyInfo* enemy = ((target != nullptr) && (target->GetPos().SqDistance2D(pos) < SQUARE(highestRange)))
-			? target : FindNearestHittable(frame);
+			? target : FindNearestHittable(frame, std::max(highestRange, leader->GetCircuitDef()->GetMaxRange()) * 1.5f);
 	if (enemy != nullptr) {
 		SetTarget(enemy);
 		position = enemy->GetPos();
@@ -1279,14 +1297,14 @@ void CAttackTask::ApplyCorneredPath(const CQueryPathSingle* query)
 	ActivePath();
 }
 
-CEnemyInfo* CAttackTask::FindNearestHittable(int frame) const
+CEnemyInfo* CAttackTask::FindNearestHittable(int frame, float radius) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const AIFloat3& pos = leader->GetPos(frame);
 	const int canTargetCat = cdef->GetTargetCategory();
 	const bool notAA = !cdef->HasAntiAir();
-	const float maxSqDist = SQUARE(std::max(highestRange, cdef->GetMaxRange()) * 1.5f);
+	const float maxSqDist = SQUARE(radius);
 	CEnemyInfo* best = nullptr;
 	float minSqDist = maxSqDist;
 	for (auto& kv : circuit->GetEnemyInfos()) {
@@ -2027,6 +2045,7 @@ bool CAttackTask::IsFighting() const
 
 void CAttackTask::Engage(int frame)
 {
+	engageFrame = frame;  // IsRallyFighting
 	Attack(frame);
 	// Stragglers (IsOutOfReach) got no attack order. One without an active path (e.g. it merged in while we were
 	// engaged: it took the leader's waiting travel state) would idle where it is: walk it to the leader, along the
