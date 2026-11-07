@@ -9,6 +9,9 @@
 #define SRC_CIRCUIT_TASK_REPAIRTASK_H_
 
 #include "task/common/RepairTask.h"
+#include "module/BuilderManager.h"
+
+#include <map>
 
 namespace circuit {
 
@@ -32,7 +35,7 @@ private:
 	bool IsLeashBroken();
 
 	std::set<CCircuitUnit*> inRange;  // builders that got within build range of the target
-	int fleeFrame;  // frame since the target keeps driving away from all assignees, -1 = not fleeing
+	std::map<CCircuitUnit*, CBuilderManager::SChaseCheck> chases;  // closing-in progress of assignees out of reach
 };
 
 } // namespace circuit

@@ -104,8 +104,18 @@ public:
 	// faster than repair_flee share of its own max speed
 	bool IsRepairTargetFleeing(const IBuilderTask* task, CCircuitUnit* builder, const springai::AIFloat3& pos,
 							   const springai::AIFloat3* targetVel = nullptr) const;  // targetVel: already read by caller
-	bool IsRepairFleeOn() const { return repairFleeShare > 0.f; }
-	int GetRepairFleeFrames() const { return repairFleeFrames; }
+	// Builder closing in on a moving repair target: checkpoint of its gap beyond build range
+	struct SChaseCheck {
+		ICoreUnit::Id targetId = -1;
+		float gap = 0.f;
+		int frame = -1;
+		void Reset() { targetId = -1; frame = -1; }
+	};
+	// gap <= 0 = in reach. True once the gap has not shrunk by repair_chase[1] for repair_chase[0] sec
+	bool IsChaseStalled(SChaseCheck& chase, ICoreUnit::Id targetId, float gap, int frame) const;
+	// Engine's own repair (picked while patrolling) of a mobile unit that the builder doesn't close in on
+	bool IsEngineChaseStalled(CCircuitUnit* unit, SChaseCheck& chase) const;
+	int GetPrioRepairCooldown() const { return prioRepairCooldown; }
 	void OnRetreatEnd(CCircuitUnit* unit);  // unit left retreat: drop its leftover retreat (HIGH) repair job
 
 	struct SEscort {
@@ -218,7 +228,8 @@ private:
 	float prioRepairLeash;  // cancel started priority repair if target gets this far beyond build range, 0 = off
 	int prioRepairCooldown;  // frames without new priority repair job after leash break
 	float repairFleeShare;  // target moving away faster than this share of its max speed counts as fleeing, 0 = off
-	int repairFleeFrames;  // frames a target may keep fleeing from all its repairers before the job is dropped
+	int repairChaseFrames;  // frames a builder may chase a repair target without closing in, 0 = off
+	float repairChaseClose;  // elmos the gap must shrink by within repairChaseFrames
 	std::map<ICoreUnit::Id, int> leashUntil;  // unitId: frame until which priority repair is held off
 	SEscort escort;
 	std::set<IUnitTask*> escortTasks;

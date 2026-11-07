@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_BUILDER_ESCORTTASK_H_
 
 #include "task/builder/BuilderTask.h"
+#include "module/BuilderManager.h"
 
 namespace circuit {
 
@@ -49,6 +50,8 @@ private:
 	bool isFightOrder;
 	bool isArrived;  // threat-aware catch-up path finished
 	bool isTraveling;  // catch-up path is active
+	CBuilderManager::SChaseCheck chase;  // engine repair picked while patrolling
+	int noPatrolFrame;  // move instead of patrol until this frame: the engine would re-pick the same chase
 };
 
 } // namespace circuit

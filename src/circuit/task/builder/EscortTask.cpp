@@ -34,6 +34,7 @@ CBEscortTask::CBEscortTask(ITaskManager* mgr, ISquadTask* squad)
 		, isFightOrder(false)
 		, isArrived(false)
 		, isTraveling(false)
+		, noPatrolFrame(-1)
 {
 }
 
@@ -76,10 +77,20 @@ void CBEscortTask::Update()
 		manager->AbortTask(this);
 		return;
 	}
-	const bool isForce = isArrived;
+	bool isForce = isArrived;
 	isArrived = false;
+	CBuilderManager* builderMgr = static_cast<CBuilderManager*>(manager);
 	auto assignees = units;  // Follow may abort the task
 	for (CCircuitUnit* unit : assignees) {
+		// Patrol repairs on its own and chases any unit no faster than the builder: drop a chase that gets nowhere
+		if (isFightOrder && builderMgr->IsEngineChaseStalled(unit, chase)) {
+			chase.Reset();
+			noPatrolFrame = manager->GetCircuit()->GetLastFrame() + builderMgr->GetPrioRepairCooldown();
+			isForce = true;
+			TRY_UNIT(manager->GetCircuit(), unit,
+				unit->GetUnit()->Stop();  // Follow may give no order when the builder is already at its spot
+			)
+		}
 		Follow(unit, isForce);
 		if (isDead) {
 			break;
@@ -166,7 +177,7 @@ void CBEscortTask::Follow(CCircuitUnit* unit, bool isForce)
 			&& (vel.x * dir.x + vel.z * dir.z > 0.f);
 	const float sqDist = unit->GetPos(frame).SqDistance2D(pos);
 	const bool isLagging = sqDist > SQUARE(escort.follow);
-	const bool isFight = !isFallback && !isLagging;
+	const bool isFight = !isFallback && !isLagging && (frame >= noPatrolFrame);
 
 	ITravelAction* travelAct = unit->GetTravelAct();
 	if (isLagging) {

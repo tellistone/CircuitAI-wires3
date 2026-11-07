@@ -20,7 +20,6 @@ using namespace springai;
 
 CBRepairTask::CBRepairTask(ITaskManager* mgr, Priority priority, CAllyUnit* target, int timeout)
 		: IRepairTask(mgr, priority, Type::BUILDER, target, timeout)
-		, fleeFrame(-1)
 {
 }
 
@@ -51,12 +50,12 @@ bool CBRepairTask::IsLeashBroken()
 	if (units.empty() || (target == nullptr) || !target->GetCircuitDef()->IsMobile()
 		|| ((priority != Priority::NOW) && (priority != Priority::HIGH)))
 	{
-		fleeFrame = -1;
+		chases.clear();
 		return false;
 	}
 	// A retreating unit is heading home to be repaired: keep following it
 	if (target->GetTask()->GetType() == IUnitTask::Type::RETREAT) {
-		fleeFrame = -1;
+		chases.clear();  // the chase check starts afresh once it stops retreating
 		return false;
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -65,6 +64,7 @@ bool CBRepairTask::IsLeashBroken()
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& targetPos = target->GetPos(frame);
 	bool isAnyInRange = false;
+	bool isAllStalled = true;  // no assignee closes in on the target
 	std::vector<CCircuitUnit*> unsafe;
 	for (CCircuitUnit* unit : units) {
 		// Don't follow the target into a fight the builder can't survive (retreat.repair_safe, same rule as job selection)
@@ -74,14 +74,21 @@ bool CBRepairTask::IsLeashBroken()
 		}
 		const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
 		const float sqDist = targetPos.SqDistance2D(unit->GetPos(frame));
-		if (sqDist < SQUARE(buildDist + SQUARE_SIZE * 8)) {
+		const float range = buildDist + SQUARE_SIZE * 8;
+		if (sqDist < SQUARE(range)) {
 			inRange.insert(unit);  // repair has started
 			isAnyInRange = true;
-		} else if ((leash > 0.f) && (inRange.find(unit) != inRange.end()) && (sqDist > SQUARE(buildDist + leash))) {
+			chases[unit].Reset();
+			continue;
+		}
+		if ((leash > 0.f) && (inRange.find(unit) != inRange.end()) && (sqDist > SQUARE(buildDist + leash))) {
 			// Target drove off half-repaired: stop chasing it
 			builderMgr->OnPrioRepairLeash(targetId);
 			manager->AbortTask(this);
 			return true;
+		}
+		if (!builderMgr->IsChaseStalled(chases[unit], targetId, sqrtf(sqDist) - range, frame)) {
+			isAllStalled = false;
 		}
 	}
 	if (!unsafe.empty()) {
@@ -90,25 +97,13 @@ bool CBRepairTask::IsLeashBroken()
 			RemoveAssignee(unit);
 		}
 		if (units.empty()) {
-			fleeFrame = -1;
 			return true;
 		}
 	}
-	// Target keeps driving away from all its repairers: don't chase it.
-	// Job selection skips it while it does, a new job is taken once it stops or turns back.
-	bool isFleeing = !isAnyInRange && builderMgr->IsRepairFleeOn();
-	if (isFleeing) {
-		const AIFloat3 vel = target->GetUnit()->GetVel();  // one engine call for all assignees
-		for (auto it = units.begin(); isFleeing && (it != units.end()); ++it) {
-			isFleeing = builderMgr->IsRepairTargetFleeing(this, *it, (*it)->GetPos(frame), &vel);
-		}
-	}
-	if (!isFleeing) {
-		fleeFrame = -1;
-	} else if (fleeFrame < 0) {
-		fleeFrame = frame;
-	} else if (frame - fleeFrame >= builderMgr->GetRepairFleeFrames()) {
-		builderMgr->OnPrioRepairLeash(targetId);  // same cooldown as the leash: a unit in a fight stops and starts
+	// Nobody in reach and nobody closing in (target as fast, or moving at its group's pace, or stop-and-go): drop it.
+	// Same cooldown as the leash, then a new job is taken if the unit still needs one.
+	if (!isAnyInRange && isAllStalled) {
+		builderMgr->OnPrioRepairLeash(targetId);
 		manager->AbortTask(this);
 		return true;
 	}
@@ -118,6 +113,7 @@ bool CBRepairTask::IsLeashBroken()
 void CBRepairTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	inRange.erase(unit);
+	chases.erase(unit);
 	IRepairTask::RemoveAssignee(unit);
 }
 
