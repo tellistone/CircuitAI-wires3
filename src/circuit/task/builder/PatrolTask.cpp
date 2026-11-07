@@ -14,6 +14,7 @@
 #include "util/Utils.h"
 
 #include "Map.h"
+#include "AISCommands.h"
 
 namespace circuit {
 
@@ -23,6 +24,7 @@ CBPatrolTask::CBPatrolTask(ITaskManager* mgr, Priority priority,
 						   const AIFloat3& position,
 						   float cost, int timeout)
 		: IBuilderTask(mgr, priority, nullptr, position, Type::BUILDER, BuildType::PATROL, cost, 0.f, timeout)
+		, isMoveOrder(false)
 {
 }
 
@@ -61,6 +63,19 @@ void CBPatrolTask::Start(CCircuitUnit* unit)
 
 void CBPatrolTask::Update()
 {
+	if (isMoveOrder) {
+		return;
+	}
+	CBuilderManager* builderMgr = static_cast<CBuilderManager*>(manager);
+	for (CCircuitUnit* unit : units) {
+		// Patrol repairs on its own and chases any unit no faster than the builder: drop a chase that gets nowhere.
+		// Patrolling again would re-pick it, so move to the patrol spot for the rest of this short task.
+		if (builderMgr->IsEngineChaseStalled(unit, chase)) {
+			isMoveOrder = true;
+			Execute(unit);
+			break;
+		}
+	}
 }
 
 void CBPatrolTask::Finish()
@@ -74,6 +89,12 @@ void CBPatrolTask::Cancel()
 void CBPatrolTask::Execute(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
+	if (isMoveOrder) {
+		TRY_UNIT(circuit, unit,
+			unit->CmdMoveTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY);
+		)
+		return;
+	}
 	TRY_UNIT(circuit, unit,
 		unit->CmdPriority(0);
 

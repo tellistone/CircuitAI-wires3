@@ -113,7 +113,8 @@
 	"repair_safe": true,  // true = builders skip priority repair (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs, and leave a mobile unit's repair (priority or retreat) once it leads them into such an area
 	"repair_pull": [600, 0.4],  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
         "repair_leash": [300, 5],  // [<distance>, <cooldown sec>]: cancel a started priority or retreat (HIGH) repair if the unit, no longer retreating, drives this far beyond build range, then no new priority repair for it during cooldown, distance 0 = disabled
-	"repair_flee": [0.5, 2]  // [<speed share>, <sec>]: a mobile unit (not retreating) out of a builder's reach and moving away from it faster than this share of its own max speed is not picked for repair, and a repair is dropped, with the repair_leash cooldown, once the unit keeps doing so from all its builders this long, share 0 = disabled
+	"repair_flee": [0.5],  // [<speed share>]: a mobile unit (not retreating) out of a builder's reach and moving away from it faster than this share of its own max speed is not picked for repair, 0 = disabled
+	"repair_chase": [3, 64]  // [<sec>, <elmos>]: a builder out of reach of a moving unit it repairs (repair job, or the engine's own repair while escorting or patrolling) that hasn't closed the gap by this many elmos in this many seconds drops it, then repair_leash cooldown (escorts and patrols move instead of patrol meanwhile), sec 0 = disabled
 },
 
 "defence": {

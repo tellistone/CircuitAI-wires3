@@ -72,7 +72,8 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, prioRepairLeash(0.f)
 		, prioRepairCooldown(0)
 		, repairFleeShare(0.f)
-		, repairFleeFrames(0)
+		, repairChaseFrames(0)
+		, repairChaseClose(0.f)
 		, escort({0.f, 0.f, 0.f, 0.f, 0.f, false, static_cast<int>(IBuilderTask::Priority::HIGH)})
 {
 	commDangerFrame = -1;
@@ -194,7 +195,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	prioRepairCooldown = leash.get((unsigned)1, 20.f).asFloat() * FRAMES_PER_SEC;
 	const Json::Value& flee = root["retreat"]["repair_flee"];
 	repairFleeShare = flee.get((unsigned)0, 0.f).asFloat();
-	repairFleeFrames = flee.get((unsigned)1, 2.f).asFloat() * FRAMES_PER_SEC;
+	const Json::Value& chase = root["retreat"]["repair_chase"];
+	repairChaseFrames = chase.get((unsigned)0, 0.f).asFloat() * FRAMES_PER_SEC;
+	repairChaseClose = chase.get((unsigned)1, 64.f).asFloat();
 	commThrMod = root["quota"]["thr_mod"].get("comm", 1.f).asFloat();
 	const Json::Value& escortCfg = root["escort"];
 	escort.minPower = escortCfg.get("min_power", 0.f).asFloat();
@@ -813,6 +816,50 @@ bool CBuilderManager::IsRepairTargetFleeing(const IBuilderTask* task, CCircuitUn
 	}
 	const float minAway = repairFleeShare * target->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;
 	return SQUARE(awayDot) > SQUARE(minAway) * sqDist;
+}
+
+bool CBuilderManager::IsChaseStalled(SChaseCheck& chase, ICoreUnit::Id targetId, float gap, int frame) const
+{
+	if ((repairChaseFrames <= 0) || (gap <= 0.f)) {
+		chase.Reset();
+		return false;
+	}
+	if ((chase.targetId != targetId) || (chase.frame < 0) || (chase.gap - gap >= repairChaseClose)) {
+		// new chase, or closing in: checkpoint
+		chase.targetId = targetId;
+		chase.gap = gap;
+		chase.frame = frame;
+		return false;
+	}
+	return frame - chase.frame >= repairChaseFrames;
+}
+
+static constexpr int ENGINE_CMD_REPAIR = 40;  // engine's CMD_REPAIR
+
+bool CBuilderManager::IsEngineChaseStalled(CCircuitUnit* unit, SChaseCheck& chase) const
+{
+	if (repairChaseFrames <= 0) {
+		return false;
+	}
+	// Repair the engine picks while patrolling: CMD_REPAIR <unitId> <x> <y> <z> <radius> at the queue front
+	ICoreUnit::Id targetId = -1;
+	auto commands = unit->GetUnit()->GetCurrentCommands();
+	if (!commands.empty() && (commands.front()->GetId() == ENGINE_CMD_REPAIR)) {
+		const std::vector<float> params = commands.front()->GetParams();
+		if (params.size() == 5) {
+			targetId = static_cast<ICoreUnit::Id>(params[0]);
+		}
+	}
+	utils::free_clear(commands);
+	CAllyUnit* target = (targetId != -1) ? circuit->GetFriendlyUnit(targetId) : nullptr;
+	if ((target == nullptr) || !target->GetCircuitDef()->IsMobile()) {
+		chase.Reset();
+		return false;
+	}
+	const int frame = circuit->GetLastFrame();
+	const float range = unit->GetCircuitDef()->GetBuildDistance() + SQUARE_SIZE * 8;
+	const float gap = target->GetPos(frame).distance2D(unit->GetPos(frame)) - range;
+	return IsChaseStalled(chase, targetId, gap, frame);
 }
 
 void CBuilderManager::OnRetreatEnd(CCircuitUnit* unit)

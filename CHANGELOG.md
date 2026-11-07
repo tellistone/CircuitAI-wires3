@@ -164,6 +164,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Repair chases end when the builder doesn't close in** (`retreat.repair_chase: [sec, elmos]`, default `[0, ...]` =
+  off; shipped `[3, 64]`). This replaces dropping a repair job by sampling the target's speed (`repair_flee` now only
+  has the speed share, used when picking jobs). A builder out of reach of a moving repair target that hasn't cut the gap
+  by 64 elmos in 3 s counts as stalled; when no builder on the job is in reach and all are stalled, the job is dropped
+  with the `repair_leash` cooldown. The speed test missed units moving at their group's (slowest member's) pace and
+  restarted on every pause in a fight.
+- **Escort and patrol builders drop the engine's own repair chases.** While patrolling, the engine repairs damaged
+  units nearby by itself and chases any that is no faster than the builder (up to about 500 elmos from the patrol
+  path). The same `repair_chase` check now catches that: an escort builder then moves instead of patrolling for the
+  `repair_leash` cooldown, and a patrol fallback job moves to its spot for the rest of the job, so the engine doesn't
+  pick the same chase again.
+
 - **Builders stop chasing units they can't catch** (`retreat.repair_flee: [speed share, sec]`, default `[0, ...]` = off;
   shipped `[0.5, 2]`). A mobile repair target that is not retreating, is out of a builder's reach and is moving away
   from it faster than 0.5 x its own max speed is no longer picked for repair or pulled onto. A repair job is dropped
