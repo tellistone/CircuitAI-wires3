@@ -1234,24 +1234,19 @@ const CBuilderManager::SJobRank& CBuilderManager::GetJobRank(const IBuilderTask*
 	}
 }
 
-bool CBuilderManager::IsStallSpend(const IBuilderTask* task, const CCircuitUnit* unit) const
+// While stalling (CEconomyManager::IsStalling): would unit add its build power to spending? Spending = a building
+// (placed or not), terraform, or repairing an unfinished unit; reclaim, finished-unit repair, patrol and guard are
+// free. Its own job never counts, nor a new stall fix that nobody is on yet (helping one is an assist)
+static bool IsStallSpend(const CEconomyManager* economyMgr, const IBuilderTask* task, const CCircuitUnit* unit)
 {
 	if (task == unit->GetTask()) {
-		return false;  // never pushed off its own job
+		return false;
 	}
 	const IBuilderTask::BuildType type = task->GetBuildType();
 	const CCircuitUnit* target = task->GetTarget();
 	const bool isSpend = (task->GetBuildDef() != nullptr) || (type == IBuilderTask::BuildType::TERRAFORM)
 		|| ((type == IBuilderTask::BuildType::REPAIR) && (target != nullptr) && target->GetUnit()->IsBeingBuilt());
-	if (!isSpend) {
-		return false;  // reclaim, finished-unit repair, patrol, guard
-	}
-	// A new mex or pylon ends a metal stall, a new energy building an energy stall: nobody on it yet, so no assist
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const bool isStallFix = task->GetAssignees().empty()
-		&& ((economyMgr->IsMetalStall() && ((type == IBuilderTask::BuildType::MEX) || (type == IBuilderTask::BuildType::PYLON)))
-			|| (economyMgr->IsEnergyStall() && (type == IBuilderTask::BuildType::ENERGY)));
-	return !isStallFix;
+	return isSpend && !(task->GetAssignees().empty() && economyMgr->IsStallFix(task));
 }
 
 // Travel cost from pos to a job at buildPos on the builder's cost map, at least COST_BASE; < 0 = path blocked by buildings
@@ -1314,7 +1309,7 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 			if ((isNow && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
 				|| !candidate->CanAssignTo(unit)
 				|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr))
-				|| (isStalling && IsStallSpend(candidate, unit)))
+				|| (isStalling && IsStallSpend(economyMgr, candidate, unit)))
 			{
 				continue;
 			}
@@ -1374,7 +1369,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 		((unit->GetTask()->GetType() != IUnitTask::Type::BUILDER) || (static_cast<IBuilderTask*>(unit->GetTask())->GetBuildType() != IBuilderTask::BuildType::GUARD)))
 	{
 		CCircuitUnit* vip = circuit->GetFactoryManager()->GetClosestFactory(pos);
-		if ((vip != nullptr) && IsCommJobSafe(commState, vip->GetPos(frame))) {
+		// Guarding the factory adds build power to it: patrol instead while stalling (a patrol repairs and reclaims)
+		if ((vip != nullptr) && !isStalling && IsCommJobSafe(commState, vip->GetPos(frame))) {
 			task = EnqueueGuard(IBuilderTask::Priority::NORMAL, vip, FRAMES_PER_SEC * 60);
 		} else {
 			task = EnqueuePatrol(IBuilderTask::Priority::LOW, pos, .0f, FRAMES_PER_SEC * 5);
@@ -1397,7 +1393,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 //	if (task != nullptr) {
 //		return task;
 //	}
-	const bool isNotReady = !economyMgr->IsExcessed();
+	const bool isNotReady = !economyMgr->IsExcessed();  // rarely true with excess -1 (economy.json); stalls are below
 	// While metal or energy stalls, no new spending (urgent jobs included): more build power only spreads the stall
 	const bool isStalling = economyMgr->IsStalling();
 
@@ -1428,7 +1424,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 				|| (isNotReady && !isNow
 					&& (candidate->GetBuildDef() != nullptr)
 					&& !economyMgr->IsIgnoreStallingPull(candidate))
-				|| (isStalling && IsStallSpend(candidate, unit)))
+				|| (isStalling && IsStallSpend(economyMgr, candidate, unit)))
 			{
 				continue;
 			}

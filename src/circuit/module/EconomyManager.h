@@ -92,6 +92,8 @@ public:
 	void SetOpenSpot(int spotId, bool value);
 	bool IsIgnorePull(const IBuilderTask* task) const;
 	bool IsIgnoreStallingPull(const IBuilderTask* task) const;
+	// A building that ends the current stall: mex or pylon in a metal stall, energy in an energy stall
+	bool IsStallFix(const IBuilderTask* task) const;
 
 	IBuilderTask* MakeEconomyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateMetalTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);

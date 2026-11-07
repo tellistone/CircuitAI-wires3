@@ -132,9 +132,6 @@ public:
 private:
 	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);
 	bool IsPrioRepairFull(const CCircuitUnit* unit) const;
-	// While stalling: a job that would add unit's build power to spending (a building, placed or not, terraform,
-	// or repairing an unfinished unit), other than its own job and a new stall fixer (CEconomyManager::IsStalling)
-	bool IsStallSpend(const IBuilderTask* task, const CCircuitUnit* unit) const;
 public:
 	IBuilderTask* EnqueueReclaim(IBuilderTask::Priority priority,
 								 const springai::AIFloat3& position,
