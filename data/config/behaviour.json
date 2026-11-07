@@ -92,6 +92,9 @@
 		"static": 1.00,  // initial modifier for power of attack group based on static enemy threat
 		"comm": 0.75
 	},
+	"pwr_mod": {
+		"comm": 1.1  // power multiplier for every commander, as a unit's own "pwr_mod": our view of its strength (commander flee cover, group power); threat stays thr_mod.comm
+	},
 	"aa_threat": 80.0,  // anti-air threat threshold, air factories will stop production when AA threat exceedsx
 	"slack_mod": {
 		"all": 1.0,  // threat map 64-elmos slack multiplier for all units

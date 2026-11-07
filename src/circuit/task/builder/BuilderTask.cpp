@@ -424,7 +424,10 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 		&& (circuit->GetInflMap()->GetInfluenceAt(pos) > -INFL_EPS))
 	{
 		if (unit->GetCircuitDef()->IsRoleComm()) {  // FIXME: or any other builder-attacker
-			if (circuit->GetInflMap()->GetEnemyInflAt(circuit->GetSetupManager()->GetBasePos()) < INFL_EPS) {
+			// Re-plan only when CBuilderManager::DefaultMakeTask would send it to fight at home (the same test).
+			// Enemy influence at base (the old test) spreads ~4x further than weapon reach, so a scout near base had
+			// the commander re-plan non-stop, and a far commander re-planned for nothing
+			if (!circuit->GetBuilderManager()->IsHomeFight(unit)) {
 				return true;
 			}
 		} else {

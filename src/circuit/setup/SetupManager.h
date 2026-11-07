@@ -36,7 +36,13 @@ public:
 			int frame;
 			float threat;
 			bool isAir;
-			float sqTaskRad;
+			float sqTaskRad;  // hide mode: optional cap on job distance from base, 0 = off
+			// Flee (always on, hide or not): run when a ground danger is within its weapon range + fleeMargin,
+			// unless the commander and allies within fleeAllyRadius, minus the danger's threat, add up to
+			// fleeAllyThreat; < 0 margin = no flee, < 0 ally threat = flee regardless of cover
+			float fleeMargin;
+			float fleeAllyThreat;
+			float fleeAllyRadius;
 		} hide;
 	};
 	using StartFunc = std::function<void (const springai::AIFloat3& pos)>;
