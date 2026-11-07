@@ -2274,11 +2274,13 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 
 void CAttackTask::GatherAt(const AIFloat3& pos)
 {
-	// Wait around pos: only units farther than the group radius walk there, the rest stand where they are, spread
+	// Wait around pos: only units farther than GATHER_RADIUS walk there, the rest stand where they are, spread
 	// out as they came in (not packed onto one spot for area damage, and no orders resent every decision).
+	// A fixed radius, not the group radius: that grows with range, and artillery would wait far off.
 	// Holding: a unit hit by something we didn't go for steps out of its range (OnUnitDamaged)
+	constexpr float GATHER_RADIUS = 600.f;
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	const float sqRadius = SQUARE(GetGroupRadius());
+	const float sqRadius = SQUARE(GATHER_RADIUS);
 	pPath = std::make_shared<PathInfo>();
 	for (CCircuitUnit* unit : units) {
 		if (unit->Blocker() != nullptr) {

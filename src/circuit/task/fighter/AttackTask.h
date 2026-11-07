@@ -252,7 +252,7 @@ private:
 	// Quietest reachable spot within 2x our range (24 samples + where we stand), avoiding the last hit area;
 	// returns the threat there
 	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
-	// Units beyond the group radius walk to pos, the rest stand; sets isHolding
+	// Units more than 600 from pos walk there, the rest stand; sets isHolding
 	void GatherAt(const springai::AIFloat3& pos);
 	void MoveGroupTo(const springai::AIFloat3& pos);
 	void MoveUnitTo(CCircuitUnit* unit, const springai::AIFloat3& pos, int frame);
