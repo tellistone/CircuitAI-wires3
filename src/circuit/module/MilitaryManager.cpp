@@ -446,7 +446,7 @@ void CMilitaryManager::ReadConfig()
 	const float noMax = std::numeric_limits<float>::max();
 	attackFleeShare = readAttackNum("attack_flee_share", 0.5f, 0.f, 1.f);
 	attackKeepThreat = readAttackNum("attack_keep_threat", 1.34f, 1.f, noMax);  // below 1 = off
-	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 180.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
+	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 270.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
 	{
 		const Json::Value& qcont = quotas["contested"];
 		if (!qcont.isNull() && !qcont.isObject()) {

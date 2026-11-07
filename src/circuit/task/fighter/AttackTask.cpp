@@ -1351,7 +1351,7 @@ void CAttackTask::FindTarget()
 	const float weaponRange = cdef->GetMaxRange();
 	const float sqMaxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
 	const float sqHighestRange = SQUARE(highestRange);
-	// quota.attack_own_ground_time: early on, only enemies within allied influence are targets (enemy influence ignored)
+	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (below)
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
 	// Divided by the thr_mod.distance curve at each judged spot
@@ -1457,9 +1457,6 @@ void CAttackTask::FindTarget()
 			continue;
 		}
 		const AIFloat3& ePos = enemy->GetPos();
-		if (isOwnGroundOnly && (inflMap->GetAllyInflAt(ePos) <= INFL_EPS)) {
-			continue;  // quota.attack_own_ground_time: outside allied influence
-		}
 		const AIFloat3& eVel = enemy->GetVel();
 		if ((eVel.SqLength2D() >= sqMaxSpeed) && (eVel.dot2D(pos - ePos) < 0)) {
 			continue;  // runs away faster than we chase
@@ -1480,6 +1477,12 @@ void CAttackTask::FindTarget()
 		// shift its rank
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
+		// quota.attack_own_ground_time: ground our buildings, builders or static defences cover (enemy influence
+		// ignored; armed mobiles don't count, else a group would license its own surroundings and creep forward).
+		// A target already within range is always fair game, so fights at the edge aren't dropped
+		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && (inflMap->GetAllyDefendInflAt(c.rangePos) <= INFL_EPS)) {
+			continue;
+		}
 		c.rawKey = sqOEDist * scale;
 		c.key = c.rawKey * SQUARE(distModFor(enemy));
 		if (IsSiegeTarget(enemy, frame)) {  // quota.attack_static_cells.siege_bonus
