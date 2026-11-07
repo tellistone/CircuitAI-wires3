@@ -145,6 +145,16 @@
 	"flee_ally_radius": 500.0  // see flee_ally_threat
 },
 
+// Concede a lost 1v1: checked every 10 s from "time" on, only when each side is a single team. Resign when our
+// ally team holds fewer than "mex" x the map's metal spots AND the known enemy mobile threat (every enemy mobile
+// unit seen, commander and builders included) is more than "threat" x ours (our finished mobile units, same scale).
+// Says "<CircuitAI> I am defeated." in public chat, then leaves the game (/aikill), which Zero-K counts as a resign. Missing block or time < 0 = never resign
+"resign": {
+	"time": 480,  // seconds of game time
+	"mex": 0.1,
+	"threat": 4.0
+},
+
 // Anti-heavy squads (main role anti_heavy: Lance, Ultimatum, Scorpion, Merlin, ...)
 "antiheavy": {
 	"path_threat": 1.0,  // routes (to a heavy, to safety, home) may not cross enemy threat above this x the squad's allowance: its strength (power x sqrt(health %)) x the task's power mod x base_bonus / thr_mod.distance at the strictest end, as anti-air's routes. The route to a heavy ends at its stand-off point (on our side, the first walkable spot from just outside the heavy's own threat ring, never nearer than the squad's LOS, whose threat is under the cap; a heavy with no such spot within a few cells isn't walked to), so the cap meets only its escorts; from there the squad attacks it. Never below the threat where the squad stands; the way home tries once more through any threat; -1 = no cap and the old routes straight to the heavy (threat is only avoided where cheap). Aircraft never get the cap

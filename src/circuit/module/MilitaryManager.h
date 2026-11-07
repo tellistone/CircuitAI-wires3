@@ -154,6 +154,11 @@ public:
 		float fleeAllyRadius;
 	};
 	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
+	struct SResignCfg {
+		int frame;  // no resign before this frame; < 0 = never resign
+		float mexShare;  // resign only while our ally team holds less than this share of the map's metal spots
+		float threatMult;  // ... and the known enemy mobile threat is more than this x ours
+	};
 	bool IsGuardRole(CCircuitDef* cdef) const;
 	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
 	bool IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const;
@@ -314,6 +319,7 @@ private:
 	void UpdateFight();
 	void UpdateCaptureHide();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
+	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
 	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
 	// Host candidate: the strongest group (raw strength) in the movement class with the most total strength;
@@ -439,6 +445,7 @@ private:
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SAttackRally attackRally;  // quota.attack_merge.rally
+	SResignCfg resign;  // "resign"
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
 	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use
