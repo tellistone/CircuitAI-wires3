@@ -194,6 +194,8 @@ private:
 	// our slowest unit and not a nanoframe: the spot it was last seen still on in LOS, and the frame it settled there.
 	// false: no cells (any other target; also a building with an unknown type)
 	bool GetCellAnchor(const CEnemyInfo* enemy, int frame, springai::AIFloat3& outPos, int& outEpoch) const;
+	// quota.attack_static_cells.siege_bonus applies: a slow mobile type that outranges us on the ground, in view or just out of it
+	bool IsSiegeTarget(const CEnemyInfo* enemy, int frame) const;
 	// The target still has a cell anchor, of this epoch: state built for it (cells, sides, bans, planned side) holds
 	bool IsSameAnchor(const CEnemyInfo* enemy, int epoch, int frame) const;
 	// Where range to a target is measured from: a radar-only parked mobile's spot (its radar position wobbles by the
