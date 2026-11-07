@@ -61,6 +61,14 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, defenceIdx(0)
 		, scoutIdx(0)
 		, armyCost(0.f)
+		, attackBaseGather(true)
+		, rallyHost(nullptr)
+		, prevRallyHost(nullptr)
+		, rallyStartFrame(-1)
+		, rallyEndFrame(-FRAMES_PER_SEC * 60)
+		, rallyBlobFrame(-1)
+		, rallyBlobPos(-RgtVector)
+		, rallyBlobThreat(0.f)
 		, radarDef(nullptr)
 		, sonarDef(nullptr)
 		, bigGunDef(nullptr)
@@ -522,6 +530,34 @@ void CMilitaryManager::ReadConfig()
 		attackMerge.reinforceRange = readNum("reinforce_range", 800.f, 0.f);
 		attackMerge.reinforceFails = static_cast<int>(readNum("reinforce_fails", 10.f, 1.f));
 		attackMerge.reinforceRetry = static_cast<int>(readNum("reinforce_retry", 10.f, 0.f) * FRAMES_PER_SEC);
+
+		const Json::Value& qgather = qmerge.isObject() ? qmerge["base_gather"] : Json::Value();
+		if (!qgather.isNull() && !qgather.isBool()) {
+			circuit->LOG("CONFIG %s: quota.attack_merge.base_gather must be true or false, using true", cfgName.c_str());
+		}
+		attackBaseGather = qgather.isBool() ? qgather.asBool() : true;
+
+		const Json::Value& qrally = qmerge.isObject() ? qmerge["rally"] : Json::Value();
+		if (!qrally.isNull() && !qrally.isObject()) {
+			circuit->LOG("CONFIG %s: quota.attack_merge.rally must be an object, rally is off", cfgName.c_str());
+		}
+		if (qrally.isObject()) {
+			auto readRally = [&](const char* name, float def, float minVal) {
+				const Json::Value& v = qrally[name];
+				if (v.isNull()) {
+					return def;
+				}
+				if (!v.isNumeric() || (v.asFloat() < minVal)) {
+					circuit->LOG("CONFIG %s: quota.attack_merge.rally.%s must be a number >= %g, using %g", cfgName.c_str(), name, minVal, def);
+					return def;
+				}
+				return v.asFloat();
+			};
+			attackRally.match = readRally("match", 1.f, 0.f);
+			attackRally.margin = readRally("margin", 0.25f, 0.f);
+			attackRally.range = readRally("range", 3000.f, 0.f);
+			attackRally.seenFrames = static_cast<int>(readRally("seen_sec", 20.f, 0.f) * FRAMES_PER_SEC);
+		}
 	}
 	{
 		const Json::Value& q = quotas["attack_group_radius"];
@@ -853,6 +889,9 @@ void CMilitaryManager::Init()
 		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
+		if (attackRally.IsOn()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
+		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
 								FRAMES_PER_SEC * 60,
@@ -866,6 +905,7 @@ void CMilitaryManager::Release()
 {
 	// NOTE: Release expected to be called on CCircuit::Release.
 	//       It doesn't stop scheduled GameTasks for that reason.
+	rallyStartFrame = -1;  // no new rally host while every task ends
 	for (IUnitTask* task : fightUpdates) {
 		AbortTask(task);
 		// NOTE: Do not delete task as other AbortTask may ask for it
@@ -1022,11 +1062,19 @@ float CMilitaryManager::GetAttackGatherPower() const
 	return std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
 }
 
-CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self) const
+CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self,
+		bool isRally) const
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
+	// Rally: everything compatible reinforces the host, whatever its size
+	CAttackTask* host = isRally ? GetRallyHost() : nullptr;
+	if ((host != nullptr) && (host != self) && host->IsCompatible(unit)
+		&& terrainMgr->CanMoveToPos(unit->GetArea(), host->GetLeader()->GetPos(frame)))
+	{
+		return host;
+	}
 	CAttackTask* best = nullptr;
 	float minSqDist = std::numeric_limits<float>::max();
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
@@ -1061,6 +1109,174 @@ IFighterTask* CMilitaryManager::EnqueueReinforce(CCircuitUnit* unit, float power
 	return task;
 }
 
+/*
+ * quota.attack_merge.rally
+ */
+
+CAttackTask* CMilitaryManager::GetRallyHost() const
+{
+	// rallyHost is cleared in DequeueTask when its task ends
+	return ((rallyHost != nullptr) && !rallyHost->IsDead() && (rallyHost->GetLeader() != nullptr)) ? rallyHost : nullptr;
+}
+
+bool CMilitaryManager::IsRallyJoiner(const CAttackTask* task) const
+{
+	// Compatible with the host and able to reach it (another terrain area would hold for the whole rally)
+	CAttackTask* host = GetRallyHost();
+	CCircuitUnit* leader = task->GetLeader();
+	return (host != nullptr) && (host != task) && (leader != nullptr) && host->IsCompatible(leader)
+		&& circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(),
+				host->GetLeader()->GetPos(circuit->GetLastFrame()));
+}
+
+void CMilitaryManager::CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const
+{
+	// Ground attack groups with a leader (air groups never rally)
+	outGroups.clear();
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
+		CAttackTask* g = static_cast<CAttackTask*>(t);
+		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()) {
+			outGroups.push_back(g);
+		}
+	}
+}
+
+CAttackTask* CMilitaryManager::PickRallyHost(const std::vector<CAttackTask*>& groups, CAttackTask* prefer) const
+{
+	// The movement class with the most total strength: for each group, the strength of all groups that may join it
+	CAttackTask* best = nullptr;
+	float bestTotal = -1.f;
+	float bestStrength = -1.f;
+	for (CAttackTask* g : groups) {
+		float total = 0.f;
+		for (CAttackTask* h : groups) {
+			if ((h == g) || g->IsCompatible(h->GetLeader())) {
+				total += h->GetRallyStrength();
+			}
+		}
+		const float strength = g->GetRallyStrength();
+		if ((total > bestTotal * 1.001f) || ((total >= bestTotal * 0.999f) && (strength > bestStrength))) {
+			best = g;
+			bestTotal = total;
+			bestStrength = strength;
+		}
+	}
+	// Restart: keep the previous host while it is within 20% of the best (no new host for a near tie)
+	if ((best != nullptr) && (prefer != nullptr) && (prefer != best)
+		&& (std::find(groups.begin(), groups.end(), prefer) != groups.end())
+		&& (prefer->GetRallyStrength() >= 0.8f * bestStrength) && prefer->IsCompatible(best->GetLeader()))
+	{
+		return prefer;
+	}
+	return best;
+}
+
+void CMilitaryManager::EndAttackRally(const char* reason, int frame)
+{
+	CAttackTask* host = GetRallyHost();
+	circuit->LOG("RALLY end (%s): host %.1f, blob %.1f at (%.0f, %.0f)", reason,
+			(host != nullptr) ? host->GetRallyStrength() : 0.f, rallyBlobThreat, rallyBlobPos.x, rallyBlobPos.z);
+	prevRallyHost = host;
+	rallyHost = nullptr;
+	rallyStartFrame = -1;
+	rallyEndFrame = frame;
+}
+
+void CMilitaryManager::ReplaceRallyHost(const IFighterTask* gone)
+{
+	// The host died or merged away: the strongest group takes over at once, so joiners don't hunt for a decision
+	// meanwhile (UpdateAttackRally ends the rally if no group is left)
+	static std::vector<CAttackTask*> groups;  // NOTE: micro-opt
+	CollectRallyGroups(groups);
+	groups.erase(std::remove(groups.begin(), groups.end(), gone), groups.end());
+	rallyHost = groups.empty() ? nullptr : PickRallyHost(groups, nullptr);
+	if (rallyHost != nullptr) {
+		circuit->LOG("RALLY new host %.1f", rallyHost->GetRallyStrength());
+	}
+}
+
+void CMilitaryManager::UpdateAttackRally()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	constexpr int RALLY_MIN_FRAMES = FRAMES_PER_SEC * 10;  // a rally lasts at least this long
+	constexpr int RALLY_GAP_FRAMES = FRAMES_PER_SEC * 15;  // and the next can't start sooner than this after it
+	const int frame = circuit->GetLastFrame();
+	const bool isRally = (rallyStartFrame >= 0);
+	if (!isRally && (frame < rallyEndFrame + RALLY_GAP_FRAMES)) {
+		return;
+	}
+
+	static std::vector<CAttackTask*> groups;  // NOTE: micro-opt
+	CollectRallyGroups(groups);
+	if (groups.empty()) {
+		if (isRally) {
+			EndAttackRally("no groups", frame);
+		}
+		return;
+	}
+
+	// Blobs near our groups, hottest first: within range to start, 1.5x range to keep going
+	const float sqRange = SQUARE(isRally ? attackRally.range * 1.5f : attackRally.range);
+	auto isNear = [&](const CEnemyManager::SEnemyBlob& b) {
+		return std::any_of(groups.begin(), groups.end(), [&](CAttackTask* g) {
+			return g->GetLeader()->GetPos(frame).SqDistance2D(b.pos) < sqRange;
+		});
+	};
+	const std::vector<CEnemyManager::SEnemyBlob>& blobs = circuit->GetEnemyManager()->GetBlobs(frame, attackRally.seenFrames);
+	if (!isRally && std::none_of(blobs.begin(), blobs.end(), isNear)) {
+		return;  // nothing to rally against: no host to pick
+	}
+
+	CAttackTask* host = isRally ? GetRallyHost() : PickRallyHost(groups, prevRallyHost);
+	if (host == nullptr) {  // fallback: DequeueTask normally replaces a host that ends
+		ReplaceRallyHost(nullptr);
+		host = rallyHost;
+	}
+	// The hottest near blob the host can reach
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	STerrainMapArea* hostArea = host->GetLeader()->GetArea();
+	auto it = std::find_if(blobs.begin(), blobs.end(), [&](const CEnemyManager::SEnemyBlob& b) {
+		return isNear(b) && terrainMgr->CanMoveToPos(hostArea, b.pos);
+	});
+	const CEnemyManager::SEnemyBlob* blob = (it != blobs.end()) ? &*it : nullptr;
+	const float strength = host->GetRallyStrength();
+	if (blob != nullptr) {
+		rallyBlobFrame = frame;
+		rallyBlobPos = blob->pos;
+		rallyBlobThreat = blob->threat;
+	}
+
+	if (!isRally) {
+		if ((blob != nullptr) && (strength < attackRally.match * blob->threat)) {
+			rallyHost = host;
+			rallyStartFrame = frame;
+			circuit->LOG("RALLY start: host %.1f < %.2f x blob %.1f at (%.0f, %.0f)", strength, attackRally.match,
+					blob->threat, blob->pos.x, blob->pos.z);
+		}
+		return;
+	}
+	if (frame < rallyStartFrame + RALLY_MIN_FRAMES) {
+		return;
+	}
+	if (blob == nullptr) {
+		if (frame - rallyBlobFrame > attackRally.seenFrames) {
+			EndAttackRally("blob lost", frame);
+		}
+	} else if (strength >= attackRally.match * blob->threat * (1.f + attackRally.margin)) {
+		EndAttackRally("host big enough", frame);
+	}
+}
+
+IFighterTask* CMilitaryManager::EnqueueAttackBound(CCircuitUnit* unit)
+{
+	if (attackBaseGather) {
+		return EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());
+	}
+	// No gathering at base: reinforce the rally host, else the nearest compatible group, else start a group
+	IFighterTask* task = EnqueueReinforce(unit, 0.f);
+	return (task != nullptr) ? task : EnqueueTask(IFighterTask::FightType::ATTACK);
+}
+
 IFighterTask* CMilitaryManager::EnqueueGuard(CCircuitUnit* vip)
 {
 	IFighterTask* task = new CFGuardTask(this, vip, 1.0f);
@@ -1082,6 +1298,15 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 		case IUnitTask::Type::FIGHTER: {
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
+			if (taskF == rallyHost) {
+				rallyHost = nullptr;
+				if (rallyStartFrame >= 0) {
+					ReplaceRallyHost(taskF);
+				}
+			}
+			if (taskF == prevRallyHost) {
+				prevRallyHost = nullptr;
+			}
 			if (taskF->GetFightType() == IFighterTask::FightType::GUARD) {
 				// A guard slot can abort itself (builder gone): drop its builder entry so nothing points at a dead task
 				for (auto it = guardTasks.begin(); it != guardTasks.end();) {
@@ -2291,11 +2516,11 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 				} break;
 				case IFighterTask::FightType::AH: {
 					if (!cdef->IsRoleMine() && (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) < 1.f)) {
-						task = EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());  // see below
+						task = EnqueueAttackBound(unit);  // see below
 					}
 				} break;
 				case IFighterTask::FightType::DEFEND: {
-					task = EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());  // see below
+					task = EnqueueAttackBound(unit);  // see below
 				} break;
 				default: break;
 			}
@@ -2306,7 +2531,8 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 			// Attack-bound units start in a gathering (defend) group at base. While no attack task exists this
 			// is the first army gathering to its power. Otherwise CDefendTask promotes it on its first update:
 			// it reinforces the nearest stronger group it can join (EnqueueReinforce), or leaves as a small attack group.
-			task = EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());
+			// quota.attack_merge.base_gather false: no gathering at all (EnqueueAttackBound)
+			task = EnqueueAttackBound(unit);
 		}
 	}
 

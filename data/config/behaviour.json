@@ -62,7 +62,16 @@
 	"support_radius": 400,  // on the line to the bigger group, within this many elmos of its leader both groups' strength counts against threat
 	"reinforce_range": 400,  // a reinforcing group's route only has to get this close to the stronger group's leader (merging finishes it); never more than 80% of what the group can merge from (distance, or travel_sec at its slowest speed)
 	"reinforce_fails": 4,  // empty reinforce routes in a row (one per ~2 s decision) before giving up
-	"reinforce_retry": 15  // seconds to act as a small attack group after giving up, before looking for a group again
+	"reinforce_retry": 15,  // seconds to act as a small attack group after giving up, before looking for a group again
+	"base_gather": false,  // false: attack-bound units never gather at base; they reinforce the rally host or the nearest compatible group, else start a group. true: the first army gathers at base
+	// Rally: when a recently seen enemy blob (mobile, armed enemies within 800 elmos of each other, threat summed) near our attack groups has more threat than match x the largest group's raw strength,
+	// that group (the host) walks to meet its significant joiners and every compatible attack group and new unit reinforces it, until it reaches (1 + margin) x match x the blob or the blob is lost
+	"rally": {
+		"match": 1.0,  // rally while host strength < match x blob threat; 0 = off
+		"margin": 0.25,  // end once host strength >= match x blob x (1 + margin)
+		"range": 3000,  // a blob starts a rally only within this many elmos of an attack group's leader; it keeps one going up to 1.5x this
+		"seen_sec": 20  // enemies count only if seen this recently; a rally ends when no blob has been found for this long
+	}
          },
 	"thr_mod": {
 		"base_bonus": 2.0,

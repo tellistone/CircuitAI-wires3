@@ -85,6 +85,16 @@ public:
 	float GetMaxGroupThreat() const { return enemyGroups[maxThreatGroupIdx].threat; }
 	float GetEnemyMobileCost() const { return enemyMobileCost; }
 
+	// quota.attack_merge.rally: clusters of recently seen, armed, mobile enemies of known type. A blob's threat is the
+	// plain sum of the threat of such enemies within BLOB_RADIUS of its seed (no weapon ranges, no falloff): it sizes
+	// the enemy army the way attack groups size their own. Hottest first, at most MAX_BLOBS; computed once per frame
+	// (allied AIs share this manager) for enemies seen within seenFrames
+	struct SEnemyBlob {
+		springai::AIFloat3 pos;  // the seed: the enemy with the most such threat around it
+		float threat;
+	};
+	const std::vector<SEnemyBlob>& GetBlobs(int frame, int seenFrames);
+
 	void UpdateAreaUsers(CCircuitAI* ai);
 	void SetAreaUpdated(bool value) { isAreaUpdated = value; }
 	const std::unordered_set<const STerrainMapArea*>& GetEnemyAreas() const { return enemyAreas; }
@@ -140,6 +150,10 @@ private:
 		float threat;
 	};
 	std::array<SEnemyInfo, CMaskHandler::GetMaxMasks()> enemyInfos;
+
+	std::vector<SEnemyBlob> blobs;  // GetBlobs cache
+	int blobFrame = -1;
+	int blobSeenFrames = -1;
 
 	bool isAreaUpdated;
 	std::unordered_set<const STerrainMapArea*> enemyAreas;
