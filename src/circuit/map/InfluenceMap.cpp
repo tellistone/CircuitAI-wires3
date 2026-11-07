@@ -148,8 +148,8 @@ void CInfluenceMap::Apply()
 			} else {
 				AddStaticArmed(u);
 			}
-		} else {
-			AddUnarmed(u);
+		} else if (!u->GetCircuitDef()->IsAbleToFly()) {
+			AddUnarmed(u);  // not aircraft: a scout plane or air builder over enemy land doesn't make it our ground
 		}
 	}
 	for (int i = 0; i < mapSize; ++i) {
