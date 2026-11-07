@@ -36,6 +36,7 @@ public:
 			int frame;
 			float threat;
 			bool isAir;
+			bool isLatch;  // the threat trigger stays on once tripped
 			float sqTaskRad;  // hide mode: optional cap on job distance from base, 0 = off
 			// Flee (always on, hide or not): run when a ground danger is within its weapon range + fleeMargin,
 			// unless the commander and allies within fleeAllyRadius, minus the danger's threat, add up to

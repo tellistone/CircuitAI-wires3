@@ -164,6 +164,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Commander flee and hide, follow-up to #62.** Jobs near a fight: a job inside an enemy's flee zone is taken when
+  allies there plus the commander cover 1.25x the threat reaching it (it used to be skipped whatever the cover), so
+  the commander works alongside a winning army. A home fight also needs 1.25x cover, the bar a flee ends at, so a
+  fight it starts doesn't turn into a flee at the first hit. Jobs and morph starts keep an enemy for 5 s after it left
+  radar and LOS (the flee itself still counts only enemies seen now). No cornered defence while metal is stalling.
+  Cover checks no longer force a refresh of the friendly-unit list, and the flee checks in DefaultMakeTask wait for
+  the cost map like the rest of it. One danger evaluation per commander per frame feeds every flee, fight, job and
+  morph decision. With every flee spot inside a flee zone the commander now counts as cornered (it used to head for
+  base anyway). `hide.latch` (commander.json; true in the shipped profiles, missing = on when the flee is on, so the
+  "previous" profile keeps a live trigger) replaces the latch that followed `flee_margin`. A flee also ends only once
+  no enemy seen in the last 5 s is within reach, so one stepping out of sight doesn't end it mid-way.
+
 - **Repair chases end when the builder doesn't close in** (`retreat.repair_chase: [sec, elmos]`, default `[0, ...]` =
   off; shipped `[3, 64]`). This replaces dropping a repair job by sampling the target's speed (`repair_flee` now only
   has the speed share, used when picking jobs). A builder out of reach of a moving repair target that hasn't cut the gap

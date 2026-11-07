@@ -184,11 +184,9 @@ public:
 	/*
 	 * Commander flee (always on) and hide (commander.json "hide")
 	 */
-	// Flee zones the commander should keep out of: visible ground dangers at their weapon range + margin
-	bool IsCommSafe(const springai::AIFloat3& pos, float margin);
 	// DefaultMakeTask sends this armed builder to fight at home (IBuilderTask::Reevaluate re-plans on the same test)
 	bool IsHomeFight(CCircuitUnit* unit);
-	// In a flee zone at the wide (stop-fleeing) line: no morph now
+	// An uncovered danger (recently seen ones included) within the wide (stop-fleeing) line: no morph now
 	bool IsCommInDanger(CCircuitUnit* unit);
 
 private:
@@ -207,26 +205,55 @@ private:
 		float range;  // its ground/water weapon range, 0 for a blip
 		float threat;
 		bool isAir;  // a gunship
+		bool isSeen;  // in radar or LOS now; else gone from both within COMM_DANGER_MEMORY (jobs and morph only)
+	};
+	// One commander's view of the dangers, once per frame (GetCommState)
+	struct SCommState {
+		int frame = -1;
+		float wideMargin = 0.f;  // flee_margin + max(25%, 50): where a flee stops
+		float allyThreat = 0.f;  // hide.flee_ally_threat, < 0 = never covered
+		int nearCount = 0;  // seen dangers whose flee zone (range + flee_margin) reaches it
+		float nearThreat = 0.f;
+		int wideCount = 0;  // seen dangers within range + wideMargin
+		float wideThreat = 0.f;
+		int allCount = 0;  // as wideCount, recently seen ones included
+		float allThreat = 0.f;
+		springai::AIFloat3 dangerPos;  // nearest seen danger within the wide line
+		bool isAir = false;  // it is a gunship
+		float cover = 0.f;  // the commander and allies within flee_ally_radius (power x sqrt(health %)), when allCount > 0
+		int escapeFrame = -1;  // HasCommEscape evaluated at
+		bool isEscape = false;
+		springai::AIFloat3 escapeGoal;
 	};
 	static float GetCommWideMargin(float margin) { return margin + std::max(0.25f * margin, 50.f); }
 	float GetCommFleeMargin(CCircuitUnit* unit) const;  // hide.flee_margin, < 0 = no flee
 	void UpdateCommDangers();
-	// Number of flee zones (range + margin) reaching pos; outThreat their threat, outPos/outIsAir the nearest one
-	int GetCommDanger(const springai::AIFloat3& pos, float margin, float& outThreat,
-					  springai::AIFloat3* outPos = nullptr, bool* outIsAir = nullptr);
-	// The commander itself and ground-capable allies within radius of pos, minus enemyThreat, reach allyThreat
-	bool IsCommCovered(const springai::AIFloat3& pos, float enemyThreat, float allyThreat, float radius) const;
-	// Fight at home only if no flee zone (wide line) reaches the commander, or it is covered there
-	bool IsCommCombatSafe(CCircuitUnit* unit, float margin);
-	// Cornered: an uncovered danger within the wide line and nowhere better to flee to; outDangerPos: the nearest one
-	bool IsCommCornered(CCircuitUnit* unit, springai::AIFloat3& outDangerPos, bool& outIsAir);
-	// Cornered commander: a static defence on its far side from the danger; nullptr = none to build, or one already
-	// on the go (the current task)
+	// Outside every flee zone (range + margin); isSeenOnly: dangers in radar or LOS now only
+	bool IsCommSafe(const springai::AIFloat3& pos, float margin, bool isSeenOnly);
+	// Cover power of ground-capable armed allies and static defences within radius of pos, skip left out; stops
+	// summing once it reaches enough
+	float GetCommCover(const springai::AIFloat3& pos, float radius, CCircuitUnit* skip, float enough) const;
+	// nullptr: not a commander, or its flee is off
+	SCommState* GetCommState(CCircuitUnit* unit);
+	// Cover beats threat x mod by hide.flee_ally_threat
+	static bool IsCommCovered(const SCommState* state, float threat, float mod) {
+		return (state->allyThreat >= 0.f) && (state->cover - threat * mod >= state->allyThreat);
+	}
+	// A safe flee spot not at its feet exists (state->escapeGoal)
+	bool HasCommEscape(CCircuitUnit* unit, SCommState* state);
+	// An uncovered seen danger within the wide line and nowhere better to flee to
+	bool IsCommCornered(CCircuitUnit* unit, SCommState* state);
+	// A job at pos: always for other builders and a commander with the flee off; else outside the flee zones (wide
+	// line, recently seen dangers included), or covered 1.25x there
+	bool IsCommJobSafe(CCircuitUnit* unit, const springai::AIFloat3& pos);
+	// Cornered commander: a static defence on its far side from the danger; nullptr = none to build (or metal
+	// stalling), or one already on the go (the current task)
 	IBuilderTask* MakeCommDefence(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir);
 	// Hide mode: allied strength (the commander's own left out) at pos at least matches the enemy's, on our ground
 	bool IsCommTerritory(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
-	springai::AIFloat3 FindCommFleeGoal(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir,
-										float margin);
+	// A flee spot outside every seen flee zone, not at its feet; false = none (cornered)
+	bool FindCommFleeGoal(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir, float margin,
+						  springai::AIFloat3& outGoal);
 	void UpdateCommFlee();
 	IBuilderTask* MakeBuilderTask(CCircuitUnit* unit, const CQueryCostMap* query);
 	IBuilderTask* CreateBuilderTask(const springai::AIFloat3& position, CCircuitUnit* unit);
@@ -259,6 +286,7 @@ private:
 	std::set<CCircuitUnit*> comms;  // commanders among workers
 	std::vector<SCommDanger> commDangers;
 	int commDangerFrame;  // frame commDangers was built at
+	std::map<CCircuitUnit*, SCommState> commStates;
 	F3Vec commFleeSpots;  // FindCommFleeGoal scratch
 	float commThrMod;  // quota.thr_mod.comm: undone for enemy commanders' threat in the flee
 	bool isCommHide;  // hide by threat, latched once triggered

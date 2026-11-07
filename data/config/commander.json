@@ -91,21 +91,24 @@
 				]
 			},
 
-			// Hide: once "time" has elapsed (and there are more than 2 builders), hide mode turns on for good when the enemy
-			// mobile threat per ally exceeds "threat", and while the enemy has "air". In hide mode the commander only takes jobs where
-			// allied strength (its own left out) at least matches the enemy's on the influence map, on our ground (allied
-			// armed units or our buildings there; with enemy air seen, only our buildings and static defence count).
-			// Flee (always on, hide or not): run when a visible enemy that can hit ground (gunships included, planes not) is
-			// within its weapon range + "flee_margin", unless the commander and our armed ground units and static defences
-			// within "flee_ally_radius", minus those enemies' threat, reach "flee_ally_threat" (as antiheavy). It runs to an
-			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and stops
-			// after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least), it is covered 1.25 x at the goal,
-			// or there is nowhere better to go (then it builds a static defence behind it, or fights). Jobs stay outside range + 1.25 x margin of every such enemy,
-			// a morph starts only when none there is uncovered; a morph already going on continues while it runs
+			// Hide: once "time" has elapsed (and there are more than 2 builders), hide mode is on while the enemy mobile threat
+			// per ally exceeds "threat" (with "latch", for good once it has), and while the enemy has "air". In hide mode the
+			// commander only takes jobs where allied strength (its own left out) at least matches the enemy's on the influence
+			// map, on our ground (allied armed units or our buildings there; with enemy air seen, only our buildings and static
+			// defence count).
+			// Flee (always on, hide or not): run when an enemy in radar or LOS that can hit ground (gunships included, planes
+			// not) is within its weapon range + "flee_margin", unless the commander and our armed ground units and static
+			// defences within "flee_ally_radius", minus those enemies' threat, reach "flee_ally_threat". It runs to an
+			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and
+			// stops after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least) or it is covered 1.25 x at
+			// the goal. With nowhere better to go it builds a static defence behind it (not while metal stalls), else fights.
+			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs and for ending a flee)
+			// need 1.25 x cover there; a morph starts only when no such enemy is uncovered, and one going on continues
 			"hide": {
 				"time": 360,  // seconds
 				"threat": 30,
 				"air": true,
+				"latch": true,  // the threat trigger stays on once tripped
 				"task_rad": 0,  // hide mode: optional cap on job distance from base, 0 = off
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
@@ -196,21 +199,24 @@
 				]
 			},
 
-			// Hide: once "time" has elapsed (and there are more than 2 builders), hide mode turns on for good when the enemy
-			// mobile threat per ally exceeds "threat", and while the enemy has "air". In hide mode the commander only takes jobs where
-			// allied strength (its own left out) at least matches the enemy's on the influence map, on our ground (allied
-			// armed units or our buildings there; with enemy air seen, only our buildings and static defence count).
-			// Flee (always on, hide or not): run when a visible enemy that can hit ground (gunships included, planes not) is
-			// within its weapon range + "flee_margin", unless the commander and our armed ground units and static defences
-			// within "flee_ally_radius", minus those enemies' threat, reach "flee_ally_threat" (as antiheavy). It runs to an
-			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and stops
-			// after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least), it is covered 1.25 x at the goal,
-			// or there is nowhere better to go (then it builds a static defence behind it, or fights). Jobs stay outside range + 1.25 x margin of every such enemy,
-			// a morph starts only when none there is uncovered; a morph already going on continues while it runs
+			// Hide: once "time" has elapsed (and there are more than 2 builders), hide mode is on while the enemy mobile threat
+			// per ally exceeds "threat" (with "latch", for good once it has), and while the enemy has "air". In hide mode the
+			// commander only takes jobs where allied strength (its own left out) at least matches the enemy's on the influence
+			// map, on our ground (allied armed units or our buildings there; with enemy air seen, only our buildings and static
+			// defence count).
+			// Flee (always on, hide or not): run when an enemy in radar or LOS that can hit ground (gunships included, planes
+			// not) is within its weapon range + "flee_margin", unless the commander and our armed ground units and static
+			// defences within "flee_ally_radius", minus those enemies' threat, reach "flee_ally_threat". It runs to an
+			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and
+			// stops after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least) or it is covered 1.25 x at
+			// the goal. With nowhere better to go it builds a static defence behind it (not while metal stalls), else fights.
+			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs and for ending a flee)
+			// need 1.25 x cover there; a morph starts only when no such enemy is uncovered, and one going on continues
 			"hide": {
 				"time": 600,  // seconds
 				"threat": 50,
 				"air": true,
+				"latch": true,  // the threat trigger stays on once tripped
 				"task_rad": 0,  // hide mode: optional cap on job distance from base, 0 = off
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
@@ -303,21 +309,24 @@
 				]
 			},
 
-			// Hide: once "time" has elapsed (and there are more than 2 builders), hide mode turns on for good when the enemy
-			// mobile threat per ally exceeds "threat", and while the enemy has "air". In hide mode the commander only takes jobs where
-			// allied strength (its own left out) at least matches the enemy's on the influence map, on our ground (allied
-			// armed units or our buildings there; with enemy air seen, only our buildings and static defence count).
-			// Flee (always on, hide or not): run when a visible enemy that can hit ground (gunships included, planes not) is
-			// within its weapon range + "flee_margin", unless the commander and our armed ground units and static defences
-			// within "flee_ally_radius", minus those enemies' threat, reach "flee_ally_threat" (as antiheavy). It runs to an
-			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and stops
-			// after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least), it is covered 1.25 x at the goal,
-			// or there is nowhere better to go (then it builds a static defence behind it, or fights). Jobs stay outside range + 1.25 x margin of every such enemy,
-			// a morph starts only when none there is uncovered; a morph already going on continues while it runs
+			// Hide: once "time" has elapsed (and there are more than 2 builders), hide mode is on while the enemy mobile threat
+			// per ally exceeds "threat" (with "latch", for good once it has), and while the enemy has "air". In hide mode the
+			// commander only takes jobs where allied strength (its own left out) at least matches the enemy's on the influence
+			// map, on our ground (allied armed units or our buildings there; with enemy air seen, only our buildings and static
+			// defence count).
+			// Flee (always on, hide or not): run when an enemy in radar or LOS that can hit ground (gunships included, planes
+			// not) is within its weapon range + "flee_margin", unless the commander and our armed ground units and static
+			// defences within "flee_ally_radius", minus those enemies' threat, reach "flee_ally_threat". It runs to an
+			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and
+			// stops after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least) or it is covered 1.25 x at
+			// the goal. With nowhere better to go it builds a static defence behind it (not while metal stalls), else fights.
+			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs and for ending a flee)
+			// need 1.25 x cover there; a morph starts only when no such enemy is uncovered, and one going on continues
 			"hide": {
 				"time": 140,  // seconds
 				"threat": 70,
 				"air": true,
+				"latch": true,  // the threat trigger stays on once tripped
 				"task_rad": 0,  // hide mode: optional cap on job distance from base, 0 = off
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
@@ -409,21 +418,24 @@
 				]
 			},
 
-			// Hide: once "time" has elapsed (and there are more than 2 builders), hide mode turns on for good when the enemy
-			// mobile threat per ally exceeds "threat", and while the enemy has "air". In hide mode the commander only takes jobs where
-			// allied strength (its own left out) at least matches the enemy's on the influence map, on our ground (allied
-			// armed units or our buildings there; with enemy air seen, only our buildings and static defence count).
-			// Flee (always on, hide or not): run when a visible enemy that can hit ground (gunships included, planes not) is
-			// within its weapon range + "flee_margin", unless the commander and our armed ground units and static defences
-			// within "flee_ally_radius", minus those enemies' threat, reach "flee_ally_threat" (as antiheavy). It runs to an
-			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and stops
-			// after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least), it is covered 1.25 x at the goal,
-			// or there is nowhere better to go (then it builds a static defence behind it, or fights). Jobs stay outside range + 1.25 x margin of every such enemy,
-			// a morph starts only when none there is uncovered; a morph already going on continues while it runs
+			// Hide: once "time" has elapsed (and there are more than 2 builders), hide mode is on while the enemy mobile threat
+			// per ally exceeds "threat" (with "latch", for good once it has), and while the enemy has "air". In hide mode the
+			// commander only takes jobs where allied strength (its own left out) at least matches the enemy's on the influence
+			// map, on our ground (allied armed units or our buildings there; with enemy air seen, only our buildings and static
+			// defence count).
+			// Flee (always on, hide or not): run when an enemy in radar or LOS that can hit ground (gunships included, planes
+			// not) is within its weapon range + "flee_margin", unless the commander and our armed ground units and static
+			// defences within "flee_ally_radius", minus those enemies' threat, reach "flee_ally_threat". It runs to an
+			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and
+			// stops after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least) or it is covered 1.25 x at
+			// the goal. With nowhere better to go it builds a static defence behind it (not while metal stalls), else fights.
+			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs and for ending a flee)
+			// need 1.25 x cover there; a morph starts only when no such enemy is uncovered, and one going on continues
 			"hide": {
 				"time": 480,  // seconds
 				"threat": 50,
 				"air": true,
+				"latch": true,  // the threat trigger stays on once tripped
 				"task_rad": 0,  // hide mode: optional cap on job distance from base, 0 = off
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
