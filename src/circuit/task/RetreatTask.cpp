@@ -82,8 +82,10 @@ void CRetreatTask::AssignTo(CCircuitUnit* unit)
 	unit->PushTravelAct(travelAction);
 	unit->SetAllowedToJump(cdef->IsAbleToJump() && !cdef->IsAttrNoJump());
 
-	// Mobile repair. A capturer sent home to hide ("capture_hide") or a fleeing commander at full health needs none.
-	if (!cdef->IsPlane() && !((unit->IsCaptureHide() || IsFlee()) && (unit->GetHealthPercent() > 0.98f))) {
+	// Mobile repair. A capturer sent home to hide ("capture_hide") at full health needs none. A fleeing commander
+	// gets none either: a builder would walk into the danger to reach it, and the commander would run to the builder
+	// instead of the flee goal. StopFlee queues it once the flee turns into a retreat for repair
+	if (!cdef->IsPlane() && !IsFlee() && !(unit->IsCaptureHide() && (unit->GetHealthPercent() > 0.98f))) {
 		circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
 	}
 }
@@ -277,8 +279,8 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 
 void CRetreatTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
-	if (unit->IsCaptureHide() || IsFlee()) {
-		// Skipped on AssignTo while it was unhurt (EnqueueRepair returns the existing job if there is one)
+	if (unit->IsCaptureHide()) {
+		// Skipped on AssignTo while it was unhurt
 		manager->GetCircuit()->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
 	}
 	if (State::REGROUP != state) {
@@ -315,6 +317,14 @@ void CRetreatTask::Redirect(CCircuitUnit* unit, const AIFloat3& goal)
 	Start(unit);
 }
 
+void CRetreatTask::StopFlee(CCircuitUnit* unit)
+{
+	fleeFrame = -1;
+	if (!unit->GetCircuitDef()->IsPlane()) {
+		manager->GetCircuit()->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);  // skipped while fleeing
+	}
+}
+
 void CRetreatTask::EndFlee(CCircuitUnit* unit)
 {
 	fleeFrame = -1;
@@ -329,6 +339,9 @@ void CRetreatTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 
 void CRetreatTask::CheckRepairer(CCircuitUnit* newRep)
 {
+	if (IsFlee()) {
+		return;  // a commander flee heads for its flee goal: a builder on an older repair job doesn't redirect it
+	}
 	CCircuitUnit* unit = *units.begin();
 
 	if ((costQuery != nullptr) && (costQuery->GetState() != IPathQuery::State::READY)) {  // not ready
@@ -396,9 +409,6 @@ void CRetreatTask::ApplyCostMap(const CQueryCostMap* query, CCircuitUnit* newRep
 	if (isRepairer) {
 		endPos = repairer->GetPos(frame);
 		range = pathfinder->GetSquareSize();
-	} else if (IsFlee()) {  // a repairer must beat the flee goal, not the haven
-		endPos = fleeGoal;
-		range = pathfinder->GetSquareSize() * 2;
 	} else {
 		CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 		endPos = factoryMgr->GetClosestHaven(unit);
