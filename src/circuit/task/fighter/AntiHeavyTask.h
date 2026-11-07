@@ -61,7 +61,6 @@ private:
 	void CollectDangers(float margin);
 	// No flee zone reaches spot, or (flee_ally_threat) escorts there cover the enemies that reach it
 	bool IsSpotSafe(const springai::AIFloat3& spot) const;
-	void StopAll();  // a flee ended: stop walking its path
 	// Stand-off point for a heavy at ePos: the first walkable point from standOff outwards (one threat cell at a
 	// time, a few cells at most) towards pos whose threat is under the route cap; false if none
 	bool ProbeStandOff(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float standOff,
@@ -78,12 +77,10 @@ private:
 	void ApplyBasePos(const CQueryPathSingle* query, bool isCapped);
 	void FallbackCommPos();
 
-	bool CheckFlee();  // antiheavy.flee_margin; true while fleeing
-	void Flee(const springai::AIFloat3& dangerPos);
+	bool CheckFlee();  // antiheavy.flee_margin (UpdateFlee); true while fleeing
+	virtual void Flee(const springai::AIFloat3& dangerPos) override;
+	virtual void OnFleeEnd() override;  // stop walking the flee path
 	void ApplyFleePath(const CQueryPathSingle* query);
-
-	bool isFleeing = false;
-	int fleeFrame = 0;  // re-plan the flee after this frame
 
 	struct SDanger {
 		springai::AIFloat3 pos;
