@@ -163,7 +163,7 @@ bool COOAICallback::IsNeutralUnitsIn(const AIFloat3& pos, float radius, bool sph
 
 bool COOAICallback::IsFeatures() const
 {
-	int size = sAICallback->getFeatures(skirmishAIId, nullptr, -1);
+	int size = sAICallback->getFeatures(skirmishAIId, nullptr, std::numeric_limits<int>::max());  // -1 counts nothing (see GetFeatureIds)
 	return size > 0;
 }
 
@@ -171,7 +171,7 @@ bool COOAICallback::IsFeaturesIn(const AIFloat3& pos, float radius, bool spheric
 {
 	float pos_posF3[3];
 	pos.LoadInto(pos_posF3);
-	int size = sAICallback->getFeaturesIn(skirmishAIId, pos_posF3, radius, spherical, nullptr, -1);
+	int size = sAICallback->getFeaturesIn(skirmishAIId, pos_posF3, radius, spherical, nullptr, std::numeric_limits<int>::max());
 	return size > 0;
 }
 
