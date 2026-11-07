@@ -212,6 +212,8 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
+	// quota.attack_own_ground_time: before this frame attack groups only pick targets on allied ground
+	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
 	struct SContested {
 		float bonus;  // enemies there count as this many times closer (attack ranking, raid route goals); 1 = off
@@ -438,6 +440,7 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackKeepThreat;  // quota.attack_keep_threat
+	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost

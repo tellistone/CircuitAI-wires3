@@ -1351,6 +1351,9 @@ void CAttackTask::FindTarget()
 	const float weaponRange = cdef->GetMaxRange();
 	const float sqMaxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
 	const float sqHighestRange = SQUARE(highestRange);
+	// quota.attack_own_ground_time: early on, only enemies on allied ground (influence > 0) are targets
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
 	// Divided by the thr_mod.distance curve at each judged spot
 	const float maxPower = GetPickStrength(frame);
 	// The current target is judged against a looser allowance (quota.attack_keep_threat x) at its spot and on
@@ -1454,6 +1457,9 @@ void CAttackTask::FindTarget()
 			continue;
 		}
 		const AIFloat3& ePos = enemy->GetPos();
+		if (isOwnGroundOnly && (inflMap->GetInfluenceAt(ePos) <= INFL_EPS)) {
+			continue;  // quota.attack_own_ground_time: not on allied ground yet
+		}
 		const AIFloat3& eVel = enemy->GetVel();
 		if ((eVel.SqLength2D() >= sqMaxSpeed) && (eVel.dot2D(pos - ePos) < 0)) {
 			continue;  // runs away faster than we chase
