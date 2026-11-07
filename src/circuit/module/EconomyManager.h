@@ -229,6 +229,7 @@ private:
 	float mexFrontStarted;
 	float reclaimValueExp;
 	float reclaimHelperSec;
+	float reclaimUntakenSec;  // a wreck job nobody takes expires after this (the task timeout runs only while untaken)
 	float reclaimStoreAt;
 	float reclaimTravelMetal;
 	float reclaimTravelFloor;
