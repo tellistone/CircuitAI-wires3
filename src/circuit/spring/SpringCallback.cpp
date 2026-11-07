@@ -12,6 +12,8 @@
 #include "SSkirmishAICallback.h"	// "direct" C API
 #include "WrappUnit.h"
 
+#include <limits>
+
 namespace circuit {
 
 using namespace springai;
@@ -190,8 +192,9 @@ bool COOAICallback::Feature_IsResurrectable(int featureId) const
 
 std::vector<int> COOAICallback::GetFeatureIds() const
 {
-	// Count first, then fill: the cheating path of the engine call doesn't respect a smaller buffer
-	std::vector<int> featureIds(sAICallback->getFeatures(skirmishAIId, nullptr, -1));
+	// Count first, then fill: the cheating path of the engine call doesn't respect a smaller buffer.
+	// The count call needs a large max size: the engine's LOS path stops at max size, so -1 counts nothing.
+	std::vector<int> featureIds(sAICallback->getFeatures(skirmishAIId, nullptr, std::numeric_limits<int>::max()));
 	if (!featureIds.empty()) {
 		featureIds.resize(sAICallback->getFeatures(skirmishAIId, featureIds.data(), featureIds.size()));
 	}
@@ -202,7 +205,7 @@ std::vector<int> COOAICallback::GetFeatureIdsIn(const AIFloat3& pos, float radiu
 {
 	float pos_posF3[3];
 	pos.LoadInto(pos_posF3);
-	std::vector<int> featureIds(sAICallback->getFeaturesIn(skirmishAIId, pos_posF3, radius, spherical, nullptr, -1));
+	std::vector<int> featureIds(sAICallback->getFeaturesIn(skirmishAIId, pos_posF3, radius, spherical, nullptr, std::numeric_limits<int>::max()));
 	if (!featureIds.empty()) {
 		featureIds.resize(sAICallback->getFeaturesIn(skirmishAIId, pos_posF3, radius, spherical, featureIds.data(), featureIds.size()));
 	}
