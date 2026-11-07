@@ -190,7 +190,7 @@ private:
 	// Picks the target and fills routeGoals (and screenedGoals)
 	void FindTarget();
 	// quota.attack_static_cells: where a target's firing cells are built around, and the epoch that spot belongs to.
-	// A building: its position, and the frame it was first seen. A parked mobile (parked_sec), no faster than 1.25 x
+	// A building: its position, and epoch 0. A parked mobile (parked_sec), no faster than 1.25 x
 	// our slowest unit and not a nanoframe: the spot it was last seen still on in LOS, and the frame it settled there.
 	// false: no cells (any other target; also a building with an unknown type)
 	bool GetCellAnchor(const CEnemyInfo* enemy, int frame, springai::AIFloat3& outPos, int& outEpoch) const;
@@ -201,11 +201,11 @@ private:
 	springai::AIFloat3 GetRangePos(const CEnemyInfo* enemy, int frame) const;
 	// quota.attack_static_cells: the firing cells around anchor, at most one per sector, judged with the pick's
 	// power and near-base reference; nearOnly: the sectors facing us only (parked mobiles: a far side's long walk
-	// outlasts most stops); isFacingDisc: when the best cell faces us, a disc (the route would end there anyway).
+	// outlasts most stops).
 	// false: every point we can reach is above the allowance (ban it). Else outCells; empty: route to it as a disc
-	// (undefended, melee group, nothing reachable, no line of sight, or the best cell faces us)
+	// (undefended, melee group, nothing reachable, or no line of sight)
 	bool FillFiringCells(const CEnemyInfo* enemy, const springai::AIFloat3& anchor, float power, float ref,
-			bool nearOnly, bool isFacingDisc, std::vector<SFiringCell>& outCells) const;
+			bool nearOnly, std::vector<SFiringCell>& outCells) const;
 	// The route goals of a cell target beyond range: FillFiringCells minus its rejected sides, with the planned
 	// cell (if any; GetPlannedCell) in place of its sector's. false: skip the target (banned now, or every side
 	// rejected). Else outCells; empty: route to it as a disc

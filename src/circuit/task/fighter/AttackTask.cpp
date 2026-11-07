@@ -58,7 +58,7 @@ static constexpr int CELL_ROUTE_REUSE_FRAMES = FRAMES_PER_SEC * 6;
 static constexpr int MAX_CELL_CHECKS = 32;
 // Parked mobiles get cells only if no faster than this x our slowest unit: faster ones leave before a walk arrives
 static constexpr float PARKED_SPEED_MOD = 1.25f;
-// quota.attack_static_cells.siege_bonus: for a parked mobile whose weapon range is at least this x our fire range
+// quota.attack_static_cells.siege_bonus: for a slow mobile type whose weapon range is at least this x our fire range
 static constexpr float SIEGE_RANGE_MOD = 1.2f;
 // Firing cells' line-of-sight test aims at half the target's height, within these (elmos)
 static constexpr float CELL_TARGET_LIFT_MIN = SQUARE_SIZE;
@@ -391,7 +391,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		// Fight back on the way: a target that passes the usual checks (FindTarget) and is already within range gets
 		// attacked; otherwise keep walking
 		FindTarget();
-		if ((target != nullptr) && (target->GetPos().SqDistance2D(startPos) < SQUARE(highestRange))) {
+		if ((target != nullptr) && (position.SqDistance2D(startPos) < SQUARE(highestRange))) {  // GetRangePos
 			state = State::ENGAGE;
 			Engage(frame);
 			return;
@@ -407,7 +407,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	// A route is still being worked out: keep the current pick until it comes back, unless the target is
 	// already within range (then engage as usual)
 	if (!IsQueryReady(leader) && (target != nullptr)
-		&& (target->GetPos().SqDistance2D(startPos) >= SQUARE(highestRange)))
+		&& (GetRangePos(target, frame).SqDistance2D(startPos) >= SQUARE(highestRange)))
 	{
 		return;
 	}
@@ -428,7 +428,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		FallbackFrontPos(isReuse);
 		return;
 	}
-	if (isReuse && ReuseRoute(target->GetId(), target->GetPos(), frame)) {
+	if (isReuse && ReuseRoute(target->GetId(), position, frame)) {  // position: GetRangePos (FindTarget)
 		return;
 	}
 	// Route-aware pick: one capped route to all candidates; whichever it reaches first becomes the target,
@@ -1433,6 +1433,9 @@ void CAttackTask::FindTarget()
 		bool hasAnchor;  // GetCellAnchor: anchor, epoch
 		AIFloat3 anchor;
 		int epoch;
+		// Where range and the approach line are measured from, and a disc goal's spot: a radar-only parked
+		// mobile's anchor (its radar position wobbles by the engine's radar error), else its position (GetRangePos)
+		AIFloat3 rangePos;
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
 	candidates.clear();
@@ -1461,12 +1464,17 @@ void CAttackTask::FindTarget()
 		const float scale = std::min(ePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(ePos);
 		const float rawKey = sqOEDist * scale;
-		SCandidate c = {rawKey * SQUARE(distModFor(enemy)), rawKey, enemy, false, ePos, -1};
+		SCandidate c = {rawKey * SQUARE(distModFor(enemy)), rawKey, enemy, false, ePos, -1, ePos};
 		c.hasAnchor = cellCfg.isOn && GetCellAnchor(enemy, frame, c.anchor, c.epoch);
-		// quota.attack_static_cells.siege_bonus: a parked mobile that outranges us (sieging artillery) ranks closer
+		if (c.hasAnchor && !enemy->IsInLOS()) {
+			c.rangePos = c.anchor;
+		}
+		// quota.attack_static_cells.siege_bonus: a slow mobile type that outranges us (artillery) ranks closer. By
+		// type, parked or not: it doesn't come and go with each hop, which would swap targets
 		const CCircuitDef* edef = enemy->GetCircuitDef();
-		if (c.hasAnchor && (cellCfg.siegeBonus > 1.f) && edef->IsMobile() && (fireRangeLand > 0.f)
-			&& (edef->GetMaxRange() >= SIEGE_RANGE_MOD * fireRangeLand))
+		if (cellCfg.isOn && (cellCfg.siegeBonus > 1.f) && (edef != nullptr) && edef->IsMobile()
+			&& (fireRangeLand > 0.f) && (edef->GetMaxRange() >= SIEGE_RANGE_MOD * fireRangeLand)
+			&& (edef->GetSpeed() <= lowestSpeed * PARKED_SPEED_MOD))
 		{
 			c.key /= SQUARE(cellCfg.siegeBonus);
 		}
@@ -1499,10 +1507,9 @@ void CAttackTask::FindTarget()
 	size_t targetCount = 0;  // goals are counted by target: a cell target may bring several cells
 	for (const SCandidate& c : candidates) {
 		const ICoreUnit::Id id = c.enemy->GetId();
-		const AIFloat3& ePos = c.enemy->GetPos();
+		const AIFloat3& ePos = c.rangePos;  // a radar-only parked mobile's spot (GetRangePos)
 		const bool isPrev = (id == prevTargetId);
-		// Measured from a radar-only parked mobile's spot: its radar position wobbles (GetRangePos)
-		const bool isInRange = ((c.hasAnchor && !c.enemy->IsInLOS()) ? c.anchor : ePos).SqDistance2D(pos) < sqHighestRange;
+		const bool isInRange = (ePos.SqDistance2D(pos) < sqHighestRange);
 		// A target within range is engaged at once, without a route: the straight line from it towards us is
 		// its approach check. One beyond range gets no line check: its route's approach is checked instead
 		// (ApplyTargetPath / IsApproachSafe)
@@ -1615,7 +1622,7 @@ bool CAttackTask::GetCellAnchor(const CEnemyInfo* enemy, int frame, AIFloat3& ou
 	}
 	if (!edef->IsMobile()) {
 		outPos = enemy->GetPos();  // an identified building has no radar error
-		outEpoch = enemy->GetKnownFrame();
+		outEpoch = 0;  // it never moves (its type, and so this anchor, is only known once seen in LOS)
 		return true;
 	}
 	const int parkedFrames = GetMilitaryMgr()->GetAttackStaticCells().parkedFrames;
@@ -1645,9 +1652,9 @@ bool CAttackTask::CollectFiringCells(const CEnemyInfo* enemy, const AIFloat3& an
 		float ref, const AIFloat3* planned, int frame, std::vector<SFiringCell>& outCells)
 {
 	// Judged at the pick power, as their route's approach will be (not the keep allowance). A parked mobile: near
-	// sectors only. No planned side: a disc when the best cell faces us
+	// sectors only
 	const bool isMobile = enemy->GetCircuitDef()->IsMobile();
-	if (!FillFiringCells(enemy, anchor, power, ref, isMobile, planned == nullptr, outCells) && (planned == nullptr)) {
+	if (!FillFiringCells(enemy, anchor, power, ref, isMobile, outCells) && (planned == nullptr)) {
 		BanCell(enemy, epoch, frame);
 		return false;
 	}
@@ -1666,7 +1673,7 @@ bool CAttackTask::CollectFiringCells(const CEnemyInfo* enemy, const AIFloat3& an
 }
 
 bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& anchor, float power, float ref,
-		bool nearOnly, bool isFacingDisc, std::vector<SFiringCell>& outCells) const
+		bool nearOnly, std::vector<SFiringCell>& outCells) const
 {
 	// Points on two rings around the anchor, the outer first (the inner only if the outer yields no cell), and on
 	// each the sectors facing us first (the far ones only if fewer than 2 near sectors yield a cell, and never if
@@ -1767,24 +1774,10 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 			}
 		}
 		float bestScore = NO_SCORE;
-		int bestSec = -1;
-		for (int sec = 0; sec < sectors; ++sec) {
-			if (best[sec].score < bestScore) {
-				bestScore = best[sec].score;
-				bestSec = sec;
-			}
+		for (const SBest& b : best) {
+			bestScore = std::min(bestScore, b.score);
 		}
 		if (bestScore < NO_SCORE) {
-			// The best cell in the sector we face: a disc route ends on this side anyway, without the wedges. Only if
-			// the disc's approach check would pass there too: it walks the line from the target out (IsApproachSafe),
-			// where a cell's walk-in check starts at the cell, so a short-range defender next to the target would
-			// reject the disc but not the cell
-			const float bearing = (bearingUs < 0.f) ? bearingUs + twoPi : bearingUs;
-			const int facingSec = std::min(static_cast<int>(bearing * sectors / twoPi), sectors - 1);
-			auto allowedAt = [&](const AIFloat3& q) { return GetAllowedThreatAt(q, power, ref); };
-			if (isFacingDisc && (bestSec == facingSec) && IsLineSafe(tPos, best[bestSec].pos, highestRange, allowedAt)) {
-				return true;
-			}
 			for (int sec = 0; sec < sectors; ++sec) {
 				if (best[sec].score <= bestScore + cfg.scoreSlack) {
 					outCells.push_back({best[sec].pos, sec});
@@ -1951,9 +1944,10 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		// If not, route again to the other candidates, up to MAX_TARGET_ROUTES routes per decision
 		const bool isAnchored = (reached->GetId() == anchorTargetId);
 		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+		const AIFloat3 rangePos = GetRangePos(reached, frame);  // a radar-only parked mobile's spot
 		const float ref = isAnchored ? scaleRefSqDist
-				: ((reached->GetPos().SqDistance2D(basePos) < pickSqDist) ? pickSqDist : 0.f);
-		if (!IsApproachSafe(path->posPath, reached->GetPos(), GetPickStrength(frame), ref, cell)) {
+				: ((rangePos.SqDistance2D(basePos) < pickSqDist) ? pickSqDist : 0.f);
+		if (!IsApproachSafe(path->posPath, rangePos, GetPickStrength(frame), ref, cell)) {
 			RejectGoal(hit, frame);
 			// Not our target any more, while the next route runs (nor counted against its group limit)
 			SetTarget(nullptr);
@@ -1977,13 +1971,14 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 			SetScaleAnchor(reached, pickSqDist);  // the route led to another candidate than the pick
 		}
 		SetTarget(reached);
-		position = GetRangePos(reached, frame);
+		position = rangePos;
 	}
 	pPath = path;
 	ActivePath(lowestSpeed);
 	if (reached != nullptr) {
-		// With its cell: the side we'll fight it from; the goal is then its anchor (the wedges' centre)
-		KeepRoute(reached->GetId(), (cell != nullptr) ? hit.pos : reached->GetPos(), cell, hit.sector, hit.epoch);
+		// With its cell: the side we'll fight it from; the goal is then its anchor (the wedges' centre). A disc: where
+		// range is measured from (Decide reuses it with the same)
+		KeepRoute(reached->GetId(), (cell != nullptr) ? hit.pos : position, cell, hit.sector, hit.epoch);
 	}
 }
 
