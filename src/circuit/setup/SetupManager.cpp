@@ -396,9 +396,9 @@ void CSetupManager::ReadConfig()
 		hide.frame = hhdd.get("time", -1).asInt() * FRAMES_PER_SEC;
 		hide.threat = hhdd.get("threat", 0.f).asFloat();
 		hide.isAir = hhdd.get("air", false).asBool();
-		hide.isLatch = hhdd.get("latch", false).asBool();
 		hide.sqTaskRad = SQUARE(std::max(hhdd.get("task_rad", 0.f).asFloat(), 0.f));
 		hide.fleeMargin = hhdd.get("flee_margin", -1.f).asFloat();
+		hide.isLatch = hhdd.get("latch", hide.fleeMargin >= 0.f).asBool();  // missing: on with the flee, as before
 		hide.fleeAllyThreat = hhdd.get("flee_ally_threat", 0.f).asFloat();
 		hide.fleeAllyRadius = std::max(hhdd.get("flee_ally_radius", 500.f).asFloat(), 0.f);
 	}

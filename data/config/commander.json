@@ -102,7 +102,7 @@
 			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and
 			// stops after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least) or it is covered 1.25 x at
 			// the goal. With nowhere better to go it builds a static defence behind it (not while metal stalls), else fights.
-			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs)
+			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs and for ending a flee)
 			// need 1.25 x cover there; a morph starts only when no such enemy is uncovered, and one going on continues
 			"hide": {
 				"time": 360,  // seconds
@@ -210,7 +210,7 @@
 			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and
 			// stops after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least) or it is covered 1.25 x at
 			// the goal. With nowhere better to go it builds a static defence behind it (not while metal stalls), else fights.
-			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs)
+			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs and for ending a flee)
 			// need 1.25 x cover there; a morph starts only when no such enemy is uncovered, and one going on continues
 			"hide": {
 				"time": 600,  // seconds
@@ -320,7 +320,7 @@
 			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and
 			// stops after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least) or it is covered 1.25 x at
 			// the goal. With nowhere better to go it builds a static defence behind it (not while metal stalls), else fights.
-			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs)
+			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs and for ending a flee)
 			// need 1.25 x cover there; a morph starts only when no such enemy is uncovered, and one going on continues
 			"hide": {
 				"time": 140,  // seconds
@@ -429,7 +429,7 @@
 			// attack/defend group, defended cluster, factory or base away from the danger (no repair job while it runs) and
 			// stops after 3 s at least, once nothing is within range + 1.25 x margin (+50 at least) or it is covered 1.25 x at
 			// the goal. With nowhere better to go it builds a static defence behind it (not while metal stalls), else fights.
-			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs)
+			// Fights at home and jobs inside range + 1.25 x margin of such an enemy (one seen in the last 5 s counts for jobs and for ending a flee)
 			// need 1.25 x cover there; a morph starts only when no such enemy is uncovered, and one going on continues
 			"hide": {
 				"time": 480,  // seconds

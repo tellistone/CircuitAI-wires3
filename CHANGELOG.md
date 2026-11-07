@@ -172,8 +172,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   Cover checks no longer force a refresh of the friendly-unit list, and the flee checks in DefaultMakeTask wait for
   the cost map like the rest of it. One danger evaluation per commander per frame feeds every flee, fight, job and
   morph decision. With every flee spot inside a flee zone the commander now counts as cornered (it used to head for
-  base anyway). `hide.latch` (commander.json; true in the shipped profiles, missing = false as the "previous" one)
-  replaces the latch that followed `flee_margin`.
+  base anyway). `hide.latch` (commander.json; true in the shipped profiles, missing = on when the flee is on, so the
+  "previous" profile keeps a live trigger) replaces the latch that followed `flee_margin`. A flee also ends only once
+  no enemy seen in the last 5 s is within reach, so one stepping out of sight doesn't end it mid-way.
 
 - **Repair chases end when the builder doesn't close in** (`retreat.repair_chase: [sec, elmos]`, default `[0, ...]` =
   off; shipped `[3, 64]`). This replaces dropping a repair job by sampling the target's speed (`repair_flee` now only
