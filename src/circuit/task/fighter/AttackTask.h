@@ -82,6 +82,7 @@ private:
 		// long as it stays our target (GetPlannedCell)
 		springai::AIFloat3 cell;
 		int sector;  // -1: no cell
+		float goalSlack;  // the goal may move this far and the route still counts (routes to groups); else one square
 
 		bool IsCell() const { return sector >= 0; }
 	};
@@ -125,11 +126,18 @@ private:
 	void AbsorbWeakerTasks();
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame, bool isReuse);
-	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, bool isToMeet);
+	// Rally: where to walk when reinforcing the host; false: stand still
+	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, bool& outIsToMeet) const;
+	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, bool isToMeet, float slack);
 	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, springai::AIFloat3& outPos) const;
-	// Rally host, not engaged: walk to a meeting point with the significant joiners (>= 25% of our strength, alone or
-	// together, within 60 s), from when the nearest is over 10 s away until all are within the merge distance.
-	// true: this decision is done
+	// Routes to a group or a meeting point: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES
+	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range,
+			std::function<void (const CQueryPathSingle*)>&& onComplete);
+	bool ApplyGroupRoute(const CQueryPathSingle* query, ICoreUnit::Id routeId, const springai::AIFloat3& goal,
+			float slack);
+
+	// Rally host: while a significant joiner (>= 25% of our strength, within 60 s, closing in) is on its way, walk to a
+	// meeting point with the significant ones and wait there. true: this decision is done
 	struct SMeetTrack {  // progress of one joiner towards us: a joiner that stops closing in no longer holds us
 		const CAttackTask* task;  // compared only, never dereferenced (may be gone)
 		float bestSec;  // smallest gap (travel time at its speed) seen, in steps of MEET_PROGRESS_SEC
@@ -137,7 +145,10 @@ private:
 		int seenFrame;  // last decision that looked at it
 		bool isSignificant;  // counted as significant last decision (it keeps counting down to a lower share)
 	};
+	void ResetMeet();
 	bool UpdateMeet(int frame, bool isReuse);
+	void CollectSignificantJoiners(int frame, std::vector<CAttackTask*>& outSignificant);
+	bool IsAtMeetPoint(const springai::AIFloat3& pos);  // updates isMeetArrived
 	SMeetTrack& TrackJoiner(const CAttackTask* joiner, float gapSec, int frame, bool& outIsStalled);
 	// Where the host and its joiners arrive together, stepped back towards the host until safe and reachable
 	springai::AIFloat3 FindMeetPoint(int frame, const std::vector<CAttackTask*>& joiners) const;
@@ -217,8 +228,9 @@ private:
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
 	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, const springai::AIFloat3* cell = nullptr,
 			int sector = -1);
-	// Still walking the last route to this same goal, planned under ROUTE_REUSE_FRAMES ago, with no unit in danger,
-	// nothing unsafe just ahead and (target) a safe approach still: keep it (pPath) instead of planning it again
+	// Still walking the last route to this same goal (moved less than one square, or goalSlack), planned under its
+	// reuseFrames ago, with no unit in danger, nothing unsafe just ahead and (target) a safe approach still: keep it
+	// (pPath) instead of planning it again
 	bool ReuseRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, int frame);
 
 	/*
@@ -249,6 +261,7 @@ private:
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
+	int rallyRouteFrame;  // rally: our last route to the host came back empty, hold until this frame
 	springai::AIFloat3 meetFailPos;  // rally: the host's meeting point our last route to came back empty
 
 	// Rally host meeting its joiners (quota.attack_merge.rally)

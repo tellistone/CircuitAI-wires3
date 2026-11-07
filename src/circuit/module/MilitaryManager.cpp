@@ -1182,6 +1182,19 @@ void CMilitaryManager::EndAttackRally(const char* reason, int frame)
 	rallyEndFrame = frame;
 }
 
+void CMilitaryManager::ReplaceRallyHost(const IFighterTask* gone)
+{
+	// The host died or merged away: the strongest group takes over at once, so joiners don't hunt for a decision
+	// meanwhile (UpdateAttackRally ends the rally if no group is left)
+	static std::vector<CAttackTask*> groups;  // NOTE: micro-opt
+	CollectRallyGroups(groups);
+	groups.erase(std::remove(groups.begin(), groups.end(), gone), groups.end());
+	rallyHost = groups.empty() ? nullptr : PickRallyHost(groups, nullptr);
+	if (rallyHost != nullptr) {
+		circuit->LOG("RALLY new host %.1f", rallyHost->GetRallyStrength());
+	}
+}
+
 void CMilitaryManager::UpdateAttackRally()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
@@ -1189,6 +1202,9 @@ void CMilitaryManager::UpdateAttackRally()
 	constexpr int RALLY_GAP_FRAMES = FRAMES_PER_SEC * 15;  // and the next can't start sooner than this after it
 	const int frame = circuit->GetLastFrame();
 	const bool isRally = (rallyStartFrame >= 0);
+	if (!isRally && (frame < rallyEndFrame + RALLY_GAP_FRAMES)) {
+		return;
+	}
 
 	static std::vector<CAttackTask*> groups;  // NOTE: micro-opt
 	CollectRallyGroups(groups);
@@ -1198,54 +1214,46 @@ void CMilitaryManager::UpdateAttackRally()
 		}
 		return;
 	}
-	if (!isRally && (frame < rallyEndFrame + RALLY_GAP_FRAMES)) {
-		return;
-	}
 
-	CAttackTask* host = GetRallyHost();
-	if (isRally && (host == nullptr)) {
-		host = PickRallyHost(groups, nullptr);  // the host died or merged away: the strongest takes over
-		rallyHost = host;
-		circuit->LOG("RALLY new host %.1f", host->GetRallyStrength());
-	} else if (!isRally) {
-		host = PickRallyHost(groups, prevRallyHost);
-	}
-
-	// The hottest blob near our groups that the host can reach: within range to start, 1.5x range to keep going
-	const float range = isRally ? attackRally.range * 1.5f : attackRally.range;
-	const float sqRange = SQUARE(range);
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	STerrainMapArea* hostArea = host->GetLeader()->GetArea();
-	const CEnemyManager::SEnemyBlob* blob = nullptr;
-	for (const CEnemyManager::SEnemyBlob& b : circuit->GetEnemyManager()->GetBlobs(frame, attackRally.seenFrames)) {
-		// hottest first
-		const bool isNear = std::any_of(groups.begin(), groups.end(), [&](CAttackTask* g) {
+	// Blobs near our groups, hottest first: within range to start, 1.5x range to keep going
+	const float sqRange = SQUARE(isRally ? attackRally.range * 1.5f : attackRally.range);
+	auto isNear = [&](const CEnemyManager::SEnemyBlob& b) {
+		return std::any_of(groups.begin(), groups.end(), [&](CAttackTask* g) {
 			return g->GetLeader()->GetPos(frame).SqDistance2D(b.pos) < sqRange;
 		});
-		if (isNear && terrainMgr->CanMoveToPos(hostArea, b.pos)) {
-			blob = &b;
-			break;
-		}
+	};
+	const std::vector<CEnemyManager::SEnemyBlob>& blobs = circuit->GetEnemyManager()->GetBlobs(frame, attackRally.seenFrames);
+	if (!isRally && std::none_of(blobs.begin(), blobs.end(), isNear)) {
+		return;  // nothing to rally against: no host to pick
 	}
+
+	CAttackTask* host = isRally ? GetRallyHost() : PickRallyHost(groups, prevRallyHost);
+	if (host == nullptr) {  // fallback: DequeueTask normally replaces a host that ends
+		ReplaceRallyHost(nullptr);
+		host = rallyHost;
+	}
+	// The hottest near blob the host can reach
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	STerrainMapArea* hostArea = host->GetLeader()->GetArea();
+	auto it = std::find_if(blobs.begin(), blobs.end(), [&](const CEnemyManager::SEnemyBlob& b) {
+		return isNear(b) && terrainMgr->CanMoveToPos(hostArea, b.pos);
+	});
+	const CEnemyManager::SEnemyBlob* blob = (it != blobs.end()) ? &*it : nullptr;
 	const float strength = host->GetRallyStrength();
+	if (blob != nullptr) {
+		rallyBlobFrame = frame;
+		rallyBlobPos = blob->pos;
+		rallyBlobThreat = blob->threat;
+	}
 
 	if (!isRally) {
 		if ((blob != nullptr) && (strength < attackRally.match * blob->threat)) {
 			rallyHost = host;
 			rallyStartFrame = frame;
-			rallyBlobFrame = frame;
-			rallyBlobPos = blob->pos;
-			rallyBlobThreat = blob->threat;
 			circuit->LOG("RALLY start: host %.1f < %.2f x blob %.1f at (%.0f, %.0f)", strength, attackRally.match,
 					blob->threat, blob->pos.x, blob->pos.z);
 		}
 		return;
-	}
-
-	if (blob != nullptr) {
-		rallyBlobFrame = frame;
-		rallyBlobPos = blob->pos;
-		rallyBlobThreat = blob->threat;
 	}
 	if (frame < rallyStartFrame + RALLY_MIN_FRAMES) {
 		return;
@@ -1291,17 +1299,9 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
 			if (taskF == rallyHost) {
-				// The host died or merged away: the strongest group takes over at once, so joiners don't hunt for a
-				// decision meanwhile (UpdateAttackRally ends the rally if no group is left)
 				rallyHost = nullptr;
 				if (rallyStartFrame >= 0) {
-					static std::vector<CAttackTask*> groups;  // NOTE: micro-opt
-					CollectRallyGroups(groups);
-					groups.erase(std::remove(groups.begin(), groups.end(), taskF), groups.end());
-					rallyHost = groups.empty() ? nullptr : PickRallyHost(groups, nullptr);
-					if (rallyHost != nullptr) {
-						circuit->LOG("RALLY new host %.1f", rallyHost->GetRallyStrength());
-					}
+					ReplaceRallyHost(taskF);
 				}
 			}
 			if (taskF == prevRallyHost) {

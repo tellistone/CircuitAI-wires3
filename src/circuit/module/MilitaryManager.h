@@ -260,14 +260,11 @@ public:
 		int seenFrames = FRAMES_PER_SEC * 20;  // enemies count only if seen this recently (seen_sec)
 		bool IsOn() const { return match > 0.f; }
 	};
-	const SAttackRally& GetAttackRally() const { return attackRally; }
 	// The rally's host while a rally is on (validated), else nullptr
 	CAttackTask* GetRallyHost() const;
 	// A rally is on and this group should reinforce its host: not the host, compatible with it
 	bool IsRallyJoiner(const CAttackTask* task) const;
 	const springai::AIFloat3& GetRallyBlobPos() const { return rallyBlobPos; }
-	// quota.attack_merge.base_gather: false = attack-bound units never gather at base
-	bool IsAttackBaseGather() const { return attackBaseGather; }
 	// quota.attack_group_radius: [<x the group's range>, <min elmos>]; units farther from the leader are stragglers
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
 	// quota.attack_static_cells: attack groups route to safe firing cells around static targets
@@ -310,6 +307,7 @@ private:
 	void UpdateCaptureHide();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
+	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
 	// Host candidate: the strongest group (raw strength) in the movement class with the most total strength;
 	// prefer keeps that group if it is within 20% of the best
 	CAttackTask* PickRallyHost(const std::vector<CAttackTask*>& groups, CAttackTask* prefer) const;
