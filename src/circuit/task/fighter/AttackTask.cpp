@@ -2026,6 +2026,15 @@ bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 	return pos.SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
 }
 
+bool CAttackTask::IsGuardPullable() const
+{
+	// More than one unit is a squad: taking one away weakens it (and may drop it below quota.attack)
+	if ((units.size() != 1) || IsFighting()) {
+		return false;
+	}
+	return static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this;
+}
+
 bool CAttackTask::IsFighting() const
 {
 	// Engaged and some unit has the target within its own weapon range. ENGAGE alone starts at highestRange,

@@ -10,6 +10,7 @@
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
 #include "task/builder/BuilderTask.h"
+#include "task/fighter/AttackTask.h"
 #include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
 #include "unit/enemy/EnemyUnit.h"
@@ -306,9 +307,11 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 	CCircuitUnit* best = nullptr;
 	float minSqDist = SQUARE(cfg.pullRange);
 	for (CCircuitUnit* unit : militaryMgr->GetArmy()) {
-		// Only units the AI controls that are idle or on a raid/defend task. Never:
+		// Only units the AI controls that are idle, on a raid/defend task, or alone in an attack task. Never:
 		//   retreating or player-controlled (not FIGHTER/IDLE), already guarding,
-		//   scouting (keeps the scout quota), or in an attack squad (AttackTask disbands below its min power)
+		//   scouting (keeps the scout quota), or in an attack squad of 2+ (it would get weaker), fighting, or the rally host.
+		//   A lone attack unit is what a new riot is now: with quota.attack_merge.base_gather false it never
+		//   waits in a defend group at base, it walks out alone to reinforce an army
 		IUnitTask* curTask = unit->GetTask();
 		if ((curTask == nullptr)
 			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))
@@ -320,7 +323,9 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		}
 		if (curTask->GetType() == IUnitTask::Type::FIGHTER) {
 			const FightType ft = static_cast<IFighterTask*>(curTask)->GetFightType();
-			if ((ft == FightType::GUARD) || (ft == FightType::SCOUT) || (ft == FightType::ATTACK)) {
+			if ((ft == FightType::GUARD) || (ft == FightType::SCOUT)
+				|| ((ft == FightType::ATTACK) && !static_cast<CAttackTask*>(curTask)->IsGuardPullable()))
+			{
 				continue;
 			}
 		}

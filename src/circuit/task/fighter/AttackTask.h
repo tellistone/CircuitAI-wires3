@@ -33,6 +33,9 @@ public:
 	float GetRallyStrength() const { return GetStrengthSum(); }
 	// The rally host's meeting point, while it walks or waits there (not engaged, not fleeing); false: go to the host
 	bool GetMeetPoint(int frame, springai::AIFloat3& outPos) const;
+	// A guard slot may take this group's unit (CFGuardTask::Pull): one unit, not fighting, not the rally host.
+	// New units no longer gather at base (quota.attack_merge.base_gather false), so this is how they guard
+	bool IsGuardPullable() const;
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
 	virtual void Merge(ISquadTask* task) override;
