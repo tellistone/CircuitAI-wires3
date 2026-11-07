@@ -1073,10 +1073,8 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float powe
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
 	// Rally: everything compatible reinforces the host, whatever its size
-	CAttackTask* host = isRally ? GetRallyHost() : nullptr;
-	if ((host != nullptr) && (host != self) && host->IsCompatible(unit)
-		&& terrainMgr->CanMoveToPos(unit->GetArea(), host->GetLeader()->GetPos(frame)))
-	{
+	CAttackTask* host = isRally ? GetRallyHostFor(unit, self) : nullptr;
+	if (host != nullptr) {
 		return host;
 	}
 	CAttackTask* best = nullptr;
@@ -1123,14 +1121,18 @@ CAttackTask* CMilitaryManager::GetRallyHost() const
 	return ((rallyHost != nullptr) && !rallyHost->IsDead() && (rallyHost->GetLeader() != nullptr)) ? rallyHost : nullptr;
 }
 
-bool CMilitaryManager::IsRallyJoiner(const CAttackTask* task) const
+CAttackTask* CMilitaryManager::GetRallyHostFor(CCircuitUnit* unit, const IFighterTask* self) const
 {
 	// Compatible with the host and able to reach it (another terrain area would hold for the whole rally)
 	CAttackTask* host = GetRallyHost();
-	CCircuitUnit* leader = task->GetLeader();
-	return (host != nullptr) && (host != task) && (leader != nullptr) && host->IsCompatible(leader)
-		&& circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(),
-				host->GetLeader()->GetPos(circuit->GetLastFrame()));
+	return ((host != nullptr) && (host != self) && host->IsCompatible(unit)
+		&& circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), host->GetLeader()->GetPos(circuit->GetLastFrame())))
+		? host : nullptr;
+}
+
+bool CMilitaryManager::IsRallyJoiner(const CAttackTask* task) const
+{
+	return (task->GetLeader() != nullptr) && (GetRallyHostFor(task->GetLeader(), task) != nullptr);
 }
 
 void CMilitaryManager::CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const
@@ -1221,13 +1223,16 @@ void CMilitaryManager::UpdateAttackRally()
 
 	// Blobs near our groups, hottest first: within range to start, 1.5x range to keep going
 	const float sqRange = SQUARE(isRally ? attackRally.range * 1.5f : attackRally.range);
-	auto isNear = [&](const CEnemyManager::SEnemyBlob& b) {
-		return std::any_of(groups.begin(), groups.end(), [&](CAttackTask* g) {
+	static std::vector<const CEnemyManager::SEnemyBlob*> nearBlobs;  // NOTE: micro-opt
+	nearBlobs.clear();
+	for (const CEnemyManager::SEnemyBlob& b : circuit->GetEnemyManager()->GetBlobs(frame, attackRally.seenFrames)) {
+		if (std::any_of(groups.begin(), groups.end(), [&](CAttackTask* g) {
 			return g->GetLeader()->GetPos(frame).SqDistance2D(b.pos) < sqRange;
-		});
-	};
-	const std::vector<CEnemyManager::SEnemyBlob>& blobs = circuit->GetEnemyManager()->GetBlobs(frame, attackRally.seenFrames);
-	if (!isRally && std::none_of(blobs.begin(), blobs.end(), isNear)) {
+		})) {
+			nearBlobs.push_back(&b);
+		}
+	}
+	if (!isRally && nearBlobs.empty()) {
 		return;  // nothing to rally against: no host to pick
 	}
 
@@ -1239,10 +1244,10 @@ void CMilitaryManager::UpdateAttackRally()
 	// The hottest near blob the host can reach
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	STerrainMapArea* hostArea = host->GetLeader()->GetArea();
-	auto it = std::find_if(blobs.begin(), blobs.end(), [&](const CEnemyManager::SEnemyBlob& b) {
-		return isNear(b) && terrainMgr->CanMoveToPos(hostArea, b.pos);
+	auto it = std::find_if(nearBlobs.begin(), nearBlobs.end(), [&](const CEnemyManager::SEnemyBlob* b) {
+		return terrainMgr->CanMoveToPos(hostArea, b->pos);
 	});
-	const CEnemyManager::SEnemyBlob* blob = (it != blobs.end()) ? &*it : nullptr;
+	const CEnemyManager::SEnemyBlob* blob = (it != nearBlobs.end()) ? *it : nullptr;
 	const float strength = host->GetRallyStrength();
 	if (blob != nullptr) {
 		rallyBlobFrame = frame;

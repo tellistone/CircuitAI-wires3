@@ -158,7 +158,8 @@ private:
 	bool UpdateMeet(int frame, bool isReuse);
 	void CollectSignificantJoiners(int frame, std::vector<CAttackTask*>& outSignificant);
 	bool IsAtMeetPoint(const springai::AIFloat3& pos);  // updates isMeetArrived
-	SMeetTrack& TrackJoiner(const CAttackTask* joiner, float gapSec, int frame, bool& outIsStalled);
+	// Updates the joiner's track; true: it counts as significant (strong enough, not stalled)
+	bool TrackJoiner(const CAttackTask* joiner, float gapSec, float ourStrength, int frame);
 	// Where the host and its joiners arrive together, stepped back towards the host until safe and reachable
 	springai::AIFloat3 FindMeetPoint(int frame, const std::vector<CAttackTask*>& joiners) const;
 	bool IsMeetSpotOk(const springai::AIFloat3& pos, int frame, const std::vector<CAttackTask*>& joiners) const;
@@ -189,6 +190,8 @@ private:
 	void Decide(int frame, bool isReuse);
 	// Picks the target and fills routeGoals (and screenedGoals)
 	void FindTarget();
+	// FindTarget, then engage the target if it is already within range; true: engaged
+	bool EngageInRange(int frame);
 	// quota.attack_static_cells: where a target's firing cells are built around, and the epoch that spot belongs to.
 	// A building: its position, and epoch 0. A parked mobile (parked_sec), no faster than 1.25 x
 	// our slowest unit and not a nanoframe: the spot it was last seen still on in LOS, and the frame it settled there.

@@ -264,6 +264,8 @@ public:
 	CAttackTask* GetRallyHost() const;
 	// A rally is on and this group should reinforce its host: not the host, compatible with it
 	bool IsRallyJoiner(const CAttackTask* task) const;
+	// The rally host if the group led by unit (task self) may reinforce it: compatible and able to reach it; else nullptr
+	CAttackTask* GetRallyHostFor(CCircuitUnit* unit, const IFighterTask* self) const;
 	const springai::AIFloat3& GetRallyBlobPos() const { return rallyBlobPos; }
 	// quota.attack_group_radius: [<x the group's range>, <min elmos>]; units farther from the leader are stragglers
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
