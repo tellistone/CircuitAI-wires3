@@ -89,7 +89,7 @@ protected:
 	 * Call UpdateScoots every update; Attack, the pull-back and the regroup check skip scooting units
 	 */
 	static constexpr float DEFAULT_SCOOT_MARGIN = 100.f;  // reload_scoot_margin when unset (tasks may override)
-	virtual bool IsScooting(CCircuitUnit* unit) const override;
+	virtual bool IsScooting(CCircuitUnit* unit) const override { return scoots.find(unit) != scoots.end(); }
 	// Elmos beyond the target's range a scooting unit steps to; < 0 = this unit never scoots.
 	// Default: reload_scoot units (not mines or aircraft): reload_scoot_margin, else DEFAULT_SCOOT_MARGIN
 	virtual float GetScootMargin(CCircuitUnit* unit) const;
@@ -100,21 +100,13 @@ protected:
 	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged);
 	// Every update: scoot reloading units while engaged, and end the scoot of units reloaded enough, or whose walk back
 	// into range takes as long as the reload they have left. Not engaged: every scoot ends.
-	// A unit outside all ground threat doesn't start a scoot (it fights on); a scooting one stops once it gets there.
-	// Re-checked once a second while scooting
+	// A unit outside all ground threat doesn't start a scoot (it fights on). Re-checked once a second while scooting
 	void UpdateScoots(int frame);
 
 private:
 	struct SScoot {
-		enum class Step: char {
-			AWAY,  // on its way out of reach (or there)
-			SAFE,  // stopped outside all ground threat
-			BACK,  // fights on until reloaded enough: turned back early, or no time for a scoot this reload
-		};
-		Step step;
-		int frame;  // last scoot check (AWAY, SAFE)
-		springai::AIFloat3 dest;  // last spot it was sent to (AWAY)
-		bool IsHeld() const { return step != Step::BACK; }  // on hold position
+		int frame;  // last scoot check
+		springai::AIFloat3 dest;  // last spot it was sent to
 	};
 	using Scoots = std::map<CCircuitUnit*, SScoot>;
 	// Starts (scoot == nullptr) or renews a scoot
@@ -126,9 +118,9 @@ private:
 	// While scooting a unit is on hold position: the engine's idle auto-attack (weapon range + 200 elmos on
 	// maneuver) would otherwise walk it straight back in after its scoot move ends or it stops
 	void SetScootHold(CCircuitUnit* unit, bool isHold);
-	// Erases the scoot; a held unit gets its move state back, then OnScootEnd
+	// Erases the scoot, gives the unit its move state back, then OnScootEnd
 	void EndScoot(Scoots::iterator it, int frame, bool isEngaged);
-	Scoots scoots;  // reloading units: stepping out of reach, or fighting on until reloaded
+	Scoots scoots;  // reloading units stepping out of reach (on hold position)
 
 protected:
 	/*

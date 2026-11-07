@@ -79,12 +79,8 @@ void ISquadTask::AssignTo(CCircuitUnit* unit)
 void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IFighterTask::RemoveAssignee(unit);
-	auto it = scoots.find(unit);
-	if (it != scoots.end()) {
-		if (it->second.IsHeld()) {
-			SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
-		}
-		scoots.erase(it);
+	if (scoots.erase(unit) > 0) {
+		SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
 	}
 	leader = nullptr;
 	lowestRange = lowestSpeed = std::numeric_limits<float>::max();
@@ -99,9 +95,7 @@ void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 void ISquadTask::Stop(bool done)
 {
 	for (const auto& kv : scoots) {
-		if (kv.second.IsHeld()) {
-			SetScootHold(kv.first, false);
-		}
+		SetScootHold(kv.first, false);
 	}
 	scoots.clear();
 	IFighterTask::Stop(done);
@@ -127,7 +121,7 @@ void ISquadTask::Merge(ISquadTask* task)
 		unit->GetTravelAct()->SetState(state);
 	}
 	units.insert(rookies.begin(), rookies.end());
-	scoots.insert(task->scoots.begin(), task->scoots.end());  // held ones are ended (and released) here
+	scoots.insert(task->scoots.begin(), task->scoots.end());  // still on hold position: ended (and released) here
 	task->scoots.clear();
 	attackPower += task->GetAttackPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
@@ -467,12 +461,6 @@ void ISquadTask::PullBackEndangered(int frame)
  * Shoot and scoot
  */
 
-bool ISquadTask::IsScooting(CCircuitUnit* unit) const
-{
-	auto it = scoots.find(unit);
-	return (it != scoots.end()) && it->second.IsHeld();
-}
-
 float ISquadTask::GetScootMargin(CCircuitUnit* unit) const
 {
 	CCircuitDef* cdef = unit->GetCircuitDef();
@@ -512,6 +500,7 @@ void ISquadTask::UpdateScoots(int frame)
 		const bool isReloading = (margin >= 0.f) && IsUnitReloading(unit, frame);
 		auto it = scoots.find(unit);
 		if (it == scoots.end()) {
+			// A unit that just turned back doesn't start again: its walk out and back is longer than the walk back
 			if (isReloading && (unit->Blocker() == nullptr)) {
 				Scoot(unit, nullptr, frame, margin);
 			}
@@ -521,20 +510,16 @@ void ISquadTask::UpdateScoots(int frame)
 			EndScoot(it, frame, true);  // reloaded enough: back to the fight
 			continue;
 		}
-		SScoot& scoot = it->second;
-		if (!scoot.IsHeld()) {
-			continue;  // fighting on until reloaded enough
-		}
 		// Turn back once walking into fire range takes as long as the reload left, so the unit shoots again as soon
 		// as it's ready (a slow unit far back would otherwise lose time on every cycle)
 		const float walkBack = unit->GetPos(frame).distance2D(target->GetPos()) - GetFireRange(unit);
 		if (IsWalkLongerThanReload(unit, frame, walkBack)) {
-			scoot.step = SScoot::Step::BACK;
-			SetScootHold(unit, false);
-			OnScootEnd(unit, frame, true);
+			EndScoot(it, frame, true);
 			continue;
 		}
+		SScoot& scoot = it->second;
 		if ((frame >= scoot.frame + FRAMES_PER_SEC) && (unit->Blocker() == nullptr)) {
+			scoot.frame = frame;
 			Scoot(unit, &scoot, frame, margin);
 		}
 	}
@@ -545,28 +530,15 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 	CCircuitAI* circuit = manager->GetCircuit();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const AIFloat3& uPos = unit->GetPos(frame);
-	const float hereThreat = threatMap->GetThreatAt(unit, uPos);
-	if (scoot != nullptr) {
-		scoot->frame = frame;
-	}
-
 	// Outside every ground threat (this unit's threat layer), whatever the target's range or kind (planes count
-	// through their ground threat): no scoot, the unit fights on. A scooting unit that got there stops, rather than
-	// walking on to its spot and having further to come back
+	// through their ground threat): no new scoot, the unit fights on. A scooting unit keeps its order (no stop and
+	// go at the threat's edge; the turn-back still brings it in on time)
+	const float hereThreat = threatMap->GetThreatAt(unit, uPos);
 	if (hereThreat <= THREAT_MIN) {
-		if ((scoot != nullptr) && (scoot->step == SScoot::Step::AWAY)) {
-			scoot->step = SScoot::Step::SAFE;
-			unit->GetTravelAct()->StateWait();
-			TRY_UNIT(circuit, unit,
-				unit->GetUnit()->Stop();
-			)
-		}
 		return;
 	}
-
 	// Straight back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here,
-	// where the target's own threat still counts. Else a new scoot doesn't start (the unit fights on), and a
-	// running one keeps its last order
+	// where the target's own threat still counts. Else a new scoot doesn't start, and a running one keeps its order
 	const AIFloat3 dest = GetScootSpot(unit, uPos, margin);
 	if (threatMap->GetThreatAt(unit, dest) > hereThreat) {
 		return;
@@ -574,20 +546,17 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 
 	if (scoot == nullptr) {
 		// Too slow to get there and back into fire range before the weapon is ready (short reload, slow unit): it
-		// would only lose its spot. Fights on for the rest of this reload instead
+		// would only lose its spot. Fights on instead
 		const float walk = uPos.distance2D(dest) + std::max(dest.distance2D(target->GetPos()) - GetFireRange(unit), 0.f);
 		if (IsWalkLongerThanReload(unit, frame, walk)) {
-			scoots[unit] = {SScoot::Step::BACK, frame, dest};
 			return;
 		}
 		scoot = &scoots[unit];
 		SetScootHold(unit, true);
-	} else if ((scoot->step == SScoot::Step::AWAY) && !unit->GetTravelAct()->IsActive()
-		&& (scoot->dest.SqDistance2D(dest) < SQUARE(SQUARE_SIZE * 4)))
-	{
+	} else if (!unit->GetTravelAct()->IsActive() && (scoot->dest.SqDistance2D(dest) < SQUARE(SQUARE_SIZE * 4))) {
 		return;  // already sent there (target hasn't moved much): no new orders
 	}
-	*scoot = {SScoot::Step::AWAY, frame, dest};
+	*scoot = {frame, dest};
 	unit->GetTravelAct()->StateWait();
 	TRY_UNIT(circuit, unit,
 		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
@@ -645,12 +614,9 @@ void ISquadTask::SetScootHold(CCircuitUnit* unit, bool isHold)
 void ISquadTask::EndScoot(Scoots::iterator it, int frame, bool isEngaged)
 {
 	CCircuitUnit* unit = it->first;
-	const bool isHeld = it->second.IsHeld();
 	scoots.erase(it);
-	if (isHeld) {
-		SetScootHold(unit, false);
-		OnScootEnd(unit, frame, isEngaged);
-	}
+	SetScootHold(unit, false);
+	OnScootEnd(unit, frame, isEngaged);
 }
 
 /*

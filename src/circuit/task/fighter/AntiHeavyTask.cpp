@@ -332,10 +332,12 @@ bool CAntiHeavyTask::IsUnitReloading(CCircuitUnit* unit, int frame) const
 
 void CAntiHeavyTask::OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged)
 {
-	if (isEngaged) {
-		float minePower = 0.f;  // mines never scoot
-		AttackTarget(unit, frame, minePower);
+	if (!isEngaged) {
+		ISquadTask::OnScootEnd(unit, frame, isEngaged);  // back on the squad's path (else it waits for the next one)
+		return;
 	}
+	float minePower = 0.f;  // mines never scoot
+	AttackTarget(unit, frame, minePower);
 }
 
 bool CAntiHeavyTask::AttackTarget(CCircuitUnit* unit, int frame, float& minePower)
