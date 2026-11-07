@@ -100,23 +100,29 @@ protected:
 	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged);
 	// Every update: scoot reloading units while engaged, and end the scoot of units reloaded enough, or whose walk back
 	// into range takes as long as the reload they have left. Not engaged: every scoot ends.
-	// A unit outside all ground threat doesn't start a scoot (it fights on); a scooting one stops once it gets there.
-	// Re-checked once a second while scooting
+	// A unit outside all ground threat doesn't start a scoot (it fights on). Re-checked once a second while scooting
 	void UpdateScoots(int frame);
-	void Scoot(CCircuitUnit* unit, int frame, float margin);
+
+private:
+	struct SScoot {
+		int frame;  // last scoot check
+		springai::AIFloat3 dest;  // last spot it was sent to
+	};
+	using Scoots = std::map<CCircuitUnit*, SScoot>;
+	// Starts (scoot == nullptr) or renews a scoot
+	void Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margin);
+	// Straight away from the target, just outside its ground range + margin
+	springai::AIFloat3 GetScootSpot(CCircuitUnit* unit, const springai::AIFloat3& uPos, float margin) const;
+	// Does walking dist take as long as the unit's weapon has left to reload?
+	bool IsWalkLongerThanReload(CCircuitUnit* unit, int frame, float dist) const;
 	// While scooting a unit is on hold position: the engine's idle auto-attack (weapon range + 200 elmos on
 	// maneuver) would otherwise walk it straight back in after its scoot move ends or it stops
 	void SetScootHold(CCircuitUnit* unit, bool isHold);
-	void EndScoot(CCircuitUnit* unit, int frame, bool isEngaged);  // restores the move state, then OnScootEnd
-	struct SScoot {
-		int frame;  // last scoot check
-		bool isSafe;  // stopped outside all ground threat
-	};
-	std::map<CCircuitUnit*, SScoot> scoots;  // reloading units stepping out of reach
-	// Turned back before the reload threshold (walk back in takes as long as the reload left): no new scoot
-	// until the weapon is ready
-	std::set<CCircuitUnit*> scootReturns;
+	// Erases the scoot, gives the unit its move state back, then OnScootEnd
+	void EndScoot(Scoots::iterator it, int frame, bool isEngaged);
+	Scoots scoots;  // reloading units stepping out of reach (on hold position)
 
+protected:
 	/*
 	 * Threat-capped paths and the squad flee (anti-air, anti-heavy)
 	 */

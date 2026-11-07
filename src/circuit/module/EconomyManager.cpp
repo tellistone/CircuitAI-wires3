@@ -918,41 +918,51 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 	const bool isStarved = (GetMetalPull() * 0.8f > GetAvgMetalIncome());
 	const SReclaimTravel& travel = isStarved ? reclaimTravelStarved : reclaimTravel;
 	COOAICallback* clb = circuit->GetCallback();
-	const std::vector<SReclaimFeature> features = GetReclaimFeatures(isNear
+	std::vector<SReclaimFeature> features = GetReclaimFeatures(isNear
 			? clb->GetFeatureIdsIn(position, speed * std::max(travel.maxSec, reclaimTravelFloor))
 			: clb->GetFeatureIds());
-
-	// Rank by distance and metal left, lower first
-	std::vector<std::pair<float, const SReclaimFeature*>> spots;  // rank, feature
-	spots.reserve(features.size());
-	for (const SReclaimFeature& feature : features) {
-		const float sqDist = position.SqDistance2D(feature.pos);
-		if (isNear && (sqDist > SQUARE(speed * GetReclaimTravelSec(travel, feature.metalLeft)))) {
-			continue;  // too far for its metal
-		}
-		spots.emplace_back(GetReclaimRank(sqDist, feature.metalLeft), &feature);
+	if (isNear) {  // too far for its metal
+		features.erase(std::remove_if(features.begin(), features.end(), [&](const SReclaimFeature& f) {
+			return position.SqDistance2D(f.pos) > SQUARE(speed * GetReclaimTravelSec(travel, f.metalLeft));
+		}), features.end());
 	}
-	std::sort(spots.begin(), spots.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 
-	// Best reachable spot whose job can still take this unit: join it, or open a new job there.
-	// A full job doesn't stop the search, the next spot is tried.
-	circuit->GetThreatMap()->SetThreatType(unit);
-	for (const auto& spot : spots) {
-		const AIFloat3& pos = spot.second->pos;
+	// Best-ranked safe feature whose job can still take this unit: join it, or open a new job there.
+	// A full job doesn't stop the search, the next feature is tried.
+	IBuilderTask* job = nullptr;
+	const SReclaimFeature* best = FindReclaimFeature(position, features, [&](const SReclaimFeature& f) {
 		auto it = std::find_if(reclaimTasks.begin(), reclaimTasks.end(),
-				[&pos](const IBuilderTask* t) { return utils::is_equal_pos(pos, t->GetTaskPos()); });
-		IBuilderTask* job = (it != reclaimTasks.end()) ? *it : nullptr;
-		if ((job != nullptr) ? !job->CanAssignTo(unit) : !canOpenJob) {
-			continue;  // full, or too many untaken jobs to open another
-		}
-		if (!IsReclaimSafe(unit, pos)) {
-			continue;
-		}
-		return (job != nullptr) ? job
-				: builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, pos, spot.second->metal, FRAMES_PER_SEC * reclaimUntakenSec,
-											 8.0f/*unit->GetCircuitDef()->GetBuildDistance()*/);
+				[&f](const IBuilderTask* t) { return utils::is_equal_pos(f.pos, t->GetTaskPos()); });
+		job = (it != reclaimTasks.end()) ? *it : nullptr;
+		return ((job != nullptr) ? job->CanAssignTo(unit) : canOpenJob)  // not full, or room for another untaken job
+			&& IsReclaimSafe(unit, f.pos);
+	});
+	if (best == nullptr) {
+		return nullptr;
 	}
+	return (job != nullptr) ? job
+			: builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, best->pos, best->metal, FRAMES_PER_SEC * reclaimUntakenSec,
+										 8.0f/*unit->GetCircuitDef()->GetBuildDistance()*/);
+}
 
+const CEconomyManager::SReclaimFeature* CEconomyManager::FindReclaimFeature(const AIFloat3& position,
+		const std::vector<SReclaimFeature>& features, const std::function<bool (const SReclaimFeature&)>& isAccepted) const
+{
+	std::vector<std::pair<float, const SReclaimFeature*>> heap;  // rank, feature; min-heap on rank
+	heap.reserve(features.size());
+	for (const SReclaimFeature& feature : features) {
+		heap.emplace_back(GetReclaimRank(position.SqDistance2D(feature.pos), feature.metalLeft), &feature);
+	}
+	auto greater = [](const auto& a, const auto& b) { return a.first > b.first; };
+	std::make_heap(heap.begin(), heap.end(), greater);
+	while (!heap.empty()) {
+		std::pop_heap(heap.begin(), heap.end(), greater);
+		const SReclaimFeature* feature = heap.back().second;
+		heap.pop_back();
+		if (isAccepted(*feature)) {
+			return feature;
+		}
+	}
 	return nullptr;
 }
 
@@ -967,13 +977,12 @@ bool CEconomyManager::IsReclaimSafe(CCircuitUnit* unit, const AIFloat3& pos) con
 {
 	// Same rule as other builder jobs (CBuilderManager::MakeBuilderTask): unsafe only when the enemy threat there
 	// beats the builder's own AND the enemy holds the area (influence < 0), so wrecks behind our army count.
-	// The threat type must be set for unit.
-	if (!circuit->GetTerrainManager()->CanReachAt(unit, pos, unit->GetCircuitDef()->GetBuildDistance())) {
-		return false;
-	}
+	// The map lookups go first: they are cheaper than the reach test.
 	CThreatMap* threatMap = circuit->GetThreatMap();
-	return (threatMap->GetThreatAt(pos) <= threatMap->GetUnitThreat(unit))
+	threatMap->SetThreatType(unit);
+	const bool isCovered = (threatMap->GetThreatAt(pos) <= threatMap->GetUnitThreat(unit))
 		|| (circuit->GetInflMap()->GetInfluenceAt(pos) >= -INFL_EPS);
+	return isCovered && circuit->GetTerrainManager()->CanReachAt(unit, pos, unit->GetCircuitDef()->GetBuildDistance());
 }
 
 float CEconomyManager::GetReclaimRank(float sqDist, float metalLeft) const

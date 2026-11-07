@@ -40,7 +40,7 @@ public:
 	void SetRepairer(CCircuitUnit* unit) { repairer = unit; }
 	CCircuitUnit* GetRepairer() const { return repairer; }
 
-	// Commander flee (CBuilderManager::UpdateCommFlee): heads for goal (or a cheaper repairer) and doesn't end on
+	// Commander flee (CBuilderManager::UpdateCommFlee): heads for goal (no repairer while fleeing) and doesn't end on
 	// full health; the builder manager ends it once the danger is gone
 	void SetFlee(const springai::AIFloat3& goal, int frame) { fleeGoal = goal; fleeFrame = frame; }
 	void StopFlee(CCircuitUnit* unit);  // carries on as a plain retreat, for repair

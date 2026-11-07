@@ -105,7 +105,11 @@ public:
 	IBuilderTask* UpdateReclaimTasks(const springai::AIFloat3& position, CCircuitUnit* unit, bool isNear = true);
 	// Reclaim target rank: lower is better. Distance over (metal left)^reclaimValueExp
 	float GetReclaimRank(float sqDist, float metalLeft) const;
-	// Reachable, and not under enemy threat that beats unit in enemy-held area (set unit's threat type first)
+	// Best-ranked feature from position that isAccepted takes, or nullptr. Ordered lazily (heap), so a search
+	// that stops early doesn't sort the whole list.
+	const SReclaimFeature* FindReclaimFeature(const springai::AIFloat3& position, const std::vector<SReclaimFeature>& features,
+			const std::function<bool (const SReclaimFeature&)>& isAccepted) const;
+	// Reachable, and not under enemy threat that beats unit in enemy-held area. Sets unit's threat type.
 	bool IsReclaimSafe(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	struct SReclaimTravel {
 		float minSec;  // at 1 metal left

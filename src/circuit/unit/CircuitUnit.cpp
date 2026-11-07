@@ -41,6 +41,8 @@ CCircuitUnit::CCircuitUnit(CCircuitAI* circuit, Id unitId, Unit* unit, CCircuitD
 		, execFrame(-1)
 		, disarmFrame(-1)
 		, ammoFrame(-1)
+		, reloadCheckFrame(-1)
+		, reloadFrame(0)
 		, isDead(false)
 		, isDisarmed(false)
 		, isWeaponReady(true)
@@ -183,7 +185,7 @@ bool CCircuitUnit::IsWeaponReady(int frame)
 		if (circuitDef->IsPlane()) {
 			isWeaponReady = unit->GetRulesParamFloat("noammo", 0) < 1.f;
 		} else {
-			isWeaponReady = (weapon == nullptr) ? false : weapon->GetReloadFrame() <= frame;
+			isWeaponReady = (weapon == nullptr) ? false : GetReloadFrame(frame) <= frame;
 		}
 	}
 	return isWeaponReady;
@@ -194,10 +196,14 @@ bool CCircuitUnit::IsWeaponReloaded(int frame, float fraction)
 	if ((fraction >= 1.f) || circuitDef->IsPlane() || (weapon == nullptr)) {
 		return IsWeaponReady(frame);
 	}
+	const int reloadFrame = GetReloadFrame(frame);
+	if (reloadFrame <= frame) {
+		return true;  // ready: no need to ask for the reload time
+	}
 	// The weapon's own reload time (frames; slow and other modifiers included). CCircuitDef's is the shortest over
 	// all weapons (or behaviour.json "reload"), which needn't be the main weapon's
 	const float left = (1.f - std::max(fraction, 0.f)) * weapon->GetReloadTime();  // frames still allowed
-	return weapon->GetReloadFrame() <= frame + left;
+	return reloadFrame <= frame + left;
 }
 
 int CCircuitUnit::GetWeaponReloadLeft(int frame)
@@ -205,7 +211,16 @@ int CCircuitUnit::GetWeaponReloadLeft(int frame)
 	if (circuitDef->IsPlane() || (weapon == nullptr)) {
 		return 0;
 	}
-	return std::max(weapon->GetReloadFrame() - frame, 0);
+	return std::max(GetReloadFrame(frame) - frame, 0);
+}
+
+int CCircuitUnit::GetReloadFrame(int frame)
+{
+	if (reloadCheckFrame != frame) {
+		reloadCheckFrame = frame;
+		reloadFrame = weapon->GetReloadFrame();
+	}
+	return reloadFrame;
 }
 
 bool CCircuitUnit::IsDGunReady(int frame, float energy)
