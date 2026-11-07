@@ -1291,7 +1291,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
-	// No helping others' nanoframes while metal or energy stalls: more build power only spreads the stall
+	// No helping others' nanoframes while metal or energy stalls, urgent jobs included: more build power only
+	// spreads the stall
 	const bool isNoAssist = economyMgr->IsStalling();
 	// Never send the commander into a flee zone, measured at the line the flee stops at; nullptr = flee off.
 	// Hide mode's territory test goes with the flee
@@ -1302,7 +1303,7 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 			if ((isNow && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
 				|| !candidate->CanAssignTo(unit)
 				|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr))
-				|| (isNoAssist && !isNow && IsAssist(candidate, unit)))
+				|| (isNoAssist && IsAssist(candidate, unit)))
 			{
 				continue;
 			}
@@ -1407,7 +1408,8 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
-	// No helping others' nanoframes while metal or energy stalls: more build power only spreads the stall
+	// No helping others' nanoframes while metal or energy stalls, urgent jobs included: more build power only
+	// spreads the stall
 	const bool isNoAssist = economyMgr->IsStalling();
 	// Never send the commander into a flee zone, measured at the line the flee stops at; nullptr = flee off
 	const SCommState* commState = GetCommState(unit);
@@ -1419,7 +1421,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 				|| (isNotReady && !isNow
 					&& (candidate->GetBuildDef() != nullptr)
 					&& !economyMgr->IsIgnoreStallingPull(candidate))
-				|| (isNoAssist && !isNow && IsAssist(candidate, unit)))
+				|| (isNoAssist && IsAssist(candidate, unit)))
 			{
 				continue;
 			}
