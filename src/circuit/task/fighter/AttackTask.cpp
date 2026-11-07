@@ -69,6 +69,9 @@ static constexpr float GROUP_ROUTE_SLACK = 0.1f;
 static constexpr int RALLY_ROUTE_RETRY_FRAMES = FRAMES_PER_SEC * 6;
 // Rally host: arrived at the meeting point within this; also how close its route there has to get
 static constexpr float MEET_ARRIVE_DIST = 200.f;
+// Rally host: counts as fighting this long after its last Engage, so a target blinking at the edge of its range
+// doesn't swap its joiners' goal (fight edge or meeting point) every decision
+static constexpr int RALLY_FIGHT_MEMORY_FRAMES = FRAMES_PER_SEC * 6;
 
 namespace {
 // Power-weighted median weapon range against one target type, of the non-support units that can hit it (or of all
@@ -113,6 +116,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, isMeetWalk(false)
 		, isMeetArrived(false)
 		, isJoinerNear(false)
+		, engageFrame(-RALLY_FIGHT_MEMORY_FRAMES)
 		, meetPos(-RgtVector)
 		, meetArrivePos(-RgtVector)
 		, fleeFrame(0)
@@ -375,7 +379,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	}
 	if ((reinforce != nullptr) && (GetReinforceSquad() != nullptr)) {
 		// Fight back on the way; otherwise keep walking
-		if (EngageInRange(frame)) {
+		if (EngageInRange(frame, true)) {
 			return;
 		}
 		ClearScaleAnchor();  // walking to a group, not into an accepted fight
@@ -396,7 +400,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	}
 	// Also on enemy-held ground (influence < 0): FindTarget judges threat at the target and along the approach line.
 	// With nothing to go for there, FallbackFrontPos holds nearby instead of walking back.
-	if (EngageInRange(frame)) {
+	if (EngageInRange(frame, false)) {
 		return;
 	}
 	state = State::ROAM;
@@ -416,10 +420,17 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	RequestTargetPath(routeGoals);
 }
 
-bool CAttackTask::EngageInRange(int frame)
+bool CAttackTask::EngageInRange(int frame, bool isWalking)
 {
 	// A target that passes the usual checks (FindTarget) and whose range spot (GetRangePos: position) is already
-	// within our range: engage it
+	// within our range: engage it.
+	// Walking to a group or a meeting point the pick is used only in range: with no enemy we could hit within 2x our
+	// range (a range spot is at most a fire range in front of its target) skip FindTarget, it couldn't engage
+	if (isWalking && (FindNearestHittable(frame, 2.f * highestRange) == nullptr)) {
+		SetTarget(nullptr);
+		fleeTargetId = -1;  // as FindTarget: the target we fled from is ours only at the next pick
+		return false;
+	}
 	FindTarget();
 	if ((target == nullptr) || (position.SqDistance2D(leader->GetPos(frame)) >= SQUARE(highestRange))) {
 		return false;
@@ -686,7 +697,7 @@ bool CAttackTask::PickRallyGoal(int frame, AIFloat3& inOutGoal, bool& outIsToMee
 	// - otherwise: the host itself (inOutGoal as given; inside the merge distance, so the merge always fires).
 	// false: nothing safe near the fight and we are close already, stand still
 	outIsToMeet = false;
-	if (State::ENGAGE == reinforce->state) {
+	if (reinforce->IsRallyFighting(frame)) {
 		const AIFloat3 hostPos = inOutGoal;
 		return FindFightEdge(frame, hostPos, inOutGoal);
 	}
@@ -812,10 +823,15 @@ bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& ou
  * Rally host: meeting the groups that reinforce it (quota.attack_merge.rally)
  */
 
+bool CAttackTask::IsRallyFighting(int frame) const
+{
+	return (State::ENGAGE == state) || (frame - engageFrame < RALLY_FIGHT_MEMORY_FRAMES);
+}
+
 bool CAttackTask::GetMeetPoint(int frame, AIFloat3& outPos) const
 {
-	if (!utils::is_valid(meetPos) || (State::ENGAGE == state) || (frame < fleeFrame)) {
-		return false;  // engaged or fleeing: joiners go to the host itself
+	if (!utils::is_valid(meetPos) || IsRallyFighting(frame) || (frame < fleeFrame)) {
+		return false;  // fighting or fleeing: joiners go to the host (its fight edge) instead
 	}
 	outPos = meetPos;
 	return true;
@@ -843,7 +859,7 @@ bool CAttackTask::UpdateMeet(int frame, bool isReuse)
 
 	// Fight back on the way, as reinforcing groups do; the meeting goes on after the fight (GetMeetPoint gives
 	// joiners no point while we engage)
-	if (EngageInRange(frame)) {
+	if (EngageInRange(frame, true)) {
 		isMeetArrived = false;
 		return true;
 	}
@@ -944,7 +960,7 @@ bool CAttackTask::TrackJoiner(const CAttackTask* joiner, float gapSec, float our
 	}
 	SMeetTrack& track = *it;
 	track.seenFrame = frame;
-	if (State::ENGAGE == state) {
+	if (IsRallyFighting(frame)) {
 		track.bestFrame = frame;  // we fight, joiners wait at its edge (FindFightEdge): no stall clock meanwhile
 	}
 	if (gapSec <= track.bestSec - MEET_PROGRESS_SEC) {
@@ -1262,7 +1278,7 @@ void CAttackTask::Cornered(int frame)
 
 	// Nowhere quieter: fight from here
 	CEnemyInfo* enemy = ((target != nullptr) && (target->GetPos().SqDistance2D(pos) < SQUARE(highestRange)))
-			? target : FindNearestHittable(frame);
+			? target : FindNearestHittable(frame, std::max(highestRange, leader->GetCircuitDef()->GetMaxRange()) * 1.5f);
 	if (enemy != nullptr) {
 		SetTarget(enemy);
 		position = enemy->GetPos();
@@ -1281,14 +1297,14 @@ void CAttackTask::ApplyCorneredPath(const CQueryPathSingle* query)
 	ActivePath();
 }
 
-CEnemyInfo* CAttackTask::FindNearestHittable(int frame) const
+CEnemyInfo* CAttackTask::FindNearestHittable(int frame, float radius) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const AIFloat3& pos = leader->GetPos(frame);
 	const int canTargetCat = cdef->GetTargetCategory();
 	const bool notAA = !cdef->HasAntiAir();
-	const float maxSqDist = SQUARE(std::max(highestRange, cdef->GetMaxRange()) * 1.5f);
+	const float maxSqDist = SQUARE(radius);
 	CEnemyInfo* best = nullptr;
 	float minSqDist = maxSqDist;
 	for (auto& kv : circuit->GetEnemyInfos()) {
@@ -2029,6 +2045,7 @@ bool CAttackTask::IsFighting() const
 
 void CAttackTask::Engage(int frame)
 {
+	engageFrame = frame;  // IsRallyFighting
 	Attack(frame);
 	// Stragglers (IsOutOfReach) got no attack order. One without an active path (e.g. it merged in while we were
 	// engaged: it took the leader's waiting travel state) would idle where it is: walk it to the leader, along the

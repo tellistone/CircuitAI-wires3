@@ -154,6 +154,8 @@ private:
 		int seenFrame;  // last decision that looked at it
 		bool isSignificant;  // counted as significant last decision (it keeps counting down to a lower share)
 	};
+	// Engaged, or engaged within RALLY_FIGHT_MEMORY_FRAMES: as a rally host, joiners go to the fight edge
+	bool IsRallyFighting(int frame) const;
 	void ResetMeet();
 	bool UpdateMeet(int frame, bool isReuse);
 	void CollectSignificantJoiners(int frame, std::vector<CAttackTask*>& outSignificant);
@@ -180,7 +182,8 @@ private:
 	// least-threat route; already there: attack the nearest enemy we can hit. Re-checked every second.
 	void Cornered(int frame);
 	void ApplyCorneredPath(const CQueryPathSingle* query);
-	CEnemyInfo* FindNearestHittable(int frame) const;
+	// Nearest enemy within radius that our leader can hit (category, air)
+	CEnemyInfo* FindNearestHittable(int frame, float radius) const;
 
 	/*
 	 * Targets and routes
@@ -190,8 +193,9 @@ private:
 	void Decide(int frame, bool isReuse);
 	// Picks the target and fills routeGoals (and screenedGoals)
 	void FindTarget();
-	// FindTarget, then engage the target if it is already within range; true: engaged
-	bool EngageInRange(int frame);
+	// FindTarget, then engage the target if it is already within range; true: engaged.
+	// isWalking: only the in-range result matters, so no FindTarget when no enemy is near
+	bool EngageInRange(int frame, bool isWalking);
 
 	/*
 	 * Firing cells (quota.attack_static_cells; AttackCells.cpp): where the group shoots a building or a parked
@@ -300,6 +304,7 @@ private:
 	bool isMeetWalk;  // walking to the meeting point this decision: no regroup on the way
 	bool isMeetArrived;  // at the meeting point: stand there until pushed away from it, or it moves
 	bool isJoinerNear;  // a joiner is within the merge distance: absorb every 2 updates
+	int engageFrame;  // last Engage (IsRallyFighting)
 	springai::AIFloat3 meetPos;  // -RgtVector: not meeting
 	springai::AIFloat3 meetArrivePos;  // the meeting point when we arrived
 	std::vector<SMeetTrack> meetTracks;
