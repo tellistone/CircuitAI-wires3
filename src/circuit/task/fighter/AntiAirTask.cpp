@@ -611,37 +611,10 @@ void CAntiAirTask::HoldAll()
 
 bool CAntiAirTask::CheckFlee()
 {
-	// antiair.flee_margin: flee from ground enemies in reach (FindFleeDanger), unless (flee_ally_threat)
-	// our units next to the leader outweigh them by enough. Returns true while fleeing
-	CCircuitAI* circuit = manager->GetCircuit();
-	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
-	const int frame = circuit->GetLastFrame();
-	float dangerThreat = 0.f;
-	CEnemyInfo* danger = ((aaCfg.fleeMargin >= 0.f) && (leader != nullptr)) ? FindFleeDanger(aaCfg.fleeMargin, false, dangerThreat) : nullptr;
-	if ((danger != nullptr) && (aaCfg.fleeAllyThreat >= 0.f) && IsFleeCovered(leader->GetPos(frame), dangerThreat,
-			aaCfg.fleeAllyThreat, aaCfg.fleeAllyRadius, ROLE_TYPE(AA)))
-	{
-		danger = nullptr;
-	}
-
-	if (danger == nullptr) {
-		if (isFleeing) {
-			isFleeing = false;
-			pathQueries.erase(leader);  // drop a flee path still in flight: it must not send the squad off afterwards
-			if (State::DISENGAGE == state) {
-				state = State::ROAM;  // danger gone: back to normal work on this update
-			}
-		}
-		return false;
-	}
-
-	if ((isFleeing && (frame < fleeFrame)) || !IsQueryReady(leader)) {
-		return true;  // already on the way
-	}
-	isFleeing = true;
-	fleeFrame = frame + FLEE_REPLAN_FRAMES;
-	Flee(danger->GetPos());
-	return true;
+	// antiair.flee_margin: from ground enemies in reach, unless (flee_ally_threat) our units next to the leader
+	// outweigh them by enough
+	const CMilitaryManager::SAntiAirCfg& aaCfg = manager->GetCircuit()->GetMilitaryManager()->GetAntiAirCfg();
+	return UpdateFlee(aaCfg.fleeMargin, aaCfg.fleeMargin, false, aaCfg.fleeAllyThreat, aaCfg.fleeAllyRadius, ROLE_TYPE(AA));
 }
 
 void CAntiAirTask::Flee(const AIFloat3& dangerPos)

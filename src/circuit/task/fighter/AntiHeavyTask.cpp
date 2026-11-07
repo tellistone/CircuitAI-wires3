@@ -295,6 +295,9 @@ float CAntiHeavyTask::GetPathThreatMod() const
 
 float CAntiHeavyTask::GetFleeMargin() const
 {
+	if (leader == nullptr) {
+		return -1.f;
+	}
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	if (cdef->IsRoleMine() || cdef->IsAbleToFly()) {
 		return -1.f;  // mines hide (cloak) instead; aircraft don't walk the ground paths the flee plans
@@ -384,44 +387,13 @@ bool CAntiHeavyTask::IsFleeIgnored(CEnemyInfo* enemy) const
 
 bool CAntiHeavyTask::CheckFlee()
 {
-	// antiheavy.flee_margin: flee from enemies in reach (FindFleeDanger, IsFleeIgnored), unless (flee_ally_threat)
-	// escorts next to the leader outweigh them by enough. Returns true while fleeing
-	if (leader == nullptr) {
-		return false;
-	}
+	// antiheavy.flee_margin: from enemies in reach (IsFleeIgnored: not the heavies it hunts; gunships count), unless
+	// (flee_ally_threat) escorts next to the leader outweigh them by enough. Once fleeing, until the danger is a bit
+	// further than what set it off
 	const CMilitaryManager::SAntiHeavyCfg& ahCfg = GetCfg();
-	const int frame = manager->GetCircuit()->GetLastFrame();
 	const float fleeMargin = GetFleeMargin();
-	// Once fleeing, keep going until the danger is a bit further than what set it off, so an enemy at the edge
-	// can't switch the flee on and off every update
-	const float margin = isFleeing ? (fleeMargin + std::max(0.25f * fleeMargin, 50.f)) : fleeMargin;
-	float dangerThreat = 0.f;
-	CEnemyInfo* danger = (fleeMargin >= 0.f) ? FindFleeDanger(margin, true, dangerThreat) : nullptr;  // gunships count
-	if ((danger != nullptr) && (ahCfg.fleeAllyThreat >= 0.f) && IsFleeCovered(leader->GetPos(frame), dangerThreat,
-			ahCfg.fleeAllyThreat, ahCfg.fleeAllyRadius, ROLE_TYPE(AH)))
-	{
-		danger = nullptr;
-	}
-
-	if (danger == nullptr) {
-		if (isFleeing) {
-			isFleeing = false;
-			pathQueries.erase(leader);  // drop a flee path still in flight: it must not send the squad off afterwards
-			StopAll();  // out of reach: don't walk the rest of the way to the safety spot
-			if (State::DISENGAGE == state) {
-				state = State::ROAM;  // danger gone: back to normal work on this update
-			}
-		}
-		return false;
-	}
-
-	if ((isFleeing && (frame < fleeFrame)) || !IsQueryReady(leader)) {
-		return true;  // already on the way
-	}
-	isFleeing = true;
-	fleeFrame = frame + FLEE_REPLAN_FRAMES;
-	Flee(danger->GetPos());
-	return true;
+	return UpdateFlee(fleeMargin, fleeMargin + std::max(0.25f * fleeMargin, 50.f), true,
+			ahCfg.fleeAllyThreat, ahCfg.fleeAllyRadius, ROLE_TYPE(AH));
 }
 
 void CAntiHeavyTask::Flee(const AIFloat3& dangerPos)
@@ -447,8 +419,9 @@ void CAntiHeavyTask::ApplyFleePath(const CQueryPathSingle* query)
 	}
 }
 
-void CAntiHeavyTask::StopAll()
+void CAntiHeavyTask::OnFleeEnd()
 {
+	// Out of reach: don't walk the rest of the way to the safety spot
 	pPath = std::make_shared<PathInfo>();  // else OnUnitIdle -> Start() would resume the flee path after the Stop
 	CCircuitAI* circuit = manager->GetCircuit();
 	for (CCircuitUnit* unit : units) {
@@ -579,14 +552,15 @@ bool CAntiHeavyTask::FindTarget()
 		if (enemy->IsHidden()) {
 			continue;
 		}
-		const AIFloat3& ePos = enemy->GetPos();
-		if ((maxPower / GetThrDistModAt(ePos) <= threatMap->GetThreatAt(ePos) - enemy->GetThreat())
-			|| !terrainMgr->CanMoveToPos(area, ePos))
-		{
+		// The cheap role test first: most enemies aren't heavies, and the rest reads maps and the engine
+		if (!IsQuarry(enemy)) {
 			continue;
 		}
-
-		if (!IsQuarry(enemy) || (ePos.y - map->GetElevationAt(ePos.x, ePos.z) > weaponRange)) {
+		const AIFloat3& ePos = enemy->GetPos();
+		if ((ePos.y - map->GetElevationAt(ePos.x, ePos.z) > weaponRange)
+			|| (maxPower / GetThrDistModAt(ePos) <= threatMap->GetThreatAt(ePos) - enemy->GetThreat())
+			|| !terrainMgr->CanMoveToPos(area, ePos))
+		{
 			continue;
 		}
 
@@ -624,15 +598,7 @@ bool CAntiHeavyTask::FindTarget()
 	}
 
 	SetTarget(bestTarget);
-	if (bestTarget != nullptr) {
-		return true;
-	}
-	if (enemyPositions.empty()) {
-		return false;
-	}
-
-	return true;
-	// Return: target, startPos=leader->pos, enemyPositions
+	return (bestTarget != nullptr) || !enemyPositions.empty();
 }
 
 void CAntiHeavyTask::ApplyTargetPath(const CQueryPathMulti* query)

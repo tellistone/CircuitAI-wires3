@@ -62,8 +62,8 @@ private:
 
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
-	bool CheckFlee();  // antiair.flee_margin; true while fleeing
-	void Flee(const springai::AIFloat3& dangerPos);
+	bool CheckFlee();  // antiair.flee_margin (UpdateFlee); true while fleeing
+	virtual void Flee(const springai::AIFloat3& dangerPos) override;
 	void ApplyFleePath(const CQueryPathSingle* query);
 
 	float GetAirRange() const;  // the squad's range against aircraft
@@ -77,8 +77,6 @@ private:
 	std::set<CCircuitUnit*> splitPending;  // can't rejoin the squad safely: leaves for its own task (from Update)
 	int mergeFrame = 0;  // no merging (either way) before this frame: set on a task split off a blocked regroup
 	springai::AIFloat3 approachPos;  // where to walk to shoot the target: its firing spot (FindTarget)
-	bool isFleeing = false;
-	int fleeFrame = 0;  // re-plan the flee after this frame
 };
 
 } // namespace circuit

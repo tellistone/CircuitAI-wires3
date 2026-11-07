@@ -768,8 +768,9 @@ bool ISquadTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat, float all
 	// is. When the army leaves or dies, or the enemy outgrows it, the cover goes.
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+	// The list the influence map last refreshed (every few frames): a forced refresh would re-create every allied
+	// unit's entry each time a squad looks. A unit that died since counts 0 (no health)
 	const float sqRadius = SQUARE(allyRadius);
-	circuit->UpdateFriendlyUnits();  // drop units that died since the last refresh
 	float cover = 0.f;
 	for (auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* ally = kv.second;
@@ -799,6 +800,45 @@ const AIFloat3* ISquadTask::FindFleeGoal(const AIFloat3& dangerPos)
 		fleeSpots.push_back(basePos);
 	}
 	return PickFleeSpot(leader->GetPos(circuit->GetLastFrame()), dangerPos, fleeSpots);
+}
+
+bool ISquadTask::UpdateFlee(float margin, float endMargin, bool isGunship, float allyThreat, float allyRadius,
+		CCircuitDef::RoleT ownRole)
+{
+	if (leader == nullptr) {
+		return false;
+	}
+	CEnemyInfo* danger = nullptr;
+	if (margin >= 0.f) {
+		float dangerThreat;
+		danger = FindFleeDanger(isFleeing ? endMargin : margin, isGunship, dangerThreat);
+		if ((danger != nullptr) && (allyThreat >= 0.f) && IsFleeCovered(leader->GetPos(manager->GetCircuit()->GetLastFrame()),
+				dangerThreat, allyThreat, allyRadius, ownRole))
+		{
+			danger = nullptr;
+		}
+	}
+
+	if (danger == nullptr) {
+		if (isFleeing) {
+			isFleeing = false;
+			pathQueries.erase(leader);  // drop a flee path still in flight: it must not send the squad off afterwards
+			OnFleeEnd();
+			if (State::DISENGAGE == state) {
+				state = State::ROAM;  // danger gone: back to normal work on this update
+			}
+		}
+		return false;
+	}
+
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	if ((isFleeing && (frame < fleeReplanFrame)) || !IsQueryReady(leader)) {
+		return true;  // already on the way
+	}
+	isFleeing = true;
+	fleeReplanFrame = frame + FLEE_REPLAN_FRAMES;
+	Flee(danger->GetPos());
+	return true;
 }
 
 #ifdef DEBUG_VIS

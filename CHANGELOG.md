@@ -165,6 +165,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Squad flee: one state machine, cheaper checks.** Anti-air and anti-heavy squads now share one flee state
+  machine (`ISquadTask::UpdateFlee`) in place of two copies; behaviour is unchanged (anti-heavy keeps its wider end
+  margin and stops on arrival, anti-air neither). The escort cover check no longer forces a rebuild of the allied unit
+  list each time a squad looks (it uses the one the influence map refreshes every few frames; units that died since
+  count 0). Anti-heavy target search tests the heavy role before any map or engine read.
 - **Commander flee and hide, follow-up to #62.** Jobs near a fight: a job inside an enemy's flee zone is taken when
   allies there plus the commander cover 1.25x the threat reaching it (it used to be skipped whatever the cover), so
   the commander works alongside a winning army. A home fight also needs 1.25x cover, the bar a flee ends at, so a
