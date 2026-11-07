@@ -1106,12 +1106,7 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	const AIFloat3& pos = unit->GetPos(frame);
 
 	const CCircuitDef* cdef = unit->GetCircuitDef();
-	const float commMargin = GetCommFleeMargin(unit);
-	if ((cdef->GetPower() > THREAT_MIN)
-		&& (pos.SqDistance2D(circuit->GetSetupManager()->GetBasePos()) < SQUARE(circuit->GetMilitaryManager()->GetBaseDefRange()))
-		&& circuit->GetEnemyManager()->IsEnemyNear(pos, threatMap->GetUnitThreat(unit) * 1.5f)
-		&& ((commMargin < 0.f) || IsCommCombatSafe(unit, commMargin)))  // a commander never fights where it would flee
-	{
+	if (IsHomeFight(unit)) {
 		return EnqueueCombat(1.5f);
 	}
 
@@ -1622,6 +1617,17 @@ void CBuilderManager::UpdateEscort()
 /*
  * Commander flee and hide
  */
+bool CBuilderManager::IsHomeFight(CCircuitUnit* unit)
+{
+	// An armed builder near base with a weaker enemy group close by fights; a commander never where it would flee
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	const float commMargin = GetCommFleeMargin(unit);
+	return (unit->GetCircuitDef()->GetPower() > THREAT_MIN)
+		&& (pos.SqDistance2D(circuit->GetSetupManager()->GetBasePos()) < SQUARE(circuit->GetMilitaryManager()->GetBaseDefRange()))
+		&& circuit->GetEnemyManager()->IsEnemyNear(pos, circuit->GetThreatMap()->GetUnitThreat(unit) * 1.5f)
+		&& ((commMargin < 0.f) || IsCommCombatSafe(unit, commMargin));
+}
+
 float CBuilderManager::GetCommFleeMargin(CCircuitUnit* unit) const
 {
 	if (!unit->GetCircuitDef()->IsRoleComm()) {

@@ -176,6 +176,8 @@ public:
 	 */
 	// Flee zones the commander should keep out of: visible ground dangers at their weapon range + margin
 	bool IsCommSafe(const springai::AIFloat3& pos, float margin);
+	// DefaultMakeTask sends this armed builder to fight at home (IBuilderTask::Reevaluate re-plans on the same test)
+	bool IsHomeFight(CCircuitUnit* unit);
 	// In a flee zone at the wide (stop-fleeing) line: no morph now
 	bool IsCommInDanger(CCircuitUnit* unit);
 

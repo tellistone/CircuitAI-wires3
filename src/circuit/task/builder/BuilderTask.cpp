@@ -13,7 +13,6 @@
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
-#include "unit/enemy/EnemyManager.h"
 #include "resource/MetalManager.h"
 #include "resource/EnergyGrid.h"
 #include "setup/SetupManager.h"
@@ -425,13 +424,10 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 		&& (circuit->GetInflMap()->GetInfluenceAt(pos) > -INFL_EPS))
 	{
 		if (unit->GetCircuitDef()->IsRoleComm()) {  // FIXME: or any other builder-attacker
-			// Re-plan only when CBuilderManager::DefaultMakeTask would send it to fight at home: near base with an
-			// enemy group close by. Enemy influence at base (the old test) spreads ~4x further than weapon reach, so a
-			// scout near base had the commander re-plan non-stop, and a far commander re-planned for nothing
-			const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-			const bool isHomeFight = (pos.SqDistance2D(basePos) < SQUARE(circuit->GetMilitaryManager()->GetBaseDefRange()))
-					&& circuit->GetEnemyManager()->IsEnemyNear(pos, circuit->GetThreatMap()->GetUnitThreat(unit) * 1.5f);
-			if (!isHomeFight) {
+			// Re-plan only when CBuilderManager::DefaultMakeTask would send it to fight at home (the same test).
+			// Enemy influence at base (the old test) spreads ~4x further than weapon reach, so a scout near base had
+			// the commander re-plan non-stop, and a far commander re-planned for nothing
+			if (!circuit->GetBuilderManager()->IsHomeFight(unit)) {
 				return true;
 			}
 		} else {
