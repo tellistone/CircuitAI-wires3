@@ -226,6 +226,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 	const float fighterRet = retreat.get((unsigned)0, 0.5f).asFloat();
 	const float retMod = retreat.get((unsigned)1, 1.0f).asFloat();
 	const float commMod = root["quota"]["thr_mod"].get("comm", 1.f).asFloat();
+	const float commPwrMod = root["quota"]["pwr_mod"].get("comm", 1.f).asFloat();
 	float maxRadarDivCost = 0.f;
 	float maxSonarDivCost = 0.f;
 	CCircuitDef* commDef = circuit->GetSetupManager()->GetCommChoice();
@@ -234,6 +235,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		CCircuitDef::Id unitDefId = cdef.GetId();
 		if (cdef.IsRoleComm()) {
 			cdef.ModThreat(commMod);
+			cdef.ModPower(commPwrMod);  // quota.pwr_mod.comm: on top of any per-unit pwr_mod
 		}
 		if (cdef.GetDef()->IsBuilder()) {
 //			damagedHandler[unitDefId] = structDamagedHandler;

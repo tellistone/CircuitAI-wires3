@@ -43,7 +43,7 @@ public:
 	// Commander flee (CBuilderManager::UpdateCommFlee): heads for goal (or a cheaper repairer) and doesn't end on
 	// full health; the builder manager ends it once the danger is gone
 	void SetFlee(const springai::AIFloat3& goal, int frame) { fleeGoal = goal; fleeFrame = frame; }
-	void StopFlee() { fleeFrame = -1; }  // carries on as a plain retreat
+	void StopFlee(CCircuitUnit* unit);  // carries on as a plain retreat, for repair
 	void EndFlee(CCircuitUnit* unit);  // back to work
 	bool IsFlee() const { return fleeFrame >= 0; }
 	int GetFleeFrame() const { return fleeFrame; }
