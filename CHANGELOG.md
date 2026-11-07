@@ -16,7 +16,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   early when walking into range would take as long as the reload it has left, doesn't start when there isn't time to
   get out and back, and stays on hold position while scooting (else the engine's idle auto-attack walks it straight
   back in). Scoots end when the squad stops being engaged; a scooting leader keeps anti-air and anti-heavy squads
-  engaged on their target. Anti-heavy's scoot uses the same rules now. Works in attack,
+  engaged on their target. Anti-heavy's scoot uses the same rules now. A squad that is aborted or done gives its scooting units their
+  move state back (it used to leave them on hold position for good). Works in attack,
   raid, defend, anti-air and anti-heavy squads (not mines or aircraft). It is anti-heavy's shoot and scoot, moved to
   `ISquadTask`; anti-heavy units without `reload_scoot` behave as before. No unit has it set yet.
 - **Anti-heavy threat-capped routes and flee** (`antiheavy` block in `behaviour.json`; code defaults off, shipped
