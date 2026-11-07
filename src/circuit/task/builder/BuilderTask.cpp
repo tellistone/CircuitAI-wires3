@@ -470,7 +470,6 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 		isReachable = terrainMgr->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
 				&& !circuit->GetBuilderManager()->IsUnsafePrioRepair(this, unit, endPos);
 	} else if ((buildType == BuildType::RECLAIM) && (target == nullptr)) {
-		circuit->GetThreatMap()->SetThreatType(unit);
 		isReachable = circuit->GetEconomyManager()->IsReclaimSafe(unit, endPos);
 	} else {
 		isReachable = terrainMgr->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
