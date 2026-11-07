@@ -1775,10 +1775,14 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 			}
 		}
 		if (bestScore < NO_SCORE) {
-			// The best cell in the sector we face: a disc route ends on this side anyway, without the wedges
+			// The best cell in the sector we face: a disc route ends on this side anyway, without the wedges. Only if
+			// the disc's approach check would pass there too: it walks the line from the target out (IsApproachSafe),
+			// where a cell's walk-in check starts at the cell, so a short-range defender next to the target would
+			// reject the disc but not the cell
 			const float bearing = (bearingUs < 0.f) ? bearingUs + twoPi : bearingUs;
 			const int facingSec = std::min(static_cast<int>(bearing * sectors / twoPi), sectors - 1);
-			if (isFacingDisc && (bestSec == facingSec)) {
+			auto allowedAt = [&](const AIFloat3& q) { return GetAllowedThreatAt(q, power, ref); };
+			if (isFacingDisc && (bestSec == facingSec) && IsLineSafe(tPos, best[bestSec].pos, highestRange, allowedAt)) {
 				return true;
 			}
 			for (int sec = 0; sec < sectors; ++sec) {
@@ -1833,7 +1837,8 @@ bool CAttackTask::IsCellBanned(ICoreUnit::Id id, int frame) const
 
 void CAttackTask::BanCell(const CEnemyInfo* enemy, int epoch, int frame)
 {
-	const float threat = manager->GetCircuit()->GetThreatMap()->GetThreatAt(enemy->GetPos());
+	// At its range position: a radar-only parked mobile's wobble would change the threat read and drop the ban
+	const float threat = manager->GetCircuit()->GetThreatMap()->GetThreatAt(GetRangePos(enemy, frame));
 	auto it = cellBans.find(enemy->GetId());
 	if (it == cellBans.end()) {
 		cellBans[enemy->GetId()] = {frame + REJECTED_TARGET_FRAMES, frame, threat, 0, epoch};
@@ -1854,7 +1859,7 @@ void CAttackTask::UpdateCellBans(int frame)
 		const CEnemyInfo* enemy = circuit->GetEnemyInfo(it->first);
 		bool isDrop = (frame >= ban.since + CELL_BAN_RESET_FRAMES) || !IsSameAnchor(enemy, ban.epoch, frame);
 		if (!isDrop) {
-			const float threat = threatMap->GetThreatAt(enemy->GetPos());
+			const float threat = threatMap->GetThreatAt(GetRangePos(enemy, frame));
 			isDrop = fabsf(threat - ban.threat) > CELL_BAN_THREAT_CHANGE * std::max(ban.threat, THREAT_MIN);
 		}
 		it = isDrop ? cellBans.erase(it) : std::next(it);
