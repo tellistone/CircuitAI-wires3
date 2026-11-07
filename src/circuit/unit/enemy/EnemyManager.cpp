@@ -109,6 +109,7 @@ void CEnemyManager::UpdateEnemyDatas(CQuadField& quadField)
 			}
 
 			enemy->UpdateInRadarData(pos);
+			enemy->TrackStill(circuit->GetLastFrame());
 			quadField.MovedEnemyUnit(enemy);
 
 			if (enemy->IsInLOS()) {

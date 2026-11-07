@@ -611,6 +611,8 @@ void CMilitaryManager::ReadConfig()
 		c.threatWeight = num("threat_weight", 1.f, 0.f, std::numeric_limits<float>::max());
 		c.scoreSlack = num("score_slack", 0.5f, 0.f, std::numeric_limits<float>::max());
 		c.aimHeight = num("cell_aim_height", 16.f, 0.f, 1000.f);
+		c.parkedFrames = static_cast<int>(num("parked_sec", 0.f, 0.f, 600.f) * FRAMES_PER_SEC);
+		c.siegeBonus = num("siege_bonus", 1.f, 1.f, 10.f);
 	}
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders

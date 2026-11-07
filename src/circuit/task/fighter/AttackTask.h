@@ -49,27 +49,35 @@ protected:
 	virtual bool GetFireArcBearing(float& outBearing) const override;
 
 private:
-	// A target route goal: one candidate target, or one firing cell of a static target (quota.attack_static_cells)
+	// A target route goal: one candidate target, or one firing cell of a cell target (quota.attack_static_cells:
+	// a building, or a parked mobile)
 	struct STargetGoal {
 		ICoreUnit::Id id;
-		springai::AIFloat3 pos;  // the target's position
+		springai::AIFloat3 pos;  // the target's position; for a firing cell, its anchor (GetCellAnchor)
 		float key;  // ranking: squared distance x near-base scale x target_dist_mod^2 (/ quota.contested.bonus^2)
 		springai::AIFloat3 cell = springai::AIFloat3();  // firing cell (IsCell only)
 		int sector = -1;  // >= 0: a firing cell's goal, a wedge of that sector around the target; -1: a disc around it
+		int epoch = -1;  // the anchor's epoch the cell was built under (IsCell only)
 
 		bool IsCell() const { return sector >= 0; }
 	};
-	// A firing cell of a static target: where the group can shoot it from, under the threat allowance
+	// A firing cell of a cell target: where the group can shoot it from, under the threat allowance
 	struct SFiringCell {
 		springai::AIFloat3 pos;
 		int sector;
 	};
-	// A static target with no safe firing cell: skipped beyond LOS range until 'until' (growing while nothing changes)
-	struct SStaticBan {
+	// A cell target with no safe firing cell: skipped beyond LOS range until 'until' (growing while nothing changes)
+	struct SCellBan {
 		int until;  // frame
 		int since;  // frame of the first ban in a row: the ban and its level reset 60 s after it
 		float threat;  // threat at the target's spot at the last ban: a change of more than 25% resets the ban
 		int level;  // 0, 1, 2: 6, 12, 24 s
+		int epoch;  // the anchor's epoch: dropped when it changes (a parked mobile moved)
+	};
+	// A rejected side (or whole target, sector -1) of a target, skipped until 'until'
+	struct SRejection {
+		int until;  // frame
+		int epoch;  // a side counts only under the anchor's epoch it was rejected in
 	};
 	// The last target or front route that was walked, so the next decision can keep it (ReuseRoute)
 	struct SRoute {
@@ -83,6 +91,7 @@ private:
 		springai::AIFloat3 cell;
 		int sector;  // -1: no cell
 		float goalSlack;  // the goal may move this far and the route still counts (routes to groups); else one square
+		int epoch;  // the target anchor's epoch (IsCell only): the planned side holds only under it
 
 		bool IsCell() const { return sector >= 0; }
 	};
@@ -180,25 +189,37 @@ private:
 	void Decide(int frame, bool isReuse);
 	// Picks the target and fills routeGoals (and screenedGoals)
 	void FindTarget();
-	// quota.attack_static_cells: the firing cells of a static target, at most one per sector, judged with the pick's
-	// power and near-base reference; hitTest: line of sight from a cell to the target (MakeHitTest).
+	// quota.attack_static_cells: where a target's firing cells are built around, and the epoch that spot belongs to.
+	// A building: its position, and epoch 0. A parked mobile (parked_sec), no faster than 1.25 x
+	// our slowest unit and not a nanoframe: the spot it was last seen still on in LOS, and the frame it settled there.
+	// false: no cells (any other target; also a building with an unknown type)
+	bool GetCellAnchor(const CEnemyInfo* enemy, int frame, springai::AIFloat3& outPos, int& outEpoch) const;
+	// The target still has a cell anchor, of this epoch: state built for it (cells, sides, bans, planned side) holds
+	bool IsSameAnchor(const CEnemyInfo* enemy, int epoch, int frame) const;
+	// Where range to a target is measured from: a radar-only parked mobile's spot (its radar position wobbles by the
+	// engine's radar error), else its position
+	springai::AIFloat3 GetRangePos(const CEnemyInfo* enemy, int frame) const;
+	// quota.attack_static_cells: the firing cells around anchor, at most one per sector, judged with the pick's
+	// power and near-base reference; nearOnly: the sectors facing us only (parked mobiles: a far side's long walk
+	// outlasts most stops).
 	// false: every point we can reach is above the allowance (ban it). Else outCells; empty: route to it as a disc
 	// (undefended, melee group, nothing reachable, or no line of sight)
-	bool FillFiringCells(const CEnemyInfo* enemy, float power, float ref, const NSMicroPather::TestFunc& hitTest,
-			std::vector<SFiringCell>& outCells) const;
-	// The route goals of a static target beyond range: FillFiringCells minus its rejected sides, with the planned
+	bool FillFiringCells(const CEnemyInfo* enemy, const springai::AIFloat3& anchor, float power, float ref,
+			bool nearOnly, std::vector<SFiringCell>& outCells) const;
+	// The route goals of a cell target beyond range: FillFiringCells minus its rejected sides, with the planned
 	// cell (if any; GetPlannedCell) in place of its sector's. false: skip the target (banned now, or every side
 	// rejected). Else outCells; empty: route to it as a disc
-	bool CollectFiringCells(const CEnemyInfo* enemy, float power, float ref, const springai::AIFloat3* planned,
-			const NSMicroPather::TestFunc& hitTest, int frame, std::vector<SFiringCell>& outCells);
+	bool CollectFiringCells(const CEnemyInfo* enemy, const springai::AIFloat3& anchor, int epoch, float power,
+			float ref, const springai::AIFloat3* planned, int frame, std::vector<SFiringCell>& outCells);
 	// The firing cell the last accepted route to this target led to (lastRoute: dropped when the target changes), if
-	// its side isn't rejected and it is still below the allowance for strength (the caller's: the keep allowance)
+	// the target still has that route's anchor (IsSameAnchor), its side isn't rejected and it is still below the
+	// allowance for strength (the caller's: the keep allowance)
 	bool GetPlannedCell(ICoreUnit::Id targetId, float strength, float refSqDist, springai::AIFloat3& outCell) const;
-	bool IsStaticBanned(ICoreUnit::Id id, int frame) const;
-	void BanStatic(const CEnemyInfo* enemy, int frame);
-	// Drops bans whose target died, whose threat changed by more than 25%, or that started over 60 s ago.
-	// Call after threatMap->SetThreatType(leader)
-	void UpdateStaticBans(int frame);
+	bool IsCellBanned(ICoreUnit::Id id, int frame) const;
+	void BanCell(const CEnemyInfo* enemy, int epoch, int frame);
+	// Drops bans whose target died or lost its anchor (IsSameAnchor), whose threat changed by more than 25%, or that
+	// started over 60 s ago. Call after threatMap->SetThreatType(leader)
+	void UpdateCellBans(int frame);
 	bool IsOnEnemyGround() const;  // influence at the leader < 0
 	// One capped route to all candidate targets
 	void RequestTargetPath(const std::vector<STargetGoal>& goals);
@@ -211,7 +232,8 @@ private:
 	// Unsafe approach to g: drop its firing cell's side for REJECTED_TARGET_FRAMES, or the whole target when it is
 	// a disc or the target has no other screened side left
 	void RejectGoal(const STargetGoal& g, int frame);
-	bool IsRejected(ICoreUnit::Id id, int sector, int frame) const;  // sector -1: the whole target
+	// sector -1: the whole target; a side (sector >= 0) only if it was rejected under this anchor epoch
+	bool IsRejected(ICoreUnit::Id id, int sector, int epoch, int frame) const;
 	// The ground we'd fight the target from, along this route: the line from the target to the route's end (or, for
 	// a firing cell, from the route's end to the cell), and the route's last stretch as long as our range; every spot
 	// below the allowance for 'strength'
@@ -227,7 +249,7 @@ private:
 	void SetRouteThreat(IPathQuery* query, AttackRoute route) const;
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
 	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, const springai::AIFloat3* cell = nullptr,
-			int sector = -1);
+			int sector = -1, int epoch = -1);
 	// Still walking the last route to this same goal (moved less than one square, or goalSlack), planned under its
 	// reuseFrames ago, with no unit in danger, nothing unsafe just ahead and (target) a safe approach still: keep it
 	// (pPath) instead of planning it again
@@ -290,8 +312,8 @@ private:
 	std::vector<STargetGoal> routeGoals;  // FindTarget: goals of the next target route, nearest first (max 16)
 	std::vector<STargetGoal> screenedGoals;  // FindTarget: all screened targets before stickiness trims them (retry goals)
 	// (target, sector; -1: the whole target) dropped for an unsafe route approach -> skip until frame
-	std::map<std::pair<ICoreUnit::Id, int>, int> rejectedUntil;
-	std::map<ICoreUnit::Id, SStaticBan> staticBans;  // static targets with no safe firing cell (beyond LOS range only)
+	std::map<std::pair<ICoreUnit::Id, int>, SRejection> rejectedUntil;
+	std::map<ICoreUnit::Id, SCellBan> cellBans;  // cell targets with no safe firing cell (beyond LOS range only)
 	// Power-weighted median of the weapon ranges of the non-support units that can hit land / under-water targets
 	float fireRangeLand;
 	float fireRangeWater;
