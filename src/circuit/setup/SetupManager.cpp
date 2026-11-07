@@ -398,7 +398,7 @@ void CSetupManager::ReadConfig()
 		hide.isAir = hhdd.get("air", false).asBool();
 		hide.sqTaskRad = SQUARE(std::max(hhdd.get("task_rad", 0.f).asFloat(), 0.f));
 		hide.fleeMargin = hhdd.get("flee_margin", -1.f).asFloat();
-		hide.fleeAllyThreat = hhdd.get("flee_ally_threat", 10.f).asFloat();
+		hide.fleeAllyThreat = hhdd.get("flee_ally_threat", 0.f).asFloat();
 		hide.fleeAllyRadius = std::max(hhdd.get("flee_ally_radius", 500.f).asFloat(), 0.f);
 	}
 

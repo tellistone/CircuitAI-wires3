@@ -246,8 +246,8 @@ private:
 	int commDangerFrame;  // frame commDangers was built at
 	F3Vec commFleeSpots;  // FindCommFleeGoal scratch
 	float commThrMod;  // quota.thr_mod.comm: undone for enemy commanders' threat in the flee
-	bool isCommHide;  // hide mode, latched once triggered
-	bool isCommHideAir;  // triggered (or seen) with enemy air: only our buildings' ground counts as territory
+	bool isCommHide;  // hide by threat, latched once triggered
+	bool isCommHideAir;  // enemy air now (live): hide, and only our buildings' ground counts as territory
 	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
 	SJobRank jobRanks[4];  // LOW, NORMAL, HIGH, NOW

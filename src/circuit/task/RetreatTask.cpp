@@ -82,8 +82,8 @@ void CRetreatTask::AssignTo(CCircuitUnit* unit)
 	unit->PushTravelAct(travelAction);
 	unit->SetAllowedToJump(cdef->IsAbleToJump() && !cdef->IsAttrNoJump());
 
-	// Mobile repair. A capturer sent home to hide ("capture_hide") at full health needs none.
-	if (!cdef->IsPlane() && !(unit->IsCaptureHide() && (unit->GetHealthPercent() > 0.98f))) {
+	// Mobile repair. A capturer sent home to hide ("capture_hide") or a fleeing commander at full health needs none.
+	if (!cdef->IsPlane() && !((unit->IsCaptureHide() || IsFlee()) && (unit->GetHealthPercent() > 0.98f))) {
 		circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
 	}
 }
@@ -277,8 +277,8 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 
 void CRetreatTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
-	if (unit->IsCaptureHide()) {
-		// Skipped on AssignTo while it was unhurt
+	if (unit->IsCaptureHide() || IsFlee()) {
+		// Skipped on AssignTo while it was unhurt (EnqueueRepair returns the existing job if there is one)
 		manager->GetCircuit()->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
 	}
 	if (State::REGROUP != state) {
@@ -396,6 +396,9 @@ void CRetreatTask::ApplyCostMap(const CQueryCostMap* query, CCircuitUnit* newRep
 	if (isRepairer) {
 		endPos = repairer->GetPos(frame);
 		range = pathfinder->GetSquareSize();
+	} else if (IsFlee()) {  // a repairer must beat the flee goal, not the haven
+		endPos = fleeGoal;
+		range = pathfinder->GetSquareSize() * 2;
 	} else {
 		CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 		endPos = factoryMgr->GetClosestHaven(unit);
