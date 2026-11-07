@@ -86,13 +86,11 @@ bool CBReclaimTask::Reevaluate(CCircuitUnit* unit)
 		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		const auto features = economyMgr->GetReclaimFeatures(circuit->GetCallback()->GetFeatureIdsIn(pos, 500.0f));
 		if (!features.empty()) {
-			CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 			circuit->GetThreatMap()->SetThreatType(unit);
-			const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
 			float minRank = std::numeric_limits<float>::max();
 			for (const CEconomyManager::SReclaimFeature& feature : features) {
 				const float rank = economyMgr->GetReclaimRank(pos.SqDistance2D(feature.pos), feature.metalLeft);
-				if ((rank < minRank) && terrainMgr->CanReachAtSafe(unit, feature.pos, buildDist)) {
+				if ((rank < minRank) && economyMgr->IsReclaimSafe(unit, feature.pos)) {
 					position = feature.pos;
 					minRank = rank;
 				}
