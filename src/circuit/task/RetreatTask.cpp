@@ -108,11 +108,20 @@ AIFloat3 CRetreatTask::GetHaven(CCircuitUnit* unit) const
 	return utils::is_valid(haven) ? haven : circuit->GetSetupManager()->GetBasePos();
 }
 
-float CRetreatTask::GetHavenRange() const
+AIFloat3 CRetreatTask::GetGoal(CCircuitUnit* unit, float& outRange) const
 {
-	// Well inside a caretaker's build range
 	CCircuitAI* circuit = manager->GetCircuit();
-	return circuit->GetFactoryManager()->GetAssistDef()->GetBuildDistance() * 0.6f + circuit->GetPathfinder()->GetSquareSize();
+	const int squareSize = circuit->GetPathfinder()->GetSquareSize();
+	if (repairer != nullptr) {
+		outRange = squareSize;
+		return repairer->GetPos(circuit->GetLastFrame());
+	}
+	if (IsFlee()) {
+		outRange = squareSize * 2;
+		return fleeGoal;
+	}
+	outRange = circuit->GetFactoryManager()->GetAssistDef()->GetBuildDistance() * 0.6f + squareSize;  // well inside a caretaker's reach
+	return GetHaven(unit);
 }
 
 void CRetreatTask::RemoveAssignee(CCircuitUnit* unit)
@@ -137,19 +146,8 @@ void CRetreatTask::Start(CCircuitUnit* unit)
 	const int frame = circuit->GetLastFrame();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const AIFloat3& startPos = unit->GetPos(frame);
-	AIFloat3 endPos;
 	float range;
-
-	if (repairer != nullptr) {
-		endPos = repairer->GetPos(frame);
-		range = pathfinder->GetSquareSize();
-	} else if (IsFlee()) {
-		endPos = fleeGoal;
-		range = pathfinder->GetSquareSize() * 2;
-	} else {
-		endPos = GetHaven(unit);
-		range = GetHavenRange();
-	}
+	const AIFloat3 endPos = GetGoal(unit, range);
 
 	if (unit->GetTravelAct()->GetPath() == nullptr) {
 		std::shared_ptr<PathInfo> pPath = std::make_shared<PathInfo>();
@@ -403,19 +401,10 @@ void CRetreatTask::ApplyCostMap(const CQueryCostMap* query, CCircuitUnit* newRep
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	CPathFinder* pathfinder = circuit->GetPathfinder();
 	CCircuitUnit* unit = query->GetUnit();
-	AIFloat3 endPos;
+	const bool isRepairer = (repairer != nullptr);
 	float range;
-
-	bool isRepairer = (repairer != nullptr);
-	if (isRepairer) {
-		endPos = repairer->GetPos(frame);
-		range = pathfinder->GetSquareSize();
-	} else {
-		endPos = GetHaven(unit);
-		range = GetHavenRange();
-	}
+	AIFloat3 endPos = GetGoal(unit, range);
 
 	float prevCost = query->GetCostAt(endPos, range);
 	if (isRepairer && repairer->GetCircuitDef()->IsMobile()) {

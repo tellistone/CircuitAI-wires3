@@ -55,7 +55,8 @@ private:
 	void PushTravelAct(CCircuitUnit* unit);  // move (or fight) home
 	void EnqueueRepair(CCircuitUnit* unit);
 	springai::AIFloat3 GetHaven(CCircuitUnit* unit) const;  // closest haven, else the base
-	float GetHavenRange() const;  // how close to the haven counts as there
+	// Where the path heads (the repairer, else the flee goal, else the haven) and how close counts as there
+	springai::AIFloat3 GetGoal(CCircuitUnit* unit, float& outRange) const;
 	void ApplyPath(const CQueryPathSingle* query);
 	CCircuitUnit* ValidateNewRepairer(const IPathQuery* query, int newRepId) const;
 	void ApplyCostMap(const CQueryCostMap* query, CCircuitUnit* newRep);
