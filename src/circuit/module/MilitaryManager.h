@@ -212,7 +212,7 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
-	// quota.attack_own_ground_time: before this frame attack groups only pick targets on allied ground
+	// quota.attack_own_ground_time: before this frame attack groups only pick targets within allied influence
 	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
 	struct SContested {
