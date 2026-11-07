@@ -36,6 +36,8 @@
 
 namespace circuit {
 
+#define STALL_REFILL	0.05f  // share of storage that ends a stall latch
+
 using namespace springai;
 
 #define PYLON_RANGE		500.0f
@@ -61,6 +63,8 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, isMetalFull(false)
 		, isEnergyStalling(false)
 		, isEnergyEmpty(false)
+		, isMetalStall(false)
+		, isEnergyStall(false)
 		, metalCurFrame(-1)
 		, metalPullFrame(-1)
 		, energyCurFrame(-1)
@@ -690,6 +694,27 @@ bool CEconomyManager::IsEnergyEmpty()
 	return isEnergyEmpty;
 }
 
+bool CEconomyManager::IsStallFix(const IBuilderTask* task) const
+{
+	// Unlike IsIgnoreStallingPull, no mex while only energy stalls: a mex costs energy too. Reads the latches as the
+	// caller's IsStalling left them this pick.
+	const IBuilderTask::BuildType type = task->GetBuildType();
+	return (isMetalStall && ((type == IBuilderTask::BuildType::MEX) || (type == IBuilderTask::BuildType::PYLON)))
+		|| (isEnergyStall && (type == IBuilderTask::BuildType::ENERGY));
+}
+
+bool CEconomyManager::IsMetalStall()
+{
+	UpdateEconomy();
+	return isMetalStall;
+}
+
+bool CEconomyManager::IsEnergyStall()
+{
+	UpdateEconomy();
+	return isEnergyStall;
+}
+
 bool CEconomyManager::IsAllyOpenSpot(int spotId) const
 {
 	return IsOpenSpot(spotId) && circuit->GetMetalManager()->IsOpenSpot(spotId);
@@ -757,7 +782,7 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	// Energy stall: queue energy, but keep expanding. Mex jobs then rank as NORMAL (CBuilderManager::GetJobRank).
 	// Mex and reclaim are both searched on every pass (reclaim costs no energy, so a stall doesn't stop it);
 	// the job picker then chooses between them by travel and priority.
-	IBuilderTask* task = IsEnergyStalling() ? UpdateEnergyTasks(position, unit) : nullptr;
+	IBuilderTask* task = (IsEnergyStalling() || IsEnergyStall()) ? UpdateEnergyTasks(position, unit) : nullptr;
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
 	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);
 
@@ -1620,6 +1645,15 @@ void CEconomyManager::UpdateEconomy()
 	const float curEnergy = GetEnergyCur();
 	const float storEnergy = GetStorage(energyRes);
 	isEnergyEmpty = curEnergy < storEnergy * 0.1f;
+	// Stall latches (the builder rule's CBuilderManager::IsStallSpend): on below half the refill level with pull above
+	// income x 1.2; off once storage is back at the refill level or income catches up with pull. The gap between
+	// the two keeps the rule from flickering, and the income test ends it as soon as constructors stop adding pull.
+	auto latch = [](bool isOn, float cur, float stor, float income, float pull) {
+		const float refill = stor * STALL_REFILL;
+		return isOn ? ((cur < refill) && (income < pull)) : ((cur < refill * 0.5f) && (income * 1.2f < pull));
+	};
+	isMetalStall = latch(isMetalStall, curMetal, storMetal, GetAvgMetalIncome(), GetMetalPull());
+	isEnergyStall = latch(isEnergyStall, curEnergy, storEnergy, GetAvgEnergyIncome(), GetEnergyPull());
 
 	if (ecoFrame <= efInfo.startFrame) {
 		energyFactor = efInfo.startFactor;
