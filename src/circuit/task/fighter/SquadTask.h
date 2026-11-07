@@ -89,7 +89,7 @@ protected:
 	 * Call UpdateScoots every update; Attack, the pull-back and the regroup check skip scooting units
 	 */
 	static constexpr float DEFAULT_SCOOT_MARGIN = 100.f;  // reload_scoot_margin when unset (tasks may override)
-	virtual bool IsScooting(CCircuitUnit* unit) const override { return scoots.find(unit) != scoots.end(); }
+	virtual bool IsScooting(CCircuitUnit* unit) const override;
 	// Elmos beyond the target's range a scooting unit steps to; < 0 = this unit never scoots.
 	// Default: reload_scoot units (not mines or aircraft): reload_scoot_margin, else DEFAULT_SCOOT_MARGIN
 	virtual float GetScootMargin(CCircuitUnit* unit) const;
@@ -103,20 +103,34 @@ protected:
 	// A unit outside all ground threat doesn't start a scoot (it fights on); a scooting one stops once it gets there.
 	// Re-checked once a second while scooting
 	void UpdateScoots(int frame);
-	void Scoot(CCircuitUnit* unit, int frame, float margin);
+
+private:
+	struct SScoot {
+		enum class Step: char {
+			AWAY,  // on its way out of reach (or there)
+			SAFE,  // stopped outside all ground threat
+			BACK,  // fights on until reloaded enough: turned back early, or no time for a scoot this reload
+		};
+		Step step;
+		int frame;  // last scoot check (AWAY, SAFE)
+		springai::AIFloat3 dest;  // last spot it was sent to (AWAY)
+		bool IsHeld() const { return step != Step::BACK; }  // on hold position
+	};
+	using Scoots = std::map<CCircuitUnit*, SScoot>;
+	// Starts (scoot == nullptr) or renews a scoot
+	void Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margin);
+	// Straight away from the target, just outside its ground range + margin
+	springai::AIFloat3 GetScootSpot(CCircuitUnit* unit, const springai::AIFloat3& uPos, float margin) const;
+	// Does walking dist take as long as the unit's weapon has left to reload?
+	bool IsWalkLongerThanReload(CCircuitUnit* unit, int frame, float dist) const;
 	// While scooting a unit is on hold position: the engine's idle auto-attack (weapon range + 200 elmos on
 	// maneuver) would otherwise walk it straight back in after its scoot move ends or it stops
 	void SetScootHold(CCircuitUnit* unit, bool isHold);
-	void EndScoot(CCircuitUnit* unit, int frame, bool isEngaged);  // restores the move state, then OnScootEnd
-	struct SScoot {
-		int frame;  // last scoot check
-		bool isSafe;  // stopped outside all ground threat
-	};
-	std::map<CCircuitUnit*, SScoot> scoots;  // reloading units stepping out of reach
-	// Turned back before the reload threshold (walk back in takes as long as the reload left): no new scoot
-	// until the weapon is ready
-	std::set<CCircuitUnit*> scootReturns;
+	// Erases the scoot; a held unit gets its move state back, then OnScootEnd
+	void EndScoot(Scoots::iterator it, int frame, bool isEngaged);
+	Scoots scoots;  // reloading units: stepping out of reach, or fighting on until reloaded
 
+protected:
 	/*
 	 * Threat-capped paths and the squad flee (anti-air, anti-heavy)
 	 */

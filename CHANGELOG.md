@@ -19,7 +19,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   engaged on their target. Anti-heavy's scoot uses the same rules now. A squad that is aborted or done gives its scooting units their
   move state back (it used to leave them on hold position for good). Works in attack,
   raid, defend, anti-air and anti-heavy squads (not mines or aircraft). It is anti-heavy's shoot and scoot, moved to
-  `ISquadTask`; anti-heavy units without `reload_scoot` behave as before. No unit has it set yet.
+  `ISquadTask`; anti-heavy units without `reload_scoot` behave as before. No unit has it set yet. A scooting unit's
+  move is re-sent once a second only when its spot has moved, and a unit with no time to scoot fights on for the rest
+  of that reload.
 - **Anti-heavy threat-capped routes and flee** (`antiheavy` block in `behaviour.json`; code defaults off, shipped
   `path_threat` 1.0, `flee_margin` 200, `flee_ally_threat` 10, `flee_ally_radius` 500; per unit `antiheavy_flee_margin`).
   Anti-heavy squads used to path to heavies, safety and home with no threat cap, and had no flee. Their routes now use

@@ -79,10 +79,13 @@ void ISquadTask::AssignTo(CCircuitUnit* unit)
 void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IFighterTask::RemoveAssignee(unit);
-	if (scoots.erase(unit) > 0) {
-		SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
+	auto it = scoots.find(unit);
+	if (it != scoots.end()) {
+		if (it->second.IsHeld()) {
+			SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
+		}
+		scoots.erase(it);
 	}
-	scootReturns.erase(unit);
 	leader = nullptr;
 	lowestRange = lowestSpeed = std::numeric_limits<float>::max();
 	highestRange = highestSpeed = .0f;
@@ -96,17 +99,17 @@ void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 void ISquadTask::Stop(bool done)
 {
 	for (const auto& kv : scoots) {
-		SetScootHold(kv.first, false);
+		if (kv.second.IsHeld()) {
+			SetScootHold(kv.first, false);
+		}
 	}
 	scoots.clear();
-	scootReturns.clear();
 	IFighterTask::Stop(done);
 }
 
 void ISquadTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	scoots.erase(unit);
-	scootReturns.erase(unit);
 	IFighterTask::OnUnitDestroyed(unit, attacker);
 }
 
@@ -124,7 +127,7 @@ void ISquadTask::Merge(ISquadTask* task)
 		unit->GetTravelAct()->SetState(state);
 	}
 	units.insert(rookies.begin(), rookies.end());
-	scoots.insert(task->scoots.begin(), task->scoots.end());  // still on hold position: ended (and released) here
+	scoots.insert(task->scoots.begin(), task->scoots.end());  // held ones are ended (and released) here
 	task->scoots.clear();
 	attackPower += task->GetAttackPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
@@ -464,6 +467,12 @@ void ISquadTask::PullBackEndangered(int frame)
  * Shoot and scoot
  */
 
+bool ISquadTask::IsScooting(CCircuitUnit* unit) const
+{
+	auto it = scoots.find(unit);
+	return (it != scoots.end()) && it->second.IsHeld();
+}
+
 float ISquadTask::GetScootMargin(CCircuitUnit* unit) const
 {
 	CCircuitDef* cdef = unit->GetCircuitDef();
@@ -490,46 +499,137 @@ void ISquadTask::OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged)
 
 void ISquadTask::UpdateScoots(int frame)
 {
-	const bool isEngaged = (State::ENGAGE == state) && (target != nullptr);
-	if (!isEngaged) {
+	if ((State::ENGAGE != state) || (target == nullptr)) {
 		// Fight over (target lost, flee, regroup...): nothing to step away from. End the scoots now, so no unit is
 		// left behind on hold position while the squad walks off (a Lance would stay there ~20 s)
-		scootReturns.clear();
 		while (!scoots.empty()) {
-			EndScoot(scoots.begin()->first, frame, false);
+			EndScoot(scoots.begin(), frame, false);
 		}
 		return;
 	}
 	for (CCircuitUnit* unit : units) {  // NOTE: orders can't remove units here (TRY_UNIT defers to Garbage)
-		auto it = scoots.find(unit);
 		const float margin = GetScootMargin(unit);
-		if ((margin < 0.f) || !IsUnitReloading(unit, frame)) {
-			scootReturns.erase(unit);
-			if (it != scoots.end()) {
-				EndScoot(unit, frame, isEngaged);  // reloaded enough: back to the fight
+		const bool isReloading = (margin >= 0.f) && IsUnitReloading(unit, frame);
+		auto it = scoots.find(unit);
+		if (it == scoots.end()) {
+			if (isReloading && (unit->Blocker() == nullptr)) {
+				Scoot(unit, nullptr, frame, margin);
 			}
 			continue;
 		}
-		if (scootReturns.find(unit) != scootReturns.end()) {
-			continue;  // on its way back in already
+		if (!isReloading) {
+			EndScoot(it, frame, true);  // reloaded enough: back to the fight
+			continue;
 		}
-		if (it != scoots.end()) {
-			// Turn back once walking into fire range takes as long as the reload left, so the unit shoots again as
-			// soon as it's ready (a slow unit far back would otherwise lose time on every cycle)
-			const float speed = unit->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
-			const float walk = unit->GetPos(frame).distance2D(target->GetPos()) - GetFireRange(unit);
-			if ((speed > 0.f) && (walk / speed >= unit->GetWeaponReloadLeft(frame))) {
-				scootReturns.insert(unit);
-				EndScoot(unit, frame, isEngaged);
-				continue;
-			}
+		SScoot& scoot = it->second;
+		if (!scoot.IsHeld()) {
+			continue;  // fighting on until reloaded enough
 		}
-		if ((unit->Blocker() == nullptr)
-			&& ((it == scoots.end()) || (frame >= it->second.frame + FRAMES_PER_SEC)))
-		{
-			Scoot(unit, frame, margin);
+		// Turn back once walking into fire range takes as long as the reload left, so the unit shoots again as soon
+		// as it's ready (a slow unit far back would otherwise lose time on every cycle)
+		const float walkBack = unit->GetPos(frame).distance2D(target->GetPos()) - GetFireRange(unit);
+		if (IsWalkLongerThanReload(unit, frame, walkBack)) {
+			scoot.step = SScoot::Step::BACK;
+			SetScootHold(unit, false);
+			OnScootEnd(unit, frame, true);
+			continue;
+		}
+		if ((frame >= scoot.frame + FRAMES_PER_SEC) && (unit->Blocker() == nullptr)) {
+			Scoot(unit, &scoot, frame, margin);
 		}
 	}
+}
+
+void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margin)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const AIFloat3& uPos = unit->GetPos(frame);
+	const float hereThreat = threatMap->GetThreatAt(unit, uPos);
+	if (scoot != nullptr) {
+		scoot->frame = frame;
+	}
+
+	// Outside every ground threat (this unit's threat layer), whatever the target's range or kind (planes count
+	// through their ground threat): no scoot, the unit fights on. A scooting unit that got there stops, rather than
+	// walking on to its spot and having further to come back
+	if (hereThreat <= THREAT_MIN) {
+		if ((scoot != nullptr) && (scoot->step == SScoot::Step::AWAY)) {
+			scoot->step = SScoot::Step::SAFE;
+			unit->GetTravelAct()->StateWait();
+			TRY_UNIT(circuit, unit,
+				unit->GetUnit()->Stop();
+			)
+		}
+		return;
+	}
+
+	// Straight back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here,
+	// where the target's own threat still counts. Else a new scoot doesn't start (the unit fights on), and a
+	// running one keeps its last order
+	const AIFloat3 dest = GetScootSpot(unit, uPos, margin);
+	if (threatMap->GetThreatAt(unit, dest) > hereThreat) {
+		return;
+	}
+
+	if (scoot == nullptr) {
+		// Too slow to get there and back into fire range before the weapon is ready (short reload, slow unit): it
+		// would only lose its spot. Fights on for the rest of this reload instead
+		const float walk = uPos.distance2D(dest) + std::max(dest.distance2D(target->GetPos()) - GetFireRange(unit), 0.f);
+		if (IsWalkLongerThanReload(unit, frame, walk)) {
+			scoots[unit] = {SScoot::Step::BACK, frame, dest};
+			return;
+		}
+		scoot = &scoots[unit];
+		SetScootHold(unit, true);
+	} else if ((scoot->step == SScoot::Step::AWAY) && !unit->GetTravelAct()->IsActive()
+		&& (scoot->dest.SqDistance2D(dest) < SQUARE(SQUARE_SIZE * 4)))
+	{
+		return;  // already sent there (target hasn't moved much): no new orders
+	}
+	*scoot = {SScoot::Step::AWAY, frame, dest};
+	unit->GetTravelAct()->StateWait();
+	TRY_UNIT(circuit, unit,
+		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
+}
+
+AIFloat3 ISquadTask::GetScootSpot(CCircuitUnit* unit, const AIFloat3& uPos, float margin) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& tPos = target->GetPos();
+	CCircuitDef* edef = target->GetCircuitDef();
+	const float tRange = (edef != nullptr)
+			? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
+			: 0.f;  // unknown type (radar blip): the margin alone
+	AIFloat3 dir = uPos - tPos;
+	dir.y = 0.f;
+	const float len = dir.Length2D();
+	if (len < 1.f) {
+		dir = circuit->GetSetupManager()->GetBasePos() - tPos;  // on top of it: towards our base
+		dir.y = 0.f;
+	}
+	const float dirLen = dir.Length2D();
+	AIFloat3 dest = uPos;
+	if (dirLen > 1.f) {
+		// Just outside the target's ground range + margin; already past that (other enemies, or the threat ring's
+		// slack beyond the target's range): another margin further back
+		const float dist = std::max(tRange + margin, len + std::max(margin, (float)SQUARE_SIZE * 8)) + 50.f;
+		dest = tPos + dir * (dist / dirLen);
+	}
+	CTerrainManager::CorrectPosition(dest);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	if (!terrainMgr->CanMoveToPos(unit->GetArea(), dest)) {
+		dest = terrainMgr->GetMovePosition(unit->GetArea(), dest);
+	}
+	return dest;
+}
+
+bool ISquadTask::IsWalkLongerThanReload(CCircuitUnit* unit, int frame, float dist) const
+{
+	const float speed = unit->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
+	return (speed > 0.f) && (dist / speed >= unit->GetWeaponReloadLeft(frame));
 }
 
 void ISquadTask::SetScootHold(CCircuitUnit* unit, bool isHold)
@@ -542,93 +642,15 @@ void ISquadTask::SetScootHold(CCircuitUnit* unit, bool isHold)
 	)
 }
 
-void ISquadTask::EndScoot(CCircuitUnit* unit, int frame, bool isEngaged)
+void ISquadTask::EndScoot(Scoots::iterator it, int frame, bool isEngaged)
 {
-	scoots.erase(unit);
-	SetScootHold(unit, false);
-	OnScootEnd(unit, frame, isEngaged);
-}
-
-void ISquadTask::Scoot(CCircuitUnit* unit, int frame, float margin)
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	auto it = scoots.find(unit);
-	const bool isNew = (it == scoots.end());
-
-	// Outside every ground threat (this unit's threat layer), whatever the target's range or kind (planes count
-	// through their ground threat): no scoot, the unit fights on. A scooting unit that got there stops, rather than
-	// walking on to its spot and having further to come back
-	const AIFloat3& uPos = unit->GetPos(frame);
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	const float hereThreat = threatMap->GetThreatAt(unit, uPos);
-	if (hereThreat <= THREAT_MIN) {
-		if (isNew) {
-			return;
-		}
-		it->second.frame = frame;
-		if (!it->second.isSafe) {
-			it->second.isSafe = true;
-			unit->GetTravelAct()->StateWait();
-			TRY_UNIT(circuit, unit,
-				unit->GetUnit()->Stop();
-			)
-		}
-		return;
+	CCircuitUnit* unit = it->first;
+	const bool isHeld = it->second.IsHeld();
+	scoots.erase(it);
+	if (isHeld) {
+		SetScootHold(unit, false);
+		OnScootEnd(unit, frame, isEngaged);
 	}
-
-	const AIFloat3& tPos = target->GetPos();
-	CCircuitDef* edef = target->GetCircuitDef();
-	const float tRange = (edef != nullptr)
-			? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
-			: 0.f;  // unknown type (radar blip): the margin alone
-	const float reach = tRange + margin;
-	AIFloat3 dir = uPos - tPos;
-	dir.y = 0.f;
-	const float len = dir.Length2D();
-	if (len < 1.f) {
-		dir = circuit->GetSetupManager()->GetBasePos() - tPos;  // on top of it: towards our base
-		dir.y = 0.f;
-	}
-	const float dirLen = dir.Length2D();
-	AIFloat3 dest = uPos;
-	if (dirLen > 1.f) {
-		// Just outside the target's ground range + margin; already past that (other enemies, or the threat ring's
-		// slack beyond the target's range): another margin further back. Re-sent each second while in threat
-		const float dist = std::max(reach, len + std::max(margin, (float)SQUARE_SIZE * 8)) + 50.f;
-		dest = tPos + dir * (dist / dirLen);
-	}
-	CTerrainManager::CorrectPosition(dest);
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	if (!terrainMgr->CanMoveToPos(unit->GetArea(), dest)) {
-		dest = terrainMgr->GetMovePosition(unit->GetArea(), dest);
-	}
-	// Straight back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here,
-	// where the target's own threat still counts. Else a new scoot doesn't start (the unit fights on), and a
-	// running one keeps its last order
-	if (threatMap->GetThreatAt(unit, dest) > hereThreat) {
-		if (!isNew) {
-			it->second.frame = frame;
-		}
-		return;
-	}
-	// Too slow to get there and back into fire range before the weapon is ready (short reload, slow unit): it would
-	// only lose its spot. Fights on instead
-	const float speed = unit->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
-	if (isNew && (speed > 0.f)) {
-		const float walk = uPos.distance2D(dest) + std::max(dest.distance2D(tPos) - GetFireRange(unit), 0.f);
-		if (walk / speed >= unit->GetWeaponReloadLeft(frame)) {
-			return;
-		}
-	}
-	scoots[unit] = {frame, false};
-	if (isNew) {
-		SetScootHold(unit, true);
-	}
-	unit->GetTravelAct()->StateWait();
-	TRY_UNIT(circuit, unit,
-		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
-	)
 }
 
 /*
