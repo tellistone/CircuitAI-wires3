@@ -1841,8 +1841,7 @@ CBuilderManager::SCommState* CBuilderManager::GetCommState(CCircuitUnit* unit)
 	}
 	state.frame = frame;
 	state.nearZone = state.wideZone = state.allZone = SCommZone();
-	state.isAir = false;
-	state.cover = 0.f;
+	state.cover = 0.f;  // dangerPos and isAir stay from the last refresh that saw a danger (see SCommState)
 	state.own = IFighterTask::GetCoverPower(unit);
 	const float margin = state.hide->fleeMargin;
 	const AIFloat3& pos = unit->GetPos(frame);

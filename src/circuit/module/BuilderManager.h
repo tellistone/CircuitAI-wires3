@@ -223,7 +223,9 @@ private:
 		SCommZone nearZone;  // seen dangers whose flee zone (range + flee_margin) reaches it
 		SCommZone wideZone;  // seen dangers within range + wideMargin
 		SCommZone allZone;  // as wideZone, recently seen ones included
-		springai::AIFloat3 dangerPos;  // nearest seen danger within the wide line
+		// Nearest seen danger within the wide line, kept from the last refresh that saw one: a flee whose goal turns
+		// unsafe while the danger near it has gone from sight still picks a new spot away from where it was
+		springai::AIFloat3 dangerPos;
 		bool isAir = false;  // it is a gunship
 		float own = 0.f;  // the commander's own cover power (power x sqrt(health %))
 		float cover = 0.f;  // it and allies within flee_ally_radius, when allZone has any (stops once it covers all)
