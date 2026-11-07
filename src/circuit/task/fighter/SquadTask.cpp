@@ -837,7 +837,7 @@ bool ISquadTask::UpdateFlee(float margin, float endMargin, bool isGunship, float
 	}
 	isFleeing = true;
 	fleeReplanFrame = frame + FLEE_REPLAN_FRAMES;
-	Flee(danger->GetPos());
+	FleeFrom(danger->GetPos());  // not Flee: attack and raid tasks have their own Flee(int frame), which would hide it
 	return true;
 }
 

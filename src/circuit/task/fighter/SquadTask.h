@@ -159,11 +159,11 @@ protected:
 	// The squad flee (anti-air, anti-heavy), every update before anything else: run from the nearest enemy within its
 	// range + margin of a squad unit (FindFleeDanger), unless escorts next to the leader cover every enemy in reach
 	// (IsFleeCovered; allyThreat < 0 = never covered). While fleeing the reach is range + endMargin (>= margin), so an
-	// enemy at the edge can't switch the flee on and off. Flee plans the run, again every FLEE_REPLAN_FRAMES while
+	// enemy at the edge can't switch the flee on and off. FleeFrom plans the run, again every FLEE_REPLAN_FRAMES while
 	// the danger stays; OnFleeEnd runs once it's gone. margin < 0 = off. True while fleeing
 	bool UpdateFlee(float margin, float endMargin, bool isGunship, float allyThreat, float allyRadius,
 			CCircuitDef::RoleT ownRole);
-	virtual void Flee(const springai::AIFloat3& dangerPos) {}
+	virtual void FleeFrom(const springai::AIFloat3& dangerPos) {}
 	virtual void OnFleeEnd() {}
 private:
 	bool isFleeing = false;

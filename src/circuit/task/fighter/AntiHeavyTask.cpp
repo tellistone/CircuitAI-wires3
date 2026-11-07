@@ -396,7 +396,7 @@ bool CAntiHeavyTask::CheckFlee()
 			ahCfg.fleeAllyThreat, ahCfg.fleeAllyRadius, ROLE_TYPE(AH));
 }
 
-void CAntiHeavyTask::Flee(const AIFloat3& dangerPos)
+void CAntiHeavyTask::FleeFrom(const AIFloat3& dangerPos)
 {
 	const AIFloat3* goal = FindFleeGoal(dangerPos);
 	if (goal == nullptr) {
