@@ -270,7 +270,7 @@ public:
 	// quota.attack_group_radius: [<x the group's range>, <min elmos>]; units farther from the leader are stragglers
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
 	// quota.attack_static_cells: attack groups route to safe firing cells around static targets
-	struct SAttackStaticCells {
+	struct SAttackCells {
 		bool isOn;  // false: static targets are routed to like any other (a disc of the group's range)
 		float rings[2];  // ring radii, x the group's fire range: the first is sampled first, the second only if it yields nothing
 		int angles;  // points per ring
@@ -285,7 +285,7 @@ public:
 		// (artillery) ranks this many times closer, parked or not, while in view or just out of it (1: off)
 		float siegeBonus;
 	};
-	const SAttackStaticCells& GetAttackStaticCells() const { return attackStaticCells; }
+	const SAttackCells& GetAttackCells() const { return attackCells; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
 	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
 	// Highest value of the task's thr_mod.distance curve (1 if it has none)
@@ -448,7 +448,7 @@ private:
 	springai::AIFloat3 rallyBlobPos;
 	float rallyBlobThreat;
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
-	SAttackStaticCells attackStaticCells;  // quota.attack_static_cells
+	SAttackCells attackCells;  // quota.attack_static_cells
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
 	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
 	float invMapDiagonal;  // 1 / the map's diagonal (thr_mod.distance curves take a fraction of it)

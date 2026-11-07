@@ -588,7 +588,7 @@ void CMilitaryManager::ReadConfig()
 			}
 			return v.asFloat();
 		};
-		SAttackStaticCells& c = attackStaticCells;
+		SAttackCells& c = attackCells;
 		const Json::Value& qon = qc["on"];
 		if (!qon.isNull() && !qon.isBool()) {
 			circuit->LOG("CONFIG %s: quota.attack_static_cells.on must be true or false, using false", cfgName.c_str());
