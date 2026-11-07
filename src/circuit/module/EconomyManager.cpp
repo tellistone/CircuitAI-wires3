@@ -14,6 +14,7 @@
 #include "resource/EnergyGrid.h"
 #include "terrain/TerrainManager.h"
 #include "map/ThreatMap.h"
+#include "task/RetreatTask.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
@@ -1539,7 +1540,8 @@ void CEconomyManager::UpdateMorph()
 	while (it != morphees.end()) {
 		CCircuitUnit* unit = *it;
 		if ((unit->GetTask()->GetType() == IUnitTask::Type::PLAYER) ||
-			(unit->GetTask()->GetType() == IUnitTask::Type::RETREAT) ||  // fleeing or off for repair
+			((unit->GetTask()->GetType() == IUnitTask::Type::RETREAT)
+				&& static_cast<CRetreatTask*>(unit->GetTask())->IsFlee()) ||  // a health retreat may still morph
 			(unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth() * 0.8f) ||
 			circuit->GetBuilderManager()->IsCommInDanger(unit))  // it would only stop again to flee
 		{

@@ -176,7 +176,7 @@ public:
 	 */
 	// Flee zones the commander should keep out of: visible ground dangers at their weapon range + margin
 	bool IsCommSafe(const springai::AIFloat3& pos, float margin);
-	// In a flee zone at the wide (stop-fleeing) line, or under threat: no morph now
+	// In a flee zone at the wide (stop-fleeing) line: no morph now
 	bool IsCommInDanger(CCircuitUnit* unit);
 
 private:

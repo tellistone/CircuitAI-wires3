@@ -1705,8 +1705,8 @@ bool CBuilderManager::IsCommInDanger(CCircuitUnit* unit)
 	if (margin < 0.f) {
 		return false;
 	}
-	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
-	return !IsCommSafe(pos, GetCommWideMargin(margin)) || (circuit->GetThreatMap()->GetThreatAt(unit, pos) > THREAT_MIN);
+	// Visible dangers only: the threat map keeps last-known ghosts, which could hold a morph off for long
+	return !IsCommSafe(unit->GetPos(circuit->GetLastFrame()), GetCommWideMargin(margin));
 }
 
 bool CBuilderManager::IsCommCovered(const AIFloat3& pos, float enemyThreat, float allyThreat, float radius) const
