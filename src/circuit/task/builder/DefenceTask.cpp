@@ -61,13 +61,9 @@ void CBDefenceTask::Update()
 
 void CBDefenceTask::Finish()
 {
-	CCircuitAI* circuit = manager->GetCircuit();
-	// Reclaim turret blockers
-	const float radius = 128.0f;  // buildDef->GetMaxRange() * 0.5f;
-	if (circuit->GetCallback()->IsFeaturesIn(buildPos, radius)) {
-		circuit->GetBuilderManager()->EnqueueReclaim(IBuilderTask::Priority::HIGH, buildPos, .0f, FRAMES_PER_SEC * 60, radius, false);
-	}
-
+	// NOTE: No "reclaim turret blockers" job here. It was queued with cost 0, which CBReclaimTask::CanAssignTo
+	//       never accepts (0 > build power x helper_sec is false), so no constructor could take it. It only
+	//       counted as an untaken reclaim job for 60 s and blocked wreck jobs (CEconomyManager::UpdateReclaimTasks).
 	IBuilderTask::Finish();
 }
 

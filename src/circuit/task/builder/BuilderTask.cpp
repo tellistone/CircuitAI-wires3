@@ -467,11 +467,18 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 
 	const AIFloat3& endPos = GetPosition();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	// Priority repair targets are usually in combat: apply the same safety rule as task selection
-	const bool isReachable = ((priority == Priority::NOW) && (buildType == BuildType::REPAIR))
-			? terrainMgr->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
-				&& !circuit->GetBuilderManager()->IsUnsafePrioRepair(this, unit, endPos)
-			: terrainMgr->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
+	// Priority repair targets are usually in combat, and wrecks often lie where we just fought:
+	// both keep the same safety rule as task selection
+	bool isReachable;
+	if ((priority == Priority::NOW) && (buildType == BuildType::REPAIR)) {
+		isReachable = terrainMgr->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
+				&& !circuit->GetBuilderManager()->IsUnsafePrioRepair(this, unit, endPos);
+	} else if ((buildType == BuildType::RECLAIM) && (target == nullptr)) {
+		circuit->GetThreatMap()->SetThreatType(unit);
+		isReachable = circuit->GetEconomyManager()->IsReclaimSafe(unit, endPos);
+	} else {
+		isReachable = terrainMgr->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
+	}
 	if (!isReachable) {
 		manager->AbortTask(this);
 		return;

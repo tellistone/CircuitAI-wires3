@@ -14,6 +14,7 @@
 #include "resource/EnergyGrid.h"
 #include "terrain/TerrainManager.h"
 #include "map/ThreatMap.h"
+#include "map/InfluenceMap.h"
 #include "task/RetreatTask.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
@@ -306,6 +307,7 @@ void CEconomyManager::ReadConfig()
 	const Json::Value& recl = econ["reclaim"];
 	reclaimValueExp = recl.get("value_exp", 0.5f).asFloat();
 	reclaimHelperSec = std::max(recl.get("helper_sec", 20.f).asFloat(), 0.f);
+	reclaimUntakenSec = std::max(recl.get("untaken_sec", 30.f).asFloat(), 1.f);
 	reclaimStoreAt = recl.get("store_at", 0.7f).asFloat();
 	const Json::Value& travel = recl["travel"];
 	reclaimTravelMetal = travel.get("metal", 2000.f).asFloat();
@@ -753,15 +755,13 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	}
 
 	// Energy stall: queue energy, but keep expanding. Mex jobs then rank as NORMAL (CBuilderManager::GetJobRank).
-	const bool isEnergyStalling = IsEnergyStalling();
-	IBuilderTask* task = isEnergyStalling ? UpdateEnergyTasks(position, unit) : nullptr;
-
+	// Mex and reclaim are both searched on every pass (reclaim costs no energy, so a stall doesn't stop it);
+	// the job picker then chooses between them by travel and priority.
+	IBuilderTask* task = IsEnergyStalling() ? UpdateEnergyTasks(position, unit) : nullptr;
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
-	if (mexTask != nullptr) {
-		return (task != nullptr) ? task : mexTask;
-	}
+	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);
 
-	return isEnergyStalling ? task : UpdateReclaimTasks(position, unit);
+	return (task != nullptr) ? task : (mexTask != nullptr) ? mexTask : reclaimTask;
 }
 
 IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuitUnit* unit)
@@ -881,7 +881,7 @@ float CEconomyManager::GetReclaimMetal(CCircuitDef* builderDef, const AIFloat3& 
 		return it->second.first;
 	}
 
-	// Same reach + threat test as UpdateReclaimTasks (CanReachAtSafe), but by area: no unit at hand
+	// Reach + any-threat test by area (no unit at hand): stricter than UpdateReclaimTasks, which allows threat under our cover
 	const float range = builderDef->GetBuildDistance();
 	float metal = 0.f;
 	for (const SReclaimFeature& feature : GetReclaimFeatures(circuit->GetCallback()->GetFeatureIds())) {
@@ -936,8 +936,7 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 
 	// Best reachable spot whose job can still take this unit: join it, or open a new job there.
 	// A full job doesn't stop the search, the next spot is tried.
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
+	circuit->GetThreatMap()->SetThreatType(unit);
 	for (const auto& spot : spots) {
 		const AIFloat3& pos = spot.second->pos;
 		auto it = std::find_if(reclaimTasks.begin(), reclaimTasks.end(),
@@ -946,11 +945,11 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 		if ((job != nullptr) ? !job->CanAssignTo(unit) : !canOpenJob) {
 			continue;  // full, or too many untaken jobs to open another
 		}
-		if (!terrainMgr->CanReachAtSafe(unit, pos, buildDist)) {
+		if (!IsReclaimSafe(unit, pos)) {
 			continue;
 		}
 		return (job != nullptr) ? job
-				: builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, pos, spot.second->metal, FRAMES_PER_SEC * 300,
+				: builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, pos, spot.second->metal, FRAMES_PER_SEC * reclaimUntakenSec,
 											 8.0f/*unit->GetCircuitDef()->GetBuildDistance()*/);
 	}
 
@@ -962,6 +961,19 @@ float CEconomyManager::GetReclaimTravelSec(const SReclaimTravel& travel, float m
 	// Linear from (1 metal, minSec) to (reclaimTravelMetal, maxSec), capped at maxSec, never below the floor
 	const float t = std::min(std::max(metalLeft - 1.f, 0.f) / std::max(reclaimTravelMetal - 1.f, 1.f), 1.f);
 	return std::max(travel.minSec + (travel.maxSec - travel.minSec) * t, reclaimTravelFloor);
+}
+
+bool CEconomyManager::IsReclaimSafe(CCircuitUnit* unit, const AIFloat3& pos) const
+{
+	// Same rule as other builder jobs (CBuilderManager::MakeBuilderTask): unsafe only when the enemy threat there
+	// beats the builder's own AND the enemy holds the area (influence < 0), so wrecks behind our army count.
+	// The threat type must be set for unit.
+	if (!circuit->GetTerrainManager()->CanReachAt(unit, pos, unit->GetCircuitDef()->GetBuildDistance())) {
+		return false;
+	}
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	return (threatMap->GetThreatAt(pos) <= threatMap->GetUnitThreat(unit))
+		|| (circuit->GetInflMap()->GetInfluenceAt(pos) >= -INFL_EPS);
 }
 
 float CEconomyManager::GetReclaimRank(float sqDist, float metalLeft) const
