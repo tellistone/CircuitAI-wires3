@@ -58,8 +58,9 @@ protected:
 	void ReleaseStuck(std::vector<CCircuitUnit*>& stuck);
 	void ActivePath(float speed = NO_SPEED_LIMIT);
 	NSMicroPather::TestFunc GetHitTest() const;
-	// Line of sight over terrain between two path-map squares (sector max elevation), aimed aimLift above the start
-	static NSMicroPather::TestFunc MakeHitTest(CTerrainManager* terrainMgr, float aimLift);
+	// Line of sight over terrain between two path-map squares (sector max elevation), from aimLift above the start to
+	// targetLift above the end
+	static NSMicroPather::TestFunc MakeHitTest(CTerrainManager* terrainMgr, float aimLift, float targetLift = SQUARE_SIZE);
 
 	/*
 	 * Escape check of attack and raid groups. Danger: threat at or above GetAllowedThreatAt for GetEscapeSafeThreat

@@ -120,6 +120,41 @@ void CEnemyUnit::UpdateInRadarData(const AIFloat3& p)
 	data.vel = unit->GetVel();
 }
 
+void CEnemyUnit::TrackStill(int frame)
+{
+	// One path square: wedges, route reuse and cells all work at that grain, and units in a blob are pushed about
+	constexpr float STILL_TOL = 64.f;
+	// The engine's base radar error (CLosHandler::defBaseRadarErrorSize): a radar contact wobbles about the true spot
+	constexpr float RADAR_TOL = 96.f;
+	// elmos per frame (6 elmos/s): a spot is only taken while the unit is about stopped
+	constexpr float STILL_SPEED = 0.2f;
+	const float sqDist = (stillSince < 0) ? 0.f : data.pos.SqDistance2D(stillPos);
+	if (data.IsInLOS()) {
+		if ((stillSince < 0) || (sqDist > SQUARE(STILL_TOL))) {
+			const bool isStopped = data.vel.SqLength2D() < SQUARE(STILL_SPEED);
+			stillPos = data.pos;
+			stillSince = isStopped ? frame : -1;
+		}
+	} else if ((stillSince >= 0) && (sqDist > SQUARE(STILL_TOL + RADAR_TOL))) {
+		stillSince = -1;  // on radar only and away from the spot: moved
+	}
+	// A gap in updates (out of radar and LOS) changes nothing by itself: on return the unit is judged against its spot
+}
+
+bool CEnemyUnit::GetParkedSpot(int frame, int parkedFrames, AIFloat3& outPos, int& outEpoch) const
+{
+	const CCircuitDef* cdef = data.cdef;
+	if ((stillSince < 0) || (frame - stillSince < parkedFrames)
+		|| (cdef == nullptr) || !cdef->IsMobile() || cdef->IsAbleToFly()
+		|| IsFake() || IsHidden() || !IsInRadarOrLOS())  // out of view: we don't know it's still there
+	{
+		return false;
+	}
+	outPos = stillPos;
+	outEpoch = stillSince;
+	return true;
+}
+
 void CEnemyUnit::UpdateInLosData()
 {
 	if (shield != nullptr) {

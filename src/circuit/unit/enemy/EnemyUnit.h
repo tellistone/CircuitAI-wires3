@@ -103,6 +103,7 @@ public:
 
 	void SetKnown(int frame) { knownFrame = (knownFrame != -1) ? knownFrame : frame; }
 	bool IsKnown(int frame) const { return (knownFrame != -1) && (knownFrame != frame); }
+	int GetKnownFrame() const { return knownFrame; }  // first seen in LOS (-1: not yet)
 
 	void SetLastSeen(int frame) { lastSeen = frame; }
 	int GetLastSeen() const { return lastSeen; }
@@ -134,6 +135,13 @@ public:
 	void UpdateInRadarData(const springai::AIFloat3& p);
 	void UpdateInLosData();
 
+	// Parked: the spot a unit was last seen standing on in LOS (radar positions carry the engine's radar error), and
+	// since when. Called from the staggered enemy update only, after UpdateInRadarData
+	void TrackStill(int frame);
+	// A mobile, known, ground unit in radar or LOS that has stood on its spot for at least parkedFrames: that spot,
+	// and the frame it settled there (the spot's epoch: a new spot is a new epoch)
+	bool GetParkedSpot(int frame, int parkedFrames, springai::AIFloat3& outPos, int& outEpoch) const;
+
 private:
 	void Init();
 
@@ -143,6 +151,10 @@ private:
 	springai::Weapon* shield;
 
 	SEnemyData data;
+
+	// TrackStill: not in SEnemyData, which the threat map copies on every update and doesn't need these
+	springai::AIFloat3 stillPos = springai::AIFloat3(-1.f, 0.f, -1.f);
+	int stillSince = -1;  // -1: no spot (moving, or not seen in LOS on it yet)
 
 public:
 	void SetInLOS()     { data.SetInLOS(); }
@@ -198,6 +210,10 @@ public:
 	const springai::AIFloat3& GetVel() const { return data->GetVel(); }
 
 	float GetThreat() const { return data->GetThreat(); }
+	int GetKnownFrame() const { return data->GetKnownFrame(); }
+	bool GetParkedSpot(int frame, int parkedFrames, springai::AIFloat3& outPos, int& outEpoch) const {
+		return data->GetParkedSpot(frame, parkedFrames, outPos, outEpoch);
+	}
 
 	bool IsInLOS()          const { return data->IsInLOS(); }
 	bool IsInRadarOrLOS()   const { return data->IsInRadarOrLOS(); }

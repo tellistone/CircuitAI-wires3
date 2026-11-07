@@ -336,13 +336,13 @@ NSMicroPather::TestFunc ISquadTask::GetHitTest() const
 	return MakeHitTest(manager->GetCircuit()->GetTerrainManager(), aimLift);
 }
 
-NSMicroPather::TestFunc ISquadTask::MakeHitTest(CTerrainManager* terrainMgr, float aimLift)
+NSMicroPather::TestFunc ISquadTask::MakeHitTest(CTerrainManager* terrainMgr, float aimLift, float targetLift)
 {
 	const std::vector<STerrainMapSector>& sectors = terrainMgr->GetAreaData()->sector;
 	const int sectorXSize = terrainMgr->GetSectorXSize();
-	return [&sectors, sectorXSize, aimLift](int2 start, int2 end) {  // losTest
+	return [&sectors, sectorXSize, aimLift, targetLift](int2 start, int2 end) {  // losTest
 		float startHeight = sectors[start.y * sectorXSize + start.x].maxElevation + aimLift;
-		float diffHeight = sectors[end.y * sectorXSize + end.x].maxElevation + SQUARE_SIZE - startHeight;
+		float diffHeight = sectors[end.y * sectorXSize + end.x].maxElevation + targetLift - startHeight;
 		// All octant line draw
 		const int dx =  abs(end.x - start.x), sx = start.x < end.x ? 1 : -1;
 		const int dy = -abs(end.y - start.y), sy = start.y < end.y ? 1 : -1;
