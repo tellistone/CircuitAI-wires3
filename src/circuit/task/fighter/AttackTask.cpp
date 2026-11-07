@@ -72,6 +72,8 @@ static constexpr int GROUP_ROUTE_REUSE_FRAMES = FRAMES_PER_SEC * 6;
 static constexpr float GROUP_ROUTE_SLACK = 0.1f;
 // Rally: after an empty route to the host (or its fight), hold this long before routing again
 static constexpr int RALLY_ROUTE_RETRY_FRAMES = FRAMES_PER_SEC * 6;
+// Rally host: arrived at the meeting point within this; also how close its route there has to get
+static constexpr float MEET_ARRIVE_DIST = 200.f;
 
 namespace {
 // Power-weighted median weapon range against one target type, of the non-support units that can hit it (or of all
@@ -653,7 +655,7 @@ void CAttackTask::Reinforce(const int frame, bool isReuse)
 	bool isToMeet = false;
 	if (isRally && !PickRallyGoal(frame, goal, isToMeet)) {
 		position = startPos;
-		MoveGroupTo(startPos);  // nothing safe near the host's fight and we are close already: stand here
+		GatherAt(startPos);  // nothing safe near the host's fight and we are close already: stand here
 		return;
 	}
 	position = goal;
@@ -856,18 +858,17 @@ bool CAttackTask::UpdateMeet(int frame, bool isReuse)
 	meetPos = FindMeetPoint(frame, significant);
 	position = meetPos;
 	if (IsAtMeetPoint(pos)) {
-		// Stand at the point and wait (regrouping allowed). No quiet-spot search: the point was judged safe,
-		// and the joiners aim at it
-		MoveGroupTo(meetPos);
+		// Wait at the point (regrouping allowed). No quiet-spot search: the point was judged safe, and the joiners
+		// aim at it
+		GatherAt(meetPos);
 		return true;
 	}
 	isMeetWalk = true;
 	if ((isReuse && ReuseRoute(MEET_ROUTE_ID, meetPos, frame)) || !IsQueryReady(leader)) {
 		return true;
 	}
-	constexpr float MEET_ROUTE_RANGE = 200.f;
 	const AIFloat3 goal = meetPos;
-	RunGroupRoute(frame, goal, MEET_ROUTE_RANGE, [this, goal](const CQueryPathSingle* query) {
+	RunGroupRoute(frame, goal, MEET_ARRIVE_DIST, [this, goal](const CQueryPathSingle* query) {
 		if (!this->ApplyGroupRoute(query, MEET_ROUTE_ID, goal, 0.f)) {
 			this->HoldPosition();  // no safe route there: wait here, the joiners still come to us
 		}
@@ -918,7 +919,6 @@ bool CAttackTask::IsAtMeetPoint(const AIFloat3& pos)
 {
 	// Arrived within MEET_ARRIVE_DIST of the point; still there until pushed farther than MEET_LEAVE_DIST away
 	// (escape) or the point moved MEET_MOVED_DIST since: then walk there again by a route
-	constexpr float MEET_ARRIVE_DIST = 200.f;
 	constexpr float MEET_LEAVE_DIST = 600.f;
 	constexpr float MEET_MOVED_DIST = 400.f;
 	const float sqMeetDist = meetPos.SqDistance2D(pos);
@@ -2270,6 +2270,26 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 	}
 	outPos = bestPos;
 	return (bestThreat < std::numeric_limits<float>::max()) ? bestThreat : threatMap->GetThreatAt(leader, pos);
+}
+
+void CAttackTask::GatherAt(const AIFloat3& pos)
+{
+	// Wait around pos: only units farther than the group radius walk there, the rest stand where they are, spread
+	// out as they came in (not packed onto one spot for area damage, and no orders resent every decision).
+	// Holding: a unit hit by something we didn't go for steps out of its range (OnUnitDamaged)
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const float sqRadius = SQUARE(GetGroupRadius());
+	pPath = std::make_shared<PathInfo>();
+	for (CCircuitUnit* unit : units) {
+		if (unit->Blocker() != nullptr) {
+			continue;
+		}
+		unit->GetTravelAct()->StateWait();
+		if (unit->GetPos(frame).SqDistance2D(pos) > sqRadius) {
+			MoveUnitTo(unit, pos, frame);
+		}
+	}
+	isHolding = true;
 }
 
 void CAttackTask::MoveGroupTo(const AIFloat3& pos)
