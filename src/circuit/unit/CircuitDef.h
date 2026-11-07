@@ -69,18 +69,19 @@ public:
 	 * NO_DGUN:   do not use DGun
 	 * PRIO_REPAIR: builders rush to repair when damaged (same as heavy role)
 	 * GUARDED:   gets a guard slot like an early builder (behaviour.json "guard"); never guards others itself
+	 * NO_FORM:   never takes a slot in a squad's line formation (behaviour.json "formation"): walks the path as before
 	 */
 	enum class AttrType: RoleT {NONE = -1,
 		MELEE = 0, BOOST, NO_JUMP, NO_STRAFE,
 		STOCK, SIEGE, RET_HOLD, RET_FIGHT,
 		JUMP, DG_COST, DG_STILL, ANTI_STAT,
-		REARM, NO_DGUN, PRIO_REPAIR, GUARDED, RAID_TARGET, _SIZE_};
+		REARM, NO_DGUN, PRIO_REPAIR, GUARDED, RAID_TARGET, NO_FORM, _SIZE_};
 	enum AttrMask: RoleM {
 		MELEE = 0x00000001, BOOST   = 0x00000002, NO_JUMP  = 0x00000004, NO_STRAFE = 0x00000008,
 		STOCK = 0x00000010, SIEGE   = 0x00000020, RET_HOLD = 0x00000040, RET_FIGHT = 0x00000080,
 		JUMP  = 0x00000100, DG_COST = 0x00000200, DG_STILL = 0x00000400, ANTI_STAT = 0x00000800,
 		REARM = 0x00001000, NO_DGUN = 0x00002000, PRIO_REPAIR = 0x00004000, GUARDED = 0x00008000,
-		RAID_TARGET = 0x00010000};
+		RAID_TARGET = 0x00010000, NO_FORM = 0x00020000};
 	using AttrT = std::underlying_type<AttrType>::type;
 	using AttrM = std::underlying_type<AttrMask>::type;
 
@@ -161,6 +162,7 @@ public:
 	bool IsAttrPrioRepair() const { return attr & AttrMask::PRIO_REPAIR; }
 	bool IsAttrGuarded()    const { return attr & AttrMask::GUARDED; }
 	bool IsAttrRaidTarget() const { return attr & AttrMask::RAID_TARGET; }
+	bool IsAttrNoForm()     const { return attr & AttrMask::NO_FORM; }
 
 	bool IsHoldFire()   const { return fireState == FireType::HOLD; }
 	bool IsReturnFire() const { return fireState == FireType::RETURN; }
@@ -296,6 +298,10 @@ public:
 	// Attack target choice: this enemy type's distance counts as this many times its real distance
 	void SetTargetDistMod(float value) { targetDistMod = value; }
 	float GetTargetDistMod() const { return targetDistMod; }
+	// behaviour.json per unit "formation_row": its rank in a squad's line formation (0 = front row); -1 = unset (its
+	// main role's place in formation.row_order)
+	void SetFormationRow(int value) { formationRow = value; }
+	int GetFormationRow() const { return formationRow; }
 
 	float GetRadius();
 	float GetHeight();
@@ -403,6 +409,7 @@ private:
 	bool isReloadScootMarginSet = false;
 	float captureHide = 0.f;
 	float targetDistMod = 1.f;
+	int formationRow = -1;
 
 	float radius;
 	float height;

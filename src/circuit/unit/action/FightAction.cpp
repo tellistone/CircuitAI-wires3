@@ -33,7 +33,7 @@ CFightAction::~CFightAction()
 
 void CFightAction::Update(CCircuitAI* circuit)
 {
-	if (lastFrame + FRAMES_PER_SEC * 2 > circuit->GetLastFrame()) {
+	if (lastFrame + GetOrderInterval() > circuit->GetLastFrame()) {
 		return;
 	}
 	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
@@ -41,6 +41,9 @@ void CFightAction::Update(CCircuitAI* circuit)
 		return;
 	}
 	lastFrame = circuit->GetLastFrame();
+	if (TryFormationOrder(circuit)) {
+		return;
+	}
 
 	float stepSpeed;
 	int pathMaxIndex = CalcSpeedStep(stepSpeed);

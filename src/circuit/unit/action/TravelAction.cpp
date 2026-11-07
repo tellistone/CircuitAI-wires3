@@ -9,7 +9,11 @@
 #include "unit/CircuitUnit.h"
 #include "unit/CircuitDef.h"
 #include "task/UnitTask.h"
+#include "task/fighter/Formation.h"
+#include "CircuitAI.h"
 #include "util/Utils.h"
+
+#include "AISCommands.h"
 
 namespace circuit {
 
@@ -21,6 +25,8 @@ ITravelAction::ITravelAction(CCircuitUnit* owner, Type type, int squareSize, flo
 		, pathIterator(0)
 		, isForce(true)
 		, lastFrame(-1)
+		, formPos(-RgtVector)
+		, formSpeed(NO_SPEED_LIMIT)
 {
 	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
 	CCircuitDef* cdef = unit->GetCircuitDef();
@@ -62,6 +68,7 @@ void ITravelAction::SetPath(const std::shared_ptr<PathInfo>& pPath, float speed)
 	this->pPath = pPath;
 	this->speed = speed;
 	isForce = true;
+	formPos = -RgtVector;
 }
 
 int ITravelAction::CalcSpeedStep(float& stepSpeed)
@@ -94,6 +101,60 @@ int ITravelAction::CalcSpeedStep(float& stepSpeed)
 
 	isForce = false;
 	return pathMaxIndex;
+}
+
+bool ITravelAction::TryFormationOrder(CCircuitAI* circuit)
+{
+	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
+	const CFormation* formation = pPath->posPath.empty() ? nullptr : unit->GetTask()->GetFormation();
+	SFormationOrder order;
+	if ((formation == nullptr) || !formation->GetOrder(unit, order)) {
+		formPos = -RgtVector;  // following the path: the next formation move goes out at once
+		return false;
+	}
+	isForce = true;  // once the formation lets go, path following sends its step at once
+	const bool isMove = IsFormationMoveDue(unit->GetPos(lastFrame), order);
+	if (!isMove && (std::fabs(order.speed - formSpeed) <= 0.15f * std::fabs(formSpeed))) {
+		return true;
+	}
+	TRY_UNIT(circuit, unit,
+		if (isMove) {
+			if (IsEqual(Mask::FIGHT)) {
+				unit->GetUnit()->Fight(order.pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+			} else {
+				unit->CmdMoveTo(order.pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+			}
+			formPos = order.pos;
+		}
+		unit->CmdWantedSpeed(order.speed);
+		formSpeed = order.speed;
+	)
+	return true;
+}
+
+bool ITravelAction::IsFormationMoveDone(const AIFloat3& pos) const
+{
+	return utils::is_valid(formPos) && (pos.SqDistance2D(formPos) < SQUARE(DEFAULT_SLACK));
+}
+
+bool ITravelAction::IsFormationMoveDue(const AIFloat3& pos, const SFormationOrder& order) const
+{
+	if (!utils::is_valid(formPos)) {
+		return true;
+	}
+	// Within the order interval + 1 s of the last target: the next one, unless it is the same spot
+	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
+	const float speed = (formSpeed > 0.f) ? formSpeed : unit->GetCircuitDef()->GetSpeed();
+	const float reach = std::max<float>(speed * (GetOrderInterval() + FRAMES_PER_SEC) / FRAMES_PER_SEC, DEFAULT_SLACK);
+	const float3 toLast = formPos - pos;
+	const float sqLast = toLast.SqLength2D();
+	if (sqLast < SQUARE(reach)) {
+		return order.pos.SqDistance2D(formPos) >= SQUARE(order.slack);
+	}
+	// The target moved off the way to the last one (a re-plan, a bend, a wider or narrower line) or behind the unit
+	const float3 toNew = order.pos - pos;
+	const float along = toNew.dot2D(toLast) / std::sqrt(sqLast);
+	return (along < -order.slack) || (toNew.SqLength2D() - SQUARE(along) > SQUARE(order.slack));
 }
 
 } // namespace circuit

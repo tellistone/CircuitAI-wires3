@@ -116,6 +116,17 @@ public:
 	};
 	const SArtilleryCfg& GetArtilleryCfg() const { return artillery; }
 
+	struct SFormationCfg {  // behaviour.json "formation" (CFormation)
+		bool isEnable;  // missing block or false: squads walk as before
+		int minUnits;  // land or sea members needed to form a line (off again below 2)
+		float spacing, spacingUnits, spacingExp;  // spacing(n) = spacing * (spacingUnits / max(n, spacingUnits))^spacingExp
+		float gap;  // elmos between footprints, and clearance at the line's ends
+		float widthRange;  // max width = this x the squad's fire range
+		float leadSec;  // the line stops when a unit is this many seconds behind its slot
+		std::vector<CCircuitDef::RoleT> rowOrder;  // main roles front to back (unit types may override: formation_row)
+	};
+	const SFormationCfg& GetFormationCfg() const { return formation; }
+
 	IFighterTask* AddGuardTask(CCircuitUnit* unit);
 	bool DelGuardTask(CCircuitUnit* unit);
 	IFighterTask* GetGuardTask(CCircuitUnit* unit) const;
@@ -406,6 +417,7 @@ private:
 	};
 	std::unordered_map<int, SCapturedUnit> capturedUnits;  // captured unit id -> who holds it, for "capture_hide"
 	SArtilleryCfg artillery;
+	SFormationCfg formation;
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
 	SGuardCfg guard;

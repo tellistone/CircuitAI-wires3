@@ -1121,6 +1121,11 @@ bool CAttackTask::UpdateEscape(int frame)
 	return false;
 }
 
+bool CAttackTask::IsFormationAllowed(int frame) const
+{
+	return (frame >= fleeFrame) && !utils::is_valid(corneredPos);
+}
+
 bool CAttackTask::IsHoldingGround(int frame) const
 {
 	// Only inside the base defence radius (where thr_mod.base_bonus applies): out in the field the enemy
@@ -2179,7 +2184,7 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
 	}
 
-	if (units.find(unit) != units.end()) {
+	if ((units.find(unit) != units.end()) && !IsIdleInLine(unit)) {
 		Start(unit);  // NOTE: Not sure if it has effect
 	}
 }

@@ -42,6 +42,7 @@ ISquadTask::ISquadTask(ITaskManager* mgr, FightType type, float powerMod)
 		, prevGroupPos(-RgtVector)
 		, pPath(std::make_shared<PathInfo>())
 		, groupFrame(0)
+		, formation(this)
 {
 }
 
@@ -79,6 +80,7 @@ void ISquadTask::AssignTo(CCircuitUnit* unit)
 void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IFighterTask::RemoveAssignee(unit);
+	formation.Remove(unit);
 	if (scoots.erase(unit) > 0) {
 		SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
 	}
@@ -334,6 +336,31 @@ void ISquadTask::ReleaseStuck(std::vector<CCircuitUnit*>& stuck)
 		RemoveAssignee(unit);  // to the idle task; a squad left without units aborts
 	}
 	stuck.clear();
+}
+
+void ISquadTask::LateUpdate()
+{
+	static std::vector<CCircuitUnit*> stuckUnits;  // NOTE: micro-opt
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	formation.Update(frame, IsFormationActive(frame), stuckUnits);
+	ReleaseStuck(stuckUnits);  // may leave leader == nullptr (task aborted)
+}
+
+bool ISquadTask::IsFormationActive(int frame) const
+{
+	if (!manager->GetCircuit()->GetMilitaryManager()->GetFormationCfg().isEnable || (State::ROAM != state)
+		|| (leader == nullptr) || pPath->posPath.empty() || !IsFormationAllowed(frame))
+	{
+		return false;
+	}
+	ITravelAction* travelAct = leader->GetTravelAct();
+	return travelAct->IsActive() && (travelAct->GetPath() == pPath);  // a busy leader (blocker) keeps its line
+}
+
+bool ISquadTask::IsIdleInLine(CCircuitUnit* unit) const
+{
+	return formation.IsOn()
+		&& unit->GetTravelAct()->IsFormationMoveDone(unit->GetPos(manager->GetCircuit()->GetLastFrame()));
 }
 
 void ISquadTask::ActivePath(float speed)
@@ -849,6 +876,7 @@ void ISquadTask::Log()
 	CCircuitAI* circuit = manager->GetCircuit();
 	circuit->LOG("pPath: %i | size: %i | TravelAct: %i", pPath.get(), pPath ? pPath->posPath.size() : 0,
 			leader->GetTravelAct()->GetState());
+	formation.Log();
 }
 #endif
 

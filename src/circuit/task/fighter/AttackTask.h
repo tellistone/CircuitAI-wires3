@@ -187,6 +187,9 @@ private:
 	void ApplyCorneredPath(const CQueryPathSingle* query);
 	// Nearest enemy within radius that our leader can hit (category, air)
 	CEnemyInfo* FindNearestHittable(int frame, float radius) const;
+	// Line formation: not while the escape runs (the flee and the cornered move keep state ROAM)
+	virtual bool IsFormationAllowed(int frame) const override;
+	virtual float GetFormationRange() const override { return fireRangeLand; }
 
 	/*
 	 * Targets and routes

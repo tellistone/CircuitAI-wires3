@@ -7,6 +7,22 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Line formation for attack groups** (`formation` block in `behaviour.json`; code default off, shipped on; per unit
+  `formation_row` and the `no_formation` attribute). Attack groups of 3 or more land or sea units used to send every
+  unit to the same path points, so they walked single file and clumped at turns. While a group walks its path and
+  isn't engaging, fleeing or cornered, it now walks as a line across the path, centred on its leader: neighbours
+  `spacing` apart (closer as the group grows), at most `width_range` x its median weapon range wide, narrower where
+  terrain or buildings in the next 3 s of walking leave less room, with rows shifted sideways to fit and slots on ground
+  a unit can't stand on slid towards the path. Spacing squeezes to 0.7 before a second row is added; rows fill front to
+  back by `row_order` (riots and assaults in front, artillery at the back) and follow the leader's path (behind the
+  leader, the track of its spot on that path). Where not even 2 fit abreast the units follow the path as before, until
+  2 fit again for 3 s. The line walks at its slowest unit's speed and slows in proportion as its furthest-behind unit
+  falls behind its slot, stopping when that unit is `lead_sec` behind, so even the slowest can catch up; each unit gets
+  a move a few seconds ahead of its slot and a wanted speed that lets it catch up, re-sent only when it nears that
+  move's end or the slot moves off its way. A unit out of its slot for 12 s catches up at full speed and isn't waited
+  for (the usual regroup still gathers the group if it falls far behind); one that hasn't moved 64 elmos in 30 s while
+  out of its slot is released to find a new task (the leader too, and the line re-centres on the next one). Other
+  squads (raid, defend, anti-air, anti-heavy), threat-aware width, facing and standing in line come in later steps.
 - **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit
   `reload_scoot_margin`, default 100, or the anti-heavy flee margin in anti-heavy squads). While engaged, a unit whose
   main weapon is less than `reload_scoot` reloaded and that stands in ground threat steps straight away from the

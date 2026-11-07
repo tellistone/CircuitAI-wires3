@@ -715,6 +715,32 @@ void CMilitaryManager::ReadConfig()
 	artillery.isNoScout = artyCfg.get("no_scout", false).asBool();
 	artillery.fleeMargin = artyCfg.get("artillery_flee_margin", -1.f).asFloat();
 
+	const Json::Value& formCfg = root["formation"];
+	formation.isEnable = formCfg.get("enable", false).asBool();
+	formation.minUnits = std::max(2, formCfg.get("min_units", 3).asInt());
+	const Json::Value& formSpacing = formCfg["spacing"];
+	formation.spacing = std::max(1.f, formSpacing.get((unsigned)0, 96.f).asFloat());
+	formation.spacingUnits = std::max(1.f, formSpacing.get((unsigned)1, 4.f).asFloat());
+	formation.spacingExp = std::max(0.f, formSpacing.get((unsigned)2, 0.35f).asFloat());
+	formation.gap = std::max(0.f, formCfg.get("gap", 16.f).asFloat());
+	formation.widthRange = std::max(0.f, formCfg.get("width_range", 1.5f).asFloat());
+	formation.leadSec = std::max(0.1f, formCfg.get("lead_sec", 1.5f).asFloat());
+	formation.rowOrder.clear();
+	Json::Value rowOrder = formCfg["row_order"];
+	if (rowOrder.isNull()) {
+		for (const char* name : {"riot", "assault", "heavy", "raider", "skirmish", "anti_heavy", "anti_air", "artillery"}) {
+			rowOrder.append(name);
+		}
+	}
+	for (const Json::Value& ro : rowOrder) {
+		auto it = roleNames.find(ro.asString());
+		if (it == roleNames.end()) {
+			circuit->LOG("CONFIG %s: formation.row_order has unknown role '%s'", cfgName.c_str(), ro.asCString());
+			continue;
+		}
+		formation.rowOrder.push_back(it->second.type);
+	}
+
 	const Json::Value& guardCfg = root["guard"];
 	guard.maxWorkers = std::max(0, guardCfg.get("max_workers", 3).asInt());
 	const Json::Value& guardSafe = guardCfg["safe"];
@@ -2626,6 +2652,9 @@ void CMilitaryManager::UpdateFight()
 			task->ClearRelease();  // delete task;
 		} else {
 			task->Update();
+			if (!task->IsDead()) {
+				task->LateUpdate();
+			}
 			++fightIterator;
 			n--;
 		}

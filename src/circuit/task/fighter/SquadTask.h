@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_SQUADTASK_H_
 
 #include "task/fighter/FighterTask.h"
+#include "task/fighter/Formation.h"
 #include "terrain/path/MicroPather.h"
 #include "unit/CircuitDef.h"
 
@@ -39,9 +40,27 @@ public:
 
 	CCircuitUnit* GetLeader() const { return leader; }
 	const springai::AIFloat3& GetLeaderPos(int frame) const;
+	const std::shared_ptr<PathInfo>& GetSquadPath() const { return pPath; }
+
+	/*
+	 * Line formation (CFormation, behaviour.json "formation") while the squad walks its path outside combat
+	 */
+	// Lays the line out (at most twice a second) and releases units it finds stuck
+	virtual void LateUpdate() override;
+	virtual const CFormation* GetFormation() const override { return formation.IsOn() ? &formation : nullptr; }
+	// May the squad walk in line now (besides walking its path in ROAM)? Default: no; tasks opt in
+	virtual bool IsFormationAllowed(int frame) const { return false; }
+	// Fire range the line's width is scaled by (formation.width_range)
+	virtual float GetFormationRange() const { return lowestRange; }
+protected:
+	// Idle on purpose: the line formation steers it and it stands where its last formation move sent it, so
+	// re-activating its path (Start) would only send it there again, and again once it is idle
+	bool IsIdleInLine(CCircuitUnit* unit) const;
 
 private:
 	void FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd);
+	// Formation on in config, allowed by the task, ROAM, and the leader walks the squad's path
+	bool IsFormationActive(int frame) const;
 
 	bool IsMergeSafe() const;
 
@@ -181,6 +200,8 @@ protected:
 	std::shared_ptr<PathInfo> pPath;
 
 	int groupFrame;
+private:
+	CFormation formation;  // the line while walking (LateUpdate)
 
 #ifdef DEBUG_VIS
 public:
