@@ -776,6 +776,12 @@ void CMilitaryManager::ReadConfig()
 	antiHeavy.fleeAllyThreat = ahCfg.get("flee_ally_threat", (antiHeavy.fleeMargin >= 0.f) ? 10.f : -1.f).asFloat();
 	antiHeavy.fleeAllyRadius = std::max(0.f, ahCfg.get("flee_ally_radius", 500.f).asFloat());
 
+	const Json::Value& resignCfg = root["resign"];
+	const float resignTime = resignCfg.get("time", -1.f).asFloat();
+	resign.frame = (resignTime < 0.f) ? -1 : int(resignTime * FRAMES_PER_SEC);
+	resign.mexShare = resignCfg.get("mex", 0.1f).asFloat();
+	resign.threatMult = resignCfg.get("threat", 4.f).asFloat();
+
 	const Json::Value& porc = root["porcupine"];
 	const Json::Value& defs = porc["unit"];
 	defenderDefs.reserve(defs.size());
@@ -895,6 +901,10 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
 		if (attackRally.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
+		}
+
+		if (resign.frame >= 0) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResign, this), FRAMES_PER_SEC * 10, offset + 1);
 		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
@@ -2620,6 +2630,48 @@ void CMilitaryManager::UpdateFight()
 			n--;
 		}
 	}
+}
+
+void CMilitaryManager::UpdateResign()
+{
+	const int frame = circuit->GetLastFrame();
+	if (frame < resign.frame) {
+		return;
+	}
+	// 1v1 only: our ally team is just us, and there is a single enemy team
+	if ((circuit->GetAllyTeam()->GetSize() != 1) || (circuit->GetEnemyTeamSize() != 1)) {
+		return;
+	}
+
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const int spotCount = metalMgr->GetSpots().size();
+	if (spotCount == 0) {
+		return;
+	}
+	metalMgr->MarkAllyMexes();
+	const int mexCount = metalMgr->GetMexCount();
+	if (mexCount >= resign.mexShare * spotCount) {
+		return;
+	}
+
+	// Same scale as CEnemyManager::GetMobileThreat: every finished mobile unit (commander and builders included)
+	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
+	float ourThreat = 0.f;
+	for (auto& kv : circuit->GetTeamUnits()) {
+		CCircuitUnit* unit = kv.second;
+		if (unit->GetCircuitDef()->IsMobile() && !unit->GetUnit()->IsBeingBuilt()) {
+			ourThreat += unit->GetCircuitDef()->GetThreat();
+		}
+	}
+	ourThreat *= enemyMgr->GetMobileThreatMod();
+	const float enemyThreat = enemyMgr->GetMobileThreat();
+	if (enemyThreat <= resign.threatMult * ourThreat) {
+		return;
+	}
+
+	circuit->LOG("RESIGN: frame %i | mexes %i / %i spots | enemy mobile threat %.1f vs ours %.1f",
+			frame, mexCount, spotCount, enemyThreat, ourThreat);
+	circuit->Surrender();
 }
 
 void CMilitaryManager::AddArmyCost(CCircuitUnit* unit)

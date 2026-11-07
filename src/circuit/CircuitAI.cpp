@@ -96,6 +96,7 @@ CCircuitAI::CCircuitAI(OOAICallback* clb)
 		, isInitialized(false)
 		, isLoadSave(false)
 		, isResigned(false)
+		, isSurrendered(false)
 		// NOTE: assert(lastFrame != -1): CCircuitUnit initialized with -1
 		//       and lastFrame check will misbehave until first update event.
 		, lastFrame(-2)
@@ -730,6 +731,26 @@ int CCircuitAI::Update(int frame)
 	if (isResigned) {
 		Release(RELEASE_RESIGN);
 		NotifyResign();
+		return 0;
+	}
+	if (isSurrendered) {
+		LOG("SURRENDER: frame %i", frame);
+		// Zero-K's game_resign gadget says "<name> I am defeated." to everyone, kills the team (as /resign) and answers "1".
+		// Game versions without it answer nothing: blow everything up instead (no chat line: the engine drops plain AI
+		// text messages, Game_sendTextMessage only runs "/" commands as the host player)
+		const std::string cmd("ai_resign");
+		const std::string answer = lua->CallRules(cmd.c_str(), cmd.size());
+		if (answer != "1") {
+			auto units = callback->GetTeamUnits();
+			for (Unit* u : units) {
+				if (u != nullptr) {
+					u->SelfDestruct();
+				}
+			}
+			utils::free_clear(units);
+		}
+		Release(RELEASE_RESIGN);
+		NotifyGameEnd();
 		return 0;
 	}
 
