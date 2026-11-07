@@ -2026,6 +2026,13 @@ bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 	return pos.SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
 }
 
+bool CAttackTask::IsGuardPullable() const
+{
+	// A squad of 2+ would get weaker (maybe below quota.attack); a lone unit's task just ends when it leaves.
+	// The rally host is left alone too: every compatible group is walking to it
+	return (units.size() == 1) && !IsFighting() && (static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this);
+}
+
 bool CAttackTask::IsFighting() const
 {
 	// Engaged and some unit has the target within its own weapon range. ENGAGE alone starts at highestRange,

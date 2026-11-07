@@ -181,7 +181,7 @@
 	"max_workers": 30,  // an unarmed builder gets a guard slot if, once it is finished, the worker count (commander included) is below this; 0 = off
 	"safe": [1.0, 0.01],  // [ally, enemy]: guard leaves while its builder stands where allied influence (guards excluded, same units as quota.attack) >= ally and enemy influence <= enemy; ally <= 0 = never safe. The guard also leaves while the builder retreats
 	"safe_time": 3.0,  // seconds the builder must stay safe before its guard leaves (stops a passing army from sending the guard away)
-	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (not retreating or guarding, can reach the builder); 0 = only units asking for a new task fill it
+	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (not retreating, guarding, scouting or in an attack squad of 2+, can reach the builder); 0 = only units asking for a new task fill it
 	"interpose": [120.0, 600.0],  // [<distance>, <range>]: while a mobile armed ground enemy in LOS/radar (or unknown radar dot; turrets are ignored) is within <range> of the vip, the guard stands <distance> from the vip towards the nearest one (at most halfway) instead of following it with the engine Guard order; distance 0 = engine Guard only
         "threat_cooldown": 10.0,  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
 	"threat_ratio": 1.25,  // ... but only if enemy threat at the guard > this * the guard's own threat; lower values cancel on lighter threat, 0 = any threat

@@ -287,6 +287,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Guard slots fill again with riots.** Since `quota.attack_merge.base_gather` false (the shipped default), new
+  riots no longer wait in a defend group at base: they walk out alone to reinforce an army. The guard pull skipped
+  every unit in an attack task, so riots could only get a slot in the moment they left the factory, and only if a
+  builder needed a guard right then. The pull now also takes a unit that is alone in its attack task, isn't fighting
+  and isn't the rally host. Squads of two or more are still left alone.
+
 - The `retreat.repair_pull` share cap now also applies when idle builders choose their next job. Before, it only
   limited builders pulled off other work. Urgent jobs outrank everything in job selection, so every idle builder
   took a priority repair whenever there were enough of them, and other work such as metal extractors stalled.
