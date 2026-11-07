@@ -126,7 +126,7 @@ private:
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame, bool isReuse);
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, bool isToMeet);
-	springai::AIFloat3 FindFightEdge(int frame, const springai::AIFloat3& hostPos) const;
+	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, springai::AIFloat3& outPos) const;
 	// Rally host, not engaged: walk to a meeting point with the significant joiners (>= 25% of our strength, alone or
 	// together, within 60 s), from when the nearest is over 10 s away until all are within the merge distance.
 	// true: this decision is done

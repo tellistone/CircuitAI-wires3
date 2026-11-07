@@ -650,7 +650,12 @@ void CAttackTask::Reinforce(const int frame, bool isReuse)
 	if (isRally) {
 		AIFloat3 meet;
 		if (State::ENGAGE == reinforce->state) {
-			goal = FindFightEdge(frame, goal);
+			if (!FindFightEdge(frame, reinforce->GetLeaderPos(frame), goal)) {
+				// Nothing safe near the fight and we are close already: stand here until it ends or moves
+				position = startPos;
+				MoveGroupTo(startPos);
+				return;
+			}
 		} else if ((startPos.SqDistance2D(goal) > SQUARE(cfg.distance)) && reinforce->GetMeetPoint(frame, meet)
 			&& (meet.SqDistance2D(meetFailPos) > SQUARE(1.f)))
 		{
@@ -714,17 +719,21 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 	}
 }
 
-AIFloat3 CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos) const
+bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& outPos) const
 {
 	// The rally host is fighting: its position stepped back towards us until the threat there is under our own
 	// allowance (as our route judges it), so we join the fight from its safe side.
-	// Nothing safe within reach of the steps: our own spot (we hold), or, from farther away, the last step checked
+	// Nothing safe on the steps: from farther away than one step past them, walk to that point (the edge is looked
+	// for again on the way); closer: false, the caller stands still (a route to our own spot would be a one-node
+	// path that leaves the last move order running)
 	constexpr float STEP = 200.f;
 	constexpr int MAX_STEPS = 12;
+	constexpr float FAR_DIST = (MAX_STEPS + 2) * STEP;  // 2800: a 400 gap past the last step checked
 	const AIFloat3& ownPos = leader->GetPos(frame);
 	const float dist = ownPos.distance2D(hostPos);
 	if (dist < 1.f) {
-		return hostPos;
+		outPos = hostPos;
+		return true;
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
 	CThreatMap* threatMap = circuit->GetThreatMap();
@@ -739,16 +748,16 @@ AIFloat3 CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos) const
 		}
 		const float threat = threatMap->GetThreatAt(leader, p);
 		if ((threat <= 0.f) || (threat < GetAllowedThreatAt(p, own))) {
-			return p;
+			outPos = p;
+			return true;
 		}
 	}
-	if (dist > MAX_STEPS * STEP) {
-		// Far away: walk to the last step checked; the edge is looked for again on the way
-		AIFloat3 p = hostPos + dir * (MAX_STEPS * STEP);
-		CTerrainManager::CorrectPosition(p);
-		return p;
+	if (dist > FAR_DIST) {
+		outPos = hostPos + dir * FAR_DIST;
+		CTerrainManager::CorrectPosition(outPos);
+		return true;
 	}
-	return ownPos;
+	return false;
 }
 
 /*
@@ -895,6 +904,9 @@ CAttackTask::SMeetTrack& CAttackTask::TrackJoiner(const CAttackTask* joiner, flo
 		return *it;
 	}
 	it->seenFrame = frame;
+	if (State::ENGAGE == state) {
+		it->bestFrame = frame;  // we fight, joiners wait at its edge (FindFightEdge): no stall clock meanwhile
+	}
 	if (gapSec <= it->bestSec - MEET_PROGRESS_SEC) {
 		it->bestSec = gapSec;
 		it->bestFrame = frame;
