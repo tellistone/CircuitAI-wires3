@@ -61,9 +61,6 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, defenceIdx(0)
 		, scoutIdx(0)
 		, armyCost(0.f)
-		, radarDef(nullptr)
-		, sonarDef(nullptr)
-		, bigGunDef(nullptr)
 		, attackBaseGather(true)
 		, rallyHost(nullptr)
 		, prevRallyHost(nullptr)
@@ -72,6 +69,9 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, rallyBlobFrame(-1)
 		, rallyBlobPos(-RgtVector)
 		, rallyBlobThreat(0.f)
+		, radarDef(nullptr)
+		, sonarDef(nullptr)
+		, bigGunDef(nullptr)
 {
 	const float width = CTerrainManager::GetTerrainWidth();
 	const float height = CTerrainManager::GetTerrainHeight();
@@ -905,6 +905,7 @@ void CMilitaryManager::Release()
 {
 	// NOTE: Release expected to be called on CCircuit::Release.
 	//       It doesn't stop scheduled GameTasks for that reason.
+	rallyStartFrame = -1;  // no new rally host while every task ends
 	for (IUnitTask* task : fightUpdates) {
 		AbortTask(task);
 		// NOTE: Do not delete task as other AbortTask may ask for it
@@ -1120,8 +1121,24 @@ CAttackTask* CMilitaryManager::GetRallyHost() const
 
 bool CMilitaryManager::IsRallyJoiner(const CAttackTask* task) const
 {
+	// Compatible with the host and able to reach it (another terrain area would hold for the whole rally)
 	CAttackTask* host = GetRallyHost();
-	return (host != nullptr) && (host != task) && (task->GetLeader() != nullptr) && host->IsCompatible(task->GetLeader());
+	CCircuitUnit* leader = task->GetLeader();
+	return (host != nullptr) && (host != task) && (leader != nullptr) && host->IsCompatible(leader)
+		&& circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(),
+				host->GetLeader()->GetPos(circuit->GetLastFrame()));
+}
+
+void CMilitaryManager::CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const
+{
+	// Ground attack groups with a leader (air groups never rally)
+	outGroups.clear();
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
+		CAttackTask* g = static_cast<CAttackTask*>(t);
+		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()) {
+			outGroups.push_back(g);
+		}
+	}
 }
 
 CAttackTask* CMilitaryManager::PickRallyHost(const std::vector<CAttackTask*>& groups, CAttackTask* prefer) const
@@ -1173,15 +1190,8 @@ void CMilitaryManager::UpdateAttackRally()
 	const int frame = circuit->GetLastFrame();
 	const bool isRally = (rallyStartFrame >= 0);
 
-	// Ground attack groups with a leader (air groups never rally)
 	static std::vector<CAttackTask*> groups;  // NOTE: micro-opt
-	groups.clear();
-	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
-		CAttackTask* g = static_cast<CAttackTask*>(t);
-		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()) {
-			groups.push_back(g);
-		}
-	}
+	CollectRallyGroups(groups);
 	if (groups.empty()) {
 		if (isRally) {
 			EndAttackRally("no groups", frame);
@@ -1281,7 +1291,18 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
 			if (taskF == rallyHost) {
-				rallyHost = nullptr;  // UpdateAttackRally picks a new host
+				// The host died or merged away: the strongest group takes over at once, so joiners don't hunt for a
+				// decision meanwhile (UpdateAttackRally ends the rally if no group is left)
+				rallyHost = nullptr;
+				if (rallyStartFrame >= 0) {
+					static std::vector<CAttackTask*> groups;  // NOTE: micro-opt
+					CollectRallyGroups(groups);
+					groups.erase(std::remove(groups.begin(), groups.end(), taskF), groups.end());
+					rallyHost = groups.empty() ? nullptr : PickRallyHost(groups, nullptr);
+					if (rallyHost != nullptr) {
+						circuit->LOG("RALLY new host %.1f", rallyHost->GetRallyStrength());
+					}
+				}
 			}
 			if (taskF == prevRallyHost) {
 				prevRallyHost = nullptr;

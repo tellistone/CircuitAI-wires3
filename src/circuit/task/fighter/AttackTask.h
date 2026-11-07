@@ -130,8 +130,15 @@ private:
 	// Rally host, not engaged: walk to a meeting point with the significant joiners (>= 25% of our strength, alone or
 	// together, within 60 s), from when the nearest is over 10 s away until all are within the merge distance.
 	// true: this decision is done
+	struct SMeetTrack {  // progress of one joiner towards us: a joiner that stops closing in no longer holds us
+		const CAttackTask* task;  // compared only, never dereferenced (may be gone)
+		float bestSec;  // smallest gap (travel time at its speed) seen, in steps of MEET_PROGRESS_SEC
+		int bestFrame;  // when bestSec was set
+		int seenFrame;  // last decision that looked at it
+		bool isSignificant;  // counted as significant last decision (it keeps counting down to a lower share)
+	};
 	bool UpdateMeet(int frame, bool isReuse);
-	bool IsMeetStalled(const CAttackTask* joiner, float gapSec, int frame);
+	SMeetTrack& TrackJoiner(const CAttackTask* joiner, float gapSec, int frame, bool& outIsStalled);
 	// Where the host and its joiners arrive together, stepped back towards the host until safe and reachable
 	springai::AIFloat3 FindMeetPoint(int frame, const std::vector<CAttackTask*>& joiners) const;
 	bool IsMeetSpotOk(const springai::AIFloat3& pos, int frame, const std::vector<CAttackTask*>& joiners) const;
@@ -245,16 +252,11 @@ private:
 	springai::AIFloat3 meetFailPos;  // rally: the host's meeting point our last route to came back empty
 
 	// Rally host meeting its joiners (quota.attack_merge.rally)
-	bool isMeeting;
 	bool isMeetWalk;  // walking to the meeting point this decision: no regroup on the way
-	bool isMeetArrived;  // at the meeting point: stand there until pushed well away from it
-	springai::AIFloat3 meetPos;  // -RgtVector: none
-	struct SMeetTrack {  // progress of one joiner towards us: a joiner that stops closing in no longer holds us
-		const CAttackTask* task;  // compared only, never dereferenced (may be gone)
-		float bestSec;  // smallest gap (travel time at its speed) seen, in steps of MEET_PROGRESS_SEC
-		int bestFrame;  // when bestSec was set
-		int seenFrame;  // last decision that looked at it
-	};
+	bool isMeetArrived;  // at the meeting point: stand there until pushed away from it, or it moves
+	bool isJoinerNear;  // a joiner is within the merge distance: absorb every 2 updates
+	springai::AIFloat3 meetPos;  // -RgtVector: not meeting
+	springai::AIFloat3 meetArrivePos;  // the meeting point when we arrived
 	std::vector<SMeetTrack> meetTracks;
 
 	// Escape

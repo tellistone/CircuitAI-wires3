@@ -309,6 +309,7 @@ private:
 	void UpdateFight();
 	void UpdateCaptureHide();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
+	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
 	// Host candidate: the strongest group (raw strength) in the movement class with the most total strength;
 	// prefer keeps that group if it is within 20% of the best
 	CAttackTask* PickRallyHost(const std::vector<CAttackTask*>& groups, CAttackTask* prefer) const;
