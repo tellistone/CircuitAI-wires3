@@ -141,6 +141,8 @@ public:  // flee helpers, also used by the commander flee (CBuilderManager::Upda
 	// never do), or an unidentified radar blip that moves (a parked building blip is no danger).
 	// outRange: its ground/water weapon range (a bomb's blast radius), 0 for a blip
 	static bool IsGroundDanger(CEnemyInfo* enemy, bool isGunship, float& outRange);
+	// IsGroundDanger's unit type test alone (no visibility or state checks)
+	static bool IsGroundDangerDef(CCircuitDef* edef, bool isGunship, float& outRange);
 	// Flee: the nearest spot further from the danger than pos is, else the one furthest from it; nullptr if none
 	static const springai::AIFloat3* PickFleeSpot(const springai::AIFloat3& pos, const springai::AIFloat3& dangerPos,
 			const F3Vec& spots);
