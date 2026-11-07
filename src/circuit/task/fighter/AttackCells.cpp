@@ -40,8 +40,9 @@ static constexpr float CELL_BAN_THREAT_CHANGE = 0.25f;
 
 bool CAttackTask::GetCellAnchor(const CEnemyInfo* enemy, int frame, AIFloat3& outPos, int& outEpoch) const
 {
+	const CMilitaryManager::SAttackCells& cfg = GetMilitaryMgr()->GetAttackCells();
 	const CCircuitDef* edef = enemy->GetCircuitDef();
-	if (edef == nullptr) {
+	if (!cfg.isOn || (edef == nullptr)) {
 		return false;
 	}
 	if (!edef->IsMobile()) {
@@ -49,23 +50,9 @@ bool CAttackTask::GetCellAnchor(const CEnemyInfo* enemy, int frame, AIFloat3& ou
 		outEpoch = 0;  // it never moves (its type, and so this anchor, is only known once seen in LOS)
 		return true;
 	}
-	const int parkedFrames = GetMilitaryMgr()->GetAttackStaticCells().parkedFrames;
-	return (parkedFrames > 0) && (edef->GetSpeed() <= lowestSpeed * PARKED_SPEED_MOD)
+	return (cfg.parkedFrames > 0) && (edef->GetSpeed() <= lowestSpeed * PARKED_SPEED_MOD)
 		&& !enemy->IsBeingBuilt()  // a nanoframe sits in its factory, which is the cell target there
-		&& enemy->GetParkedSpot(frame, parkedFrames, outPos, outEpoch);
-}
-
-bool CAttackTask::IsSiegeTarget(const CEnemyInfo* enemy, int frame) const
-{
-	// A slow mobile type that outranges us on the ground (artillery). By type, parked or not: it doesn't come and go
-	// with each hop, which would swap targets. Only while in view or just out of it, not at a spot it was last seen
-	// on minutes ago
-	const CMilitaryManager::SAttackStaticCells& cfg = GetMilitaryMgr()->GetAttackStaticCells();
-	const CCircuitDef* edef = enemy->GetCircuitDef();
-	return cfg.isOn && (cfg.siegeBonus > 1.f) && (edef != nullptr) && edef->IsMobile() && edef->HasAntiLand()
-		&& (fireRangeLand > 0.f) && (edef->GetMaxRange(CCircuitDef::RangeType::LAND) >= SIEGE_RANGE_MOD * fireRangeLand)
-		&& (edef->GetSpeed() <= lowestSpeed * PARKED_SPEED_MOD)
-		&& enemy->IsRecentlySeen(frame, cfg.parkedFrames);
+		&& enemy->GetParkedSpot(frame, cfg.parkedFrames, outPos, outEpoch);
 }
 
 bool CAttackTask::IsSameAnchor(const CEnemyInfo* enemy, int epoch, int frame) const
@@ -79,34 +66,23 @@ AIFloat3 CAttackTask::GetRangePos(const CEnemyInfo* enemy, int frame) const
 {
 	AIFloat3 anchor;
 	int epoch;
-	if (!enemy->IsInLOS() && GetMilitaryMgr()->GetAttackStaticCells().isOn && GetCellAnchor(enemy, frame, anchor, epoch)) {
+	if (!enemy->IsInLOS() && GetCellAnchor(enemy, frame, anchor, epoch)) {
 		return anchor;
 	}
 	return enemy->GetPos();
 }
 
-bool CAttackTask::CollectFiringCells(const CEnemyInfo* enemy, const AIFloat3& anchor, int epoch, float power,
-		float ref, const AIFloat3* planned, int frame, std::vector<SFiringCell>& outCells)
+bool CAttackTask::IsSiegeTarget(const CEnemyInfo* enemy, int frame) const
 {
-	// Judged at the pick power, as their route's approach will be (not the keep allowance). A parked mobile: near
-	// sectors only
-	const bool isMobile = enemy->GetCircuitDef()->IsMobile();
-	if (!FillFiringCells(enemy, anchor, power, ref, isMobile, outCells) && (planned == nullptr)) {
-		BanCell(enemy, epoch, frame);
-		return false;
-	}
-	// Sides whose walk in was unsafe stay out for a while (RejectGoal); all of them: so does the target. The planned
-	// cell replaces its sector's fresh one, so losses or a re-route don't move the spot we walk to
-	const ICoreUnit::Id id = enemy->GetId();
-	const int plannedSector = (planned != nullptr) ? lastRoute.sector : -1;
-	const bool hadCells = !outCells.empty();
-	outCells.erase(std::remove_if(outCells.begin(), outCells.end(), [&](const SFiringCell& cell) {
-		return (cell.sector == plannedSector) || IsRejected(id, cell.sector, epoch, frame);
-	}), outCells.end());
-	if (planned != nullptr) {
-		outCells.push_back({*planned, plannedSector});
-	}
-	return !hadCells || !outCells.empty();
+	// A slow mobile type that outranges us on the ground (artillery). By type, parked or not: it doesn't come and go
+	// with each hop, which would swap targets. Only while in view or just out of it, not at a spot it was last seen
+	// on minutes ago
+	const CMilitaryManager::SAttackCells& cfg = GetMilitaryMgr()->GetAttackCells();
+	const CCircuitDef* edef = enemy->GetCircuitDef();
+	return cfg.isOn && (cfg.siegeBonus > 1.f) && (edef != nullptr) && edef->IsMobile() && edef->HasAntiLand()
+		&& (fireRangeLand > 0.f) && (edef->GetMaxRange(CCircuitDef::RangeType::LAND) >= SIEGE_RANGE_MOD * fireRangeLand)
+		&& (edef->GetSpeed() <= lowestSpeed * PARKED_SPEED_MOD)
+		&& enemy->IsRecentlySeen(frame, cfg.parkedFrames);
 }
 
 bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& anchor, float power, float ref,
@@ -118,7 +94,7 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 	// reference) and it sees the target. Each sector keeps its best-scoring point; cells scoring over score_slack
 	// worse than the best one are left out. Call after threatMap->SetThreatType(leader)
 	outCells.clear();
-	const CMilitaryManager::SAttackStaticCells& cfg = GetMilitaryMgr()->GetAttackStaticCells();
+	const CMilitaryManager::SAttackCells& cfg = GetMilitaryMgr()->GetAttackCells();
 	CCircuitAI* circuit = manager->GetCircuit();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -175,41 +151,48 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 
 	bool isReachable = false;  // some point is reachable (none: an island, plateau or far shore)
 	bool isThreatOk = false;  // some reachable point is below the allowance (no line of sight is not a ban)
+	// Point i of the ring at radius: a cell if reachable, below the allowance and in sight of the target; it then
+	// replaces its sector's best if it scores better. true: the first cell of its sector
+	auto tryPoint = [&](int i, float radius) {
+		const AIFloat3 p = pointAt(i * twoPi / angles, radius);
+		if (!terrainMgr->CanMoveToPos(area, p)) {
+			return false;
+		}
+		isReachable = true;
+		const float threat = threatMap->GetThreatAt(p);
+		if ((threat > 0.f) && (threat >= GetAllowedThreatAt(p, power, ref))) {  // the allowance is always above 0
+			return false;
+		}
+		isThreatOk = true;
+		if (!hitTest(toPathXY(p), targetXY)) {  // the costly test last
+			return false;
+		}
+		const float score = cfg.threatWeight * std::max(threat, 0.f) / strength + p.distance2D(lPos) / fireRange;
+		SBest& b = best[sectorOf(i)];
+		const bool isFirst = (b.score == NO_SCORE);
+		if (score < b.score) {
+			b = {p, score};
+		}
+		return isFirst;
+	};
 	for (const float ringMod : cfg.rings) {
 		const float radius = fireRange * ringMod;
 		best.assign(sectors, {AIFloat3(), NO_SCORE});
-		int nearCells = 0;  // near sectors with a cell
-		// The near sectors' points first, the far ones' only if fewer than 2 near sectors yield a cell
-		for (const bool isNearPass : {true, false}) {
-			if (!isNearPass && (nearOnly || (nearCells >= 2))) {
-				break;
+		// The near sectors' points first; the far ones' only if fewer than 2 near sectors yield a cell
+		int nearCells = 0;
+		for (int i = 0; i < angles; ++i) {
+			if (isNear[sectorOf(i)] && tryPoint(i, radius)) {
+				++nearCells;
 			}
+		}
+		if (!nearOnly && (nearCells < 2)) {
 			for (int i = 0; i < angles; ++i) {
-				const int sec = sectorOf(i);
-				if (isNear[sec] != isNearPass) {
-					continue;
-				}
-				const AIFloat3 p = pointAt(i * twoPi / angles, radius);
-				if (!terrainMgr->CanMoveToPos(area, p)) {
-					continue;
-				}
-				isReachable = true;
-				const float threat = threatMap->GetThreatAt(p);
-				if (threat >= GetAllowedThreatAt(p, power, ref)) {
-					continue;
-				}
-				isThreatOk = true;
-				if (!hitTest(toPathXY(p), targetXY)) {  // the costly test last
-					continue;
-				}
-				const float score = cfg.threatWeight * std::max(threat, 0.f) / strength + p.distance2D(lPos) / fireRange;
-				SBest& b = best[sec];
-				if (score < b.score) {
-					nearCells += (isNearPass && (b.score == NO_SCORE)) ? 1 : 0;
-					b = {p, score};
+				if (!isNear[sectorOf(i)]) {
+					tryPoint(i, radius);
 				}
 			}
 		}
+		// Every sector's best within score_slack of the best one
 		float bestScore = NO_SCORE;
 		for (const SBest& b : best) {
 			bestScore = std::min(bestScore, b.score);
@@ -226,6 +209,30 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 	// No cell. Nothing reachable (a disc route may still reach ground in range, e.g. a shore) or no line of sight (a
 	// pessimistic test): a disc. Too hot everywhere we can reach: ban
 	return !isReachable || isThreatOk;
+}
+
+bool CAttackTask::CollectFiringCells(const CEnemyInfo* enemy, const AIFloat3& anchor, int epoch, float power,
+		float ref, const AIFloat3* planned, int frame, std::vector<SFiringCell>& outCells)
+{
+	// Judged at the pick power, as their route's approach will be (not the keep allowance). A parked mobile: near
+	// sectors only
+	const bool isMobile = enemy->GetCircuitDef()->IsMobile();
+	if (!FillFiringCells(enemy, anchor, power, ref, isMobile, outCells) && (planned == nullptr)) {
+		BanCell(enemy, epoch, frame);
+		return false;
+	}
+	// Sides whose walk in was unsafe stay out for a while (RejectGoal); all of them: so does the target. The planned
+	// cell replaces its sector's fresh one, so losses or a re-route don't move the spot we walk to
+	const ICoreUnit::Id id = enemy->GetId();
+	const int plannedSector = (planned != nullptr) ? lastRoute.sector : -1;
+	const bool hadCells = !outCells.empty();
+	outCells.erase(std::remove_if(outCells.begin(), outCells.end(), [&](const SFiringCell& cell) {
+		return (cell.sector == plannedSector) || IsRejected(id, cell.sector, epoch, frame);
+	}), outCells.end());
+	if (planned != nullptr) {
+		outCells.push_back({*planned, plannedSector});
+	}
+	return !hadCells || !outCells.empty();
 }
 
 bool CAttackTask::GetPlannedCell(ICoreUnit::Id targetId, float strength, float refSqDist, AIFloat3& outCell) const

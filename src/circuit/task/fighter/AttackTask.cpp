@@ -1412,7 +1412,7 @@ void CAttackTask::FindTarget()
 	};
 
 	// quota.attack_static_cells: a target that gets firing cells beyond range (a building or a parked mobile)
-	const CMilitaryManager::SAttackStaticCells& cellCfg = militaryMgr->GetAttackStaticCells();
+	const CMilitaryManager::SAttackCells& cellCfg = militaryMgr->GetAttackCells();
 	struct SCandidate {
 		float key;  // rawKey x target_dist_mod^2, / quota.contested.bonus^2 in a contested cluster: the ranking
 		float rawKey;  // squared distance x near-base scale: about what the route sees
@@ -1447,7 +1447,7 @@ void CAttackTask::FindTarget()
 			continue;
 		}
 		SCandidate c = {0.f, 0.f, enemy, false, ePos, -1, ePos};
-		c.hasAnchor = cellCfg.isOn && GetCellAnchor(enemy, frame, c.anchor, c.epoch);
+		c.hasAnchor = GetCellAnchor(enemy, frame, c.anchor, c.epoch);
 		if (c.hasAnchor && !enemy->IsInLOS()) {
 			c.rangePos = c.anchor;
 		}
@@ -1583,7 +1583,7 @@ void CAttackTask::FindTarget()
 
 	if (best != nullptr) {
 		SetTarget(best->enemy);
-		position = GetRangePos(target, frame);
+		position = best->rangePos;  // GetRangePos
 		SetScaleAnchor(best->enemy, refFor(best->enemy));
 	} else {
 		ClearScaleAnchor();  // no fight accepted: no near-base discount
@@ -1609,7 +1609,7 @@ void CAttackTask::RequestTargetPath(const std::vector<STargetGoal>& goals)
 	// A firing cell's goal: the cell is its node (search heuristic, threat cap); its end nodes are a wedge of its
 	// sector around the target, out to our range, so the route stops about where we engage, on the cell's side
 	const bool isWedge = std::any_of(goals.begin(), goals.end(), [](const STargetGoal& g) { return g.IsCell(); });
-	const float halfAngle = static_cast<float>(M_PI) / GetMilitaryMgr()->GetAttackStaticCells().sectors;
+	const float halfAngle = static_cast<float>(M_PI) / GetMilitaryMgr()->GetAttackCells().sectors;
 	F3Vec goalPos;
 	std::vector<SGoalShape> shapes;  // none if no goal is a wedge
 	goalPos.reserve(goals.size());

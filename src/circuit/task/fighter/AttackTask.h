@@ -189,39 +189,42 @@ private:
 	void Decide(int frame, bool isReuse);
 	// Picks the target and fills routeGoals (and screenedGoals)
 	void FindTarget();
-	// quota.attack_static_cells: where a target's firing cells are built around, and the epoch that spot belongs to.
-	// A building: its position, and epoch 0. A parked mobile (parked_sec), no faster than 1.25 x
-	// our slowest unit and not a nanoframe: the spot it was last seen still on in LOS, and the frame it settled there.
-	// false: no cells (any other target; also a building with an unknown type)
+
+	/*
+	 * Firing cells (quota.attack_static_cells; AttackCells.cpp): where the group shoots a building or a parked
+	 * mobile from, beyond range. Every piece of cell state (goals, planned side, rejected sides, bans) records the
+	 * anchor epoch it was built under and holds only while the target keeps that anchor (IsSameAnchor)
+	 */
+	// Where a target's cells are built around, and that spot's epoch. A building: its position, epoch 0. A parked
+	// mobile (parked_sec; no faster than 1.25 x our slowest unit, not a nanoframe): the spot it stood still on in
+	// LOS, and the frame it settled there. false: no cells (cells off, any other target, unknown type)
 	bool GetCellAnchor(const CEnemyInfo* enemy, int frame, springai::AIFloat3& outPos, int& outEpoch) const;
-	// quota.attack_static_cells.siege_bonus applies: a slow mobile type that outranges us on the ground, in view or just out of it
-	bool IsSiegeTarget(const CEnemyInfo* enemy, int frame) const;
-	// The target still has a cell anchor, of this epoch: state built for it (cells, sides, bans, planned side) holds
 	bool IsSameAnchor(const CEnemyInfo* enemy, int epoch, int frame) const;
-	// Where range to a target is measured from: a radar-only parked mobile's spot (its radar position wobbles by the
-	// engine's radar error), else its position
+	// Where range to a target is measured from: a radar-only parked mobile's anchor (its radar position wobbles by
+	// the engine's radar error), else its position
 	springai::AIFloat3 GetRangePos(const CEnemyInfo* enemy, int frame) const;
-	// quota.attack_static_cells: the firing cells around anchor, at most one per sector, judged with the pick's
-	// power and near-base reference; nearOnly: the sectors facing us only (parked mobiles: a far side's long walk
-	// outlasts most stops).
-	// false: every point we can reach is above the allowance (ban it). Else outCells; empty: route to it as a disc
-	// (undefended, melee group, nothing reachable, or no line of sight)
+	// siege_bonus applies: a slow mobile type that outranges us on the ground, in view or just out of it
+	bool IsSiegeTarget(const CEnemyInfo* enemy, int frame) const;
+	// The target's cells around anchor, at most one per sector, judged with the pick's power and near-base
+	// reference; nearOnly: the sectors facing us only (parked mobiles). false: every reachable point is above the
+	// allowance (ban it). Else outCells; empty: route to it as a disc (undefended, melee group, nothing reachable,
+	// or no line of sight). Call after threatMap->SetThreatType(leader)
 	bool FillFiringCells(const CEnemyInfo* enemy, const springai::AIFloat3& anchor, float power, float ref,
 			bool nearOnly, std::vector<SFiringCell>& outCells) const;
 	// The route goals of a cell target beyond range: FillFiringCells minus its rejected sides, with the planned
-	// cell (if any; GetPlannedCell) in place of its sector's. false: skip the target (banned now, or every side
+	// cell (GetPlannedCell) in place of its sector's. false: skip the target (banned now, or every side
 	// rejected). Else outCells; empty: route to it as a disc
 	bool CollectFiringCells(const CEnemyInfo* enemy, const springai::AIFloat3& anchor, int epoch, float power,
 			float ref, const springai::AIFloat3* planned, int frame, std::vector<SFiringCell>& outCells);
-	// The firing cell the last accepted route to this target led to (lastRoute: dropped when the target changes), if
-	// the target still has that route's anchor (IsSameAnchor), its side isn't rejected and it is still below the
-	// allowance for strength (the caller's: the keep allowance)
+	// The cell the last accepted route to this target led to (lastRoute), while the target keeps that route's
+	// anchor, its side isn't rejected and it is below the allowance for strength (the caller's: the keep allowance)
 	bool GetPlannedCell(ICoreUnit::Id targetId, float strength, float refSqDist, springai::AIFloat3& outCell) const;
 	bool IsCellBanned(ICoreUnit::Id id, int frame) const;
 	void BanCell(const CEnemyInfo* enemy, int epoch, int frame);
-	// Drops bans whose target died or lost its anchor (IsSameAnchor), whose threat changed by more than 25%, or that
-	// started over 60 s ago. Call after threatMap->SetThreatType(leader)
+	// Drops bans whose target died or lost its anchor, whose threat changed by more than 25%, or that started over
+	// 60 s ago. Call after threatMap->SetThreatType(leader)
 	void UpdateCellBans(int frame);
+
 	bool IsOnEnemyGround() const;  // influence at the leader < 0
 	// One capped route to all candidate targets
 	void RequestTargetPath(const std::vector<STargetGoal>& goals);
