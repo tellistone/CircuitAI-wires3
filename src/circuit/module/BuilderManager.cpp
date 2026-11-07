@@ -1236,7 +1236,8 @@ const CBuilderManager::SJobRank& CBuilderManager::GetJobRank(const IBuilderTask*
 
 // While stalling (CEconomyManager::IsStalling): would unit add its build power to spending? Spending = a building
 // (placed or not), terraform, or repairing an unfinished unit; reclaim, finished-unit repair, patrol and guard are
-// free. Its own job never counts, nor a new stall fix that nobody is on yet (helping one is an assist)
+// free. Its own job never counts, nor a stall fix: it runs at ZK's high build priority (CmdPriority), so it takes the
+// scarce resource first and more builders on it do finish it sooner
 static bool IsStallSpend(const CEconomyManager* economyMgr, const IBuilderTask* task, const CCircuitUnit* unit)
 {
 	if (task == unit->GetTask()) {
@@ -1246,7 +1247,7 @@ static bool IsStallSpend(const CEconomyManager* economyMgr, const IBuilderTask* 
 	const CCircuitUnit* target = task->GetTarget();
 	const bool isSpend = (task->GetBuildDef() != nullptr) || (type == IBuilderTask::BuildType::TERRAFORM)
 		|| ((type == IBuilderTask::BuildType::REPAIR) && (target != nullptr) && target->GetUnit()->IsBeingBuilt());
-	return isSpend && !(task->GetAssignees().empty() && economyMgr->IsStallFix(task));
+	return isSpend && !economyMgr->IsStallFix(task);
 }
 
 // Travel cost from pos to a job at buildPos on the builder's cost map, at least COST_BASE; < 0 = path blocked by buildings

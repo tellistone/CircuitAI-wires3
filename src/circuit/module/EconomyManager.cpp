@@ -1025,12 +1025,19 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// check energy / metal ratio
 	float metalIncome = GetAvgMetalIncome();
 	const float energyIncome = GetAvgEnergyIncome();
-	const bool isEnergyStalling = IsEnergyStalling();
+	// Short of energy: worse off than metal, or the stall latch is on (energy storage near empty)
+	const bool isEnergyStalling = IsEnergyStalling() || IsEnergyStall();
 	// TODO: e-stalling needs separate array of energy-defs sorted by cost
 
 	// Select proper energy UnitDef to build
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	// Budget for energy jobs. Normally a time-scaled share of the lower income. Short of energy, that share shrinks
+	// with the shortage and caps energy at 1-2 jobs. ZK's high build priority gives energy jobs the scarce energy
+	// first, so in a shortage budget by metal income instead: enough jobs to soak up the energy and spare metal.
 	metalIncome = std::min(metalIncome, energyIncome) * energyFactor;
+	if (isEnergyStalling) {
+		metalIncome = std::max(metalIncome, GetAvgMetalIncome());
+	}
 	const float buildPower = std::min(builderMgr->GetBuildPower(), metalIncome);
 	const int taskSize = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
 	const float maxBuildTime = MAX_BUILD_SEC * (isEnergyStalling ? 0.25f : 1.f);

@@ -37,7 +37,9 @@ void CBEnergyTask::Update()
 	}
 
 	CCircuitAI* circuit = manager->GetCircuit();
-	bool isEnergyStalling = circuit->GetEconomyManager()->IsEnergyStalling();
+	// Same test as CEconomyManager::UpdateEnergyTasks: high build priority while short of energy
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const bool isEnergyStalling = economyMgr->IsEnergyStalling() || economyMgr->IsEnergyStall();
 	if (isStalling == isEnergyStalling) {
 		return;
 	}
