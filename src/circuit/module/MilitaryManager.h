@@ -279,8 +279,8 @@ public:
 		// Parked mobiles (parked_sec; 0: off): a mobile target still on one spot this long, no faster than about our
 		// slowest unit, gets firing cells too (near sectors only)
 		int parkedFrames;
-		// siege_bonus: a mobile type no faster than 1.25 x our slowest unit with 1.2 x our fire range (artillery) ranks
-		// this many times closer, parked or not (1: off)
+		// siege_bonus: a mobile type no faster than 1.25 x our slowest unit with 1.2 x our fire range against ground
+		// (artillery) ranks this many times closer, parked or not, while in view or just out of it (1: off)
 		float siegeBonus;
 	};
 	const SAttackStaticCells& GetAttackStaticCells() const { return attackStaticCells; }

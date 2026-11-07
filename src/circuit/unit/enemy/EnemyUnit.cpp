@@ -146,13 +146,11 @@ bool CEnemyUnit::GetParkedSpot(int frame, int parkedFrames, AIFloat3& outPos, in
 	const CCircuitDef* cdef = data.cdef;
 	if ((stillSince < 0) || (frame - stillSince < parkedFrames)
 		|| (cdef == nullptr) || !cdef->IsMobile() || cdef->IsAbleToFly()
-		|| IsFake() || IsHidden())
+		|| IsFake() || IsHidden()
+		// Out of view for longer we don't know it's still there; a short gap keeps the spot, so the side and bans
+		// built for it don't flip on every flicker
+		|| !IsRecentlySeen(frame, parkedFrames))
 	{
-		return false;
-	}
-	// Out of view (lastSeen: the frame it left radar) we don't know it's still there; a short gap (radar edge, a
-	// jammer) keeps the spot for parkedFrames, so the side and bans built for it don't flip on every flicker
-	if (!IsInRadarOrLOS() && ((lastSeen < 0) || (frame - lastSeen >= parkedFrames))) {
 		return false;
 	}
 	outPos = stillPos;

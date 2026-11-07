@@ -106,6 +106,11 @@ public:
 
 	void SetLastSeen(int frame) { lastSeen = frame; }
 	int GetLastSeen() const { return lastSeen; }
+	// In radar or LOS, or out of both for less than frames (lastSeen: the frame it left radar): still there, as far
+	// as we can tell. A short gap (radar edge, a jammer) doesn't count as gone
+	bool IsRecentlySeen(int frame, int frames) const {
+		return IsInRadarOrLOS() || ((lastSeen >= 0) && (frame - lastSeen < frames));
+	}
 
 	void SetCost(float value) { data.cost = value; }
 	float GetCost() const { return data.cost; }
@@ -213,6 +218,7 @@ public:
 	bool GetParkedSpot(int frame, int parkedFrames, springai::AIFloat3& outPos, int& outEpoch) const {
 		return data->GetParkedSpot(frame, parkedFrames, outPos, outEpoch);
 	}
+	bool IsRecentlySeen(int frame, int frames) const { return data->IsRecentlySeen(frame, frames); }
 
 	bool IsInLOS()          const { return data->IsInLOS(); }
 	bool IsInRadarOrLOS()   const { return data->IsInRadarOrLOS(); }

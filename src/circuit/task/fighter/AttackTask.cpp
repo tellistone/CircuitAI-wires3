@@ -1459,22 +1459,27 @@ void CAttackTask::FindTarget()
 		{
 			continue;
 		}
-		// Ranked by Own to Enemy distance x near-base scale, times the type's target_dist_mod (behaviour.json)
-		// so unwanted types count as farther
-		const float scale = std::min(ePos.SqDistance2D(basePos) / sqOBDist, 1.f);
-		const float sqOEDist = pos.SqDistance2D(ePos);
-		const float rawKey = sqOEDist * scale;
-		SCandidate c = {rawKey * SQUARE(distModFor(enemy)), rawKey, enemy, false, ePos, -1, ePos};
+		SCandidate c = {0.f, 0.f, enemy, false, ePos, -1, ePos};
 		c.hasAnchor = cellCfg.isOn && GetCellAnchor(enemy, frame, c.anchor, c.epoch);
 		if (c.hasAnchor && !enemy->IsInLOS()) {
 			c.rangePos = c.anchor;
 		}
-		// quota.attack_static_cells.siege_bonus: a slow mobile type that outranges us (artillery) ranks closer. By
-		// type, parked or not: it doesn't come and go with each hop, which would swap targets
+		// Ranked by Own to Enemy distance x near-base scale, times the type's target_dist_mod (behaviour.json)
+		// so unwanted types count as farther. From the range position: a radar-only parked mobile's wobble would
+		// shift its rank
+		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
+		const float sqOEDist = pos.SqDistance2D(c.rangePos);
+		c.rawKey = sqOEDist * scale;
+		c.key = c.rawKey * SQUARE(distModFor(enemy));
+		// quota.attack_static_cells.siege_bonus: a slow mobile type that outranges us on the ground (artillery) ranks
+		// closer. By type, parked or not: it doesn't come and go with each hop, which would swap targets. Only while
+		// in view or just out of it (IsRecentlySeen), not at a spot it was last seen on minutes ago
 		const CCircuitDef* edef = enemy->GetCircuitDef();
 		if (cellCfg.isOn && (cellCfg.siegeBonus > 1.f) && (edef != nullptr) && edef->IsMobile()
-			&& (fireRangeLand > 0.f) && (edef->GetMaxRange() >= SIEGE_RANGE_MOD * fireRangeLand)
-			&& (edef->GetSpeed() <= lowestSpeed * PARKED_SPEED_MOD))
+			&& edef->HasAntiLand() && (fireRangeLand > 0.f)
+			&& (edef->GetMaxRange(CCircuitDef::RangeType::LAND) >= SIEGE_RANGE_MOD * fireRangeLand)
+			&& (edef->GetSpeed() <= lowestSpeed * PARKED_SPEED_MOD)
+			&& enemy->IsRecentlySeen(frame, cellCfg.parkedFrames))
 		{
 			c.key /= SQUARE(cellCfg.siegeBonus);
 		}
@@ -1507,9 +1512,9 @@ void CAttackTask::FindTarget()
 	size_t targetCount = 0;  // goals are counted by target: a cell target may bring several cells
 	for (const SCandidate& c : candidates) {
 		const ICoreUnit::Id id = c.enemy->GetId();
-		const AIFloat3& ePos = c.rangePos;  // a radar-only parked mobile's spot (GetRangePos)
+		const AIFloat3& rangePos = c.rangePos;  // a radar-only parked mobile's spot (GetRangePos)
 		const bool isPrev = (id == prevTargetId);
-		const bool isInRange = (ePos.SqDistance2D(pos) < sqHighestRange);
+		const bool isInRange = (rangePos.SqDistance2D(pos) < sqHighestRange);
 		// A target within range is engaged at once, without a route: the straight line from it towards us is
 		// its approach check. One beyond range gets no line check: its route's approach is checked instead
 		// (ApplyTargetPath / IsApproachSafe)
@@ -1520,9 +1525,9 @@ void CAttackTask::FindTarget()
 			// The current target with a planned firing cell: judged on the side we plan to fight from, as its route
 			// was (the line from it to the cell, and our walk there). Else, or that side went hot: the line towards us
 			const bool isPlannedSide = isPrev && hasPlanned
-					&& IsLineSafe(ePos, plannedCell, highestRange, allowedAt)
+					&& IsLineSafe(rangePos, plannedCell, highestRange, allowedAt)
 					&& IsLineSafe(pos, plannedCell, std::numeric_limits<float>::max(), allowedAt);
-			if (!isPlannedSide && !IsLineSafe(ePos, pos, highestRange, allowedAt)) {
+			if (!isPlannedSide && !IsLineSafe(rangePos, pos, highestRange, allowedAt)) {
 				continue;
 			}
 		}
@@ -1556,7 +1561,7 @@ void CAttackTask::FindTarget()
 			prev = &c;
 		}
 		if (cells.empty()) {
-			routeGoals.push_back({id, ePos, c.key});
+			routeGoals.push_back({id, rangePos, c.key});
 		}
 		for (const SFiringCell& cell : cells) {
 			routeGoals.push_back({id, c.anchor, c.key, cell.pos, cell.sector, c.epoch});
