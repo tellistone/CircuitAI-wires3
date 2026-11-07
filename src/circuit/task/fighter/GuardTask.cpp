@@ -307,11 +307,9 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 	CCircuitUnit* best = nullptr;
 	float minSqDist = SQUARE(cfg.pullRange);
 	for (CCircuitUnit* unit : militaryMgr->GetArmy()) {
-		// Only units the AI controls that are idle, on a raid/defend task, or alone in an attack task. Never:
-		//   retreating or player-controlled (not FIGHTER/IDLE), already guarding,
-		//   scouting (keeps the scout quota), or in an attack squad of 2+ (it would get weaker), fighting, or the rally host.
-		//   A lone attack unit is what a new riot is now: with quota.attack_merge.base_gather false it never
-		//   waits in a defend group at base, it walks out alone to reinforce an army
+		// Only units the AI controls that are idle, on a raid/defend task, or alone in an attack task
+		// (CAttackTask::IsGuardPullable). Never retreating or player-controlled (not FIGHTER/IDLE),
+		// already guarding, or scouting (keeps the scout quota)
 		IUnitTask* curTask = unit->GetTask();
 		if ((curTask == nullptr)
 			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))

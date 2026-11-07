@@ -2028,11 +2028,9 @@ bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 
 bool CAttackTask::IsGuardPullable() const
 {
-	// More than one unit is a squad: taking one away weakens it (and may drop it below quota.attack)
-	if ((units.size() != 1) || IsFighting()) {
-		return false;
-	}
-	return static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this;
+	// A squad of 2+ would get weaker (maybe below quota.attack); a lone unit's task just ends when it leaves.
+	// The rally host is left alone too: every compatible group is walking to it
+	return (units.size() == 1) && !IsFighting() && (static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this);
 }
 
 bool CAttackTask::IsFighting() const
