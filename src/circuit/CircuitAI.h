@@ -98,8 +98,7 @@ public:
 	void NotifyGameEnd();
 	void NotifyResign();
 	void Resign(int newTeamId, springai::Economy* economy);
-	// Concede the match: on the next update ask the game (LuaRules "ai_resign") to announce it and kill our team,
-	// self-destruct everything if the game doesn't support that, and stop playing
+	// Concede the match: on the next update say "I am defeated." in chat, leave the game (/aikill) and stop playing
 	void Surrender() { isSurrendered = true; }
 private:
 	typedef int (CCircuitAI::*EventHandlerPtr)(int topic, const void* data);

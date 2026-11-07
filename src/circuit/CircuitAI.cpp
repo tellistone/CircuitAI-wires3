@@ -735,20 +735,12 @@ int CCircuitAI::Update(int frame)
 	}
 	if (isSurrendered) {
 		LOG("SURRENDER: frame %i", frame);
-		// Zero-K's game_resign gadget says "<name> I am defeated." to everyone, kills the team (as /resign) and answers "1".
-		// Game versions without it answer nothing: blow everything up instead (no chat line: the engine drops plain AI
-		// text messages, Game_sendTextMessage only runs "/" commands as the host player)
-		const std::string cmd("ai_resign");
-		const std::string answer = lua->CallRules(cmd.c_str(), cmd.size());
-		if (answer != "1") {
-			auto units = callback->GetTeamUnits();
-			for (Unit* u : units) {
-				if (u != nullptr) {
-					u->SelfDestruct();
-				}
-			}
-			utils::free_clear(units);
-		}
+		// Game_sendTextMessage only runs "/" commands, as the player hosting the AI (as zkgbai does it):
+		// /say for the chat line, then /aikill to leave the game. Zero-K counts a team with neither AI nor players
+		// out (game_over.lua), which ends a 1v1
+		game->SendTextMessage("/say <CircuitAI> I am defeated.", 0);
+		const std::string kill = "/aikill " + utils::int_to_string(teamId);
+		game->SendTextMessage(kill.c_str(), 0);
 		Release(RELEASE_RESIGN);
 		NotifyGameEnd();
 		return 0;

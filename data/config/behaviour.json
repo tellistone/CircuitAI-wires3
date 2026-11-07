@@ -148,8 +148,7 @@
 // Concede a lost 1v1: checked every 10 s from "time" on, only when each side is a single team. Resign when our
 // ally team holds fewer than "mex" x the map's metal spots AND the known enemy mobile threat (every enemy mobile
 // unit seen, commander and builders included) is more than "threat" x ours (our finished mobile units, same scale).
-// Zero-K's game_resign gadget then says "<AI name> I am defeated." to everyone and resigns the team; on a game
-// version without that gadget code the AI self-destructs everything instead (no chat line). Missing block or time < 0 = never resign
+// Says "<CircuitAI> I am defeated." in public chat, then leaves the game (/aikill), which Zero-K counts as a resign. Missing block or time < 0 = never resign
 "resign": {
 	"time": 480,  // seconds of game time
 	"mex": 0.1,
