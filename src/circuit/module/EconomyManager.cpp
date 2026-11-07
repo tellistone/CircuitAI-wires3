@@ -1555,7 +1555,7 @@ void CEconomyManager::UpdateMorph()
 			((unit->GetTask()->GetType() == IUnitTask::Type::RETREAT)
 				&& static_cast<CRetreatTask*>(unit->GetTask())->IsFlee()) ||  // a health retreat may still morph
 			(unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth() * 0.8f) ||
-			circuit->GetBuilderManager()->IsCommInDanger(unit))  // it would only stop again to flee
+			circuit->GetBuilderManager()->IsCommInDanger(unit))  // no metal into a commander that may die mid-morph
 		{
 			++it;
 		} else {
