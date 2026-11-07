@@ -159,6 +159,8 @@ public:
 	int GetTargetTile() const { return targetTile; }
 
 private:
+	int GetReloadFrame(int frame);  // main weapon's reload frame, read once a frame; needs weapon != nullptr
+
 	// NOTE: taskFrame assigned on task change and OnUnitIdle to workaround idle spam.
 	//       Proper fix: do not issue any commands OnUnitIdle, delay them until next frame?
 	int taskFrame;
@@ -174,6 +176,8 @@ private:
 	int execFrame;  // TODO: Replace by CExecuteAction?
 	int disarmFrame;
 	int ammoFrame;
+	int reloadCheckFrame;  // frame reloadFrame was read
+	int reloadFrame;  // main weapon's, cached for a frame (GetReloadFrame)
 
 	// ---- Bit fields ---- BEGIN
 	bool isDead : 1;
