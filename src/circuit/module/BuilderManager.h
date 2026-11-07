@@ -104,8 +104,18 @@ public:
 	// faster than repair_flee share of its own max speed
 	bool IsRepairTargetFleeing(const IBuilderTask* task, CCircuitUnit* builder, const springai::AIFloat3& pos,
 							   const springai::AIFloat3* targetVel = nullptr) const;  // targetVel: already read by caller
-	bool IsRepairFleeOn() const { return repairFleeShare > 0.f; }
-	int GetRepairFleeFrames() const { return repairFleeFrames; }
+	// Builder closing in on a moving repair target: checkpoint of its gap beyond build range
+	struct SChaseCheck {
+		ICoreUnit::Id targetId = -1;
+		float gap = 0.f;
+		int frame = -1;
+		void Reset() { targetId = -1; frame = -1; }
+	};
+	// gap <= 0 = in reach. True once the gap has not shrunk by repair_chase[1] for repair_chase[0] sec
+	bool IsChaseStalled(SChaseCheck& chase, ICoreUnit::Id targetId, float gap, int frame) const;
+	// Engine's own repair (picked while patrolling) of a mobile unit that the builder doesn't close in on
+	bool IsEngineChaseStalled(CCircuitUnit* unit, SChaseCheck& chase) const;
+	int GetPrioRepairCooldown() const { return prioRepairCooldown; }
 	void OnRetreatEnd(CCircuitUnit* unit);  // unit left retreat: drop its leftover retreat (HIGH) repair job
 
 	struct SEscort {
@@ -171,6 +181,16 @@ public:
 
 	bool IsReclaimed(CAllyUnit* unit) const { return reclaimedUnits.find(unit) != reclaimedUnits.end(); }
 
+	/*
+	 * Commander flee (always on) and hide (commander.json "hide")
+	 */
+	// Flee zones the commander should keep out of: visible ground dangers at their weapon range + margin
+	bool IsCommSafe(const springai::AIFloat3& pos, float margin);
+	// DefaultMakeTask sends this armed builder to fight at home (IBuilderTask::Reevaluate re-plans on the same test)
+	bool IsHomeFight(CCircuitUnit* unit);
+	// In a flee zone at the wide (stop-fleeing) line: no morph now
+	bool IsCommInDanger(CCircuitUnit* unit);
+
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
 	// How a job ranks for a builder: travel cost x invWeight, lowest wins; beyond travelSec only as a fallback
@@ -181,6 +201,33 @@ private:
 	// By the job's priority, except mex drops to NORMAL during an energy stall
 	const SJobRank& GetJobRank(const IBuilderTask* task, bool isEnergyStalling) const;
 	IBuilderTask* MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
+
+	struct SCommDanger {
+		springai::AIFloat3 pos;
+		float range;  // its ground/water weapon range, 0 for a blip
+		float threat;
+		bool isAir;  // a gunship
+	};
+	static float GetCommWideMargin(float margin) { return margin + std::max(0.25f * margin, 50.f); }
+	float GetCommFleeMargin(CCircuitUnit* unit) const;  // hide.flee_margin, < 0 = no flee
+	void UpdateCommDangers();
+	// Number of flee zones (range + margin) reaching pos; outThreat their threat, outPos/outIsAir the nearest one
+	int GetCommDanger(const springai::AIFloat3& pos, float margin, float& outThreat,
+					  springai::AIFloat3* outPos = nullptr, bool* outIsAir = nullptr);
+	// The commander itself and ground-capable allies within radius of pos, minus enemyThreat, reach allyThreat
+	bool IsCommCovered(const springai::AIFloat3& pos, float enemyThreat, float allyThreat, float radius) const;
+	// Fight at home only if no flee zone (wide line) reaches the commander, or it is covered there
+	bool IsCommCombatSafe(CCircuitUnit* unit, float margin);
+	// Cornered: an uncovered danger within the wide line and nowhere better to flee to; outDangerPos: the nearest one
+	bool IsCommCornered(CCircuitUnit* unit, springai::AIFloat3& outDangerPos, bool& outIsAir);
+	// Cornered commander: a static defence on its far side from the danger; nullptr = none to build, or one already
+	// on the go (the current task)
+	IBuilderTask* MakeCommDefence(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir);
+	// Hide mode: allied strength (the commander's own left out) at pos at least matches the enemy's, on our ground
+	bool IsCommTerritory(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
+	springai::AIFloat3 FindCommFleeGoal(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir,
+										float margin);
+	void UpdateCommFlee();
 	IBuilderTask* MakeBuilderTask(CCircuitUnit* unit, const CQueryCostMap* query);
 	IBuilderTask* CreateBuilderTask(const springai::AIFloat3& position, CCircuitUnit* unit);
 
@@ -209,6 +256,13 @@ private:
 	unsigned int buildIterator;
 
 	std::set<CCircuitUnit*> workers;
+	std::set<CCircuitUnit*> comms;  // commanders among workers
+	std::vector<SCommDanger> commDangers;
+	int commDangerFrame;  // frame commDangers was built at
+	F3Vec commFleeSpots;  // FindCommFleeGoal scratch
+	float commThrMod;  // quota.thr_mod.comm: undone for enemy commanders' threat in the flee
+	bool isCommHide;  // hide by threat, latched once triggered
+	bool isCommHideAir;  // enemy air now (live): hide, and only our buildings' ground counts as territory
 	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
 	SJobRank jobRanks[4];  // LOW, NORMAL, HIGH, NOW
@@ -218,7 +272,8 @@ private:
 	float prioRepairLeash;  // cancel started priority repair if target gets this far beyond build range, 0 = off
 	int prioRepairCooldown;  // frames without new priority repair job after leash break
 	float repairFleeShare;  // target moving away faster than this share of its max speed counts as fleeing, 0 = off
-	int repairFleeFrames;  // frames a target may keep fleeing from all its repairers before the job is dropped
+	int repairChaseFrames;  // frames a builder may chase a repair target without closing in, 0 = off
+	float repairChaseClose;  // elmos the gap must shrink by within repairChaseFrames
 	std::map<ICoreUnit::Id, int> leashUntil;  // unitId: frame until which priority repair is held off
 	SEscort escort;
 	std::set<IUnitTask*> escortTasks;

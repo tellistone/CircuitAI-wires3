@@ -16,7 +16,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   early when walking into range would take as long as the reload it has left, doesn't start when there isn't time to
   get out and back, and stays on hold position while scooting (else the engine's idle auto-attack walks it straight
   back in). Scoots end when the squad stops being engaged; a scooting leader keeps anti-air and anti-heavy squads
-  engaged on their target. Anti-heavy's scoot uses the same rules now. Works in attack,
+  engaged on their target. Anti-heavy's scoot uses the same rules now. A squad that is aborted or done gives its scooting units their
+  move state back (it used to leave them on hold position for good). Works in attack,
   raid, defend, anti-air and anti-heavy squads (not mines or aircraft). It is anti-heavy's shoot and scoot, moved to
   `ISquadTask`; anti-heavy units without `reload_scoot` behave as before. No unit has it set yet.
 - **Anti-heavy threat-capped routes and flee** (`antiheavy` block in `behaviour.json`; code defaults off, shipped
@@ -162,6 +163,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `behaviour.json` gains `energygeo` and `energyheavygeo` entries.
 
 ### Changed
+
+- **Repair chases end when the builder doesn't close in** (`retreat.repair_chase: [sec, elmos]`, default `[0, ...]` =
+  off; shipped `[3, 64]`). This replaces dropping a repair job by sampling the target's speed (`repair_flee` now only
+  has the speed share, used when picking jobs). A builder out of reach of a moving repair target that hasn't cut the gap
+  by 64 elmos in 3 s counts as stalled; when no builder on the job is in reach and all are stalled, the job is dropped
+  with the `repair_leash` cooldown. The speed test missed units moving at their group's (slowest member's) pace and
+  restarted on every pause in a fight.
+- **Escort and patrol builders drop the engine's own repair chases.** While patrolling, the engine repairs damaged
+  units nearby by itself and chases any that is no faster than the builder (up to about 500 elmos from the patrol
+  path). The same `repair_chase` check now catches that: an escort builder then moves instead of patrolling for the
+  `repair_leash` cooldown, and a patrol fallback job moves to its spot for the rest of the job, so the engine doesn't
+  pick the same chase again.
 
 - **Builders stop chasing units they can't catch** (`retreat.repair_flee: [speed share, sec]`, default `[0, ...]` = off;
   shipped `[0.5, 2]`). A mobile repair target that is not retreating, is out of a builder's reach and is moving away

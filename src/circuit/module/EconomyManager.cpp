@@ -15,6 +15,7 @@
 #include "terrain/TerrainManager.h"
 #include "map/ThreatMap.h"
 #include "map/InfluenceMap.h"
+#include "task/RetreatTask.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
@@ -1551,7 +1552,10 @@ void CEconomyManager::UpdateMorph()
 	while (it != morphees.end()) {
 		CCircuitUnit* unit = *it;
 		if ((unit->GetTask()->GetType() == IUnitTask::Type::PLAYER) ||
-			(unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth() * 0.8f))
+			((unit->GetTask()->GetType() == IUnitTask::Type::RETREAT)
+				&& static_cast<CRetreatTask*>(unit->GetTask())->IsFlee()) ||  // a health retreat may still morph
+			(unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth() * 0.8f) ||
+			circuit->GetBuilderManager()->IsCommInDanger(unit))  // no metal into a commander that may die mid-morph
 		{
 			++it;
 		} else {

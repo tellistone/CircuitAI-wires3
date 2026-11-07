@@ -10,6 +10,7 @@
 
 #include "unit/enemy/EnemyUnit.h"
 
+#include <unordered_map>
 #include <vector>
 #ifdef DEBUG_VIS
 #include <stdint.h>
@@ -97,6 +98,8 @@ private:
 //	float* drawVulnerability;
 //	float* drawFeatureInfl;
 	bool isUpdating;
+	// Where each mobile armed ally stood when the current maps were applied (GetMobileArmedInflAt)
+	std::unordered_map<int, springai::AIFloat3> mobileArmedPos;
 
 	float* enemyInfl;
 	float* allyInfl;

@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_BUILDER_PATROLTASK_H_
 
 #include "task/builder/BuilderTask.h"
+#include "module/BuilderManager.h"
 
 namespace circuit {
 
@@ -29,6 +30,10 @@ protected:
 	virtual void Cancel() override;
 
 	virtual void Execute(CCircuitUnit* unit) override;
+
+private:
+	CBuilderManager::SChaseCheck chase;  // engine repair picked while patrolling
+	bool isMoveOrder;  // patrol replaced by a move after a failed chase
 };
 
 } // namespace circuit

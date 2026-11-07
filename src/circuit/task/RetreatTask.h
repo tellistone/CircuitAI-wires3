@@ -40,6 +40,17 @@ public:
 	void SetRepairer(CCircuitUnit* unit) { repairer = unit; }
 	CCircuitUnit* GetRepairer() const { return repairer; }
 
+	// Commander flee (CBuilderManager::UpdateCommFlee): heads for goal (or a cheaper repairer) and doesn't end on
+	// full health; the builder manager ends it once the danger is gone
+	void SetFlee(const springai::AIFloat3& goal, int frame) { fleeGoal = goal; fleeFrame = frame; }
+	void StopFlee(CCircuitUnit* unit);  // carries on as a plain retreat, for repair
+	void EndFlee(CCircuitUnit* unit);  // back to work
+	bool IsFlee() const { return fleeFrame >= 0; }
+	int GetFleeFrame() const { return fleeFrame; }
+	const springai::AIFloat3& GetFleeGoal() const { return fleeGoal; }
+	bool IsArrived() const { return State::REGROUP == state; }
+	void Redirect(CCircuitUnit* unit, const springai::AIFloat3& goal);  // new flee goal, on the way again
+
 private:
 	void ApplyPath(const CQueryPathSingle* query);
 	CCircuitUnit* ValidateNewRepairer(const IPathQuery* query, int newRepId) const;
@@ -49,6 +60,8 @@ private:
 	int regroupFrame;  // when unit arrived at haven
 	float lastHavenSqDist;  // distance to haven at the last move attempt, -1 = none
 	std::shared_ptr<IPathQuery> costQuery;  // owner
+	springai::AIFloat3 fleeGoal;
+	int fleeFrame;  // flee start, -1 = plain retreat
 };
 
 } // namespace circuit

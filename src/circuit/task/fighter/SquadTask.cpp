@@ -93,6 +93,23 @@ void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 	FindLeader(units.begin(), units.end());
 }
 
+void ISquadTask::Stop(bool done)
+{
+	for (const auto& kv : scoots) {
+		SetScootHold(kv.first, false);
+	}
+	scoots.clear();
+	scootReturns.clear();
+	IFighterTask::Stop(done);
+}
+
+void ISquadTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
+{
+	scoots.erase(unit);
+	scootReturns.erase(unit);
+	IFighterTask::OnUnitDestroyed(unit, attacker);
+}
+
 void ISquadTask::Merge(ISquadTask* task)
 {
 	const std::set<CCircuitUnit*>& rookies = task->GetAssignees();

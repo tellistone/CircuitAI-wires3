@@ -129,6 +129,7 @@ protected:
 	static F3Vec urgentPositions;  // NOTE: micro-opt
 	static F3Vec enemyPositions;  // NOTE: micro-opt
 
+public:  // flee helpers, also used by the commander flee (CBuilderManager::UpdateCommFlee)
 	// AA flee cover: strength a friendly unit lends, health-scaled as squad strength is
 	// (power * sqrt(health %)); 0 for nanoframes
 	static float GetCoverPower(CAllyUnit* ally);

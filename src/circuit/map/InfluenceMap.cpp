@@ -138,10 +138,12 @@ void CInfluenceMap::Apply()
 	CCircuitAI* circuit = manager->GetCircuit();
 	circuit->UpdateFriendlyUnits();  // FIXME: update or ignore units with -RgtVector position
 	const CAllyTeam::AllyUnits& units = circuit->GetFriendlyUnits();
+	mobileArmedPos.clear();
 	for (auto& kv : units) {
 		CAllyUnit* u = kv.second;
 		if (u->GetCircuitDef()->IsAttacker()) {
 			if (u->GetCircuitDef()->IsMobile()) {
+				mobileArmedPos[u->GetId()] = u->GetPos(circuit->GetLastFrame());
 				AddMobileArmed(u);
 			} else {
 				AddStaticArmed(u);
@@ -235,8 +237,13 @@ float CInfluenceMap::GetMobileArmedInflAt(CAllyUnit* u, const AIFloat3& position
 	if (!u->GetCircuitDef()->IsAttacker() || !u->GetCircuitDef()->IsMobile()) {
 		return 0.f;
 	}
+	// From where the unit stood when the maps were applied, not where it is now: the map holds that spread
+	auto it = mobileArmedPos.find(u->GetId());
+	if (it == mobileArmedPos.end()) {
+		return 0.f;  // not in the current maps (new, or not applied yet)
+	}
 	int ux, uz, px, pz;
-	PosToXZ(u->GetPos(manager->GetCircuit()->GetLastFrame()), ux, uz);
+	PosToXZ(it->second, ux, uz);
 	PosToXZ(position, px, pz);
 	const int range = GetUnitRange(u);
 	if (range <= 0) {
