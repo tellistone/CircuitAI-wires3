@@ -209,10 +209,10 @@ private:
 	// Fight at home only if no flee zone (wide line) reaches the commander, or it is covered there
 	bool IsCommCombatSafe(CCircuitUnit* unit, float margin);
 	// Cornered: an uncovered danger within the wide line and nowhere better to flee to; outDangerPos: the nearest one
-	bool IsCommCornered(CCircuitUnit* unit, springai::AIFloat3& outDangerPos);
+	bool IsCommCornered(CCircuitUnit* unit, springai::AIFloat3& outDangerPos, bool& outIsAir);
 	// Cornered commander: a static defence on its far side from the danger; nullptr = none to build, or one already
 	// on the go (the current task)
-	IBuilderTask* MakeCommDefence(CCircuitUnit* unit, const springai::AIFloat3& dangerPos);
+	IBuilderTask* MakeCommDefence(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir);
 	// Hide mode: allied strength (the commander's own left out) at pos at least matches the enemy's, on our ground
 	bool IsCommTerritory(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	springai::AIFloat3 FindCommFleeGoal(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir,

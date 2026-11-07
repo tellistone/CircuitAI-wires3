@@ -1118,11 +1118,12 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 
 	const CCircuitDef* cdef = unit->GetCircuitDef();
 	AIFloat3 dangerPos;
-	if (IsCommCornered(unit, dangerPos)) {  // build cover rather than stand; with none to build it fights at home
+	bool isAirDanger = false;
+	if (IsCommCornered(unit, dangerPos, isAirDanger)) {  // build cover rather than stand; with none to build it fights at home
 		if (IsBuildingDefence(unit)) {
 			return nullptr;  // keep at it
 		}
-		IBuilderTask* task = MakeCommDefence(unit, dangerPos);
+		IBuilderTask* task = MakeCommDefence(unit, dangerPos, isAirDanger);
 		if (task != nullptr) {
 			return task;
 		}
@@ -1796,7 +1797,7 @@ bool CBuilderManager::IsCommCombatSafe(CCircuitUnit* unit, float margin)
 	return pos.SqDistance2D(FindCommFleeGoal(unit, dangerPos, isAir, wideMargin)) < SQUARE(COMM_ESCAPE_MIN);
 }
 
-bool CBuilderManager::IsCommCornered(CCircuitUnit* unit, AIFloat3& outDangerPos)
+bool CBuilderManager::IsCommCornered(CCircuitUnit* unit, AIFloat3& outDangerPos, bool& outIsAir)
 {
 	const float margin = GetCommFleeMargin(unit);
 	if (margin < 0.f) {
@@ -1806,16 +1807,16 @@ bool CBuilderManager::IsCommCornered(CCircuitUnit* unit, AIFloat3& outDangerPos)
 	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
 	const float wideMargin = GetCommWideMargin(margin);
 	float threat;
-	bool isAir = false;
-	if ((GetCommDanger(pos, wideMargin, threat, &outDangerPos, &isAir) == 0)
+	outIsAir = false;
+	if ((GetCommDanger(pos, wideMargin, threat, &outDangerPos, &outIsAir) == 0)
 		|| IsCommCovered(pos, threat, hide->fleeAllyThreat, hide->fleeAllyRadius))
 	{
 		return false;
 	}
-	return pos.SqDistance2D(FindCommFleeGoal(unit, outDangerPos, isAir, wideMargin)) < SQUARE(COMM_ESCAPE_MIN);
+	return pos.SqDistance2D(FindCommFleeGoal(unit, outDangerPos, outIsAir, wideMargin)) < SQUARE(COMM_ESCAPE_MIN);
 }
 
-IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, const AIFloat3& dangerPos)
+IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, const AIFloat3& dangerPos, bool isAir)
 {
 	// The defence adds the cover (IsCommCovered counts finished static defences) that lets the commander stay.
 	// It shoots while it builds. One at a time: an unfinished one nearby is helped rather than a new one queued
@@ -1833,13 +1834,14 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, const AIFloat
 		}
 	}
 
-	// Cheapest first, as porcupine.land/water list them (MakeDefence's water test)
+	// The first one porcupine.land/water lists (its build order; MakeDefence's water test) that can shoot the danger:
+	// against gunships one that hits air
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	const bool isWater = circuit->GetMap()->GetElevationAt(pos.x, pos.z) < -SQUARE_SIZE * 5;
 	CCircuitDef* buildDef = nullptr;
 	for (CCircuitDef* ddef : isWater ? militaryMgr->GetWaterDefenders() : militaryMgr->GetLandDefenders()) {
 		if (ddef->IsAvailable(frame) && cdef->CanBuild(ddef) && ddef->IsAttacker()
-			&& (isWater ? ddef->HasAntiWater() : ddef->HasAntiLand()))
+			&& (isAir ? ddef->HasAntiAir() : (isWater ? ddef->HasAntiWater() : ddef->HasAntiLand())))
 		{
 			buildDef = ddef;
 			break;
@@ -1970,7 +1972,7 @@ void CBuilderManager::UpdateCommFlee()
 		if (pos.SqDistance2D(goal) < SQUARE(COMM_ESCAPE_MIN)) {
 			// Nowhere better to go: build cover rather than stand (none to build: keep at it, IsCommCombatSafe
 			// lets it fight at home)
-			IBuilderTask* defence = MakeCommDefence(unit, dangerPos);
+			IBuilderTask* defence = MakeCommDefence(unit, dangerPos, isAir);
 			if (defence != nullptr) {
 				AssignTask(unit, defence);
 			}
