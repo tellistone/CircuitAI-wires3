@@ -132,6 +132,8 @@ public:
 private:
 	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);
 	bool IsPrioRepairFull(const CCircuitUnit* unit) const;
+	// Joining a nanoframe that other constructors already build (unit's own job doesn't count)
+	static bool IsAssist(const IBuilderTask* task, const CCircuitUnit* unit);
 public:
 	IBuilderTask* EnqueueReclaim(IBuilderTask::Priority priority,
 								 const springai::AIFloat3& position,

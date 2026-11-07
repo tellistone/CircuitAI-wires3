@@ -1234,6 +1234,14 @@ const CBuilderManager::SJobRank& CBuilderManager::GetJobRank(const IBuilderTask*
 	}
 }
 
+bool CBuilderManager::IsAssist(const IBuilderTask* task, const CCircuitUnit* unit)
+{
+	// Cheapest tests first; the being-built test is an engine call
+	const CCircuitUnit* target = task->GetTarget();
+	return (target != nullptr) && (task != unit->GetTask()) && !task->GetAssignees().empty()
+		&& target->GetUnit()->IsBeingBuilt();
+}
+
 // Travel cost from pos to a job at buildPos on the builder's cost map, at least COST_BASE; < 0 = path blocked by buildings
 static float GetJobTravelCost(const CQueryCostMap* query, const CPathFinder* pathfinder,
 							  const AIFloat3& pos, const AIFloat3& buildPos, int buildDistance)
@@ -1283,6 +1291,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
+	// No helping others' nanoframes while metal or energy stalls: more build power only spreads the stall
+	const bool isNoAssist = economyMgr->IsStalling();
 	// Never send the commander into a flee zone, measured at the line the flee stops at; nullptr = flee off.
 	// Hide mode's territory test goes with the flee
 	const SCommState* commState = GetCommState(unit);
@@ -1291,7 +1301,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 			const bool isNow = (candidate->GetPriority() == IBuilderTask::Priority::NOW);
 			if ((isNow && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
 				|| !candidate->CanAssignTo(unit)
-				|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr)))
+				|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr))
+				|| (isNoAssist && !isNow && IsAssist(candidate, unit)))
 			{
 				continue;
 			}
@@ -1396,6 +1407,8 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
+	// No helping others' nanoframes while metal or energy stalls: more build power only spreads the stall
+	const bool isNoAssist = economyMgr->IsStalling();
 	// Never send the commander into a flee zone, measured at the line the flee stops at; nullptr = flee off
 	const SCommState* commState = GetCommState(unit);
 	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
@@ -1405,7 +1418,8 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 				|| !candidate->CanAssignTo(unit)
 				|| (isNotReady && !isNow
 					&& (candidate->GetBuildDef() != nullptr)
-					&& !economyMgr->IsIgnoreStallingPull(candidate)))
+					&& !economyMgr->IsIgnoreStallingPull(candidate))
+				|| (isNoAssist && !isNow && IsAssist(candidate, unit)))
 			{
 				continue;
 			}

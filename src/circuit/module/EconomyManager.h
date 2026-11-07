@@ -80,6 +80,8 @@ public:
 	bool IsMetalFull();
 	bool IsEnergyStalling();
 	bool IsEnergyEmpty();
+	// Storage nearly empty and pull above income, for metal or energy: build power spent now only slows every job
+	bool IsStalling();
 	bool IsExcessed() const { return metalProduced > metalUsed; }
 	int GetBuildDelay() const { return buildDelay; }
 

@@ -690,6 +690,12 @@ bool CEconomyManager::IsEnergyEmpty()
 	return isEnergyEmpty;
 }
 
+bool CEconomyManager::IsStalling()
+{
+	return (IsMetalEmpty() && (GetAvgMetalIncome() < GetMetalPull()))
+		|| (IsEnergyEmpty() && (GetAvgEnergyIncome() < GetEnergyPull()));
+}
+
 bool CEconomyManager::IsAllyOpenSpot(int spotId) const
 {
 	return IsOpenSpot(spotId) && circuit->GetMetalManager()->IsOpenSpot(spotId);
