@@ -306,6 +306,7 @@ void CEconomyManager::ReadConfig()
 	const Json::Value& recl = econ["reclaim"];
 	reclaimValueExp = recl.get("value_exp", 0.5f).asFloat();
 	reclaimHelperSec = std::max(recl.get("helper_sec", 20.f).asFloat(), 0.f);
+	reclaimUntakenSec = std::max(recl.get("untaken_sec", 30.f).asFloat(), 1.f);
 	reclaimStoreAt = recl.get("store_at", 0.7f).asFloat();
 	const Json::Value& travel = recl["travel"];
 	reclaimTravelMetal = travel.get("metal", 2000.f).asFloat();
@@ -947,7 +948,7 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 			continue;
 		}
 		return (job != nullptr) ? job
-				: builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, pos, spot.second->metal, FRAMES_PER_SEC * 300,
+				: builderMgr->EnqueueReclaim(IBuilderTask::Priority::HIGH, pos, spot.second->metal, FRAMES_PER_SEC * reclaimUntakenSec,
 											 8.0f/*unit->GetCircuitDef()->GetBuildDistance()*/);
 	}
 
