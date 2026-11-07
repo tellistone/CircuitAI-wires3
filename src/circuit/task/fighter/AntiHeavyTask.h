@@ -78,7 +78,7 @@ private:
 	void FallbackCommPos();
 
 	bool CheckFlee();  // antiheavy.flee_margin (UpdateFlee); true while fleeing
-	virtual void Flee(const springai::AIFloat3& dangerPos) override;
+	virtual void FleeFrom(const springai::AIFloat3& dangerPos) override;
 	virtual void OnFleeEnd() override;  // stop walking the flee path
 	void ApplyFleePath(const CQueryPathSingle* query);
 

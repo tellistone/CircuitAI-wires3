@@ -617,7 +617,7 @@ bool CAntiAirTask::CheckFlee()
 	return UpdateFlee(aaCfg.fleeMargin, aaCfg.fleeMargin, false, aaCfg.fleeAllyThreat, aaCfg.fleeAllyRadius, ROLE_TYPE(AA));
 }
 
-void CAntiAirTask::Flee(const AIFloat3& dangerPos)
+void CAntiAirTask::FleeFrom(const AIFloat3& dangerPos)
 {
 	// Candidates: safe spots (attack/defend group leaders, else a defended mex cluster, else base) and the base
 	const AIFloat3* goal = FindFleeGoal(dangerPos);
