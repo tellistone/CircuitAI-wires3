@@ -7,7 +7,6 @@
 
 #include "task/builder/ReclaimTask.h"
 #include "task/TaskManager.h"
-#include "map/ThreatMap.h"
 #include "module/EconomyManager.h"
 #include "terrain/TerrainManager.h"
 #include "unit/action/TravelAction.h"
@@ -82,19 +81,13 @@ bool CBReclaimTask::Reevaluate(CCircuitUnit* unit)
 			utils::free_clear(enemies);
 		}
 
-		// Best-ranked safe reclaimable feature nearby (rank first: the reach test costs more)
+		// Best-ranked safe reclaimable feature nearby
 		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		const auto features = economyMgr->GetReclaimFeatures(circuit->GetCallback()->GetFeatureIdsIn(pos, 500.0f));
-		if (!features.empty()) {
-			circuit->GetThreatMap()->SetThreatType(unit);
-			float minRank = std::numeric_limits<float>::max();
-			for (const CEconomyManager::SReclaimFeature& feature : features) {
-				const float rank = economyMgr->GetReclaimRank(pos.SqDistance2D(feature.pos), feature.metalLeft);
-				if ((rank < minRank) && economyMgr->IsReclaimSafe(unit, feature.pos)) {
-					position = feature.pos;
-					minRank = rank;
-				}
-			}
+		const auto best = economyMgr->FindReclaimFeature(pos, features,
+				[economyMgr, unit](const CEconomyManager::SReclaimFeature& f) { return economyMgr->IsReclaimSafe(unit, f.pos); });
+		if (best != nullptr) {
+			position = best->pos;
 		}
 	}
 
