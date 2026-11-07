@@ -61,6 +61,8 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, isMetalFull(false)
 		, isEnergyStalling(false)
 		, isEnergyEmpty(false)
+		, isMetalStall(false)
+		, isEnergyStall(false)
 		, metalCurFrame(-1)
 		, metalPullFrame(-1)
 		, energyCurFrame(-1)
@@ -690,10 +692,16 @@ bool CEconomyManager::IsEnergyEmpty()
 	return isEnergyEmpty;
 }
 
-bool CEconomyManager::IsStalling()
+bool CEconomyManager::IsMetalStall()
 {
-	return (IsMetalEmpty() && (GetAvgMetalIncome() < GetMetalPull()))
-		|| (IsEnergyEmpty() && (GetAvgEnergyIncome() < GetEnergyPull()));
+	UpdateEconomy();
+	return isMetalStall;
+}
+
+bool CEconomyManager::IsEnergyStall()
+{
+	UpdateEconomy();
+	return isEnergyStall;
 }
 
 bool CEconomyManager::IsAllyOpenSpot(int spotId) const
@@ -1626,6 +1634,14 @@ void CEconomyManager::UpdateEconomy()
 	const float curEnergy = GetEnergyCur();
 	const float storEnergy = GetStorage(energyRes);
 	isEnergyEmpty = curEnergy < storEnergy * 0.1f;
+	// Stall latches: on when storage is nearly empty and pull beats income by 20%, off only once storage refills
+	// to twice the empty level, so an economy spent down to the threshold doesn't flicker the builder job rule
+	isMetalStall = isMetalStall
+			? (curMetal < storMetal * 0.4f)
+			: (isMetalEmpty && (GetAvgMetalIncome() * 1.2f < GetMetalPull()));
+	isEnergyStall = isEnergyStall
+			? (curEnergy < storEnergy * 0.2f)
+			: (isEnergyEmpty && (GetAvgEnergyIncome() * 1.2f < GetEnergyPull()));
 
 	if (ecoFrame <= efInfo.startFrame) {
 		energyFactor = efInfo.startFactor;
