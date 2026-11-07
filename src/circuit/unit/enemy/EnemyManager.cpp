@@ -23,6 +23,7 @@
 #include "WrappUnit.h"
 #include "Cheats.h"
 
+#include <algorithm>
 #include <limits>
 
 namespace circuit {
@@ -135,6 +136,82 @@ void CEnemyManager::UpdateEnemyDatas(CQuadField& quadField)
 //	if (!circuit->IsCheating()) {
 //		circuit->GetCheats()->SetEnabled(false);
 //	}
+}
+
+const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame, int seenFrames)
+{
+	if ((frame == blobFrame) && (seenFrames == blobSeenFrames)) {
+		return blobs;
+	}
+	blobFrame = frame;
+	blobSeenFrames = seenFrames;
+	blobs.clear();
+
+	constexpr float BLOB_RADIUS = 800.f;
+	constexpr size_t MAX_BLOBS = 8;
+	struct SMember {
+		AIFloat3 pos;
+		float threat;
+		float sum;
+		bool isTaken;
+	};
+	static std::vector<SMember> members;  // NOTE: micro-opt
+	members.clear();
+	for (const auto& kv : circuit->GetMapManager()->GetHostileUnits()) {
+		const CEnemyUnit* e = kv.second;
+		const CCircuitDef* cdef = e->GetCircuitDef();
+		// Known type, mobile, armed, finished, not proven gone; seen in LOS or radar now, or left radar recently
+		// (lastSeen is set when an enemy leaves radar, -1 while it is in radar).
+		// Surface fighters only: not aircraft, and able to shoot land or water (as the threat map's surface layer);
+		// merging ground groups doesn't answer gunships or AA
+		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsAbleToFly()
+			|| !(cdef->HasAntiLand() || cdef->HasAntiWater())
+			|| e->IsHidden() || e->IsBeingBuilt() || (e->GetThreat() <= 0.f))
+		{
+			continue;
+		}
+		const int lastSeen = e->GetLastSeen();
+		if (!e->IsInRadarOrLOS() && ((lastSeen == -1) || (frame - lastSeen > seenFrames))) {
+			continue;
+		}
+		members.push_back({e->GetPos(), e->GetThreat(), 0.f, false});
+	}
+	if (members.empty()) {
+		return blobs;
+	}
+
+	// O(n^2) once a second: a few hundred enemies at most
+	const float sqRadius = SQUARE(BLOB_RADIUS);
+	for (size_t i = 0; i < members.size(); ++i) {
+		members[i].sum += members[i].threat;
+		for (size_t j = i + 1; j < members.size(); ++j) {
+			if (members[i].pos.SqDistance2D(members[j].pos) < sqRadius) {
+				members[i].sum += members[j].threat;
+				members[j].sum += members[i].threat;
+			}
+		}
+	}
+	// Greedy: the hottest untaken seed takes the untaken enemies around it
+	std::sort(members.begin(), members.end(), [](const SMember& a, const SMember& b) { return a.sum > b.sum; });
+	for (SMember& seed : members) {
+		if (seed.isTaken) {
+			continue;
+		}
+		float threat = 0.f;
+		for (SMember& m : members) {
+			if (!m.isTaken && (m.pos.SqDistance2D(seed.pos) < sqRadius)) {
+				m.isTaken = true;
+				threat += m.threat;
+			}
+		}
+		blobs.push_back({seed.pos, threat});
+		if (blobs.size() >= MAX_BLOBS) {
+			break;
+		}
+	}
+	// Remaining sums can be lower than a later seed's: keep hottest first
+	std::sort(blobs.begin(), blobs.end(), [](const SEnemyBlob& a, const SEnemyBlob& b) { return a.threat > b.threat; });
+	return blobs;
 }
 
 void CEnemyManager::PrepareUpdate()

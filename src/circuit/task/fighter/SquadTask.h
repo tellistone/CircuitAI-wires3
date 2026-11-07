@@ -30,6 +30,10 @@ public:
 
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
+	// Abort/done moves units to the idle task without RemoveAssignee: give scooting units their move state back first
+	virtual void Stop(bool done) override;
+	// A destroyed unit needs no move state back: drop its scoot without sending it orders
+	virtual void OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 	virtual void Merge(ISquadTask* task);
 

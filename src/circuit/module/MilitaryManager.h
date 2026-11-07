@@ -60,10 +60,15 @@ public:
 	// Power an attack-bound group gathers at base before it leaves: max(quota.attack, enemy threat / allies)
 	float GetAttackGatherPower() const;
 	// Nearest attack group stronger than `power` that the group led by `unit` may join and can reach;
-	// nullptr if none. `self` is skipped.
-	CAttackTask* FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self = nullptr) const;
+	// nullptr if none. `self` is skipped. With `isRally` the rally host comes first, wherever it is
+	// (quota.attack_merge.rally); fleeing passes false and keeps the nearest stronger group.
+	CAttackTask* FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self = nullptr,
+			bool isRally = true) const;
 	// New attack task that walks to FindReinforceSquad(unit, power) and merges into it; nullptr if there is none
 	IFighterTask* EnqueueReinforce(CCircuitUnit* unit, float power);
+	// An attack-bound unit's first task: a gathering group at base (quota.attack_merge.base_gather true), else
+	// reinforce the rally host or the nearest compatible group, else a new attack group
+	IFighterTask* EnqueueAttackBound(CCircuitUnit* unit);
 	CRetreatTask* EnqueueRetreat();
 private:
 	void DequeueTask(IUnitTask* task, bool done = false);
@@ -245,6 +250,21 @@ public:
 		int reinforceRetry;  // frames to act as a small attack group after giving up, before looking again
 	};
 	const SAttackMerge& GetAttackMerge() const { return attackMerge; }
+	// quota.attack_merge.rally: when a recently seen enemy blob near our attack groups has more threat than
+	// match x the largest group's raw strength, every compatible attack group (and new unit) reinforces that group
+	// (the host) until it is (1 + margin) x match x the blob, or no blob is found for seen_sec. match 0 = off
+	struct SAttackRally {
+		float match = 0.f;
+		float margin = 0.25f;
+		float range = 3000.f;  // a blob starts a rally only within this of an attack group's leader; keeps one up to 1.5x
+		int seenFrames = FRAMES_PER_SEC * 20;  // enemies count only if seen this recently (seen_sec)
+		bool IsOn() const { return match > 0.f; }
+	};
+	// The rally's host while a rally is on (validated), else nullptr
+	CAttackTask* GetRallyHost() const;
+	// A rally is on and this group should reinforce its host: not the host, compatible with it
+	bool IsRallyJoiner(const CAttackTask* task) const;
+	const springai::AIFloat3& GetRallyBlobPos() const { return rallyBlobPos; }
 	// quota.attack_group_radius: [<x the group's range>, <min elmos>]; units farther from the leader are stragglers
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
 	// quota.attack_static_cells: attack groups route to safe firing cells around static targets
@@ -285,6 +305,14 @@ private:
 	void UpdateIdle();
 	void UpdateFight();
 	void UpdateCaptureHide();
+	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
+	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
+	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
+	// Host candidate: the strongest group (raw strength) in the movement class with the most total strength;
+	// prefer keeps that group if it is within 20% of the best
+	CAttackTask* PickRallyHost(const std::vector<CAttackTask*>& groups, CAttackTask* prefer) const;
+	// Ends the rally (log), starting the gap before the next one
+	void EndAttackRally(const char* reason, int frame);
 
 	void AddArmyCost(CCircuitUnit* unit);
 	void DelArmyCost(CCircuitUnit* unit);
@@ -402,6 +430,15 @@ private:
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
+	SAttackRally attackRally;  // quota.attack_merge.rally
+	bool attackBaseGather;  // quota.attack_merge.base_gather
+	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
+	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use
+	int rallyStartFrame;
+	int rallyEndFrame;  // a new rally can't start within RALLY_GAP_FRAMES of this
+	int rallyBlobFrame;  // last frame a qualifying blob was found
+	springai::AIFloat3 rallyBlobPos;
+	float rallyBlobThreat;
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
 	SAttackStaticCells attackStaticCells;  // quota.attack_static_cells
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
