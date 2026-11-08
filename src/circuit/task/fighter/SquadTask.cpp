@@ -249,7 +249,11 @@ ISquadTask* ISquadTask::GetMergeTask()
 
 bool ISquadTask::IsMustRegroup()
 {
-	if ((State::ENGAGE == state) || (updCount % 16 != 15)) {
+	// Checked every 16 updates. A regroup in line (the line stands while units walk to their slots) is also looked at
+	// on the updates between, only to end it early once the line is whole
+	const bool isCheck = (updCount % 16 == 15);
+	const bool isLineRegroup = (State::REGROUP == state) && formation.IsOn();
+	if ((State::ENGAGE == state) || (!isCheck && !isLineRegroup)) {
 		return false;
 	}
 
@@ -264,9 +268,11 @@ bool ISquadTask::IsMustRegroup()
 	static std::vector<CCircuitUnit*> stuckUnits;  // released after the loops over units
 //	validUnits.reserve(units.size());
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();;
-	// Units the line formation steers and that keep up don't count: the line waits for them, or they catch it up
+	// Units the line formation steers and that keep up don't count: the line waits for them, or they catch it up.
+	// While it stands for a regroup, only those in their slots: one still walking to its slot counts
 	for (CCircuitUnit* unit : units) {
-		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !formation.IsKeptUp(unit) &&
+		const bool isInLine = isLineRegroup ? formation.IsInSlot(unit) : formation.IsKeptUp(unit);
+		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !isInLine &&
 			terrainMgr->CanMoveToPos(unit->GetArea(), unit->GetPos(frame)))
 		{
 			validUnits.push_back(unit);
@@ -275,6 +281,22 @@ bool ISquadTask::IsMustRegroup()
 	if (validUnits.empty()) {
 		state = State::ROAM;
 		return false;
+	}
+	if (!isCheck) {
+		// Between checks: whole once every unit the line steers stands in its slot and the others are near
+		const float sqNear = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
+		bool isWhole = true;
+		for (CCircuitUnit* unit : validUnits) {
+			if (formation.IsSteered(unit) || (groupPos.SqDistance2D(unit->GetPos(frame)) > sqNear)) {
+				isWhole = false;
+				break;
+			}
+		}
+		validUnits.clear();
+		if (isWhole) {
+			state = State::ROAM;
+		}
+		return !isWhole;
 	}
 
 	if (State::REGROUP != state) {

@@ -228,6 +228,7 @@ float CFormation::AddMembers(int frame)
 			m.rank = cdef->GetFormationRow();
 		}
 		m.isStraggler = isOn;
+		m.isInSlot = false;
 		m.slotFrame = m.moveFrame = frame;
 		m.movePos = unit->GetPos(frame);
 		m.row = -1;
@@ -524,7 +525,8 @@ void CFormation::PlaceSlots(int frame, float pace, float leadSec, std::vector<CC
 		// a straggler, until it is back (the leader never is); so a unit that holds the line up does so for a while only
 		const bool isNear = (slotLag < leadSec * slowest / 2)
 				&& (m.pos.SqDistance2D(SlotAt(slotArc, x, mobileId)) < SQUARE(std::max(spacing, m.maxSpeed * SLOT_SEC)));
-		if (isNear || (&m == leaderM)) {
+		m.isInSlot = isNear || (&m == leaderM);
+		if (m.isInSlot) {
 			m.slotFrame = frame;
 			m.isStraggler = false;
 		} else if (frame >= m.slotFrame + STRAGGLE_FRAMES) {
@@ -582,6 +584,18 @@ bool CFormation::IsKeptUp(const CCircuitUnit* unit) const
 		return false;
 	}
 	return !it->second.isStraggler || (it->second.maxSpeed >= 1.1f * slowest);
+}
+
+bool CFormation::IsSteered(const CCircuitUnit* unit) const
+{
+	auto it = members.find(const_cast<CCircuitUnit*>(unit));
+	return isOn && (it != members.end()) && it->second.isSteered;
+}
+
+bool CFormation::IsInSlot(const CCircuitUnit* unit) const
+{
+	auto it = members.find(const_cast<CCircuitUnit*>(unit));
+	return isOn && (it != members.end()) && it->second.isSteered && it->second.isInSlot;
 }
 
 void CFormation::Reset()

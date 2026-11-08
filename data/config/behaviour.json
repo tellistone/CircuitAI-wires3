@@ -191,8 +191,9 @@
 // it has to narrow, while they aren't engaging; also while they flee or move to a quieter spot when cornered, rows in
 // reverse order (riots at the back, towards the pursuers) and waiting for no one, so they don't run bunched. Where no line of 2 fits (terrain, buildings) the
 // units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; when one
-// falls far behind, the usual regroup stops the line where it stands and the units take their slots in it (as a gather
-// where no line fits). At the end of its walk the group stands in line. Missing block or
+// falls far behind, the usual regroup stops the line where it stands (just after a fight: at the leader, facing the
+// nearest strong enemy group) and the units take their slots in it, until the line is whole (as a gather where no
+// line fits). At the end of its walk the group stands in line. Missing block or
 // "enable": false = groups walk as before, except that a holding group still takes a threat-capped path to a quiet spot
 // more than 256 elmos away instead of a straight move (it ends bunched on the path's last point, as it did before)
 "formation": {
