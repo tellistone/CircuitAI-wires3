@@ -59,6 +59,12 @@ static constexpr int MAX_CELL_CHECKS = 32;
 
 // Route ids for ReuseRoute/KeepRoute that aren't enemy ids
 static constexpr ICoreUnit::Id FRONT_ROUTE_ID = -1;  // FallbackFrontPos
+// quota.attack_merge.idle_merge: an army seeks a group to merge with only after this long without a target, so the
+// gap after a kill or a radar blip that drops out doesn't start a walk across the map
+static constexpr int IDLE_MERGE_DELAY_FRAMES = FRAMES_PER_SEC * 8;
+// Keep walking to the group we reinforce while it has at least this share of our power, though it may rank below us
+// now: one loss would otherwise turn two similar groups around (both walking to each other still merges them)
+static constexpr float REINFORCE_KEEP_SHARE = 0.8f;
 static constexpr ICoreUnit::Id REINFORCE_ROUTE_ID = -2;  // to the group we reinforce, or the rally host's meeting point
 static constexpr ICoreUnit::Id MEET_ROUTE_ID = -3;  // rally host to its meeting point
 // Routes to a group or a meeting point (ApplyGroupRoute) are kept this long, and while their goal (a moving group)
@@ -111,7 +117,8 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, reinforce(nullptr)
 		, reinforceFails(0)
 		, reinforceRetryFrame(-1)
-		, idleMergeFrame(-1)
+		, idleFrame(-1)
+		, isDecisionReuse(false)
 		, rallyRouteFrame(-1)
 		, meetFailPos(-RgtVector)
 		, isMeetWalk(false)
@@ -350,6 +357,7 @@ void CAttackTask::Update()
 void CAttackTask::Decide(int frame, bool isReuse)
 {
 	isHolding = false;  // re-set by HoldPosition if this decision finds nothing to go to
+	isDecisionReuse = isReuse;  // the target route's callbacks fall back with the same (FallbackFrontPos)
 
 	/*
 	 * Reinforce: a group under quota.attack walks to the nearest stronger group instead of hunting alone.
@@ -375,11 +383,12 @@ void CAttackTask::Decide(int frame, bool isReuse)
 			reinforce = rallyHost;
 		}
 	} else if (attackPower >= minPower) {
-		reinforce = nullptr;  // an army itself (grown by merges)
+		// An army itself (grown by merges): it picks targets first; reinforce is only the group it walks to when it
+		// has had nothing to attack for a while (SeekIdleMerge), kept until it attacks again
 	} else if ((reinforce == nullptr) && (State::ENGAGE != state) && (frame >= reinforceRetryFrame)) {
 		reinforce = militaryMgr->FindReinforceSquad(leader, attackPower, this);
 	}
-	if ((reinforce != nullptr) && (GetReinforceSquad() != nullptr)) {
+	if ((reinforce != nullptr) && (attackPower < minPower || isJoiner) && (GetReinforceSquad() != nullptr)) {
 		// Fight back on the way; otherwise keep walking
 		if (EngageInRange(frame, true)) {
 			return;
@@ -403,6 +412,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	// Also on enemy-held ground (influence < 0): FindTarget judges threat at the target and along the approach line.
 	// With nothing to go for there, FallbackFrontPos holds nearby instead of walking back.
 	if (EngageInRange(frame, false)) {
+		SetHasTarget();
 		return;
 	}
 	state = State::ROAM;
@@ -414,6 +424,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		return;
 	}
 	if (isReuse && ReuseRoute(target->GetId(), position, frame)) {  // position: GetRangePos (FindTarget)
+		SetHasTarget();
 		return;
 	}
 	// Route-aware pick: one capped route to all candidates; whichever it reaches first becomes the target,
@@ -566,7 +577,7 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 		return nullptr;
 	}
 	const bool isFast = (attackPower < minPower) || (militaryMgr->GetRallyHost() == this)
-			|| militaryMgr->IsRallyJoiner(this) || IsIdleMerging(manager->GetCircuit()->GetLastFrame());
+			|| militaryMgr->IsRallyJoiner(this) || (reinforce != nullptr);  // an army walking to merge (SeekIdleMerge)
 	return (isFast ? isSmallTick : isArmyTick) ? CheckMergeTask() : nullptr;
 }
 
@@ -602,11 +613,14 @@ void CAttackTask::AbsorbWeakerTasks()
 	// small group's side.
 	// The rally host (quota.attack_merge.rally) absorbs any compatible group, armies too, whatever its own size
 	// A rally host with a joiner within the merge distance checks every 2 updates, so the merge fires while it waits
+	// Any group walking to us (reinforce: ours) is absorbed too, whatever either size: a walker that kept us as its
+	// group though we now rank below it (REINFORCE_KEEP_SHARE) can't join us from its side (CheckMergeTask)
 	const bool isHost = (GetMilitaryMgr()->GetRallyHost() == this);
 	const int absorbInterval = (isHost && isJoinerNear) ? 2 : GetMilitaryMgr()->GetAttackMerge().absorb;
-	if ((!isHost && (attackPower < minPower)) || (updCount % absorbInterval != 5 % absorbInterval)) {
+	if (updCount % absorbInterval != 5 % absorbInterval) {
 		return;
 	}
+	const bool isArmy = (attackPower >= minPower);
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
@@ -618,7 +632,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		CCircuitUnit* candyLeader = candy->GetLeader();
 		// Cheap checks first; the small group walks to us, so the line is judged from its side
 		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
-			|| (!isHost && (candy->GetAttackPower() >= minPower))
+			|| (!isHost && (candy->reinforce != this) && (!isArmy || (candy->GetAttackPower() >= minPower)))
 			|| !CanAssignTo(candyLeader)
 			|| candy->IsFighting()  // let it finish its fight (it doesn't join either)
 			|| !terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)
@@ -645,16 +659,17 @@ CAttackTask* CAttackTask::GetReinforceSquad()
 	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(fightType);
 	if ((tasks.find(static_cast<IFighterTask*>(reinforce)) != tasks.end()) && !reinforce->IsDead()
 		&& (reinforce->GetLeader() != nullptr)
-		&& ((reinforce->GetAttackPower() > attackPower) || (reinforce == militaryMgr->GetRallyHost())))
+		&& ((reinforce->GetAttackPower() >= REINFORCE_KEEP_SHARE * attackPower)
+			|| (reinforce == militaryMgr->GetRallyHost())))
 	{
 		return reinforce;  // a rally host is kept whatever its size
 	}
-	// Group gone or no longer stronger: pick the nearest other stronger one
+	// Group gone or now clearly weaker: pick the nearest one ranked above us
 	reinforce = militaryMgr->FindReinforceSquad(leader, attackPower, this);
 	return reinforce;
 }
 
-void CAttackTask::Reinforce(const int frame, bool isReuse, bool isIdle)
+void CAttackTask::Reinforce(const int frame, bool isReuse)
 {
 	SetTarget(nullptr);
 	state = State::ROAM;
@@ -689,8 +704,8 @@ void CAttackTask::Reinforce(const int frame, bool isReuse, bool isIdle)
 	const float mergeReach = std::min(cfg.distance, cfg.travelSec * lowestSpeed);
 	const float pathRange = std::min(cfg.reinforceRange, mergeReach * 0.8f);
 	const float slack = GROUP_ROUTE_SLACK * startPos.distance2D(goal);
-	RunGroupRoute(frame, goal, pathRange, [this, goal, isToMeet, slack, isIdle](const CQueryPathSingle* query) {
-		this->ApplyReinforcePath(query, goal, isToMeet, slack, isIdle);
+	RunGroupRoute(frame, goal, pathRange, [this, goal, isToMeet, slack](const CQueryPathSingle* query) {
+		this->ApplyReinforcePath(query, goal, isToMeet, slack);
 	});
 }
 
@@ -718,8 +733,7 @@ bool CAttackTask::PickRallyGoal(int frame, AIFloat3& inOutGoal, bool& outIsToMee
 	return true;
 }
 
-void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloat3& goal, bool isToMeet, float slack,
-		bool isIdle)
+void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloat3& goal, bool isToMeet, float slack)
 {
 	if (ApplyGroupRoute(query, REINFORCE_ROUTE_ID, goal, slack)) {
 		reinforceFails = 0;
@@ -740,8 +754,8 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 		HoldPosition();
 		return;
 	}
-	if (isIdle) {
-		HoldPosition();  // nothing to attack and no safe route to the group yet: hold nearby, try again next decision
+	if (attackPower >= minPower) {
+		HoldPosition();  // an army merging for want of a target, no safe route yet: hold nearby, retry next decision
 	}
 	const CMilitaryManager::SAttackMerge& cfg = GetMilitaryMgr()->GetAttackMerge();
 	if (++reinforceFails >= cfg.reinforceFails) {
@@ -755,68 +769,38 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 }
 
 /*
- * Idle merging (quota.attack_merge.idle_merge): a group with nothing to attack walks to another group and merges
+ * Idle merging (quota.attack_merge.idle_merge): an army with nothing to attack walks to another group and merges
  */
 
-bool CAttackTask::IsIdleMerging(int frame) const
+void CAttackTask::SetHasTarget()
 {
-	constexpr int IDLE_MERGE_MEMORY_FRAMES = FRAMES_PER_SEC * 5;  // a decision every ~2 s, with a margin
-	return (idleMergeFrame >= 0) && (frame - idleMergeFrame < IDLE_MERGE_MEMORY_FRAMES);
-}
-
-CAttackTask* CAttackTask::FindIdleMergeHost(int frame) const
-{
-	// The nearest group that ranks above us (more attack power; on a tie, the lower leader id), that we may join
-	// (IsCompatible from its side: speed ratio, movement type, never a worse mover than its leader) and can reach.
-	// No distance limit: the goal is one army. The route there is threat-capped like any reinforce route
-	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
-	const AIFloat3& pos = leader->GetPos(frame);
-	const ICoreUnit::Id ourId = leader->GetId();
-	CAttackTask* best = nullptr;
-	float minSqDist = std::numeric_limits<float>::max();
-	for (IFighterTask* t : militaryMgr->GetTasks(fightType)) {
-		CAttackTask* candy = static_cast<CAttackTask*>(t);
-		CCircuitUnit* candyLeader = candy->GetLeader();
-		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)) {
-			continue;
-		}
-		const float power = candy->GetAttackPower();
-		if ((power < attackPower) || ((power == attackPower) && (candyLeader->GetId() >= ourId))) {
-			continue;  // ranks below us: it comes to us (if it is idle too)
-		}
-		if (!candy->IsCompatible(leader) || !candy->IsRoomFor(units.size())) {
-			continue;
-		}
-		const AIFloat3& candyPos = candyLeader->GetPos(frame);
-		const float sqDist = pos.SqDistance2D(candyPos);
-		if ((sqDist >= minSqDist) || !terrainMgr->CanMoveToPos(leader->GetArea(), candyPos)) {
-			continue;
-		}
-		minSqDist = sqDist;
-		best = candy;
+	idleFrame = -1;
+	if ((attackPower >= minPower) && (GetMilitaryMgr()->GetRallyHost() != reinforce)) {
+		reinforce = nullptr;  // attacking again: no longer walking to merge
 	}
-	return best;
 }
 
 bool CAttackTask::SeekIdleMerge(int frame, bool isReuse)
 {
-	// Not during a rally (its host and joiners have their own rules), nor for a while after our routes to a group kept
-	// coming back empty (reinforce_fails, then reinforce_retry: the front fallback meanwhile)
+	// Only armies: a smaller group reinforces already (Decide). Only after IDLE_MERGE_DELAY_FRAMES without a target;
+	// not during a rally (its host and joiners have their own rules), nor for a while after our routes to a group
+	// kept coming back empty (reinforce_fails, then reinforce_retry: the front fallback meanwhile)
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	if (!militaryMgr->IsAttackIdleMerge() || (frame < reinforceRetryFrame)
-		|| (militaryMgr->GetRallyHost() == this) || militaryMgr->IsRallyJoiner(this))
+	if (idleFrame < 0) {
+		idleFrame = frame;
+	}
+	if (!militaryMgr->IsAttackIdleMerge() || (attackPower < minPower) || (frame < idleFrame + IDLE_MERGE_DELAY_FRAMES)
+		|| (frame < reinforceRetryFrame) || (militaryMgr->GetRallyHost() == this) || militaryMgr->IsRallyJoiner(this))
 	{
 		return false;
 	}
-	CAttackTask* host = FindIdleMergeHost(frame);
-	if (host == nullptr) {
-		return false;  // we are the top of our class: hold at the front, the others come to us
+	// The group we walk to, kept while it has REINFORCE_KEEP_SHARE of our power, else the nearest one ranked above us.
+	// None: we are the top of our class, hold at the front and the others come to us
+	if (GetReinforceSquad() == nullptr) {
+		return false;
 	}
-	reinforce = host;  // an army clears it at its next decision (Decide) and looks again if still idle
-	idleMergeFrame = frame;
 	ClearScaleAnchor();  // walking to a group, not into an accepted fight
-	Reinforce(frame, isReuse, true);
+	Reinforce(frame, isReuse);
 	return true;
 }
 
@@ -1772,7 +1756,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		// No candidate reachable within our threat cap: drop the target and head for the front
 		SetTarget(nullptr);
 		ClearScaleAnchor();
-		FallbackFrontPos();
+		FallbackFrontPos(isDecisionReuse);
 		return;
 	}
 
@@ -1814,7 +1798,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 				return;
 			}
 			ClearScaleAnchor();
-			FallbackFrontPos();
+			FallbackFrontPos(isDecisionReuse);
 			return;
 		}
 		if (!isAnchored) {
@@ -1822,6 +1806,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		}
 		SetTarget(reached);
 		position = rangePos;
+		SetHasTarget();
 	}
 	pPath = path;
 	ActivePath(lowestSpeed);

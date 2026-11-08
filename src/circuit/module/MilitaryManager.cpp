@@ -1120,6 +1120,12 @@ float CMilitaryManager::GetAttackGatherPower() const
 	return std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
 }
 
+bool CMilitaryManager::IsRankedAbove(float power, const CCircuitUnit* leader, float otherPower,
+		const CCircuitUnit* otherLeader)
+{
+	return (power > otherPower) || ((power == otherPower) && (leader->GetId() < otherLeader->GetId()));
+}
+
 CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self,
 		bool isRally) const
 {
@@ -1136,8 +1142,8 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float powe
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
 		CAttackTask* squad = static_cast<CAttackTask*>(t);
 		CCircuitUnit* squadLeader = squad->GetLeader();
-		if ((squad == self) || squad->IsDead() || (squadLeader == nullptr) || (squad->GetAttackPower() <= power)
-			|| !squad->IsCompatible(unit))
+		if ((squad == self) || squad->IsDead() || (squadLeader == nullptr)
+			|| !IsRankedAbove(squad->GetAttackPower(), squadLeader, power, unit) || !squad->IsCompatible(unit))
 		{
 			continue;
 		}
