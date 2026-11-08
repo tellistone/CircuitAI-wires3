@@ -423,6 +423,12 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		FallbackFrontPos(isReuse);
 		return;
 	}
+	if (IsMergeFirst(frame)) {  // the group we'd merge with is nearer than the target: merge, then hunt together
+		SetTarget(nullptr);
+		ClearScaleAnchor();  // walking to a group, not into an accepted fight
+		Reinforce(frame, isReuse);
+		return;
+	}
 	if (isReuse && ReuseRoute(target->GetId(), position, frame)) {  // position: GetRangePos (FindTarget)
 		SetHasTarget(frame, true);
 		return;
@@ -794,7 +800,7 @@ void CAttackTask::SetHasTarget(int frame, bool isHunt)
 	}
 }
 
-bool CAttackTask::SeekIdleMerge(int frame, bool isReuse)
+bool CAttackTask::IsIdleMergeOn(int frame)
 {
 	// Armies only: a smaller group reinforces already (Decide), the rally host and its joiners have their own rules.
 	// An army's reinforce is the group it walks to: kept through fights on the way (SetHasTarget), dropped here when
@@ -806,6 +812,14 @@ bool CAttackTask::SeekIdleMerge(int frame, bool isReuse)
 	}
 	if (!militaryMgr->IsAttackIdleMerge() || (frame < reinforceRetryFrame)) {
 		reinforce = nullptr;
+		return false;
+	}
+	return true;
+}
+
+bool CAttackTask::SeekIdleMerge(int frame, bool isReuse)
+{
+	if (!IsIdleMergeOn(frame)) {
 		return false;
 	}
 	// A new walk starts only after IDLE_MERGE_DELAY_FRAMES without a target (not after every kill or lost blip):
@@ -821,6 +835,33 @@ bool CAttackTask::SeekIdleMerge(int frame, bool isReuse)
 	ClearScaleAnchor();  // walking to a group, not into an accepted fight
 	Reinforce(frame, isReuse);
 	return true;
+}
+
+bool CAttackTask::IsMergeFirst(int frame)
+{
+	// We picked a target (position: its range spot), but the group we'd merge with is nearer: merge first, and the
+	// merged army hunts. While we walk to it, only a target at under BREAK_OFF_SHARE of its distance breaks the walk
+	// off, so the two distances don't trade places back and forth as both move. A target in range is fought before
+	// this (EngageInRange); with no group ranked above us (the top of our class) we hunt as before
+	constexpr float BREAK_OFF_SHARE = 0.5f;
+	if (!IsIdleMergeOn(frame)) {
+		return false;
+	}
+	const bool wasWalking = (reinforce != nullptr);
+	CAttackTask* host = GetReinforceSquad();
+	if (host == nullptr) {
+		return false;
+	}
+	const AIFloat3& pos = leader->GetPos(frame);
+	const float sqHostDist = pos.SqDistance2D(host->GetLeaderPos(frame));
+	const float share = wasWalking ? BREAK_OFF_SHARE : 1.f;
+	if (pos.SqDistance2D(position) >= SQUARE(share) * sqHostDist) {
+		return true;
+	}
+	if (!wasWalking) {
+		reinforce = nullptr;  // hunting; a walk broken off ends when the target's route is accepted (SetHasTarget)
+	}
+	return false;
 }
 
 void CAttackTask::RunGroupRoute(int frame, const AIFloat3& goal, float range,

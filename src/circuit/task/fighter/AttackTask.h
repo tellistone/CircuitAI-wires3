@@ -141,10 +141,16 @@ private:
 	void AbsorbWeakerTasks();
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame, bool isReuse);
-	// quota.attack_merge.idle_merge: an army without a target for a while reinforces the group GetReinforceSquad picks
-	// (ranked above us: CMilitaryManager::IsRankedAbove) and merges with it; false: not yet idle long enough, no
-	// such group, or none we could route to lately
+	// quota.attack_merge.idle_merge: on for this group now (an army outside the rally, not waiting after failed
+	// routes to a group); off, or waiting: drops an army's reinforce
+	bool IsIdleMergeOn(int frame);
+	// An army without a target for a while reinforces the group GetReinforceSquad picks (ranked above us:
+	// CMilitaryManager::IsRankedAbove) and merges with it; false: not yet idle long enough, no such group, or none we
+	// could route to lately
 	bool SeekIdleMerge(int frame, bool isReuse);
+	// An army with a target out of range: the group GetReinforceSquad picks is nearer than the target (while walking
+	// to it: unless the target is under half its distance), so merge first
+	bool IsMergeFirst(int frame);
 	// A fight here (isHunt false) or a target route accepted (true): the idle clock restarts; a hunt also ends an
 	// army's walk to merge
 	void SetHasTarget(int frame, bool isHunt);
