@@ -80,6 +80,12 @@ public:
 	bool IsMetalFull();
 	bool IsEnergyStalling();
 	bool IsEnergyEmpty();
+	// Stall latches (UpdateEconomy): on while a resource runs short, so build power added now only slows every job
+	bool IsMetalStall();
+	bool IsEnergyStall();
+	bool IsStalling() { return IsMetalStall() || IsEnergyStall(); }
+	// Short of energy: worse off than metal (IsEnergyStalling), or the energy stall latch is on
+	bool IsEnergyShort() { return IsEnergyStalling() || IsEnergyStall(); }
 	bool IsExcessed() const { return metalProduced > metalUsed; }
 	int GetBuildDelay() const { return buildDelay; }
 
@@ -88,6 +94,9 @@ public:
 	void SetOpenSpot(int spotId, bool value);
 	bool IsIgnorePull(const IBuilderTask* task) const;
 	bool IsIgnoreStallingPull(const IBuilderTask* task) const;
+	// A job the stall rule lets builders start or join: a building that ends the current stall (mex or pylon in a
+	// metal stall, energy in an energy stall), or a NOW factory (the replacement, or the early factory)
+	bool IsStallFix(const IBuilderTask* task) const;
 
 	IBuilderTask* MakeEconomyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateMetalTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
@@ -257,6 +266,8 @@ private:
 	bool isMetalFull;
 	bool isEnergyStalling;
 	bool isEnergyEmpty;
+	bool isMetalStall;
+	bool isEnergyStall;
 
 	int metalCurFrame;
 	int metalPullFrame;

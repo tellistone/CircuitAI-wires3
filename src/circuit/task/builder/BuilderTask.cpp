@@ -183,6 +183,30 @@ void IBuilderTask::Cancel()
 	// Destructor will take care of the nextTask queue
 }
 
+void IBuilderTask::ChangePriority(Priority value)
+{
+	const float oldPriority = ClampPriority();
+	priority = value;
+	if (ClampPriority() == oldPriority) {
+		return;  // same ZK build priority (NOW and HIGH both send 2)
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (target != nullptr) {
+		TRY_UNIT(circuit, target,
+			// Only a frame: on a finished unit (a repair target such as a factory) it would change its own priority
+			if (target->GetUnit()->IsBeingBuilt()) {
+				target->CmdPriority(ClampPriority());
+			}
+		)
+	}
+	const std::set<CCircuitUnit*> assignees = units;  // a failed command garbages the unit
+	for (CCircuitUnit* unit : assignees) {
+		TRY_UNIT(circuit, unit,
+			unit->CmdPriority(ClampPriority());
+		)
+	}
+}
+
 void IBuilderTask::Execute(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();

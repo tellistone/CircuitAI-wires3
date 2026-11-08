@@ -106,6 +106,9 @@ public:
 	IBuilderTask* GetNextTask() const { return nextTask; }
 
 	float ClampPriority() const { return std::min(static_cast<float>(priority), 2.0f); }
+	// Set the priority and send ZK's build priority to the placed frame and the builders on it. SetPriority alone
+	// only changes the job rank: Execute sends the build priority once, when a builder starts
+	void ChangePriority(Priority value);
 
 protected:
 	CCircuitUnit* GetNextAssignee();

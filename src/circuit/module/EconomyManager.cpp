@@ -36,6 +36,8 @@
 
 namespace circuit {
 
+#define STALL_REFILL	0.05f  // share of storage that ends a stall latch
+
 using namespace springai;
 
 #define PYLON_RANGE		500.0f
@@ -61,6 +63,8 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, isMetalFull(false)
 		, isEnergyStalling(false)
 		, isEnergyEmpty(false)
+		, isMetalStall(false)
+		, isEnergyStall(false)
 		, metalCurFrame(-1)
 		, metalPullFrame(-1)
 		, energyCurFrame(-1)
@@ -690,6 +694,29 @@ bool CEconomyManager::IsEnergyEmpty()
 	return isEnergyEmpty;
 }
 
+bool CEconomyManager::IsStallFix(const IBuilderTask* task) const
+{
+	// Unlike IsIgnoreStallingPull, no mex while only energy stalls: a mex costs energy too. Reads the latches as the
+	// caller's IsStalling left them this pick. A NOW factory is the AI's way back to making constructors: without
+	// it a stall that lasts (energy jobs keep the pull up) would leave it with none
+	const IBuilderTask::BuildType type = task->GetBuildType();
+	return (isMetalStall && ((type == IBuilderTask::BuildType::MEX) || (type == IBuilderTask::BuildType::PYLON)))
+		|| (isEnergyStall && (type == IBuilderTask::BuildType::ENERGY))
+		|| ((type == IBuilderTask::BuildType::FACTORY) && (task->GetPriority() == IBuilderTask::Priority::NOW));
+}
+
+bool CEconomyManager::IsMetalStall()
+{
+	UpdateEconomy();
+	return isMetalStall;
+}
+
+bool CEconomyManager::IsEnergyStall()
+{
+	UpdateEconomy();
+	return isEnergyStall;
+}
+
 bool CEconomyManager::IsAllyOpenSpot(int spotId) const
 {
 	return IsOpenSpot(spotId) && circuit->GetMetalManager()->IsOpenSpot(spotId);
@@ -758,7 +785,7 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	// Mex and reclaim are both searched on every pass (reclaim costs no energy, so a stall doesn't stop it);
 	// the job picker then chooses between them by travel and priority.
 	// Geo isn't only a stall fix: a free vent is the cheapest energy there is, so look for one on every pass
-	IBuilderTask* task = IsEnergyStalling() ? UpdateEnergyTasks(position, unit) : UpdateGeoTasks(position, unit);
+	IBuilderTask* task = IsEnergyShort() ? UpdateEnergyTasks(position, unit) : UpdateGeoTasks(position, unit);
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
 	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);
 
@@ -1021,7 +1048,7 @@ IBuilderTask* CEconomyManager::UpdateGeoTasks(const AIFloat3& position, CCircuit
 		}
 		const AIFloat3 ventPos = FindGeoSpot(engy.cdef, position, unit);  // also checks safety and reach
 		if (utils::is_valid(ventPos)) {
-			const IBuilderTask::Priority priority = IsEnergyStalling() ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
+			const IBuilderTask::Priority priority = IsEnergyShort() ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
 			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
 			IBuilderTask* task = builderMgr->EnqueueTask(priority, engy.cdef, ventPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
 			task->SetBuildPos(ventPos);
@@ -1041,12 +1068,19 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// check energy / metal ratio
 	float metalIncome = GetAvgMetalIncome();
 	const float energyIncome = GetAvgEnergyIncome();
-	const bool isEnergyStalling = IsEnergyStalling();
+	const bool isEnergyStalling = IsEnergyShort();
 	// TODO: e-stalling needs separate array of energy-defs sorted by cost
 
 	// Select proper energy UnitDef to build
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	// Budget for energy jobs. Normally a time-scaled share of the lower income. Short of energy, that share shrinks
+	// with the shortage and caps energy at 1-2 jobs. ZK's high build priority gives energy jobs the scarce energy
+	// first, so in a shortage budget by metal income instead: enough jobs to soak up the energy and spare metal.
+	// Not while metal stalls too: that metal is short as well, and energy jobs would take it from mex jobs.
 	metalIncome = std::min(metalIncome, energyIncome) * energyFactor;
+	if (isEnergyStalling && !IsMetalStall()) {
+		metalIncome = std::max(metalIncome, GetAvgMetalIncome());
+	}
 	const float buildPower = std::min(builderMgr->GetBuildPower(), metalIncome);
 	const int taskSize = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
 	const float maxBuildTime = MAX_BUILD_SEC * (isEnergyStalling ? 0.25f : 1.f);
@@ -1444,9 +1478,10 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
 		lastFacFrame = frame;
-		IBuilderTask::Priority priority = (builderMgr->GetWorkerCount() <= 2) ?
-										  IBuilderTask::Priority::NOW :
-										  IBuilderTask::Priority::NORMAL;
+		// NOW while few constructors, or while no factory of ours can make constructors (the replacement job was lost)
+		IBuilderTask::Priority priority = ((builderMgr->GetWorkerCount() <= 2) || !factoryMgr->HasBuilderFactory(frame))
+				? IBuilderTask::Priority::NOW
+				: IBuilderTask::Priority::NORMAL;
 		return builderMgr->EnqueueFactory(priority, facDef, buildPos);
 	}
 
@@ -1484,7 +1519,7 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 	if (!storeTasks.empty()) {
 		if (isReclaimStore) {
 			for (IBuilderTask* t : storeTasks) {
-				t->SetPriority(IBuilderTask::Priority::NOW);  // upgrade the one already queued
+				t->ChangePriority(IBuilderTask::Priority::NOW);  // upgrade the one already queued
 			}
 		}
 		return UpdatePylonTasks();
@@ -1650,6 +1685,15 @@ void CEconomyManager::UpdateEconomy()
 	const float curEnergy = GetEnergyCur();
 	const float storEnergy = GetStorage(energyRes);
 	isEnergyEmpty = curEnergy < storEnergy * 0.1f;
+	// Stall latches (the builder rule's CBuilderManager::IsStallSpend): on below half the refill level with pull above
+	// income x 1.2; off once storage is back at the refill level or income catches up with pull. The gap between
+	// the two keeps the rule from flickering, and the income test ends it as soon as constructors stop adding pull.
+	auto latch = [](bool isOn, float cur, float stor, float income, float pull) {
+		const float refill = stor * STALL_REFILL;
+		return isOn ? ((cur < refill) && (income < pull)) : ((cur < refill * 0.5f) && (income * 1.2f < pull));
+	};
+	isMetalStall = latch(isMetalStall, curMetal, storMetal, GetAvgMetalIncome(), GetMetalPull());
+	isEnergyStall = latch(isEnergyStall, curEnergy, storEnergy, GetAvgEnergyIncome(), GetEnergyPull());
 
 	if (ecoFrame <= efInfo.startFrame) {
 		energyFactor = efInfo.startFactor;

@@ -718,7 +718,7 @@ IBuilderTask* CBuilderManager::EnqueueRepair(IBuilderTask::Priority priority,
 	if (it != repairedUnits.end()) {
 		task = it->second;
 		if (static_cast<int>(priority) > static_cast<int>(task->GetPriority())) {
-			task->SetPriority(priority);  // upgrade, e.g. HIGH left over from retreat
+			task->ChangePriority(priority);  // upgrade, e.g. HIGH left over from retreat
 		}
 	} else {
 		task = new CBRepairTask(this, priority, target, timeout);
@@ -1252,10 +1252,13 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	}
 
 	IBuilderTask* task = MakeBuilderTask(unit, pQuery.get());
-	if ((task == nullptr) && (commState != nullptr) && !commState->IsComm() && (unit->GetTask() == idleTask)
-		&& !IsCommJobSafe(commState, pos))
+	// A constructor idle with no job while stalling (only reclaim is allowed, and there's none) or in a flee zone with
+	// no safe job: look again in a while, not with a new cost map and feature scan every update. Not a commander: it
+	// keeps asking, so a fight at home (IsHomeFight above) isn't delayed
+	if ((task == nullptr) && (unit->GetTask() == idleTask)
+		&& ((!cdef->IsRoleComm() && circuit->GetEconomyManager()->IsStalling())
+			|| ((commState != nullptr) && !commState->IsComm() && !IsCommJobSafe(commState, pos))))
 	{
-		// Idle in a flee zone with no safe job: look again in a while, not with a new cost map every update
 		return EnqueueWait(BUILDER_IDLE_WAIT);
 	}
 	return task;
@@ -1271,6 +1274,22 @@ const CBuilderManager::SJobRank& CBuilderManager::GetJobRank(const IBuilderTask*
 			return (isEnergyStalling && (task->GetBuildType() == IBuilderTask::BuildType::MEX)) ? jobRanks[1] : jobRanks[2];
 		default:                             return jobRanks[3];  // NOW
 	}
+}
+
+// While stalling (CEconomyManager::IsStalling): would unit add its build power to spending? Spending = a building
+// (placed or not), terraform, or repairing an unfinished unit; reclaim and finished-unit repair are free (guard and
+// patrol jobs are never candidates). Its own job never counts, nor a stall fix (IsStallFix): it runs at ZK's high
+// build priority (CmdPriority), so it takes the scarce resource first and more builders on it do finish it sooner
+static bool IsStallSpend(const CEconomyManager* economyMgr, const IBuilderTask* task, const CCircuitUnit* unit)
+{
+	if (task == unit->GetTask()) {
+		return false;
+	}
+	const IBuilderTask::BuildType type = task->GetBuildType();
+	const CCircuitUnit* target = task->GetTarget();
+	const bool isSpend = (task->GetBuildDef() != nullptr) || (type == IBuilderTask::BuildType::TERRAFORM)
+		|| ((type == IBuilderTask::BuildType::REPAIR) && (target != nullptr) && target->GetUnit()->IsBeingBuilt());
+	return isSpend && !economyMgr->IsStallFix(task);
 }
 
 // Travel cost from pos to a job at buildPos on the builder's cost map, at least COST_BASE; < 0 = path blocked by buildings
@@ -1322,6 +1341,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
+	// While metal or energy stalls, no new spending (urgent jobs included): more build power only spreads the stall
+	const bool isStalling = economyMgr->IsStalling();
 	// Never send the commander into a flee zone, measured at the line the flee stops at; nullptr = flee off.
 	// Hide mode's territory test goes with the flee
 	const SCommState* commState = GetCommState(unit);
@@ -1330,7 +1351,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 			const bool isNow = (candidate->GetPriority() == IBuilderTask::Priority::NOW);
 			if ((isNow && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
 				|| !candidate->CanAssignTo(unit)
-				|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr)))
+				|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr))
+				|| (isStalling && IsStallSpend(economyMgr, candidate, unit)))
 			{
 				continue;
 			}
@@ -1390,10 +1412,22 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 		((unit->GetTask()->GetType() != IUnitTask::Type::BUILDER) || (static_cast<IBuilderTask*>(unit->GetTask())->GetBuildType() != IBuilderTask::BuildType::GUARD)))
 	{
 		CCircuitUnit* vip = circuit->GetFactoryManager()->GetClosestFactory(pos);
-		if ((vip != nullptr) && IsCommJobSafe(commState, vip->GetPos(frame))) {
-			task = EnqueueGuard(IBuilderTask::Priority::NORMAL, vip, FRAMES_PER_SEC * 60);
-		} else {
-			task = EnqueuePatrol(IBuilderTask::Priority::LOW, pos, .0f, FRAMES_PER_SEC * 5);
+		// Guarding the factory adds build power to it, and a patrol helps any frame in reach: while stalling, reclaim
+		// nearby first and patrol only if there is none that is safe and inside the hide range (as the loop above)
+		if (isStalling) {
+			task = economyMgr->UpdateReclaimTasks(pos, unit, true);
+			if ((task != nullptr) && (!IsCommJobSafe(commState, task->GetPosition())
+				|| ((sqMaxBaseRange > 0.f) && (basePos.SqDistance2D(task->GetPosition()) > sqMaxBaseRange))))
+			{
+				task = nullptr;  // left queued for constructors
+			}
+		}
+		if (task == nullptr) {
+			if ((vip != nullptr) && !isStalling && IsCommJobSafe(commState, vip->GetPos(frame))) {
+				task = EnqueueGuard(IBuilderTask::Priority::NORMAL, vip, FRAMES_PER_SEC * 60);
+			} else {
+				task = EnqueuePatrol(IBuilderTask::Priority::LOW, pos, .0f, FRAMES_PER_SEC * 5);
+			}
 		}
 	}
 
@@ -1413,7 +1447,9 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 //	if (task != nullptr) {
 //		return task;
 //	}
-	const bool isNotReady = !economyMgr->IsExcessed() || IsMetalStalling();
+	const bool isNotReady = !economyMgr->IsExcessed();  // rarely true with excess -1 (economy.json); stalls are below
+	// While metal or energy stalls, no new spending (urgent jobs included): more build power only spreads the stall
+	const bool isStalling = economyMgr->IsStalling();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CInfluenceMap* inflMap = circuit->GetInflMap();
@@ -1441,7 +1477,8 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 				|| !candidate->CanAssignTo(unit)
 				|| (isNotReady && !isNow
 					&& (candidate->GetBuildDef() != nullptr)
-					&& !economyMgr->IsIgnoreStallingPull(candidate)))
+					&& !economyMgr->IsIgnoreStallingPull(candidate))
+				|| (isStalling && IsStallSpend(economyMgr, candidate, unit)))
 			{
 				continue;
 			}
@@ -1508,7 +1545,8 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 		if (!IsCommJobSafe(commState, pos)) {
 			return nullptr;  // a builder with the flee on makes no job where it stands inside a flee zone
 		}
-		task = CreateBuilderTask(pos, unit);
+		// Stalling: no new building from an idle constructor, only reclaim anywhere on the map
+		task = isStalling ? economyMgr->UpdateReclaimTasks(pos, unit, false) : CreateBuilderTask(pos, unit);
 	}
 
 	return const_cast<IBuilderTask*>(task);
