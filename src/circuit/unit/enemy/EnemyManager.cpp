@@ -139,13 +139,15 @@ void CEnemyManager::UpdateEnemyDatas(CQuadField& quadField)
 //	}
 }
 
-const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame, int seenFrames)
+const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame, int seenFrames, bool isRaiders)
 {
-	if ((frame == blobFrame) && (seenFrames == blobSeenFrames)) {
+	SBlobCache& cache = blobCaches[isRaiders ? 1 : 0];
+	std::vector<SEnemyBlob>& blobs = cache.blobs;
+	if ((frame == cache.frame) && (seenFrames == cache.seenFrames)) {
 		return blobs;
 	}
-	blobFrame = frame;
-	blobSeenFrames = seenFrames;
+	cache.frame = frame;
+	cache.seenFrames = seenFrames;
 	blobs.clear();
 
 	constexpr float BLOB_RADIUS = 800.f;
@@ -167,7 +169,8 @@ const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame,
 		// merging ground groups doesn't answer gunships or AA
 		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsAbleToFly()
 			|| !(cdef->HasAntiLand() || cdef->HasAntiWater())
-			|| e->IsHidden() || e->IsBeingBuilt() || (e->GetThreat() <= 0.f))
+			|| e->IsHidden() || e->IsBeingBuilt() || (e->GetThreat() <= 0.f)
+			|| (isRaiders && !cdef->IsEnemyRoleAny(CCircuitDef::RoleMask::RAIDER)))
 		{
 			continue;
 		}

@@ -41,6 +41,15 @@
 	"attack": 10.0,  // min power of attack group
 
 	"raid_flee_share": 0.33,
+	// Raid rally: when a recently seen pack of enemy raiders (mobile, armed enemies of the raider role within 800 elmos of each other, threat summed) has more threat than match x our strongest raid group's raw strength,
+	// that group (the host) keeps raiding while every raid group that moves like it (any ground raider within attack_merge.speed_ratio, no worse a mover) and is within 30 s of travel chases the nearest bigger such group and merges into it.
+	// Raid groups may then hold mixed raider types and grow up to (1 + margin) x match x the pack. A joiner with no safe route raids normally; it never waits. Missing block or match 0 = off
+	"raid_rally": {
+		"match": 1.0,  // rally while host strength < match x pack threat; 0 = off
+		"margin": 0.25,  // end once host strength >= match x pack x (1 + margin)
+		"range": 0,  // a pack starts a rally only within this many elmos of a raid group's leader (keeps one up to 1.5x); 0 = anywhere on the map
+		"seen_sec": 20  // enemies count only if seen this recently; a rally ends when no pack has been found for this long
+	},
         "attack_flee_share": 0.33,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group
 
 	"attack_spot_threat": 0.33,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking

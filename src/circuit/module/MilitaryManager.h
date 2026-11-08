@@ -25,6 +25,8 @@ class CGameTask;
 class CBDefenceTask;
 class CRetreatTask;
 class CAttackTask;
+class CRaidTask;
+class ISquadTask;
 
 // Attack group route kinds (quota.attack_path_dynamic_cost)
 enum class AttackRoute: int { TARGET = 0, REINFORCE, FRONT, FLEE, CORNERED, _SIZE_ };
@@ -112,6 +114,8 @@ public:
 	// Gave up on this spot (danger at it or no safe route): nobody of that kind picks it for a while
 	void BlockScoutSpot(const springai::AIFloat3& spot, int frames) { BlockSpot(scoutClaims, spot, frames); }
 	void BlockRaidSpot(const springai::AIFloat3& spot, int frames) { BlockSpot(raidClaims, spot, frames); }
+	// The raid group led by leader no longer heads for its spot (a raid rally joiner): free its claim for others
+	void ReleaseRaidSpot(const CCircuitUnit* leader);
 	bool IsRaidSpotOn() const { return isRaiderSpot; }  // quota.raider_spot given
 	springai::AIFloat3 GetRaidPosition(CCircuitUnit* unit);
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
@@ -290,23 +294,31 @@ public:
 	// quota.attack_merge.idle_merge: an army with nothing to attack for a while reinforces the nearest compatible group
 	// ranked above it (IsRankedAbove) and merges, so all attack groups converge into one army
 	bool IsAttackIdleMerge() const { return attackIdleMerge; }
-	// quota.attack_merge.rally: when a recently seen enemy blob near our attack groups has more threat than
-	// match x the largest group's raw strength, every compatible attack group (and new unit) reinforces that group
-	// (the host) until it is (1 + margin) x match x the blob, or no blob is found for seen_sec. match 0 = off
-	struct SAttackRally {
+	// Rallies: quota.attack_merge.rally (attack groups vs blobs of armed enemies near them) and quota.raid_rally (raid
+	// groups vs packs of enemy raiders anywhere, by default). When a recently seen blob has more threat than match x the
+	// host's strength (with the group size bonus), compatible groups join the host (the strongest group of the
+	// movement class with the most strength) until it is (1 + margin) x match x the blob, or no blob is found for
+	// seen_sec. A rally lasts at least RALLY_MIN_FRAMES and the next starts RALLY_GAP_FRAMES after it. match 0 = off
+	struct SRallyCfg {
 		float match = 0.f;
 		float margin = 0.25f;
-		float range = 3000.f;  // a blob starts a rally only within this of an attack group's leader; keeps one up to 1.5x
+		float range = 3000.f;  // a blob starts a rally only within this of a group's leader (keeps one up to 1.5x); 0 = anywhere
 		int seenFrames = FRAMES_PER_SEC * 20;  // enemies count only if seen this recently (seen_sec)
 		bool IsOn() const { return match > 0.f; }
 	};
-	// The rally's host while a rally is on (validated), else nullptr
+	// The attack rally's host while a rally is on (validated), else nullptr
 	CAttackTask* GetRallyHost() const;
 	// A rally is on and this group should reinforce its host: not the host, compatible with it
 	bool IsRallyJoiner(const CAttackTask* task) const;
 	// The rally host if the group led by unit (task self) may reinforce it: compatible and able to reach it; else nullptr
 	CAttackTask* GetRallyHostFor(CCircuitUnit* unit, const IFighterTask* self) const;
-	const springai::AIFloat3& GetRallyBlobPos() const { return rallyBlobPos; }
+	const springai::AIFloat3& GetRallyBlobPos() const { return attackRally.blobPos; }
+	// quota.raid_rally: the host while a raid rally is on (validated), else nullptr
+	CRaidTask* GetRaidRallyHost() const;
+	// A raid rally is on and this raid group joins it: not the host, compatible with it and able to reach it
+	bool IsRaidRallyJoiner(const CRaidTask* task) const;
+	// While a raid rally is on: the host's goal (match x the pack x (1 + margin)); raid groups may grow up to it. Else 0
+	float GetRaidRallyGoal() const;
 	// quota.attack_group_radius: [<x the group's range>, <min elmos>]; units farther from the leader are stragglers
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
 	// quota.attack_static_cells: attack groups route to safe firing cells around static targets
@@ -357,15 +369,38 @@ private:
 	// there is none) leave for anti-heavy squads, every 2 s; not while their group is fighting or fleeing
 	void UpdateAhPull();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
+	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
-	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
-	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
+	// One rally's state; attack and raid rallies share the rules (UpdateRally)
+	struct SRally {
+		SRallyCfg cfg;
+		IFighterTask::FightType type;  // its groups' fight type
+		bool isRaiders;  // blobs of enemy raiders only (CEnemyManager::GetBlobs)
+		const char* tag;  // log prefix
+		ISquadTask* host = nullptr;  // nullptr: no rally; cleared in DequeueTask when the task ends
+		ISquadTask* prevHost = nullptr;  // host of the last rally (preferred on a restart); validated before use
+		int startFrame = -1;  // < 0: no rally
+		int endFrame = -FRAMES_PER_SEC * 60;  // a new rally can't start within RALLY_GAP_FRAMES of this
+		int blobFrame = -1;  // last frame a qualifying blob was found
+		springai::AIFloat3 blobPos;
+		float blobThreat = 0.f;
+		SRally(IFighterTask::FightType type, bool isRaiders, const char* tag);
+		bool IsActive() const { return startFrame >= 0; }
+	};
+	ISquadTask* GetValidHost(const SRally& rally) const;  // the host, if it is still alive and led
+	// Once a second while the rally is on in config: start, keep or end it
+	void UpdateRally(SRally& rally);
+	// Ground groups of the rally's type with a leader (air groups never rally)
+	void CollectRallyGroups(const SRally& rally, std::vector<ISquadTask*>& outGroups) const;
+	void ReplaceRallyHost(SRally& rally, const IFighterTask* gone);  // PickRallyHost among the other groups
 	// Host candidate: the strongest group (raw strength) in the movement class with the most total strength;
 	// prefer keeps that group if it is within 20% of the best
-	CAttackTask* PickRallyHost(const std::vector<CAttackTask*>& groups, CAttackTask* prefer) const;
+	ISquadTask* PickRallyHost(const std::vector<ISquadTask*>& groups, ISquadTask* prefer) const;
 	// Ends the rally (log), starting the gap before the next one
-	void EndAttackRally(const char* reason, int frame);
+	void EndRally(SRally& rally, const char* reason, int frame);
+	// A fight task ended: the rally drops it (a host is replaced at once)
+	void OnRallyTaskEnd(SRally& rally, const IFighterTask* task);
 
 	void AddArmyCost(CCircuitUnit* unit);
 	void DelArmyCost(CCircuitUnit* unit);
@@ -412,6 +447,7 @@ private:
 	bool isRaiderSpot = false;  // quota.raider_spot given
 	springai::AIFloat3 PickSpot(CCircuitUnit* unit, float safeThreat, const SSpotCfg& cfg, IFighterTask::FightType type,
 			SSpotClaims& claims);
+	void ReleaseSpot(SSpotClaims& claims, int unitId);  // the picker's claim, if any
 	void BlockSpot(SSpotClaims& claims, const springai::AIFloat3& spot, int frames);
 
 	struct SRaidPoint {
@@ -486,22 +522,16 @@ private:
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
-	SAttackRally attackRally;  // quota.attack_merge.rally
+	SRally attackRally;  // quota.attack_merge.rally
+	SRally raidRally;  // quota.raid_rally
 	SResignCfg resign;  // "resign"
 	int resignSince = -1;  // first frame of the current "reads lost" run; -1 = doesn't read lost
 	int drownedFrames;  // "drowned".time in frames; < 0 = off
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
-	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
-	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use
-	int rallyStartFrame;
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at
 	int heavySeenAge;  // frames since an enemy heavy was last in radar or LOS; max = none
-	int rallyEndFrame;  // a new rally can't start within RALLY_GAP_FRAMES of this
-	int rallyBlobFrame;  // last frame a qualifying blob was found
-	springai::AIFloat3 rallyBlobPos;
-	float rallyBlobThreat;
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
 	SAttackCells attackCells;  // quota.attack_static_cells
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted

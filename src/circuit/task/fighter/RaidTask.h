@@ -15,6 +15,8 @@
 
 namespace circuit {
 
+class CMilitaryManager;
+
 class CRaidTask: public ISquadTask {
 public:
 	CRaidTask(ITaskManager* mgr, float maxPower, float powerMod);
@@ -29,7 +31,42 @@ public:
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 
+	// quota.raid_rally: a raider whose group moves like ours (IsMoveCompatible at quota.attack_merge.speed_ratio)
+	virtual bool IsRallyCompatible(CCircuitUnit* unit) const override;
+
 private:
+	CMilitaryManager* GetMilitaryMgr() const;
+	// Units of other types may join only during a raid rally, and only compatible ones; the group may then grow up to
+	// the rally's goal instead of maxPower
+	float GetMaxPower() const;
+	bool IsInRally() const;  // a raid rally is on and we are its host or a joiner
+	bool IsCautious(int frame) const { return frame < fleeFrame + FRAMES_PER_SEC * 4; }  // just escaped
+	// GetMergeTask, but in a rally every 2 updates, and judged by the straight line (IsSafeMergeLine), not influence
+	ISquadTask* GetRaidMergeTask();
+	// In a rally: the straight line to the other leader under our allowance, as our escape judges it. Else the default
+	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
+	// The chase route's cap (the only capped QueryPath of a raid group): x0.75 for 4 s after an escape, as FindTarget
+	virtual float GetPathThreatMod() const override;
+
+	/*
+	 * Raid rally joiner (quota.raid_rally): chase the nearest bigger compatible raid group within CHASE_TRAVEL_SEC
+	 * and merge into it. Fights back only at targets in range on the way. No safe route: raid normally (never wait);
+	 * CHASE_FAILS empty routes in a row: raid normally for CHASE_RETRY_FRAMES
+	 */
+	// The group to chase now (nullptr: raid normally). Keeps the last one while it is still bigger and in reach
+	CRaidTask* UpdateChase(int frame);
+	bool IsChaseable(const CRaidTask* group, int frame, float sqMaxDist) const;  // bigger, compatible, reachable, near
+	const CRaidTask* FindChaseTask(int frame) const;  // the nearest chaseable group within CHASE_TRAVEL_SEC
+	void Chase(int frame, const CRaidTask* group);
+	void ApplyChasePath(const CQueryPathSingle* query);
+	const CRaidTask* chaseTask;  // the group we chase (validated against the task set before use)
+	int chaseFails;  // empty chase routes in a row
+	int chaseRetryFrame;  // after CHASE_FAILS: raid normally until this frame
+	bool isChaseSkip;  // the last chase route came back empty: the next decision raids normally
+	int chaseRouteFrame;  // the last chase route: when asked, for which goal (reused CHASE_ROUTE_FRAMES)
+	springai::AIFloat3 chaseGoal;
+	std::shared_ptr<PathInfo> chaseRoute;  // ...once it arrived (kept only while the leader walks it)
+
 	bool FindTarget();
 	void ApplyTargetPath(const CQueryPathMulti* query);
 	// isContestedAllowed: may head for a contested cluster (not after a failed route to targets: its path is uncapped)
