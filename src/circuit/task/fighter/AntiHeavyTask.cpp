@@ -134,10 +134,14 @@ void CAntiHeavyTask::Update()
 	++updCount;
 
 	/*
-	 * Drop task if no enemy heavy exists
+	 * Drop task once no enemy heavy has been seen for a while (mines: once none is known, as before)
 	 */
 	if (updCount % 32 == 1) {
-		if (manager->GetCircuit()->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) < 1.f) {
+		CCircuitAI* circuit = manager->GetCircuit();
+		const bool isGone = ((leader != nullptr) && leader->GetCircuitDef()->IsRoleMine())
+				? (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) < 1.f)
+				: !circuit->GetMilitaryManager()->IsEnemyHeavySeen(CMilitaryManager::AH_KEEP_FRAMES);
+		if (isGone) {
 			manager->AbortTask(this);
 			return;
 		}
@@ -396,7 +400,7 @@ bool CAntiHeavyTask::CheckFlee()
 			ahCfg.fleeAllyThreat, ahCfg.fleeAllyRadius, ROLE_TYPE(AH));
 }
 
-void CAntiHeavyTask::Flee(const AIFloat3& dangerPos)
+void CAntiHeavyTask::FleeFrom(const AIFloat3& dangerPos)
 {
 	const AIFloat3* goal = FindFleeGoal(dangerPos);
 	if (goal == nullptr) {
@@ -617,7 +621,7 @@ void CAntiHeavyTask::FallbackTargetEmpty()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	if (!leader->GetCircuitDef()->IsRoleMine() &&
-		(circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) < 1.f))
+		!circuit->GetMilitaryManager()->IsEnemyHeavySeen(CMilitaryManager::AH_KEEP_FRAMES))
 	{
 		manager->AbortTask(this);
 	} else {

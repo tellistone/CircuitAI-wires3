@@ -63,7 +63,7 @@ private:
 	void ApplyDamagedPath(const CQueryPathMulti* query);
 
 	bool CheckFlee();  // antiair.flee_margin (UpdateFlee); true while fleeing
-	virtual void Flee(const springai::AIFloat3& dangerPos) override;
+	virtual void FleeFrom(const springai::AIFloat3& dangerPos) override;
 	void ApplyFleePath(const CQueryPathSingle* query);
 
 	float GetAirRange() const;  // the squad's range against aircraft

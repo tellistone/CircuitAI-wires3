@@ -249,7 +249,11 @@ ISquadTask* ISquadTask::GetMergeTask()
 
 bool ISquadTask::IsMustRegroup()
 {
-	if ((State::ENGAGE == state) || (updCount % 16 != 15)) {
+	// Checked every 16 updates. A regroup in line (the line stands while units walk to their slots) is also looked at
+	// on the updates between, only to end it early once the line is whole
+	const bool isCheck = (updCount % 16 == 15);
+	const bool isLineRegroup = (State::REGROUP == state) && formation.IsOn();
+	if ((State::ENGAGE == state) || (!isCheck && !isLineRegroup)) {
 		return false;
 	}
 
@@ -264,9 +268,11 @@ bool ISquadTask::IsMustRegroup()
 	static std::vector<CCircuitUnit*> stuckUnits;  // released after the loops over units
 //	validUnits.reserve(units.size());
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();;
-	// Units the line formation steers and that keep up don't count: the line waits for them, or they catch it up
+	// Units the line formation steers and that keep up don't count: the line waits for them, or they catch it up.
+	// While it stands for a regroup, only those in their slots: one still walking to its slot counts
 	for (CCircuitUnit* unit : units) {
-		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !formation.IsKeptUp(unit) &&
+		const bool isInLine = isLineRegroup ? formation.IsInSlot(unit) : formation.IsKeptUp(unit);
+		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !isInLine &&
 			terrainMgr->CanMoveToPos(unit->GetArea(), unit->GetPos(frame)))
 		{
 			validUnits.push_back(unit);
@@ -276,13 +282,29 @@ bool ISquadTask::IsMustRegroup()
 		state = State::ROAM;
 		return false;
 	}
+	// Far from the group: beyond this from groupPos
+	const float sqMaxDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
+	if (!isCheck) {
+		// Between checks: whole once every unit the line steers stands in its slot and the others are near
+		bool isWhole = true;
+		for (CCircuitUnit* unit : validUnits) {
+			if (formation.IsSteered(unit) || (groupPos.SqDistance2D(unit->GetPos(frame)) > sqMaxDist)) {
+				isWhole = false;
+				break;
+			}
+		}
+		validUnits.clear();
+		if (isWhole) {
+			state = State::ROAM;
+		}
+		return !isWhole;
+	}
 
 	if (State::REGROUP != state) {
 		groupPos = leader->GetPos(frame);
 		groupFrame = frame;
 	} else if (frame >= groupFrame + FRAMES_PER_SEC * 60) {
 		// eliminate buggy units
-		const float sqMaxDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
 		for (CCircuitUnit* unit : units) {
 			if (unit->GetCircuitDef()->IsPlane() || IsRegroupExempt(unit)) {
 				continue;
@@ -304,7 +326,6 @@ bool ISquadTask::IsMustRegroup()
 
 	bool wasRegroup = (State::REGROUP == state);
 	state = State::ROAM;
-	const float sqMaxDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
 	for (CCircuitUnit* unit : validUnits) {
 		const float sqDist = groupPos.SqDistance2D(unit->GetPos(frame));
 		if (sqDist > sqMaxDist) {
@@ -349,7 +370,9 @@ void ISquadTask::LateUpdate()
 
 bool ISquadTask::IsFormationActive(int frame) const
 {
-	if (!manager->GetCircuit()->GetMilitaryManager()->GetFormationCfg().isEnable || (State::ROAM != state)
+	// REGROUP: the regroup in line (CAttackTask::Regroup) stands on a short path; a gather sets the travel to wait
+	if (!manager->GetCircuit()->GetMilitaryManager()->GetFormationCfg().isEnable
+		|| ((State::ROAM != state) && (State::REGROUP != state))
 		|| (leader == nullptr) || !IsFormationAllowed(frame))
 	{
 		return false;
@@ -885,7 +908,7 @@ bool ISquadTask::UpdateFlee(float margin, float endMargin, bool isGunship, float
 	}
 	isFleeing = true;
 	fleeReplanFrame = frame + FLEE_REPLAN_FRAMES;
-	Flee(danger->GetPos());
+	FleeFrom(danger->GetPos());  // not Flee: attack and raid tasks have their own Flee(int frame), which would hide it
 	return true;
 }
 

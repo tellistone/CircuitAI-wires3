@@ -64,7 +64,8 @@
 	"support_radius": 400,  // on the line to the bigger group, within this many elmos of its leader both groups' strength counts against threat
 	"reinforce_range": 400,  // a reinforcing group's route only has to get this close to the stronger group's leader (merging finishes it); never more than 80% of what the group can merge from (distance, or travel_sec at its slowest speed)
 	"reinforce_fails": 4,  // empty reinforce routes in a row (one per ~2 s decision) before giving up
-	"reinforce_retry": 15,  // seconds to act as a small attack group after giving up, before looking for a group again
+	"reinforce_retry": 15,  // seconds to act as a small attack group after giving up, before looking for a group again; doubles with each give-up in a row (up to 8x), reset by a route that works
+	"idle_merge": true,  // an army (at or above quota.attack) with nothing to attack for 8 s (it holds meanwhile, unless no group outranks it) walks to the nearest compatible group ranked above it (more attack power; ties: lower leader id) and merges, so all attack groups converge into one army; it keeps that group while it has 80% of the army's power; false: it heads for the front or holds as before. Small groups reinforcing get the ranking (with the tie-break), the 80% keep, stopping beside the group on a short route and the doubling retry wait whatever this is, and any group absorbs groups walking to it: so false is not the zk behaviour, compare against a zk build for A/B games
 	"base_gather": false,  // false: attack-bound units never gather at base; they reinforce the rally host or the nearest compatible group, else start a group. true: the first army gathers at base
 	// Rally: when a recently seen enemy blob (mobile, armed enemies within 800 elmos of each other, threat summed) near our attack groups has more threat than match x the largest group's raw strength,
 	// that group (the host) walks to meet its significant joiners and every compatible attack group and new unit reinforces it, until it reaches (1 + margin) x match x the blob or the blob is lost
@@ -190,8 +191,10 @@
 // Line formation: attack groups of land or sea units walk their path as a line across it, with more rows only where
 // it has to narrow, while they aren't engaging; also while they flee or move to a quieter spot when cornered, rows in
 // reverse order (riots at the back, towards the pursuers) and waiting for no one, so they don't run bunched. Where no line of 2 fits (terrain, buildings) the
-// units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; the usual
-// regroup still gathers one that falls far behind. At the end of its walk the group stands in line. Missing block or
+// units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; when one
+// falls far behind, the usual regroup stops the line where it stands (just after a fight: at the leader, facing the
+// nearest strong enemy group) and the units take their slots in it, until the line is whole (as a gather where no
+// line fits). At the end of its walk the group stands in line. Missing block or
 // "enable": false = groups walk as before, except that a holding group still takes a threat-capped path to a quiet spot
 // more than 256 elmos away instead of a straight move (it ends bunched on the path's last point, as it did before)
 "formation": {
