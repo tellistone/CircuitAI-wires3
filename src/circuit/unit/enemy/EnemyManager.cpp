@@ -39,6 +39,7 @@ CEnemyManager::CEnemyManager(CCircuitAI* circuit)
 		, isUpdating(false)
 		, enemyMobileCost(0.f)
 		, mobileThreat(0.f)
+		, commThreat(0.f)
 		, staticThreat(0.f)
 		, isAreaUpdated(true)
 {
@@ -404,6 +405,9 @@ void CEnemyManager::AddEnemyCost(const CEnemyUnit* e)
 	}
 	if (cdef->IsMobile()) {
 		mobileThreat += cdef->GetThreat() * initThrMod.inMobile;
+		if (cdef->IsRoleComm()) {
+			commThreat += cdef->GetThreat() * initThrMod.inMobile;
+		}
 		enemyMobileCost += e->GetCost();
 	} else {
 		staticThreat += cdef->GetThreat() * initThrMod.inStatic;
@@ -425,6 +429,9 @@ void CEnemyManager::DelEnemyCost(const CEnemyUnit* e)
 	}
 	if (cdef->IsMobile()) {
 		mobileThreat = std::max(mobileThreat - cdef->GetThreat() * initThrMod.inMobile, 0.f);
+		if (cdef->IsRoleComm()) {
+			commThreat = std::max(commThreat - cdef->GetThreat() * initThrMod.inMobile, 0.f);
+		}
 		enemyMobileCost = std::max(enemyMobileCost - e->GetCost(), 0.f);
 	} else {
 		staticThreat = std::max(staticThreat - cdef->GetThreat() * initThrMod.inStatic, 0.f);

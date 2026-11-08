@@ -76,6 +76,7 @@ public:
 	void AddEnemyCost(const CEnemyUnit* e);
 	void DelEnemyCost(const CEnemyUnit* e);
 	float GetMobileThreat() const { return mobileThreat; }
+	float GetMobileThreatNoComm() const { return std::max(mobileThreat - commThreat, 0.f); }  // without commanders
 	float GetStaticThreat() const { return staticThreat; }
 	float GetEnemyThreat() const { return mobileThreat + staticThreat; }
 	bool IsAirValid() const { return GetEnemyThreat(ROLE_TYPE(AA)) <= maxAAThreat; }
@@ -140,6 +141,7 @@ private:
 
 	float enemyMobileCost;
 	float mobileThreat;  // thr_mod.mobile applied
+	float commThreat;  // commanders' share of mobileThreat
 	float staticThreat;  // thr_mod.static applied
 	struct SInitThreatMod {
 		float inMobile;

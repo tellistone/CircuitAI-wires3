@@ -116,6 +116,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
 		, isPastFloor(false)
+		, isOwnGroundOnly(false)
 		, reinforce(nullptr)
 		, reinforceFails(0)
 		, reinforceRetryFrame(-1)
@@ -1539,7 +1540,7 @@ void CAttackTask::FindTarget()
 	// (quota.attack_threat_floor), at any time
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	UpdatePastFloor();
-	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
+	isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
 			|| militaryMgr->IsAttackThreatFloor();
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
@@ -1966,7 +1967,9 @@ void CAttackTask::FallbackFrontPos(bool isReuse)
 
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& startPos = leader->GetPos(frame);
-	if (IsOnEnemyGround()) {
+	// Restricted to our ground (isOwnGroundOnly): nothing out here may be picked, so walk back to the front
+	// (a floor can switch on mid-push); there is no border to bounce on
+	if (!isOwnGroundOnly && IsOnEnemyGround()) {
 		// The front is our own cluster on friendly ground. Already past it (farther from our base than its
 		// nearest point): routing there walks the group back, and it would bounce on the border, so hold at
 		// the quietest spot nearby. Not past it (an enemy-held patch on the way): keep going to the front.
