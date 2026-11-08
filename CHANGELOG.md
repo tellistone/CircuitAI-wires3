@@ -27,14 +27,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   any unit in the group, or was in the last 5 s: near the enemy the line walks on at its slowest unit's speed); each unit gets a move a few seconds
   ahead of its slot and a wanted speed that lets it catch up, re-sent only when it nears that move's end or the slot
   moves off its way. At the end of its walk the group stands in line. A unit out of its slot for 12 s catches up at full
-  speed and isn't waited for (the usual regroup still gathers the group if it falls far behind); while the line walks,
+  speed and isn't waited for (the usual regroup still stops the group if it falls far behind); while the line walks,
   one that hasn't moved 64 elmos in 30 s while out of its slot is released to find a new task (the leader too, and the
   line re-centres on the next one). Units with the `jump` attribute (jump on the move; none in the shipped config)
   still jump along the path whenever their jump is ready, then walk back into line; jumps in combat and when fleeing
   don't go through the line and are unchanged. If the group's most restricted mover is a `no_formation` unit, the
   group walks as before. While the line is on, the regroup check (stop and gather when units spread too far)
   ignores units the line steers that keep up (in line, or stragglers at least 10% faster than the line), so a group in
-  line no longer stops to gather for them. A holding group (nothing to attack, no front to walk to, no safe route) now
+  line no longer stops to gather for them. When the group does regroup (formation on, `min_units` or more), it regroups
+  in line: the line stops with its front row where it stands (at the leader if the line was off), and the units walk to
+  their slots in it, so laggards come up into their rows instead of everyone packing onto the leader; where no line fits,
+  the units walk to that spot, as the gather did. The walk then resumes in line on the same path. A holding group (nothing to attack, no front to walk to, no safe route) now
   walks to its quiet spot along a threat-capped path when the spot is more than 256 elmos away, so the line takes it
   there and it stands in line instead of clumped; it keeps that spot unless another is 20% quieter. A group with no line
   (line off, too few units, or no room for 2 columns) takes this path too, and ends bunched on its last point as before. Stepping out of an

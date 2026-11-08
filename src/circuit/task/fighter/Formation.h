@@ -75,6 +75,11 @@ public:
 	void Update(int frame, bool isActive, std::vector<CCircuitUnit*>& outStuck);
 	void Remove(CCircuitUnit* unit);  // it left the squad
 	bool IsOn() const { return isOn; }  // the line is formed: its units walk to GetOrder
+	// Where the front row's centre is now; false: the line is off
+	bool GetStandPos(springai::AIFloat3& outPos) const {
+		if (isOn) { outPos = anchorPos; }
+		return isOn;
+	}
 	// Where the unit walks now; false: it has no slot (busy, no_formation, or the line is off): follow the path
 	bool GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const;
 	// The line steers the unit and it keeps up (in line, or a straggler faster than the line): no regroup for it

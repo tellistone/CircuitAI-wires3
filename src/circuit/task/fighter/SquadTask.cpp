@@ -349,7 +349,9 @@ void ISquadTask::LateUpdate()
 
 bool ISquadTask::IsFormationActive(int frame) const
 {
-	if (!manager->GetCircuit()->GetMilitaryManager()->GetFormationCfg().isEnable || (State::ROAM != state)
+	// REGROUP: the regroup in line (CAttackTask::Regroup) stands on a short path; a gather sets the travel to wait
+	if (!manager->GetCircuit()->GetMilitaryManager()->GetFormationCfg().isEnable
+		|| ((State::ROAM != state) && (State::REGROUP != state))
 		|| (leader == nullptr) || !IsFormationAllowed(frame))
 	{
 		return false;

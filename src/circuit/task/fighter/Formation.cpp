@@ -618,12 +618,14 @@ void CFormation::UpdateTrack(const AIFloat3& pos, float keepLen)
 bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, bool isNewPath, float backLen, float aheadLen)
 {
 	// The leader's spot on its path: the nearest point, searched on from the last segment (the leader walks a reused
-	// path on; a new path starts at the leader), up to the first segment it is on, so a hairpin's far leg isn't taken
+	// path on), up to the first segment it is on, so a hairpin's far leg isn't taken. A new path usually starts at the
+	// leader; one sent again (the walk resumed after a regroup) is searched to its end, once
 	const F3Vec& pts = path.posPath;
 	size_t seg = std::min(pathIndex, pts.size() - 1);
 	AIFloat3 spot = pts[seg];
 	float sqOff = leaderPos.SqDistance2D(spot);
-	for (size_t i = seg; (i + 1 < pts.size()) && (i < pathIndex + PATH_SEARCH); ++i) {
+	const size_t searchEnd = isNewPath ? pts.size() : (pathIndex + PATH_SEARCH);
+	for (size_t i = seg; (i + 1 < pts.size()) && (i < searchEnd); ++i) {
 		const float t = ProjectOnSegment(leaderPos, pts[i], pts[i + 1]);
 		const AIFloat3 p = pts[i] + (pts[i + 1] - pts[i]) * t;
 		const float sq = leaderPos.SqDistance2D(p);

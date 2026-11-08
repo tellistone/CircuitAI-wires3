@@ -306,11 +306,7 @@ void CAttackTask::Update()
 	}
 	if (State::REGROUP == state) {
 		if (mustRegroup) {
-			const int timeout = frame + FRAMES_PER_SEC * 60;
-			for (CCircuitUnit* unit : units) {
-				unit->Gather(groupPos, timeout);
-				unit->GetTravelAct()->StateWait();
-			}
+			Regroup(frame);
 		}
 		return;
 	}
@@ -2178,6 +2174,38 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 	}
 	outPos = bestPos;
 	return (bestThreat < std::numeric_limits<float>::max()) ? bestThreat : threatMap->GetThreatAt(leader, pos);
+}
+
+void CAttackTask::Regroup(int frame)
+{
+	// In line (formation on, enough units): the line stops, its front row where it stands now (at the leader when
+	// the line is off), and the units walk to their slots in it, so laggards come up into their rows instead of
+	// everyone packing onto the leader. Where no line fits, the units follow that short path to its end, as a gather
+	// would take them. Kept while the regroup lasts (no re-solve on each check)
+	const CMilitaryManager::SFormationCfg& cfg = GetMilitaryMgr()->GetFormationCfg();
+	if (cfg.isEnable && IsFormationAllowed(frame) && ((int)units.size() >= cfg.minUnits)) {
+		ITravelAction* travelAct = leader->GetTravelAct();
+		if (travelAct->IsActive() && (regroupPath != nullptr) && (travelAct->GetPath() == regroupPath)) {
+			return;
+		}
+		regroupPath = std::make_shared<PathInfo>();
+		regroupPath->posPath.push_back(groupPos);
+		AIFloat3 standPos;
+		const CFormation* line = GetFormation();  // nullptr: the line is off
+		if ((line != nullptr) && line->GetStandPos(standPos) && (standPos.SqDistance2D(groupPos) >= SQUARE(DEFAULT_SLACK))) {
+			regroupPath->posPath.push_back(standPos);
+		}
+		for (CCircuitUnit* unit : units) {
+			unit->GetTravelAct()->SetPath(regroupPath);  // full speed when not steered, as a gather
+			unit->GetTravelAct()->StateActivate();
+		}
+		return;
+	}
+	const int timeout = frame + FRAMES_PER_SEC * 60;
+	for (CCircuitUnit* unit : units) {
+		unit->Gather(groupPos, timeout);
+		unit->GetTravelAct()->StateWait();
+	}
 }
 
 void CAttackTask::GatherAt(const AIFloat3& pos)

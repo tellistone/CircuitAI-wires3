@@ -298,6 +298,7 @@ private:
 	// returns the threat there
 	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
 	// Units more than 600 from pos walk there, the rest stand; sets isHolding
+	void Regroup(int frame);  // the regroup's move (state REGROUP): in line where it can
 	void GatherAt(const springai::AIFloat3& pos);
 	void MoveGroupTo(const springai::AIFloat3& pos);
 	void MoveUnitTo(CCircuitUnit* unit, const springai::AIFloat3& pos, int frame);
@@ -350,6 +351,7 @@ private:
 	// Holding
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)
 	springai::AIFloat3 holdPos;  // the spot HoldPosition walks the group to along a path (-RgtVector: none)
+	std::shared_ptr<PathInfo> regroupPath;  // the short path a regroup in line stands on (Regroup)
 	int stepFrame;  // last step back after being hit while holding
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
 	float hitRadius;
