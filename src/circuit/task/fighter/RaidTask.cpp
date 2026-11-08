@@ -697,7 +697,7 @@ float CRaidTask::GetSafeThreat() const
 {
 	// Like attackPower (def power incl. pwr_mod) but scaled by current health, times the task's powerMod
 	// Courage also depends on how far from home the group is (quota.thr_mod.distance)
-	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
+	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod * GetCountPowerMod();  // the thr_mod.distance curve is applied per judged spot
 }
 
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const

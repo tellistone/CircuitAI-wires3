@@ -89,6 +89,11 @@ protected:
 	};
 	const std::vector<SUnitStrength>& GetUnitStrengths() const;
 	float GetStrengthSum() const;  // sum of GetUnitStrengths
+	// Group size bonus to the group's own power where it is compared against enemy threat (Lanchester's square
+	// law): 1 + quota.group_count_power x count, so 10 units at 0.025 count as 1.25x. The no-argument form uses
+	// the task's unit count
+	float GetCountPowerMod(size_t count) const;
+	float GetCountPowerMod() const { return GetCountPowerMod(units.size()); }
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)

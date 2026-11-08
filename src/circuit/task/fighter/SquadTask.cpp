@@ -698,7 +698,7 @@ bool ISquadTask::IsHighBlip(CMap* map, const AIFloat3& p)
 
 float ISquadTask::GetSafeThreat() const
 {
-	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;
+	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod * GetCountPowerMod();
 }
 
 float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
