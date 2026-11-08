@@ -244,6 +244,9 @@ public:
 	float GetGroupCountPower() const { return groupCountPower; }
 	// quota.attack_own_ground_time: before this frame attack groups only walk to targets on our ground
 	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }
+	// quota.attack_floor_hold: a group past quota.attack (the floor) stays past it until its power drops below
+	// quota.attack x this; under the floor it only walks to targets on our ground (as attack_own_ground_time)
+	float GetAttackFloorHold() const { return attackFloorHold; }
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
 	struct SContested {
 		float bonus;  // enemies there count as this many times closer (attack ranking, raid route goals); 1 = off
@@ -480,6 +483,7 @@ private:
 	float attackKeepThreat;  // quota.attack_keep_threat
 	float groupCountPower;  // quota.group_count_power
 	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
+	float attackFloorHold;  // quota.attack_floor_hold
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost

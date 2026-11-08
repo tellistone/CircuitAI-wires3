@@ -314,6 +314,10 @@ private:
 
 	float minPower;
 	bool IsArmy() const { return attackPower >= minPower; }  // at or above quota.attack
+	// quota.attack as a floor: past it the group may walk to targets anywhere, under it only on our ground.
+	// Set at quota.attack, cleared below quota.attack x quota.attack_floor_hold (UpdatePastFloor)
+	bool isPastFloor;
+	void UpdatePastFloor();
 
 	// Reinforcing
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use

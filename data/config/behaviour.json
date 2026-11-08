@@ -38,7 +38,8 @@
 	"scout_map_size": [[8, 1.0], [20, 4.0]],
 
 	"raid": [9.0, 20.0],  // [<min>, <avg>] power of raider squad
-	"attack": 10.0,  // min power of attack group
+	"attack": 10.0,  // attack group floor: a group under this power reinforces (walks to) a stronger attack group if one can be reached, else only walks to targets on our ground, as attack_own_ground_time (a target already within range is always fair game; with none it goes to the front line)
+	"attack_floor_hold": 0.75,  // hysteresis for the attack floor: a group that reached quota.attack keeps walking to targets anywhere until its power drops below quota.attack x this; 1 = none
 
 	"raid_flee_share": 0.33,
         "attack_flee_share": 0.33,  // attack group flees (to the nearest stronger attack group, else a haven, else base) when units standing in danger hold at least this share of its current strength; 0 = any unit, 1 = whole group

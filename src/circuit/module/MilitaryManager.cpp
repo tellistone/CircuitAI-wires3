@@ -452,6 +452,7 @@ void CMilitaryManager::ReadConfig()
 	attackKeepThreat = readAttackNum("attack_keep_threat", 1.34f, 1.f, noMax);  // below 1 = off
 	groupCountPower = readAttackNum("group_count_power", 0.025f, 0.f, 1.f);  // 0 = off
 	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 270.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
+	attackFloorHold = readAttackNum("attack_floor_hold", 0.75f, 0.f, 1.f);  // 1 = no hysteresis
 	{
 		const Json::Value& qcont = quotas["contested"];
 		if (!qcont.isNull() && !qcont.isObject()) {

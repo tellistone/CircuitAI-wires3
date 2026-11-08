@@ -115,6 +115,7 @@ float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::Ran
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
+		, isPastFloor(false)
 		, reinforce(nullptr)
 		, reinforceFails(0)
 		, reinforceRetryFrame(-1)
@@ -1533,9 +1534,11 @@ void CAttackTask::FindTarget()
 		AIFloat3 rangePos;
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
-	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop)
+	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop).
+	// The same under the quota.attack floor (UpdatePastFloor), at any time
 	CInfluenceMap* inflMap = circuit->GetInflMap();
-	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
+	UpdatePastFloor();
+	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor;
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1705,6 +1708,17 @@ void CAttackTask::FindTarget()
 		ClearScaleAnchor();  // no fight accepted: no near-base discount
 	}
 	// Return: target, startPos=leader->pos, endPos=position
+}
+
+void CAttackTask::UpdatePastFloor()
+{
+	// Hysteresis: a group that loses a unit or two just past the floor keeps going; a beaten one falls back to
+	// targets on our ground. Power is the units' def power (not health), so it changes only as units join or die
+	if (attackPower >= minPower) {
+		isPastFloor = true;
+	} else if (attackPower < minPower * GetMilitaryMgr()->GetAttackFloorHold()) {
+		isPastFloor = false;
+	}
 }
 
 bool CAttackTask::IsOnEnemyGround() const
