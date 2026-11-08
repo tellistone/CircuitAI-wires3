@@ -311,6 +311,7 @@ private:
 	void MoveUnitTo(CCircuitUnit* unit, const springai::AIFloat3& pos, int frame);
 
 	float minPower;
+	bool IsArmy() const { return attackPower >= minPower; }  // at or above quota.attack
 
 	// Reinforcing
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use

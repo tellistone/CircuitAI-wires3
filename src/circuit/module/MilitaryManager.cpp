@@ -1126,10 +1126,15 @@ bool CMilitaryManager::IsRankedAbove(float power, const CCircuitUnit* leader, fl
 	return (power > otherPower) || ((power == otherPower) && (leader->GetId() < otherLeader->GetId()));
 }
 
+bool CMilitaryManager::CanReinforce(const CAttackTask* squad, CCircuitUnit* unit) const
+{
+	return squad->IsCompatible(unit) && circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(),
+			squad->GetLeader()->GetPos(circuit->GetLastFrame()));
+}
+
 CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self,
 		bool isRally) const
 {
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
 	// Rally: everything compatible reinforces the host, whatever its size
@@ -1143,16 +1148,12 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float powe
 		CAttackTask* squad = static_cast<CAttackTask*>(t);
 		CCircuitUnit* squadLeader = squad->GetLeader();
 		if ((squad == self) || squad->IsDead() || (squadLeader == nullptr)
-			|| !IsRankedAbove(squad->GetAttackPower(), squadLeader, power, unit) || !squad->IsCompatible(unit))
+			|| !IsRankedAbove(squad->GetAttackPower(), squadLeader, power, unit))
 		{
 			continue;
 		}
-		const AIFloat3& squadPos = squadLeader->GetPos(frame);
-		if (!terrainMgr->CanMoveToPos(unit->GetArea(), squadPos)) {
-			continue;
-		}
-		const float sqDist = pos.SqDistance2D(squadPos);
-		if (sqDist < minSqDist) {
+		const float sqDist = pos.SqDistance2D(squadLeader->GetPos(frame));
+		if ((sqDist < minSqDist) && CanReinforce(squad, unit)) {
 			minSqDist = sqDist;
 			best = squad;
 		}
@@ -1185,9 +1186,7 @@ CAttackTask* CMilitaryManager::GetRallyHostFor(CCircuitUnit* unit, const IFighte
 {
 	// Compatible with the host and able to reach it (another terrain area would hold for the whole rally)
 	CAttackTask* host = GetRallyHost();
-	return ((host != nullptr) && (host != self) && host->IsCompatible(unit)
-		&& circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), host->GetLeader()->GetPos(circuit->GetLastFrame())))
-		? host : nullptr;
+	return ((host != nullptr) && (host != self) && CanReinforce(host, unit)) ? host : nullptr;
 }
 
 bool CMilitaryManager::IsRallyJoiner(const CAttackTask* task) const

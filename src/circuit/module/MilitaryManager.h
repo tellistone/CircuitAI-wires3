@@ -62,8 +62,10 @@ public:
 	// Attack group rank: more attack power, ties broken by the lower leader id. A strict order, so groups that each
 	// walk to a higher-ranked one (reinforcing, quota.attack_merge.idle_merge) end at one group per movement class
 	static bool IsRankedAbove(float power, const CCircuitUnit* leader, float otherPower, const CCircuitUnit* otherLeader);
+	// The group led by `unit` may join `squad` (CAttackTask::IsCompatible) and can reach its leader; `squad` has one
+	bool CanReinforce(const CAttackTask* squad, CCircuitUnit* unit) const;
 	// Nearest attack group ranked above (`power`, `unit`) (IsRankedAbove) that the group led by `unit` may join and
-	// can reach; nullptr if none. `self` is skipped. With `isRally` the rally host comes first, wherever it is
+	// can reach (CanReinforce); nullptr if none. `self` is skipped. With `isRally` the rally host comes first, wherever it is
 	// (quota.attack_merge.rally); fleeing passes false and keeps the nearest stronger group.
 	CAttackTask* FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self = nullptr,
 			bool isRally = true) const;
