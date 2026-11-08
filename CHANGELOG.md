@@ -348,6 +348,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Geothermal plants are actually queued.** Three checks shared with other energy kept geo off the build list in
+  practice. The energy-job cap allowed a 500-metal job only while no energy job at all was queued (below 62.5 build
+  power), and solar or wind jobs nearly always were; geo now has its own cap of one geo job at a time. The energy
+  pick ran only during an energy stall or for an idle constructor with spare metal and nothing else to do; the vent
+  check now also runs on every economy pass, like mex. And in a stall the quick-build test used a quarter of the time
+  budget, which needed an income of about 22 at 10 minutes; geo now always uses the full 40 s budget (income about 11
+  at 10 minutes, 15.5 at the 400 s `since`).
 - **Guard slots fill again with riots.** Since `quota.attack_merge.base_gather` false (the shipped default), new
   riots no longer wait in a defend group at base: they walk out alone to reinforce an army. The guard pull skipped
   every unit in an attack task, so riots could only get a slot in the moment they left the factory, and only if a
