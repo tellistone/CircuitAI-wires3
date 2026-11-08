@@ -51,6 +51,11 @@ constexpr int FACE_VOTES = 2;  // turn only for a threat that is far off this ma
 constexpr float FACE_TURN_COS = 0.7071f;  // far off: more than 45 degrees
 constexpr float FACE_CLEAR = 0.3f;  // a clear side: the threat's vector sum is at least this share of all of it
 constexpr float FACE_KEEP = 256.f;  // a new path that ends this near the last one keeps the line facing
+constexpr int SPLASH_SCAN_FRAMES = FRAMES_PER_SEC;  // enemies near are scanned for splash this often
+constexpr int SPLASH_HOLD_FRAMES = FRAMES_PER_SEC * 10;  // a splash radius is kept this long after it was last seen
+constexpr float SPLASH_PAD = 600.f;  // an enemy's splash counts within its weapon range + this of the leader
+constexpr float SPLASH_MIN = 16.f;  // smaller splash radii don't spread the line
+constexpr float MAX_SPLASH_PITCH = 256.f;  // splash spreads neighbours and rows at most this far apart
 constexpr size_t PATH_SEARCH = 32;  // path segments searched for the leader's spot, from the last one
 constexpr int SIGHT_HOLD_FRAMES = FRAMES_PER_SEC * 5;  // an enemy seen this recently: the line doesn't wait
 constexpr int SWAP_PASSES = 8;  // SwapPlaces: passes of place swaps at most
@@ -129,7 +134,16 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	leaderM = &itLeader->second;
 	leaderM->isStraggler = false;  // the line is centred on it
 	const int count = members.size();
-	const float baseSpacing = cfg.spacing * std::pow(cfg.spacingUnits / std::max<float>(count, cfg.spacingUnits), cfg.spacingExp);
+	// Running away: rows in reverse (riots at the back, towards the pursuers), matched afresh on the change
+	const bool isFleeNow = task->IsFormationFlee(frame);
+	if (isFleeNow != isFlee) {
+		isFlee = isFleeNow;
+		isDirty = true;
+	}
+	// Near splash, neighbours and rows no closer than splash_spacing x its radius, so one blast doesn't hit two
+	splashPitch = std::min(cfg.splashSpacing * UpdateSplash(frame), MAX_SPLASH_PITCH);
+	const float baseSpacing = std::max(splashPitch,
+			cfg.spacing * std::pow(cfg.spacingUnits / std::max<float>(count, cfg.spacingUnits), cfg.spacingExp));
 	maxWidth = std::min(std::max(cfg.widthRange * task->GetFormationRange(), 3.f * baseSpacing), MAX_WIDTH);
 	const float backLen = depth + maxWidth / 2 + baseSpacing;  // rows behind the leader, and smoothing
 	// Facing stops on a path that ends elsewhere, or once the line is off
@@ -267,7 +281,7 @@ int CFormation::FitColumns(int frame, float frontArc, int count, float baseSpaci
 	const float room = std::max(heldWidth - maxFoot - 2 * gap, 0.f);
 	spacing = baseSpacing;
 	if ((count - 1) * spacing > room) {
-		spacing = std::max(room / (count - 1), COMPRESS * baseSpacing);
+		spacing = std::max(room / (count - 1), std::max(COMPRESS * baseSpacing, splashPitch));
 	}
 	return std::min(count, int(room / std::max(spacing, maxFoot + gap) + 1e-3f) + 1);
 }
@@ -287,14 +301,16 @@ void CFormation::SwitchOn(int frame)
 
 void CFormation::Rematch(int cols)
 {
-	// Rows front to back: stragglers last, then by row order; within a rank, units further along first. Within a row,
-	// left to right as the units stand, so none walk across each other; the leader takes the middle column of its row
+	// Rows front to back: stragglers last, then by row order (reversed while running away); within a rank, units
+	// further along first. Within a row, left to right as the units stand, so none walk across each other; the leader
+	// takes the middle column of its row
 	order.clear();
 	for (auto& kv : members) {
 		order.push_back(&kv.second);
 	}
-	std::sort(order.begin(), order.end(), [](const SMember* a, const SMember* b) {
-		return std::tie(a->isStraggler, a->rank, b->arc) < std::tie(b->isStraggler, b->rank, a->arc);
+	const int sign = isFlee ? -1 : 1;
+	std::sort(order.begin(), order.end(), [sign](const SMember* a, const SMember* b) {
+		return std::make_tuple(a->isStraggler, sign * a->rank, b->arc) < std::make_tuple(b->isStraggler, sign * b->rank, a->arc);
 	});
 	rows.resize((order.size() + cols - 1) / cols);
 	for (size_t r = 0; r < rows.size(); ++r) {
@@ -362,7 +378,7 @@ void CFormation::LayOut(float gap)
 			foot = std::max(foot, m->foot);
 		}
 		if (r > 0) {
-			offset += (prevFoot + foot) / 2 + ROW_GAPS * gap;
+			offset += std::max((prevFoot + foot) / 2 + ROW_GAPS * gap, splashPitch);
 		}
 		row.offset = offset;
 		prevFoot = foot;
@@ -399,10 +415,10 @@ float CFormation::MoveAnchor(int frame, bool isSwitchOn, float frontArc, float d
 			lag = std::max(lag, LagAt(anchorArc - rows[m.row].offset, m.pos));
 		}
 	}
-	// Near the enemy the line doesn't wait: it walks on at the slowest unit's speed and units catch up as they can.
-	// Standing at the path's end the pace doesn't matter
+	// Running away or near the enemy the line doesn't wait: it walks on at the slowest unit's speed and units catch up
+	// as they can. Standing at the path's end the pace doesn't matter
 	const bool isStanding = isLineToEnd && (anchorArc >= arcs.back());
-	if ((lag > 0.f) && !isStanding && IsEnemyInSight(frame)) {
+	if ((lag > 0.f) && !isStanding && (isFlee || IsEnemyInSight(frame))) {
 		lag = 0.f;
 	}
 	const float pace = std::max(slowest - lag / leadSec, 0.f);
@@ -437,6 +453,35 @@ bool CFormation::IsEnemyInSight(int frame)
 		}
 	}
 	return false;
+}
+
+float CFormation::UpdateSplash(int frame)
+{
+	// The largest splash radius (weapon area of effect, or a mobile bomb's blast) of armed enemies that can hit the
+	// ground and are within their range + SPLASH_PAD of the leader; a larger one is taken at once, a smaller one only
+	// once the larger hasn't been seen for SPLASH_HOLD_FRAMES (so the line doesn't widen and narrow as they move)
+	if (frame < splashScanFrame + SPLASH_SCAN_FRAMES) {
+		return splash;
+	}
+	splashScanFrame = frame;
+	CCircuitAI* circuit = task->GetManager()->GetCircuit();
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	float nearAoe = 0.f;
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		const CEnemyInfo* enemy = kv.second;
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef == nullptr) || !edef->HasAntiLand() || (edef->GetAoe() < std::max(SPLASH_MIN, nearAoe))) {
+			continue;
+		}
+		if (leaderPos.SqDistance2D(enemy->GetPos()) < SQUARE(edef->GetMaxRange() + SPLASH_PAD)) {
+			nearAoe = edef->GetAoe();
+		}
+	}
+	if ((nearAoe >= splash) || (frame >= splashFrame + SPLASH_HOLD_FRAMES)) {
+		splash = nearAoe;
+		splashFrame = frame;
+	}
+	return splash;
 }
 
 void CFormation::ShiftRows(float pace, float gap)

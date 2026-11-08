@@ -1122,9 +1122,10 @@ bool CAttackTask::UpdateEscape(int frame)
 	return false;
 }
 
-bool CAttackTask::IsFormationAllowed(int frame) const
+bool CAttackTask::IsFormationFlee(int frame) const
 {
-	return (frame >= fleeFrame) && !utils::is_valid(corneredPos);
+	// Fleeing, or cornered and moving to a quieter spot: the line runs too, so light units don't bunch for splash
+	return (frame < fleeFrame) || utils::is_valid(corneredPos);
 }
 
 bool CAttackTask::IsHoldingGround(int frame) const

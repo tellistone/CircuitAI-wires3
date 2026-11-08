@@ -727,6 +727,7 @@ void CMilitaryManager::ReadConfig()
 	formation.widthRange = std::max(0.f, formCfg.get("width_range", 1.5f).asFloat());
 	formation.leadSec = std::max(0.1f, formCfg.get("lead_sec", 1.5f).asFloat());
 	formation.faceRange = std::max(0.f, formCfg.get("face_range", 2.f).asFloat());
+	formation.splashSpacing = std::max(0.f, formCfg.get("splash_spacing", 1.2f).asFloat());
 	formation.rowOrder.clear();
 	Json::Value rowOrder = formCfg["row_order"];
 	if (rowOrder.isNull()) {

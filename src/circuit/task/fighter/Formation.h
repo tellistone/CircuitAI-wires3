@@ -28,7 +28,8 @@ struct SFormationOrder {
 
 /*
  * Line formation (behaviour.json "formation"): a squad of land or sea units walking its path outside combat goes as
- * a line across the path, with more rows only where the line has to narrow. The task plans its path as before; the
+ * a line across the path, with more rows only where the line has to narrow; an attack group running away (fleeing,
+ * or cornered and moving to a quieter spot) too, its rows in reverse order (riots at the back) and waiting for no one. The task plans its path as before; the
  * formation decides where along and beside it each unit walks, and how fast. The travel action asks GetOrder.
  * - The line: the path the leader walks, through the leader's spot on it, and behind the spot its track. A new path
  *   that turns back by more than 120 degrees from where the line was heading drops the track, so the rows behind are
@@ -38,6 +39,8 @@ struct SFormationOrder {
  *   there (the threat map's grain), so flanks don't step into a turret's range the path kept out of, or deeper into
  *   one it crosses. Each row shifts sideways to fit, and a slot never lies past the first spot that isn't free, seen
  *   from the line. Spacing shrinks as the squad grows, and squeezes to 0.7 of that before a second row is added.
+ *   With splash near (armed enemies' largest weapon area of effect or bomb blast, within their range + 600, held
+ *   10 s), neighbours and rows stay at least splash_spacing x its radius apart (at most 256).
  *   Below 2 columns the formation lets go and the units follow the path as before, until 2 fit again for a few
  *   seconds.
  * - Slots: rows fill front to back by row_order. In a row, one pitch; units take the places left to right as they
@@ -116,6 +119,7 @@ private:
 	float StartArc(bool isSwitchOn, float frontArc) const;  // the anchor before this solve's step
 	float MoveAnchor(int frame, bool isSwitchOn, float frontArc, float dt, float leadSec);  // returns the pace
 	bool IsEnemyInSight(int frame);  // an enemy in some member's LOS (or was, a few seconds ago): the line won't wait
+	float UpdateSplash(int frame);  // splash, re-scanned once a second
 	void ShiftRows(float pace, float gap);
 	void PlaceSlots(int frame, float pace, float leadSec, std::vector<CCircuitUnit*>& outStuck);
 	void UpdateFacing(int frame, const springai::AIFloat3& pathEnd, float radius);  // start facing at the path's end, or turn
@@ -150,6 +154,11 @@ private:
 	SMember* leaderM = nullptr;
 	bool isOn = false;
 	bool isDirty = false;  // match units to slots again (members changed, or the path turned back)
+	bool isFlee = false;  // the squad runs away (ISquadTask::IsFormationFlee): rows in reverse order, no waiting
+	float splashPitch = 0.f;  // neighbours and rows at least this far apart (splash_spacing x splash)
+	float splash = 0.f;  // largest splash radius of armed enemies near (UpdateSplash), held SPLASH_HOLD_FRAMES
+	int splashFrame = 0;  // when splash was last raised or let go
+	int splashScanFrame = -FRAMES_PER_SEC;  // last scan
 	int matchCols = 0;  // columns of the current match
 
 	std::deque<springai::AIFloat3> track;  // the leader's last spots on its path, oldest first

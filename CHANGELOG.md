@@ -10,7 +10,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Line formation for attack groups** (`formation` block in `behaviour.json`; code default off, shipped on; per unit
   `formation_row` and the `no_formation` attribute). Attack groups of 3 or more land or sea units used to send every
   unit to the same path points, so they walked single file and clumped at turns. While a group walks its path and
-  isn't engaging, fleeing or cornered, it now walks as a line across the path its leader walks, centred on the leader:
+  isn't engaging, it now walks as a line across the path its leader walks, centred on the leader:
   neighbours `spacing` apart (closer as the group grows), at most `width_range` x its median weapon range wide,
   narrower where terrain or buildings in the next 3 s of walking leave less room, or where a flank would step into
   more enemy threat than the path itself is in (between two turrets the line narrows to the gap). Rows shift sideways
@@ -43,7 +43,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   short of more threat than at the centre (else it faces the way it came, not the path's last jog). It turns only
   where the block fits that way (walkable, 2 columns wide), and again only for a clear threat more than 45° off for
   2 s, and keeps facing across new paths that end within 256 elmos of the same spot, so
-  re-plans to the same spot don't turn it to and fro. Units keep their places on a turn of up to 120°. Other squads
+  re-plans to the same spot don't turn it to and fro. Units keep their places on a turn of up to 120°. Fleeing groups, and cornered groups moving to a quieter spot, also
+  run as a line (they used to run single file along the escape path, which splash weapons punished): rows in reverse
+  `row_order` (riots at the back, towards the pursuers; artillery and skirmishers lead), at the slowest unit's speed
+  without waiting for anyone. With splash near (`splash_spacing`: an armed enemy whose weapon area of effect or bomb
+  blast is 16 or more, within its range + 600 of the group, held 10 s), neighbours and rows stay at least 1.2 x its
+  radius apart (at most 256), adding rows where the width runs out. Other squads
   (raid, defend, anti-air, anti-heavy) and units' own facing come in later steps.
 - **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit
   `reload_scoot_margin`, default 100, or the anti-heavy flee margin in anti-heavy squads). While engaged, a unit whose

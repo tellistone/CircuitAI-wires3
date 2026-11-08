@@ -49,6 +49,7 @@ public:
 	virtual const CFormation* GetFormation() const override { return formation.IsOn() ? &formation : nullptr; }
 	// May the squad walk in line now (besides walking its path in ROAM)? Default: no; tasks opt in
 	virtual bool IsFormationAllowed(int frame) const { return false; }
+	virtual bool IsFormationFlee(int frame) const { return false; }  // running away: rows in reverse, no waiting
 	// Fire range the line's width is scaled by (formation.width_range)
 	virtual float GetFormationRange() const { return lowestRange; }
 protected:
