@@ -39,9 +39,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   there and it stands in line instead of clumped; it keeps that spot unless another is 20% quieter. Stepping out of an
   attacker's range while holding, and moves where no path was found, stay straight moves. Once the line stands at the end of its
   walk it faces the threat (`face_range`, 0 = off): it reads the enemy threat 8 ways at 1 and 2 x its fire range
-  around the block and, if the threat has a clear side, turns the block about its centre to face it (else it faces
-  the way it came, not the path's last jog). It turns again only for a clear threat more than 45° off for 2 s, where
-  its rows can stand that way, and keeps facing across new paths that end within 256 elmos of the same spot, so
+  around the block and, if the threat has a clear side, turns the block about its centre to face it, its front row
+  short of more threat than at the centre (else it faces the way it came, not the path's last jog). It turns only
+  where the block fits that way (walkable, 2 columns wide), and again only for a clear threat more than 45° off for
+  2 s, and keeps facing across new paths that end within 256 elmos of the same spot, so
   re-plans to the same spot don't turn it to and fro. Units keep their places on a turn of up to 120°. Other squads
   (raid, defend, anti-air, anti-heavy) and units' own facing come in later steps.
 - **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit

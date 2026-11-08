@@ -173,7 +173,9 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	const float pace = MoveAnchor(frame, isSwitchOn, frontArc, dt, cfg.leadSec);
 	ShiftRows(pace, cfg.gap);
 	PlaceSlots(frame, pace, cfg.leadSec, outStuck);
-	UpdateFacing(frame, *path, cfg.faceRange * task->GetFormationRange());
+	if (cfg.faceRange > 0.f) {
+		UpdateFacing(frame, path->posPath.back(), cfg.faceRange * task->GetFormationRange());
+	}
 }
 
 float CFormation::AddMembers(int frame)
@@ -377,9 +379,10 @@ void CFormation::LayOut(float gap)
 
 float CFormation::StartArc(bool isSwitchOn, float frontArc) const
 {
-	// Where the front row's centre starts this solve: the leader's slot isn't behind it
+	// Where the front row's centre starts this solve: the leader's slot isn't behind it, nor the anchor past the line's
+	// end (a leader ahead of its row's slot there: after the line turned back while facing)
 	const float leaderOffset = rows[leaderM->row].offset;
-	return isSwitchOn ? leaderOffset : std::max(frontArc, leaderOffset);
+	return std::min(isSwitchOn ? leaderOffset : std::max(frontArc, leaderOffset), arcs.back());
 }
 
 float CFormation::MoveAnchor(int frame, bool isSwitchOn, float frontArc, float dt, float leadSec)
@@ -396,8 +399,10 @@ float CFormation::MoveAnchor(int frame, bool isSwitchOn, float frontArc, float d
 			lag = std::max(lag, LagAt(anchorArc - rows[m.row].offset, m.pos));
 		}
 	}
-	// Near the enemy the line doesn't wait: it walks on at the slowest unit's speed and units catch up as they can
-	if ((lag > 0.f) && IsEnemyInSight(frame)) {
+	// Near the enemy the line doesn't wait: it walks on at the slowest unit's speed and units catch up as they can.
+	// Standing at the path's end the pace doesn't matter
+	const bool isStanding = isLineToEnd && (anchorArc >= arcs.back());
+	if ((lag > 0.f) && !isStanding && IsEnemyInSight(frame)) {
 		lag = 0.f;
 	}
 	const float pace = std::max(slowest - lag / leadSec, 0.f);
@@ -645,7 +650,7 @@ bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, bool
 void CFormation::BuildFacingLine(const AIFloat3& leaderPos, float backLen)
 {
 	// Arc 0 level with the leader (not past the front), as on a path
-	const AIFloat3 front = faceCentre + faceDir * (depth / 2);
+	const AIFloat3 front = faceCentre + faceDir * faceAhead;
 	const float frontArc = std::max((front - leaderPos).dot2D(faceDir), 0.f);
 	const float len = backLen + frontArc;
 	line.assign({front - faceDir * len, front});
@@ -653,28 +658,29 @@ void CFormation::BuildFacingLine(const AIFloat3& leaderPos, float backLen)
 	isLineToEnd = true;
 }
 
-void CFormation::UpdateFacing(int frame, const PathInfo& path, float radius)
+void CFormation::UpdateFacing(int frame, const AIFloat3& pathEnd, float radius)
 {
-	if ((radius <= 0.f) || (frame < faceFrame + FACE_EVAL_FRAMES)) {
+	if (frame < faceFrame + FACE_EVAL_FRAMES) {
 		return;
 	}
+	AIFloat3 dir;
+	float ahead;
 	if (isFacing) {
-		// Turn for a clear threat more than 45 degrees off, FACE_VOTES reads running, where the rows fit that way
+		// Turn for a clear threat more than 45 degrees off, FACE_VOTES reads running, where the block fits that way
 		faceFrame = frame;
-		AIFloat3 dir;
 		if (!ThreatDir(faceCentre, radius, dir) || (dir.dot2D(faceDir) >= FACE_TURN_COS)) {
 			faceVotes = 0;
-		} else if ((++faceVotes >= FACE_VOTES) && IsBlockFree(faceCentre, dir)) {
+		} else if ((++faceVotes >= FACE_VOTES) && FitFacing(dir, ahead)) {
 			faceVotes = 0;
-			Face(dir);
+			Face(dir, ahead);
 		}
 		return;
 	}
-	if (!isLineToEnd || (anchorArc < arcs.back()) || path.posPath.empty()) {
+	if (!isLineToEnd || (anchorArc < arcs.back())) {
 		return;  // not standing at the path's end yet
 	}
 	// Standing at the path's end: face the way the line came (over its last TURN_LOOK, not the last jog of the path),
-	// or a clear threat where the rows fit
+	// or a clear threat where the block fits
 	float3 arrival = PointAt(arcs.back()) - PointAt(arcs.back() - TURN_LOOK);
 	arrival.y = 0.f;
 	if (arrival.SqLength2D() < 1.f) {
@@ -682,17 +688,23 @@ void CFormation::UpdateFacing(int frame, const PathInfo& path, float radius)
 	}
 	faceDir = arrival.Normalize2D();
 	faceCentre = anchorPos - faceDir * (depth / 2);
-	faceEnd = path.posPath.back();
+	faceEnd = pathEnd;
 	faceFrame = frame;
 	faceVotes = 0;
 	isFacing = true;
-	AIFloat3 dir;
-	Face((ThreatDir(faceCentre, radius, dir) && IsBlockFree(faceCentre, dir)) ? dir : faceDir);
+	if (ThreatDir(faceCentre, radius, dir) && FitFacing(dir, ahead)) {
+		Face(dir, ahead);
+	} else {
+		Face(faceDir, depth / 2);  // the front row where it stands: the line just walked there
+	}
 }
 
 bool CFormation::ThreatDir(const AIFloat3& centre, float radius, AIFloat3& outDir) const
 {
 	// The threat map: every armed enemy that can hit the leader's type (seen, on radar or last seen), by its strength
+	if (radius <= 0.f) {
+		return false;  // no land weapon (torpedoes only): the way the line came
+	}
 	CThreatMap* threatMap = task->GetManager()->GetCircuit()->GetThreatMap();
 	radius = std::max(radius, float(DEFAULT_SLACK * 4));
 	float3 sum = ZeroVector;
@@ -716,21 +728,34 @@ bool CFormation::ThreatDir(const AIFloat3& centre, float radius, AIFloat3& outDi
 	return true;
 }
 
-bool CFormation::IsBlockFree(const AIFloat3& centre, const AIFloat3& dir) const
+bool CFormation::FitFacing(const AIFloat3& dir, float& outAhead) const
 {
-	// Half the depth walkable both ways from the centre; the width is fitted as ever. Not the threat: facing a threat
-	// takes the front row half the depth towards it
+	// The front row half the depth ahead of the centre, or less: short of a spot that isn't free (FreeDist, more threat
+	// than at the centre), so it doesn't step into a turret's reach; measured once per turn, so a threat edge moving
+	// across the block doesn't move it to and fro. The rows behind walkable; and 2 columns at least across the front,
+	// as FitColumns fits them, else the line would switch off there and face that way again on its way back
+	CCircuitAI* circuit = task->GetManager()->GetCircuit();
+	const float gap = circuit->GetMilitaryManager()->GetFormationCfg().gap;
 	const int mobileId = leader->GetCircuitDef()->GetMobileId();
-	const float half = depth / 2;
-	return (FreeDist(centre, dir, half, mobileId, false) >= half) && (FreeDist(centre, -dir, half, mobileId, false) >= half);
+	outAhead = FreeDist(faceCentre, dir, depth / 2, mobileId);
+	const float back = depth - outAhead;
+	if (FreeDist(faceCentre, -dir, back, mobileId, false) < back) {
+		return false;
+	}
+	const AIFloat3 front = faceCentre + dir * outAhead;
+	const AIFloat3 axis(-dir.z, 0.f, dir.x);
+	const float room = FreeDist(front, axis, maxWidth, mobileId) + FreeDist(front, -axis, maxWidth, mobileId)
+			- maxFoot - 2 * gap;
+	return room >= std::max(spacing, maxFoot + gap);
 }
 
-void CFormation::Face(const AIFloat3& dir)
+void CFormation::Face(const AIFloat3& dir, float ahead)
 {
 	if (IsTurnBack(faceDir, dir)) {
 		isDirty = true;  // the rows swap ends: match units to slots afresh (turned less, the block turns as it is)
 	}
 	faceDir = dir;
+	faceAhead = ahead;
 }
 
 AIFloat3 CFormation::PointAt(float arc) const
