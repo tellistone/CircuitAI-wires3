@@ -62,6 +62,10 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, defenceIdx(0)
 		, scoutIdx(0)
 		, armyCost(0.f)
+		, armyThreat(0.f)
+		, attackThreatFloor(0.f)
+		, isAttackThreatFloor(false)
+		, attackThreatFloorFrame(-1)
 		, attackBaseGather(true)
 		, attackIdleMerge(true)
 		, rallyHost(nullptr)
@@ -453,6 +457,7 @@ void CMilitaryManager::ReadConfig()
 	groupCountPower = readAttackNum("group_count_power", 0.025f, 0.f, 1.f);  // 0 = off
 	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 270.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
 	attackFloorHold = readAttackNum("attack_floor_hold", 0.75f, 0.f, 1.f);  // 1 = no hysteresis
+	attackThreatFloor = readAttackNum("attack_threat_floor", 0.8f, 0.f, noMax);  // 0 = off
 	{
 		const Json::Value& qcont = quotas["contested"];
 		if (!qcont.isNull() && !qcont.isObject()) {
@@ -2849,12 +2854,36 @@ void CMilitaryManager::AddArmyCost(CCircuitUnit* unit)
 {
 	AddResponse(unit);
 	armyCost += unit->GetCircuitDef()->GetCostM();
+	armyThreat += unit->GetCircuitDef()->GetThreat();
 }
 
 void CMilitaryManager::DelArmyCost(CCircuitUnit* unit)
 {
 	DelResponse(unit);
 	armyCost = std::max(armyCost - unit->GetCircuitDef()->GetCostM(), .0f);
+	armyThreat = std::max(armyThreat - unit->GetCircuitDef()->GetThreat(), .0f);
+}
+
+bool CMilitaryManager::IsAttackThreatFloor()
+{
+	if (attackThreatFloor <= 0.f) {
+		return false;
+	}
+	const int frame = circuit->GetLastFrame();
+	if (frame == attackThreatFloorFrame) {
+		return isAttackThreatFloor;
+	}
+	attackThreatFloorFrame = frame;
+	// Known enemy mobile threat (thr_mod.mobile applied) shared over the enemy teams, against our own army (allies'
+	// armies don't count: each AI judges its own)
+	const float enemyPerTeam = circuit->GetEnemyManager()->GetMobileThreat() / std::max(circuit->GetEnemyTeamSize(), 1);
+	const float onAt = armyThreat * attackThreatFloor;
+	if (enemyPerTeam > onAt) {
+		isAttackThreatFloor = true;
+	} else if (enemyPerTeam <= onAt * attackFloorHold) {
+		isAttackThreatFloor = false;
+	}  // else: keep, so the floor doesn't flip on every unit made or lost
+	return isAttackThreatFloor;
 }
 
 } // namespace circuit

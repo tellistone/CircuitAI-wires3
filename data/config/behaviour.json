@@ -39,6 +39,7 @@
 
 	"raid": [9.0, 20.0],  // [<min>, <avg>] power of raider squad
 	"attack": 10.0,  // attack group floor: a group under this power reinforces (walks to) a stronger attack group if one can be reached, else only walks to targets on our ground, as attack_own_ground_time (a target already within range is always fair game; with none it goes to the front line)
+	"attack_threat_floor": 0.8,  // all attack groups only walk to targets on our ground (as under quota.attack) while known enemy mobile threat / enemy team count > our own army's threat (our mobile fighters, not allies', not the commander) x this; lifted once it is at or below our army's threat x this x attack_floor_hold; 0 = off
 	"attack_floor_hold": 0.75,  // hysteresis for the attack floor: a group that reached quota.attack keeps walking to targets anywhere until its power drops below quota.attack x this; 1 = none
 
 	"raid_flee_share": 0.33,

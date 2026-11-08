@@ -1535,10 +1535,12 @@ void CAttackTask::FindTarget()
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
 	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop).
-	// The same under the quota.attack floor (UpdatePastFloor), at any time
+	// The same under the quota.attack floor (UpdatePastFloor) and while the enemy army outweighs ours
+	// (quota.attack_threat_floor), at any time
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	UpdatePastFloor();
-	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor;
+	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
+			|| militaryMgr->IsAttackThreatFloor();
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;

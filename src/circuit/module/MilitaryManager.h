@@ -247,6 +247,10 @@ public:
 	// quota.attack_floor_hold: a group past quota.attack (the floor) stays past it until its power drops below
 	// quota.attack x this; under the floor it only walks to targets on our ground (as attack_own_ground_time)
 	float GetAttackFloorHold() const { return attackFloorHold; }
+	// quota.attack_threat_floor: while known enemy mobile threat / enemy teams is above our army's threat x this,
+	// every attack group only walks to targets on our ground (as attack_own_ground_time). Lifted once it drops to
+	// our army's threat x this x attack_floor_hold; 0 = off. Re-judged at most once a frame
+	bool IsAttackThreatFloor();
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
 	struct SContested {
 		float bonus;  // enemies there count as this many times closer (attack ranking, raid route goals); 1 = off
@@ -442,6 +446,7 @@ private:
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;
+	float armyThreat;  // our army's threat (CCircuitDef::GetThreat, as the enemy's mobile threat counts it)
 	struct SCapturedUnit {
 		int controllerId;  // our unit that captured it
 		float cost;
@@ -484,6 +489,9 @@ private:
 	float groupCountPower;  // quota.group_count_power
 	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
 	float attackFloorHold;  // quota.attack_floor_hold
+	float attackThreatFloor;  // quota.attack_threat_floor
+	bool isAttackThreatFloor;  // IsAttackThreatFloor's latched state
+	int attackThreatFloorFrame;  // frame it was last judged
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
