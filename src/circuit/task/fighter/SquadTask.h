@@ -136,7 +136,8 @@ protected:
 	 * Target picks: runners not worth chasing (attack, raid)
 	 */
 	static constexpr float CHASE_SPEED_MOD = 0.8f;  // x our top speed: a runner this fast is not chased
-	static constexpr float OUTRANGE_CHASE_SPEED_MOD = 0.7f;  // x our top speed: nor this fast, if it outranges us
+	static constexpr float OUTRANGE_CHASE_SPEED_MOD = 0.75f;  // x our top speed: nor this fast, if it outranges us
+	static_assert(CHASE_SPEED_MOD >= OUTRANGE_CHASE_SPEED_MOD, "IsRunningAway: sqSpeed >= sqOutrangeSpeed");
 	static constexpr float OUTRANGE_MOD = 1.1f;  // outranges us: ground range over ours x this (not by a few elmos)
 	// Is the enemy moving away from pos at sqSpeed or more (elmos per frame, squared), or at sqOutrangeSpeed or more
 	// when its ground/water weapons (IsGroundDangerDef: not anti-air only) outrange ourRange x OUTRANGE_MOD?

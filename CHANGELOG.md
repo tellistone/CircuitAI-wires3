@@ -166,7 +166,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Changed
 
 - **Raid and attack drop outranging runners sooner.** Both tasks skip an enemy moving away from the leader at 80%
-  of the squad's top speed or more; an enemy that outranges us is now skipped from 70%. Outranges: its ground/water
+  of the squad's top speed or more; an enemy that outranges us is now skipped from 75% (raid: except anti-heavy, support and
+  artillery units, which raiders chase as before). Outranges: its ground/water
   weapon range (anti-air only units never count, as in the flee's `IsGroundDangerDef`) is over 1.1x ours, so a
   constructor's few extra elmos don't count. Ours: attack's weighted median weapon range (as for siege targets), a
   raid group's highest weapon range. Raid's near-base allowance (which doubles the squared speed limit) no longer

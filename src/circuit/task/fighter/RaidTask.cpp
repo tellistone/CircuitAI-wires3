@@ -318,9 +318,12 @@ bool CRaidTask::FindTarget()
 	const bool isAntiStatic = cdef->IsAttrAntiStat();
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
-	const float maxSpeed = SQUARE(highestSpeed * CHASE_SPEED_MOD / FRAMES_PER_SEC);
+	const float sqMaxSpeed = SQUARE(highestSpeed * CHASE_SPEED_MOD / FRAMES_PER_SEC);
 	// A runner that outranges us is dropped at a lower speed, near base too: we would only catch it inside its range
-	const float outrangeSpeed = SQUARE(highestSpeed * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
+	const float sqOutrangeSpeed = SQUARE(highestSpeed * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
+	// Raiders' prey: chased whatever its range (the outranging runner rule is off for it)
+	constexpr CCircuitDef::RoleM preyRoles = CCircuitDef::RoleMask::AH | CCircuitDef::RoleMask::SUPPORT
+			| CCircuitDef::RoleMask::ARTY;
 	// Current health, same measure as the escape check; for 4s after an escape demand a 25% margin,
 	// so the group doesn't pick a target at the edge of the danger it just left and bounce back and forth
 	const bool isCautious = (circuit->GetLastFrame() < fleeFrame + FRAMES_PER_SEC * 4);
@@ -380,23 +383,25 @@ bool CRaidTask::FindTarget()
 		const float sqEBDist = basePos.SqDistance2D(ePos);
 		const float distMod = GetThrDistModAt(ePos);  // thr_mod.distance curve at the enemy's spot
 		float checkPower = maxPower / distMod;
-		float checkSpeed = maxSpeed;
+		float sqCheckSpeed = sqMaxSpeed;
 		if (sqEBDist < sqBaseRange) {
 			checkPower *= circuit->GetMilitaryManager()->GetBaseThrBonus(sqEBDist);  // quota.thr_mod.base_bonus near base
-			checkSpeed *= 2.f;
+			sqCheckSpeed *= 2.f;
 		}
 		const float power = threatMap->GetThreatAt(ePos);
 		if (checkPower <= power) {
 			continue;
 		}
-		if (IsRunningAway(enemy, pos, checkSpeed, outrangeSpeed, highestRange)) {
-			continue;  // the near-base doubling (checkSpeed) is not for a runner that outranges us
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		const bool isPrey = (edef != nullptr) && edef->IsEnemyRoleAny(preyRoles);
+		// The near-base doubling (sqCheckSpeed) is not for a runner that outranges us
+		if (IsRunningAway(enemy, pos, sqCheckSpeed, isPrey ? sqCheckSpeed : sqOutrangeSpeed, highestRange)) {
+			continue;
 		}
 
 		int targetCat;
 		float defThreat;
 		bool isBuilder;
-		CCircuitDef* edef = enemy->GetCircuitDef();
 		if (edef != nullptr) {
 			if (isAntiStatic && edef->IsMobile()) {
 				continue;
