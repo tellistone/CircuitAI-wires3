@@ -51,9 +51,9 @@ public:
 	float GetCountPowerMod(size_t count) const;
 	float GetCountPowerMod() const { return GetCountPowerMod(units.size()); }
 	// Judges threat with the enemy unit count (squad threat, CThreatMap::GetSquadThreatAt): a squad (ISquadTask)
-	// that isn't mostly area damage. Area damage hits several of a swarm with one shot, so the swarm's numbers don't
-	// count against it. Changes only when units join or leave
-	bool IsSquadThreat() const { return isSquad && (areaPower * 2.f < attackPower); }
+	// with no more than half its power from area damage. Area damage hits several of a swarm with one shot, so the
+	// swarm's numbers don't count against it. Changes only when units join or leave
+	bool IsSquadThreat() const { return isSquad && (areaPower * 2.f <= attackPower); }
 	// The unit's task IsSquadThreat: its routes use the squad threat layers (CPathFinder)
 	static bool IsSquadThreat(CCircuitUnit* unit);
 	// Enemy threat at pos as this task judges it: squad threat if IsSquadThreat, else the plain threat. Use it

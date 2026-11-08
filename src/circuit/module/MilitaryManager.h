@@ -241,10 +241,11 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
-	// quota.group_count_aoe: an armed type whose weapon's area of effect (radius) is at least this. A squad mostly of
-	// these doesn't count the enemies (IFighterTask::IsSquadThreat): one shot hits several of a swarm
+	// quota.group_count_aoe: an armed type whose fire's area of effect (CCircuitDef::GetFireAoe, radius) is at least
+	// this. A squad mostly of these doesn't count the enemies (IFighterTask::IsSquadThreat): one shot hits several of
+	// a swarm
 	bool IsAreaDamage(const CCircuitDef* cdef) const {
-		return (countAoe > 0.f) && cdef->IsAttacker() && (cdef->GetAoe() >= countAoe);
+		return (countAoe > 0.f) && cdef->IsAttacker() && (cdef->GetFireAoe() >= countAoe);
 	}
 	// quota.attack_own_ground_time: before this frame attack groups only walk to targets on our ground
 	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }

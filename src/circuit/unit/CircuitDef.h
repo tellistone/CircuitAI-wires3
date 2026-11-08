@@ -205,7 +205,11 @@ public:
 	springai::WeaponMount* GetWeaponMount() const { return weaponMount; }
 	float GetPwrDamage() const { return pwrDmg; }  // ally
 	float GetThrDamage() const { return thrDmg; }  // enemy
-	float GetAoe() const { return aoe; }
+	float GetAoe() const { return aoe; }  // the largest of its weapons'
+	// Area of effect (radius) of what it fires on its own: its weapons' radii weighted by their dps, manual fire
+	// (D-gun) and shields left out, so one big splash weapon it seldom fires (a strider's manual-fire or landing
+	// weapon) doesn't make it area damage. A mobile bomb: its explosion's
+	float GetFireAoe() const { return fireAoe; }
 	float GetPower() const { return power; }
 	float GetThreat() const { return threat; }
 	// How much one enemy of this type counts in the threat map's enemy unit count (CThreatMap squad layers):
@@ -348,6 +352,7 @@ private:
 	float thrDmg;  // enemy damage
 	float thrMod;  // product of the threat multipliers (thr_mod)
 	float aoe;  // radius
+	float fireAoe;  // radius: GetFireAoe
 	float power;  // ally max threat
 	float threat;  // enemy max threat
 	float minRange;
