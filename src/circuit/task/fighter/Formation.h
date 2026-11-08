@@ -66,6 +66,8 @@ public:
 	bool IsOn() const { return isOn; }  // the line is formed: its units walk to GetOrder
 	// Where the unit walks now; false: it has no slot (busy, no_formation, or the line is off): follow the path
 	bool GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const;
+	// The line steers the unit and it keeps up (in line, or a straggler faster than the line): no regroup for it
+	bool IsKeptUp(const CCircuitUnit* unit) const;
 
 #ifdef DEBUG_VIS
 	void Log() const;

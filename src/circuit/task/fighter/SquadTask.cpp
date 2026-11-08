@@ -264,8 +264,9 @@ bool ISquadTask::IsMustRegroup()
 	static std::vector<CCircuitUnit*> stuckUnits;  // released after the loops over units
 //	validUnits.reserve(units.size());
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();;
+	// Units the line formation steers and that keep up don't count: the line waits for them, or they catch it up
 	for (CCircuitUnit* unit : units) {
-		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) &&
+		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !formation.IsKeptUp(unit) &&
 			terrainMgr->CanMoveToPos(unit->GetArea(), unit->GetPos(frame)))
 		{
 			validUnits.push_back(unit);

@@ -32,7 +32,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   line re-centres on the next one). Units with the `jump` attribute (jump on the move; none in the shipped config)
   still jump along the path whenever their jump is ready, then walk back into line; jumps in combat and when fleeing
   don't go through the line and are unchanged. If the group's most restricted mover is a `no_formation` unit, the
-  group walks as before. Other squads (raid, defend, anti-air, anti-heavy) and facing come in later steps.
+  group walks as before. While the line is on, the regroup check (stop and gather when units spread too far)
+  ignores units the line steers that keep up (in line, or stragglers at least 10% faster than the line), so a group in
+  line no longer stops to gather for them. A holding group (nothing to attack, no front to walk to, no safe route) now
+  walks to its quiet spot along a threat-capped path when the spot is more than 256 elmos away, so the line takes it
+  there and it stands in line instead of clumped; it keeps that spot unless another is 20% quieter. Stepping out of an
+  attacker's range while holding, and moves where no path was found, stay straight moves. Other squads (raid, defend,
+  anti-air, anti-heavy) and facing come in later steps.
 - **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit
   `reload_scoot_margin`, default 100, or the anti-heavy flee margin in anti-heavy squads). While engaged, a unit whose
   main weapon is less than `reload_scoot` reloaded and that stands in ground threat steps straight away from the

@@ -491,6 +491,15 @@ bool CFormation::GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const
 	return true;
 }
 
+bool CFormation::IsKeptUp(const CCircuitUnit* unit) const
+{
+	auto it = members.find(const_cast<CCircuitUnit*>(unit));
+	if (!isOn || (it == members.end()) || !it->second.isSteered) {
+		return false;
+	}
+	return !it->second.isStraggler || (it->second.maxSpeed >= 1.1f * slowest);
+}
+
 void CFormation::Reset()
 {
 	isOn = false;

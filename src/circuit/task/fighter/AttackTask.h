@@ -288,7 +288,11 @@ private:
 	void Engage(int frame);
 	// Nothing to go to: hold at the quietest reachable spot within 2x our range (never head home),
 	// avoiding the spot we were last hit at while holding; retry next decision
-	void HoldPosition();
+	// Walk to the quietest spot nearby (FindQuietSpot) and hold there; isHolding. isWalk: along a planned path, so the
+	// line formation takes the group there and it stands in line (a spot within 256 elmos, or no path: straight
+	// moves); false: straight moves at once (stepping out of an attacker's range)
+	void HoldPosition(bool isWalk = true);
+	void ApplyHoldPath(const CQueryPathSingle* query);
 	// Quietest reachable spot within 2x our range (24 samples + where we stand), avoiding the last hit area;
 	// returns the threat there
 	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
@@ -344,6 +348,7 @@ private:
 
 	// Holding
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)
+	springai::AIFloat3 holdPos;  // the spot HoldPosition walks the group to along a path (-RgtVector: none)
 	int stepFrame;  // last step back after being hit while holding
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
 	float hitRadius;

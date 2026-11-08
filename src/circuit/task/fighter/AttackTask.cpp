@@ -137,6 +137,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, pickSqDist(0.f)
 		, lastRoute({nullptr, -RgtVector, -1, 0, ROUTE_REUSE_FRAMES, AIFloat3(-RgtVector), -1, 0.f, -1})
 		, isHolding(false)
+		, holdPos(-RgtVector)
 		, stepFrame(0)
 		, hitPos(-RgtVector)
 		, hitRadius(0.f)
@@ -2081,12 +2082,51 @@ void CAttackTask::Engage(int frame)
 	}
 }
 
-void CAttackTask::HoldPosition()
+void CAttackTask::HoldPosition(bool isWalk)
 {
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
 	AIFloat3 bestPos;
-	FindQuietSpot(leader->GetPos(manager->GetCircuit()->GetLastFrame()), bestPos);
-	MoveGroupTo(bestPos);
+	const float bestThreat = FindQuietSpot(pos, bestPos);
 	isHolding = true;
+	if (isWalk && utils::is_valid(holdPos)) {
+		if (!IsQueryReady(leader)) {
+			return;  // its path is on the way
+		}
+		// Walking to the spot, or standing there in line: keep it unless the new one is clearly (20%) quieter
+		ITravelAction* travelAct = leader->GetTravelAct();
+		if (travelAct->IsActive() && (travelAct->GetPath() == pPath) && !pPath->posPath.empty()
+			&& (pPath->posPath.back().SqDistance2D(holdPos) < SQUARE(DEFAULT_SLACK * 4))
+			&& (bestThreat >= circuit->GetThreatMap()->GetThreatAt(leader, holdPos) * 0.8f))
+		{
+			return;
+		}
+	}
+	holdPos = -RgtVector;
+	if (!isWalk || (bestPos.SqDistance2D(pos) < SQUARE(DEFAULT_SLACK * 4))) {
+		MoveGroupTo(bestPos);
+		return;
+	}
+	holdPos = bestPos;
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			leader, circuit->GetThreatMap(), circuit->GetLastFrame(), pos, bestPos, pathfinder->GetSquareSize(), nullptr,
+			GetPathThreatCap(pos, {bestPos}));
+	SetRouteThreat(query.get(), AttackRoute::FRONT);
+	RunRoute(query, [this](const IPathQuery* query) {
+		this->ApplyHoldPath(static_cast<const CQueryPathSingle*>(query));
+	});
+}
+
+void CAttackTask::ApplyHoldPath(const CQueryPathSingle* query)
+{
+	pPath = query->GetPathInfo();
+	if (pPath->posPath.size() > 2) {
+		ActivePath();  // the line walks it, and stands in line at its end
+		return;
+	}
+	MoveGroupTo(holdPos);  // no path (or a trivial one): straight there, as before
+	holdPos = -RgtVector;
 }
 
 float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
@@ -2237,7 +2277,7 @@ void CAttackTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 		hitRadius = std::max(highestRange, 300.f);
 		hitFrame = frame;
 	}
-	HoldPosition();
+	HoldPosition(false);  // hit: away at once, no waiting for a path
 }
 
 } // namespace circuit
