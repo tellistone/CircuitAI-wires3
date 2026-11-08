@@ -73,7 +73,7 @@ public:
 	// isBottleneck: cost at a cell = least "highest threat crossed" on any route from startPos (see CMicroPather).
 	//               Always uses the normal (not cloak) threat array so the result is on the GetThreatAt scale.
 	// isSquadThreat: on the squad threat layers (CThreatMap::GetSquadThreatAt) whatever the unit's task; the other
-	//                queries use them when the unit's task is a squad (IFighterTask::IsSquadThreat)
+	//                queries use them when the unit's task judges with them (IFighterTask::IsSquadThreat)
 	std::shared_ptr<IPathQuery> CreateCostMapQuery(CCircuitUnit* unit, CThreatMap* threatMap, int frame,
 			const springai::AIFloat3& startPos, bool isBottleneck = false, bool isSquadThreat = false);
 	std::shared_ptr<IPathQuery> CreateLineMapQuery(CCircuitUnit* unit, CThreatMap* threatMap, int frame);

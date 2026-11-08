@@ -45,8 +45,8 @@ ISquadTask::ISquadTask(ITaskManager* mgr, FightType type, float powerMod)
 		, formation(this)
 {
 	// Squads weigh their own power with the group size bonus (GetCountPowerMod), so they judge threat with the
-	// same bonus on the enemy side
-	isSquadThreat = true;
+	// same bonus on the enemy side (IsSquadThreat)
+	isSquad = true;
 }
 
 ISquadTask::~ISquadTask()
@@ -129,6 +129,7 @@ void ISquadTask::Merge(ISquadTask* task)
 	scoots.insert(task->scoots.begin(), task->scoots.end());  // still on hold position: ended (and released) here
 	task->scoots.clear();
 	attackPower += task->GetAttackPower();
+	areaPower += task->GetAreaPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
 	shields.insert(sh.begin(), sh.end());
 

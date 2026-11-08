@@ -405,7 +405,7 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap*
 		maxSlope = std::max(areaData->mobileType[mobileTypeId].maxSlope, 1e-3f);
 	}
 
-	// Squads route on squad threat (CThreatMap::GetSquadThreatAt), the threat they judge with; cloak has no squad layer
+	// Squads route on the threat they judge with (IFighterTask::IsSquadThreat); cloak has no squad layer
 	float* airThreat = isSquadThreat ? threatMap->GetAirSquadArray() : threatMap->GetAirThreatArray();
 	float* surfThreat = isSquadThreat ? threatMap->GetSurfSquadArray() : threatMap->GetSurfThreatArray();
 	float* amphThreat = isSquadThreat ? threatMap->GetAmphSquadArray() : threatMap->GetAmphThreatArray();

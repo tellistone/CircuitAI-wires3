@@ -57,6 +57,9 @@ void IFighterTask::AssignTo(CCircuitUnit* unit)
 
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	attackPower += cdef->GetPower();
+	if (manager->GetCircuit()->GetMilitaryManager()->IsAreaDamage(cdef)) {
+		areaPower += cdef->GetPower();
+	}
 	if (unit->HasShield()) {
 		shields.insert(unit);
 	}
@@ -75,7 +78,11 @@ void IFighterTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IUnitTask::RemoveAssignee(unit);
 
-	attackPower -= unit->GetCircuitDef()->GetPower();
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	attackPower -= cdef->GetPower();
+	if (manager->GetCircuit()->GetMilitaryManager()->IsAreaDamage(cdef)) {
+		areaPower -= cdef->GetPower();
+	}
 	cowards.erase(unit);
 	fireSpots.erase(unit);
 	if (unit->HasShield()) {
@@ -496,17 +503,24 @@ float IFighterTask::GetCountPowerMod(size_t count) const
 	return manager->GetCircuit()->GetThreatMap()->GetCountMod(count);
 }
 
-float IFighterTask::GetTaskThreatAt(CCircuitUnit* unit, const AIFloat3& pos) const
-{
-	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
-	return isSquadThreat ? threatMap->GetSquadThreatAt(unit, pos) : threatMap->GetThreatAt(unit, pos);
-}
-
 bool IFighterTask::IsSquadThreat(CCircuitUnit* unit)
 {
 	IUnitTask* task = unit->GetTask();
 	return (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
-			&& static_cast<IFighterTask*>(task)->isSquadThreat;
+			&& static_cast<IFighterTask*>(task)->IsSquadThreat();
+}
+
+float IFighterTask::GetTaskThreatAt(CCircuitUnit* unit, const AIFloat3& pos) const
+{
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	return IsSquadThreat() ? threatMap->GetSquadThreatAt(unit, pos) : threatMap->GetThreatAt(unit, pos);
+}
+
+float IFighterTask::GetTaskThreatExcl(CCircuitUnit* unit, const AIFloat3& pos, float exclThreat) const
+{
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	return IsSquadThreat() ? threatMap->GetSquadThreatExcl(unit, pos, exclThreat)
+			: std::max(0.f, threatMap->GetThreatAt(unit, pos) - exclThreat);
 }
 
 bool IFighterTask::IsDangerAt(CCircuitUnit* unit, const AIFloat3& p, float strength) const

@@ -562,7 +562,7 @@ bool CAntiHeavyTask::FindTarget()
 		}
 		const AIFloat3& ePos = enemy->GetPos();
 		if ((ePos.y - map->GetElevationAt(ePos.x, ePos.z) > weaponRange)
-			|| (maxPower / GetThrDistModAt(ePos) <= threatMap->GetSquadThreatExcl(leader, ePos, enemy->GetThreat()))
+			|| (maxPower / GetThrDistModAt(ePos) <= GetTaskThreatExcl(leader, ePos, enemy->GetThreat()))
 			|| !terrainMgr->CanMoveToPos(area, ePos))
 		{
 			continue;

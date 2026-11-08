@@ -460,6 +460,18 @@ void CMilitaryManager::ReadConfig()
 					cfgName.c_str(), qcount.asFloat(), countPower, CThreatMap::MAX_COUNT_POWER);
 		}
 	}
+	countAoe = readAttackNum("group_count_aoe", 64.f, 0.f, noMax);  // 0 = off
+	if (countAoe > 0.f) {  // for tuning: the mobile types that count as area damage
+		std::string names;
+		for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
+			if (cdef.IsMobile() && IsAreaDamage(&cdef)) {
+				names += names.empty() ? "" : ", ";
+				names += cdef.GetDef()->GetName();
+			}
+		}
+		circuit->LOG("CONFIG %s: quota.group_count_aoe %g: area damage: %s", cfgName.c_str(), countAoe,
+				names.empty() ? "none" : names.c_str());
+	}
 	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 270.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
 	{
 		const Json::Value& qcont = quotas["contested"];
@@ -1319,9 +1331,11 @@ void CMilitaryManager::UpdateAttackRally()
 		return terrainMgr->CanMoveToPos(hostArea, b->pos);
 	});
 	const CEnemyManager::SEnemyBlob* blob = (it != nearBlobs.end()) ? *it : nullptr;
-	// Both with their group size bonus, as squads compare themselves with squad threat
+	// Both with their group size bonus, as squads compare themselves with squad threat (a host of mostly area
+	// damage doesn't count the enemies: IFighterTask::IsSquadThreat)
 	const float strength = host->GetRallyStrength() * host->GetCountPowerMod();
-	const float blobThreat = (blob != nullptr) ? blob->threat * circuit->GetThreatMap()->GetCountMod(blob->count) : 0.f;
+	const float blobCount = ((blob != nullptr) && host->IsSquadThreat()) ? blob->count : 0.f;
+	const float blobThreat = (blob != nullptr) ? blob->threat * circuit->GetThreatMap()->GetCountMod(blobCount) : 0.f;
 	if (blob != nullptr) {
 		rallyBlobFrame = frame;
 		rallyBlobPos = blob->pos;
@@ -1936,7 +1950,9 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 		}
 		CTerrainManager::CorrectPosition(startPos);
 
-		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true, isRaider);
+		// A group of this type judges on squad threat unless it is area damage (IFighterTask::IsSquadThreat)
+		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true,
+				isRaider && !IsAreaDamage(cdef));
 		// The quota is a member: it outlives the query (a pointer, so that is plain to see)
 		std::map<int, unsigned int>* bonus = &mexBonus;
 		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {

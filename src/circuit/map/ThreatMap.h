@@ -40,8 +40,8 @@ public:
 	float GetThreatAt(const springai::AIFloat3& position) const;
 	float GetThreatAt(CCircuitUnit* unit, const springai::AIFloat3& position) const;
 	/*
-	 * Squad threat, for squads (ISquadTask) and their routes (Lanchester's square law): the threat x (1 +
-	 * quota.group_count_power x the number of enemies that can fire at the cell, each weighted by
+	 * Squad threat, for squads (IFighterTask::IsSquadThreat) and their routes (Lanchester's square law): the
+	 * threat x (1 + quota.group_count_power x the number of enemies that can fire at the cell, each weighted by
 	 * SEnemyData::GetCountWeight). Squads weigh their own power the same way (IFighterTask::GetCountPowerMod),
 	 * so the bonus cancels out at equal numbers. With group_count_power 0 it is GetThreatAt
 	 */

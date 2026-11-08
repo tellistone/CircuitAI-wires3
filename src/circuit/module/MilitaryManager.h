@@ -240,6 +240,11 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
+	// quota.group_count_aoe: an armed type whose weapon's area of effect (radius) is at least this. A squad mostly of
+	// these doesn't count the enemies (IFighterTask::IsSquadThreat): one shot hits several of a swarm
+	bool IsAreaDamage(const CCircuitDef* cdef) const {
+		return (countAoe > 0.f) && cdef->IsAttacker() && (cdef->GetAoe() >= countAoe);
+	}
 	// quota.attack_own_ground_time: before this frame attack groups only walk to targets on our ground
 	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
@@ -476,6 +481,7 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackKeepThreat;  // quota.attack_keep_threat
+	float countAoe;  // quota.group_count_aoe, elmos (radius); 0 = off
 	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
