@@ -783,6 +783,9 @@ void CMilitaryManager::ReadConfig()
 	resign.mexShare = resignCfg.get("mex", 0.1f).asFloat();
 	resign.threatMult = resignCfg.get("threat", 4.f).asFloat();
 
+	const float drownedTime = root["drowned"].get("time", -1.f).asFloat();
+	drownedFrames = (drownedTime < 0.f) ? -1 : int(drownedTime * FRAMES_PER_SEC);
+
 	const Json::Value& porc = root["porcupine"];
 	const Json::Value& defs = porc["unit"];
 	defenderDefs.reserve(defs.size());
@@ -906,6 +909,9 @@ void CMilitaryManager::Init()
 
 		if (resign.frame >= 0) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResign, this), FRAMES_PER_SEC * 10, offset + 1);
+		}
+		if (drownedFrames >= 0) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDrowned, this), FRAMES_PER_SEC, offset + 2);
 		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
@@ -2673,6 +2679,41 @@ void CMilitaryManager::UpdateResign()
 	circuit->LOG("RESIGN: frame %i | mexes %i / %i spots | enemy mobile threat %.1f vs ours %.1f",
 			frame, mexCount, spotCount, enemyThreat, ourThreat);
 	circuit->Surrender();
+}
+
+/*
+ * "drowned" (behaviour.json): a ground unit that ends up in water deeper than its move type allows (knocked or
+ * pushed off a shore, dropped there, or the seabed terraformed under it) can't move or do anything useful.
+ * After "time" seconds stuck there it self-destructs, so the squads and builder tasks waiting on it are freed.
+ * @see CTerrainManager::IsStuckInWater. The order is sent once: CMD_SELFD toggles the countdown, the AI can't
+ * read it back, and Zero-K gadgets (capture, unit given, mass self-D blocker) toggle it too.
+ */
+void CMilitaryManager::UpdateDrowned()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	const int frame = circuit->GetLastFrame();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	std::unordered_map<int, int> stillStuck;  // drops dead units and the ones that got out
+	for (auto& kv : circuit->GetTeamUnits()) {
+		CCircuitUnit* unit = kv.second;
+		const AIFloat3& pos = unit->GetPos(frame);
+		if (!terrainMgr->IsStuckInWater(unit->GetCircuitDef(), pos) || unit->GetUnit()->IsBeingBuilt()) {
+			continue;
+		}
+		auto it = drownedSince.find(unit->GetId());
+		int since = (it != drownedSince.end()) ? it->second : frame;
+		if ((since >= 0) && (frame - since >= drownedFrames)) {
+			TRY_UNIT(circuit, unit,
+				unit->GetUnit()->SelfDestruct();
+			)
+			circuit->LOG("DROWNED: frame %i | %s (%i) stuck in deep water at (%.0f, %.0f) for %.1f s, self-destruct",
+					frame, unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), pos.x, pos.z,
+					float(frame - since) / FRAMES_PER_SEC);
+			since = -1;
+		}
+		stillStuck.emplace(unit->GetId(), since);
+	}
+	drownedSince.swap(stillStuck);
 }
 
 void CMilitaryManager::AddArmyCost(CCircuitUnit* unit)

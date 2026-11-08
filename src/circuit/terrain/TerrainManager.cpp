@@ -1198,6 +1198,19 @@ bool CTerrainManager::CanMoveToPos(STerrainMapArea* area, const AIFloat3& destin
 	return false;
 }
 
+bool CTerrainManager::IsStuckInWater(CCircuitDef* cdef, const AIFloat3& position) const
+{
+	if (!cdef->IsMobile() || (position.y >= 0.f)) {  // factories have a mobile type too; y >= 0: on land or carried
+		return false;
+	}
+	const STerrainMapMobileType* mobileType = GetMobileTypeById(cdef->GetMobileId());
+	if ((mobileType == nullptr) || mobileType->canHover || mobileType->canFloat) {  // aircraft, hovers, ships, subs
+		return false;
+	}
+	// minElevation = -MoveDef depth: the deepest water the unit can walk in
+	return circuit->GetMap()->GetElevationAt(position.x, position.z) < mobileType->minElevation;
+}
+
 AIFloat3 CTerrainManager::GetBuildPosition(CCircuitDef* cdef, const AIFloat3& position)
 {
 	AIFloat3 pos = position;
