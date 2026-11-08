@@ -72,22 +72,56 @@ void CRetreatTask::AssignTo(CCircuitUnit* unit)
 		return;
 	}
 
-	int squareSize = circuit->GetPathfinder()->GetSquareSize();
-	ITravelAction* travelAction;
-	if (cdef->IsAttrRetFight()) {
-		travelAction = new CFightAction(unit, squareSize);
-	} else {
-		travelAction = new CMoveAction(unit, squareSize);
-	}
-	unit->PushTravelAct(travelAction);
-	unit->SetAllowedToJump(cdef->IsAbleToJump() && !cdef->IsAttrNoJump());
+	PushTravelAct(unit);
 
-	// Mobile repair. A capturer sent home to hide ("capture_hide") at full health needs none. A fleeing commander
-	// gets none either: a builder would walk into the danger to reach it, and the commander would run to the builder
-	// instead of the flee goal. StopFlee queues it once the flee turns into a retreat for repair
-	if (!cdef->IsPlane() && !IsFlee() && !(unit->IsCaptureHide() && (unit->GetHealthPercent() > 0.98f))) {
-		circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
+	// A capturer sent home to hide ("capture_hide") at full health needs no repair. A fleeing commander gets none
+	// either: a builder would walk into the danger to reach it. StopFlee queues it once the flee turns into a retreat
+	if (!IsFlee() && !(unit->IsCaptureHide() && (unit->GetHealthPercent() > 0.98f))) {
+		EnqueueRepair(unit);
 	}
+}
+
+void CRetreatTask::PushTravelAct(CCircuitUnit* unit)
+{
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	const int squareSize = manager->GetCircuit()->GetPathfinder()->GetSquareSize();
+	if (cdef->IsAttrRetFight()) {
+		unit->PushTravelAct(new CFightAction(unit, squareSize));
+	} else {
+		unit->PushTravelAct(new CMoveAction(unit, squareSize));
+	}
+	unit->SetAllowedToJump(cdef->IsAbleToJump() && !cdef->IsAttrNoJump());
+}
+
+void CRetreatTask::EnqueueRepair(CCircuitUnit* unit)
+{
+	// Mobile repair; planes repair on air pads
+	if (!unit->GetCircuitDef()->IsPlane()) {
+		manager->GetCircuit()->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
+	}
+}
+
+AIFloat3 CRetreatTask::GetHaven(CCircuitUnit* unit) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3 haven = circuit->GetFactoryManager()->GetClosestHaven(unit);
+	return utils::is_valid(haven) ? haven : circuit->GetSetupManager()->GetBasePos();
+}
+
+AIFloat3 CRetreatTask::GetGoal(CCircuitUnit* unit, float& outRange) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int squareSize = circuit->GetPathfinder()->GetSquareSize();
+	if (repairer != nullptr) {
+		outRange = squareSize;
+		return repairer->GetPos(circuit->GetLastFrame());
+	}
+	if (IsFlee()) {
+		outRange = squareSize * 2;
+		return fleeGoal;
+	}
+	outRange = circuit->GetFactoryManager()->GetAssistDef()->GetBuildDistance() * 0.6f + squareSize;  // well inside a caretaker's reach
+	return GetHaven(unit);
 }
 
 void CRetreatTask::RemoveAssignee(CCircuitUnit* unit)
@@ -112,23 +146,8 @@ void CRetreatTask::Start(CCircuitUnit* unit)
 	const int frame = circuit->GetLastFrame();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const AIFloat3& startPos = unit->GetPos(frame);
-	AIFloat3 endPos;
 	float range;
-
-	if (repairer != nullptr) {
-		endPos = repairer->GetPos(frame);
-		range = pathfinder->GetSquareSize();
-	} else if (IsFlee()) {
-		endPos = fleeGoal;
-		range = pathfinder->GetSquareSize() * 2;
-	} else {
-		CFactoryManager* factoryMgr = circuit->GetFactoryManager();
-		endPos = factoryMgr->GetClosestHaven(unit);
-		if (!utils::is_valid(endPos)) {
-			endPos = circuit->GetSetupManager()->GetBasePos();
-		}
-		range = factoryMgr->GetAssistDef()->GetBuildDistance() * 0.6f + pathfinder->GetSquareSize();
-	}
+	const AIFloat3 endPos = GetGoal(unit, range);
 
 	if (unit->GetTravelAct()->GetPath() == nullptr) {
 		std::shared_ptr<PathInfo> pPath = std::make_shared<PathInfo>();
@@ -230,20 +249,15 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		return;
 	}
 
-	CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 	const bool isFleeGoal = (repairer == nullptr) && IsFlee();
-	AIFloat3 haven = (repairer != nullptr) ? repairer->GetPos(frame)
-			: isFleeGoal ? fleeGoal : factoryMgr->GetClosestHaven(unit);
-	if (!utils::is_valid(haven)) {
-		haven = circuit->GetSetupManager()->GetBasePos();
-	}
+	const AIFloat3 haven = (repairer != nullptr) ? repairer->GetPos(frame) : isFleeGoal ? fleeGoal : GetHaven(unit);
 
 	// Stop well inside the repairer's build range (same margin as the retreat path), so the wait spot
 	// can't end up on the edge or outside of it
 	const float repairDist = (repairer != nullptr)
 			? repairer->GetCircuitDef()->GetBuildDistance()
 			: isFleeGoal ? (float)(circuit->GetPathfinder()->GetSquareSize() * 2)
-			: factoryMgr->GetAssistDef()->GetBuildDistance();
+			: circuit->GetFactoryManager()->GetAssistDef()->GetBuildDistance();
 	const float maxDist = repairDist * 0.6f + cdef->GetRadius();  // big units can't get their center any closer
 	const AIFloat3& unitPos = unit->GetPos(frame);
 	const float sqDist = unitPos.SqDistance2D(haven);
@@ -280,8 +294,7 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 void CRetreatTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	if (unit->IsCaptureHide()) {
-		// Skipped on AssignTo while it was unhurt
-		manager->GetCircuit()->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);
+		EnqueueRepair(unit);  // skipped on AssignTo while it was unhurt
 	}
 	if (State::REGROUP != state) {
 		return;
@@ -289,17 +302,7 @@ void CRetreatTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	state = State::ROAM;
 
 	if (unit->GetTravelAct() == nullptr) {
-		// NOTE: IsAttrBoost units don't get travel action on AssignTo
-		int squareSize = manager->GetCircuit()->GetPathfinder()->GetSquareSize();
-		CCircuitDef* cdef = unit->GetCircuitDef();
-		ITravelAction* travelAction;
-		if (cdef->IsAttrRetFight()) {
-			travelAction = new CFightAction(unit, squareSize);
-		} else {
-			travelAction = new CMoveAction(unit, squareSize);
-		}
-		unit->PushTravelAct(travelAction);
-		unit->SetAllowedToJump(cdef->IsAbleToJump() && !cdef->IsAttrNoJump());
+		PushTravelAct(unit);  // IsAttrBoost units don't get one on AssignTo
 	}
 	unit->GetTravelAct()->StateActivate();
 
@@ -320,9 +323,7 @@ void CRetreatTask::Redirect(CCircuitUnit* unit, const AIFloat3& goal)
 void CRetreatTask::StopFlee(CCircuitUnit* unit)
 {
 	fleeFrame = -1;
-	if (!unit->GetCircuitDef()->IsPlane()) {
-		manager->GetCircuit()->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::HIGH, unit);  // skipped while fleeing
-	}
+	EnqueueRepair(unit);  // skipped while fleeing
 }
 
 void CRetreatTask::EndFlee(CCircuitUnit* unit)
@@ -400,23 +401,10 @@ void CRetreatTask::ApplyCostMap(const CQueryCostMap* query, CCircuitUnit* newRep
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	CPathFinder* pathfinder = circuit->GetPathfinder();
 	CCircuitUnit* unit = query->GetUnit();
-	AIFloat3 endPos;
+	const bool isRepairer = (repairer != nullptr);
 	float range;
-
-	bool isRepairer = (repairer != nullptr);
-	if (isRepairer) {
-		endPos = repairer->GetPos(frame);
-		range = pathfinder->GetSquareSize();
-	} else {
-		CFactoryManager* factoryMgr = circuit->GetFactoryManager();
-		endPos = factoryMgr->GetClosestHaven(unit);
-		if (!utils::is_valid(endPos)) {
-			endPos = circuit->GetSetupManager()->GetBasePos();
-		}
-		range = factoryMgr->GetAssistDef()->GetBuildDistance() * 0.6f + pathfinder->GetSquareSize();
-	}
+	AIFloat3 endPos = GetGoal(unit, range);
 
 	float prevCost = query->GetCostAt(endPos, range);
 	if (isRepairer && repairer->GetCircuitDef()->IsMobile()) {
