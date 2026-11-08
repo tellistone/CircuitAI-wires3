@@ -83,7 +83,6 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	commDangerFrame = -1;
 	commCoverFrame = -1;
 	commThrMod = 1.f;
-	builderFlee = {-1.f, 0.f, 500.f};
 	isCommHide = false;
 	isCommHideAir = false;
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CBuilderManager::Init, this));
@@ -208,6 +207,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	builderFlee.margin = bflee.get((unsigned)0, -1.f).asFloat();
 	builderFlee.allyThreat = bflee.get((unsigned)1, 0.f).asFloat();
 	builderFlee.allyRadius = std::max(bflee.get((unsigned)2, 500.f).asFloat(), 0.f);
+	isFleeLog = root["retreat"].get("flee_log", false).asBool();
 	const Json::Value& escortCfg = root["escort"];
 	escort.minPower = escortCfg.get("min_power", 0.f).asFloat();
 	escort.share = escortCfg.get("share", 0.2f).asFloat();
@@ -1182,13 +1182,6 @@ static bool IsFightBackJob(const IBuilderTask* task)
 	return (def != nullptr) && (def->GetPower() >= THREAT_MIN);
 }
 
-// One line per flee start and end, to count flees and quick restarts in test games
-static void LogFlee(CCircuitAI* circuit, CCircuitUnit* unit, const char* event, float threat, float cover)
-{
-	circuit->LOG("FLEE %s | %s | id: %i | frame: %i | threat: %.1f | cover: %.1f", event,
-				 unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), circuit->GetLastFrame(), threat, cover);
-}
-
 IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 {
 	CThreatMap* threatMap = circuit->GetThreatMap();
@@ -1413,10 +1406,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 //	if (task != nullptr) {
 //		return task;
 //	}
-	const bool isStalling = economyMgr->IsMetalEmpty() &&
-							(economyMgr->GetAvgMetalIncome() * 1.2f < economyMgr->GetMetalPull()) &&
-							(metalPull > economyMgr->GetPullMtoS() * circuit->GetFactoryManager()->GetMetalPull());
-	const bool isNotReady = !economyMgr->IsExcessed() || isStalling;
+	const bool isNotReady = !economyMgr->IsExcessed() || IsMetalStalling();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CInfluenceMap* inflMap = circuit->GetInflMap();
@@ -1766,22 +1756,19 @@ void CBuilderManager::AddComm(CCircuitUnit* unit)
 		if (state.hide == nullptr) {
 			return;
 		}
-		state.margin = state.hide->fleeMargin;
-		state.allyThreat = state.hide->fleeAllyThreat;
-		state.allyRadius = state.hide->fleeAllyRadius;
+		state.cfg = {state.hide->fleeMargin, state.hide->fleeAllyThreat, state.hide->fleeAllyRadius};
 	} else {
 		if (cdef->IsAbleToFly()) {
 			return;
 		}
-		state.margin = cdef->GetBuilderFleeMargin(builderFlee.margin);
-		state.allyThreat = builderFlee.allyThreat;
-		state.allyRadius = builderFlee.allyRadius;
+		state.cfg = builderFlee;
+		state.cfg.margin = cdef->GetBuilderFleeMargin(builderFlee.margin);
 	}
-	if (state.margin < 0.f) {
+	if (state.cfg.margin < 0.f) {
 		return;
 	}
 	state.id = unit->GetId();
-	state.wideMargin = GetCommWideMargin(state.margin);
+	state.wideMargin = GetCommWideMargin(state.cfg.margin);
 	comms[unit] = state;
 }
 
@@ -1901,7 +1888,7 @@ CBuilderManager::SCommState* CBuilderManager::GetCommState(CCircuitUnit* unit)
 	state.nearZone = state.wideZone = state.allZone = SCommZone();
 	state.cover = 0.f;  // dangerPos and isAir stay from the last refresh that saw a danger (see SCommState)
 	state.own = IFighterTask::GetCoverPower(unit);
-	const float margin = state.margin;
+	const float margin = state.cfg.margin;
 	const AIFloat3& pos = unit->GetPos(frame);
 	UpdateCommDangers();
 	float minSqDist = std::numeric_limits<float>::max();
@@ -1925,10 +1912,10 @@ CBuilderManager::SCommState* CBuilderManager::GetCommState(CCircuitUnit* unit)
 			state.isAir = danger.isAir;
 		}
 	}
-	if ((state.allZone.count > 0) && (state.allyThreat >= 0.f)) {
+	if ((state.allZone.count > 0) && (state.cfg.allyThreat >= 0.f)) {
 		// The builder itself included. Enough once it passes the highest bar any check sets
-		const float enough = state.allZone.threat * COMM_END_COVER_MOD + state.allyThreat;
-		state.cover = GetCommCover(pos, state.allyRadius, -1, enough);
+		const float enough = state.allZone.threat * COMM_END_COVER_MOD + state.cfg.allyThreat;
+		state.cover = GetCommCover(pos, state.cfg.allyRadius, -1, enough);
 	}
 	return &state;
 }
@@ -1951,7 +1938,16 @@ bool CBuilderManager::IsCommCornered(CCircuitUnit* unit, SCommState* state)
 bool CBuilderManager::IsFinishingDefence(CCircuitUnit* unit, const SCommState* state) const
 {
 	return (state != nullptr) && (state->cornerTask != nullptr) && (unit->GetTask() == state->cornerTask)
-		&& !circuit->GetEconomyManager()->IsMetalEmpty();
+		&& !IsMetalStalling();
+}
+
+bool CBuilderManager::IsMetalStalling() const
+{
+	// Low metal (IsMetalEmpty: under 20% of storage) alone is the usual state of an economy that spends its income
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	return economyMgr->IsMetalEmpty()
+		&& (economyMgr->GetAvgMetalIncome() * 1.2f < economyMgr->GetMetalPull())
+		&& (metalPull > economyMgr->GetPullMtoS() * circuit->GetFactoryManager()->GetMetalPull());
 }
 
 bool CBuilderManager::IsCommJobSafe(const SCommState* state, const AIFloat3& pos, const IBuilderTask* task)
@@ -1961,12 +1957,13 @@ bool CBuilderManager::IsCommJobSafe(const SCommState* state, const AIFloat3& pos
 	// the builder itself reach 1.25x the threat that reaches it.
 	// Other builders: a fight-back job is measured at the start line instead, as the old builder safety check let
 	// armed builds into threat (the turret or the repaired unit is what makes the spot safe); and the danger the
-	// last flee ran from still counts at its spot for BUILDER_SCAR_FRAMES, as threatening as then, even unseen
+	// last flee ran from still counts at its spot until scarEnd, at the wide line for every job (so fight-back jobs
+	// get the start/stop gap back there), as threatening as then, even unseen
 	if (state == nullptr) {
 		return true;
 	}
-	const bool isBuilder = !state->IsComm();
-	const float line = (isBuilder && (task != nullptr) && IsFightBackJob(task)) ? state->margin : state->wideMargin;
+	const bool isFightBack = !state->IsComm() && (task != nullptr) && IsFightBackJob(task);
+	const float line = isFightBack ? state->cfg.margin : state->wideMargin;
 	UpdateCommDangers();
 	SCommZone zone;
 	for (const SCommDanger& danger : commDangers) {
@@ -1975,8 +1972,8 @@ bool CBuilderManager::IsCommJobSafe(const SCommState* state, const AIFloat3& pos
 		}
 	}
 	const SCommDanger& scar = state->scar;
-	if (isBuilder && (state->scarFrame >= 0) && (circuit->GetLastFrame() - state->scarFrame < BUILDER_SCAR_FRAMES)
-		&& (pos.SqDistance2D(scar.pos) <= SQUARE(scar.range + line)))
+	if ((circuit->GetLastFrame() < state->scarEnd)
+		&& (pos.SqDistance2D(scar.pos) <= SQUARE(scar.range + state->wideMargin)))
 	{
 		++zone.count;
 		zone.threat = std::max(zone.threat, scar.threat);  // not added: it is often still in the list
@@ -1984,23 +1981,25 @@ bool CBuilderManager::IsCommJobSafe(const SCommState* state, const AIFloat3& pos
 	if (zone.count == 0) {
 		return true;
 	}
-	if (state->allyThreat < 0.f) {
+	if (state->cfg.allyThreat < 0.f) {
 		return false;
 	}
-	const float need = zone.threat * COMM_END_COVER_MOD + state->allyThreat;
+	const float need = zone.threat * COMM_END_COVER_MOD + state->cfg.allyThreat;
 	return (state->own >= need)
-		|| (state->own + GetCommCover(pos, state->allyRadius, state->id, need - state->own) >= need);
+		|| (state->own + GetCommCover(pos, state->cfg.allyRadius, state->id, need - state->own) >= need);
 }
 
 IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* state)
 {
 	// The defence adds the cover (GetCommCover counts finished static defences) that lets the builder stay.
 	// A commander shoots while it builds. One at a time: an unfinished one nearby is helped rather than a new one
-	// queued. None while metal is stalling: it would stand nanolathing a frame that never finishes.
+	// queued. None while metal is short (a commander: IsMetalEmpty; other builders: IsMetalStalling): it would
+	// stand nanolathing a frame that never finishes.
 	// Other builders also help one started in the danger's flee zone on their side of it (no nearer the danger than
-	// they are, and nearer them than the danger), only build one that outranges the danger from behind them (else
-	// none), and keep the one they build or help as cornerTask, to finish it (StartCommFlee)
-	if (IsBuildingDefence(unit) || circuit->GetEconomyManager()->IsMetalEmpty()) {
+	// they are, and nearer them than the danger), only help or build one that can hit the danger and outranges it
+	// from behind them (else none), and keep it as cornerTask, to finish it (StartCommFlee)
+	const bool isBuilder = !state->IsComm();
+	if (IsBuildingDefence(unit) || (isBuilder ? IsMetalStalling() : circuit->GetEconomyManager()->IsMetalEmpty())) {
 		return nullptr;
 	}
 	const int frame = circuit->GetLastFrame();
@@ -2008,9 +2007,19 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float buildDist = cdef->GetBuildDistance();
 	const AIFloat3& dangerPos = state->dangerPos;
-	const bool isBuilder = !state->IsComm();
+	const bool isAir = state->isAir;
+	const bool isWater = circuit->GetMap()->GetElevationAt(pos.x, pos.z) < -SQUARE_SIZE * 5;  // MakeDefence's test
+	const CCircuitDef::RangeType rangeType = isAir ? CCircuitDef::RangeType::AIR
+			: (isWater ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND);
+	const float minRange = isBuilder ? (state->dangerRange + buildDist * 0.5f) : 0.f;  // placed that far back
+	// Shoots the danger: against gunships one that hits air
+	auto canHit = [isAir, isWater, rangeType, minRange](const CCircuitDef* ddef) {
+		return (ddef != nullptr) && ddef->IsAttacker()
+			&& (isAir ? ddef->HasAntiAir() : (isWater ? ddef->HasAntiWater() : ddef->HasAntiLand()))
+			&& (ddef->GetMaxRange(rangeType) >= minRange);
+	};
 	const float sqDangerDist = pos.SqDistance2D(dangerPos);
-	const float sqReach = SQUARE(state->dangerRange + state->margin);
+	const float sqReach = SQUARE(state->dangerRange + state->cfg.margin);
 
 	IBuilderTask* task = nullptr;
 	for (IBuilderTask* t : GetTasks(IBuilderTask::BuildType::DEFENCE)) {
@@ -2019,27 +2028,18 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 		const bool isNear = sqTaskDist < SQUARE(buildDist + DEFAULT_SLACK * 2);
 		const bool isOnSide = isBuilder && (sqTaskDanger <= sqReach) && (sqTaskDanger >= sqDangerDist)
 				&& (sqTaskDist < sqDangerDist);
-		if ((isNear || isOnSide) && t->CanAssignTo(unit)) {
+		if ((isNear || isOnSide) && (!isBuilder || canHit(t->GetBuildDef())) && t->CanAssignTo(unit)) {
 			task = t;
 			break;
 		}
 	}
 
 	if (task == nullptr) {
-		// The first one porcupine.land/water lists (its build order; MakeDefence's water test) that can shoot the
-		// danger: against gunships one that hits air
+		// The first one porcupine.land/water lists (its build order) that can hit the danger
 		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-		const bool isWater = circuit->GetMap()->GetElevationAt(pos.x, pos.z) < -SQUARE_SIZE * 5;
-		const bool isAir = state->isAir;
-		const CCircuitDef::RangeType rangeType = isAir ? CCircuitDef::RangeType::AIR
-				: (isWater ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND);
-		const float minRange = isBuilder ? (state->dangerRange + buildDist * 0.5f) : 0.f;  // placed that far back
 		CCircuitDef* buildDef = nullptr;
 		for (CCircuitDef* ddef : isWater ? militaryMgr->GetWaterDefenders() : militaryMgr->GetLandDefenders()) {
-			if (ddef->IsAvailable(frame) && cdef->CanBuild(ddef) && ddef->IsAttacker()
-				&& (isAir ? ddef->HasAntiAir() : (isWater ? ddef->HasAntiWater() : ddef->HasAntiLand()))
-				&& (ddef->GetMaxRange(rangeType) >= minRange))
-			{
+			if (ddef->IsAvailable(frame) && cdef->CanBuild(ddef) && canHit(ddef)) {
 				buildDef = ddef;
 				break;
 			}
@@ -2166,9 +2166,9 @@ void CBuilderManager::StartCommFlee(CCircuitUnit* unit, SCommState* state)
 	AssignTask(unit, flee);
 	if (!state->IsComm()) {
 		state->scar = {state->dangerPos, state->dangerRange, state->nearZone.threat, state->isAir, false};
-		state->scarFrame = frame;
+		state->scarEnd = frame + BUILDER_SCAR_FRAMES;
 	}
-	LogFlee(circuit, unit, "start", state->nearZone.threat, state->cover);
+	LogFlee(unit, "start", state);
 }
 
 void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat, SCommState* state)
@@ -2177,7 +2177,7 @@ void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat
 	// line or it is covered 1.25x at the flee goal. Hurt on the way: a plain retreat for repair from there
 	if (unit->GetHealthPercent() < unit->GetCircuitDef()->GetRetreat()) {
 		retreat->StopFlee(unit);
-		LogFlee(circuit, unit, "end: hurt", state->allZone.threat, state->cover);
+		LogFlee(unit, "end: hurt", state);
 		return;
 	}
 	if (circuit->GetLastFrame() < retreat->GetFleeFrame() + COMM_FLEE_MIN_FRAMES) {
@@ -2186,8 +2186,7 @@ void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat
 	// Ends on recently seen dangers too, as jobs: an enemy stepping out of sight doesn't end it mid-way
 	if ((state->allZone.count == 0) || (retreat->IsArrived() && state->IsCovered(state->allZone.threat, COMM_END_COVER_MOD))) {
 		retreat->EndFlee(unit);  // back to work: jobs stay out of uncovered flee zones
-		LogFlee(circuit, unit, (state->allZone.count == 0) ? "end: clear" : "end: covered", state->allZone.threat,
-				state->cover);
+		LogFlee(unit, (state->allZone.count == 0) ? "end: clear" : "end: covered", state);
 		return;
 	}
 	const AIFloat3& goal = retreat->GetFleeGoal();
@@ -2197,11 +2196,23 @@ void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat
 	if (!HasCommEscape(unit, state)) {
 		if (retreat->IsArrived()) {
 			retreat->EndFlee(unit);  // nowhere better to go (e.g. a turret reaches every spot): build or fight here
-			LogFlee(circuit, unit, "end: cornered", state->allZone.threat, state->cover);
+			LogFlee(unit, "end: cornered", state);
 		}
 	} else if (state->escapeGoal.SqDistance2D(goal) > SQUARE(DEFAULT_SLACK)) {
 		retreat->Redirect(unit, state->escapeGoal);
 	}
+}
+
+void CBuilderManager::LogFlee(CCircuitUnit* unit, const char* event, const SCommState* state) const
+{
+	// retreat.flee_log: one line per flee start and end, to count flees and quick restarts in test games.
+	// threat: of the dangers within the wide line, recently seen ones included
+	if (!isFleeLog) {
+		return;
+	}
+	circuit->LOG("FLEE %s | %s | id: %i | frame: %i | threat: %.1f | cover: %.1f", event,
+				 unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), circuit->GetLastFrame(),
+				 state->allZone.threat, state->cover);
 }
 
 void CBuilderManager::UpdateIdle()

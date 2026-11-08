@@ -214,21 +214,26 @@ private:
 		float threat = 0.f;
 		void Add(float t) { ++count; threat += t; }
 	};
-	// A ground builder with the flee on: its flee settings, and its view of the dangers (GetCommState). A commander's
-	// come from commander.json hide, other builders' from retreat.builder_flee and their own builder_flee_margin
+	// Flee settings: a commander's from commander.json hide, other builders' from retreat.builder_flee and their own
+	// builder_flee_margin
+	struct SFleeCfg {
+		float margin = -1.f;  // flee_margin: a flee starts at a danger's range + this; < 0 = off
+		float allyThreat = 0.f;  // flee_ally_threat
+		float allyRadius = 500.f;  // flee_ally_radius
+	};
+	// A ground builder with the flee on: its flee settings, and its view of the dangers (GetCommState)
 	struct SCommState {
 		const CSetupManager::SCommInfo::SHide* hide = nullptr;  // commanders only: hide mode and morph
 		ICoreUnit::Id id = -1;
-		float margin = 0.f;  // flee_margin: a flee starts at a danger's range + this
-		float allyThreat = 0.f;  // flee_ally_threat
-		float allyRadius = 0.f;  // flee_ally_radius
+		SFleeCfg cfg;
 		float wideMargin = 0.f;  // margin + max(25%, 50): where a flee stops
 		int frame = -1;  // read at; reused for COMM_STATE_FRAMES
 		SCommZone nearZone;  // seen dangers whose flee zone (range + flee_margin) reaches it
 		SCommZone wideZone;  // seen dangers within range + wideMargin
 		SCommZone allZone;  // as wideZone, recently seen ones included
 		// Nearest seen danger within the wide line, kept from the last refresh that saw one: a flee whose goal turns
-		// unsafe while the danger near it has gone from sight still picks a new spot away from where it was
+		// unsafe while the danger near it has gone from sight still picks a new spot away from where it was. Also
+		// what a cornered builder's defence must hit
 		springai::AIFloat3 dangerPos;
 		float dangerRange = 0.f;  // its weapon range
 		bool isAir = false;  // it is a gunship
@@ -237,14 +242,14 @@ private:
 		int escapeFrame = -1;  // HasCommEscape evaluated at
 		bool isEscape = false;
 		springai::AIFloat3 escapeGoal;
-		// Other builders: the danger the last flee ran from, kept for jobs for BUILDER_SCAR_FRAMES from scarFrame
+		// Other builders: the danger the last flee ran from, kept for jobs until scarEnd (-1 = none)
 		SCommDanger scar;
-		int scarFrame = -1;
+		int scarEnd = -1;
 		const IBuilderTask* cornerTask = nullptr;  // other builders: the defence it was cornered into (MakeCommDefence)
 		bool IsComm() const { return hide != nullptr; }
 		// Cover beats threat x mod by flee_ally_threat (< 0 = never covered)
 		bool IsCovered(float threat, float mod) const {
-			return (allyThreat >= 0.f) && (cover - threat * mod >= allyThreat);
+			return (cfg.allyThreat >= 0.f) && (cover - threat * mod >= cfg.allyThreat);
 		}
 		// Some danger in the zone, and not covered
 		bool IsExposed(const SCommZone& zone, float mod) const {
@@ -271,13 +276,15 @@ private:
 	bool HasCommEscape(CCircuitUnit* unit, SCommState* state);
 	// An uncovered seen danger within the wide line and nowhere better to flee to
 	bool IsCommCornered(CCircuitUnit* unit, SCommState* state);
-	// Other builders: on the defence they were cornered into (cornerTask), which they finish while metal lasts
+	// Other builders: on the defence they were cornered into (cornerTask), which they finish unless metal stalls
 	bool IsFinishingDefence(CCircuitUnit* unit, const SCommState* state) const;
+	// Metal is short and builders pull more than income: their new metal jobs wait (MakeBuilderTask)
+	bool IsMetalStalling() const;
 	// A job at pos: always with no state (flee off); else outside the flee zones (wide line, recently seen dangers
 	// included), or covered 1.25x there. Other builders: a fight-back task is measured at the start line, and the
 	// scar counts
 	bool IsCommJobSafe(const SCommState* state, const springai::AIFloat3& pos, const IBuilderTask* task = nullptr);
-	// Cornered: a static defence on its far side from the danger; nullptr = none to build (or metal stalling), or one
+	// Cornered: a static defence on its far side from the danger; nullptr = none to build (or metal short), or one
 	// already on the go (the current task). Other builders keep it as cornerTask
 	IBuilderTask* MakeCommDefence(CCircuitUnit* unit, SCommState* state);
 	// Hide mode: allied strength (the commander's own left out) at pos at least matches the enemy's, on our ground
@@ -288,6 +295,7 @@ private:
 	void UpdateCommFlee();
 	void StartCommFlee(CCircuitUnit* unit, SCommState* state);
 	void ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat, SCommState* state);
+	void LogFlee(CCircuitUnit* unit, const char* event, const SCommState* state) const;
 	IBuilderTask* MakeBuilderTask(CCircuitUnit* unit, const CQueryCostMap* query);
 	IBuilderTask* CreateBuilderTask(const springai::AIFloat3& position, CCircuitUnit* unit);
 
@@ -323,11 +331,8 @@ private:
 	int commCoverFrame;  // frame commCovers was built at
 	F3Vec commFleeSpots;  // FindCommFleeGoal scratch
 	float commThrMod;  // quota.thr_mod.comm: undone for enemy commanders' threat in the flee
-	struct SBuilderFlee {
-		float margin;  // -1 = off
-		float allyThreat;
-		float allyRadius;
-	} builderFlee;  // retreat.builder_flee: the flee of builders other than commanders
+	SFleeCfg builderFlee;  // retreat.builder_flee: the flee of builders other than commanders
+	bool isFleeLog;  // retreat.flee_log: LogFlee writes flee starts and ends
 	bool isCommHide;  // hide by threat, latched once triggered
 	bool isCommHideAir;  // enemy air now (live): hide, and only our buildings' ground counts as territory
 	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
