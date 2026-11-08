@@ -152,7 +152,8 @@
 
 // Concede a lost 1v1: checked every 10 s from "time" on, only when each side is a single team. Resign when our
 // ally team holds fewer than "mex" x the map's metal spots AND the known enemy mobile threat (every enemy mobile
-// unit seen, commander and builders included) is more than "threat" x ours (our finished mobile units, same scale).
+// unit seen, builders included, commanders not) is more than "threat" x ours (our finished mobile units, same scale,
+// no commander).
 // Says "<CircuitAI> I am defeated." in public chat, then leaves the game (/aikill), which Zero-K counts as a resign. Missing block or time < 0 = never resign
 "resign": {
 	"time": 480,  // seconds of game time

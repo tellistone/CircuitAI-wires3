@@ -2691,17 +2691,30 @@ void CMilitaryManager::UpdateResign()
 	const int mexCount = metalMgr->GetMexCount();
 	const bool isMexLost = (spotCount > 0) && (mexCount < resign.mexShare * spotCount);
 
-	// Same scale as CEnemyManager::GetMobileThreat: every finished mobile unit (commander and builders included)
+	// Army against army, commanders left out on both sides: a commander's threat (health in the thousands, levelled
+	// up by the late game) dwarfs a unit's, so a lone surviving commander kept ours above a quarter of a whole enemy
+	// army. Same scale as CEnemyManager::GetMobileThreat: every finished mobile unit, builders included
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	float ourThreat = 0.f;
 	for (auto& kv : circuit->GetTeamUnits()) {
 		CCircuitUnit* unit = kv.second;
-		if (unit->GetCircuitDef()->IsMobile() && !unit->GetUnit()->IsBeingBuilt()) {
-			ourThreat += unit->GetCircuitDef()->GetThreat();
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		if (cdef->IsMobile() && !cdef->IsRoleComm() && !unit->GetUnit()->IsBeingBuilt()) {
+			ourThreat += cdef->GetThreat();
 		}
 	}
 	ourThreat *= enemyMgr->GetMobileThreatMod();
-	const float enemyThreat = enemyMgr->GetMobileThreat();
+	// Enemies: every live enemy we have seen in LOS (so its type is known), counted afresh
+	float enemyThreat = 0.f;
+	for (auto& kv : enemyMgr->GetEnemyUnits()) {
+		const CEnemyUnit* enemy = kv.second;
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		if (enemy->IsDead() || (edef == nullptr) || !enemy->IsKnown(frame) || !edef->IsMobile() || edef->IsRoleComm()) {
+			continue;
+		}
+		enemyThreat += edef->GetThreat();
+	}
+	enemyThreat *= enemyMgr->GetMobileThreatMod();
 	const bool isArmyLost = (enemyThreat > resign.threatMult * ourThreat);
 
 	const bool isLost = is1v1 && isMexLost && isArmyLost;

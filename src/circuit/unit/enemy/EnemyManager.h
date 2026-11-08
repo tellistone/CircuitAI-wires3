@@ -40,6 +40,7 @@ public:
 	void SetAuthority(CCircuitAI* authority) { circuit = authority; }
 
 	CEnemyUnit* GetEnemyUnit(ICoreUnit::Id unitId) const;
+	const EnemyUnits& GetEnemyUnits() const { return enemyUnits; }
 
 	const std::vector<ICoreUnit::Id>& GetGarbage() const { return enemyGarbage; }
 
