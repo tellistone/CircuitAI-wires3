@@ -60,7 +60,8 @@ static constexpr float COMM_ESCAPE_MIN = DEFAULT_SLACK * 4;  // a flee goal near
 static constexpr float COMM_END_COVER_MOD = 1.25f;  // ending a flee, starting a home fight or a job in a flee zone on cover needs this x the enemy threat covered
 static constexpr int COMM_STATE_FRAMES = 4;  // the danger list, cover list and each commander's state are reused this long
 static constexpr int COMM_DANGER_MEMORY = FRAMES_PER_SEC * 5;  // jobs and morph starts keep a danger this long after it left radar and LOS
-static constexpr int BUILDER_SCAR_FRAMES = FRAMES_PER_SEC * 20;  // other builders keep jobs off the danger they last fled this long
+static constexpr int BUILDER_SCAR_FRAMES = FRAMES_PER_SEC * 5;  // other builders all keep jobs off a spot one of them fled from this long
+static constexpr int BUILDER_CORNER_TIMEOUT = FRAMES_PER_SEC * 30;  // an unstarted cornered defence nobody builds is dropped after this
 static constexpr int BUILDER_IDLE_WAIT = FRAMES_PER_SEC * 3;  // other builders idle in a flee zone with no safe job look again after this
 
 CBuilderManager::CBuilderManager(CCircuitAI* circuit)
@@ -1785,6 +1786,8 @@ void CBuilderManager::UpdateCommDangers()
 	}
 	commDangerFrame = frame;
 	commDangers.clear();
+	fleeScars.erase(std::remove_if(fleeScars.begin(), fleeScars.end(),
+			[frame](const SFleeScar& scar) { return scar.endFrame <= frame; }), fleeScars.end());
 	CMap* map = circuit->GetMap();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1956,13 +1959,14 @@ bool CBuilderManager::IsCommJobSafe(const SCommState* state, const AIFloat3& pos
 	// seen dangers included), or covered there as a flee would end: allies within flee_ally_radius of the job plus
 	// the builder itself reach 1.25x the threat that reaches it.
 	// Other builders: a fight-back job is measured at the start line instead, as the old builder safety check let
-	// armed builds into threat (the turret or the repaired unit is what makes the spot safe); and the danger the
-	// last flee ran from still counts at its spot until scarEnd, at the wide line for every job (so fight-back jobs
-	// get the start/stop gap back there), as threatening as then, even unseen
+	// armed builds into threat (the turret or the repaired unit is what makes the spot safe); and a danger any of
+	// them fled from in the last BUILDER_SCAR_FRAMES still counts at its spot (fleeScars), at the wide line for
+	// every job (so fight-back jobs get the start/stop gap back there), as threatening as then, even unseen
 	if (state == nullptr) {
 		return true;
 	}
-	const bool isFightBack = !state->IsComm() && (task != nullptr) && IsFightBackJob(task);
+	const bool isBuilder = !state->IsComm();
+	const bool isFightBack = isBuilder && (task != nullptr) && IsFightBackJob(task);
 	const float line = isFightBack ? state->cfg.margin : state->wideMargin;
 	UpdateCommDangers();
 	SCommZone zone;
@@ -1971,12 +1975,13 @@ bool CBuilderManager::IsCommJobSafe(const SCommState* state, const AIFloat3& pos
 			zone.Add(danger.threat);
 		}
 	}
-	const SCommDanger& scar = state->scar;
-	if ((circuit->GetLastFrame() < state->scarEnd)
-		&& (pos.SqDistance2D(scar.pos) <= SQUARE(scar.range + state->wideMargin)))
-	{
-		++zone.count;
-		zone.threat = std::max(zone.threat, scar.threat);  // not added: it is often still in the list
+	if (isBuilder) {
+		for (const SFleeScar& scar : fleeScars) {
+			if (pos.SqDistance2D(scar.pos) <= SQUARE(scar.range + state->wideMargin)) {
+				++zone.count;
+				zone.threat = std::max(zone.threat, scar.threat);  // not added: its danger is often still in the list
+			}
+		}
 	}
 	if (zone.count == 0) {
 		return true;
@@ -2057,8 +2062,10 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 			buildPos += away / len * (buildDist * 0.5f);
 		}
 		CTerrainManager::CorrectPosition(buildPos);
+		// Other builders: an unstarted one is dropped soon after the last builder leaves it, not left as a job
+		const int timeout = isBuilder ? BUILDER_CORNER_TIMEOUT : ASSIGN_TIMEOUT;
 		task = EnqueueTask(IBuilderTask::Priority::HIGH, buildDef, buildPos, IBuilderTask::BuildType::DEFENCE,
-						   buildDef->GetCostM(), SQUARE_SIZE * 8.f);
+						   buildDef->GetCostM(), SQUARE_SIZE * 8.f, true, timeout);
 	}
 	if (isBuilder) {
 		state->cornerTask = task;
@@ -2165,8 +2172,7 @@ void CBuilderManager::StartCommFlee(CCircuitUnit* unit, SCommState* state)
 	flee->SetFlee(state->escapeGoal, frame);
 	AssignTask(unit, flee);
 	if (!state->IsComm()) {
-		state->scar = {state->dangerPos, state->dangerRange, state->nearZone.threat, state->isAir, false};
-		state->scarEnd = frame + BUILDER_SCAR_FRAMES;
+		fleeScars.push_back({state->dangerPos, state->dangerRange, state->nearZone.threat, frame + BUILDER_SCAR_FRAMES});
 	}
 	LogFlee(unit, "start", state);
 }

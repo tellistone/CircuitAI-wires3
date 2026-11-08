@@ -208,6 +208,13 @@ private:
 		bool isAir;  // a gunship
 		bool isSeen;  // in radar or LOS now; else gone from both within COMM_DANGER_MEMORY (jobs and morph only)
 	};
+	// A spot a builder other than a commander fled from: every such builder's jobs keep off it until endFrame
+	struct SFleeScar {
+		springai::AIFloat3 pos;
+		float range;  // the danger's weapon range
+		float threat;  // what reached the builder as it fled
+		int endFrame;
+	};
 	// Dangers in reach of a spot and their summed threat
 	struct SCommZone {
 		int count = 0;
@@ -242,9 +249,6 @@ private:
 		int escapeFrame = -1;  // HasCommEscape evaluated at
 		bool isEscape = false;
 		springai::AIFloat3 escapeGoal;
-		// Other builders: the danger the last flee ran from, kept for jobs until scarEnd (-1 = none)
-		SCommDanger scar;
-		int scarEnd = -1;
 		const IBuilderTask* cornerTask = nullptr;  // other builders: the defence it was cornered into (MakeCommDefence)
 		bool IsComm() const { return hide != nullptr; }
 		// Cover beats threat x mod by flee_ally_threat (< 0 = never covered)
@@ -282,7 +286,7 @@ private:
 	bool IsMetalStalling() const;
 	// A job at pos: always with no state (flee off); else outside the flee zones (wide line, recently seen dangers
 	// included), or covered 1.25x there. Other builders: a fight-back task is measured at the start line, and the
-	// scar counts
+	// flee scars count
 	bool IsCommJobSafe(const SCommState* state, const springai::AIFloat3& pos, const IBuilderTask* task = nullptr);
 	// Cornered: a static defence on its far side from the danger; nullptr = none to build (or metal short), or one
 	// already on the go (the current task). Other builders keep it as cornerTask
@@ -327,6 +331,7 @@ private:
 	std::map<CCircuitUnit*, SCommState> comms;  // ground workers with the flee on, commanders and other builders
 	std::vector<SCommDanger> commDangers;
 	int commDangerFrame;  // frame commDangers was built at
+	std::vector<SFleeScar> fleeScars;  // StartCommFlee adds them, UpdateCommDangers drops expired ones
 	std::vector<SCommCover> commCovers;
 	int commCoverFrame;  // frame commCovers was built at
 	F3Vec commFleeSpots;  // FindCommFleeGoal scratch
