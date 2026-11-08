@@ -49,7 +49,6 @@
 #include <limits>
 
 #include "AISCommands.h"
-#include "Game.h"
 #include "Command.h"
 #include "Log.h"
 
@@ -822,6 +821,7 @@ void CMilitaryManager::ReadConfig()
 	resign.frame = (resignTime < 0.f) ? -1 : int(resignTime * FRAMES_PER_SEC);
 	resign.mexShare = resignCfg.get("mex", 0.1f).asFloat();
 	resign.threatMult = resignCfg.get("threat", 4.f).asFloat();
+	resign.holdFrames = int(std::max(0.f, resignCfg.get("hold", 30.f).asFloat()) * FRAMES_PER_SEC);
 
 	const float drownedTime = root["drowned"].get("time", -1.f).asFloat();
 	drownedFrames = (drownedTime < 0.f) ? -1 : int(drownedTime * FRAMES_PER_SEC);
@@ -948,6 +948,9 @@ void CMilitaryManager::Init()
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
 		}
 
+		if (resign.frame >= 0) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResign, this), FRAMES_PER_SEC * 10, offset + 1);
+		}
 		if (drownedFrames >= 0) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDrowned, this), FRAMES_PER_SEC, offset + 2);
 		}
@@ -2759,80 +2762,49 @@ void CMilitaryManager::UpdateFight()
 void CMilitaryManager::UpdateResign()
 {
 	const int frame = circuit->GetLastFrame();
-	if (frame < resign.frame) {
+	// 1v1 only: our ally team is just us (start script) and one enemy team (engine count less Gaia)
+	if ((frame < resign.frame) || (circuit->GetAllyTeam()->GetSize() != 1) || (circuit->GetEnemyTeamSize() != 1)) {
 		return;
 	}
 
-	// 1v1 only, counted straight from the engine as zkgbai does: no other team in our ally team, and one enemy team
-	// that isn't Gaia (Zero-K names Gaia's ally team "Neutral")
-	springai::Game* game = circuit->GetGame();
-	const int myTeam = circuit->GetTeamId();
-	const int myAllyTeam = circuit->GetAllyTeamId();
-	int allyCount = 0;
-	int enemyCount = 0;
-	const int teamCount = game->GetTeams();  // Gaia included: the engine puts it last, alone in its own ally team
-	const int lastAllyTeam = (teamCount > 0) ? game->GetTeamAllyTeam(teamCount - 1) : -1;
-	bool isLastAlone = true;
-	for (int t = 0; t < teamCount - 1; ++t) {
-		isLastAlone = isLastAlone && (game->GetTeamAllyTeam(t) != lastAllyTeam);
-	}
-	for (int t = 0; t < teamCount; ++t) {
-		if ((t == myTeam) || ((t == teamCount - 1) && isLastAlone && (lastAllyTeam != myAllyTeam))) {
-			continue;
-		}
-		const int at = game->GetTeamAllyTeam(t);
-		const std::string name = game->GetRulesParamString(("allyteam_short_name_" + utils::int_to_string(at)).c_str(), "");
-		if (name == "Neutral") {
-			continue;
-		}
-		if (at == myAllyTeam) {
-			++allyCount;
-		} else {
-			++enemyCount;
-		}
-	}
-	const bool is1v1 = (allyCount == 0) && (enemyCount == 1);
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	metalMgr->MarkAllyMexes();
+	const int mexCount = metalMgr->GetMexCount();
+	const int spotCount = metalMgr->GetSpots().size();
 
-	// Our mexes: finished or not, straight from our own units
-	const int spotCount = circuit->GetMetalManager()->GetSpots().size();
-	int mexCount = 0;
+	// Army against army, commanders left out on both sides (a levelled commander dwarfs any unit; builders have no
+	// threat). Ours: the finished army (no commander, no builders). Theirs: every live enemy seen in LOS
 	float ourThreat = 0.f;
-	for (auto& kv : circuit->GetTeamUnits()) {
-		CCircuitUnit* unit = kv.second;
-		CCircuitDef* cdef = unit->GetCircuitDef();
-		if (cdef->IsMex()) {
-			++mexCount;
-		} else if (cdef->IsMobile() && !cdef->IsRoleComm() && !unit->GetUnit()->IsBeingBuilt()) {
-			// Army against army, commanders left out on both sides (a levelled commander dwarfs any unit)
-			ourThreat += cdef->GetThreat();
-		}
+	for (const CCircuitUnit* unit : army) {
+		ourThreat += unit->GetCircuitDef()->GetThreat();
 	}
-	const bool isMexLost = (spotCount > 0) && (mexCount < resign.mexShare * spotCount);
-
-	// Enemies: every live enemy we have seen in LOS (so its type is known), counted afresh, on the same scale
-	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	float enemyThreat = 0.f;
-	for (auto& kv : enemyMgr->GetEnemyUnits()) {
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
 		const CCircuitDef* edef = enemy->GetCircuitDef();
-		if (enemy->IsDead() || (edef == nullptr) || !enemy->IsKnown(frame) || !edef->IsMobile() || edef->IsRoleComm()) {
-			continue;
+		if (!enemy->IsDead() && (edef != nullptr) && enemy->IsKnown(frame) && edef->IsMobile() && !edef->IsRoleComm()) {
+			enemyThreat += edef->GetThreat();
 		}
-		enemyThreat += edef->GetThreat();
 	}
-	// No army left at all is lost too, whatever we have seen of theirs
-	const bool isArmyLost = (ourThreat <= 0.f) || (enemyThreat > resign.threatMult * ourThreat);
 
-	const bool isLost = is1v1 && isMexLost && isArmyLost;
-	// Diagnostics: the first check and then once a minute (UpdateResign runs every 10 s), plus the one that resigns
-	if (isLost || (resignChecks++ % 6 == 0)) {
-		circuit->LOG("RESIGN %s: frame %i | teams: allies %i, enemies %i of %i (%s) | mexes %i / %i spots, need < %.1f (%s)"
-				" | mobile threat: enemy %.1f, ours %.1f, need ours 0 or enemy > %.1f (%s)",
-				isLost ? "NOW" : "check", frame, allyCount, enemyCount, teamCount, is1v1 ? "ok" : "no",
-				mexCount, spotCount, resign.mexShare * spotCount, isMexLost ? "ok" : "no",
-				enemyThreat, ourThreat, resign.threatMult * ourThreat, isArmyLost ? "ok" : "no");
+	// No army left reads lost whatever we have seen of theirs (their artillery or bombers may never show)
+	const bool isLost = (mexCount < resign.mexShare * spotCount)
+			&& ((ourThreat <= 0.f) || (enemyThreat > resign.threatMult * ourThreat));
+	if (!isLost) {
+		if (resignSince >= 0) {
+			circuit->LOG("RESIGN: no longer reads lost (frame %i)", frame);
+			resignSince = -1;
+		}
+		return;
 	}
-	if (isLost) {
+	if (resignSince < 0) {
+		resignSince = frame;
+		circuit->LOG("RESIGN: reads lost (frame %i): mexes %i / %i spots, army threat %.1f vs enemy %.1f",
+				frame, mexCount, spotCount, ourThreat, enemyThreat);
+	}
+	// It must read lost on every check for resign.holdFrames: a trade or a raid can look lost for a moment
+	if (frame - resignSince >= resign.holdFrames) {
+		circuit->LOG("RESIGN: now (frame %i)", frame);
 		circuit->Surrender();
 	}
 }

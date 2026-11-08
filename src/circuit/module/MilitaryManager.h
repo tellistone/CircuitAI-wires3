@@ -182,13 +182,11 @@ public:
 		float fleeAllyRadius;
 	};
 	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
-	// "resign": concede a lost 1v1. Called every 10 s by CCircuitAI::Update itself, outside the scheduler
-	void UpdateResign();
-	bool IsResignOn() const { return resign.frame >= 0; }
 	struct SResignCfg {
 		int frame;  // no resign before this frame; < 0 = never resign
 		float mexShare;  // resign only while our ally team holds less than this share of the map's metal spots
-		float threatMult;  // ... and the known enemy mobile threat is more than this x ours
+		float threatMult;  // ... and the known enemy army threat is more than this x ours (or we have none)
+		int holdFrames;  // ... on every check for this long
 	};
 	bool IsGuardRole(CCircuitDef* cdef) const;
 	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
@@ -359,6 +357,7 @@ private:
 	// there is none) leave for anti-heavy squads, every 2 s; not while their group is fighting or fleeing
 	void UpdateAhPull();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
+	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
 	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
@@ -489,7 +488,7 @@ private:
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SAttackRally attackRally;  // quota.attack_merge.rally
 	SResignCfg resign;  // "resign"
-	unsigned int resignChecks = 0;  // UpdateResign calls past resign.frame, to space out its diagnostic log
+	int resignSince = -1;  // first frame of the current "reads lost" run; -1 = doesn't read lost
 	int drownedFrames;  // "drowned".time in frames; < 0 = off
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	bool attackBaseGather;  // quota.attack_merge.base_gather
