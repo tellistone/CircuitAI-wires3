@@ -2684,63 +2684,36 @@ void CMilitaryManager::UpdateResign()
 /*
  * "drowned" (behaviour.json): a ground unit that ends up in water deeper than its move type allows (knocked or
  * pushed off a shore, dropped there, or the seabed terraformed under it) can't move or do anything useful.
- * After "time" seconds stuck there it self-destructs, so its supply and the tasks waiting on it are freed.
- * Hovers, ships, subs, amphibious units and aircraft never count; nor does a unit held above the water by a
- * transport. If the unit gets out while the self-destruct countdown runs, the countdown is cancelled.
+ * After "time" seconds stuck there it self-destructs, so the squads and builder tasks waiting on it are freed.
+ * @see CTerrainManager::IsStuckInWater. The order is sent once: CMD_SELFD toggles the countdown, the AI can't
+ * read it back, and Zero-K gadgets (capture, unit given, mass self-D blocker) toggle it too.
  */
-bool CMilitaryManager::IsDrowned(CCircuitUnit* unit, int frame) const
-{
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	// factories have a mobile type too; a sub's minElevation is the shallowest water it needs, not the deepest
-	if (!cdef->IsMobile() || cdef->IsAbleToFly() || cdef->IsSubmarine()) {
-		return false;
-	}
-	const STerrainMapMobileType* mobileType = circuit->GetTerrainManager()->GetMobileTypeById(cdef->GetMobileId());
-	if ((mobileType == nullptr) || mobileType->canHover || mobileType->canFloat) {
-		return false;
-	}
-	const AIFloat3& pos = unit->GetPos(frame);
-	if (pos.y >= 0.f) {  // above the water: on land, or carried by a transport
-		return false;
-	}
-	// minElevation = -MoveDef depth: the deepest water the unit can walk in
-	return circuit->GetMap()->GetElevationAt(pos.x, pos.z) < mobileType->minElevation;
-}
-
 void CMilitaryManager::UpdateDrowned()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
 	const int frame = circuit->GetLastFrame();
-	std::unordered_map<int, SDrownedState> stillDrowned;
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	std::unordered_map<int, int> stillStuck;  // drops dead units and the ones that got out
 	for (auto& kv : circuit->GetTeamUnits()) {
 		CCircuitUnit* unit = kv.second;
-		auto it = drownedUnits.find(unit->GetId());
-		const bool isDrowned = !unit->GetUnit()->IsBeingBuilt() && IsDrowned(unit, frame);
-		if (!isDrowned) {
-			if ((it != drownedUnits.end()) && it->second.isSelfD) {  // got out in time: cancel the countdown
-				TRY_UNIT(circuit, unit,
-					unit->GetUnit()->SelfDestruct();
-				)
-				circuit->LOG("DROWNED: frame %i | %s (%i) got out of the water, self-destruct cancelled",
-						frame, unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId());
-			}
+		const AIFloat3& pos = unit->GetPos(frame);
+		if (!terrainMgr->IsStuckInWater(unit->GetCircuitDef(), pos) || unit->GetUnit()->IsBeingBuilt()) {
 			continue;
 		}
-
-		SDrownedState state = (it != drownedUnits.end()) ? it->second : SDrownedState{frame, false};
-		if (!state.isSelfD && (frame - state.stuckFrame >= drownedFrames)) {
+		auto it = drownedSince.find(unit->GetId());
+		int since = (it != drownedSince.end()) ? it->second : frame;
+		if ((since >= 0) && (frame - since >= drownedFrames)) {
 			TRY_UNIT(circuit, unit,
 				unit->GetUnit()->SelfDestruct();
 			)
-			state.isSelfD = true;
-			const AIFloat3& pos = unit->GetPos(frame);
 			circuit->LOG("DROWNED: frame %i | %s (%i) stuck in deep water at (%.0f, %.0f) for %.1f s, self-destruct",
 					frame, unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), pos.x, pos.z,
-					float(frame - state.stuckFrame) / FRAMES_PER_SEC);
+					float(frame - since) / FRAMES_PER_SEC);
+			since = -1;
 		}
-		stillDrowned.emplace(unit->GetId(), state);
+		stillStuck.emplace(unit->GetId(), since);
 	}
-	drownedUnits.swap(stillDrowned);  // drops dead units and the ones that got out
+	drownedSince.swap(stillStuck);
 }
 
 void CMilitaryManager::AddArmyCost(CCircuitUnit* unit)

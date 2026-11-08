@@ -160,9 +160,10 @@
 },
 
 // Self-destruct own ground units stuck under water deeper than their move type can walk in (knocked or pushed off a
-// shore, dropped there, or the seabed terraformed under them). Checked every second; hovers, ships, subs, amphibious
-// units and aircraft never count, nor does a unit held above the water by a transport. If the unit gets out during the
-// self-destruct countdown, the countdown is cancelled. Missing block or time < 0 = off
+// shore, dropped there, or the seabed terraformed under them): no square within one square of the unit is walkable
+// (the engine's rule: a square's highest corner no deeper than the MoveDef depth). Checked every second; hovers, ships,
+// subs, amphibious units and aircraft never count, nor does a unit held above the water by a transport. The order is
+// sent once and never cancelled. Missing block or time < 0 = off
 "drowned": {
 	"time": 10.0  // seconds stuck before the self-destruct order
 },

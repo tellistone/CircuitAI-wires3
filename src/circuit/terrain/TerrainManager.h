@@ -191,6 +191,8 @@ public:
 	bool IsWaterSector(const springai::AIFloat3& position) const {
 		return areaData->sector[GetSectorIndex(position)].isWater;
 	}
+	// A ground unit (not hover, ship, sub or aircraft) under water with no square it can walk on within one square
+	bool IsStuckInWater(CCircuitDef* cdef, const springai::AIFloat3& position) const;
 
 	SAreaData* GetAreaData() const { return areaData; }
 	void UpdateAreaUsers(int interval);
