@@ -36,18 +36,13 @@ void CBEnergyTask::Update()
 		return;
 	}
 
-	CCircuitAI* circuit = manager->GetCircuit();
 	// Same test as CEconomyManager::UpdateEnergyTasks: high build priority while short of energy
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const bool isEnergyStalling = economyMgr->IsEnergyStalling() || economyMgr->IsEnergyStall();
-	if (isStalling == isEnergyStalling) {
+	const bool isEnergyShort = manager->GetCircuit()->GetEconomyManager()->IsEnergyShort();
+	if (isStalling == isEnergyShort) {
 		return;
 	}
-	isStalling = isEnergyStalling;
-	priority = isEnergyStalling ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
-	TRY_UNIT(circuit, target,
-		target->CmdPriority(ClampPriority());
-	)
+	isStalling = isEnergyShort;
+	ChangePriority(isEnergyShort ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL);
 }
 
 void CBEnergyTask::Execute(CCircuitUnit* unit)

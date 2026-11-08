@@ -84,6 +84,8 @@ public:
 	bool IsMetalStall();
 	bool IsEnergyStall();
 	bool IsStalling() { return IsMetalStall() || IsEnergyStall(); }
+	// Short of energy: worse off than metal (IsEnergyStalling), or the energy stall latch is on
+	bool IsEnergyShort() { return IsEnergyStalling() || IsEnergyStall(); }
 	bool IsExcessed() const { return metalProduced > metalUsed; }
 	int GetBuildDelay() const { return buildDelay; }
 
@@ -92,7 +94,8 @@ public:
 	void SetOpenSpot(int spotId, bool value);
 	bool IsIgnorePull(const IBuilderTask* task) const;
 	bool IsIgnoreStallingPull(const IBuilderTask* task) const;
-	// A building that ends the current stall: mex or pylon in a metal stall, energy in an energy stall
+	// A job the stall rule lets builders start or join: a building that ends the current stall (mex or pylon in a
+	// metal stall, energy in an energy stall), or a NOW factory (the replacement, or the early factory)
 	bool IsStallFix(const IBuilderTask* task) const;
 
 	IBuilderTask* MakeEconomyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);

@@ -197,7 +197,8 @@ private:
 		float invWeight;  // 1 / economy.builder_jobs.weight of the priority
 		float travelSec;  // economy.builder_jobs.travel of the priority; max = no cap
 	};
-	// By the job's priority, except mex drops to NORMAL during an energy stall
+	// By the job's priority, except mex drops to NORMAL while energy is worse off than metal (IsEnergyStalling).
+	// Not on the energy latch alone: then metal is as short, and a mex still helps
 	const SJobRank& GetJobRank(const IBuilderTask* task, bool isEnergyStalling) const;
 	IBuilderTask* MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
 

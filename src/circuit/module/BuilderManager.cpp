@@ -718,7 +718,7 @@ IBuilderTask* CBuilderManager::EnqueueRepair(IBuilderTask::Priority priority,
 	if (it != repairedUnits.end()) {
 		task = it->second;
 		if (static_cast<int>(priority) > static_cast<int>(task->GetPriority())) {
-			task->SetPriority(priority);  // upgrade, e.g. HIGH left over from retreat
+			task->ChangePriority(priority);  // upgrade, e.g. HIGH left over from retreat
 		}
 	} else {
 		task = new CBRepairTask(this, priority, target, timeout);
@@ -1275,8 +1275,8 @@ const CBuilderManager::SJobRank& CBuilderManager::GetJobRank(const IBuilderTask*
 
 // While stalling (CEconomyManager::IsStalling): would unit add its build power to spending? Spending = a building
 // (placed or not), terraform, or repairing an unfinished unit; reclaim, finished-unit repair, patrol and guard are
-// free. Its own job never counts, nor a stall fix: it runs at ZK's high build priority (CmdPriority), so it takes the
-// scarce resource first and more builders on it do finish it sooner
+// free. Its own job never counts, nor a stall fix (IsStallFix): it runs at ZK's high build priority (CmdPriority), so
+// it takes the scarce resource first and more builders on it do finish it sooner
 static bool IsStallSpend(const CEconomyManager* economyMgr, const IBuilderTask* task, const CCircuitUnit* unit)
 {
 	if (task == unit->GetTask()) {
@@ -1409,11 +1409,20 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 		((unit->GetTask()->GetType() != IUnitTask::Type::BUILDER) || (static_cast<IBuilderTask*>(unit->GetTask())->GetBuildType() != IBuilderTask::BuildType::GUARD)))
 	{
 		CCircuitUnit* vip = circuit->GetFactoryManager()->GetClosestFactory(pos);
-		// Guarding the factory adds build power to it: patrol instead while stalling (a patrol repairs and reclaims)
-		if ((vip != nullptr) && !isStalling && IsCommJobSafe(commState, vip->GetPos(frame))) {
-			task = EnqueueGuard(IBuilderTask::Priority::NORMAL, vip, FRAMES_PER_SEC * 60);
-		} else {
-			task = EnqueuePatrol(IBuilderTask::Priority::LOW, pos, .0f, FRAMES_PER_SEC * 5);
+		// Guarding the factory adds build power to it, and a patrol helps any frame in reach: while stalling, reclaim
+		// first (as an idle constructor does) and patrol only if there is no safe reclaim
+		if (isStalling) {
+			task = economyMgr->UpdateReclaimTasks(pos, unit, false);
+			if ((task != nullptr) && !IsCommJobSafe(commState, task->GetPosition())) {
+				task = nullptr;  // left queued for constructors
+			}
+		}
+		if (task == nullptr) {
+			if ((vip != nullptr) && !isStalling && IsCommJobSafe(commState, vip->GetPos(frame))) {
+				task = EnqueueGuard(IBuilderTask::Priority::NORMAL, vip, FRAMES_PER_SEC * 60);
+			} else {
+				task = EnqueuePatrol(IBuilderTask::Priority::LOW, pos, .0f, FRAMES_PER_SEC * 5);
+			}
 		}
 	}
 

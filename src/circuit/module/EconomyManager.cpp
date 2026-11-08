@@ -697,10 +697,12 @@ bool CEconomyManager::IsEnergyEmpty()
 bool CEconomyManager::IsStallFix(const IBuilderTask* task) const
 {
 	// Unlike IsIgnoreStallingPull, no mex while only energy stalls: a mex costs energy too. Reads the latches as the
-	// caller's IsStalling left them this pick.
+	// caller's IsStalling left them this pick. A NOW factory is the AI's way back to making constructors: without
+	// it a stall that lasts (energy jobs keep the pull up) would leave it with none
 	const IBuilderTask::BuildType type = task->GetBuildType();
 	return (isMetalStall && ((type == IBuilderTask::BuildType::MEX) || (type == IBuilderTask::BuildType::PYLON)))
-		|| (isEnergyStall && (type == IBuilderTask::BuildType::ENERGY));
+		|| (isEnergyStall && (type == IBuilderTask::BuildType::ENERGY))
+		|| ((type == IBuilderTask::BuildType::FACTORY) && (task->GetPriority() == IBuilderTask::Priority::NOW));
 }
 
 bool CEconomyManager::IsMetalStall()
@@ -782,7 +784,7 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	// Energy stall: queue energy, but keep expanding. Mex jobs then rank as NORMAL (CBuilderManager::GetJobRank).
 	// Mex and reclaim are both searched on every pass (reclaim costs no energy, so a stall doesn't stop it);
 	// the job picker then chooses between them by travel and priority.
-	IBuilderTask* task = (IsEnergyStalling() || IsEnergyStall()) ? UpdateEnergyTasks(position, unit) : nullptr;
+	IBuilderTask* task = IsEnergyShort() ? UpdateEnergyTasks(position, unit) : nullptr;
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
 	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);
 
@@ -1025,8 +1027,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// check energy / metal ratio
 	float metalIncome = GetAvgMetalIncome();
 	const float energyIncome = GetAvgEnergyIncome();
-	// Short of energy: worse off than metal, or the stall latch is on (energy storage near empty)
-	const bool isEnergyStalling = IsEnergyStalling() || IsEnergyStall();
+	const bool isEnergyStalling = IsEnergyShort();
 	// TODO: e-stalling needs separate array of energy-defs sorted by cost
 
 	// Select proper energy UnitDef to build
@@ -1034,8 +1035,9 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// Budget for energy jobs. Normally a time-scaled share of the lower income. Short of energy, that share shrinks
 	// with the shortage and caps energy at 1-2 jobs. ZK's high build priority gives energy jobs the scarce energy
 	// first, so in a shortage budget by metal income instead: enough jobs to soak up the energy and spare metal.
+	// Not while metal stalls too: that metal is short as well, and energy jobs would take it from mex jobs.
 	metalIncome = std::min(metalIncome, energyIncome) * energyFactor;
-	if (isEnergyStalling) {
+	if (isEnergyStalling && !IsMetalStall()) {
 		metalIncome = std::max(metalIncome, GetAvgMetalIncome());
 	}
 	const float buildPower = std::min(builderMgr->GetBuildPower(), metalIncome);
@@ -1487,7 +1489,7 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 	if (!storeTasks.empty()) {
 		if (isReclaimStore) {
 			for (IBuilderTask* t : storeTasks) {
-				t->SetPriority(IBuilderTask::Priority::NOW);  // upgrade the one already queued
+				t->ChangePriority(IBuilderTask::Priority::NOW);  // upgrade the one already queued
 			}
 		}
 		return UpdatePylonTasks();
