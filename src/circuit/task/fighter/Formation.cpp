@@ -46,7 +46,7 @@ constexpr float THREAT_EPS = 1e-3f;
 constexpr float TURN_BACK_COS = -0.5f;  // a new path that turns back by more than 120 degrees starts the rows afresh
 constexpr float TURN_LOOK = 256.f;  // the path's heading: towards its point this far along
 constexpr size_t PATH_SEARCH = 32;  // path segments searched for the leader's spot, from the last one
-constexpr int SWAP_PASSES = 8;  // Rematch: passes of place swaps at most
+constexpr int SWAP_PASSES = 8;  // SwapPlaces: passes of place swaps at most
 
 // Share along segment ab of the point closest to p (2D)
 float ProjectOnSegment(const AIFloat3& p, const AIFloat3& a, const AIFloat3& b)
