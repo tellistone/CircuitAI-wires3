@@ -47,8 +47,9 @@ public:
 	float GetAllyDefendInflAt(const springai::AIFloat3& position) const;
 	float GetInfluenceAt(const springai::AIFloat3& position) const;
 	// Our territory: our buildings, land constructors and static defences (allyDefendInfl) outweigh the enemy's
-	// buildings and static defences there (enemyStaticInfl, the same formulas); enemy mobile units don't count
-	bool IsAllyTerritory(const springai::AIFloat3& position) const;
+	// buildings and static defences (enemyStaticInfl, the same formulas) by more than margin there; enemy mobile units
+	// don't count
+	bool IsAllyTerritory(const springai::AIFloat3& position, float margin) const;
 	// What one mobile armed ally adds to allyInfl at position, by the same formula as AddMobileArmed
 	float GetMobileArmedInflAt(CAllyUnit* u, const springai::AIFloat3& position) const;
 
@@ -75,6 +76,8 @@ private:
 	void AddUnarmed(CAllyUnit* u);
 	void AddEnemy(const SEnemyData& e);
 	void AddEnemyUnarmed(const SEnemyData& e);  // an unarmed enemy building, as AddUnarmed
+	// Adds val, fading linearly to 0 at range cells, to layer around cell (posx, posz)
+	void AddDisc(float* layer, int posx, int posz, int range, float val);
 //	void AddFeature(springai::Feature* f);
 	inline void PosToXZ(const springai::AIFloat3& pos, int& x, int& z) const;
 

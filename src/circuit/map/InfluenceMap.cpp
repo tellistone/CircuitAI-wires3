@@ -238,12 +238,12 @@ float CInfluenceMap::GetInfluenceAt(const AIFloat3& position) const
 	return influence[z * width + x] - INFL_BASE;
 }
 
-bool CInfluenceMap::IsAllyTerritory(const AIFloat3& position) const
+bool CInfluenceMap::IsAllyTerritory(const AIFloat3& position, float margin) const
 {
 	int x, z;
 	PosToXZ(position, x, z);
 	const int index = z * width + x;
-	return allyDefendInfl[index] - enemyStaticInfl[index] > INFL_EPS;  // both INFL_BASE-offset
+	return allyDefendInfl[index] - enemyStaticInfl[index] > margin;  // both INFL_BASE-offset
 }
 
 int CInfluenceMap::Pos2Index(const AIFloat3& pos) const
@@ -378,30 +378,7 @@ void CInfluenceMap::AddUnarmed(CAllyUnit* u)
 	CCircuitAI* circuit = manager->GetCircuit();  // FIXME: not thread-safe
 	int posx, posz;
 	PosToXZ(u->GetPos(circuit->GetLastFrame()), posx, posz);
-
-	const float val = 2.f;
-	const int range = DEFAULT_SLACK * 4 * defRadius / squareSize;
-	const int rangeSq = SQUARE(range);
-
-	const int beginX = std::max(int(posx - range + 1),       0);
-	const int endX   = std::min(int(posx + range    ),  width);
-	const int beginZ = std::max(int(posz - range + 1),       0);
-	const int endZ   = std::min(int(posz + range    ), height);
-
-	for (int z = beginZ; z < endZ; ++z) {
-		const int dzSq = SQUARE(posz - z);
-		for (int x = beginX; x < endX; ++x) {
-			const int dxSq = SQUARE(posx - x);
-			const int lenSq = dxSq + dzSq;
-			if (lenSq > rangeSq) {
-				continue;
-			}
-
-			const int index = z * width + x;
-			const float infl = val * (1.0f - 1.0f * sqrtf(lenSq) / range);
-			drawAllyDefendInfl[index] += infl;
-		}
-	}
+	AddDisc(drawAllyDefendInfl, posx, posz, DEFAULT_SLACK * 4 * defRadius / squareSize, 2.f);
 }
 
 void CInfluenceMap::AddEnemy(const SEnemyData& e)
@@ -449,9 +426,11 @@ void CInfluenceMap::AddEnemyUnarmed(const SEnemyData& e)
 {
 	int posx, posz;
 	PosToXZ(e.pos, posx, posz);
+	AddDisc(drawEnemyStaticInfl, posx, posz, DEFAULT_SLACK * 4 * defRadius / squareSize, 2.f);  // as AddUnarmed
+}
 
-	const float val = 2.f;  // as AddUnarmed
-	const int range = DEFAULT_SLACK * 4 * defRadius / squareSize;
+void CInfluenceMap::AddDisc(float* layer, int posx, int posz, int range, float val)
+{
 	const int rangeSq = SQUARE(range);
 
 	const int beginX = std::max(int(posx - range + 1),       0);
@@ -467,9 +446,7 @@ void CInfluenceMap::AddEnemyUnarmed(const SEnemyData& e)
 			if (lenSq > rangeSq) {
 				continue;
 			}
-
-			const int index = z * width + x;
-			drawEnemyStaticInfl[index] += val * (1.0f - 1.0f * sqrtf(lenSq) / range);
+			layer[z * width + x] += val * (1.0f - 1.0f * sqrtf(lenSq) / range);
 		}
 	}
 }

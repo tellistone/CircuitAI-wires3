@@ -1575,8 +1575,12 @@ void CAttackTask::FindTarget()
 		// quota.attack_own_ground_time and the floors: our territory (IsAllyTerritory: our buildings, land builders
 		// or static defences outweigh the enemy's buildings and static defences; mobiles on neither side count, else
 		// a group would license its own surroundings and creep forward, and the target would veto itself).
-		// A target already within range is always fair game, so fights at the edge aren't dropped
-		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && !inflMap->IsAllyTerritory(c.rangePos)) {
+		// A target already within range is always fair game, so fights at the edge aren't dropped. The current target
+		// stays ours until the enemy outweighs us there by half a building, so it doesn't flicker on the border
+		// as our constructors move or enemy buildings come into view
+		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange)
+			&& !inflMap->IsAllyTerritory(c.rangePos, (enemy->GetId() == prevTargetId) ? -1.f : INFL_EPS))
+		{
 			continue;
 		}
 		c.rawKey = sqOEDist * scale;
