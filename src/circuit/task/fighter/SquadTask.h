@@ -40,7 +40,6 @@ public:
 
 	CCircuitUnit* GetLeader() const { return leader; }
 	const springai::AIFloat3& GetLeaderPos(int frame) const;
-	const std::shared_ptr<PathInfo>& GetSquadPath() const { return pPath; }
 
 	/*
 	 * Line formation (CFormation, behaviour.json "formation") while the squad walks its path outside combat
@@ -59,7 +58,7 @@ protected:
 
 private:
 	void FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd);
-	// Formation on in config, allowed by the task, ROAM, and the leader walks the squad's path
+	// Formation on in config, allowed by the task, ROAM, and the leader walks a path (the line follows it)
 	bool IsFormationActive(int frame) const;
 
 	bool IsMergeSafe() const;

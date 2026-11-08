@@ -8,6 +8,7 @@
 #include "task/fighter/Formation.h"
 #include "task/fighter/SquadTask.h"
 #include "module/MilitaryManager.h"
+#include "map/ThreatMap.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
 #include "unit/action/TravelAction.h"
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <tuple>
 
 namespace circuit {
@@ -27,12 +29,9 @@ namespace {
 constexpr int SOLVE_FRAMES = FRAMES_PER_SEC / 2;  // lay the line out at most this often
 constexpr int WIDEN_FRAMES = FRAMES_PER_SEC * 3;  // a wider way must last this long before the line widens
 constexpr int STRAGGLE_FRAMES = FRAMES_PER_SEC * 12;  // out of its slot this long: a straggler
-constexpr int STUCK_FRAMES = FRAMES_PER_SEC * 30;  // out of its slot without a STUCK_DIST move this long: released
-constexpr float STUCK_DIST = 64.f;
-constexpr float TRACK_STEP = 32.f;  // the leader's track keeps a point every this many elmos
-constexpr float MARCH_STEP = 32.f;  // width march and slot slide
+constexpr int STUCK_FRAMES = FRAMES_PER_SEC * 30;  // out of its slot without a DEFAULT_SLACK move this long: released
+constexpr float STEP = SQUARE_SIZE * 4;  // the leader's track and the free distance tests
 constexpr float MAX_WIDTH = 900.f;
-constexpr float MIN_HALF_WIDTH = 64.f;  // the line's direction is smoothed over its width, at least twice this
 constexpr float COMPRESS = 0.7f;  // spacing squeezes to this share of normal before a second row is added
 constexpr float ROW_GAPS = 3.f;  // rows are their widest footprint + this many gaps apart
 constexpr float WIDTH_AHEAD_SEC = 3.f;  // the column count fits the narrowest spot this far ahead of the front row
@@ -43,8 +42,8 @@ constexpr float MAX_CATCH_UP = 1.5f;  // catching up at most this x the slowest 
 constexpr float MIN_SPEED = 0.25f;  // wanted speed never below this x the slowest unit's
 constexpr float SLOT_SEC = 1.5f;  // near its slot: within max(spacing, this many seconds of its own walking)
 constexpr float MIN_SLACK = 48.f;  // re-order slack at least
+constexpr float THREAT_EPS = 1e-3f;  // more enemy threat than this: in threat
 constexpr size_t PATH_SEARCH = 32;  // path segments searched for the leader's spot, from the last one
-constexpr float ON_PATH_DIST = 64.f;  // the leader is on a path segment this close
 
 // Share along segment ab of the point closest to p (2D)
 float ProjectOnSegment(const AIFloat3& p, const AIFloat3& a, const AIFloat3& b)
@@ -67,7 +66,8 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 		Reset();
 		return;
 	}
-	const std::shared_ptr<PathInfo>& path = task->GetSquadPath();
+	CCircuitUnit* squadLeader = task->GetLeader();
+	const std::shared_ptr<PathInfo>& path = squadLeader->GetTravelAct()->GetPath();  // the path the squad walks
 	if ((frame < solveFrame + SOLVE_FRAMES) && (path == solvedPath)) {
 		return;
 	}
@@ -80,11 +80,64 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 		solvedPath = path;
 		pathIndex = 0;  // a new path starts at the leader
 	}
+	if (squadLeader != leader) {
+		leader = squadLeader;
+		track.clear();  // a new leader walked elsewhere
+	}
 
-	// Land and sea units take slots (not support, not no_formation). Newcomers to a formed line straggle to theirs
+	const float supportSpeed = AddMembers(frame);
+	auto itLeader = members.find(leader);
+	if (itLeader == members.end()) {
+		isOn = false;  // a leader that doesn't walk in line
+		return;
+	}
+	leaderM = &itLeader->second;
+	leaderM->isStraggler = false;  // the line is centred on it
+	const int count = members.size();
+	const float baseSpacing = cfg.spacing * std::pow(cfg.spacingUnits / std::max<float>(count, cfg.spacingUnits), cfg.spacingExp);
+	maxWidth = std::min(std::max(cfg.widthRange * task->GetFormationRange(), 3.f * baseSpacing), MAX_WIDTH);
+	const float backLen = depth + maxWidth / 2 + baseSpacing;  // rows behind the leader, and smoothing
+	if (!BuildLine(leader->GetPos(frame), *path, backLen, depth + maxWidth + leaderM->maxSpeed * LINE_AHEAD_SEC)
+		|| (count < (isOn ? 2 : cfg.minUnits)))
+	{
+		isOn = false;  // the leader is far off its path (e.g. a new leader that just merged in), or too few units
+		return;
+	}
+	MeasureMembers(frame, path, supportSpeed);
+	const float frontArc = isOn ? Project(anchorPos, 0.f) : 0.f;
+	const int cols = FitColumns(frame, frontArc, count, baseSpacing, cfg.gap);
+	if (cols < 2) {
+		isOn = false;  // no line fits: follow the path as before
+		return;
+	}
+
+	const bool isSwitchOn = !isOn;
+	if (isSwitchOn) {
+		SwitchOn(frame);
+	}
+	if (isSwitchOn || isDirty || (cols != matchCols)) {
+		Rematch(cols);
+	}
+	LayOut(cfg.gap);
+	const float pace = MoveAnchor(isSwitchOn, frontArc, dt, cfg.leadSec);
+	ShiftRows(pace, cfg.gap);
+	PlaceSlots(frame, pace, cfg.leadSec, outStuck);
+}
+
+float CFormation::AddMembers(int frame)
+{
+	// Land and sea units take slots (not support, not no_formation). Newcomers to a formed line straggle to theirs.
+	// Support units follow the leader instead (CSupportAction), so the line walks no faster than they do
+	CCircuitAI* circuit = task->GetManager()->GetCircuit();
+	const CMilitaryManager::SFormationCfg& cfg = circuit->GetMilitaryManager()->GetFormationCfg();
+	float supportSpeed = std::numeric_limits<float>::max();
 	for (CCircuitUnit* unit : task->GetAssignees()) {
 		CCircuitDef* cdef = unit->GetCircuitDef();
-		if (cdef->IsAbleToFly() || cdef->IsRoleSupport() || cdef->IsAttrNoForm()) {
+		if (cdef->IsAbleToFly() || cdef->IsAttrNoForm()) {
+			continue;
+		}
+		if (cdef->IsRoleSupport()) {
+			supportSpeed = std::min(supportSpeed, cdef->GetSpeed());
 			continue;
 		}
 		auto result = members.try_emplace(unit);
@@ -111,31 +164,14 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 		m.row = -1;
 		isDirty = true;
 	}
-	CCircuitUnit* leader = task->GetLeader();
-	auto itLeader = members.find(leader);
-	if (itLeader == members.end()) {
-		isOn = false;  // a leader that doesn't walk in line
-		return;
-	}
-	leaderM = &itLeader->second;
-	leaderM->isStraggler = false;  // the line is centred on it
-	if (leader != trackLeader) {
-		track.clear();  // a new leader walked elsewhere
-		trackLeader = leader;
-	}
-	const int count = members.size();
-	const float baseSpacing = cfg.spacing * std::pow(cfg.spacingUnits / std::max<float>(count, cfg.spacingUnits), cfg.spacingExp);
-	const float maxWidth = std::min(std::max(cfg.widthRange * task->GetFormationRange(), 3.f * baseSpacing), MAX_WIDTH);
-	const float backLen = depth + maxWidth / 2 + baseSpacing;  // rows behind the leader, and smoothing
-	if (!BuildLine(leader->GetPos(frame), *path, backLen, depth + maxWidth + leaderM->maxSpeed * LINE_AHEAD_SEC, maxWidth)
-		|| (count < (isOn ? 2 : cfg.minUnits)))
-	{
-		isOn = false;  // the leader is far off its path (e.g. a new leader that just merged in), or too few units
-		return;
-	}
+	return supportSpeed;
+}
 
-	float slowest = leaderM->maxSpeed;
-	float maxFoot = 0.f;
+void CFormation::MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed)
+{
+	// The line's top speed: the slowest unit that keeps up with it (or will follow it), the leader at least
+	slowest = std::min(leaderM->maxSpeed, supportSpeed);
+	maxFoot = 0.f;
 	for (auto& kv : members) {
 		CCircuitUnit* unit = kv.first;
 		SMember& m = kv.second;
@@ -148,14 +184,16 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 			slowest = std::min(slowest, m.maxSpeed);
 		}
 	}
+}
 
-	// Free width across the line where the front row walks in the next few seconds, on the leader's move array:
-	// the narrowest spot sets the columns, so the line narrows before a choke, not in it
+int CFormation::FitColumns(int frame, float frontArc, int count, float baseSpacing, float gap)
+{
+	// Free width across the line where the front row walks in the next few seconds: the narrowest spot sets the
+	// columns, so the line narrows before a choke (or a gap between threats), not in it
 	const int mobileId = leader->GetCircuitDef()->GetMobileId();
-	const float frontArc = isOn ? Project(anchorPos, 0.f) : 0.f;
 	const float endArc = std::min(frontArc + slowest * WIDTH_AHEAD_SEC, arcs.back());
 	float freeWidth = maxWidth;
-	for (float s = frontArc; ; s = std::min(s + MARCH_STEP * 2, endArc)) {
+	for (float s = frontArc; ; s = std::min(s + DEFAULT_SLACK, endArc)) {
 		const AIFloat3 p = PointAt(s);
 		const AIFloat3 axis = AxisAt(s);
 		freeWidth = std::min(freeWidth, FreeDist(p, axis, maxWidth, mobileId) + FreeDist(p, -axis, maxWidth, mobileId));
@@ -171,127 +209,13 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 		heldWidth = freeWidth;
 	}
 	// Columns: half the widest footprint + gap clear at each end; spacing squeezes before a second row is added
-	const float room = std::max(heldWidth - maxFoot - 2 * cfg.gap, 0.f);
+	const float room = std::max(heldWidth - maxFoot - 2 * gap, 0.f);
 	spacing = baseSpacing;
 	if ((count - 1) * spacing > room) {
 		spacing = std::max(room / (count - 1), COMPRESS * baseSpacing);
 	}
-	const int fitCols = std::min(count, int(room / spacing + 1e-3f) + 1);
-	if (fitCols < 2) {
-		isOn = false;  // no line fits: follow the path as before
-		return;
-	}
-
-	const bool isSwitchOn = !isOn;
-	if (isSwitchOn) {
-		SwitchOn(frame);
-	}
-	if (isSwitchOn || isDirty || (fitCols != matchCols)) {
-		Rematch(fitCols);
-	}
-	LayOut(spacing, cfg.gap);
-
-	// Pace: the slowest unit's speed, slowing in proportion as the unit furthest behind its slot along the line falls
-	// behind (one still spreading sideways isn't behind), to a stop at lead_sec behind: the line waits for everyone,
-	// so the slowest can catch up too. Stragglers and busy units don't count
-	const float leaderOffset = rows[leaderM->row].offset;
-	float anchorArc = isSwitchOn ? leaderOffset : std::max(frontArc, leaderOffset);  // the leader's slot isn't behind it
-	float lag = 0.f;
-	for (const auto& kv : members) {
-		const SMember& m = kv.second;
-		if (m.isSteered && !m.isStraggler) {
-			lag = std::max(lag, LagAt(anchorArc - rows[m.row].offset, m.pos));
-		}
-	}
-	const float pace = std::max(slowest - lag / cfg.leadSec, 0.f);
-	anchorArc = std::min(anchorArc + pace * dt, arcs.back());
-	anchorPos = PointAt(anchorArc);
-
-	// Each row shifts sideways as little as it takes to fit between obstacles where it walks to
-	const float clear = maxFoot / 2 + cfg.gap;
-	for (SRow& row : rows) {
-		const float s = std::min(anchorArc + pace * (1.f + LOOK_AHEAD_SEC), arcs.back()) - row.offset;
-		const AIFloat3 p = PointAt(s);
-		const AIFloat3 axis = AxisAt(s);
-		const float lo = clear - FreeDist(p, -axis, maxWidth, mobileId) - row.units.front()->x;
-		const float hi = FreeDist(p, axis, maxWidth, mobileId) - clear - row.units.back()->x;
-		row.shift = (lo <= hi) ? utils::clamp(0.f, lo, hi) : (lo + hi) / 2;
-	}
-
-	for (auto& kv : members) {
-		CCircuitUnit* unit = kv.first;
-		SMember& m = kv.second;
-		const SRow& row = rows[m.row];
-		const float x = row.shift + m.x;
-		const int unitMobileId = unit->GetCircuitDef()->GetMobileId();
-		const float slotArc = anchorArc - row.offset;
-		const float slotLag = LagAt(slotArc, m.pos);
-
-		// In its slot: near it, and not so far behind that the line has slowed to half. Out of it for STRAGGLE_FRAMES:
-		// a straggler, until it is back (the leader never is); so a unit that holds the line up does so for a while only
-		const bool isNear = (slotLag < cfg.leadSec * slowest / 2)
-				&& (m.pos.SqDistance2D(SlotAt(slotArc, x, unitMobileId)) < SQUARE(std::max(spacing, m.maxSpeed * SLOT_SEC)));
-		if (isNear || (&m == leaderM)) {
-			m.slotFrame = frame;
-			m.isStraggler = false;
-		} else if (frame >= m.slotFrame + STRAGGLE_FRAMES) {
-			m.isStraggler = true;
-		}
-		// Progress watchdog: out of its slot and walking it, but no STUCK_DIST move for STUCK_FRAMES
-		if (!m.isSteered || isNear || (m.pos.SqDistance2D(m.movePos) >= SQUARE(STUCK_DIST))) {
-			m.movePos = m.pos;
-			m.moveFrame = frame;
-		} else if (frame >= m.moveFrame + STUCK_FRAMES) {
-			outStuck.push_back(unit);
-		}
-
-		// Target: the slot ahead by the order interval + LOOK_AHEAD_SEC at the line's pace, so the engine doesn't brake
-		// on the way. While walking never behind the unit (it waits instead); at the path's end the slot itself
-		const float ahead = pace * (float(unit->GetTravelAct()->GetOrderInterval()) / FRAMES_PER_SEC + LOOK_AHEAD_SEC);
-		float targetArc = std::min(anchorArc + ahead, arcs.back()) - row.offset;
-		if (!isLineToEnd || (anchorArc + ahead < arcs.back())) {
-			targetArc = std::max(targetArc, slotArc - slotLag);  // level with the unit
-		}
-		m.target = SlotAt(targetArc, x, unitMobileId);
-		// Speed: the pace, plus catching up along the line; stragglers at full speed
-		const float catchUp = pace + CATCH_UP * slotLag;
-		m.speed = m.isStraggler ? NO_SPEED_LIMIT : std::max(
-				std::min(std::max(catchUp, 0.5f * pace), std::min(MAX_CATCH_UP * slowest, m.maxSpeed)),
-				MIN_SPEED * slowest);
-	}
-}
-
-void CFormation::Remove(CCircuitUnit* unit)
-{
-	if (members.erase(unit) > 0) {
-		isDirty = true;
-	}
-	if (unit == trackLeader) {
-		trackLeader = nullptr;
-	}
-}
-
-bool CFormation::GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const
-{
-	auto it = members.find(unit);
-	if (!isOn || (it == members.end()) || !it->second.isSteered) {
-		return false;
-	}
-	outOrder = {it->second.target, it->second.speed, std::max(spacing / 2, MIN_SLACK)};
-	return true;
-}
-
-void CFormation::Reset()
-{
-	isOn = false;
-	members.clear();
-	rows.clear();
-	leaderM = nullptr;
-	track.clear();
-	trackLeader = nullptr;
-	solvedPath = nullptr;
-	heldWidth = width = depth = 0.f;
-	widenFrame = -WIDEN_FRAMES;
+	slack = std::max(spacing / 2, MIN_SLACK);
+	return std::min(count, int(room / spacing + 1e-3f) + 1);
 }
 
 void CFormation::SwitchOn(int frame)
@@ -306,7 +230,7 @@ void CFormation::SwitchOn(int frame)
 	}
 }
 
-void CFormation::Rematch(int count)
+void CFormation::Rematch(int cols)
 {
 	// Rows front to back: stragglers last, then by row order; within a rank, units further along first. Within a row,
 	// left to right as the units stand, so none walk across each other; the leader takes the middle column of its row
@@ -317,10 +241,10 @@ void CFormation::Rematch(int count)
 	std::sort(order.begin(), order.end(), [](const SMember* a, const SMember* b) {
 		return std::tie(a->isStraggler, a->rank, b->arc) < std::tie(b->isStraggler, b->rank, a->arc);
 	});
-	rows.resize((order.size() + count - 1) / count);
+	rows.resize((order.size() + cols - 1) / cols);
 	for (size_t r = 0; r < rows.size(); ++r) {
 		std::vector<SMember*>& units = rows[r].units;
-		units.assign(order.begin() + r * count, order.begin() + std::min((r + 1) * count, order.size()));
+		units.assign(order.begin() + r * cols, order.begin() + std::min((r + 1) * cols, order.size()));
 		std::sort(units.begin(), units.end(), [](const SMember* a, const SMember* b) { return a->side < b->side; });
 		auto it = std::find(units.begin(), units.end(), leaderM);
 		if (it != units.end()) {
@@ -335,11 +259,11 @@ void CFormation::Rematch(int count)
 			m->row = r;
 		}
 	}
-	matchCols = count;
+	matchCols = cols;
 	isDirty = false;
 }
 
-void CFormation::LayOut(float spacing, float gap)
+void CFormation::LayOut(float gap)
 {
 	// Rows their widest footprint + ROW_GAPS gaps apart. In a row, neighbours spacing apart, or their half footprints
 	// + gap if more; the row centred, or on the leader in its row
@@ -371,9 +295,122 @@ void CFormation::LayOut(float spacing, float gap)
 	depth = offset;
 }
 
+float CFormation::MoveAnchor(bool isSwitchOn, float frontArc, float dt, float leadSec)
+{
+	// Pace: the slowest unit's speed, slowing in proportion as the unit furthest behind its slot along the line falls
+	// behind (one still spreading sideways isn't behind), to a stop at lead_sec behind: the line waits for everyone,
+	// so the slowest can catch up too. Stragglers and busy units don't count; the leader always does, as the line is
+	// centred on it
+	const float leaderOffset = rows[leaderM->row].offset;
+	anchorArc = isSwitchOn ? leaderOffset : std::max(frontArc, leaderOffset);  // the leader's slot isn't behind it
+	float lag = 0.f;
+	for (const auto& kv : members) {
+		const SMember& m = kv.second;
+		if ((m.isSteered && !m.isStraggler) || (&m == leaderM)) {
+			lag = std::max(lag, LagAt(anchorArc - rows[m.row].offset, m.pos));
+		}
+	}
+	const float pace = std::max(slowest - lag / leadSec, 0.f);
+	anchorArc = std::min(anchorArc + pace * dt, arcs.back());
+	anchorPos = PointAt(anchorArc);
+	return pace;
+}
+
+void CFormation::ShiftRows(float pace, float gap)
+{
+	// Each row shifts sideways as little as it takes to fit where it walks to
+	const int mobileId = leader->GetCircuitDef()->GetMobileId();
+	const float clear = maxFoot / 2 + gap;
+	for (SRow& row : rows) {
+		const float s = std::min(anchorArc + pace * (1.f + LOOK_AHEAD_SEC), arcs.back()) - row.offset;
+		const AIFloat3 p = PointAt(s);
+		const AIFloat3 axis = AxisAt(s);
+		const float lo = clear - FreeDist(p, -axis, maxWidth, mobileId) - row.units.front()->x;
+		const float hi = FreeDist(p, axis, maxWidth, mobileId) - clear - row.units.back()->x;
+		row.shift = (lo <= hi) ? utils::clamp(0.f, lo, hi) : (lo + hi) / 2;
+	}
+}
+
+void CFormation::PlaceSlots(int frame, float pace, float leadSec, std::vector<CCircuitUnit*>& outStuck)
+{
+	const float minSpeed = std::max(0.5f * pace, MIN_SPEED * slowest);
+	for (auto& kv : members) {
+		CCircuitUnit* unit = kv.first;
+		SMember& m = kv.second;
+		const SRow& row = rows[m.row];
+		const float x = row.shift + m.x;
+		const int mobileId = unit->GetCircuitDef()->GetMobileId();
+		const float slotArc = anchorArc - row.offset;
+		const float slotLag = LagAt(slotArc, m.pos);
+
+		// In its slot: near it, and not so far behind that the line has slowed to half. Out of it for STRAGGLE_FRAMES:
+		// a straggler, until it is back (the leader never is); so a unit that holds the line up does so for a while only
+		const bool isNear = (slotLag < leadSec * slowest / 2)
+				&& (m.pos.SqDistance2D(SlotAt(slotArc, x, mobileId)) < SQUARE(std::max(spacing, m.maxSpeed * SLOT_SEC)));
+		if (isNear || (&m == leaderM)) {
+			m.slotFrame = frame;
+			m.isStraggler = false;
+		} else if (frame >= m.slotFrame + STRAGGLE_FRAMES) {
+			m.isStraggler = true;
+		}
+		// Progress watchdog: out of its slot and walking to it, but no DEFAULT_SLACK move for STUCK_FRAMES
+		if (!m.isSteered || isNear || (m.pos.SqDistance2D(m.movePos) >= SQUARE(DEFAULT_SLACK))) {
+			m.movePos = m.pos;
+			m.moveFrame = frame;
+		} else if (frame >= m.moveFrame + STUCK_FRAMES) {
+			outStuck.push_back(unit);
+		}
+
+		// Target: the slot ahead by the order interval + LOOK_AHEAD_SEC at the line's pace, so the engine doesn't brake
+		// on the way. While walking never behind the unit (it waits instead); at the path's end the slot itself
+		const float ahead = pace * (float(unit->GetTravelAct()->GetOrderInterval()) / FRAMES_PER_SEC + LOOK_AHEAD_SEC);
+		float targetArc = std::min(anchorArc + ahead, arcs.back()) - row.offset;
+		if (!isLineToEnd || (anchorArc + ahead < arcs.back())) {
+			targetArc = std::max(targetArc, slotArc - slotLag);  // level with the unit
+		}
+		m.target = SlotAt(targetArc, x, mobileId);
+		// Speed: the pace plus catching up along the line, within MIN_SPEED and MAX_CATCH_UP; stragglers at full speed
+		const float maxSpeed = std::max(std::min(MAX_CATCH_UP * slowest, m.maxSpeed), minSpeed);
+		m.speed = m.isStraggler ? NO_SPEED_LIMIT : utils::clamp(pace + CATCH_UP * slotLag, minSpeed, maxSpeed);
+	}
+}
+
+void CFormation::Remove(CCircuitUnit* unit)
+{
+	if (members.erase(unit) > 0) {
+		isDirty = true;
+	}
+	if (unit == leader) {
+		leader = nullptr;
+	}
+}
+
+bool CFormation::GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const
+{
+	auto it = members.find(unit);
+	if (!isOn || (it == members.end()) || !it->second.isSteered) {
+		return false;
+	}
+	outOrder = {it->second.target, it->second.speed, slack};
+	return true;
+}
+
+void CFormation::Reset()
+{
+	isOn = false;
+	members.clear();
+	rows.clear();
+	leader = nullptr;
+	leaderM = nullptr;
+	track.clear();
+	solvedPath = nullptr;
+	heldWidth = width = depth = 0.f;
+	widenFrame = -WIDEN_FRAMES;
+}
+
 void CFormation::UpdateTrack(const AIFloat3& pos, float keepLen)
 {
-	if (track.empty() || (track.back().SqDistance2D(pos) >= SQUARE(TRACK_STEP))) {
+	if (track.empty() || (track.back().SqDistance2D(pos) >= SQUARE(STEP))) {
 		track.push_back(pos);
 	}
 	// Only as far back as the line reaches (BuildLine extends it straight from there)
@@ -387,7 +424,7 @@ void CFormation::UpdateTrack(const AIFloat3& pos, float keepLen)
 	}
 }
 
-bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, float backLen, float aheadLen, float maxOff)
+bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, float backLen, float aheadLen)
 {
 	// The leader's spot on its path: the nearest point, searched on from the last segment (the leader walks a reused
 	// path on; a new path starts at the leader), up to the first segment it is on, so a hairpin's far leg isn't taken
@@ -404,12 +441,12 @@ bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, floa
 			seg = i;
 			spot = p;
 		}
-		if ((t < 1.f) && (sq < SQUARE(ON_PATH_DIST))) {
+		if ((t < 1.f) && (sq < SQUARE(DEFAULT_SLACK))) {
 			break;
 		}
 	}
 	pathIndex = seg;
-	if (sqOff > SQUARE(maxOff)) {
+	if (sqOff > SQUARE(maxWidth)) {
 		return false;
 	}
 
@@ -477,7 +514,7 @@ AIFloat3 CFormation::AxisAt(float arc) const
 {
 	// Direction from half the line's width behind to half its width ahead, so one kinked path point doesn't swing
 	// the line; turned 90 degrees
-	const float half = std::max(width / 2, MIN_HALF_WIDTH);
+	const float half = std::max(width / 2, float(DEFAULT_SLACK));
 	const float3 d = PointAt(arc + half) - PointAt(arc - half);
 	const float len = d.Length2D();
 	return (len < 1.f) ? AIFloat3(RgtVector) : AIFloat3(-d.z / len, 0.f, d.x / len);
@@ -517,23 +554,34 @@ float CFormation::Project(const AIFloat3& pos, float minArc, float* outSide) con
 
 float CFormation::FreeDist(const AIFloat3& p, const AIFloat3& dir, float maxDist, int mobileTypeId) const
 {
-	CPathFinder* pathfinder = task->GetManager()->GetCircuit()->GetPathfinder();
+	// Free: walkable and, if p itself is out of enemy threat, out of it too (the threat map's cells are too coarse to
+	// compare one threat with another a few elmos away). The last step may be short, so slots aren't rounded to STEP
+	CCircuitAI* circuit = task->GetManager()->GetCircuit();
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	AIFloat3 ref = p;
+	CTerrainManager::CorrectPosition(ref);  // the line's straight start can reach past the map's edge
+	const bool isOutOfThreat = threatMap->GetThreatAt(leader, ref) <= THREAT_EPS;
 	float dist = 0.f;
-	while ((dist + MARCH_STEP <= maxDist) && pathfinder->IsMovable(mobileTypeId, p + dir * (dist + MARCH_STEP))) {
-		dist += MARCH_STEP;
+	while (dist < maxDist) {
+		const float next = std::min(dist + STEP, maxDist);
+		const AIFloat3 q = p + dir * next;
+		if (!pathfinder->IsMovable(mobileTypeId, q)  // a movable spot is inside the map
+			|| (isOutOfThreat && (threatMap->GetThreatAt(leader, q) > THREAT_EPS)))
+		{
+			break;
+		}
+		dist = next;
 	}
 	return dist;
 }
 
 AIFloat3 CFormation::SlotAt(float arc, float x, int mobileTypeId) const
 {
-	// The line itself is the path or the leader's track, where the squad can walk
-	CPathFinder* pathfinder = task->GetManager()->GetCircuit()->GetPathfinder();
+	// No further out than the first spot that isn't free: the line itself is the path or the leader's track
 	const AIFloat3 base = PointAt(arc);
 	const AIFloat3 axis = AxisAt(arc);
-	while ((x != 0.f) && !pathfinder->IsMovable(mobileTypeId, base + axis * x)) {
-		x = (std::fabs(x) > MARCH_STEP) ? x - std::copysign(MARCH_STEP, x) : 0.f;
-	}
+	x = (x >= 0.f) ? FreeDist(base, axis, x, mobileTypeId) : -FreeDist(base, -axis, -x, mobileTypeId);
 	AIFloat3 slot = base + axis * x;
 	CTerrainManager::CorrectPosition(slot);
 	return slot;

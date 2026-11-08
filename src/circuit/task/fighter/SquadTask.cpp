@@ -349,12 +349,15 @@ void ISquadTask::LateUpdate()
 bool ISquadTask::IsFormationActive(int frame) const
 {
 	if (!manager->GetCircuit()->GetMilitaryManager()->GetFormationCfg().isEnable || (State::ROAM != state)
-		|| (leader == nullptr) || pPath->posPath.empty() || !IsFormationAllowed(frame))
+		|| (leader == nullptr) || !IsFormationAllowed(frame))
 	{
 		return false;
 	}
+	// The path the leader walks, not pPath: a short re-plan that the task doesn't walk (ApplyFrontPos) keeps the line.
+	// A busy leader (blocker) keeps it too
 	ITravelAction* travelAct = leader->GetTravelAct();
-	return travelAct->IsActive() && (travelAct->GetPath() == pPath);  // a busy leader (blocker) keeps its line
+	const std::shared_ptr<PathInfo>& path = travelAct->GetPath();
+	return travelAct->IsActive() && (path != nullptr) && !path->posPath.empty();
 }
 
 bool ISquadTask::IsIdleInLine(CCircuitUnit* unit) const

@@ -108,7 +108,8 @@ bool ITravelAction::TryFormationOrder(CCircuitAI* circuit)
 	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
 	const CFormation* formation = pPath->posPath.empty() ? nullptr : unit->GetTask()->GetFormation();
 	SFormationOrder order;
-	if ((formation == nullptr) || !formation->GetOrder(unit, order)) {
+	// A unit whose jump is ready follows the path, which jumps along it as before
+	if ((formation == nullptr) || !formation->GetOrder(unit, order) || (unit->IsAllowedToJump() && unit->IsJumpReady())) {
 		formPos = -RgtVector;  // following the path: the next formation move goes out at once
 		return false;
 	}
