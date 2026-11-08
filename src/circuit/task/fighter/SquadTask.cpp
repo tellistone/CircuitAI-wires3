@@ -577,7 +577,8 @@ bool ISquadTask::IsRunningAway(CEnemyInfo* enemy, const AIFloat3& pos, float sqS
 	}
 	CCircuitDef* edef = enemy->GetCircuitDef();
 	float eRange;
-	return (edef != nullptr) && IsGroundDangerDef(edef, false, eRange) && (eRange > ourRange * OUTRANGE_MOD);
+	return (edef != nullptr) && !edef->IsEnemyRoleAny(OUTRANGE_CHASED_ROLES) && IsGroundDangerDef(edef, false, eRange)
+		&& (eRange > ourRange * OUTRANGE_MOD);
 }
 
 AIFloat3 ISquadTask::GetScootSpot(CCircuitUnit* unit, const AIFloat3& uPos, float margin) const
