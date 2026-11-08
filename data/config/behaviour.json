@@ -115,7 +115,9 @@
 	"repair_pull": [600, 0.4],  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
         "repair_leash": [300, 5],  // [<distance>, <cooldown sec>]: cancel a started priority or retreat (HIGH) repair if the unit, no longer retreating, drives this far beyond build range, then no new priority repair for it during cooldown, distance 0 = disabled
 	"repair_flee": [0.5],  // [<speed share>]: a mobile unit (not retreating) out of a builder's reach and moving away from it faster than this share of its own max speed is not picked for repair, 0 = disabled
-	"repair_chase": [3, 64]  // [<sec>, <elmos>]: a builder out of reach of a moving unit it repairs (repair job, or the engine's own repair while escorting or patrolling) that hasn't closed the gap by this many elmos in this many seconds drops it, then repair_leash cooldown (escorts and patrols move instead of patrol meanwhile), sec 0 = disabled
+	"repair_chase": [3, 64],  // [<sec>, <elmos>]: a builder out of reach of a moving unit it repairs (repair job, or the engine's own repair while escorting or patrolling) that hasn't closed the gap by this many elmos in this many seconds drops it, then repair_leash cooldown (escorts and patrols move instead of patrol meanwhile), sec 0 = disabled
+	// [<margin>, <ally_threat>, <ally_radius>]: ground builders other than commanders flee as the commander does (commander.json hide): from an armed mobile enemy seen now within its weapon range + margin, unless they and our armed units and static defences within ally_radius, minus the enemies' threat, reach ally_threat (-1 = flee regardless). They run to the nearest defended mex cluster, factory or base (not to attack groups) and work again once nothing seen in the last 5 s is within range + margin + max(25%, 50), or cover reaches ally_threat over 1.25x the enemies' threat. Jobs keep out of that line unless so covered, and for 20 s also out of the reach of the enemy the last flee ran from; armed builds (turrets) and repairs of armed units or turrets only keep out of range + margin. Cornered, they build a static defence behind them that outranges the enemy (or help one started on their side) and stay on it until it is done, they are hurt or metal runs out. Flying builders never flee; margin -1 = off. A unit type can override the margin with its own builder_flee_margin in its "behaviour" entry
+	"builder_flee": [-1, 0.0, 500.0]
 },
 
 "defence": {
@@ -234,6 +236,9 @@
 
 		// Minimum hp percent before retreat
 //		"retreat": 0.8,
+
+		// Builders other than commanders: overrides retreat.builder_flee's margin, -1 = no flee
+//		"builder_flee_margin": 200.0,
 
 		// Ally threat multiplier
 //		"pwr_mod": 1.0,

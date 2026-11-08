@@ -278,6 +278,9 @@ public:
 	// behaviour.json per unit "antiheavy_flee_margin"; unset = use the "antiheavy" block's value
 	void SetAhFleeMargin(float value) { ahFleeMargin = value; isAhFleeMarginSet = true; }
 	float GetAhFleeMargin(float defaultValue) const { return isAhFleeMarginSet ? ahFleeMargin : defaultValue; }
+	// behaviour.json per unit "builder_flee_margin"; unset = use retreat.builder_flee's margin
+	void SetBuilderFleeMargin(float value) { builderFleeMargin = value; isBuilderFleeMarginSet = true; }
+	float GetBuilderFleeMargin(float defaultValue) const { return isBuilderFleeMarginSet ? builderFleeMargin : defaultValue; }
 	// behaviour.json per unit "antiheavy_max_group": most units of this type in one anti-heavy squad; 0 = no limit
 	void SetAhMaxGroup(int value) { ahMaxGroup = value; }
 	int GetAhMaxGroup() const { return ahMaxGroup; }
@@ -397,6 +400,8 @@ private:
 	bool isArtyFleeMarginSet = false;
 	float ahFleeMargin = -1.f;
 	bool isAhFleeMarginSet = false;
+	float builderFleeMargin = -1.f;
+	bool isBuilderFleeMarginSet = false;
 	int ahMaxGroup = 0;
 	float reloadScoot = 0.f;
 	float reloadScootMargin = -1.f;
