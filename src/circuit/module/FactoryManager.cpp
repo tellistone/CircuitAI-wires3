@@ -377,6 +377,10 @@ void CFactoryManager::ReadConfig()
 		if (!ahFlee.isNull()) {
 			cdef->SetAhFleeMargin(ahFlee.asFloat());
 		}
+		const Json::Value& builderFlee = behaviour["builder_flee_margin"];
+		if (!builderFlee.isNull()) {
+			cdef->SetBuilderFleeMargin(builderFlee.asFloat());
+		}
 		cdef->SetAhMaxGroup(std::max(0, behaviour.get("antiheavy_max_group", cdef->GetAhMaxGroup()).asInt()));
 		const Json::Value& scoot = behaviour["reload_scoot"];
 		if (scoot.isBool()) {
@@ -403,6 +407,7 @@ void CFactoryManager::ReadConfig()
 			cdef->SetTargetDistMod(std::max(distMod.asFloat(), 0.01f));
 		}
 
+		cdef->SetFormationRow(std::max(-1, behaviour.get("formation_row", -1).asInt()));
 		cdef->SetIgnore(behaviour.get("ignore", cdef->IsIgnore()).asBool());
 	}
 

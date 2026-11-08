@@ -33,6 +33,9 @@ public:
 	float GetRallyStrength() const { return GetStrengthSum(); }
 	// The rally host's meeting point, while it walks or waits there (not engaged, not fleeing); false: go to the host
 	bool GetMeetPoint(int frame, springai::AIFloat3& outPos) const;
+	// A guard slot may pull this group's unit (CFGuardTask::Pull): it is alone, not fighting and not the rally host.
+	// With quota.attack_merge.base_gather false a new riot walks out alone, so this is how it gets pulled
+	bool IsGuardPullable() const;
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
 	virtual void Merge(ISquadTask* task) override;
@@ -101,8 +104,8 @@ private:
 	/*
 	 * Group strength and the threat it tolerates
 	 */
-	// Like attackPower (def power incl. pwr_mod) but scaled by current health (GetStrengthSum), times the task's powerMod
-	float GetSafeThreat() const;
+	// GetSafeThreat (ISquadTask) of this group and squad together, with the group size bonus for both groups' units
+	float GetJointSafeThreat(const CAttackTask* squad) const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
 	// Strength for picking a target and checking its approach: lower for a few seconds after an escape
 	float GetPickStrength(int frame) const;
@@ -154,11 +157,14 @@ private:
 		int seenFrame;  // last decision that looked at it
 		bool isSignificant;  // counted as significant last decision (it keeps counting down to a lower share)
 	};
+	// Engaged, or engaged within RALLY_FIGHT_MEMORY_FRAMES: as a rally host, joiners go to the fight edge
+	bool IsRallyFighting(int frame) const;
 	void ResetMeet();
 	bool UpdateMeet(int frame, bool isReuse);
 	void CollectSignificantJoiners(int frame, std::vector<CAttackTask*>& outSignificant);
 	bool IsAtMeetPoint(const springai::AIFloat3& pos);  // updates isMeetArrived
-	SMeetTrack& TrackJoiner(const CAttackTask* joiner, float gapSec, int frame, bool& outIsStalled);
+	// Updates the joiner's track; true: it counts as significant (strong enough, not stalled)
+	bool TrackJoiner(const CAttackTask* joiner, float gapSec, float ourStrength, int frame);
 	// Where the host and its joiners arrive together, stepped back towards the host until safe and reachable
 	springai::AIFloat3 FindMeetPoint(int frame, const std::vector<CAttackTask*>& joiners) const;
 	bool IsMeetSpotOk(const springai::AIFloat3& pos, int frame, const std::vector<CAttackTask*>& joiners) const;
@@ -179,7 +185,12 @@ private:
 	// least-threat route; already there: attack the nearest enemy we can hit. Re-checked every second.
 	void Cornered(int frame);
 	void ApplyCorneredPath(const CQueryPathSingle* query);
-	CEnemyInfo* FindNearestHittable(int frame) const;
+	// Nearest enemy within radius that our leader can hit (category, air)
+	CEnemyInfo* FindNearestHittable(int frame, float radius) const;
+	// Line formation: also while the escape runs (the flee and the cornered move keep state ROAM and walk as a line)
+	virtual bool IsFormationAllowed(int frame) const override { return true; }
+	virtual bool IsFormationFlee(int frame) const override;
+	virtual float GetFormationRange() const override { return fireRangeLand; }
 
 	/*
 	 * Targets and routes
@@ -189,6 +200,9 @@ private:
 	void Decide(int frame, bool isReuse);
 	// Picks the target and fills routeGoals (and screenedGoals)
 	void FindTarget();
+	// FindTarget, then engage the target if it is already within range; true: engaged.
+	// isWalking: only the in-range result matters, so no FindTarget when no enemy is near
+	bool EngageInRange(int frame, bool isWalking);
 
 	/*
 	 * Firing cells (quota.attack_static_cells; AttackCells.cpp): where the group shoots a building or a parked
@@ -275,7 +289,11 @@ private:
 	void Engage(int frame);
 	// Nothing to go to: hold at the quietest reachable spot within 2x our range (never head home),
 	// avoiding the spot we were last hit at while holding; retry next decision
-	void HoldPosition();
+	// Walk to the quietest spot nearby (FindQuietSpot) and hold there; isHolding. isWalk: along a planned path, so the
+	// line formation takes the group there and it stands in line (a spot within 256 elmos, or no path: straight
+	// moves); false: straight moves at once (stepping out of an attacker's range)
+	void HoldPosition(bool isWalk = true);
+	void ApplyHoldPath(const CQueryPathSingle* query);
 	// Quietest reachable spot within 2x our range (24 samples + where we stand), avoiding the last hit area;
 	// returns the threat there
 	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
@@ -297,6 +315,7 @@ private:
 	bool isMeetWalk;  // walking to the meeting point this decision: no regroup on the way
 	bool isMeetArrived;  // at the meeting point: stand there until pushed away from it, or it moves
 	bool isJoinerNear;  // a joiner is within the merge distance: absorb every 2 updates
+	int engageFrame;  // last Engage (IsRallyFighting)
 	springai::AIFloat3 meetPos;  // -RgtVector: not meeting
 	springai::AIFloat3 meetArrivePos;  // the meeting point when we arrived
 	std::vector<SMeetTrack> meetTracks;
@@ -330,6 +349,7 @@ private:
 
 	// Holding
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)
+	springai::AIFloat3 holdPos;  // the spot HoldPosition walks the group to along a path (-RgtVector: none)
 	int stepFrame;  // last step back after being hit while holding
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
 	float hitRadius;

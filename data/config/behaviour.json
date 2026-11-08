@@ -46,7 +46,9 @@
 	"attack_spot_threat": 0.33,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking
 "attack_group_radius": [2.0, 800],  // [<x the group's highest weapon/LOS range>, <min elmos>]: attack group units farther than this from their leader are stragglers: while the group fights they walk to the leader instead of straight to a firing spot
 	"attack_static_cells": {"on": true, "rings": [0.9, 0.7], "angles": 16, "sectors": 8, "threat_weight": 1.0, "score_slack": 0.5, "cell_aim_height": 16, "parked_sec": 5},  // attack groups route to a static target beyond LOS range by its safe firing cells: points on rings at these x the group's fire range (power-weighted median weapon range; the second ring only if the first yields nothing), reachable, below the usual threat allowance and with line of sight to the target (aimed cell_aim_height elmos up); best point per sector (the sectors facing us first), score = threat_weight x threat / group strength + distance / fire range, cells more than score_slack worse than the best are left out. The route then ends in a wedge of a cell's sector at about LOS range. Undefended targets, melee groups, and targets with no line of sight anywhere are routed to as before; targets with no cell below the allowance are skipped for 6, 12, 24 s (beyond LOS range only). Parked mobiles: a mobile target seen standing on one spot in LOS for parked_sec seconds (0 = off), no faster than 1.25 x the group's slowest unit and not a nanoframe, gets cells too (the sectors facing us only), around that spot, until it leaves it. Optional "siege_bonus": <x> (default 1 = off): a mobile type no faster than 1.25 x the group's slowest unit and with at least 1.2 x our fire range against ground (artillery) ranks x times closer, parked or not, while in radar or LOS or out of both for under parked_sec. Only in addition to the usual check at the target's own spot; on: false = as before
+	"group_count_power": 0.025,  // Lanchester's square law: every group (attack, raid, defend, anti-air, anti-heavy, ...) sees its own power as (1 + this x its unit count) wherever it weighs it against enemy threat (targets, escape, routes, the attack rally vs enemy blobs, firing spots: there only the units supporting that spot count), so 10 units count as 1.25x; 0 = off
          "attack_keep_threat": 1.34,  // attack group's current target stays acceptable up to this x the usual threat allowance (at its spot, and on the approach line when in range; not on its route), so it isn't dropped and re-picked over small swings; not inside the base defence radius; 1 (or less) = off
+	"attack_own_ground_time": 270,  // seconds from game start during which attack groups only go for targets on our ground: within defence.infl_rad of our buildings, land constructors or static defences (influence map; enemy influence, our armed mobile units and unarmed aircraft are ignored); a target already within range is always fair game; with none they go to the front line as usual; 0 = off
 	"contested": {"wall": 3.0, "bonus": 2.0, "age": 60, "range": 300},  // wall: threat at a mex cluster's centre up to this doesn't block the builders' cluster walk (above it the walk stops there, so safe mexes behind it are never found; each spot still needs threat <= 1 to be built; a Glaive is about 2.2); min and default 1 = the old rule. Clusters with more threat than wall are contested: attack and raid groups that can take the threat there (at their usual allowance) treat enemies within the cluster radius + range elmos as bonus x closer (attack target ranking, unless an enemy is already within range; raid route goals); raids with no enemies known go to the nearest such cluster before roaming; a mark lasts age seconds unless seen again; bonus 1 = off
 	"attack_path_dynamic_cost": {"target": true, "reinforce": true, "front": true, "flee": true, "cornered": true},  // attack group routes, per kind (target = route to a target, reinforce = to a group it joins, front = to the front, flee = escape, cornered = to a quieter spot): true = a cell's threat cost is threat x (1 + threat / the threat the group tolerates there, i.e. its strength x thr_mod base bonus / distance curve / near-base scale, as the escape uses), i.e. about half the usual for light threat, the same at the escape's danger line, steeper above; false = the flat 2 x threat; true/false alone sets all
 	"attack_flee_path_max_weight": 3.0,  // flee and cornered routes with attack_path_dynamic_cost on: the threat weight (1 + threat / tolerated threat) is at most this (the flat weight is 2); >= 1
@@ -114,7 +116,10 @@
 	"repair_pull": [600, 0.4],  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
         "repair_leash": [300, 5],  // [<distance>, <cooldown sec>]: cancel a started priority or retreat (HIGH) repair if the unit, no longer retreating, drives this far beyond build range, then no new priority repair for it during cooldown, distance 0 = disabled
 	"repair_flee": [0.5],  // [<speed share>]: a mobile unit (not retreating) out of a builder's reach and moving away from it faster than this share of its own max speed is not picked for repair, 0 = disabled
-	"repair_chase": [3, 64]  // [<sec>, <elmos>]: a builder out of reach of a moving unit it repairs (repair job, or the engine's own repair while escorting or patrolling) that hasn't closed the gap by this many elmos in this many seconds drops it, then repair_leash cooldown (escorts and patrols move instead of patrol meanwhile), sec 0 = disabled
+	"repair_chase": [3, 64],  // [<sec>, <elmos>]: a builder out of reach of a moving unit it repairs (repair job, or the engine's own repair while escorting or patrolling) that hasn't closed the gap by this many elmos in this many seconds drops it, then repair_leash cooldown (escorts and patrols move instead of patrol meanwhile), sec 0 = disabled
+	// [<margin>, <ally_threat>, <ally_radius>]: ground builders other than commanders flee as the commander does (commander.json hide): from an armed mobile enemy seen now within its weapon range + margin, unless they and our armed units and static defences within ally_radius, minus the enemies' threat, reach ally_threat (-1 = flee regardless). They run to the nearest defended mex cluster, factory or base (not to attack groups) and work again once nothing seen in the last 5 s is within range + margin + max(25%, 50), or cover reaches ally_threat over 1.25x the enemies' threat. Jobs keep out of that line unless so covered; armed builds (turrets) and repairs of armed units or turrets only keep out of range + margin, and for 5 s after any of them flees, all their jobs also keep out of the enemy it ran from, at the wider line, even once it is unseen. Cornered, they build a static defence behind them that can hit the enemy and outranges it (or help such a one started on their side) and stay on it until it is done, they are hurt or metal stalls; one nobody has started is dropped 30 s after its last builder leaves. Flying builders never flee; margin -1 = off. A unit type can override the margin with its own builder_flee_margin in its "behaviour" entry
+	"builder_flee": [-1, 0.0, 500.0],
+	"flee_log": false  // true = one infolog line per flee start and end ("FLEE start/end"), commanders and other builders, with the threat and cover; for test games
 },
 
 "defence": {
@@ -145,6 +150,24 @@
 	"flee_ally_radius": 500.0  // see flee_ally_threat
 },
 
+// Concede a lost 1v1: checked every 10 s from "time" on, only when each side is a single team. Resign when our
+// ally team holds fewer than "mex" x the map's metal spots AND the known enemy mobile threat (every enemy mobile
+// unit seen, commander and builders included) is more than "threat" x ours (our finished mobile units, same scale).
+// Says "<CircuitAI> I am defeated." in public chat, then leaves the game (/aikill), which Zero-K counts as a resign. Missing block or time < 0 = never resign
+"resign": {
+	"time": 480,  // seconds of game time
+	"mex": 0.1,
+	"threat": 4.0
+},
+
+// Self-destruct own ground units stuck under water deeper than their move type can walk in (knocked or pushed off a
+// shore, dropped there, or the seabed terraformed under them). Checked every second; hovers, ships, subs, amphibious
+// units and aircraft never count, nor does a unit held above the water by a transport. The order is sent once and
+// never cancelled. Missing block or time < 0 = off
+"drowned": {
+	"time": 10.0  // seconds stuck before the self-destruct order
+},
+
 // Anti-heavy squads (main role anti_heavy: Lance, Ultimatum, Scorpion, Merlin, ...)
 "antiheavy": {
 	"path_threat": 1.0,  // routes (to a heavy, to safety, home) may not cross enemy threat above this x the squad's allowance: its strength (power x sqrt(health %)) x the task's power mod x base_bonus / thr_mod.distance at the strictest end, as anti-air's routes. The route to a heavy ends at its stand-off point (on our side, the first walkable spot from just outside the heavy's own threat ring, never nearer than the squad's LOS, whose threat is under the cap; a heavy with no such spot within a few cells isn't walked to), so the cap meets only its escorts; from there the squad attacks it. Never below the threat where the squad stands; the way home tries once more through any threat; -1 = no cap and the old routes straight to the heavy (threat is only avoided where cheap). Aircraft never get the cap
@@ -164,6 +187,27 @@
 	"artillery_flee_margin": 400.0  // checked every update: flee when an armed mobile enemy currently in radar or LOS (mobile bombs and gunships included; planes, units that can only shoot aircraft, paralysed and unfinished units excluded; unidentified radar blips only while moving) is within its ground weapon range (a bomb's blast radius) + this, unless (ally_threat) our cover at the artillery's spot (static defences that can hit ground count here too, not superweapons), minus the threat of the enemies that set off the flee, still reaches ally_threat. It runs to the nearest safety spot (behind a group, defended mex cluster, base) that is further from the enemy, else the one furthest from it, and stops fleeing once the enemy is out of reach or cover arrives. Firing spots inside such an enemy's reach are skipped unless that cover is there; -1 = off. Default for all artillery; a unit type can override it with its own artillery_flee_margin in its "behaviour" entry
 },
 
+// Line formation: attack groups of land or sea units walk their path as a line across it, with more rows only where
+// it has to narrow, while they aren't engaging; also while they flee or move to a quieter spot when cornered, rows in
+// reverse order (riots at the back, towards the pursuers) and waiting for no one, so they don't run bunched. Where no line of 2 fits (terrain, buildings) the
+// units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; the usual
+// regroup still gathers one that falls far behind. At the end of its walk the group stands in line. Missing block or
+// "enable": false = groups walk as before, except that a holding group still takes a threat-capped path to a quiet spot
+// more than 256 elmos away instead of a straight move (it ends bunched on the path's last point, as it did before)
+"formation": {
+	"enable": true,
+	"min_units": 3,  // land or sea units needed to form a line (off again below 2); aircraft, support units and no_formation units don't take a slot
+	"spacing": [96.0, 4, 0.35],  // [<elmos>, <units>, <exponent>]: neighbours this far apart up to this many units, closer beyond: x (units / n)^exponent (6 units 83, 10 units 70, 25 units 51); never closer than half their footprints + gap. Squeezed down to 0.7 of it before a second row is added
+	"gap": 16.0,  // elmos between footprints, and clearance at the line's ends; rows are their widest footprint + 3 gaps apart
+	"width_range": 1.5,  // the line is at most this x the group's power-weighted median weapon range wide (at least 3 spacings, at most 900 elmos), less where terrain, buildings or more enemy threat than on the path leave less room in the next 3 s of walking; rows shift sideways to fit, and no slot lies past a spot that isn't free, seen from the path
+	"lead_sec": 1.5,  // the line walks at its slowest unit's speed (support units included), slows in proportion as the unit furthest behind its slot (or a busy leader) falls behind, and stops when it is this many seconds behind; not while an enemy is in LOS of the group (or was in the last 5 s), when it walks on regardless. A unit out of its slot for 12 s straggles (catches up at full speed, the line doesn't wait for it); while the line walks, one that hasn't moved 64 elmos in 30 s is released to find a new task. Units with the "jump" attribute jump along the path whenever their jump is ready, as before
+	"splash_spacing": 1.2,  // with a finished enemy that can hit the ground (or a mobile bomb; mobile ones seen in the last 10 s) whose weapon area of effect (or blast) is at least 16 within its range + 600 elmos of the group, neighbours and rows stay at least this x the largest such radius apart (at most 256 elmos; held 10 s after it was last seen), so one blast doesn't hit two; more rows if the width runs out; 0 = off
+	"face_range": 2.0,  // once the line stands at the end of its walk, it turns to face the enemy threat read around it (8 ways, at half and all of this x the group's fire range), if the threat has a clear side, else the way it came; it turns about its centre (its front row short of more threat than at the centre), only where it fits that way (walkable, 2 columns wide), and again only for a clear threat more than 45° off for 2 s, and keeps facing while new paths end within 256 elmos of the same spot; 0 = off (the line stands across its path's last stretch)
+	"row_order": ["riot", "assault", "heavy", "raider", "skirmish", "anti_heavy", "anti_air", "artillery"]  // main roles from the front row back, when there is more than one row (a custom role goes where the role it acts as goes); unlisted roles last
+	// Per unit type, in its "behaviour" entry: "formation_row": <n> = its place in row_order instead (0 = front);
+	// "attribute": ["no_formation"] = never takes a slot (follows the path as before)
+},
+
 
 // Bodyguard for early unarmed builders: one unit per guard slot (needs CircuitAI PR #3)
 "guard": {
@@ -171,7 +215,7 @@
 	"max_workers": 30,  // an unarmed builder gets a guard slot if, once it is finished, the worker count (commander included) is below this; 0 = off
 	"safe": [1.0, 0.01],  // [ally, enemy]: guard leaves while its builder stands where allied influence (guards excluded, same units as quota.attack) >= ally and enemy influence <= enemy; ally <= 0 = never safe. The guard also leaves while the builder retreats
 	"safe_time": 3.0,  // seconds the builder must stay safe before its guard leaves (stops a passing army from sending the guard away)
-	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (not retreating or guarding, can reach the builder); 0 = only units asking for a new task fill it
+	"pull_range": 800.0,  // an empty slot whose builder needs a guard pulls the nearest eligible unit within this distance (not retreating, guarding, scouting or in an attack squad of 2+, can reach the builder); 0 = only units asking for a new task fill it
 	"interpose": [120.0, 600.0],  // [<distance>, <range>]: while a mobile armed ground enemy in LOS/radar (or unknown radar dot; turrets are ignored) is within <range> of the vip, the guard stands <distance> from the vip towards the nearest one (at most halfway) instead of following it with the engine Guard order; distance 0 = engine Guard only
         "threat_cooldown": 10.0,  // a guard standing in enemy threat is cancelled and its builder gets no guard for this many seconds; -1 = never cancel on threat
 	"threat_ratio": 1.25,  // ... but only if enemy threat at the guard > this * the guard's own threat; lower values cancel on lighter threat, 0 = any threat
@@ -223,6 +267,9 @@
 
 		// Minimum hp percent before retreat
 //		"retreat": 0.8,
+
+		// Builders other than commanders: overrides retreat.builder_flee's margin, -1 = no flee
+//		"builder_flee_margin": 200.0,
 
 		// Ally threat multiplier
 //		"pwr_mod": 1.0,

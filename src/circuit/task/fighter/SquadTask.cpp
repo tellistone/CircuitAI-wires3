@@ -42,6 +42,7 @@ ISquadTask::ISquadTask(ITaskManager* mgr, FightType type, float powerMod)
 		, prevGroupPos(-RgtVector)
 		, pPath(std::make_shared<PathInfo>())
 		, groupFrame(0)
+		, formation(this)
 {
 }
 
@@ -79,6 +80,7 @@ void ISquadTask::AssignTo(CCircuitUnit* unit)
 void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IFighterTask::RemoveAssignee(unit);
+	formation.Remove(unit);
 	if (scoots.erase(unit) > 0) {
 		SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
 	}
@@ -262,8 +264,9 @@ bool ISquadTask::IsMustRegroup()
 	static std::vector<CCircuitUnit*> stuckUnits;  // released after the loops over units
 //	validUnits.reserve(units.size());
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();;
+	// Units the line formation steers and that keep up don't count: the line waits for them, or they catch it up
 	for (CCircuitUnit* unit : units) {
-		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) &&
+		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !formation.IsKeptUp(unit) &&
 			terrainMgr->CanMoveToPos(unit->GetArea(), unit->GetPos(frame)))
 		{
 			validUnits.push_back(unit);
@@ -334,6 +337,34 @@ void ISquadTask::ReleaseStuck(std::vector<CCircuitUnit*>& stuck)
 		RemoveAssignee(unit);  // to the idle task; a squad left without units aborts
 	}
 	stuck.clear();
+}
+
+void ISquadTask::LateUpdate()
+{
+	static std::vector<CCircuitUnit*> stuckUnits;  // NOTE: micro-opt
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	formation.Update(frame, IsFormationActive(frame), stuckUnits);
+	ReleaseStuck(stuckUnits);  // may leave leader == nullptr (task aborted)
+}
+
+bool ISquadTask::IsFormationActive(int frame) const
+{
+	if (!manager->GetCircuit()->GetMilitaryManager()->GetFormationCfg().isEnable || (State::ROAM != state)
+		|| (leader == nullptr) || !IsFormationAllowed(frame))
+	{
+		return false;
+	}
+	// The path the leader walks, not pPath: a short re-plan that the task doesn't walk (ApplyFrontPos) keeps the line.
+	// A busy leader (blocker) keeps it too
+	ITravelAction* travelAct = leader->GetTravelAct();
+	const std::shared_ptr<PathInfo>& path = travelAct->GetPath();
+	return travelAct->IsActive() && (path != nullptr) && !path->posPath.empty();
+}
+
+bool ISquadTask::IsIdleInLine(CCircuitUnit* unit) const
+{
+	return formation.IsOn()
+		&& unit->GetTravelAct()->IsFormationMoveDone(unit->GetPos(manager->GetCircuit()->GetLastFrame()));
 }
 
 void ISquadTask::ActivePath(float speed)
@@ -564,6 +595,23 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 	)
 }
 
+bool ISquadTask::IsRunningAway(CEnemyInfo* enemy, const AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
+		float ourRange)
+{
+	const AIFloat3& eVel = enemy->GetVel();
+	const float sqVel = eVel.SqLength2D();
+	if ((sqVel < sqOutrangeSpeed) || (eVel.dot2D(pos - enemy->GetPos()) >= 0.f)) {
+		return false;  // slow, or not moving away
+	}
+	if (sqVel >= sqSpeed) {
+		return true;
+	}
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	float eRange;
+	return (edef != nullptr) && !edef->IsEnemyRoleAny(OUTRANGE_CHASED_ROLES) && IsGroundDangerDef(edef, false, eRange)
+		&& (eRange > ourRange * OUTRANGE_MOD);
+}
+
 AIFloat3 ISquadTask::GetScootSpot(CCircuitUnit* unit, const AIFloat3& uPos, float margin) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -650,7 +698,7 @@ bool ISquadTask::IsHighBlip(CMap* map, const AIFloat3& p)
 
 float ISquadTask::GetSafeThreat() const
 {
-	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;
+	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod * GetCountPowerMod();
 }
 
 float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
@@ -768,8 +816,9 @@ bool ISquadTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat, float all
 	// is. When the army leaves or dies, or the enemy outgrows it, the cover goes.
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+	// The list the influence map last refreshed (every few frames): a forced refresh would re-create every allied
+	// unit's entry each time a squad looks. A unit that died since counts 0 (no health)
 	const float sqRadius = SQUARE(allyRadius);
-	circuit->UpdateFriendlyUnits();  // drop units that died since the last refresh
 	float cover = 0.f;
 	for (auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* ally = kv.second;
@@ -801,6 +850,45 @@ const AIFloat3* ISquadTask::FindFleeGoal(const AIFloat3& dangerPos)
 	return PickFleeSpot(leader->GetPos(circuit->GetLastFrame()), dangerPos, fleeSpots);
 }
 
+bool ISquadTask::UpdateFlee(float margin, float endMargin, bool isGunship, float allyThreat, float allyRadius,
+		CCircuitDef::RoleT ownRole)
+{
+	if (leader == nullptr) {
+		return false;
+	}
+	CEnemyInfo* danger = nullptr;
+	if (margin >= 0.f) {
+		float dangerThreat;
+		danger = FindFleeDanger(isFleeing ? endMargin : margin, isGunship, dangerThreat);
+		if ((danger != nullptr) && (allyThreat >= 0.f) && IsFleeCovered(leader->GetPos(manager->GetCircuit()->GetLastFrame()),
+				dangerThreat, allyThreat, allyRadius, ownRole))
+		{
+			danger = nullptr;
+		}
+	}
+
+	if (danger == nullptr) {
+		if (isFleeing) {
+			isFleeing = false;
+			pathQueries.erase(leader);  // drop a flee path still in flight: it must not send the squad off afterwards
+			OnFleeEnd();
+			if (State::DISENGAGE == state) {
+				state = State::ROAM;  // danger gone: back to normal work on this update
+			}
+		}
+		return false;
+	}
+
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	if ((isFleeing && (frame < fleeReplanFrame)) || !IsQueryReady(leader)) {
+		return true;  // already on the way
+	}
+	isFleeing = true;
+	fleeReplanFrame = frame + FLEE_REPLAN_FRAMES;
+	Flee(danger->GetPos());
+	return true;
+}
+
 #ifdef DEBUG_VIS
 void ISquadTask::Log()
 {
@@ -809,6 +897,7 @@ void ISquadTask::Log()
 	CCircuitAI* circuit = manager->GetCircuit();
 	circuit->LOG("pPath: %i | size: %i | TravelAct: %i", pPath.get(), pPath ? pPath->posPath.size() : 0,
 			leader->GetTravelAct()->GetState());
+	formation.Log();
 }
 #endif
 

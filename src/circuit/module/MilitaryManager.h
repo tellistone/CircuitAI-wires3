@@ -116,6 +116,19 @@ public:
 	};
 	const SArtilleryCfg& GetArtilleryCfg() const { return artillery; }
 
+	struct SFormationCfg {  // behaviour.json "formation" (CFormation)
+		bool isEnable;  // missing block or false: squads walk as before
+		int minUnits;  // land or sea members needed to form a line (off again below 2)
+		float spacing, spacingUnits, spacingExp;  // spacing(n) = spacing * (spacingUnits / max(n, spacingUnits))^spacingExp
+		float gap;  // elmos between footprints, and clearance at the line's ends
+		float widthRange;  // max width = this x the squad's fire range
+		float leadSec;  // the line stops when a unit is this many seconds behind its slot
+		float faceRange;  // standing at its path's end, the line faces threat within this x the fire range; 0: off
+		float splashSpacing;  // neighbours and rows at least this x the largest splash radius of armed enemies near; 0: off
+		std::vector<CCircuitDef::RoleT> rowOrder;  // main roles front to back (unit types may override: formation_row)
+	};
+	const SFormationCfg& GetFormationCfg() const { return formation; }
+
 	IFighterTask* AddGuardTask(CCircuitUnit* unit);
 	bool DelGuardTask(CCircuitUnit* unit);
 	IFighterTask* GetGuardTask(CCircuitUnit* unit) const;
@@ -154,6 +167,11 @@ public:
 		float fleeAllyRadius;
 	};
 	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
+	struct SResignCfg {
+		int frame;  // no resign before this frame; < 0 = never resign
+		float mexShare;  // resign only while our ally team holds less than this share of the map's metal spots
+		float threatMult;  // ... and the known enemy mobile threat is more than this x ours
+	};
 	bool IsGuardRole(CCircuitDef* cdef) const;
 	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
 	bool IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const;
@@ -207,6 +225,9 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
+	float GetGroupCountPower() const { return groupCountPower; }
+	// quota.attack_own_ground_time: before this frame attack groups only walk to targets on our ground
+	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
 	struct SContested {
 		float bonus;  // enemies there count as this many times closer (attack ranking, raid route goals); 1 = off
@@ -264,6 +285,8 @@ public:
 	CAttackTask* GetRallyHost() const;
 	// A rally is on and this group should reinforce its host: not the host, compatible with it
 	bool IsRallyJoiner(const CAttackTask* task) const;
+	// The rally host if the group led by unit (task self) may reinforce it: compatible and able to reach it; else nullptr
+	CAttackTask* GetRallyHostFor(CCircuitUnit* unit, const IFighterTask* self) const;
 	const springai::AIFloat3& GetRallyBlobPos() const { return rallyBlobPos; }
 	// quota.attack_group_radius: [<x the group's range>, <min elmos>]; units farther from the leader are stragglers
 	const std::pair<float, float>& GetAttackGroupRadius() const { return attackGroupRadius; }
@@ -312,6 +335,8 @@ private:
 	void UpdateFight();
 	void UpdateCaptureHide();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
+	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
+	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
 	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
 	// Host candidate: the strongest group (raw strength) in the movement class with the most total strength;
@@ -398,6 +423,7 @@ private:
 	};
 	std::unordered_map<int, SCapturedUnit> capturedUnits;  // captured unit id -> who holds it, for "capture_hide"
 	SArtilleryCfg artillery;
+	SFormationCfg formation;
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
 	SGuardCfg guard;
@@ -430,6 +456,8 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackKeepThreat;  // quota.attack_keep_threat
+	float groupCountPower;  // quota.group_count_power
+	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
@@ -437,6 +465,9 @@ private:
 	float attackSpotThreat;  // quota.attack_spot_threat
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SAttackRally attackRally;  // quota.attack_merge.rally
+	SResignCfg resign;  // "resign"
+	int drownedFrames;  // "drowned".time in frames; < 0 = off
+	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
 	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use
