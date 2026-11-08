@@ -794,7 +794,6 @@ bool CFormation::ThreatDir(const AIFloat3& centre, float radius, AIFloat3& outDi
 	if (radius <= 0.f) {
 		return false;  // no land weapon (torpedoes only): the way the line came
 	}
-	CThreatMap* threatMap = task->GetManager()->GetCircuit()->GetThreatMap();
 	radius = std::max(radius, float(DEFAULT_SLACK * 4));
 	float3 sum = ZeroVector;
 	float total = 0.f;
@@ -804,7 +803,7 @@ bool CFormation::ThreatDir(const AIFloat3& centre, float radius, AIFloat3& outDi
 		for (float r : {radius / 2, radius}) {
 			AIFloat3 p = centre + dir * r;
 			CTerrainManager::CorrectPosition(p);
-			const float threat = threatMap->GetThreatAt(leader, p);
+			const float threat = task->GetTaskThreatAt(leader, p);
 			sum += dir * threat;
 			total += threat;
 		}
@@ -908,16 +907,15 @@ float CFormation::FreeDist(const AIFloat3& p, const AIFloat3& dir, float maxDist
 	// last step may be short, so slots aren't rounded to STEP
 	CCircuitAI* circuit = task->GetManager()->GetCircuit();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
-	CThreatMap* threatMap = circuit->GetThreatMap();
 	AIFloat3 ref = p;
 	CTerrainManager::CorrectPosition(ref);  // the line's straight start can reach past the map's edge
-	const float maxThreat = isSafe ? (THREAT_TOLERANCE * threatMap->GetThreatAt(leader, ref) + THREAT_EPS) : 0.f;
+	const float maxThreat = isSafe ? (THREAT_TOLERANCE * task->GetTaskThreatAt(leader, ref) + THREAT_EPS) : 0.f;
 	float dist = 0.f;
 	while (dist < maxDist) {
 		const float next = std::min(dist + STEP, maxDist);
 		const AIFloat3 q = p + dir * next;
 		if (!pathfinder->IsMovable(mobileTypeId, q)  // a movable spot is inside the map
-			|| (isSafe && (threatMap->GetThreatAt(leader, q) > maxThreat)))
+			|| (isSafe && (task->GetTaskThreatAt(leader, q) > maxThreat)))
 		{
 			break;
 		}

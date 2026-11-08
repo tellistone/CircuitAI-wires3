@@ -345,7 +345,7 @@ bool CRaidTask::FindTarget()
 	CEnemyInfo* worstTarget = nullptr;
 	urgentPositions.clear();
 	enemyPositions.clear();
-	threatMap->SetThreatType(leader);
+	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
 	// Contested clusters (threat there blocks our mex expansion) that this group can take: an enemy there counts
 	// quota.contested.bonus times closer as a route goal
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
@@ -385,7 +385,7 @@ bool CRaidTask::FindTarget()
 			checkPower *= circuit->GetMilitaryManager()->GetBaseThrBonus(sqEBDist);  // quota.thr_mod.base_bonus near base
 			sqCheckSpeed *= 2.f;
 		}
-		const float power = threatMap->GetThreatAt(ePos);
+		const float power = GetTaskThreatAt(leader, ePos);
 		if (checkPower <= power) {
 			continue;
 		}
@@ -514,7 +514,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	contested.clear();
-	threatMap->SetThreatType(leader);
+	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
 	if (isContestedAllowed) {
 		const float cautionMod = (frame < fleeFrame + FRAMES_PER_SEC * 4) ? 0.75f : 1.f;  // same as FindTarget
 		militaryMgr->GetTakeableContested(leader, highestRange,
@@ -533,7 +533,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// A contested destination from before is dropped too when contested ones aren't allowed now
 	const bool mustRepick = !isContestedAllowed && isContestedDest;
 	isContestedDest = (bestContested != nullptr);
-	const bool isDanger = (safeThreat / GetThrDistModAt(threatPos) <= threatMap->GetThreatAt(leader, threatPos));
+	const bool isDanger = (safeThreat / GetThrDistModAt(threatPos) <= GetTaskThreatAt(leader, threatPos));
 	// quota.raider_spot: roam between scored spots instead of the shared mex list
 	bool isSpotDest = false;
 	bool isSpotDone = false;
@@ -553,7 +553,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 		for (int i = 0; i < 8; ++i) {
 			candidate = militaryMgr->GetRaidPosition(leader);
 			if (!utils::is_valid(candidate)
-				|| (safeThreat / GetThrDistModAt(candidate) > threatMap->GetThreatAt(leader, candidate)))
+				|| (safeThreat / GetThrDistModAt(candidate) > GetTaskThreatAt(leader, candidate)))
 			{
 				break;
 			}

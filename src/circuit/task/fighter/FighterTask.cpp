@@ -57,6 +57,9 @@ void IFighterTask::AssignTo(CCircuitUnit* unit)
 
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	attackPower += cdef->GetPower();
+	if (manager->GetCircuit()->GetMilitaryManager()->IsAreaDamage(cdef)) {
+		areaPower += cdef->GetPower();
+	}
 	if (unit->HasShield()) {
 		shields.insert(unit);
 	}
@@ -75,7 +78,11 @@ void IFighterTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IUnitTask::RemoveAssignee(unit);
 
-	attackPower -= unit->GetCircuitDef()->GetPower();
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	attackPower -= cdef->GetPower();
+	if (manager->GetCircuit()->GetMilitaryManager()->IsAreaDamage(cdef)) {
+		areaPower -= cdef->GetPower();
+	}
 	cowards.erase(unit);
 	fireSpots.erase(unit);
 	if (unit->HasShield()) {
@@ -343,7 +350,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	auto isDanger = [&](const AIFloat3& p, float threat) {
 		return hasDangerLine && (threat > 0.f) && (threat >= GetAllowedThreatAt(p, supportAt(p)));
 	};
-	const float startThreat = threatMap->GetThreatAt(unit, uPos);
+	const float startThreat = GetTaskThreatAt(unit, uPos);
 	const bool isSafeHere = hasDangerLine && !isDanger(uPos, startThreat);
 
 	// Straight walk from the unit to p: is it dangerous, and its worst threat. A unit already in danger may
@@ -362,7 +369,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		for (float d = step; d < dist; d += step) {
 			AIFloat3 q = uPos + dir * d;
 			CTerrainManager::CorrectPosition(q);
-			const float qThreat = threatMap->GetThreatAt(unit, q);
+			const float qThreat = GetTaskThreatAt(unit, q);
 			if (!isDanger(q, qThreat)) {
 				isLeft = true;
 			} else if (isLeft || (qThreat > startThreat)) {
@@ -393,7 +400,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 				++crowd;
 			}
 		}
-		SCandidate c{p, threatMap->GetThreatAt(unit, p), crowd, p.distance2D(uPos) / range};
+		SCandidate c{p, GetTaskThreatAt(unit, p), crowd, p.distance2D(uPos) / range};
 		c.cost = costOf(c, std::max(c.threat, 0.f));
 		cands.push_back(c);
 	};
@@ -493,7 +500,33 @@ float IFighterTask::GetStrengthSum() const
 
 float IFighterTask::GetCountPowerMod(size_t count) const
 {
-	return 1.f + manager->GetCircuit()->GetMilitaryManager()->GetGroupCountPower() * count;
+	return manager->GetCircuit()->GetThreatMap()->GetCountMod(count);
+}
+
+bool IFighterTask::IsSquadThreat(CCircuitUnit* unit)
+{
+	IUnitTask* task = unit->GetTask();
+	return (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+			&& static_cast<IFighterTask*>(task)->IsSquadThreat();
+}
+
+float IFighterTask::GetTaskThreatAt(CCircuitUnit* unit, const AIFloat3& pos) const
+{
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	return IsSquadThreat() ? threatMap->GetSquadThreatAt(unit, pos) : threatMap->GetThreatAt(unit, pos);
+}
+
+float IFighterTask::GetTaskThreatExcl(CCircuitUnit* unit, const AIFloat3& pos, float exclThreat) const
+{
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	return IsSquadThreat() ? threatMap->GetSquadThreatExcl(unit, pos, exclThreat)
+			: std::max(0.f, threatMap->GetThreatAt(unit, pos) - exclThreat);
+}
+
+bool IFighterTask::IsDangerAt(CCircuitUnit* unit, const AIFloat3& p, float strength) const
+{
+	const float threat = GetTaskThreatAt(unit, p);
+	return (threat > 0.f) && (threat >= GetAllowedThreatAt(p, strength));
 }
 
 #ifdef DEBUG_VIS

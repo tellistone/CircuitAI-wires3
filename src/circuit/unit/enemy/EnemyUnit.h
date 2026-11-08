@@ -64,6 +64,13 @@ struct SEnemyData {
 	}
 
 	bool IsFake() const { return id == -1; }
+	// How much this enemy counts towards the enemy unit count of squad threat (CThreatMap::GetSquadThreatAt): its
+	// type's CCircuitDef::GetCountWeight while it can fight; 0 when it can't (being built, paralysed, disarmed), has
+	// no threat, or is of unknown type (a radar blip, which might be a constructor or eco unit)
+	float GetCountWeight() const {
+		return ((cdef == nullptr) || (threat <= 0.f) || isBeingBuilt || isParalyzed || isDisarmed)
+				? 0.f : cdef->GetCountWeight();
+	}
 
 	ICoreUnit::Id id;  // FIXME: duplicate
 	float cost;
@@ -130,6 +137,7 @@ public:
 
 	void SetThreat(float t) { data.threat = t; }
 	float GetThreat() const { return data.threat; }
+	float GetCountWeight() const { return data.GetCountWeight(); }
 
 	void SetRange(CCircuitDef::ThreatType t, int r) { data.SetRange(t, r); }
 	int GetRange(CCircuitDef::ThreatType t) const { return data.GetRange(t); }

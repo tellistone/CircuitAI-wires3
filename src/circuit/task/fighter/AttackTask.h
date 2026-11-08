@@ -116,6 +116,9 @@ private:
 	// refSqDist: the near-base scale's reference (0: none); the 2-argument form uses the current fight's
 	float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength, float refSqDist) const;
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override;
+	// IFighterTask::IsDangerAt with the near-base reference refSqDist
+	using IFighterTask::IsDangerAt;
+	bool IsDangerAt(CCircuitUnit* unit, const springai::AIFloat3& p, float strength, float refSqDist) const;
 	// Threat at spots nearer our base than refSqDist (squared distance to base) counts less, floored by
 	// quota.thr_mod.scale_min
 	float GetNearBaseScaleAt(const springai::AIFloat3& pos, float refSqDist) const;
@@ -229,7 +232,7 @@ private:
 	// The target's cells around anchor, at most one per sector, judged with the pick's power and near-base
 	// reference; nearOnly: the sectors facing us only (parked mobiles). false: every reachable point is above the
 	// allowance (ban it). Else outCells; empty: route to it as a disc (undefended, melee group, nothing reachable,
-	// or no line of sight). Call after threatMap->SetThreatType(leader)
+	// or no line of sight)
 	bool FillFiringCells(const CEnemyInfo* enemy, const springai::AIFloat3& anchor, float power, float ref,
 			bool nearOnly, std::vector<SFiringCell>& outCells) const;
 	// The route goals of a cell target beyond range: FillFiringCells minus its rejected sides, with the planned
@@ -243,7 +246,7 @@ private:
 	bool IsCellBanned(ICoreUnit::Id id, int frame) const;
 	void BanCell(const CEnemyInfo* enemy, int epoch, int frame);
 	// Drops bans whose target died or lost its anchor, whose threat changed by more than 25%, or that started over
-	// 60 s ago. Call after threatMap->SetThreatType(leader)
+	// 60 s ago
 	void UpdateCellBans(int frame);
 
 	bool IsOnEnemyGround() const;  // influence at the leader < 0
