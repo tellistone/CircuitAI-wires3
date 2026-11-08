@@ -1448,6 +1448,9 @@ void CAttackTask::FindTarget()
 		AIFloat3 rangePos;
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
+	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop)
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1479,6 +1482,12 @@ void CAttackTask::FindTarget()
 		// shift its rank
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
+		// quota.attack_own_ground_time: ground our buildings, land builders or static defences cover (enemy influence
+		// ignored; armed mobiles don't count, else a group would license its own surroundings and creep forward).
+		// A target already within range is always fair game, so fights at the edge aren't dropped
+		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && (inflMap->GetAllyDefendInflAt(c.rangePos) <= INFL_EPS)) {
+			continue;
+		}
 		c.rawKey = sqOEDist * scale;
 		c.key = c.rawKey * SQUARE(distModFor(enemy));
 		if (IsSiegeTarget(enemy, frame)) {  // quota.attack_static_cells.siege_bonus
