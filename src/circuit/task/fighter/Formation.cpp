@@ -134,12 +134,6 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	leaderM = &itLeader->second;
 	leaderM->isStraggler = false;  // the line is centred on it
 	const int count = members.size();
-	// Running away: rows in reverse (riots at the back, towards the pursuers), matched afresh on the change
-	const bool isFleeNow = task->IsFormationFlee(frame);
-	if (isFleeNow != isFlee) {
-		isFlee = isFleeNow;
-		isDirty = true;
-	}
 	// Near splash, neighbours and rows no closer than splash_spacing x its radius, so one blast doesn't hit two
 	splashPitch = std::min(cfg.splashSpacing * UpdateSplash(frame), MAX_SPLASH_PITCH);
 	const float baseSpacing = std::max(splashPitch,
@@ -151,6 +145,13 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 		isFacing = false;
 		track.clear();  // the rows stood across faceDir, not along the track
 		isDirty = true;  // and walk a new way: match units to slots afresh
+	}
+	// Running away: rows in reverse (riots at the back, towards the pursuers), matched afresh on the change. Not once
+	// it stands facing (a cornered line at its quiet spot): the threat is ahead then
+	const bool isFleeNow = task->IsFormationFlee(frame) && !isFacing;
+	if (isFleeNow != isFlee) {
+		isFlee = isFleeNow;
+		isDirty = true;
 	}
 	bool isLine = true;
 	if (isFacing) {
@@ -457,9 +458,11 @@ bool CFormation::IsEnemyInSight(int frame)
 
 float CFormation::UpdateSplash(int frame)
 {
-	// The largest splash radius (weapon area of effect, or a mobile bomb's blast) of armed enemies that can hit the
-	// ground and are within their range + SPLASH_PAD of the leader; a larger one is taken at once, a smaller one only
-	// once the larger hasn't been seen for SPLASH_HOLD_FRAMES (so the line doesn't widen and narrow as they move)
+	// The largest splash radius (weapon area of effect, or a mobile bomb's blast) of enemies that can hit the ground
+	// (mobile bombs too: no weapon, CCircuitDef takes their blast) within their range + SPLASH_PAD of the leader.
+	// Finished, not hidden; mobile ones in radar or LOS, or seen within SPLASH_HOLD_FRAMES (not old ghosts). A larger
+	// radius is taken at once, a smaller one only once the larger hasn't been seen for SPLASH_HOLD_FRAMES (so the line
+	// doesn't widen and narrow as they move)
 	if (frame < splashScanFrame + SPLASH_SCAN_FRAMES) {
 		return splash;
 	}
@@ -470,7 +473,11 @@ float CFormation::UpdateSplash(int frame)
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		const CEnemyInfo* enemy = kv.second;
 		const CCircuitDef* edef = enemy->GetCircuitDef();
-		if ((edef == nullptr) || !edef->HasAntiLand() || (edef->GetAoe() < std::max(SPLASH_MIN, nearAoe))) {
+		if ((edef == nullptr) || (edef->GetAoe() < std::max(SPLASH_MIN, nearAoe))
+			|| !(edef->HasAntiLand() || (edef->IsMobile() && !edef->IsAttacker()))
+			|| enemy->IsBeingBuilt() || enemy->IsHidden()
+			|| (edef->IsMobile() && !enemy->IsRecentlySeen(frame, SPLASH_HOLD_FRAMES)))
+		{
 			continue;
 		}
 		if (leaderPos.SqDistance2D(enemy->GetPos()) < SQUARE(edef->GetMaxRange() + SPLASH_PAD)) {
@@ -501,7 +508,8 @@ void CFormation::ShiftRows(float pace, float gap)
 
 void CFormation::PlaceSlots(int frame, float pace, float leadSec, std::vector<CCircuitUnit*>& outStuck)
 {
-	const float minSpeed = std::max(0.5f * pace, MIN_SPEED * slowest);
+	// Running away, a unit ahead of its slot keeps the line's pace rather than dropping back towards the pursuers
+	const float minSpeed = isFlee ? std::max(pace, MIN_SPEED * slowest) : std::max(0.5f * pace, MIN_SPEED * slowest);
 	const bool isWalking = !isLineToEnd || (anchorArc < arcs.back());  // not yet standing at the path's end
 	for (auto& kv : members) {
 		CCircuitUnit* unit = kv.first;

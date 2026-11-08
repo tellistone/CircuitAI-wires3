@@ -45,9 +45,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   2 s, and keeps facing across new paths that end within 256 elmos of the same spot, so
   re-plans to the same spot don't turn it to and fro. Units keep their places on a turn of up to 120°. Fleeing groups, and cornered groups moving to a quieter spot, also
   run as a line (they used to run single file along the escape path, which splash weapons punished): rows in reverse
-  `row_order` (riots at the back, towards the pursuers; artillery and skirmishers lead), at the slowest unit's speed
-  without waiting for anyone. With splash near (`splash_spacing`: an armed enemy whose weapon area of effect or bomb
-  blast is 16 or more, within its range + 600 of the group, held 10 s), neighbours and rows stay at least 1.2 x its
+  `row_order` while they walk (riots at the back, towards the pursuers; artillery and skirmishers lead; normal order
+  again once a cornered line stands and faces), at the slowest unit's speed, waiting for no one and with no unit
+  dropping back towards the pursuers. With splash near (`splash_spacing`: a finished enemy that can hit the ground, or a mobile bomb, whose weapon area of
+  effect or blast is 16 or more, mobile ones seen in the last 10 s, within its range + 600 of the group, held 10 s), neighbours and rows stay at least 1.2 x its
   radius apart (at most 256), adding rows where the width runs out. Other squads
   (raid, defend, anti-air, anti-heavy) and units' own facing come in later steps.
 - **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit
