@@ -322,7 +322,6 @@ private:
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
-	int reinforceGiveUps;  // reinforce_fails give-ups in a row: each doubles the retry wait (up to 8x)
 	int lastTargetFrame;  // last decision that fought or went for a target (SetHasTarget); SeekIdleMerge's delay
 	bool isDecisionReuse;  // the last decision's isReuse, for the fallbacks of its target route
 	int rallyRouteFrame;  // rally: our last route to the host came back empty, hold until this frame

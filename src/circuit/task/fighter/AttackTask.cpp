@@ -118,7 +118,6 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, reinforce(nullptr)
 		, reinforceFails(0)
 		, reinforceRetryFrame(-1)
-		, reinforceGiveUps(0)
 		, lastTargetFrame(mgr->GetCircuit()->GetLastFrame())
 		, isDecisionReuse(false)
 		, rallyRouteFrame(-1)
@@ -747,7 +746,6 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 	const bool isRally = (reinforce != nullptr) && (reinforce == GetMilitaryMgr()->GetRallyHost());
 	if (ApplyGroupRoute(query, REINFORCE_ROUTE_ID, goal, slack)) {
 		reinforceFails = 0;
-		reinforceGiveUps = 0;
 		if (isToMeet) {
 			meetFailPos = -RgtVector;
 		}
@@ -777,12 +775,10 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 	if (++reinforceFails >= cfg.reinforceFails) {
 		// No safe route quota.attack_merge.reinforce_fails times in a row (10: ~20 s at a decision every ~2 s):
 		// act as a small attack group for reinforce_retry (10 s), then look again
-		// (merge checks and absorbing still apply meanwhile). Each give-up in a row doubles the wait (up to 8x):
-		// a failed route searches all the ground it may cross, the most costly kind
+		// (merge checks and absorbing still apply meanwhile)
 		reinforce = nullptr;
 		reinforceFails = 0;
-		reinforceRetryFrame = frame + cfg.reinforceRetry * (1 << std::min(reinforceGiveUps, 3));
-		++reinforceGiveUps;
+		reinforceRetryFrame = frame + cfg.reinforceRetry;
 	}
 }
 
@@ -812,18 +808,15 @@ bool CAttackTask::SeekIdleMerge(int frame, bool isReuse)
 		reinforce = nullptr;
 		return false;
 	}
-	// The group we walk to, kept while it has REINFORCE_KEEP_SHARE of our power, else the nearest one ranked above us.
-	// None: we are the top of our class, the front fallback as before (the others come to us)
-	const bool isNewWalk = (reinforce == nullptr);
-	if (GetReinforceSquad() == nullptr) {
+	// A new walk starts only after IDLE_MERGE_DELAY_FRAMES without a target (not after every kill or lost blip):
+	// meanwhile the front fallback, which also brings idle groups together at the front
+	if ((reinforce == nullptr) && (frame < lastTargetFrame + IDLE_MERGE_DELAY_FRAMES)) {
 		return false;
 	}
-	// A new walk starts only after IDLE_MERGE_DELAY_FRAMES without a target (not after every kill or lost blip):
-	// meanwhile hold where we are rather than walk off to the front
-	if (isNewWalk && (frame < lastTargetFrame + IDLE_MERGE_DELAY_FRAMES)) {
-		reinforce = nullptr;  // not walking yet
-		HoldPosition();
-		return true;
+	// The group we walk to, kept while it has REINFORCE_KEEP_SHARE of our power, else the nearest one ranked above us.
+	// None: we are the top of our class, the front fallback as before (the others come to us)
+	if (GetReinforceSquad() == nullptr) {
+		return false;
 	}
 	ClearScaleAnchor();  // walking to a group, not into an accepted fight
 	Reinforce(frame, isReuse);
