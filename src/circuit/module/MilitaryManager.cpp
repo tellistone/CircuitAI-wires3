@@ -49,6 +49,7 @@
 #include <limits>
 
 #include "AISCommands.h"
+#include "Game.h"
 #include "Command.h"
 #include "Log.h"
 
@@ -817,7 +818,7 @@ void CMilitaryManager::ReadConfig()
 	antiHeavy.fleeAllyRadius = std::max(0.f, ahCfg.get("flee_ally_radius", 500.f).asFloat());
 
 	const Json::Value& resignCfg = root["resign"];
-	const float resignTime = resignCfg.get("time", -1.f).asFloat();
+	const float resignTime = resignCfg.get("time", 480.f).asFloat();  // on by default, even with an older behaviour.json
 	resign.frame = (resignTime < 0.f) ? -1 : int(resignTime * FRAMES_PER_SEC);
 	resign.mexShare = resignCfg.get("mex", 0.1f).asFloat();
 	resign.threatMult = resignCfg.get("threat", 4.f).asFloat();
@@ -947,9 +948,6 @@ void CMilitaryManager::Init()
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
 		}
 
-		if (resign.frame >= 0) {
-			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResign, this), FRAMES_PER_SEC * 10, offset + 1);
-		}
 		if (drownedFrames >= 0) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDrowned, this), FRAMES_PER_SEC, offset + 2);
 		}
@@ -2764,31 +2762,55 @@ void CMilitaryManager::UpdateResign()
 	if (frame < resign.frame) {
 		return;
 	}
-	// 1v1 only: our ally team is just us, and there is a single enemy team
-	const int allySize = circuit->GetAllyTeam()->GetSize();
-	const int enemySize = circuit->GetEnemyTeamSize();
-	const bool is1v1 = (allySize == 1) && (enemySize == 1);
 
-	CMetalManager* metalMgr = circuit->GetMetalManager();
-	const int spotCount = metalMgr->GetSpots().size();
-	metalMgr->MarkAllyMexes();
-	const int mexCount = metalMgr->GetMexCount();
-	const bool isMexLost = (spotCount > 0) && (mexCount < resign.mexShare * spotCount);
+	// 1v1 only, counted straight from the engine as zkgbai does: no other team in our ally team, and one enemy team
+	// that isn't Gaia (Zero-K names Gaia's ally team "Neutral")
+	springai::Game* game = circuit->GetGame();
+	const int myTeam = circuit->GetTeamId();
+	const int myAllyTeam = circuit->GetAllyTeamId();
+	int allyCount = 0;
+	int enemyCount = 0;
+	const int teamCount = game->GetTeams();  // Gaia included: the engine puts it last, alone in its own ally team
+	const int lastAllyTeam = (teamCount > 0) ? game->GetTeamAllyTeam(teamCount - 1) : -1;
+	bool isLastAlone = true;
+	for (int t = 0; t < teamCount - 1; ++t) {
+		isLastAlone = isLastAlone && (game->GetTeamAllyTeam(t) != lastAllyTeam);
+	}
+	for (int t = 0; t < teamCount; ++t) {
+		if ((t == myTeam) || ((t == teamCount - 1) && isLastAlone && (lastAllyTeam != myAllyTeam))) {
+			continue;
+		}
+		const int at = game->GetTeamAllyTeam(t);
+		const std::string name = game->GetRulesParamString(("allyteam_short_name_" + utils::int_to_string(at)).c_str(), "");
+		if (name == "Neutral") {
+			continue;
+		}
+		if (at == myAllyTeam) {
+			++allyCount;
+		} else {
+			++enemyCount;
+		}
+	}
+	const bool is1v1 = (allyCount == 0) && (enemyCount == 1);
 
-	// Army against army, commanders left out on both sides: a commander's threat (health in the thousands, levelled
-	// up by the late game) dwarfs a unit's, so a lone surviving commander kept ours above a quarter of a whole enemy
-	// army. Same scale as CEnemyManager::GetMobileThreat: every finished mobile unit, builders included
-	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
+	// Our mexes: finished or not, straight from our own units
+	const int spotCount = circuit->GetMetalManager()->GetSpots().size();
+	int mexCount = 0;
 	float ourThreat = 0.f;
 	for (auto& kv : circuit->GetTeamUnits()) {
 		CCircuitUnit* unit = kv.second;
 		CCircuitDef* cdef = unit->GetCircuitDef();
-		if (cdef->IsMobile() && !cdef->IsRoleComm() && !unit->GetUnit()->IsBeingBuilt()) {
+		if (cdef->IsMex()) {
+			++mexCount;
+		} else if (cdef->IsMobile() && !cdef->IsRoleComm() && !unit->GetUnit()->IsBeingBuilt()) {
+			// Army against army, commanders left out on both sides (a levelled commander dwarfs any unit)
 			ourThreat += cdef->GetThreat();
 		}
 	}
-	ourThreat *= enemyMgr->GetMobileThreatMod();
-	// Enemies: every live enemy we have seen in LOS (so its type is known), counted afresh
+	const bool isMexLost = (spotCount > 0) && (mexCount < resign.mexShare * spotCount);
+
+	// Enemies: every live enemy we have seen in LOS (so its type is known), counted afresh, on the same scale
+	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	float enemyThreat = 0.f;
 	for (auto& kv : enemyMgr->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
@@ -2798,15 +2820,15 @@ void CMilitaryManager::UpdateResign()
 		}
 		enemyThreat += edef->GetThreat();
 	}
-	enemyThreat *= enemyMgr->GetMobileThreatMod();
-	const bool isArmyLost = (enemyThreat > resign.threatMult * ourThreat);
+	// No army left at all is lost too, whatever we have seen of theirs
+	const bool isArmyLost = (ourThreat <= 0.f) || (enemyThreat > resign.threatMult * ourThreat);
 
 	const bool isLost = is1v1 && isMexLost && isArmyLost;
 	// Diagnostics: the first check and then once a minute (UpdateResign runs every 10 s), plus the one that resigns
 	if (isLost || (resignChecks++ % 6 == 0)) {
-		circuit->LOG("RESIGN %s: frame %i | teams: ally %i, enemy %i (%s) | mexes %i / %i spots, need < %.1f (%s)"
-				" | mobile threat: enemy %.1f, ours %.1f, need enemy > %.1f (%s)",
-				isLost ? "NOW" : "check", frame, allySize, enemySize, is1v1 ? "ok" : "no",
+		circuit->LOG("RESIGN %s: frame %i | teams: allies %i, enemies %i of %i (%s) | mexes %i / %i spots, need < %.1f (%s)"
+				" | mobile threat: enemy %.1f, ours %.1f, need ours 0 or enemy > %.1f (%s)",
+				isLost ? "NOW" : "check", frame, allyCount, enemyCount, teamCount, is1v1 ? "ok" : "no",
 				mexCount, spotCount, resign.mexShare * spotCount, isMexLost ? "ok" : "no",
 				enemyThreat, ourThreat, resign.threatMult * ourThreat, isArmyLost ? "ok" : "no");
 	}

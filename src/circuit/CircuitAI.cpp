@@ -774,6 +774,10 @@ int CCircuitAI::Update(int frame)
 	scheduler->ProcessTasks(frame);
 	UpdateActions();
 
+	if ((frame % (FRAMES_PER_SEC * 10) == 0) && militaryManager->IsResignOn()) {
+		militaryManager->UpdateResign();  // may Surrender: acted on at the start of the next Update
+	}
+
 #ifdef DEBUG_VIS
 	if (frame % FRAMES_PER_SEC == 0) {
 		allyTeam->GetEnergyGrid()->UpdateVis();

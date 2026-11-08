@@ -151,11 +151,12 @@
 	"flee_ally_radius": 500.0  // see flee_ally_threat
 },
 
-// Concede a lost 1v1: checked every 10 s from "time" on, only when each side is a single team. Resign when our
-// ally team holds fewer than "mex" x the map's metal spots AND the known enemy mobile threat (every enemy mobile
-// unit seen, builders included, commanders not) is more than "threat" x ours (our finished mobile units, same scale,
-// no commander).
-// Says "<CircuitAI> I am defeated." in public chat, then leaves the game (/aikill), which Zero-K counts as a resign. Missing block or time < 0 = never resign
+// Concede a lost 1v1: checked every 10 s from "time" on, only when no other team shares our ally team and exactly one
+// enemy team (not Gaia/"Neutral") is in the game, counted from the engine. Resign when our mexes are fewer than "mex"
+// x the map's metal spots AND either we have no mobile army left, or the enemy mobile army we have seen alive is more
+// than "threat" x ours (unit threat; commanders left out on both sides, builders in). Says "<CircuitAI> I am
+// defeated." in public chat, self-destructs everything and leaves the game (/aikill), which Zero-K counts as a resign.
+// Missing block = these defaults; time < 0 = never resign
 "resign": {
 	"time": 480,  // seconds of game time
 	"mex": 0.1,

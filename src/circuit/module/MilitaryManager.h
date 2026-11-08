@@ -182,6 +182,9 @@ public:
 		float fleeAllyRadius;
 	};
 	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
+	// "resign": concede a lost 1v1. Called every 10 s by CCircuitAI::Update itself, outside the scheduler
+	void UpdateResign();
+	bool IsResignOn() const { return resign.frame >= 0; }
 	struct SResignCfg {
 		int frame;  // no resign before this frame; < 0 = never resign
 		float mexShare;  // resign only while our ally team holds less than this share of the map's metal spots
@@ -356,7 +359,6 @@ private:
 	// there is none) leave for anti-heavy squads, every 2 s; not while their group is fighting or fleeing
 	void UpdateAhPull();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
-	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
 	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
