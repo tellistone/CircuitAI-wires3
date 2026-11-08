@@ -21,7 +21,7 @@ CBEnergyTask::CBEnergyTask(ITaskManager* mgr, Priority priority,
 						   CCircuitDef* buildDef, const AIFloat3& position,
 						   float cost, float shake, int timeout)
 		: IBuilderTask(mgr, priority, buildDef, position, Type::BUILDER, BuildType::ENERGY, cost, shake, timeout)
-		, isStalling(false)
+		, isEnergyShort(false)
 {
 }
 
@@ -37,12 +37,12 @@ void CBEnergyTask::Update()
 	}
 
 	// Same test as CEconomyManager::UpdateEnergyTasks: high build priority while short of energy
-	const bool isEnergyShort = manager->GetCircuit()->GetEconomyManager()->IsEnergyShort();
-	if (isStalling == isEnergyShort) {
+	const bool isShort = manager->GetCircuit()->GetEconomyManager()->IsEnergyShort();
+	if (isEnergyShort == isShort) {
 		return;
 	}
-	isStalling = isEnergyShort;
-	ChangePriority(isEnergyShort ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL);
+	isEnergyShort = isShort;
+	ChangePriority(isShort ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL);
 }
 
 void CBEnergyTask::Execute(CCircuitUnit* unit)

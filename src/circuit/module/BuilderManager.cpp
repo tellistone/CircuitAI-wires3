@@ -1252,10 +1252,13 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	}
 
 	IBuilderTask* task = MakeBuilderTask(unit, pQuery.get());
-	if ((task == nullptr) && (commState != nullptr) && !commState->IsComm() && (unit->GetTask() == idleTask)
-		&& !IsCommJobSafe(commState, pos))
+	// A constructor idle with no job while stalling (only reclaim is allowed, and there's none) or in a flee zone with
+	// no safe job: look again in a while, not with a new cost map and feature scan every update. Not a commander: it
+	// keeps asking, so a fight at home (IsHomeFight above) isn't delayed
+	if ((task == nullptr) && (unit->GetTask() == idleTask)
+		&& ((!cdef->IsRoleComm() && circuit->GetEconomyManager()->IsStalling())
+			|| ((commState != nullptr) && !commState->IsComm() && !IsCommJobSafe(commState, pos))))
 	{
-		// Idle in a flee zone with no safe job: look again in a while, not with a new cost map every update
 		return EnqueueWait(BUILDER_IDLE_WAIT);
 	}
 	return task;
@@ -1274,9 +1277,9 @@ const CBuilderManager::SJobRank& CBuilderManager::GetJobRank(const IBuilderTask*
 }
 
 // While stalling (CEconomyManager::IsStalling): would unit add its build power to spending? Spending = a building
-// (placed or not), terraform, or repairing an unfinished unit; reclaim, finished-unit repair, patrol and guard are
-// free. Its own job never counts, nor a stall fix (IsStallFix): it runs at ZK's high build priority (CmdPriority), so
-// it takes the scarce resource first and more builders on it do finish it sooner
+// (placed or not), terraform, or repairing an unfinished unit; reclaim and finished-unit repair are free (guard and
+// patrol jobs are never candidates). Its own job never counts, nor a stall fix (IsStallFix): it runs at ZK's high
+// build priority (CmdPriority), so it takes the scarce resource first and more builders on it do finish it sooner
 static bool IsStallSpend(const CEconomyManager* economyMgr, const IBuilderTask* task, const CCircuitUnit* unit)
 {
 	if (task == unit->GetTask()) {
@@ -1410,10 +1413,12 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	{
 		CCircuitUnit* vip = circuit->GetFactoryManager()->GetClosestFactory(pos);
 		// Guarding the factory adds build power to it, and a patrol helps any frame in reach: while stalling, reclaim
-		// first (as an idle constructor does) and patrol only if there is no safe reclaim
+		// nearby first and patrol only if there is none that is safe and inside the hide range (as the loop above)
 		if (isStalling) {
-			task = economyMgr->UpdateReclaimTasks(pos, unit, false);
-			if ((task != nullptr) && !IsCommJobSafe(commState, task->GetPosition())) {
+			task = economyMgr->UpdateReclaimTasks(pos, unit, true);
+			if ((task != nullptr) && (!IsCommJobSafe(commState, task->GetPosition())
+				|| ((sqMaxBaseRange > 0.f) && (basePos.SqDistance2D(task->GetPosition()) > sqMaxBaseRange))))
+			{
 				task = nullptr;  // left queued for constructors
 			}
 		}

@@ -191,10 +191,12 @@ void IBuilderTask::ChangePriority(Priority value)
 		return;  // same ZK build priority (NOW and HIGH both send 2)
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
-	// Only a frame: on a finished unit (a repair target such as a factory) it would change that unit's own priority
-	if ((target != nullptr) && target->GetUnit()->IsBeingBuilt()) {
+	if (target != nullptr) {
 		TRY_UNIT(circuit, target,
-			target->CmdPriority(ClampPriority());
+			// Only a frame: on a finished unit (a repair target such as a factory) it would change its own priority
+			if (target->GetUnit()->IsBeingBuilt()) {
+				target->CmdPriority(ClampPriority());
+			}
 		)
 	}
 	const std::set<CCircuitUnit*> assignees = units;  // a failed command garbages the unit
