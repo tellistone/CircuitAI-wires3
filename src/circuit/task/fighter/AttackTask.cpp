@@ -1572,10 +1572,11 @@ void CAttackTask::FindTarget()
 		// shift its rank
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
-		// quota.attack_own_ground_time: ground our buildings, land builders or static defences cover (enemy influence
-		// ignored; armed mobiles don't count, else a group would license its own surroundings and creep forward).
+		// quota.attack_own_ground_time and the floors: our territory (IsAllyTerritory: our buildings, land builders
+		// or static defences outweigh the enemy's buildings and static defences; mobiles on neither side count, else
+		// a group would license its own surroundings and creep forward, and the target would veto itself).
 		// A target already within range is always fair game, so fights at the edge aren't dropped
-		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && (inflMap->GetAllyDefendInflAt(c.rangePos) <= INFL_EPS)) {
+		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && !inflMap->IsAllyTerritory(c.rangePos)) {
 			continue;
 		}
 		c.rawKey = sqOEDist * scale;
