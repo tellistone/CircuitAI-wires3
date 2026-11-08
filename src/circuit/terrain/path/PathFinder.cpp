@@ -222,6 +222,20 @@ void CPathFinder::Pos2MoveXY(AIFloat3 pos, int* x, int* y) const
 	*y = int(pos.z / squareSize) + 1;
 }
 
+bool CPathFinder::IsMovable(int mobileTypeId, const AIFloat3& pos) const
+{
+	if ((pos.x < 0.f) || (pos.z < 0.f)) {
+		return false;
+	}
+	int x, y;
+	Pos2MoveXY(pos, &x, &y);
+	if ((x >= moveMapXSize) || (y >= moveMapYSize)) {
+		return false;
+	}
+	const bool* moveArray = (mobileTypeId < 0) ? airMoveArray : pMoveData.load()->moveArrays[mobileTypeId];
+	return moveArray[y * moveMapXSize + x];  // the map's edge squares are never movable
+}
+
 void CPathFinder::Pos2PathXY(AIFloat3 pos, int* x, int* y) const
 {
 	*x = int(pos.x / squareSize);

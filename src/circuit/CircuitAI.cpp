@@ -96,6 +96,7 @@ CCircuitAI::CCircuitAI(OOAICallback* clb)
 		, isInitialized(false)
 		, isLoadSave(false)
 		, isResigned(false)
+		, isSurrendered(false)
 		// NOTE: assert(lastFrame != -1): CCircuitUnit initialized with -1
 		//       and lastFrame check will misbehave until first update event.
 		, lastFrame(-2)
@@ -730,6 +731,18 @@ int CCircuitAI::Update(int frame)
 	if (isResigned) {
 		Release(RELEASE_RESIGN);
 		NotifyResign();
+		return 0;
+	}
+	if (isSurrendered) {
+		LOG("SURRENDER: frame %i", frame);
+		// Game_sendTextMessage only runs "/" commands, as the player hosting the AI (as zkgbai does it):
+		// /say for the chat line, then /aikill to leave the game. Zero-K counts a team with neither AI nor players
+		// out (game_over.lua), which ends a 1v1
+		game->SendTextMessage("/say <CircuitAI> I am defeated.", 0);
+		const std::string kill = "/aikill " + utils::int_to_string(teamId);
+		game->SendTextMessage(kill.c_str(), 0);
+		Release(RELEASE_RESIGN);
+		NotifyGameEnd();
 		return 0;
 	}
 

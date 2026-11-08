@@ -98,6 +98,8 @@ public:
 	void NotifyGameEnd();
 	void NotifyResign();
 	void Resign(int newTeamId, springai::Economy* economy);
+	// Concede the match: on the next update say "I am defeated." in chat, leave the game (/aikill) and stop playing
+	void Surrender() { isSurrendered = true; }
 private:
 	typedef int (CCircuitAI::*EventHandlerPtr)(int topic, const void* data);
 	int HandleGameEvent(int topic, const void* data);
@@ -303,6 +305,7 @@ private:
 	bool isInitialized;
 	bool isLoadSave;
 	bool isResigned;
+	bool isSurrendered;
 	int lastFrame;
 	int skirmishAIId;
 	int teamId;

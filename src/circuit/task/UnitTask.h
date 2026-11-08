@@ -24,6 +24,7 @@ namespace circuit {
 
 class CCircuitUnit;
 class CEnemyInfo;
+class CFormation;
 class ITaskManager;
 class IPathQuery;
 class CQueryPathSingle;
@@ -47,6 +48,7 @@ public:
 
 	virtual void Start(CCircuitUnit* unit) = 0;  // <=> IAction::OnStart()
 	virtual void Update() = 0;
+	virtual void LateUpdate() {}  // right after Update, if the task is still alive (fighter tasks)
 	virtual void Stop(bool done);  // <=> IAction::OnEnd()
 protected:
 	// NOTE: Do not run time consuming code here. Instead create separate task.
@@ -60,6 +62,8 @@ public:
 	void OnUnitMoveFailed(CCircuitUnit* unit);
 
 	virtual void OnTravelEnd(CCircuitUnit* unit);
+	// The squad's line formation while it is on: travel actions take their moves from it
+	virtual const CFormation* GetFormation() const { return nullptr; }
 	virtual void OnRearmStart(CCircuitUnit* unit);
 
 	const std::set<CCircuitUnit*>& GetAssignees() const { return units; }

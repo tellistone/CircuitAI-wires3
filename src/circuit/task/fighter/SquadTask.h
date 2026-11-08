@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_SQUADTASK_H_
 
 #include "task/fighter/FighterTask.h"
+#include "task/fighter/Formation.h"
 #include "terrain/path/MicroPather.h"
 #include "unit/CircuitDef.h"
 
@@ -40,8 +41,26 @@ public:
 	CCircuitUnit* GetLeader() const { return leader; }
 	const springai::AIFloat3& GetLeaderPos(int frame) const;
 
+	/*
+	 * Line formation (CFormation, behaviour.json "formation") while the squad walks its path outside combat
+	 */
+	// Lays the line out (at most twice a second) and releases units it finds stuck
+	virtual void LateUpdate() override;
+	virtual const CFormation* GetFormation() const override { return formation.IsOn() ? &formation : nullptr; }
+	// May the squad walk in line now (besides walking its path in ROAM)? Default: no; tasks opt in
+	virtual bool IsFormationAllowed(int frame) const { return false; }
+	virtual bool IsFormationFlee(int frame) const { return false; }  // running away: rows in reverse, no waiting
+	// Fire range the line's width is scaled by (formation.width_range)
+	virtual float GetFormationRange() const { return lowestRange; }
+protected:
+	// Idle on purpose: the line formation steers it and it stands where its last formation move sent it, so
+	// re-activating its path (Start) would only send it there again, and again once it is idle
+	bool IsIdleInLine(CCircuitUnit* unit) const;
+
 private:
 	void FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd);
+	// Formation on in config, allowed by the task, ROAM, and the leader walks a path (the line follows it)
+	bool IsFormationActive(int frame) const;
 
 	bool IsMergeSafe() const;
 
@@ -132,7 +151,24 @@ public:  // also used by the commander flee (CBuilderManager::UpdateCommFlee)
 	// Is an unidentified radar blip at p high enough above the ground (or water surface) to be a plane?
 	static bool IsHighBlip(CMap* map, const springai::AIFloat3& p);
 protected:
-	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
+	/*
+	 * Target picks: runners not worth chasing (attack, raid)
+	 */
+	static constexpr float CHASE_SPEED_MOD = 0.8f;  // x our top speed: a runner this fast is not chased
+	static constexpr float OUTRANGE_CHASE_SPEED_MOD = 0.75f;  // x our top speed: nor this fast, if it outranges us
+	static_assert(CHASE_SPEED_MOD >= OUTRANGE_CHASE_SPEED_MOD, "IsRunningAway: sqSpeed >= sqOutrangeSpeed");
+	static constexpr float OUTRANGE_MOD = 1.1f;  // outranges us: ground range over ours x this (not by a few elmos)
+	// Enemy roles chased whatever their range (the outranging rule is off for them): anti-heavy, support, artillery
+	static constexpr CCircuitDef::RoleM OUTRANGE_CHASED_ROLES = CCircuitDef::RoleMask::AH
+			| CCircuitDef::RoleMask::SUPPORT | CCircuitDef::RoleMask::ARTY;
+	// Is the enemy moving away from pos at sqSpeed or more (elmos per frame, squared), or at sqOutrangeSpeed or more
+	// when its ground/water weapons (IsGroundDangerDef: not anti-air only) outrange ourRange x OUTRANGE_MOD and it has
+	// none of OUTRANGE_CHASED_ROLES? sqSpeed must be at least sqOutrangeSpeed. Unknown type (radar blip): not outranging
+	static bool IsRunningAway(CEnemyInfo* enemy, const springai::AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
+			float ourRange);
+	// Current squad strength (health-scaled power) x powerMod x the group size bonus (GetCountPowerMod). The
+	// thr_mod.distance curve and base bonus are applied per judged spot
+	float GetSafeThreat() const;
 	// Multiplier on GetPathThreatCap's squad allowance; < 0 = no cap at all
 	virtual float GetPathThreatMod() const { return 1.f; }
 	// Pathfinder threat cap for a route from startPos to goals (see .cpp)
@@ -181,6 +217,8 @@ protected:
 	std::shared_ptr<PathInfo> pPath;
 
 	int groupFrame;
+private:
+	CFormation formation;  // the line while walking (LateUpdate)
 
 #ifdef DEBUG_VIS
 public:

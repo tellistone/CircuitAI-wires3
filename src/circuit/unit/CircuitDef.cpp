@@ -47,6 +47,7 @@ CCircuitDef::AttrName CCircuitDef::attrNames = {
 	{"prio_repair", CCircuitDef::AttrType::PRIO_REPAIR},
 	{"guarded",     CCircuitDef::AttrType::GUARDED},
 	{"raid_target", CCircuitDef::AttrType::RAID_TARGET},
+	{"no_formation", CCircuitDef::AttrType::NO_FORM},
 };
 CCircuitDef::FireName CCircuitDef::fireNames = {
 	{"hold",   CCircuitDef::FireType::HOLD},

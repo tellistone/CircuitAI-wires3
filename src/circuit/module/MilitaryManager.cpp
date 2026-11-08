@@ -45,6 +45,7 @@
 #include "spring/SpringCallback.h"
 #include "spring/SpringMap.h"
 
+#include <cmath>
 #include <limits>
 
 #include "AISCommands.h"
@@ -446,6 +447,8 @@ void CMilitaryManager::ReadConfig()
 	const float noMax = std::numeric_limits<float>::max();
 	attackFleeShare = readAttackNum("attack_flee_share", 0.5f, 0.f, 1.f);
 	attackKeepThreat = readAttackNum("attack_keep_threat", 1.34f, 1.f, noMax);  // below 1 = off
+	groupCountPower = readAttackNum("group_count_power", 0.025f, 0.f, 1.f);  // 0 = off
+	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 270.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
 	{
 		const Json::Value& qcont = quotas["contested"];
 		if (!qcont.isNull() && !qcont.isObject()) {
@@ -715,6 +718,34 @@ void CMilitaryManager::ReadConfig()
 	artillery.isNoScout = artyCfg.get("no_scout", false).asBool();
 	artillery.fleeMargin = artyCfg.get("artillery_flee_margin", -1.f).asFloat();
 
+	const Json::Value& formCfg = root["formation"];
+	formation.isEnable = formCfg.get("enable", false).asBool();
+	formation.minUnits = std::max(2, formCfg.get("min_units", 3).asInt());
+	const Json::Value& formSpacing = formCfg["spacing"];
+	formation.spacing = std::max(1.f, formSpacing.get((unsigned)0, 96.f).asFloat());
+	formation.spacingUnits = std::max(1.f, formSpacing.get((unsigned)1, 4.f).asFloat());
+	formation.spacingExp = std::max(0.f, formSpacing.get((unsigned)2, 0.35f).asFloat());
+	formation.gap = std::max(0.f, formCfg.get("gap", 16.f).asFloat());
+	formation.widthRange = std::max(0.f, formCfg.get("width_range", 1.5f).asFloat());
+	formation.leadSec = std::max(0.1f, formCfg.get("lead_sec", 1.5f).asFloat());
+	formation.faceRange = std::max(0.f, formCfg.get("face_range", 2.f).asFloat());
+	formation.splashSpacing = std::max(0.f, formCfg.get("splash_spacing", 1.2f).asFloat());
+	formation.rowOrder.clear();
+	Json::Value rowOrder = formCfg["row_order"];
+	if (rowOrder.isNull()) {
+		for (const char* name : {"riot", "assault", "heavy", "raider", "skirmish", "anti_heavy", "anti_air", "artillery"}) {
+			rowOrder.append(name);
+		}
+	}
+	for (const Json::Value& ro : rowOrder) {
+		auto it = roleNames.find(ro.asString());
+		if (it == roleNames.end()) {
+			circuit->LOG("CONFIG %s: formation.row_order has unknown role '%s'", cfgName.c_str(), ro.asCString());
+			continue;
+		}
+		formation.rowOrder.push_back(it->second.type);
+	}
+
 	const Json::Value& guardCfg = root["guard"];
 	guard.maxWorkers = std::max(0, guardCfg.get("max_workers", 3).asInt());
 	const Json::Value& guardSafe = guardCfg["safe"];
@@ -775,6 +806,15 @@ void CMilitaryManager::ReadConfig()
 	antiHeavy.fleeMargin = ahCfg.get("flee_margin", -1.f).asFloat();
 	antiHeavy.fleeAllyThreat = ahCfg.get("flee_ally_threat", (antiHeavy.fleeMargin >= 0.f) ? 10.f : -1.f).asFloat();
 	antiHeavy.fleeAllyRadius = std::max(0.f, ahCfg.get("flee_ally_radius", 500.f).asFloat());
+
+	const Json::Value& resignCfg = root["resign"];
+	const float resignTime = resignCfg.get("time", -1.f).asFloat();
+	resign.frame = (resignTime < 0.f) ? -1 : int(resignTime * FRAMES_PER_SEC);
+	resign.mexShare = resignCfg.get("mex", 0.1f).asFloat();
+	resign.threatMult = resignCfg.get("threat", 4.f).asFloat();
+
+	const float drownedTime = root["drowned"].get("time", -1.f).asFloat();
+	drownedFrames = (drownedTime < 0.f) ? -1 : int(drownedTime * FRAMES_PER_SEC);
 
 	const Json::Value& porc = root["porcupine"];
 	const Json::Value& defs = porc["unit"];
@@ -895,6 +935,13 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
 		if (attackRally.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
+		}
+
+		if (resign.frame >= 0) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResign, this), FRAMES_PER_SEC * 10, offset + 1);
+		}
+		if (drownedFrames >= 0) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDrowned, this), FRAMES_PER_SEC, offset + 2);
 		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
@@ -1181,7 +1228,7 @@ void CMilitaryManager::EndAttackRally(const char* reason, int frame)
 {
 	CAttackTask* host = GetRallyHost();
 	circuit->LOG("RALLY end (%s): host %.1f, blob %.1f at (%.0f, %.0f)", reason,
-			(host != nullptr) ? host->GetRallyStrength() : 0.f, rallyBlobThreat, rallyBlobPos.x, rallyBlobPos.z);
+			(host != nullptr) ? host->GetRallyStrength() * host->GetCountPowerMod() : 0.f, rallyBlobThreat, rallyBlobPos.x, rallyBlobPos.z);
 	prevRallyHost = host;
 	rallyHost = nullptr;
 	rallyStartFrame = -1;
@@ -1248,7 +1295,7 @@ void CMilitaryManager::UpdateAttackRally()
 		return terrainMgr->CanMoveToPos(hostArea, b->pos);
 	});
 	const CEnemyManager::SEnemyBlob* blob = (it != nearBlobs.end()) ? *it : nullptr;
-	const float strength = host->GetRallyStrength();
+	const float strength = host->GetRallyStrength() * host->GetCountPowerMod();  // with the group size bonus: vs a blob
 	if (blob != nullptr) {
 		rallyBlobFrame = frame;
 		rallyBlobPos = blob->pos;
@@ -1846,8 +1893,10 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 		CCircuitDef* cdef = unit->GetCircuitDef();
 		// Fresh unit of this type (scouts, same scale as ScoutTask::GetSafeThreat), or a starting raid group
 		// of quota.raid[0] power (raiders, as CRaidTask::GetSafeThreat)
+		// with the group size bonus for about that many units of the type (scouts are judged alone, without it)
 		const float power = isRaider ? std::max(cdef->GetPower(), raid.min) : cdef->GetPower();
-		const float safeThreat = std::max(power, THREAT_MIN) * powerMod;
+		const float count = isRaider ? std::ceil(power / std::max(cdef->GetPower(), 1e-3f)) : 0.f;
+		const float safeThreat = std::max(power, THREAT_MIN) * powerMod * (1.f + groupCountPower * count);
 		AIFloat3 startPos = basePos;
 		if ((unit->GetArea() != nullptr) && !terrainMgr->CanMoveToPos(unit->GetArea(), startPos)) {
 			startPos = unit->GetPos(frame);  // our base is not in its area (e.g. ships): flood from where it is
@@ -2616,10 +2665,90 @@ void CMilitaryManager::UpdateFight()
 			task->ClearRelease();  // delete task;
 		} else {
 			task->Update();
+			if (!task->IsDead()) {
+				task->LateUpdate();
+			}
 			++fightIterator;
 			n--;
 		}
 	}
+}
+
+void CMilitaryManager::UpdateResign()
+{
+	const int frame = circuit->GetLastFrame();
+	if (frame < resign.frame) {
+		return;
+	}
+	// 1v1 only: our ally team is just us, and there is a single enemy team
+	if ((circuit->GetAllyTeam()->GetSize() != 1) || (circuit->GetEnemyTeamSize() != 1)) {
+		return;
+	}
+
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const int spotCount = metalMgr->GetSpots().size();
+	if (spotCount == 0) {
+		return;
+	}
+	metalMgr->MarkAllyMexes();
+	const int mexCount = metalMgr->GetMexCount();
+	if (mexCount >= resign.mexShare * spotCount) {
+		return;
+	}
+
+	// Same scale as CEnemyManager::GetMobileThreat: every finished mobile unit (commander and builders included)
+	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
+	float ourThreat = 0.f;
+	for (auto& kv : circuit->GetTeamUnits()) {
+		CCircuitUnit* unit = kv.second;
+		if (unit->GetCircuitDef()->IsMobile() && !unit->GetUnit()->IsBeingBuilt()) {
+			ourThreat += unit->GetCircuitDef()->GetThreat();
+		}
+	}
+	ourThreat *= enemyMgr->GetMobileThreatMod();
+	const float enemyThreat = enemyMgr->GetMobileThreat();
+	if (enemyThreat <= resign.threatMult * ourThreat) {
+		return;
+	}
+
+	circuit->LOG("RESIGN: frame %i | mexes %i / %i spots | enemy mobile threat %.1f vs ours %.1f",
+			frame, mexCount, spotCount, enemyThreat, ourThreat);
+	circuit->Surrender();
+}
+
+/*
+ * "drowned" (behaviour.json): a ground unit that ends up in water deeper than its move type allows (knocked or
+ * pushed off a shore, dropped there, or the seabed terraformed under it) can't move or do anything useful.
+ * After "time" seconds stuck there it self-destructs, so the squads and builder tasks waiting on it are freed.
+ * @see CTerrainManager::IsStuckInWater. The order is sent once: CMD_SELFD toggles the countdown, the AI can't
+ * read it back, and Zero-K gadgets (capture, unit given, mass self-D blocker) toggle it too.
+ */
+void CMilitaryManager::UpdateDrowned()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	const int frame = circuit->GetLastFrame();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	std::unordered_map<int, int> stillStuck;  // drops dead units and the ones that got out
+	for (auto& kv : circuit->GetTeamUnits()) {
+		CCircuitUnit* unit = kv.second;
+		const AIFloat3& pos = unit->GetPos(frame);
+		if (!terrainMgr->IsStuckInWater(unit->GetCircuitDef(), pos) || unit->GetUnit()->IsBeingBuilt()) {
+			continue;
+		}
+		auto it = drownedSince.find(unit->GetId());
+		int since = (it != drownedSince.end()) ? it->second : frame;
+		if ((since >= 0) && (frame - since >= drownedFrames)) {
+			TRY_UNIT(circuit, unit,
+				unit->GetUnit()->SelfDestruct();
+			)
+			circuit->LOG("DROWNED: frame %i | %s (%i) stuck in deep water at (%.0f, %.0f) for %.1f s, self-destruct",
+					frame, unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), pos.x, pos.z,
+					float(frame - since) / FRAMES_PER_SEC);
+			since = -1;
+		}
+		stillStuck.emplace(unit->GetId(), since);
+	}
+	drownedSince.swap(stillStuck);
 }
 
 void CMilitaryManager::AddArmyCost(CCircuitUnit* unit)
