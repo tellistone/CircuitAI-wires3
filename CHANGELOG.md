@@ -36,7 +36,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   ignores units the line steers that keep up (in line, or stragglers at least 10% faster than the line), so a group in
   line no longer stops to gather for them. A holding group (nothing to attack, no front to walk to, no safe route) now
   walks to its quiet spot along a threat-capped path when the spot is more than 256 elmos away, so the line takes it
-  there and it stands in line instead of clumped; it keeps that spot unless another is 20% quieter. Stepping out of an
+  there and it stands in line instead of clumped; it keeps that spot unless another is 20% quieter. A group with no line
+  (line off, too few units, or no room for 2 columns) takes this path too, and ends bunched on its last point as before. Stepping out of an
   attacker's range while holding, and moves where no path was found, stay straight moves. Once the line stands at the end of its
   walk it faces the threat (`face_range`, 0 = off): it reads the enemy threat 8 ways at 1 and 2 x its fire range
   around the block and, if the threat has a clear side, turns the block about its centre to face it, its front row

@@ -191,7 +191,8 @@
 // reverse order (riots at the back, towards the pursuers) and waiting for no one, so they don't run bunched. Where no line of 2 fits (terrain, buildings) the
 // units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; the usual
 // regroup still gathers one that falls far behind. At the end of its walk the group stands in line. Missing block or
-// "enable": false = groups walk as before
+// "enable": false = groups walk as before, except that a holding group still takes a threat-capped path to a quiet spot
+// more than 256 elmos away instead of a straight move (it ends bunched on the path's last point, as it did before)
 "formation": {
 	"enable": true,
 	"min_units": 3,  // land or sea units needed to form a line (off again below 2); aircraft, support units and no_formation units don't take a slot
