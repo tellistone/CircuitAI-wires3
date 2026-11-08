@@ -319,6 +319,8 @@ bool CRaidTask::FindTarget()
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
 	const float maxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
+	// A runner that outranges us is dropped at a lower speed, near base too: we would only catch it inside its range
+	const float outrangeSpeed = SQUARE(highestSpeed * 0.66f / FRAMES_PER_SEC);
 	// Current health, same measure as the escape check; for 4s after an escape demand a 25% margin,
 	// so the group doesn't pick a target at the edge of the danger it just left and bounce back and forth
 	const bool isCautious = (circuit->GetLastFrame() < fleeFrame + FRAMES_PER_SEC * 4);
@@ -388,6 +390,10 @@ bool CRaidTask::FindTarget()
 			continue;
 		}
 		const AIFloat3& eVel = enemy->GetVel();
+		const CCircuitDef* runnerDef = enemy->GetCircuitDef();
+		if ((runnerDef != nullptr) && (runnerDef->GetMaxRange() > highestRange)) {
+			checkSpeed = outrangeSpeed;  // outranges us: no near-base doubling
+		}
 		if ((eVel.SqLength2D() >= checkSpeed) && (eVel.dot2D(pos - ePos) < 0)) {
 			continue;
 		}
