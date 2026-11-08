@@ -49,6 +49,12 @@ struct SFormationOrder {
  *   (the leader counts even while busy), stopping when it is lead_sec behind; but while an enemy is in some member's
  *   LOS (or was in the last 5 s) it doesn't wait for anyone. Each unit walks to its slot a few
  *   seconds ahead, at the anchor's speed plus a catch-up term. At the path's end the line stands in its slots.
+ * - Facing (face_range): once the anchor stands at the path's end, the line becomes a straight segment that points
+ *   at the threat, its rows across it: the threat map read 8 ways on two rings around the block (half and all of
+ *   face_range x the fire range), if it has a clear side, else the way the line came. The block turns about its own
+ *   centre. It turns again only for a clear threat more than 45 degrees off, two reads a second apart, and only where
+ *   its rows can stand that way (walkable); a turn back (> 120 degrees) matches slots afresh. It keeps facing across
+ *   new paths that end within 256 elmos of the same end, and stops on a path elsewhere or when the line switches off.
  * - A unit out of its slot for 12 s straggles: full speed, and the line no longer waits for it (the squad's regroup
  *   gathers it if it falls far behind). While the line walks, one that hasn't moved 64 elmos in 30 s while out of
  *   its slot is released (ISquadTask::ReleaseStuck), the leader too.
@@ -110,18 +116,26 @@ private:
 	bool IsEnemyInSight(int frame);  // an enemy in some member's LOS (or was, a few seconds ago): the line won't wait
 	void ShiftRows(float pace, float gap);
 	void PlaceSlots(int frame, float pace, float leadSec, std::vector<CCircuitUnit*>& outStuck);
+	void UpdateFacing(int frame, const PathInfo& path, float radius);  // start facing at the path's end, or turn
 	void Reset();
 
 	// The centre line: the track of the leader's spot on its path, the spot, then the path ahead; arc 0 at the spot.
 	// False: the leader is more than maxWidth from its path
 	bool BuildLine(const springai::AIFloat3& leaderPos, const PathInfo& path, bool isNewPath, float backLen, float aheadLen);
+	// Facing: the straight line across faceDir, its end (the front row's centre) half the depth ahead of faceCentre
+	void BuildFacingLine(const springai::AIFloat3& leaderPos, float backLen);
+	// Where the threat is around centre (8 ways, rings at radius / 2 and radius); false: none, or no clear side
+	bool ThreatDir(const springai::AIFloat3& centre, float radius, springai::AIFloat3& outDir) const;
+	bool IsBlockFree(const springai::AIFloat3& centre, const springai::AIFloat3& dir) const;  // rows can stand facing dir
+	void Face(const springai::AIFloat3& dir);  // turn the block; a turn back (> 120 degrees) matches slots afresh
 	void UpdateTrack(const springai::AIFloat3& pos, float keepLen);
 	springai::AIFloat3 PointAt(float arc) const;
 	springai::AIFloat3 AxisAt(float arc) const;  // unit vector across the line (smoothed)
 	float LagAt(float arc, const springai::AIFloat3& pos) const;  // how far pos is behind the point at arc, along the line
 	float Project(const springai::AIFloat3& pos, float minArc, float* outSide = nullptr) const;
-	// Free distance from p along dir, up to maxDist (see the class comment)
-	float FreeDist(const springai::AIFloat3& p, const springai::AIFloat3& dir, float maxDist, int mobileTypeId) const;
+	// Free distance from p along dir, up to maxDist (see the class comment); isSafe: and no more threat than at p
+	float FreeDist(const springai::AIFloat3& p, const springai::AIFloat3& dir, float maxDist, int mobileTypeId,
+			bool isSafe = true) const;
 	// The point x beside the line at arc, no further out than the free distance on that side
 	springai::AIFloat3 SlotAt(float arc, float x, int mobileTypeId) const;
 
@@ -137,6 +151,12 @@ private:
 
 	std::deque<springai::AIFloat3> track;  // the leader's last spots on its path, oldest first
 	springai::AIFloat3 heading = ZeroVector;  // where the line headed at the last solve (Heading), for turn-backs
+	bool isFacing = false;  // standing at the path's end, the line is the straight segment across faceDir
+	springai::AIFloat3 faceCentre;  // the block's centre when it began facing (it turns about it)
+	springai::AIFloat3 faceEnd;  // the path's end then: a new path ending near it keeps facing
+	springai::AIFloat3 faceDir;  // unit vector, towards the threat
+	int faceFrame = 0;  // last facing evaluation
+	int faceVotes = 0;  // evaluations in a row that found a clear threat far off faceDir
 	F3Vec line;  // BuildLine
 	std::vector<float> arcs;
 	bool isLineToEnd = false;  // the line reaches the path's end

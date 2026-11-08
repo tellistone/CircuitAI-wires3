@@ -123,6 +123,7 @@ public:
 		float gap;  // elmos between footprints, and clearance at the line's ends
 		float widthRange;  // max width = this x the squad's fire range
 		float leadSec;  // the line stops when a unit is this many seconds behind its slot
+		float faceRange;  // standing at its path's end, the line faces threat within this x the fire range; 0: off
 		std::vector<CCircuitDef::RoleT> rowOrder;  // main roles front to back (unit types may override: formation_row)
 	};
 	const SFormationCfg& GetFormationCfg() const { return formation; }

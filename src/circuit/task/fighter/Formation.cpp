@@ -46,6 +46,11 @@ constexpr float THREAT_TOLERANCE = 1.5f;  // the threat map's cells differ up to
 constexpr float THREAT_EPS = 1e-3f;
 constexpr float TURN_BACK_COS = -0.5f;  // a new path that turns back by more than 120 degrees starts the rows afresh
 constexpr float TURN_LOOK = 256.f;  // the path's heading: towards its point this far along
+constexpr int FACE_EVAL_FRAMES = FRAMES_PER_SEC;  // facing: the threat around is read this often
+constexpr int FACE_VOTES = 2;  // turn only for a threat that is far off this many reads in a row
+constexpr float FACE_TURN_COS = 0.7071f;  // far off: more than 45 degrees
+constexpr float FACE_CLEAR = 0.3f;  // a clear side: the threat's vector sum is at least this share of all of it
+constexpr float FACE_KEEP = 256.f;  // a new path that ends this near the last one keeps the line facing
 constexpr size_t PATH_SEARCH = 32;  // path segments searched for the leader's spot, from the last one
 constexpr int SIGHT_HOLD_FRAMES = FRAMES_PER_SEC * 5;  // an enemy seen this recently: the line doesn't wait
 constexpr int SWAP_PASSES = 8;  // SwapPlaces: passes of place swaps at most
@@ -56,6 +61,12 @@ float ProjectOnSegment(const AIFloat3& p, const AIFloat3& a, const AIFloat3& b)
 	const float3 ab = b - a;
 	const float sqLen = ab.SqLength2D();
 	return (sqLen < 1e-3f) ? 0.f : utils::clamp((p - a).dot2D(ab) / sqLen, 0.f, 1.f);
+}
+
+// b turned more than 120 degrees from a (either zero: no)
+bool IsTurnBack(const AIFloat3& a, const AIFloat3& b)
+{
+	return a.dot2D(b) < TURN_BACK_COS * a.Length2D() * b.Length2D();
 }
 
 // Where the path heads from spot on segment seg: towards its point TURN_LOOK further along (zero at the path's end)
@@ -121,14 +132,26 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	const float baseSpacing = cfg.spacing * std::pow(cfg.spacingUnits / std::max<float>(count, cfg.spacingUnits), cfg.spacingExp);
 	maxWidth = std::min(std::max(cfg.widthRange * task->GetFormationRange(), 3.f * baseSpacing), MAX_WIDTH);
 	const float backLen = depth + maxWidth / 2 + baseSpacing;  // rows behind the leader, and smoothing
-	if (!BuildLine(leader->GetPos(frame), *path, isNewPath, backLen, depth + maxWidth + leaderM->maxSpeed * LINE_AHEAD_SEC)
-		|| (count < (isOn ? 2 : cfg.minUnits)))
-	{
+	// Facing stops on a path that ends elsewhere, or once the line is off
+	if (isFacing && (!isOn || (path->posPath.back().SqDistance2D(faceEnd) > SQUARE(FACE_KEEP)))) {
+		isFacing = false;
+		track.clear();  // the rows stood across faceDir, not along the track
+		isDirty = true;  // and walk a new way: match units to slots afresh
+	}
+	bool isLine = true;
+	if (isFacing) {
+		BuildFacingLine(leader->GetPos(frame), backLen);
+	} else {
+		isLine = BuildLine(leader->GetPos(frame), *path, isNewPath, backLen,
+				depth + maxWidth + leaderM->maxSpeed * LINE_AHEAD_SEC);
+	}
+	if (!isLine || (count < (isOn ? 2 : cfg.minUnits))) {
 		isOn = false;  // the leader is far off its path (e.g. a new leader that just merged in), or too few units
 		return;
 	}
 	MeasureMembers(frame, path, supportSpeed);
-	const float frontArc = isOn ? Project(anchorPos, 0.f) : 0.f;
+	// Facing: the anchor stands at the line's end
+	const float frontArc = !isOn ? 0.f : (isFacing ? arcs.back() : Project(anchorPos, 0.f));
 	const int cols = FitColumns(frame, frontArc, count, baseSpacing, cfg.gap);
 	if (cols < 2) {
 		isOn = false;  // no line fits: follow the path as before
@@ -150,6 +173,7 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	const float pace = MoveAnchor(frame, isSwitchOn, frontArc, dt, cfg.leadSec);
 	ShiftRows(pace, cfg.gap);
 	PlaceSlots(frame, pace, cfg.leadSec, outStuck);
+	UpdateFacing(frame, *path, cfg.faceRange * task->GetFormationRange());
 }
 
 float CFormation::AddMembers(int frame)
@@ -465,9 +489,11 @@ void CFormation::PlaceSlots(int frame, float pace, float leadSec, std::vector<CC
 			targetArc = std::max(targetArc, slotArc - slotLag);  // level with the unit
 		}
 		m.target = SlotAt(targetArc, x, mobileId);
-		// Speed: the pace plus catching up along the line, within MIN_SPEED and MAX_CATCH_UP; stragglers at full speed
+		// Speed: the pace plus catching up along the line, within MIN_SPEED and MAX_CATCH_UP; stragglers at full speed.
+		// Standing, by the way left to the slot instead: a unit ahead of it after the line turned isn't held to MIN_SPEED
 		const float maxSpeed = std::max(std::min(MAX_CATCH_UP * slowest, m.maxSpeed), minSpeed);
-		m.speed = m.isStraggler ? NO_SPEED_LIMIT : utils::clamp(pace + CATCH_UP * slotLag, minSpeed, maxSpeed);
+		const float behind = isWalking ? slotLag : m.pos.distance2D(m.target);
+		m.speed = m.isStraggler ? NO_SPEED_LIMIT : utils::clamp(pace + CATCH_UP * behind, minSpeed, maxSpeed);
 	}
 }
 
@@ -509,6 +535,7 @@ void CFormation::Reset()
 	leaderM = nullptr;
 	track.clear();
 	heading = ZeroVector;  // sightFrame stays: a line forming right after a fight doesn't wait either
+	isFacing = false;
 	solvedPath = nullptr;
 	heldWidth = width = depth = 0.f;
 	widenFrame = -WIDEN_FRAMES;
@@ -556,9 +583,7 @@ bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, bool
 	// is dropped (the rows behind are laid straight behind the new heading) and units are matched to slots afresh.
 	// Along one path the heading turns gradually between solves, even round a sharp corner; a reversal jumps
 	const float3 ahead = Heading(pts, seg, spot);
-	if (isNewPath && (track.size() > 1)
-		&& (ahead.dot2D(heading) < TURN_BACK_COS * ahead.Length2D() * heading.Length2D()))
-	{
+	if (isNewPath && (track.size() > 1) && IsTurnBack(heading, ahead)) {
 		track.clear();
 		isDirty = true;
 	}
@@ -617,6 +642,97 @@ bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, bool
 	return true;
 }
 
+void CFormation::BuildFacingLine(const AIFloat3& leaderPos, float backLen)
+{
+	// Arc 0 level with the leader (not past the front), as on a path
+	const AIFloat3 front = faceCentre + faceDir * (depth / 2);
+	const float frontArc = std::max((front - leaderPos).dot2D(faceDir), 0.f);
+	const float len = backLen + frontArc;
+	line.assign({front - faceDir * len, front});
+	arcs.assign({frontArc - len, frontArc});
+	isLineToEnd = true;
+}
+
+void CFormation::UpdateFacing(int frame, const PathInfo& path, float radius)
+{
+	if ((radius <= 0.f) || (frame < faceFrame + FACE_EVAL_FRAMES)) {
+		return;
+	}
+	if (isFacing) {
+		// Turn for a clear threat more than 45 degrees off, FACE_VOTES reads running, where the rows fit that way
+		faceFrame = frame;
+		AIFloat3 dir;
+		if (!ThreatDir(faceCentre, radius, dir) || (dir.dot2D(faceDir) >= FACE_TURN_COS)) {
+			faceVotes = 0;
+		} else if ((++faceVotes >= FACE_VOTES) && IsBlockFree(faceCentre, dir)) {
+			faceVotes = 0;
+			Face(dir);
+		}
+		return;
+	}
+	if (!isLineToEnd || (anchorArc < arcs.back()) || path.posPath.empty()) {
+		return;  // not standing at the path's end yet
+	}
+	// Standing at the path's end: face the way the line came (over its last TURN_LOOK, not the last jog of the path),
+	// or a clear threat where the rows fit
+	float3 arrival = PointAt(arcs.back()) - PointAt(arcs.back() - TURN_LOOK);
+	arrival.y = 0.f;
+	if (arrival.SqLength2D() < 1.f) {
+		return;
+	}
+	faceDir = arrival.Normalize2D();
+	faceCentre = anchorPos - faceDir * (depth / 2);
+	faceEnd = path.posPath.back();
+	faceFrame = frame;
+	faceVotes = 0;
+	isFacing = true;
+	AIFloat3 dir;
+	Face((ThreatDir(faceCentre, radius, dir) && IsBlockFree(faceCentre, dir)) ? dir : faceDir);
+}
+
+bool CFormation::ThreatDir(const AIFloat3& centre, float radius, AIFloat3& outDir) const
+{
+	// The threat map: every armed enemy that can hit the leader's type (seen, on radar or last seen), by its strength
+	CThreatMap* threatMap = task->GetManager()->GetCircuit()->GetThreatMap();
+	radius = std::max(radius, float(DEFAULT_SLACK * 4));
+	float3 sum = ZeroVector;
+	float total = 0.f;
+	for (int a = 0; a < 8; ++a) {
+		const float angle = a * static_cast<float>(M_PI) / 4.f;
+		const AIFloat3 dir(std::cos(angle), 0.f, std::sin(angle));
+		for (float r : {radius / 2, radius}) {
+			AIFloat3 p = centre + dir * r;
+			CTerrainManager::CorrectPosition(p);
+			const float threat = threatMap->GetThreatAt(leader, p);
+			sum += dir * threat;
+			total += threat;
+		}
+	}
+	const float len = sum.Length2D();
+	if ((total <= THREAT_EPS) || (len < FACE_CLEAR * total)) {
+		return false;
+	}
+	outDir = AIFloat3(sum.x / len, 0.f, sum.z / len);
+	return true;
+}
+
+bool CFormation::IsBlockFree(const AIFloat3& centre, const AIFloat3& dir) const
+{
+	// Half the depth walkable both ways from the centre; the width is fitted as ever. Not the threat: facing a threat
+	// takes the front row half the depth towards it
+	const int mobileId = leader->GetCircuitDef()->GetMobileId();
+	const float half = depth / 2;
+	return (FreeDist(centre, dir, half, mobileId, false) >= half) && (FreeDist(centre, -dir, half, mobileId, false) >= half);
+}
+
+void CFormation::Face(const AIFloat3& dir)
+{
+	if (IsTurnBack(faceDir, dir)) {
+		isDirty = true;  // the rows swap ends: match units to slots afresh (turned less, the block turns as it is)
+	}
+	faceDir = dir;
+}
+
 AIFloat3 CFormation::PointAt(float arc) const
 {
 	if (arc <= arcs.front()) {
@@ -672,22 +788,22 @@ float CFormation::Project(const AIFloat3& pos, float minArc, float* outSide) con
 	return std::max(bestArc, minArc);
 }
 
-float CFormation::FreeDist(const AIFloat3& p, const AIFloat3& dir, float maxDist, int mobileTypeId) const
+float CFormation::FreeDist(const AIFloat3& p, const AIFloat3& dir, float maxDist, int mobileTypeId, bool isSafe) const
 {
-	// Free: walkable, and no more than THREAT_TOLERANCE x the enemy threat at p (none where p has none). The last step
-	// may be short, so slots aren't rounded to STEP
+	// Free: walkable, and (isSafe) no more than THREAT_TOLERANCE x the enemy threat at p (none where p has none). The
+	// last step may be short, so slots aren't rounded to STEP
 	CCircuitAI* circuit = task->GetManager()->GetCircuit();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	AIFloat3 ref = p;
 	CTerrainManager::CorrectPosition(ref);  // the line's straight start can reach past the map's edge
-	const float maxThreat = THREAT_TOLERANCE * threatMap->GetThreatAt(leader, ref) + THREAT_EPS;
+	const float maxThreat = isSafe ? (THREAT_TOLERANCE * threatMap->GetThreatAt(leader, ref) + THREAT_EPS) : 0.f;
 	float dist = 0.f;
 	while (dist < maxDist) {
 		const float next = std::min(dist + STEP, maxDist);
 		const AIFloat3 q = p + dir * next;
 		if (!pathfinder->IsMovable(mobileTypeId, q)  // a movable spot is inside the map
-			|| (threatMap->GetThreatAt(leader, q) > maxThreat))
+			|| (isSafe && (threatMap->GetThreatAt(leader, q) > maxThreat)))
 		{
 			break;
 		}
@@ -711,8 +827,9 @@ AIFloat3 CFormation::SlotAt(float arc, float x, int mobileTypeId) const
 void CFormation::Log() const
 {
 	CCircuitAI* circuit = task->GetManager()->GetCircuit();
-	circuit->LOG("formation: %s | units: %i | rows: %i | columns: %i | free width: %.0f | spacing: %.0f",
-			isOn ? "on" : "off", (int)members.size(), (int)rows.size(), matchCols, heldWidth, spacing);
+	circuit->LOG("formation: %s%s | units: %i | rows: %i | columns: %i | free width: %.0f | spacing: %.0f",
+			isOn ? "on" : "off", isFacing ? " facing" : "", (int)members.size(), (int)rows.size(), matchCols, heldWidth,
+			spacing);
 	if (!isOn) {
 		return;
 	}
