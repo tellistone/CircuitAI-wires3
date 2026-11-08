@@ -531,7 +531,7 @@ bool CAntiHeavyTask::FindTarget()
 	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
 	STerrainMapArea* area = leader->GetArea();
 	CCircuitDef* cdef = leader->GetCircuitDef();
-	const float maxPower = attackPower * powerMod;  // divided by the thr_mod.distance curve at each enemy's spot
+	const float maxPower = attackPower * powerMod * GetCountPowerMod();  // divided by the thr_mod.distance curve at each enemy's spot
 	const float weaponRange = cdef->GetMaxRange();
 	const float engageRange = std::max(highestRange, threatMap->GetSquareSize() * 2.0f);  // old: LOS / jump range
 	// Stand-off routing goes with the route cap; without it (path_threat < 0, aircraft) the old goals: the heavies

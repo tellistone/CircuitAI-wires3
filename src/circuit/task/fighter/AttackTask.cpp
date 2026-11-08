@@ -137,6 +137,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, pickSqDist(0.f)
 		, lastRoute({nullptr, -RgtVector, -1, 0, ROUTE_REUSE_FRAMES, AIFloat3(-RgtVector), -1, 0.f, -1})
 		, isHolding(false)
+		, holdPos(-RgtVector)
 		, stepFrame(0)
 		, hitPos(-RgtVector)
 		, hitRadius(0.f)
@@ -444,9 +445,12 @@ bool CAttackTask::EngageInRange(int frame, bool isWalking)
  * Group strength and the threat it tolerates
  */
 
-float CAttackTask::GetSafeThreat() const
+float CAttackTask::GetJointSafeThreat(const CAttackTask* squad) const
 {
-	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
+	// Both groups' safe threat with the group size bonus of the joint count, not each group's own
+	const float own = GetSafeThreat() / GetCountPowerMod();
+	const float other = squad->GetSafeThreat() / squad->GetCountPowerMod();
+	return (own + other) * GetCountPowerMod(units.size() + squad->GetAssignees().size());
 }
 
 float CAttackTask::GetPickStrength(int frame) const
@@ -580,7 +584,7 @@ bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 		return false;
 	}
 	const float own = GetSafeThreat();
-	const float together = own + squad->GetSafeThreat();
+	const float together = GetJointSafeThreat(squad);
 	const float sqSupport = SQUARE(cfg.supportRadius);
 	return IsLineSafe(from, to, std::numeric_limits<float>::max(), [&](const AIFloat3& p) {
 		return GetAllowedThreatAt(p, (p.SqDistance2D(to) < sqSupport) ? together : own);
@@ -1121,6 +1125,12 @@ bool CAttackTask::UpdateEscape(int frame)
 	return false;
 }
 
+bool CAttackTask::IsFormationFlee(int frame) const
+{
+	// Fleeing, or cornered and moving to a quieter spot: the line runs too, so light units don't bunch for splash
+	return (frame < fleeFrame) || utils::is_valid(corneredPos);
+}
+
 bool CAttackTask::IsHoldingGround(int frame) const
 {
 	// Only inside the base defence radius (where thr_mod.base_bonus applies): out in the field the enemy
@@ -1184,7 +1194,7 @@ AIFloat3 CAttackTask::FindFleeDest(int frame) const
 	CAttackTask* squad = militaryMgr->FindReinforceSquad(leader, attackPower, this, false);
 	if (squad != nullptr) {
 		const AIFloat3& squadPos = squad->GetLeaderPos(frame);
-		const float together = GetSafeThreat() + squad->GetSafeThreat();
+		const float together = GetJointSafeThreat(squad);
 		if (threatMap->GetThreatAt(leader, squadPos) < GetAllowedThreatAt(squadPos, together)) {
 			return squadPos;
 		}
@@ -1349,7 +1359,11 @@ void CAttackTask::FindTarget()
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
 	const float weaponRange = cdef->GetMaxRange();
-	const float sqMaxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
+	const float sqMaxSpeed = SQUARE(highestSpeed * CHASE_SPEED_MOD / FRAMES_PER_SEC);
+	// A runner that outranges us is dropped at a lower speed: we would only catch it inside its range.
+	// Our range: the group's weighted median weapon range (as IsSiegeTarget), not highestRange (that includes LOS)
+	const float sqOutrangeSpeed = SQUARE(highestSpeed * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
+	const float groundRange = std::max(fireRangeLand, fireRangeWater);
 	const float sqHighestRange = SQUARE(highestRange);
 	// Divided by the thr_mod.distance curve at each judged spot
 	const float maxPower = GetPickStrength(frame);
@@ -1443,6 +1457,9 @@ void CAttackTask::FindTarget()
 		AIFloat3 rangePos;
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
+	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop)
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1453,11 +1470,10 @@ void CAttackTask::FindTarget()
 		{
 			continue;
 		}
-		const AIFloat3& ePos = enemy->GetPos();
-		const AIFloat3& eVel = enemy->GetVel();
-		if ((eVel.SqLength2D() >= sqMaxSpeed) && (eVel.dot2D(pos - ePos) < 0)) {
-			continue;  // runs away faster than we chase
+		if (IsRunningAway(enemy, pos, sqMaxSpeed, sqOutrangeSpeed, groundRange)) {
+			continue;  // runs away faster than we chase (or nearly as fast, and outranges us)
 		}
+		const AIFloat3& ePos = enemy->GetPos();
 		if ((threatMap->GetThreatAt(ePos) >= GetAllowedThreatAt(ePos, powerFor(enemy), refFor(enemy)))
 			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange)
 			|| !isTargetableHeight(enemy))
@@ -1474,6 +1490,12 @@ void CAttackTask::FindTarget()
 		// shift its rank
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
+		// quota.attack_own_ground_time: ground our buildings, land builders or static defences cover (enemy influence
+		// ignored; armed mobiles don't count, else a group would license its own surroundings and creep forward).
+		// A target already within range is always fair game, so fights at the edge aren't dropped
+		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && (inflMap->GetAllyDefendInflAt(c.rangePos) <= INFL_EPS)) {
+			continue;
+		}
 		c.rawKey = sqOEDist * scale;
 		c.key = c.rawKey * SQUARE(distModFor(enemy));
 		if (IsSiegeTarget(enemy, frame)) {  // quota.attack_static_cells.siege_bonus
@@ -2026,6 +2048,13 @@ bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 	return pos.SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
 }
 
+bool CAttackTask::IsGuardPullable() const
+{
+	// A squad of 2+ would get weaker (maybe below quota.attack); a lone unit's task just ends when it leaves.
+	// The rally host is left alone too: every compatible group is walking to it
+	return (units.size() == 1) && !IsFighting() && (static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this);
+}
+
 bool CAttackTask::IsFighting() const
 {
 	// Engaged and some unit has the target within its own weapon range. ENGAGE alone starts at highestRange,
@@ -2060,12 +2089,51 @@ void CAttackTask::Engage(int frame)
 	}
 }
 
-void CAttackTask::HoldPosition()
+void CAttackTask::HoldPosition(bool isWalk)
 {
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
 	AIFloat3 bestPos;
-	FindQuietSpot(leader->GetPos(manager->GetCircuit()->GetLastFrame()), bestPos);
-	MoveGroupTo(bestPos);
+	const float bestThreat = FindQuietSpot(pos, bestPos);
 	isHolding = true;
+	if (isWalk && utils::is_valid(holdPos)) {
+		if (!IsQueryReady(leader)) {
+			return;  // its path is on the way
+		}
+		// Walking to the spot, or standing there in line: keep it unless the new one is clearly (20%) quieter
+		ITravelAction* travelAct = leader->GetTravelAct();
+		if (travelAct->IsActive() && (travelAct->GetPath() == pPath) && !pPath->posPath.empty()
+			&& (pPath->posPath.back().SqDistance2D(holdPos) < SQUARE(DEFAULT_SLACK * 4))
+			&& (bestThreat >= circuit->GetThreatMap()->GetThreatAt(leader, holdPos) * 0.8f))
+		{
+			return;
+		}
+	}
+	holdPos = -RgtVector;
+	if (!isWalk || (bestPos.SqDistance2D(pos) < SQUARE(DEFAULT_SLACK * 4))) {
+		MoveGroupTo(bestPos);
+		return;
+	}
+	holdPos = bestPos;
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			leader, circuit->GetThreatMap(), circuit->GetLastFrame(), pos, bestPos, pathfinder->GetSquareSize(), nullptr,
+			GetPathThreatCap(pos, {bestPos}));
+	SetRouteThreat(query.get(), AttackRoute::FRONT);
+	RunRoute(query, [this](const IPathQuery* query) {
+		this->ApplyHoldPath(static_cast<const CQueryPathSingle*>(query));
+	});
+}
+
+void CAttackTask::ApplyHoldPath(const CQueryPathSingle* query)
+{
+	pPath = query->GetPathInfo();
+	if (pPath->posPath.size() > 2) {
+		ActivePath();  // the line walks it, and stands in line at its end
+		return;
+	}
+	MoveGroupTo(holdPos);  // no path (or a trivial one): straight there, as before
+	holdPos = -RgtVector;
 }
 
 float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
@@ -2172,7 +2240,7 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
 	}
 
-	if (units.find(unit) != units.end()) {
+	if ((units.find(unit) != units.end()) && !IsIdleInLine(unit)) {
 		Start(unit);  // NOTE: Not sure if it has effect
 	}
 }
@@ -2216,7 +2284,7 @@ void CAttackTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 		hitRadius = std::max(highestRange, 300.f);
 		hitFrame = frame;
 	}
-	HoldPosition();
+	HoldPosition(false);  // hit: away at once, no waiting for a path
 }
 
 } // namespace circuit

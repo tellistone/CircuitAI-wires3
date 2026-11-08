@@ -78,6 +78,10 @@ public:
 
 	void RunQuery(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);
 
+	// Can a unit of this mobile type (CCircuitDef::GetMobileId; < 0: aircraft) stand at pos? Its path square is
+	// passable for the type and not blocked by buildings (the current move array; main thread only)
+	bool IsMovable(int mobileTypeId, const springai::AIFloat3& pos) const;
+
 	int GetSquareSize() const { return squareSize; }
 	int GetPathMapXSize() const { return pathMapXSize; }
 	int GetPathMapYSize() const { return pathMapYSize; }
