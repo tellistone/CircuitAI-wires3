@@ -445,11 +445,6 @@ bool CAttackTask::EngageInRange(int frame, bool isWalking)
  * Group strength and the threat it tolerates
  */
 
-float CAttackTask::GetSafeThreat() const
-{
-	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod * GetCountPowerMod();  // the thr_mod.distance curve is applied per judged spot
-}
-
 float CAttackTask::GetJointSafeThreat(const CAttackTask* squad) const
 {
 	// Both groups' safe threat with the group size bonus of the joint count, not each group's own

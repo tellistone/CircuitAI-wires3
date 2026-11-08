@@ -45,6 +45,7 @@
 #include "spring/SpringCallback.h"
 #include "spring/SpringMap.h"
 
+#include <cmath>
 #include <limits>
 
 #include "AISCommands.h"
@@ -1227,7 +1228,7 @@ void CMilitaryManager::EndAttackRally(const char* reason, int frame)
 {
 	CAttackTask* host = GetRallyHost();
 	circuit->LOG("RALLY end (%s): host %.1f, blob %.1f at (%.0f, %.0f)", reason,
-			(host != nullptr) ? host->GetRallyStrength() : 0.f, rallyBlobThreat, rallyBlobPos.x, rallyBlobPos.z);
+			(host != nullptr) ? host->GetRallyStrength() * host->GetCountPowerMod() : 0.f, rallyBlobThreat, rallyBlobPos.x, rallyBlobPos.z);
 	prevRallyHost = host;
 	rallyHost = nullptr;
 	rallyStartFrame = -1;
@@ -1294,7 +1295,7 @@ void CMilitaryManager::UpdateAttackRally()
 		return terrainMgr->CanMoveToPos(hostArea, b->pos);
 	});
 	const CEnemyManager::SEnemyBlob* blob = (it != nearBlobs.end()) ? *it : nullptr;
-	const float strength = host->GetRallyStrength();
+	const float strength = host->GetRallyStrength() * host->GetCountPowerMod();  // with the group size bonus: vs a blob
 	if (blob != nullptr) {
 		rallyBlobFrame = frame;
 		rallyBlobPos = blob->pos;
@@ -1892,8 +1893,10 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 		CCircuitDef* cdef = unit->GetCircuitDef();
 		// Fresh unit of this type (scouts, same scale as ScoutTask::GetSafeThreat), or a starting raid group
 		// of quota.raid[0] power (raiders, as CRaidTask::GetSafeThreat)
+		// with the group size bonus for about that many units of the type (scouts are judged alone, without it)
 		const float power = isRaider ? std::max(cdef->GetPower(), raid.min) : cdef->GetPower();
-		const float safeThreat = std::max(power, THREAT_MIN) * powerMod;
+		const float count = isRaider ? std::ceil(power / std::max(cdef->GetPower(), 1e-3f)) : 0.f;
+		const float safeThreat = std::max(power, THREAT_MIN) * powerMod * (1.f + groupCountPower * count);
 		AIFloat3 startPos = basePos;
 		if ((unit->GetArea() != nullptr) && !terrainMgr->CanMoveToPos(unit->GetArea(), startPos)) {
 			startPos = unit->GetPos(frame);  // our base is not in its area (e.g. ships): flood from where it is

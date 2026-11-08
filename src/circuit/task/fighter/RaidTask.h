@@ -40,7 +40,6 @@ private:
 	void ApplyRaidPath(const CQueryPathSingle* query);
 
 	// Escape: current group strength vs threat where the units are and just ahead on the path
-	float GetSafeThreat() const;
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
 	// Firing spots (IFighterTask::Attack) skip spots the escape would call dangerous
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
