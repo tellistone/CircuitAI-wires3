@@ -13,6 +13,7 @@
 
 #include "UnitDef.h"
 
+#include <algorithm>
 #include <unordered_set>
 #include <array>
 
@@ -207,6 +208,9 @@ public:
 	float GetAoe() const { return aoe; }
 	float GetPower() const { return power; }
 	float GetThreat() const { return threat; }
+	// How much one enemy of this type counts in the threat map's enemy unit count (CThreatMap squad layers):
+	// its thr_mod, at most 1, so types the config barely fears (artillery, bombers) barely count
+	float GetCountWeight() const { return std::min(std::max(thrMod, 0.f), 1.f); }
 	float GetMinRange() const { return minRange; }
 	float GetMaxRange(RangeType type) const { return maxRange[static_cast<RangeT>(type)]; }
 	float GetMaxRange() const { return maxRange[static_cast<RangeT>(maxRangeType)]; }
@@ -220,7 +224,7 @@ public:
 	int GetNoChaseCategory() const { return noChaseCategory; }
 
 	void ModPower(float mod) { pwrDmg *= mod; power *= mod; }
-	void ModThreat(float mod) { thrDmg *= mod; threat *= mod; }
+	void ModThreat(float mod) { thrDmg *= mod; threat *= mod; thrMod *= mod; }
 	void SetThreatRange(ThreatType type, int range) { threatRange[static_cast<ThreatT>(type)] = range; }
 	void SetFireState(FireType ft) { fireState = ft; }
 	void SetReloadTime(int time) { reloadTime = time; }
@@ -342,6 +346,7 @@ private:
 	springai::WeaponMount* weaponMount;
 	float pwrDmg;  // ally damage
 	float thrDmg;  // enemy damage
+	float thrMod;  // product of the threat multipliers (thr_mod)
 	float aoe;  // radius
 	float power;  // ally max threat
 	float threat;  // enemy max threat

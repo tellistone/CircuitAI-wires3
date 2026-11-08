@@ -15,6 +15,7 @@
 #include "util/Utils.h"
 #include "json/json.h"
 
+#include "Log.h"
 #ifdef DEBUG_VIS
 #include "Lua.h"
 #endif
@@ -32,7 +33,12 @@ using namespace springai;
 
 CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 		: manager(manager)
+		, maxCount(0.f)
+		, countLogFrame(0)
 		, pThreatData(&threatData0)
+		, drawAirSquad(nullptr)
+		, drawSurfSquad(nullptr)
+		, drawAmphSquad(nullptr)
 		, isUpdating(false)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -68,7 +74,34 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 	drawCloakThreat = threatData1.cloakThreat.data();
 	drawShieldArray = threatData1.shield.data();
 
-	const Json::Value& slack = circuit->GetSetupManager()->GetConfig()["quota"]["slack_mod"];
+	const Json::Value& quota = circuit->GetSetupManager()->GetConfig()["quota"];
+	// One value for both sides of every squad comparison: allied AIs share this map, whatever their own configs say
+	constexpr float defCountPower = 0.025f;
+	const Json::Value& qcount = quota.get("group_count_power", defCountPower);
+	if (qcount.isNumeric()) {
+		countPower = utils::clamp(qcount.asFloat(), 0.f, MAX_COUNT_POWER);  // out of range: CMilitaryManager logs it
+	} else {
+		circuit->LOG("CONFIG %s: quota.group_count_power must be a number 0..%g, using %g",
+				circuit->GetSetupManager()->GetConfigName().c_str(), MAX_COUNT_POWER, defCountPower);
+		countPower = defCountPower;
+	}
+	isCounting = (countPower > 0.f);
+	if (isCounting) {
+		for (SThreatData* data : {&threatData0, &threatData1}) {
+			data->airSquad.resize(mapSize, THREAT_BASE);
+			data->surfSquad.resize(mapSize, THREAT_BASE);
+			data->amphSquad.resize(mapSize, THREAT_BASE);
+		}
+		airSquad = threatData0.airSquad.data();
+		surfSquad = threatData0.surfSquad.data();
+		amphSquad = threatData0.amphSquad.data();
+	} else {
+		airSquad = airThreat;
+		surfSquad = surfThreat;
+		amphSquad = amphThreat;
+	}
+
+	const Json::Value& slack = quota["slack_mod"];
 	slackMod.allMod = slack.get("all", 1.f).asFloat();
 	slackMod.staticMod = slack.get("static", 1.f).asFloat();
 	const Json::Value& speedSlack = slack["speed"];
@@ -199,14 +232,7 @@ float CThreatMap::GetAllThreatAt(const AIFloat3& position) const
 void CThreatMap::SetThreatType(CCircuitUnit* unit)
 {
 	assert(unit != nullptr);
-	if (unit->GetCircuitDef()->IsAbleToFly()) {
-		threatArray = airThreat;
-//	} else if (unit->GetPos(circuit->GetLastFrame()).y < -SQUARE_SIZE * 5) {
-	} else if (unit->GetCircuitDef()->IsAmphibious()) {
-		threatArray = amphThreat;
-	} else {
-		threatArray = surfThreat;
-	}
+	threatArray = GetLayer(unit, false);
 }
 
 float CThreatMap::GetThreatAt(const AIFloat3& position) const
@@ -225,14 +251,48 @@ float CThreatMap::GetThreatAt(CCircuitUnit* unit, const AIFloat3& position) cons
 		   (position.z >= 0) && (position.z < CTerrainManager::GetTerrainHeight()));
 	int x, z;
 	PosToXZ(position, x, z);
-	if (unit->GetCircuitDef()->IsAbleToFly()) {
-		return airThreat[z * width + x] - THREAT_BASE;
+	return GetLayer(unit, false)[z * width + x] - THREAT_BASE;
+}
+
+float CThreatMap::GetSquadThreatAt(CCircuitUnit* unit, const AIFloat3& position) const
+{
+	assert(unit != nullptr);
+	assert((position.x >= 0) && (position.x < CTerrainManager::GetTerrainWidth()) &&
+		   (position.z >= 0) && (position.z < CTerrainManager::GetTerrainHeight()));
+	int x, z;
+	PosToXZ(position, x, z);
+	return GetLayer(unit, true)[z * width + x] - THREAT_BASE;
+}
+
+float CThreatMap::GetSquadThreatExcl(CCircuitUnit* unit, const AIFloat3& position, float exclThreat) const
+{
+	assert(unit != nullptr);
+	assert((position.x >= 0) && (position.x < CTerrainManager::GetTerrainWidth()) &&
+		   (position.z >= 0) && (position.z < CTerrainManager::GetTerrainHeight()));
+	int x, z;
+	PosToXZ(position, x, z);
+	const int index = z * width + x;
+	const float threat = GetLayer(unit, false)[index] - THREAT_BASE;
+	if (threat <= exclThreat) {
+		return 0.f;  // nothing else there (also: no threat at all)
+	}
+	// The squad layer is threat x (1 + k x count): take the enemy's threat off and keep the count's factor
+	// (the enemy stays in the count: at most k too much)
+	const float rest = threat - exclThreat;
+	return isCounting ? rest * (GetLayer(unit, true)[index] - THREAT_BASE) / threat : rest;
+}
+
+float* CThreatMap::GetLayer(CCircuitUnit* unit, bool isSquad) const
+{
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	if (cdef->IsAbleToFly()) {
+		return isSquad ? airSquad : airThreat;
 	}
 //	if (unit->GetPos(circuit->GetLastFrame()).y < -SQUARE_SIZE * 5) {
-	if (unit->GetCircuitDef()->IsAmphibious()) {
-		return amphThreat[z * width + x] - THREAT_BASE;
+	if (cdef->IsAmphibious()) {
+		return isSquad ? amphSquad : amphThreat;
 	}
-	return surfThreat[z * width + x] - THREAT_BASE;
+	return isSquad ? surfSquad : surfThreat;
 }
 
 float CThreatMap::GetUnitThreat(CCircuitUnit* unit) const
@@ -264,11 +324,12 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 	}
 
 	const int vsl = std::min(int(e.vel.Length2D() * slackMod.speedMod), slackMod.speedModMax);
+	const float count = isCounting ? e.GetCountWeight() : 0.f;
 	if (cdef->HasAntiAir()) {
-		AddEnemyAir(e, vsl);
+		AddEnemyAir(e, vsl, count);
 	}
 	if (cdef->HasAntiLand() || cdef->HasAntiWater()) {
-		cdef->IsAlwaysHit() ? AddEnemyAmphConst(e, vsl) : AddEnemyAmphGradient(e, vsl);
+		cdef->IsAlwaysHit() ? AddEnemyAmphConst(e, vsl, count) : AddEnemyAmphGradient(e, vsl, count);
 	}
 	AddDecloaker(e);
 
@@ -279,12 +340,13 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 
 void CThreatMap::AddEnemyUnitAll(const SEnemyData& e)
 {
+	// Unknown type (radar blip): might be a constructor or eco unit, so it adds no unit count
 	AddEnemyAir(e);
 	AddEnemyAmphGradient(e);
 	AddDecloaker(e);
 }
 
-void CThreatMap::AddEnemyAir(const SEnemyData& e, const int slack)
+void CThreatMap::AddEnemyAir(const SEnemyData& e, const int slack, const float count)
 {
 	int posx, posz;
 	PosToXZ(e.pos, posx, posz);
@@ -315,11 +377,14 @@ void CThreatMap::AddEnemyAir(const SEnemyData& e, const int slack)
 			// nor with zero-cost nodes (see MP::SetMapData,
 			// threat is not used as an additive overlay)
 			drawAirThreat[index] += heat;
+			if (count > 0.f) {
+				drawAirSquad[index] += count;
+			}
 		}
 	}
 }
 
-void CThreatMap::AddEnemyAmphConst(const SEnemyData& e, const int slack)
+void CThreatMap::AddEnemyAmphConst(const SEnemyData& e, const int slack, const float count)
 {
 	int posx, posz;
 	PosToXZ(e.pos, posx, posz);
@@ -348,16 +413,22 @@ void CThreatMap::AddEnemyAmphConst(const SEnemyData& e, const int slack)
 			if (isWaterThreat || ((sum <= rangeLandSq) && (sector[index].position.y >= -SQUARE_SIZE * 5)))
 			{
 				drawAmphThreat[index] += threat;
+				if (count > 0.f) {
+					drawAmphSquad[index] += count;
+				}
 			}
 			if (isWaterThreat || (sum <= rangeLandSq))
 			{
 				drawSurfThreat[index] += threat;
+				if (count > 0.f) {
+					drawSurfSquad[index] += count;
+				}
 			}
 		}
 	}
 }
 
-void CThreatMap::AddEnemyAmphGradient(const SEnemyData& e, const int slack)
+void CThreatMap::AddEnemyAmphGradient(const SEnemyData& e, const int slack, const float count)
 {
 	int posx, posz;
 	PosToXZ(e.pos, posx, posz);
@@ -391,10 +462,16 @@ void CThreatMap::AddEnemyAmphGradient(const SEnemyData& e, const int slack)
 			if (isWaterThreat || ((sum <= rangeLandSq) && (sector[index].position.y >= -SQUARE_SIZE * 5)))
 			{
 				drawAmphThreat[index] += heat;
+				if (count > 0.f) {
+					drawAmphSquad[index] += count;
+				}
 			}
 			if (isWaterThreat || (sum <= rangeLandSq))
 			{
 				drawSurfThreat[index] += heat;
+				if (count > 0.f) {
+					drawSurfSquad[index] += count;
+				}
 			}
 		}
 	}
@@ -499,6 +576,30 @@ void CThreatMap::Prepare(SThreatData& threatData)
 	drawAmphThreat = threatData.amphThreat.data();
 	drawCloakThreat = threatData.cloakThreat.data();
 	drawShieldArray = threatData.shield.data();
+
+	if (isCounting) {
+		std::fill(threatData.airSquad.begin(), threatData.airSquad.end(), 0.f);
+		std::fill(threatData.surfSquad.begin(), threatData.surfSquad.end(), 0.f);
+		std::fill(threatData.amphSquad.begin(), threatData.amphSquad.end(), 0.f);
+		drawAirSquad = threatData.airSquad.data();
+		drawSurfSquad = threatData.surfSquad.data();
+		drawAmphSquad = threatData.amphSquad.data();
+	}
+}
+
+void CThreatMap::ApplyCountPower(SThreatData& threatData)
+{
+	float maxCnt = 0.f;
+	auto apply = [this, &maxCnt](const FloatVec& threat, FloatVec& squad) {
+		for (size_t i = 0; i < squad.size(); ++i) {
+			maxCnt = std::max(maxCnt, squad[i]);
+			squad[i] = THREAT_BASE + (threat[i] - THREAT_BASE) * GetCountMod(squad[i]);
+		}
+	};
+	apply(threatData.airThreat, threatData.airSquad);
+	apply(threatData.surfThreat, threatData.surfSquad);
+	apply(threatData.amphThreat, threatData.amphSquad);
+	maxCount = maxCnt;
 }
 
 void CThreatMap::Update()
@@ -514,12 +615,24 @@ void CThreatMap::Update()
 	for (const SEnemyData& e : enemyMgr->GetPeaceDatas()) {
 		AddDecloaker(e);
 	}
+
+	if (isCounting) {
+		ApplyCountPower(*GetNextThreatData());
+	}
 }
 
 void CThreatMap::Apply()
 {
 	SwapBuffers();
 	isUpdating = false;
+
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	if (isCounting && (frame >= countLogFrame + FRAMES_PER_SEC * 60)) {  // for tuning group_count_power
+		countLogFrame = frame;
+		circuit->LOG("THREAT count: up to %.1f enemies can fire at one cell: squad threat up to x%.2f",
+				maxCount, GetCountMod(maxCount));
+	}
 
 #ifdef DEBUG_VIS
 	UpdateVis();
@@ -535,6 +648,9 @@ void CThreatMap::SwapBuffers()
 	amphThreat = threatData.amphThreat.data();
 	cloakThreat = threatData.cloakThreat.data();
 	shieldArray = threatData.shield.data();
+	airSquad = isCounting ? threatData.airSquad.data() : airThreat;
+	surfSquad = isCounting ? threatData.surfSquad.data() : surfThreat;
+	amphSquad = isCounting ? threatData.amphSquad.data() : amphThreat;
 	threatArray = surfThreat;
 }
 
@@ -581,6 +697,12 @@ void CThreatMap::UpdateVis()
 		dbgMap[i] = std::min<float>((cloakThreat[i] - THREAT_BASE) / THREAT_CLOAK, 1.0f);
 	}
 	circuit->GetDebugDrawer()->DrawMap(sdlWindowId, dbgMap);
+
+	std::tie(sdlWindowId, dbgMap) = sdlWindows[4];
+	for (int i = 0; i < mapSize; ++i) {
+		dbgMap[i] = std::min<float>((surfSquad[i] - THREAT_BASE) / 40.0f, 1.0f);
+	}
+	circuit->GetDebugDrawer()->DrawMap(sdlWindowId, dbgMap);
 }
 
 void CThreatMap::ToggleSDLVis()
@@ -608,6 +730,11 @@ void CThreatMap::ToggleSDLVis()
 
 		win.second = new float [mapSize];
 		label = utils::int_to_string(circuit->GetSkirmishAIId(), "Circuit AI [%i] :: CLOAK Threat Map");
+		win.first = circuit->GetDebugDrawer()->AddSDLWindow(width, height, label.c_str());
+		sdlWindows.push_back(win);
+
+		win.second = new float [mapSize];
+		label = utils::int_to_string(circuit->GetSkirmishAIId(), "Circuit AI [%i] :: SURFACE SQUAD Threat Map");
 		win.first = circuit->GetDebugDrawer()->AddSDLWindow(width, height, label.c_str());
 		sdlWindows.push_back(win);
 

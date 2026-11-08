@@ -14,6 +14,7 @@
 #include "terrain/TerrainData.h"
 #include "terrain/TerrainManager.h"
 #include "map/ThreatMap.h"
+#include "task/fighter/FighterTask.h"
 #include "unit/CircuitUnit.h"
 #include "unit/UnitManager.h"
 #include "CircuitAI.h"
@@ -281,7 +282,7 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathSingleQuery(
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryPathSingle>(*this, MakeQueryId());
 	CQueryPathSingle* query = static_cast<CQueryPathSingle*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame);
+	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit));
 	query->InitQuery(startPos, endPos, maxRange, std::move(hitTest), maxThreat, endPosOnly);
 
 	return pQuery;
@@ -295,7 +296,7 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathMultiQuery(
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryPathMulti>(*this, MakeQueryId());
 	CQueryPathMulti* query = static_cast<CQueryPathMulti*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame);
+	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit));
 	query->InitQuery(startPos, maxRange, possibleTargets, std::move(hitTest), maxThreat, endPosOnly);
 
 	return pQuery;
@@ -306,12 +307,12 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathMultiQuery(
  */
 std::shared_ptr<IPathQuery> CPathFinder::CreateCostMapQuery(
 		CCircuitUnit* unit, CThreatMap* threatMap, int frame,  // SetMapData
-		const AIFloat3& startPos, bool isBottleneck)
+		const AIFloat3& startPos, bool isBottleneck, bool isSquadThreat)
 {
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryCostMap>(*this, MakeQueryId());
 	CQueryCostMap* query = static_cast<CQueryCostMap*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame, !isBottleneck);
+	FillMapData(query, unit, threatMap, frame, isSquadThreat, !isBottleneck);
 	query->InitQuery(startPos, isBottleneck);
 
 	return pQuery;
@@ -323,7 +324,7 @@ std::shared_ptr<IPathQuery> CPathFinder::CreateLineMapQuery(
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryLineMap>(*this, MakeQueryId());
 	CQueryLineMap* query = static_cast<CQueryLineMap*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame);
+	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit));
 	query->InitQuery(threatMap->GetThreatMapWidth(), threatMap->GetSquareSize());
 
 	return pQuery;
@@ -387,7 +388,8 @@ void CPathFinder::RunQuery(const std::shared_ptr<IPathQuery>& query, PathCallbac
 	}
 }
 
-void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, int frame, bool allowCloak)
+void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, int frame, bool isSquadThreat,
+		bool allowCloak)
 {
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	STerrainMapMobileType::Id mobileTypeId = cdef->GetMobileId();
@@ -403,12 +405,16 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap*
 		maxSlope = std::max(areaData->mobileType[mobileTypeId].maxSlope, 1e-3f);
 	}
 
+	// Squads route on squad threat (CThreatMap::GetSquadThreatAt), the threat they judge with; cloak has no squad layer
+	float* airThreat = isSquadThreat ? threatMap->GetAirSquadArray() : threatMap->GetAirThreatArray();
+	float* surfThreat = isSquadThreat ? threatMap->GetSurfSquadArray() : threatMap->GetSurfThreatArray();
+	float* amphThreat = isSquadThreat ? threatMap->GetAmphSquadArray() : threatMap->GetAmphThreatArray();
 	float* threatArray;
 	CostFunc moveFun;
 	CostFunc threatFun;
 	// TODO: Re-organize and pre-calculate moveFun for each move-type
 	if ((unit->GetPos(frame).y < .0f) && !cdef->IsSonarStealth()) {
-		threatArray = threatMap->GetAmphThreatArray();  // cloak doesn't work under water
+		threatArray = amphThreat;  // cloak doesn't work under water
 		moveFun = [&sectors, maxSlope](int index) {
 			return (sectors[index].isWater ? 2.f : 0.f) + 2.f * sectors[index].maxSlope / maxSlope;
 		};
@@ -424,7 +430,7 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap*
 			return threatArray[index];
 		};
 	} else if (cdef->IsAbleToFly()) {
-		threatArray = threatMap->GetAirThreatArray();
+		threatArray = airThreat;
 		moveFun = [](int index) {
 			return 0.f;
 		};
@@ -432,7 +438,7 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap*
 			return 2.f * threatArray[index];
 		};
 	} else if (cdef->IsAmphibious()) {
-		threatArray = threatMap->GetAmphThreatArray();
+		threatArray = amphThreat;
 		if (maxSlope > SPIDER_SLOPE) {
 			const float minElev = areaData->minElevation;
 			float elevLen = std::max(areaData->maxElevation - areaData->minElevation, 1e-3f);
@@ -452,7 +458,7 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap*
 			};
 		}
 	} else {
-		threatArray = threatMap->GetSurfThreatArray();
+		threatArray = surfThreat;
 		moveFun = [&sectors, maxSlope](int index) {
 			return sectors[index].isWater ? 0.f : (2.f * sectors[index].maxSlope / maxSlope);
 		};

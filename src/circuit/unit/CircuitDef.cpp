@@ -109,6 +109,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, weaponMount(nullptr)
 		, pwrDmg(.0f)
 		, thrDmg(.0f)
+		, thrMod(1.f)
 		, aoe(.0f)
 		, power(.0f)
 		, threat(.0f)

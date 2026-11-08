@@ -471,7 +471,7 @@ bool CAntiHeavyTask::ProbeStandOff(const AIFloat3& ePos, const AIFloat3& pos, fl
 	const float cap = GetPathThreatCap(leader, pos, {GetPointTowards(ePos, pos, standOff)});
 	for (int i = 0; i <= 6; ++i) {
 		const AIFloat3 p = GetPointTowards(ePos, pos, standOff + i * step);
-		if (terrainMgr->CanMoveToPos(area, p) && (threatMap->GetThreatAt(leader, p) <= cap)) {
+		if (terrainMgr->CanMoveToPos(area, p) && (GetTaskThreatAt(leader, p) <= cap)) {
 			outPos = p;
 			return true;
 		}
@@ -549,7 +549,7 @@ bool CAntiHeavyTask::FindTarget()
 
 	CEnemyInfo* bestTarget = nullptr;
 	enemyPositions.clear();
-	threatMap->SetThreatType(leader);
+	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
@@ -562,7 +562,7 @@ bool CAntiHeavyTask::FindTarget()
 		}
 		const AIFloat3& ePos = enemy->GetPos();
 		if ((ePos.y - map->GetElevationAt(ePos.x, ePos.z) > weaponRange)
-			|| (maxPower / GetThrDistModAt(ePos) <= threatMap->GetThreatAt(ePos) - enemy->GetThreat())
+			|| (maxPower / GetThrDistModAt(ePos) <= threatMap->GetSquadThreatExcl(leader, ePos, enemy->GetThreat()))
 			|| !terrainMgr->CanMoveToPos(area, ePos))
 		{
 			continue;

@@ -450,7 +450,16 @@ void CMilitaryManager::ReadConfig()
 	const float noMax = std::numeric_limits<float>::max();
 	attackFleeShare = readAttackNum("attack_flee_share", 0.5f, 0.f, 1.f);
 	attackKeepThreat = readAttackNum("attack_keep_threat", 1.34f, 1.f, noMax);  // below 1 = off
-	groupCountPower = readAttackNum("group_count_power", 0.025f, 0.f, 1.f);  // 0 = off
+	{
+		// quota.group_count_power is read by the threat map (CThreatMap::GetCountPower), clamped. Allied AIs share
+		// that map: the ally that built it first decides the value for all
+		const float countPower = circuit->GetThreatMap()->GetCountPower();
+		const Json::Value& qcount = quotas["group_count_power"];
+		if (qcount.isNumeric() && (qcount.asFloat() != countPower)) {
+			circuit->LOG("CONFIG %s: quota.group_count_power %g: using %g (0..%g; allied AIs share the first one's)",
+					cfgName.c_str(), qcount.asFloat(), countPower, CThreatMap::MAX_COUNT_POWER);
+		}
+	}
 	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 270.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
 	{
 		const Json::Value& qcont = quotas["contested"];
@@ -1310,19 +1319,21 @@ void CMilitaryManager::UpdateAttackRally()
 		return terrainMgr->CanMoveToPos(hostArea, b->pos);
 	});
 	const CEnemyManager::SEnemyBlob* blob = (it != nearBlobs.end()) ? *it : nullptr;
-	const float strength = host->GetRallyStrength() * host->GetCountPowerMod();  // with the group size bonus: vs a blob
+	// Both with their group size bonus, as squads compare themselves with squad threat
+	const float strength = host->GetRallyStrength() * host->GetCountPowerMod();
+	const float blobThreat = (blob != nullptr) ? blob->threat * circuit->GetThreatMap()->GetCountMod(blob->count) : 0.f;
 	if (blob != nullptr) {
 		rallyBlobFrame = frame;
 		rallyBlobPos = blob->pos;
-		rallyBlobThreat = blob->threat;
+		rallyBlobThreat = blobThreat;
 	}
 
 	if (!isRally) {
-		if ((blob != nullptr) && (strength < attackRally.match * blob->threat)) {
+		if ((blob != nullptr) && (strength < attackRally.match * blobThreat)) {
 			rallyHost = host;
 			rallyStartFrame = frame;
-			circuit->LOG("RALLY start: host %.1f < %.2f x blob %.1f at (%.0f, %.0f)", strength, attackRally.match,
-					blob->threat, blob->pos.x, blob->pos.z);
+			circuit->LOG("RALLY start: host %.1f < %.2f x blob %.1f (%.1f enemies) at (%.0f, %.0f)", strength,
+					attackRally.match, blobThreat, blob->count, blob->pos.x, blob->pos.z);
 		}
 		return;
 	}
@@ -1333,7 +1344,7 @@ void CMilitaryManager::UpdateAttackRally()
 		if (frame - rallyBlobFrame > attackRally.seenFrames) {
 			EndAttackRally("blob lost", frame);
 		}
-	} else if (strength >= attackRally.match * blob->threat * (1.f + attackRally.margin)) {
+	} else if (strength >= attackRally.match * blobThreat * (1.f + attackRally.margin)) {
 		EndAttackRally("host big enough", frame);
 	}
 }
@@ -1717,7 +1728,7 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 	// time the picker arrives, and the route/own-spot checks of its task handle them on the way.
 	const bool isAir = cdef->IsAbleToFly();
 	const bool isAmph = !isAir && cdef->IsAmphibious();
-	struct SDefence { AIFloat3 pos; float sqRange; float range; float threat; };
+	struct SDefence { AIFloat3 pos; float sqRange; float range; float threat; float count; };
 	std::vector<SDefence> defences;
 	// Points that mark where the enemy is: known enemy buildings and enemy groups
 	std::vector<AIFloat3> anchors;
@@ -1735,7 +1746,7 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 				: data->GetRange(CCircuitDef::ThreatType::LAND);
 		const float range = rangeSq * threatMap->GetSquareSize() * cfg.rangeMult;
 		if ((threat > 0.f) && (range > 0.f) && !enemy->IsBeingBuilt()) {
-			defences.push_back({enemy->GetPos(), SQUARE(range), range, threat});
+			defences.push_back({enemy->GetPos(), SQUARE(range), range, threat, data->GetCountWeight()});
 		}
 	}
 	for (const CEnemyManager::SEnemyGroup& group : circuit->GetEnemyManager()->GetEnemyGroups()) {
@@ -1748,13 +1759,20 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 		const AIFloat3& start = circuit->GetSetupManager()->GetStartPos();
 		anchors.push_back(AIFloat3(terrainMgr->GetTerrainWidth() - start.x, start.y, terrainMgr->GetTerrainHeight() - start.z));
 	}
+	// A raid group's safeThreat has its group size bonus: the defences get theirs too, as squad threat counts them
+	const bool isSquad = IFighterTask::IsSquadThreat(unit);
 	auto isDefended = [&](const AIFloat3& spot) {
 		float danger = 0.f;
+		float count = 0.f;
 		for (const SDefence& d : defences) {
 			const float sqDist = d.pos.SqDistance2D(spot);
 			if (sqDist < d.sqRange) {
 				danger += d.threat * (1.f - 0.5f * sqrtf(sqDist) / d.range);  // same falloff as the threat map
+				count += d.count;
 			}
+		}
+		if (isSquad) {
+			danger *= threatMap->GetCountMod(count);
 		}
 		return danger >= safeThreat / GetThrDistMod(type, spot);  // thr_mod.distance.<scout|raid> at the spot
 	};
@@ -1911,14 +1929,14 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 		// with the group size bonus for about that many units of the type (scouts are judged alone, without it)
 		const float power = isRaider ? std::max(cdef->GetPower(), raid.min) : cdef->GetPower();
 		const float count = isRaider ? std::ceil(power / std::max(cdef->GetPower(), 1e-3f)) : 0.f;
-		const float safeThreat = std::max(power, THREAT_MIN) * powerMod * (1.f + groupCountPower * count);
+		const float safeThreat = std::max(power, THREAT_MIN) * powerMod * threatMap->GetCountMod(count);
 		AIFloat3 startPos = basePos;
 		if ((unit->GetArea() != nullptr) && !terrainMgr->CanMoveToPos(unit->GetArea(), startPos)) {
 			startPos = unit->GetPos(frame);  // our base is not in its area (e.g. ships): flood from where it is
 		}
 		CTerrainManager::CorrectPosition(startPos);
 
-		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true);
+		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true, isRaider);
 		// The quota is a member: it outlives the query (a pointer, so that is plain to see)
 		std::map<int, unsigned int>* bonus = &mexBonus;
 		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
@@ -1982,9 +2000,12 @@ void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,
 	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
 	for (int index : metalMgr->GetContestedClusters(circuit->GetLastFrame(), contested.maxAge)) {
 		const AIFloat3& cPos = clusters[index].position;
-		// Live threat with this unit's threat type: the mark is from the builders' walk, maybe seconds ago
-		const float threat = threatMap->GetThreatAt(cPos);
-		if ((threat <= metalMgr->GetWallThreat()) || (threat >= allowedAt(cPos))
+		// Live threat on this unit's layer: the mark is from the builders' walk, maybe seconds ago. Still contested:
+		// above the builders' wall (plain threat, as CMetalManager judges it). Takeable: below the group's allowance,
+		// on the threat the group judges with
+		const float threat = threatMap->GetThreatAt(unit, cPos);
+		const float taskThreat = IFighterTask::IsSquadThreat(unit) ? threatMap->GetSquadThreatAt(unit, cPos) : threat;
+		if ((threat <= metalMgr->GetWallThreat()) || (taskThreat >= allowedAt(cPos))
 			|| !terrainMgr->CanMobileReachAt(unit->GetArea(), cPos, reach))
 		{
 			continue;

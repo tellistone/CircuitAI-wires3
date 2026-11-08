@@ -240,7 +240,7 @@ bool CDefendTask::FindTarget()
 
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
 	enemyPositions.clear();
-	threatMap->SetThreatType(leader);
+	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
@@ -260,7 +260,7 @@ bool CDefendTask::FindTarget()
 		if (sqEBDist < sqBaseRange) {
 			checkPower *= circuit->GetMilitaryManager()->GetBaseThrBonus(sqEBDist);  // quota.thr_mod.base_bonus near base
 		}
-		if (checkPower <= threatMap->GetThreatAt(ePos)) {
+		if (checkPower <= GetTaskThreatAt(leader, ePos)) {
 			continue;
 		}
 

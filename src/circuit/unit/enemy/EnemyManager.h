@@ -94,6 +94,7 @@ public:
 	struct SEnemyBlob {
 		springai::AIFloat3 pos;  // the seed: the enemy with the most such threat around it
 		float threat;
+		float count;  // its enemy unit count, as squad threat counts them (CEnemyUnit::GetCountWeight)
 	};
 	const std::vector<SEnemyBlob>& GetBlobs(int frame, int seenFrames);
 

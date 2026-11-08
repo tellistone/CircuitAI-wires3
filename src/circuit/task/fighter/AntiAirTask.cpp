@@ -313,7 +313,7 @@ void CAntiAirTask::FindTarget()
 			continue;
 		}
 		// Threat where the AA would stand to shoot, without the plane's own share
-		const float threat = std::max(0.f, threatMap->GetThreatAt(checkPos) - GetPlaneThreatAt(enemy, checkPos));
+		const float threat = threatMap->GetSquadThreatExcl(leader, checkPos, GetPlaneThreatAt(enemy, checkPos));
 		if (threat >= GetAllowedThreatAt(checkPos, maxPower)) {
 			continue;
 		}

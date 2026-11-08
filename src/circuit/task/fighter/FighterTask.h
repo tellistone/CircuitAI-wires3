@@ -45,9 +45,16 @@ public:
 	float GetAttackPower() const { return attackPower; }
 	// Group size bonus to the group's own power where it is compared against enemy threat (Lanchester's square
 	// law): 1 + quota.group_count_power x count, so 10 units at 0.025 count as 1.25x. The no-argument form uses
-	// the task's unit count
+	// the task's unit count. Squads compare it against squad threat (GetTaskThreatAt), which counts the enemies
+	// the same way, so the bonus cancels out at equal numbers
 	float GetCountPowerMod(size_t count) const;
 	float GetCountPowerMod() const { return GetCountPowerMod(units.size()); }
+	// Enemy threat at pos as this task judges it: squad threat (CThreatMap::GetSquadThreatAt) for squads, the plain
+	// threat for other tasks. Use it wherever the task weighs threat; threatMap->GetThreatAt only where our side
+	// gets no group size bonus (one unit judged alone)
+	float GetTaskThreatAt(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
+	// The unit's task is a squad: its routes use the squad threat layers (CPathFinder)
+	static bool IsSquadThreat(CCircuitUnit* unit);
 	CEnemyInfo* GetTarget() const { return target; }
 	void ClearTarget() { target = nullptr; }  // Only for ~CEnemyUnit
 
@@ -118,6 +125,9 @@ protected:
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const {
 		return std::numeric_limits<float>::max();
 	}
+	// Threat at p (GetTaskThreatAt) reaches what this strength allows there. No threat is never danger (allowances
+	// are above 0), and the allowance is only worked out where there is threat
+	bool IsDangerAt(CCircuitUnit* unit, const springai::AIFloat3& p, float strength) const;
 
 	FightType fightType;
 	springai::AIFloat3 position;  // attack/scout position
@@ -125,6 +135,7 @@ protected:
 	float attackPower;
 	float powerMod;
 	int attackFrame;
+	bool isSquadThreat = false;  // GetTaskThreatAt reads squad threat: set by ISquadTask
 	// NOTE: Never assign directly, use SetTarget() to avoid access to a dead target
 	CEnemyInfo* target;
 
