@@ -51,29 +51,6 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 	rangeDefault = (DEFAULT_SLACK * 4) / squareSize;
 	distCloak = (decloakRadius + DEFAULT_SLACK) / squareSize;
 
-	threatData0.airThreat.resize(mapSize, THREAT_BASE);
-	threatData0.surfThreat.resize(mapSize, THREAT_BASE);
-	threatData0.amphThreat.resize(mapSize, THREAT_BASE);
-	threatData0.cloakThreat.resize(mapSize, THREAT_BASE);
-	threatData0.shield.resize(mapSize, 0.f);
-	airThreat = threatData0.airThreat.data();
-	surfThreat = threatData0.surfThreat.data();
-	amphThreat = threatData0.amphThreat.data();
-	cloakThreat = threatData0.cloakThreat.data();
-	shieldArray = threatData0.shield.data();
-	threatArray = surfThreat;
-
-	threatData1.airThreat.resize(mapSize, THREAT_BASE);
-	threatData1.surfThreat.resize(mapSize, THREAT_BASE);
-	threatData1.amphThreat.resize(mapSize, THREAT_BASE);
-	threatData1.cloakThreat.resize(mapSize, THREAT_BASE);
-	threatData1.shield.resize(mapSize, 0.f);
-	drawAirThreat = threatData1.airThreat.data();
-	drawSurfThreat = threatData1.surfThreat.data();
-	drawAmphThreat = threatData1.amphThreat.data();
-	drawCloakThreat = threatData1.cloakThreat.data();
-	drawShieldArray = threatData1.shield.data();
-
 	const Json::Value& quota = circuit->GetSetupManager()->GetConfig()["quota"];
 	// One value for both sides of every squad comparison: allied AIs share this map, whatever their own configs say
 	constexpr float defCountPower = 0.025f;
@@ -86,20 +63,25 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 		countPower = defCountPower;
 	}
 	isCounting = (countPower > 0.f);
-	if (isCounting) {
-		for (SThreatData* data : {&threatData0, &threatData1}) {
+
+	for (SThreatData* data : {&threatData0, &threatData1}) {
+		data->airThreat.resize(mapSize, THREAT_BASE);
+		data->surfThreat.resize(mapSize, THREAT_BASE);
+		data->amphThreat.resize(mapSize, THREAT_BASE);
+		data->cloakThreat.resize(mapSize, THREAT_BASE);
+		data->shield.resize(mapSize, 0.f);
+		if (isCounting) {  // else no squad layers of their own (SetReadPointers)
 			data->airSquad.resize(mapSize, THREAT_BASE);
 			data->surfSquad.resize(mapSize, THREAT_BASE);
 			data->amphSquad.resize(mapSize, THREAT_BASE);
 		}
-		airSquad = threatData0.airSquad.data();
-		surfSquad = threatData0.surfSquad.data();
-		amphSquad = threatData0.amphSquad.data();
-	} else {
-		airSquad = airThreat;
-		surfSquad = surfThreat;
-		amphSquad = amphThreat;
 	}
+	SetReadPointers(threatData0);
+	drawAirThreat = threatData1.airThreat.data();
+	drawSurfThreat = threatData1.surfThreat.data();
+	drawAmphThreat = threatData1.amphThreat.data();
+	drawCloakThreat = threatData1.cloakThreat.data();
+	drawShieldArray = threatData1.shield.data();
 
 	const Json::Value& slack = quota["slack_mod"];
 	slackMod.allMod = slack.get("all", 1.f).asFloat();
@@ -218,11 +200,7 @@ void CThreatMap::NewEnemy(CEnemyUnit* e) const
 
 float CThreatMap::GetAllThreatAt(const AIFloat3& position) const
 {
-	assert((position.x >= 0) && (position.x < CTerrainManager::GetTerrainWidth()) &&
-		   (position.z >= 0) && (position.z < CTerrainManager::GetTerrainHeight()));
-	int x, z;
-	PosToXZ(position, x, z);
-	const int index = z * width + x;
+	const int index = PosToIndex(position);
 //	float air = airThreat[index] - THREAT_BASE;
 	float land = surfThreat[index] - THREAT_BASE;
 //	float water = amphThreat[index] - THREAT_BASE;
@@ -237,41 +215,22 @@ void CThreatMap::SetThreatType(CCircuitUnit* unit)
 
 float CThreatMap::GetThreatAt(const AIFloat3& position) const
 {
-	assert((position.x >= 0) && (position.x < CTerrainManager::GetTerrainWidth()) &&
-		   (position.z >= 0) && (position.z < CTerrainManager::GetTerrainHeight()));
-	int x, z;
-	PosToXZ(position, x, z);
-	return threatArray[z * width + x] - THREAT_BASE;
+	return threatArray[PosToIndex(position)] - THREAT_BASE;
 }
 
 float CThreatMap::GetThreatAt(CCircuitUnit* unit, const AIFloat3& position) const
 {
-	assert(unit != nullptr);
-	assert((position.x >= 0) && (position.x < CTerrainManager::GetTerrainWidth()) &&
-		   (position.z >= 0) && (position.z < CTerrainManager::GetTerrainHeight()));
-	int x, z;
-	PosToXZ(position, x, z);
-	return GetLayer(unit, false)[z * width + x] - THREAT_BASE;
+	return GetLayer(unit, false)[PosToIndex(position)] - THREAT_BASE;
 }
 
 float CThreatMap::GetSquadThreatAt(CCircuitUnit* unit, const AIFloat3& position) const
 {
-	assert(unit != nullptr);
-	assert((position.x >= 0) && (position.x < CTerrainManager::GetTerrainWidth()) &&
-		   (position.z >= 0) && (position.z < CTerrainManager::GetTerrainHeight()));
-	int x, z;
-	PosToXZ(position, x, z);
-	return GetLayer(unit, true)[z * width + x] - THREAT_BASE;
+	return GetLayer(unit, true)[PosToIndex(position)] - THREAT_BASE;
 }
 
 float CThreatMap::GetSquadThreatExcl(CCircuitUnit* unit, const AIFloat3& position, float exclThreat) const
 {
-	assert(unit != nullptr);
-	assert((position.x >= 0) && (position.x < CTerrainManager::GetTerrainWidth()) &&
-		   (position.z >= 0) && (position.z < CTerrainManager::GetTerrainHeight()));
-	int x, z;
-	PosToXZ(position, x, z);
-	const int index = z * width + x;
+	const int index = PosToIndex(position);
 	const float threat = GetLayer(unit, false)[index] - THREAT_BASE;
 	if (threat <= exclThreat) {
 		return 0.f;  // nothing else there (also: no threat at all)
@@ -284,6 +243,7 @@ float CThreatMap::GetSquadThreatExcl(CCircuitUnit* unit, const AIFloat3& positio
 
 float* CThreatMap::GetLayer(CCircuitUnit* unit, bool isSquad) const
 {
+	assert(unit != nullptr);
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	if (cdef->IsAbleToFly()) {
 		return isSquad ? airSquad : airThreat;
@@ -305,6 +265,15 @@ inline void CThreatMap::PosToXZ(const AIFloat3& pos, int& x, int& z) const
 {
 	x = (int)pos.x / squareSize;
 	z = (int)pos.z / squareSize;
+}
+
+inline int CThreatMap::PosToIndex(const AIFloat3& pos) const
+{
+	assert((pos.x >= 0) && (pos.x < CTerrainManager::GetTerrainWidth()) &&
+		   (pos.z >= 0) && (pos.z < CTerrainManager::GetTerrainHeight()));
+	int x, z;
+	PosToXZ(pos, x, z);
+	return z * width + x;
 }
 
 inline AIFloat3 CThreatMap::XZToPos(int x, int z) const
@@ -642,12 +611,18 @@ void CThreatMap::Apply()
 void CThreatMap::SwapBuffers()
 {
 	pThreatData = GetNextThreatData();
-	SThreatData& threatData = *pThreatData.load();
+	SetReadPointers(*pThreatData.load());
+}
+
+void CThreatMap::SetReadPointers(SThreatData& threatData)
+{
 	airThreat = threatData.airThreat.data();
 	surfThreat = threatData.surfThreat.data();
 	amphThreat = threatData.amphThreat.data();
 	cloakThreat = threatData.cloakThreat.data();
 	shieldArray = threatData.shield.data();
+	// Not counting: the squad layers are the threat layers (squad threat = threat). Read only: the draw pointers
+	// never alias them (Prepare), or drawing the count would add into the threat
 	airSquad = isCounting ? threatData.airSquad.data() : airThreat;
 	surfSquad = isCounting ? threatData.surfSquad.data() : surfThreat;
 	amphSquad = isCounting ? threatData.amphSquad.data() : amphThreat;

@@ -91,6 +91,7 @@ private:
 	SAreaData* areaData;
 
 	inline void PosToXZ(const springai::AIFloat3& pos, int& x, int& z) const;
+	inline int PosToIndex(const springai::AIFloat3& pos) const;  // the cell's index in a layer
 	inline springai::AIFloat3 XZToPos(int x, int z) const;
 
 	void AddEnemyUnit(const SEnemyData& e);
@@ -111,6 +112,7 @@ private:
 	void ApplyCountPower(SThreatData& threatData);  // squad layers: enemy unit count -> squad threat
 
 	void Prepare(SThreatData& threatData);
+	void SetReadPointers(SThreatData& threatData);  // the layers GetThreatAt etc read: threatData's
 	void Update();
 	void Apply();
 	void SwapBuffers();
