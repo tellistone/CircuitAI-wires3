@@ -249,6 +249,13 @@ public:
 	}
 	// quota.attack_own_ground_time: before this frame attack groups only walk to targets on our ground
 	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }
+	// quota.attack_floor_hold: a group past quota.attack (the floor) stays past it until its power drops below
+	// quota.attack x this; under the floor it only walks to targets on our ground (as attack_own_ground_time)
+	float GetAttackFloorHold() const { return attackFloorHold; }
+	// quota.attack_threat_floor [<on>, <off>]: every attack group only walks to targets on our ground (as
+	// attack_own_ground_time) from when our army's threat drops below <on> x the known enemy mobile threat per enemy
+	// team, until it is back to <off> x that. Commanders don't count on either side. Judged once a second
+	bool IsAttackThreatFloor() const { return isAttackThreatFloor; }
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
 	struct SContested {
 		float bonus;  // enemies there count as this many times closer (attack ranking, raid route goals); 1 = off
@@ -362,6 +369,7 @@ private:
 	// there is none) leave for anti-heavy squads, every 2 s; not while their group is fighting or fleeing
 	void UpdateAhPull();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
+	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
@@ -444,6 +452,7 @@ private:
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;
+	float armyThreat;  // our army's threat (CCircuitDef::GetThreat, as the enemy's mobile threat counts it; no builders, so no commanders)
 	struct SCapturedUnit {
 		int controllerId;  // our unit that captured it
 		float cost;
@@ -485,6 +494,12 @@ private:
 	float attackKeepThreat;  // quota.attack_keep_threat
 	float countAoe;  // quota.group_count_aoe, elmos (radius); 0 = off
 	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
+	float attackFloorHold;  // quota.attack_floor_hold
+	struct SThreatFloor {
+		float on = 0.f;  // our army / enemy per team below this: floor on; 0 = off
+		float off = 0.f;  // ... at or above this: floor off
+	} attackThreatFloor;  // quota.attack_threat_floor
+	bool isAttackThreatFloor;
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
