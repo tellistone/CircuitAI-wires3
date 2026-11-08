@@ -66,6 +66,8 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, rallyHost(nullptr)
 		, prevRallyHost(nullptr)
 		, rallyStartFrame(-1)
+		, heavySeenFrame(-1)
+		, heavySeenAge(std::numeric_limits<int>::max())
 		, rallyEndFrame(-FRAMES_PER_SEC * 60)
 		, rallyBlobFrame(-1)
 		, rallyBlobPos(-RgtVector)
@@ -2574,8 +2576,10 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 					}
 				} break;
 				case IFighterTask::FightType::AH: {
-					if (!cdef->IsRoleMine() && (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) < 1.f)) {
-						task = EnqueueAttackBound(unit);  // see below
+					if (!cdef->IsRoleMine() && !IsEnemyHeavySeen(AH_HUNT_FRAMES)) {
+						task = EnqueueAttackBound(unit);  // see below; UpdateAhPull takes it out once a heavy is seen
+					} else {
+						task = EnqueueAntiHeavy(unit);
 					}
 				} break;
 				case IFighterTask::FightType::DEFEND: {
@@ -2629,16 +2633,16 @@ void CMilitaryManager::UpdateCaptureHide()
 
 void CMilitaryManager::UpdateAhPull()
 {
-	// MakeTask sends a new anti-heavy unit to the army while no enemy heavy is known, and an anti-heavy squad
-	// disbands once none is left; without this pull the units stay in the army after heavies show up
+	// MakeTask sends a new anti-heavy unit to the army while no enemy heavy has been seen lately, and an anti-heavy
+	// squad disbands once none has been seen for a while; without this pull the units stay in the army after a heavy
+	// shows up
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
-	if (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) < 1.f) {
-		return;  // same test as MakeTask and CAntiHeavyTask::Update
+	if (!IsEnemyHeavySeen(AH_HUNT_FRAMES)) {
+		return;
 	}
 	for (CCircuitUnit* unit : army) {
-		CCircuitDef* cdef = unit->GetCircuitDef();
-		if ((circuit->GetBindedRole(cdef->GetMainRole()) != ROLE_TYPE(AH)) || cdef->IsRoleMine()) {
-			continue;  // mines always get anti-heavy squads
+		if (circuit->GetBindedRole(unit->GetCircuitDef()->GetMainRole()) != ROLE_TYPE(AH)) {
+			continue;
 		}
 		IUnitTask* task = unit->GetTask();
 		if (task->GetType() != IUnitTask::Type::FIGHTER) {
@@ -2648,16 +2652,50 @@ void CMilitaryManager::UpdateAhPull()
 		if ((type != IFighterTask::FightType::ATTACK) && (type != IFighterTask::FightType::DEFEND)) {
 			continue;  // already anti-heavy, or a guard
 		}
-		// Join an anti-heavy squad of its type nearby (CAntiHeavyTask::CanAssignTo), else start one
-		IFighterTask* squad = nullptr;
+		if ((task->GetState() == IUnitTask::State::ENGAGE) || (task->GetState() == IUnitTask::State::DISENGAGE)) {
+			continue;  // fighting or fleeing: losing it now could tip the fight; the next pass takes it
+		}
+		AssignTask(unit, EnqueueAntiHeavy(unit));
+	}
+}
+
+IFighterTask* CMilitaryManager::EnqueueAntiHeavy(CCircuitUnit* unit)
+{
+	if (!unit->GetCircuitDef()->IsRoleMine()) {
 		for (IFighterTask* t : GetTasks(IFighterTask::FightType::AH)) {
 			if (t->CanAssignTo(unit)) {
-				squad = t;
-				break;
+				return t;
 			}
 		}
-		AssignTask(unit, (squad != nullptr) ? squad : EnqueueTask(IFighterTask::FightType::AH));
 	}
+	return EnqueueTask(IFighterTask::FightType::AH);
+}
+
+bool CMilitaryManager::IsEnemyHeavySeen(int frames)
+{
+	const int frame = circuit->GetLastFrame();
+	if (heavySeenFrame != frame) {  // once a frame: MakeTask asks for every new anti-heavy unit
+		heavySeenFrame = frame;
+		heavySeenAge = std::numeric_limits<int>::max();
+		if (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) >= 1.f) {  // else none is known: no scan
+			for (auto& kv : circuit->GetEnemyInfos()) {
+				const CEnemyInfo* enemy = kv.second;
+				CCircuitDef* edef = enemy->GetCircuitDef();
+				if ((edef == nullptr) || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY)) {
+					continue;
+				}
+				if (enemy->IsInRadarOrLOS()) {
+					heavySeenAge = 0;
+					break;
+				}
+				const int lastSeen = enemy->GetData()->GetLastSeen();  // the frame it left radar
+				if (lastSeen >= 0) {
+					heavySeenAge = std::min(heavySeenAge, frame - lastSeen);
+				}
+			}
+		}
+	}
+	return heavySeenAge < frames;
 }
 
 void CMilitaryManager::Watchdog()
