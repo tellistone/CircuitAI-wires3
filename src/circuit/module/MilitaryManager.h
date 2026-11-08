@@ -334,6 +334,9 @@ private:
 	void UpdateIdle();
 	void UpdateFight();
 	void UpdateCaptureHide();
+	// An enemy heavy known: anti-heavy units waiting in attack and gathering groups (where they go while there is none)
+	// leave for anti-heavy squads, every 2 s
+	void UpdateAhPull();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second

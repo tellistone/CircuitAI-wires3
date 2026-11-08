@@ -933,6 +933,7 @@ void CMilitaryManager::Init()
 		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhPull, this), FRAMES_PER_SEC * 2, offset + 1);
 		if (attackRally.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
 		}
@@ -2623,6 +2624,39 @@ void CMilitaryManager::UpdateCaptureHide()
 		if (unit->IsCaptureHide() && (type != IUnitTask::Type::RETREAT) && (type != IUnitTask::Type::PLAYER)) {
 			AssignTask(unit, EnqueueRetreat());
 		}
+	}
+}
+
+void CMilitaryManager::UpdateAhPull()
+{
+	// MakeTask sends a new anti-heavy unit to the army while no enemy heavy is known, and an anti-heavy squad
+	// disbands once none is left; without this pull the units stay in the army after heavies show up
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	if (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) < 1.f) {
+		return;  // same test as MakeTask and CAntiHeavyTask::Update
+	}
+	for (CCircuitUnit* unit : army) {
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		if ((circuit->GetBindedRole(cdef->GetMainRole()) != ROLE_TYPE(AH)) || cdef->IsRoleMine()) {
+			continue;  // mines always get anti-heavy squads
+		}
+		IUnitTask* task = unit->GetTask();
+		if (task->GetType() != IUnitTask::Type::FIGHTER) {
+			continue;  // retreat, player control, idle, ...
+		}
+		const IFighterTask::FightType type = static_cast<IFighterTask*>(task)->GetFightType();
+		if ((type != IFighterTask::FightType::ATTACK) && (type != IFighterTask::FightType::DEFEND)) {
+			continue;  // already anti-heavy, or a guard
+		}
+		// Join an anti-heavy squad of its type nearby (CAntiHeavyTask::CanAssignTo), else start one
+		IFighterTask* squad = nullptr;
+		for (IFighterTask* t : GetTasks(IFighterTask::FightType::AH)) {
+			if (t->CanAssignTo(unit)) {
+				squad = t;
+				break;
+			}
+		}
+		AssignTask(unit, (squad != nullptr) ? squad : EnqueueTask(IFighterTask::FightType::AH));
 	}
 }
 

@@ -210,6 +210,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Anti-heavy units leave the army once a heavy is known.** While no enemy heavy is known, a new anti-heavy
+  unit joins the attack army (as before), and an anti-heavy squad disbands once the heavies are gone. Those units used
+  to stay in the army for good, even after heavies showed up, so anti-heavy squads only ever got units built later.
+  Now, every 2 s while an enemy heavy is known, anti-heavy units in attack and gathering groups leave for anti-heavy
+  squads: one of their type nearby (within 1000 elmos, with room) or a new one. Mines and units on other tasks (guard,
+  retreat, player control) are left alone.
 - **Raid and attack drop outranging runners sooner.** Both tasks skip an enemy moving away from the leader at 80%
   of the squad's top speed or more; an enemy that outranges us is now skipped from 75% (except anti-heavy, support and artillery
   units, which are chased as before). Outranges: its ground/water
