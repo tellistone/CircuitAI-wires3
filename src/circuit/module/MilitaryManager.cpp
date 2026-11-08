@@ -456,17 +456,13 @@ void CMilitaryManager::ReadConfig()
 	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 270.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
 	attackFloorHold = readAttackNum("attack_floor_hold", 0.75f, 0.f, 1.f);  // 1 = no hysteresis
 	{
-		const Json::Value& q = quotas.get("attack_threat_floor", Json::Value());
-		if (q.isNull()) {
-			attackThreatFloor = {0.66f, 0.8f};
-		} else if (q.isArray() && (q.size() == 2) && q[0].isNumeric() && q[1].isNumeric()
-			&& (q[0].asFloat() >= 0.f) && (q[1].asFloat() >= q[0].asFloat()))
-		{
-			attackThreatFloor = {q[0].asFloat(), q[1].asFloat()};
-		} else {
+		const Json::Value& q = quotas["attack_threat_floor"];
+		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
+				&& (q[0u].asFloat() >= 0.f) && (q[1u].asFloat() >= q[0u].asFloat()));
+		if (!isOk) {
 			circuit->LOG("CONFIG %s: quota.attack_threat_floor must be [<on >= 0>, <off >= on>], using [0.66, 0.8]", cfgName.c_str());
-			attackThreatFloor = {0.66f, 0.8f};
 		}
+		attackThreatFloor = (isOk && !q.isNull()) ? SThreatFloor{q[0u].asFloat(), q[1u].asFloat()} : SThreatFloor{0.66f, 0.8f};
 	}
 	{
 		const Json::Value& qcont = quotas["contested"];
