@@ -318,7 +318,9 @@ bool CRaidTask::FindTarget()
 	const bool isAntiStatic = cdef->IsAttrAntiStat();
 	const bool notAW = !cdef->HasAntiWater();
 	const bool notAA = !cdef->HasAntiAir();
-	const float maxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
+	const float sqMaxSpeed = SQUARE(highestSpeed * CHASE_SPEED_MOD / FRAMES_PER_SEC);
+	// A runner that outranges us is dropped at a lower speed, near base too: we would only catch it inside its range
+	const float sqOutrangeSpeed = SQUARE(highestSpeed * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
 	// Current health, same measure as the escape check; for 4s after an escape demand a 25% margin,
 	// so the group doesn't pick a target at the edge of the danger it just left and bounce back and forth
 	const bool isCautious = (circuit->GetLastFrame() < fleeFrame + FRAMES_PER_SEC * 4);
@@ -378,17 +380,17 @@ bool CRaidTask::FindTarget()
 		const float sqEBDist = basePos.SqDistance2D(ePos);
 		const float distMod = GetThrDistModAt(ePos);  // thr_mod.distance curve at the enemy's spot
 		float checkPower = maxPower / distMod;
-		float checkSpeed = maxSpeed;
+		float sqCheckSpeed = sqMaxSpeed;
 		if (sqEBDist < sqBaseRange) {
 			checkPower *= circuit->GetMilitaryManager()->GetBaseThrBonus(sqEBDist);  // quota.thr_mod.base_bonus near base
-			checkSpeed *= 2.f;
+			sqCheckSpeed *= 2.f;
 		}
 		const float power = threatMap->GetThreatAt(ePos);
 		if (checkPower <= power) {
 			continue;
 		}
-		const AIFloat3& eVel = enemy->GetVel();
-		if ((eVel.SqLength2D() >= checkSpeed) && (eVel.dot2D(pos - ePos) < 0)) {
+		// The near-base doubling (sqCheckSpeed) is not for a runner that outranges us
+		if (IsRunningAway(enemy, pos, sqCheckSpeed, sqOutrangeSpeed, highestRange)) {
 			continue;
 		}
 

@@ -209,6 +209,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Raid and attack drop outranging runners sooner.** Both tasks skip an enemy moving away from the leader at 80%
+  of the squad's top speed or more; an enemy that outranges us is now skipped from 75% (except anti-heavy, support and artillery
+  units, which are chased as before). Outranges: its ground/water
+  weapon range (anti-air only units never count, as in the flee's `IsGroundDangerDef`) is over 1.1x ours, so a
+  constructor's few extra elmos don't count. Ours: attack's weighted median weapon range (as for siege targets), a
+  raid group's highest weapon range. Raid's near-base allowance (which doubles the squared speed limit) no longer
+  applies to an outranging enemy. Enemies of unknown type (radar dots) are treated as not outranging. Both use
+  `ISquadTask::IsRunningAway`.
 - **Squad flee: one state machine, cheaper checks.** Anti-air and anti-heavy squads now share one flee state
   machine (`ISquadTask::UpdateFlee`) in place of two copies; behaviour is unchanged (anti-heavy keeps its wider end
   margin and stops on arrival, anti-air neither). The escort cover check no longer forces a rebuild of the allied unit

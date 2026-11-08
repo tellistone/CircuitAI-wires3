@@ -151,6 +151,21 @@ public:  // also used by the commander flee (CBuilderManager::UpdateCommFlee)
 	// Is an unidentified radar blip at p high enough above the ground (or water surface) to be a plane?
 	static bool IsHighBlip(CMap* map, const springai::AIFloat3& p);
 protected:
+	/*
+	 * Target picks: runners not worth chasing (attack, raid)
+	 */
+	static constexpr float CHASE_SPEED_MOD = 0.8f;  // x our top speed: a runner this fast is not chased
+	static constexpr float OUTRANGE_CHASE_SPEED_MOD = 0.75f;  // x our top speed: nor this fast, if it outranges us
+	static_assert(CHASE_SPEED_MOD >= OUTRANGE_CHASE_SPEED_MOD, "IsRunningAway: sqSpeed >= sqOutrangeSpeed");
+	static constexpr float OUTRANGE_MOD = 1.1f;  // outranges us: ground range over ours x this (not by a few elmos)
+	// Enemy roles chased whatever their range (the outranging rule is off for them): anti-heavy, support, artillery
+	static constexpr CCircuitDef::RoleM OUTRANGE_CHASED_ROLES = CCircuitDef::RoleMask::AH
+			| CCircuitDef::RoleMask::SUPPORT | CCircuitDef::RoleMask::ARTY;
+	// Is the enemy moving away from pos at sqSpeed or more (elmos per frame, squared), or at sqOutrangeSpeed or more
+	// when its ground/water weapons (IsGroundDangerDef: not anti-air only) outrange ourRange x OUTRANGE_MOD and it has
+	// none of OUTRANGE_CHASED_ROLES? sqSpeed must be at least sqOutrangeSpeed. Unknown type (radar blip): not outranging
+	static bool IsRunningAway(CEnemyInfo* enemy, const springai::AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
+			float ourRange);
 	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
 	// Multiplier on GetPathThreatCap's squad allowance; < 0 = no cap at all
 	virtual float GetPathThreatMod() const { return 1.f; }

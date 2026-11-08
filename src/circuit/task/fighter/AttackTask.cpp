@@ -1356,7 +1356,11 @@ void CAttackTask::FindTarget()
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
 	const float weaponRange = cdef->GetMaxRange();
-	const float sqMaxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
+	const float sqMaxSpeed = SQUARE(highestSpeed * CHASE_SPEED_MOD / FRAMES_PER_SEC);
+	// A runner that outranges us is dropped at a lower speed: we would only catch it inside its range.
+	// Our range: the group's weighted median weapon range (as IsSiegeTarget), not highestRange (that includes LOS)
+	const float sqOutrangeSpeed = SQUARE(highestSpeed * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
+	const float groundRange = std::max(fireRangeLand, fireRangeWater);
 	const float sqHighestRange = SQUARE(highestRange);
 	// Divided by the thr_mod.distance curve at each judged spot
 	const float maxPower = GetPickStrength(frame);
@@ -1463,11 +1467,10 @@ void CAttackTask::FindTarget()
 		{
 			continue;
 		}
-		const AIFloat3& ePos = enemy->GetPos();
-		const AIFloat3& eVel = enemy->GetVel();
-		if ((eVel.SqLength2D() >= sqMaxSpeed) && (eVel.dot2D(pos - ePos) < 0)) {
-			continue;  // runs away faster than we chase
+		if (IsRunningAway(enemy, pos, sqMaxSpeed, sqOutrangeSpeed, groundRange)) {
+			continue;  // runs away faster than we chase (or nearly as fast, and outranges us)
 		}
+		const AIFloat3& ePos = enemy->GetPos();
 		if ((threatMap->GetThreatAt(ePos) >= GetAllowedThreatAt(ePos, powerFor(enemy), refFor(enemy)))
 			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange)
 			|| !isTargetableHeight(enemy))
