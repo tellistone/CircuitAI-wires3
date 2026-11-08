@@ -757,7 +757,8 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	// Energy stall: queue energy, but keep expanding. Mex jobs then rank as NORMAL (CBuilderManager::GetJobRank).
 	// Mex and reclaim are both searched on every pass (reclaim costs no energy, so a stall doesn't stop it);
 	// the job picker then chooses between them by travel and priority.
-	IBuilderTask* task = IsEnergyStalling() ? UpdateEnergyTasks(position, unit) : nullptr;
+	// Geo isn't only a stall fix: a free vent is the cheapest energy there is, so look for one on every pass
+	IBuilderTask* task = IsEnergyStalling() ? UpdateEnergyTasks(position, unit) : UpdateGeoTasks(position, unit);
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
 	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);
 
@@ -990,6 +991,46 @@ float CEconomyManager::GetReclaimRank(float sqDist, float metalLeft) const
 	return std::sqrt(sqDist) / std::pow(std::max(metalLeft, 1.f), reclaimValueExp);
 }
 
+IBuilderTask* CEconomyManager::UpdateGeoTasks(const AIFloat3& position, CCircuitUnit* unit)
+{
+	if (geoDefIds.empty()) {
+		return nullptr;
+	}
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	if (!builderMgr->CanEnqueueTask(32)) {
+		return nullptr;
+	}
+	// One geo job at a time. The shared energy-job cap in UpdateEnergyTasks allows a 500-metal job only
+	// while no energy job at all is queued, and solars and winds almost always are, so geo has its own count
+	const std::set<IBuilderTask*>& energyTasks = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY);
+	for (const IBuilderTask* t : energyTasks) {
+		if (IsGeoDef(t->GetBuildDef())) {
+			return nullptr;
+		}
+	}
+
+	// Same income test as other energy, but always with the full time budget: the stall budget (a quarter)
+	// needs an income only a late game has, which is why a stall never queued a geo
+	const float income = std::min(GetAvgMetalIncome(), GetAvgEnergyIncome()) * energyFactor;
+	const int frame = circuit->GetLastFrame();
+	for (const auto& engy : energyDefs.GetInfos()) {
+		if (!IsGeoDef(engy.cdef) || !engy.cdef->IsAvailable(frame) || (engy.cdef->GetCount() >= engy.data.limit) ||
+			(engy.cdef->GetCostM() * 16.0f >= MAX_BUILD_SEC * SQUARE(income)))
+		{
+			continue;
+		}
+		const AIFloat3 ventPos = FindGeoSpot(engy.cdef, position, unit);  // also checks safety and reach
+		if (utils::is_valid(ventPos)) {
+			const IBuilderTask::Priority priority = IsEnergyStalling() ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
+			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
+			IBuilderTask* task = builderMgr->EnqueueTask(priority, engy.cdef, ventPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
+			task->SetBuildPos(ventPos);
+			return task;
+		}
+	}
+	return nullptr;
+}
+
 IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCircuitUnit* unit)
 {
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
@@ -1022,25 +1063,14 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	};
 	const IBuilderTask::Priority priority = isEnergyStalling ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
 
-	const int frame = circuit->GetLastFrame();
 	// Geothermal first: by the efficiency sort it ranks below fusion, and fusion at its limit stops the
-	// loop below, so geo would hardly ever be built. A free vent is cheaper energy per metal than fusion,
-	// so take it whenever it can be built in time and a free, safe, reachable vent exists.
-	for (const auto& engy : energyDefs.GetInfos()) {
-		if (!IsGeoDef(engy.cdef) || !engy.cdef->IsAvailable(frame) || (engy.cdef->GetCount() >= engy.data.limit) ||
-			!canQueue(engy.cdef) || !isQuickToBuild(engy.cdef))
-		{
-			continue;
-		}
-		const AIFloat3 ventPos = FindGeoSpot(engy.cdef, position, unit);  // also checks safety and reach
-		if (utils::is_valid(ventPos)) {
-			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
-			IBuilderTask* task = builderMgr->EnqueueTask(priority, engy.cdef, ventPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
-			task->SetBuildPos(ventPos);
-			return task;
-		}
+	// loop below, so geo would hardly ever be built (UpdateGeoTasks has its own queue and time checks)
+	IBuilderTask* geoTask = UpdateGeoTasks(position, unit);
+	if (geoTask != nullptr) {
+		return geoTask;
 	}
 
+	const int frame = circuit->GetLastFrame();
 	CCircuitDef* bestDef = nullptr;
 	CCircuitDef* hopeDef = nullptr;
 	bool isLastHope = isEnergyStalling;
