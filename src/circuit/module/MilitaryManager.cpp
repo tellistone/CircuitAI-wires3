@@ -63,6 +63,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, scoutIdx(0)
 		, armyCost(0.f)
 		, attackBaseGather(true)
+		, attackIdleMerge(true)
 		, rallyHost(nullptr)
 		, prevRallyHost(nullptr)
 		, rallyStartFrame(-1)
@@ -541,6 +542,12 @@ void CMilitaryManager::ReadConfig()
 			circuit->LOG("CONFIG %s: quota.attack_merge.base_gather must be true or false, using true", cfgName.c_str());
 		}
 		attackBaseGather = qgather.isBool() ? qgather.asBool() : true;
+
+		const Json::Value& qidle = qmerge.isObject() ? qmerge["idle_merge"] : Json::Value();
+		if (!qidle.isNull() && !qidle.isBool()) {
+			circuit->LOG("CONFIG %s: quota.attack_merge.idle_merge must be true or false, using true", cfgName.c_str());
+		}
+		attackIdleMerge = qidle.isBool() ? qidle.asBool() : true;
 
 		const Json::Value& qrally = qmerge.isObject() ? qmerge["rally"] : Json::Value();
 		if (!qrally.isNull() && !qrally.isObject()) {

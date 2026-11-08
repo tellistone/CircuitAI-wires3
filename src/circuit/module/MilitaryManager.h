@@ -271,6 +271,9 @@ public:
 		int reinforceRetry;  // frames to act as a small attack group after giving up, before looking again
 	};
 	const SAttackMerge& GetAttackMerge() const { return attackMerge; }
+	// quota.attack_merge.idle_merge: an attack group with nothing to attack walks to the nearest compatible group that
+	// ranks above it (more attack power) and merges, so all attack groups converge into one army
+	bool IsAttackIdleMerge() const { return attackIdleMerge; }
 	// quota.attack_merge.rally: when a recently seen enemy blob near our attack groups has more threat than
 	// match x the largest group's raw strength, every compatible attack group (and new unit) reinforces that group
 	// (the host) until it is (1 + margin) x match x the blob, or no blob is found for seen_sec. match 0 = off
@@ -469,6 +472,7 @@ private:
 	int drownedFrames;  // "drowned".time in frames; < 0 = off
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	bool attackBaseGather;  // quota.attack_merge.base_gather
+	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
 	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use
 	int rallyStartFrame;
