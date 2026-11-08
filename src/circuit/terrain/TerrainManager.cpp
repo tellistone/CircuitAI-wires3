@@ -1207,23 +1207,8 @@ bool CTerrainManager::IsStuckInWater(CCircuitDef* cdef, const AIFloat3& position
 	if ((mobileType == nullptr) || mobileType->canHover || mobileType->canFloat) {  // aircraft, hovers, ships, subs
 		return false;
 	}
-	// The engine blocks a square when its highest corner is deeper than MoveDef depth (minElevation = -depth).
-	// Check the corners of the 3x3 squares around the unit, so it isn't stuck while it can still step out.
-	CMap* map = circuit->GetMap();
-	const float maxX = map->GetWidth() * SQUARE_SIZE;
-	const float maxZ = map->GetHeight() * SQUARE_SIZE;
-	const int sx = int(position.x / SQUARE_SIZE);
-	const int sz = int(position.z / SQUARE_SIZE);
-	for (int z = sz - 1; z <= sz + 2; ++z) {
-		for (int x = sx - 1; x <= sx + 2; ++x) {
-			const float cx = utils::clamp(float(x * SQUARE_SIZE), 0.f, maxX);
-			const float cz = utils::clamp(float(z * SQUARE_SIZE), 0.f, maxZ);
-			if (map->GetElevationAt(cx, cz) >= mobileType->minElevation) {
-				return false;
-			}
-		}
-	}
-	return true;
+	// minElevation = -MoveDef depth: the deepest water the unit can walk in
+	return circuit->GetMap()->GetElevationAt(position.x, position.z) < mobileType->minElevation;
 }
 
 AIFloat3 CTerrainManager::GetBuildPosition(CCircuitDef* cdef, const AIFloat3& position)
