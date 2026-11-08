@@ -76,7 +76,6 @@ public:
 	void AddEnemyCost(const CEnemyUnit* e);
 	void DelEnemyCost(const CEnemyUnit* e);
 	float GetMobileThreat() const { return mobileThreat; }
-	float GetMobileThreatMod() const { return initThrMod.inMobile; }  // GetMobileThreat() = sum of cdef threat x this
 	float GetStaticThreat() const { return staticThreat; }
 	float GetEnemyThreat() const { return mobileThreat + staticThreat; }
 	bool IsAirValid() const { return GetEnemyThreat(ROLE_TYPE(AA)) <= maxAAThreat; }

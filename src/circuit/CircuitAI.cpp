@@ -737,16 +737,8 @@ int CCircuitAI::Update(int frame)
 		LOG("SURRENDER: frame %i", frame);
 		// Game_sendTextMessage only runs "/" commands, as the player hosting the AI (as zkgbai does it):
 		// /say for the chat line, then /aikill to leave the game. Zero-K counts a team with neither AI nor players
-		// out (game_over.lua), which ends a 1v1. Everything self-destructs first, so the match ends even if the kill
-		// doesn't take (Zero-K allows self-destruct in a 1v1)
+		// out (game_over.lua) and blows up what is left, which ends a 1v1
 		game->SendTextMessage("/say <CircuitAI> I am defeated.", 0);
-		auto units = callback->GetTeamUnits();
-		for (Unit* u : units) {
-			if (u != nullptr) {
-				u->SelfDestruct();
-			}
-		}
-		utils::free_clear(units);
 		const std::string kill = "/aikill " + utils::int_to_string(teamId);
 		game->SendTextMessage(kill.c_str(), 0);
 		Release(RELEASE_RESIGN);
