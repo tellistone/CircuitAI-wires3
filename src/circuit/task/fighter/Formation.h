@@ -46,7 +46,8 @@ struct SFormationOrder {
  *   path turns back.
  * - Pace: the front row's centre (anchor) walks at the speed of the slowest unit in line or support unit (those
  *   follow the leader), and slows in proportion as the unit furthest behind its slot along the line falls behind
- *   (the leader counts even while busy), stopping when it is lead_sec behind. Each unit walks to its slot a few
+ *   (the leader counts even while busy), stopping when it is lead_sec behind; but while an enemy is in some member's
+ *   LOS (or was in the last 5 s) it doesn't wait for anyone. Each unit walks to its slot a few
  *   seconds ahead, at the anchor's speed plus a catch-up term. At the path's end the line stands in its slots.
  * - A unit out of its slot for 12 s straggles: full speed, and the line no longer waits for it (the squad's regroup
  *   gathers it if it falls far behind). While the line walks, one that hasn't moved 64 elmos in 30 s while out of
@@ -103,7 +104,8 @@ private:
 	void LayOut(float gap);
 	void SwapPlaces(float startArc);  // after a Rematch and LayOut: uncross walks to the places
 	float StartArc(bool isSwitchOn, float frontArc) const;  // the anchor before this solve's step
-	float MoveAnchor(bool isSwitchOn, float frontArc, float dt, float leadSec);  // returns the pace
+	float MoveAnchor(int frame, bool isSwitchOn, float frontArc, float dt, float leadSec);  // returns the pace
+	bool IsEnemyInSight(int frame);  // an enemy in some member's LOS (or was, a few seconds ago): the line won't wait
 	void ShiftRows(float pace, float gap);
 	void PlaceSlots(int frame, float pace, float leadSec, std::vector<CCircuitUnit*>& outStuck);
 	void Reset();
@@ -141,6 +143,7 @@ private:
 
 	// This solve
 	int solveFrame = -1;
+	int sightFrame = -FRAMES_PER_SEC * 5;  // last time an enemy was in sight (IsEnemyInSight)
 	float slowest = 0.f;  // the line's top speed
 	float maxWidth = 0.f;
 	float maxFoot = 0.f;

@@ -12,6 +12,7 @@
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
 #include "unit/action/TravelAction.h"
+#include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -46,6 +47,7 @@ constexpr float THREAT_EPS = 1e-3f;
 constexpr float TURN_BACK_COS = -0.5f;  // a new path that turns back by more than 120 degrees starts the rows afresh
 constexpr float TURN_LOOK = 256.f;  // the path's heading: towards its point this far along
 constexpr size_t PATH_SEARCH = 32;  // path segments searched for the leader's spot, from the last one
+constexpr int SIGHT_HOLD_FRAMES = FRAMES_PER_SEC * 5;  // an enemy seen this recently: the line doesn't wait
 constexpr int SWAP_PASSES = 8;  // SwapPlaces: passes of place swaps at most
 
 // Share along segment ab of the point closest to p (2D)
@@ -145,7 +147,7 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	if (isMatch) {
 		SwapPlaces(StartArc(isSwitchOn, frontArc));
 	}
-	const float pace = MoveAnchor(isSwitchOn, frontArc, dt, cfg.leadSec);
+	const float pace = MoveAnchor(frame, isSwitchOn, frontArc, dt, cfg.leadSec);
 	ShiftRows(pace, cfg.gap);
 	PlaceSlots(frame, pace, cfg.leadSec, outStuck);
 }
@@ -356,7 +358,7 @@ float CFormation::StartArc(bool isSwitchOn, float frontArc) const
 	return isSwitchOn ? leaderOffset : std::max(frontArc, leaderOffset);
 }
 
-float CFormation::MoveAnchor(bool isSwitchOn, float frontArc, float dt, float leadSec)
+float CFormation::MoveAnchor(int frame, bool isSwitchOn, float frontArc, float dt, float leadSec)
 {
 	// Pace: the slowest unit's speed, slowing in proportion as the unit furthest behind its slot along the line falls
 	// behind (one still spreading sideways isn't behind), to a stop at lead_sec behind: the line waits for everyone,
@@ -370,10 +372,42 @@ float CFormation::MoveAnchor(bool isSwitchOn, float frontArc, float dt, float le
 			lag = std::max(lag, LagAt(anchorArc - rows[m.row].offset, m.pos));
 		}
 	}
+	// Near the enemy the line doesn't wait: it walks on at the slowest unit's speed and units catch up as they can
+	if ((lag > 0.f) && IsEnemyInSight(frame)) {
+		lag = 0.f;
+	}
 	const float pace = std::max(slowest - lag / leadSec, 0.f);
 	anchorArc = std::min(anchorArc + pace * dt, arcs.back());
 	anchorPos = PointAt(anchorArc);
 	return pace;
+}
+
+bool CFormation::IsEnemyInSight(int frame)
+{
+	// An enemy in LOS within some member's sight radius, now or in the last SIGHT_HOLD_FRAMES (so the line doesn't
+	// stop and go as enemies step in and out of sight)
+	if (frame < sightFrame + SIGHT_HOLD_FRAMES) {
+		return true;
+	}
+	CCircuitAI* circuit = task->GetManager()->GetCircuit();
+	const AIFloat3& leaderPos = leaderM->pos;
+	float reach = 0.f;  // no member sees further than this from the leader
+	for (const auto& kv : members) {
+		reach = std::max(reach, leaderPos.distance2D(kv.second.pos) + kv.first->GetCircuitDef()->GetLosRadius());
+	}
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		const CEnemyInfo* enemy = kv.second;
+		if (!enemy->IsInLOS() || (leaderPos.SqDistance2D(enemy->GetPos()) > SQUARE(reach))) {
+			continue;
+		}
+		for (const auto& km : members) {
+			if (km.second.pos.SqDistance2D(enemy->GetPos()) <= SQUARE(km.first->GetCircuitDef()->GetLosRadius())) {
+				sightFrame = frame;
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 void CFormation::ShiftRows(float pace, float gap)
@@ -465,7 +499,7 @@ void CFormation::Reset()
 	leader = nullptr;
 	leaderM = nullptr;
 	track.clear();
-	heading = ZeroVector;
+	heading = ZeroVector;  // sightFrame stays: a line forming right after a fight doesn't wait either
 	solvedPath = nullptr;
 	heldWidth = width = depth = 0.f;
 	widenFrame = -WIDEN_FRAMES;

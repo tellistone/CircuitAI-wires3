@@ -23,7 +23,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   matched again when the group, its columns or its leader change, or the path turns back. Where not even 2 fit abreast the units follow
   the path as before, until 2 fit again for 3 s. The line walks at the speed of its slowest unit (support units such as
   capture cars included) and slows in proportion as its furthest-behind unit, or a busy leader, falls behind its slot,
-  stopping when that unit is `lead_sec` behind, so even the slowest can catch up; each unit gets a move a few seconds
+  stopping when that unit is `lead_sec` behind, so even the slowest can catch up (but not while an enemy is in LOS of
+  any unit in the group, or was in the last 5 s: near the enemy the line walks on at its slowest unit's speed); each unit gets a move a few seconds
   ahead of its slot and a wanted speed that lets it catch up, re-sent only when it nears that move's end or the slot
   moves off its way. At the end of its walk the group stands in line. A unit out of its slot for 12 s catches up at full
   speed and isn't waited for (the usual regroup still gathers the group if it falls far behind); while the line walks,
