@@ -2681,20 +2681,15 @@ void CMilitaryManager::UpdateResign()
 		return;
 	}
 	// 1v1 only: our ally team is just us, and there is a single enemy team
-	if ((circuit->GetAllyTeam()->GetSize() != 1) || (circuit->GetEnemyTeamSize() != 1)) {
-		return;
-	}
+	const int allySize = circuit->GetAllyTeam()->GetSize();
+	const int enemySize = circuit->GetEnemyTeamSize();
+	const bool is1v1 = (allySize == 1) && (enemySize == 1);
 
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	const int spotCount = metalMgr->GetSpots().size();
-	if (spotCount == 0) {
-		return;
-	}
 	metalMgr->MarkAllyMexes();
 	const int mexCount = metalMgr->GetMexCount();
-	if (mexCount >= resign.mexShare * spotCount) {
-		return;
-	}
+	const bool isMexLost = (spotCount > 0) && (mexCount < resign.mexShare * spotCount);
 
 	// Same scale as CEnemyManager::GetMobileThreat: every finished mobile unit (commander and builders included)
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
@@ -2707,13 +2702,20 @@ void CMilitaryManager::UpdateResign()
 	}
 	ourThreat *= enemyMgr->GetMobileThreatMod();
 	const float enemyThreat = enemyMgr->GetMobileThreat();
-	if (enemyThreat <= resign.threatMult * ourThreat) {
-		return;
-	}
+	const bool isArmyLost = (enemyThreat > resign.threatMult * ourThreat);
 
-	circuit->LOG("RESIGN: frame %i | mexes %i / %i spots | enemy mobile threat %.1f vs ours %.1f",
-			frame, mexCount, spotCount, enemyThreat, ourThreat);
-	circuit->Surrender();
+	const bool isLost = is1v1 && isMexLost && isArmyLost;
+	// Diagnostics: the first check and then once a minute (UpdateResign runs every 10 s), plus the one that resigns
+	if (isLost || (resignChecks++ % 6 == 0)) {
+		circuit->LOG("RESIGN %s: frame %i | teams: ally %i, enemy %i (%s) | mexes %i / %i spots, need < %.1f (%s)"
+				" | mobile threat: enemy %.1f, ours %.1f, need enemy > %.1f (%s)",
+				isLost ? "NOW" : "check", frame, allySize, enemySize, is1v1 ? "ok" : "no",
+				mexCount, spotCount, resign.mexShare * spotCount, isMexLost ? "ok" : "no",
+				enemyThreat, ourThreat, resign.threatMult * ourThreat, isArmyLost ? "ok" : "no");
+	}
+	if (isLost) {
+		circuit->Surrender();
+	}
 }
 
 /*

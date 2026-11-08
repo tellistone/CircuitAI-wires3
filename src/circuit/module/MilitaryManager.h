@@ -466,6 +466,7 @@ private:
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SAttackRally attackRally;  // quota.attack_merge.rally
 	SResignCfg resign;  // "resign"
+	unsigned int resignChecks = 0;  // UpdateResign calls past resign.frame, to space out its diagnostic log
 	int drownedFrames;  // "drowned".time in frames; < 0 = off
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	bool attackBaseGather;  // quota.attack_merge.base_gather
