@@ -564,6 +564,23 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 	)
 }
 
+bool ISquadTask::IsRunningAway(CEnemyInfo* enemy, const AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
+		float ourRange)
+{
+	const AIFloat3& eVel = enemy->GetVel();
+	const float sqVel = eVel.SqLength2D();
+	if ((sqVel < sqOutrangeSpeed) || (eVel.dot2D(pos - enemy->GetPos()) >= 0.f)) {
+		return false;  // slow, or not moving away
+	}
+	if (sqVel >= sqSpeed) {
+		return true;
+	}
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	float eRange;
+	return (edef != nullptr) && !edef->IsEnemyRoleAny(OUTRANGE_CHASED_ROLES) && IsGroundDangerDef(edef, false, eRange)
+		&& (eRange > ourRange * OUTRANGE_MOD);
+}
+
 AIFloat3 ISquadTask::GetScootSpot(CCircuitUnit* unit, const AIFloat3& uPos, float margin) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
