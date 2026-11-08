@@ -228,6 +228,7 @@ float CFormation::AddMembers(int frame)
 			m.rank = cdef->GetFormationRow();
 		}
 		m.isStraggler = isOn;
+		m.isInSlot = false;
 		m.slotFrame = m.moveFrame = frame;
 		m.movePos = unit->GetPos(frame);
 		m.row = -1;
@@ -524,7 +525,8 @@ void CFormation::PlaceSlots(int frame, float pace, float leadSec, std::vector<CC
 		// a straggler, until it is back (the leader never is); so a unit that holds the line up does so for a while only
 		const bool isNear = (slotLag < leadSec * slowest / 2)
 				&& (m.pos.SqDistance2D(SlotAt(slotArc, x, mobileId)) < SQUARE(std::max(spacing, m.maxSpeed * SLOT_SEC)));
-		if (isNear || (&m == leaderM)) {
+		m.isInSlot = isNear || (&m == leaderM);
+		if (m.isInSlot) {
 			m.slotFrame = frame;
 			m.isStraggler = false;
 		} else if (frame >= m.slotFrame + STRAGGLE_FRAMES) {
@@ -565,23 +567,55 @@ void CFormation::Remove(CCircuitUnit* unit)
 	}
 }
 
+const CFormation::SMember* CFormation::FindSteered(const CCircuitUnit* unit) const
+{
+	if (!isOn) {
+		return nullptr;
+	}
+	auto it = members.find(const_cast<CCircuitUnit*>(unit));
+	return ((it != members.end()) && it->second.isSteered) ? &it->second : nullptr;
+}
+
 bool CFormation::GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const
 {
-	auto it = members.find(unit);
-	if (!isOn || (it == members.end()) || !it->second.isSteered) {
+	const SMember* m = FindSteered(unit);
+	if (m == nullptr) {
 		return false;
 	}
-	outOrder = {it->second.target, it->second.speed};
+	outOrder = {m->target, m->speed};
 	return true;
 }
 
 bool CFormation::IsKeptUp(const CCircuitUnit* unit) const
 {
-	auto it = members.find(const_cast<CCircuitUnit*>(unit));
-	if (!isOn || (it == members.end()) || !it->second.isSteered) {
-		return false;
+	const SMember* m = FindSteered(unit);
+	return (m != nullptr) && (!m->isStraggler || (m->maxSpeed >= 1.1f * slowest));
+}
+
+bool CFormation::IsSteered(const CCircuitUnit* unit) const
+{
+	return FindSteered(unit) != nullptr;
+}
+
+bool CFormation::IsInSlot(const CCircuitUnit* unit) const
+{
+	const SMember* m = FindSteered(unit);
+	return (m != nullptr) && m->isInSlot;
+}
+
+void CFormation::GetStandPath(F3Vec& outPath) const
+{
+	// From the line's point level with the leader (not the leader itself, which walks a little off the line) to the
+	// front row's centre, along the line as it lies
+	outPath.push_back(PointAt(0.f));
+	for (size_t i = 0; i < line.size(); ++i) {
+		if ((arcs[i] > 0.f) && (arcs[i] < anchorArc)) {
+			outPath.push_back(line[i]);
+		}
 	}
-	return !it->second.isStraggler || (it->second.maxSpeed >= 1.1f * slowest);
+	if (outPath.back().SqDistance2D(anchorPos) >= 1.f) {
+		outPath.push_back(anchorPos);
+	}
 }
 
 void CFormation::Reset()
@@ -618,12 +652,14 @@ void CFormation::UpdateTrack(const AIFloat3& pos, float keepLen)
 bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, bool isNewPath, float backLen, float aheadLen)
 {
 	// The leader's spot on its path: the nearest point, searched on from the last segment (the leader walks a reused
-	// path on; a new path starts at the leader), up to the first segment it is on, so a hairpin's far leg isn't taken
+	// path on), up to the first segment it is on, so a hairpin's far leg isn't taken. A new path usually starts at the
+	// leader; one sent again (the walk resumed after a regroup) is searched to its end, once
 	const F3Vec& pts = path.posPath;
 	size_t seg = std::min(pathIndex, pts.size() - 1);
 	AIFloat3 spot = pts[seg];
 	float sqOff = leaderPos.SqDistance2D(spot);
-	for (size_t i = seg; (i + 1 < pts.size()) && (i < pathIndex + PATH_SEARCH); ++i) {
+	const size_t searchEnd = isNewPath ? pts.size() : (pathIndex + PATH_SEARCH);
+	for (size_t i = seg; (i + 1 < pts.size()) && (i < searchEnd); ++i) {
 		const float t = ProjectOnSegment(leaderPos, pts[i], pts[i + 1]);
 		const AIFloat3 p = pts[i] + (pts[i + 1] - pts[i]) * t;
 		const float sq = leaderPos.SqDistance2D(p);
