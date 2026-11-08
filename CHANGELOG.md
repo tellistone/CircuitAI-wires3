@@ -13,20 +13,24 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   isn't engaging, fleeing or cornered, it now walks as a line across the path its leader walks, centred on the leader:
   neighbours `spacing` apart (closer as the group grows), at most `width_range` x its median weapon range wide,
   narrower where terrain or buildings in the next 3 s of walking leave less room, or where a flank would step into
-  enemy threat the path stays out of (between two turrets the line narrows to the gap). Rows shift sideways to fit,
-  and no slot lies past a spot that isn't free, seen from the path. Spacing squeezes to 0.7 before a second row is
-  added; rows fill front to back by `row_order` (riots and assaults in front, artillery at the back) and follow the
-  leader's path (behind the leader, the track of its spot on that path). Where not even 2 fit abreast the units follow
+  more enemy threat than the path itself is in (between two turrets the line narrows to the gap). Rows shift sideways
+  to fit, and no slot lies past a spot that isn't free, seen from the path. Spacing squeezes to 0.7 before a second row
+  is added; rows fill front to back by `row_order` (riots and assaults in front, artillery at the back) and follow the
+  leader's path (behind the leader, the track of its spot on that path; a re-plan that turns back by more than 120°
+  lays the rows behind the new heading instead). In a row units take places in the order they stand across the path,
+  then swap where that shortens two units' walks to their places, so they don't walk across each other; places are
+  matched again when the group, its columns or its leader change, or the path turns back. Where not even 2 fit abreast the units follow
   the path as before, until 2 fit again for 3 s. The line walks at the speed of its slowest unit (support units such as
   capture cars included) and slows in proportion as its furthest-behind unit, or a busy leader, falls behind its slot,
   stopping when that unit is `lead_sec` behind, so even the slowest can catch up; each unit gets a move a few seconds
   ahead of its slot and a wanted speed that lets it catch up, re-sent only when it nears that move's end or the slot
   moves off its way. At the end of its walk the group stands in line. A unit out of its slot for 12 s catches up at full
-  speed and isn't waited for (the usual regroup still gathers the group if it falls far behind); one that hasn't moved
-  64 elmos in 30 s while out of its slot is released to find a new task (the leader too, and the line re-centres on the
-  next one). Jump units still jump along the path whenever their jump is ready, then walk back into line; jumps in
-  combat and when fleeing are unchanged. Other squads (raid, defend, anti-air, anti-heavy) and facing come in later
-  steps.
+  speed and isn't waited for (the usual regroup still gathers the group if it falls far behind); while the line walks,
+  one that hasn't moved 64 elmos in 30 s while out of its slot is released to find a new task (the leader too, and the
+  line re-centres on the next one). Units with the `jump` attribute (jump on the move; none in the shipped config)
+  still jump along the path whenever their jump is ready, then walk back into line; jumps in combat and when fleeing
+  don't go through the line and are unchanged. If the group's most restricted mover is a `no_formation` unit, the
+  group walks as before. Other squads (raid, defend, anti-air, anti-heavy) and facing come in later steps.
 - **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit
   `reload_scoot_margin`, default 100, or the anti-heavy flee margin in anti-heavy squads). While engaged, a unit whose
   main weapon is less than `reload_scoot` reloaded and that stands in ground threat steps straight away from the

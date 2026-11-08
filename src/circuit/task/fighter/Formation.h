@@ -24,29 +24,34 @@ class ISquadTask;
 struct SFormationOrder {
 	springai::AIFloat3 pos;  // walk here
 	float speed;  // wanted speed; NO_SPEED_LIMIT: full speed
-	float slack;  // a new pos this far off the line to the last one is worth a new order
 };
 
 /*
  * Line formation (behaviour.json "formation"): a squad of land or sea units walking its path outside combat goes as
  * a line across the path, with more rows only where the line has to narrow. The task plans its path as before; the
  * formation decides where along and beside it each unit walks, and how fast. The travel action asks GetOrder.
- * - The line: the path the leader walks, through the leader's spot on it, and behind the spot its track.
+ * - The line: the path the leader walks, through the leader's spot on it, and behind the spot its track. A new path
+ *   that turns back by more than 120 degrees drops the track, so the rows behind are laid behind the new heading.
  * - Width: the free width across the line where it walks in the next few seconds, at most width_range x the
- *   squad's fire range. Free: ground the leader's type can walk and, where the line itself is out of enemy threat,
- *   out of threat too, so flanks don't step into the turret range the path kept out of. Each row shifts sideways to
- *   fit, and a slot never lies past the first spot that isn't free, seen from the line. Spacing shrinks as the squad
- *   grows, and squeezes to 0.7 of that before a second row is added. Rows fill front to back by row_order. Below 2
- *   columns the formation lets go and the units follow the path as before, until 2 fit again for a few seconds.
+ *   squad's fire range. Free: ground the leader's type can walk, with no more than 1.5 x the threat on the line
+ *   there (the threat map's grain), so flanks don't step into a turret's range the path kept out of, or deeper into
+ *   one it crosses. Each row shifts sideways to fit, and a slot never lies past the first spot that isn't free, seen
+ *   from the line. Spacing shrinks as the squad grows, and squeezes to 0.7 of that before a second row is added.
+ *   Below 2 columns the formation lets go and the units follow the path as before, until 2 fit again for a few
+ *   seconds.
+ * - Slots: rows fill front to back by row_order. In a row, one pitch; units take the places left to right as they
+ *   stand, then two swap places where that shortens their walks by more than half a spacing, so paths don't cross;
+ *   the leader takes the middle. Matched again when units join or leave, the columns or the leader change, or the
+ *   path turns back.
  * - Pace: the front row's centre (anchor) walks at the speed of the slowest unit in line or support unit (those
  *   follow the leader), and slows in proportion as the unit furthest behind its slot along the line falls behind
  *   (the leader counts even while busy), stopping when it is lead_sec behind. Each unit walks to its slot a few
  *   seconds ahead, at the anchor's speed plus a catch-up term. At the path's end the line stands in its slots.
  * - A unit out of its slot for 12 s straggles: full speed, and the line no longer waits for it (the squad's regroup
- *   gathers it if it falls far behind). One that hasn't moved 64 elmos in 30 s while out of its slot is released
- *   (ISquadTask::ReleaseStuck), the leader too.
- * - A unit that can jump jumps along the path as before whenever its jump is ready (ITravelAction), then walks back
- *   into line.
+ *   gathers it if it falls far behind). While the line walks, one that hasn't moved 64 elmos in 30 s while out of
+ *   its slot is released (ISquadTask::ReleaseStuck), the leader too.
+ * - A unit allowed to jump on the move (attribute "jump") jumps along the path as before whenever its jump is ready
+ *   (ITravelAction), then walks back into line. Jumps into combat and when retreating don't go through the line.
  */
 class CFormation {
 public:
@@ -93,8 +98,9 @@ private:
 	void MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed);
 	int FitColumns(int frame, float frontArc, int count, float baseSpacing, float gap);  // returns the columns
 	void SwitchOn(int frame);
-	void Rematch(int cols);
+	void Rematch(int cols, bool isSwitchOn, float frontArc, float gap);
 	void LayOut(float gap);
+	float StartArc(bool isSwitchOn, float frontArc) const;  // the anchor before this solve's step
 	float MoveAnchor(bool isSwitchOn, float frontArc, float dt, float leadSec);  // returns the pace
 	void ShiftRows(float pace, float gap);
 	void PlaceSlots(int frame, float pace, float leadSec, std::vector<CCircuitUnit*>& outStuck);
@@ -102,7 +108,7 @@ private:
 
 	// The centre line: the track of the leader's spot on its path, the spot, then the path ahead; arc 0 at the spot.
 	// False: the leader is more than maxWidth from its path
-	bool BuildLine(const springai::AIFloat3& leaderPos, const PathInfo& path, float backLen, float aheadLen);
+	bool BuildLine(const springai::AIFloat3& leaderPos, const PathInfo& path, bool isNewPath, float backLen, float aheadLen);
 	void UpdateTrack(const springai::AIFloat3& pos, float keepLen);
 	springai::AIFloat3 PointAt(float arc) const;
 	springai::AIFloat3 AxisAt(float arc) const;  // unit vector across the line (smoothed)
@@ -120,7 +126,7 @@ private:
 	CCircuitUnit* leader = nullptr;  // the line is centred on it (a new one clears the track)
 	SMember* leaderM = nullptr;
 	bool isOn = false;
-	bool isDirty = false;  // members changed: match units to slots again
+	bool isDirty = false;  // match units to slots again (members changed, or the path turned back)
 	int matchCols = 0;  // columns of the current match
 
 	std::deque<springai::AIFloat3> track;  // the leader's last spots on its path, oldest first
@@ -136,7 +142,6 @@ private:
 	float maxWidth = 0.f;
 	float maxFoot = 0.f;
 	float spacing = 0.f;
-	float slack = 0.f;  // SFormationOrder::slack, and the row shift's dead band
 	float anchorArc = 0.f;  // the front row's centre on the line
 	springai::AIFloat3 anchorPos;  // the same, for the next solve's line
 	float heldWidth = 0.f;  // free width in use (narrows at once, widens after WIDEN_FRAMES)

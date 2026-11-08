@@ -35,6 +35,8 @@ public:
 	bool IsFormationMoveDone(const springai::AIFloat3& pos) const;
 
 protected:
+	// Moves pathIterator on while that brings it closer to pos; returns the squared distance to its point
+	float AdvancePathIterator(const springai::AIFloat3& pos);
 	int CalcSpeedStep(float& stepSpeed);
 	// While the squad's line formation steers the unit, send its formation move instead of path steps (true).
 	// Sent only when needed: the first one after a new path, near the last target, or when the target moved off the

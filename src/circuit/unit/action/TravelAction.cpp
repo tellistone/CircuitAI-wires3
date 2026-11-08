@@ -19,6 +19,10 @@ namespace circuit {
 
 using namespace springai;
 
+namespace {
+constexpr float FORMATION_SLACK = 48.f;  // a formation target this far from the last one is worth a new move
+}  // namespace
+
 ITravelAction::ITravelAction(CCircuitUnit* owner, Type type, int squareSize, float speed)
 		: IUnitAction(owner, type)
 		, speed(speed)
@@ -71,13 +75,9 @@ void ITravelAction::SetPath(const std::shared_ptr<PathInfo>& pPath, float speed)
 	formPos = -RgtVector;
 }
 
-int ITravelAction::CalcSpeedStep(float& stepSpeed)
+float ITravelAction::AdvancePathIterator(const AIFloat3& pos)
 {
-	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
-	const AIFloat3& pos = unit->GetPos(lastFrame);
-	int pathMaxIndex = pPath->posPath.size() - 1;
-
-	int lastStep = pathIterator;
+	const int pathMaxIndex = pPath->posPath.size() - 1;
 	float sqDistToStep = pos.SqDistance2D(pPath->posPath[pathIterator]);
 	int step = std::min(pathIterator + increment, pathMaxIndex);
 	float sqNextDistToStep = pos.SqDistance2D(pPath->posPath[step]);
@@ -87,6 +87,17 @@ int ITravelAction::CalcSpeedStep(float& stepSpeed)
 		step = std::min(pathIterator + increment, pathMaxIndex);
 		sqNextDistToStep = pos.SqDistance2D(pPath->posPath[step]);
 	}
+	return sqDistToStep;
+}
+
+int ITravelAction::CalcSpeedStep(float& stepSpeed)
+{
+	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
+	const AIFloat3& pos = unit->GetPos(lastFrame);
+	int pathMaxIndex = pPath->posPath.size() - 1;
+
+	int lastStep = pathIterator;
+	const float sqDistToStep = AdvancePathIterator(pos);
 
 	if (!isForce && (pathIterator == lastStep) && ((int)sqDistToStep > minSqDist)) {
 		return -1;
@@ -95,7 +106,7 @@ int ITravelAction::CalcSpeedStep(float& stepSpeed)
 	}
 
 	if ((int)sqDistToStep <= minSqDist) {
-		pathIterator = step;
+		pathIterator = std::min(pathIterator + increment, pathMaxIndex);
 		state = (pathIterator == pathMaxIndex) ? State::FINISH : state;
 	}
 
@@ -108,13 +119,15 @@ bool ITravelAction::TryFormationOrder(CCircuitAI* circuit)
 	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
 	const CFormation* formation = pPath->posPath.empty() ? nullptr : unit->GetTask()->GetFormation();
 	SFormationOrder order;
-	// A unit whose jump is ready follows the path, which jumps along it as before
+	// A unit allowed to jump on the move (attribute "jump") whose jump is ready follows the path, which jumps along it
 	if ((formation == nullptr) || !formation->GetOrder(unit, order) || (unit->IsAllowedToJump() && unit->IsJumpReady())) {
 		formPos = -RgtVector;  // following the path: the next formation move goes out at once
 		return false;
 	}
 	isForce = true;  // once the formation lets go, path following sends its step at once
-	const bool isMove = IsFormationMoveDue(unit->GetPos(lastFrame), order);
+	const AIFloat3& pos = unit->GetPos(lastFrame);
+	AdvancePathIterator(pos);  // and from where the unit is, not from where it last followed the path
+	const bool isMove = IsFormationMoveDue(pos, order);
 	if (!isMove && (std::fabs(order.speed - formSpeed) <= 0.15f * std::fabs(formSpeed))) {
 		return true;
 	}
@@ -150,12 +163,12 @@ bool ITravelAction::IsFormationMoveDue(const AIFloat3& pos, const SFormationOrde
 	const float3 toLast = formPos - pos;
 	const float sqLast = toLast.SqLength2D();
 	if (sqLast < SQUARE(reach)) {
-		return order.pos.SqDistance2D(formPos) >= SQUARE(order.slack);
+		return order.pos.SqDistance2D(formPos) >= SQUARE(FORMATION_SLACK);
 	}
 	// The target moved off the way to the last one (a re-plan, a bend, a wider or narrower line) or behind the unit
 	const float3 toNew = order.pos - pos;
 	const float along = toNew.dot2D(toLast) / std::sqrt(sqLast);
-	return (along < -order.slack) || (toNew.SqLength2D() - SQUARE(along) > SQUARE(order.slack));
+	return (along < -FORMATION_SLACK) || (toNew.SqLength2D() - SQUARE(along) > SQUARE(FORMATION_SLACK));
 }
 
 } // namespace circuit
