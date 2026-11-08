@@ -40,7 +40,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   no way it came to go by), the front row stands at the leader facing the nearest strong enemy group (the most threat
   per distance), else away from our base; standing, it still turns to a clear threat around it. Where no line fits, the
   units walk to that spot, as the gather did. A regroup in line ends as soon as every unit the line steers stands in its
-  slot and the rest are near (else at the usual check, every 16 updates); the walk then resumes in line on the same path. A holding group (nothing to attack, no front to walk to, no safe route) now
+  slot and the rest are near (else at the usual check, every 16 updates); the walk then resumes in line on the same path,
+  unless a unit asked for a new route. A holding group that is hit and steps away ends its regroup, so the step isn't undone. A holding group (nothing to attack, no front to walk to, no safe route) now
   walks to its quiet spot along a threat-capped path when the spot is more than 256 elmos away, so the line takes it
   there and it stands in line instead of clumped; it keeps that spot unless another is 20% quieter. A group with no line
   (line off, too few units, or no room for 2 columns) takes this path too, and ends bunched on its last point as before. Stepping out of an

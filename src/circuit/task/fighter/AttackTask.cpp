@@ -311,9 +311,6 @@ void CAttackTask::Update()
 		}
 		return;
 	}
-	if (wasRegroup && !pPath->posPath.empty()) {
-		ActivePath(lowestSpeed);  // the regroup just ended: walk on (a decision may reuse the route)
-	}
 
 	/*
 	 * Decide every 2 updates (~2 s), or sooner when a unit asks for it (re-plan, sudden threat)
@@ -335,9 +332,13 @@ void CAttackTask::Update()
 		for (CCircuitUnit* unit : units) {
 			isForced |= unit->IsForceUpdate(frame);
 		}
-		if (!isForced) {
-			return;
-		}
+	}
+	// The regroup just ended: walk the route on (a decision may reuse it), unless a unit asked for a new one
+	if (wasRegroup && !isForced && !pPath->posPath.empty()) {
+		ActivePath(lowestSpeed);
+	}
+	if (!isDecision && !isForced) {
+		return;
 	}
 	// A normal decision that no unit asked to re-plan may keep a fresh route to the same goal (ReuseRoute)
 	Decide(frame, isDecision && !isForced);
@@ -2193,11 +2194,12 @@ void CAttackTask::Regroup(int frame)
 			regroupPath = MakeRegroupPath();
 			regroupFrame = groupFrame;
 		}
+		auto isOnPath = [this, isKept](ITravelAction* travelAct) {  // walking it, or at its end
+			return isKept && (travelAct->GetPath() == regroupPath) && !travelAct->IsWait();
+		};
 		for (CCircuitUnit* unit : units) {
 			ITravelAction* travelAct = unit->GetTravelAct();
-			if ((isKept && (travelAct->GetPath() == regroupPath) && !travelAct->IsWait())
-				|| (std::find(endangered.begin(), endangered.end(), unit) != endangered.end()))
-			{
+			if (isOnPath(travelAct) || (std::find(endangered.begin(), endangered.end(), unit) != endangered.end())) {
 				continue;
 			}
 			travelAct->SetPath(regroupPath);  // full speed when not steered, as a gather
@@ -2218,11 +2220,7 @@ std::shared_ptr<PathInfo> CAttackTask::MakeRegroupPath() const
 	std::shared_ptr<PathInfo> path = std::make_shared<PathInfo>();
 	const CFormation* line = GetFormation();  // nullptr: the line is off
 	if (line != nullptr) {
-		// On: it stops where it stands, from the leader to the front row's centre
-		path->posPath.push_back(groupPos);
-		if (line->GetAnchorPos().SqDistance2D(groupPos) >= SQUARE(DEFAULT_SLACK)) {
-			path->posPath.push_back(line->GetAnchorPos());
-		}
+		line->GetStandPath(path->posPath);  // on: it stops where it stands
 		return path;
 	}
 	// Off (often just after a fight, with no track to go by): the front row at the leader, facing the nearest strong
@@ -2244,6 +2242,7 @@ std::shared_ptr<PathInfo> CAttackTask::MakeRegroupPath() const
 	AIFloat3 dir = (best != nullptr) ? (best->pos - groupPos) : (groupPos - circuit->GetSetupManager()->GetBasePos());
 	dir.y = 0.f;
 	if (dir.SqLength2D() >= 1.f) {
+		// A first stretch of DEFAULT_SLACK towards the leader gives the line its way (BuildLine, with no track)
 		AIFloat3 back = groupPos - dir.Normalize2D() * DEFAULT_SLACK;
 		CTerrainManager::CorrectPosition(back);
 		path->posPath.push_back(back);
@@ -2329,6 +2328,11 @@ void CAttackTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 		return;
 	}
 	stepFrame = frame;
+	// A regroup would send the units straight back (Regroup, or the walk resumed at its end): it ends here, and the
+	// next decision plans afresh
+	if (State::REGROUP == state) {
+		state = State::ROAM;
+	}
 
 	// Hit while holding by something we didn't go for (not visible, or no safe route to it):
 	// step out of its range, away from it; unknown attacker: avoid this spot and pick the next quietest

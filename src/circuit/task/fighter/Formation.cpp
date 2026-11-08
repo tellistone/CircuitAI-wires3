@@ -567,35 +567,55 @@ void CFormation::Remove(CCircuitUnit* unit)
 	}
 }
 
+const CFormation::SMember* CFormation::FindSteered(const CCircuitUnit* unit) const
+{
+	if (!isOn) {
+		return nullptr;
+	}
+	auto it = members.find(const_cast<CCircuitUnit*>(unit));
+	return ((it != members.end()) && it->second.isSteered) ? &it->second : nullptr;
+}
+
 bool CFormation::GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const
 {
-	auto it = members.find(unit);
-	if (!isOn || (it == members.end()) || !it->second.isSteered) {
+	const SMember* m = FindSteered(unit);
+	if (m == nullptr) {
 		return false;
 	}
-	outOrder = {it->second.target, it->second.speed};
+	outOrder = {m->target, m->speed};
 	return true;
 }
 
 bool CFormation::IsKeptUp(const CCircuitUnit* unit) const
 {
-	auto it = members.find(const_cast<CCircuitUnit*>(unit));
-	if (!isOn || (it == members.end()) || !it->second.isSteered) {
-		return false;
-	}
-	return !it->second.isStraggler || (it->second.maxSpeed >= 1.1f * slowest);
+	const SMember* m = FindSteered(unit);
+	return (m != nullptr) && (!m->isStraggler || (m->maxSpeed >= 1.1f * slowest));
 }
 
 bool CFormation::IsSteered(const CCircuitUnit* unit) const
 {
-	auto it = members.find(const_cast<CCircuitUnit*>(unit));
-	return isOn && (it != members.end()) && it->second.isSteered;
+	return FindSteered(unit) != nullptr;
 }
 
 bool CFormation::IsInSlot(const CCircuitUnit* unit) const
 {
-	auto it = members.find(const_cast<CCircuitUnit*>(unit));
-	return isOn && (it != members.end()) && it->second.isSteered && it->second.isInSlot;
+	const SMember* m = FindSteered(unit);
+	return (m != nullptr) && m->isInSlot;
+}
+
+void CFormation::GetStandPath(F3Vec& outPath) const
+{
+	// From the line's point level with the leader (not the leader itself, which walks a little off the line) to the
+	// front row's centre, along the line as it lies
+	outPath.push_back(PointAt(0.f));
+	for (size_t i = 0; i < line.size(); ++i) {
+		if ((arcs[i] > 0.f) && (arcs[i] < anchorArc)) {
+			outPath.push_back(line[i]);
+		}
+	}
+	if (outPath.back().SqDistance2D(anchorPos) >= 1.f) {
+		outPath.push_back(anchorPos);
+	}
 }
 
 void CFormation::Reset()

@@ -282,12 +282,13 @@ bool ISquadTask::IsMustRegroup()
 		state = State::ROAM;
 		return false;
 	}
+	// Far from the group: beyond this from groupPos
+	const float sqMaxDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
 	if (!isCheck) {
 		// Between checks: whole once every unit the line steers stands in its slot and the others are near
-		const float sqNear = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
 		bool isWhole = true;
 		for (CCircuitUnit* unit : validUnits) {
-			if (formation.IsSteered(unit) || (groupPos.SqDistance2D(unit->GetPos(frame)) > sqNear)) {
+			if (formation.IsSteered(unit) || (groupPos.SqDistance2D(unit->GetPos(frame)) > sqMaxDist)) {
 				isWhole = false;
 				break;
 			}
@@ -304,7 +305,6 @@ bool ISquadTask::IsMustRegroup()
 		groupFrame = frame;
 	} else if (frame >= groupFrame + FRAMES_PER_SEC * 60) {
 		// eliminate buggy units
-		const float sqMaxDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
 		for (CCircuitUnit* unit : units) {
 			if (unit->GetCircuitDef()->IsPlane() || IsRegroupExempt(unit)) {
 				continue;
@@ -326,7 +326,6 @@ bool ISquadTask::IsMustRegroup()
 
 	bool wasRegroup = (State::REGROUP == state);
 	state = State::ROAM;
-	const float sqMaxDist = SQUARE(std::max<float>(SQUARE_SIZE * 8 * validUnits.size(), highestRange));
 	for (CCircuitUnit* unit : validUnits) {
 		const float sqDist = groupPos.SqDistance2D(unit->GetPos(frame));
 		if (sqDist > sqMaxDist) {

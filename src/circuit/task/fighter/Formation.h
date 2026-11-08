@@ -75,7 +75,8 @@ public:
 	void Update(int frame, bool isActive, std::vector<CCircuitUnit*>& outStuck);
 	void Remove(CCircuitUnit* unit);  // it left the squad
 	bool IsOn() const { return isOn; }  // the line is formed: its units walk to GetOrder
-	const springai::AIFloat3& GetAnchorPos() const { return anchorPos; }  // the front row's centre (while IsOn)
+	// While IsOn: the stretch of line the group stands on to stop where it is (CAttackTask::Regroup)
+	void GetStandPath(F3Vec& outPath) const;
 	// Where the unit walks now; false: it has no slot (busy, no_formation, or the line is off): follow the path
 	bool GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const;
 	// The line steers the unit and it keeps up (in line, or a straggler faster than the line): no regroup for it
@@ -111,6 +112,8 @@ private:
 		float offset;  // behind the front row, along the line
 		float shift;  // sideways, to fit between obstacles
 	};
+
+	const SMember* FindSteered(const CCircuitUnit* unit) const;  // nullptr: the line is off, or it doesn't steer the unit
 
 	// The steps of Update, in order
 	float AddMembers(int frame);  // returns the slowest support unit's speed
