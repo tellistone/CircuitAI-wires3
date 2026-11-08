@@ -74,6 +74,16 @@ public:
 	// An attack-bound unit's first task: a gathering group at base (quota.attack_merge.base_gather true), else
 	// reinforce the rally host or the nearest compatible group, else a new attack group
 	IFighterTask* EnqueueAttackBound(CCircuitUnit* unit);
+	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
+	// Mines always get a new one (each lays its field somewhere else)
+	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
+	// An enemy heavy (enemy role, as GetEnemyCost) in radar or LOS within the last frames (CEnemyUnit::IsRecentlySeen).
+	// Anti-heavy hunting starts on a fresh sighting (AH_HUNT_FRAMES: new units, the army pull) and stops once none
+	// has been seen for much longer (AH_KEEP_FRAMES: squads disband), so a heavy dipping in and out of radar can't
+	// send the units back and forth
+	static constexpr int AH_HUNT_FRAMES = FRAMES_PER_SEC * 10;
+	static constexpr int AH_KEEP_FRAMES = FRAMES_PER_SEC * 60;
+	bool IsEnemyHeavySeen(int frames);
 	CRetreatTask* EnqueueRetreat();
 private:
 	void DequeueTask(IUnitTask* task, bool done = false);
@@ -342,6 +352,9 @@ private:
 	void UpdateIdle();
 	void UpdateFight();
 	void UpdateCaptureHide();
+	// An enemy heavy seen within AH_HUNT_FRAMES: anti-heavy units in attack and gathering groups (where they go while
+	// there is none) leave for anti-heavy squads, every 2 s; not while their group is fighting or fleeing
+	void UpdateAhPull();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
@@ -481,6 +494,8 @@ private:
 	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
 	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use
 	int rallyStartFrame;
+	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at
+	int heavySeenAge;  // frames since an enemy heavy was last in radar or LOS; max = none
 	int rallyEndFrame;  // a new rally can't start within RALLY_GAP_FRAMES of this
 	int rallyBlobFrame;  // last frame a qualifying blob was found
 	springai::AIFloat3 rallyBlobPos;
