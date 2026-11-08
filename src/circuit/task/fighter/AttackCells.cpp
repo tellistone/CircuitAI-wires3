@@ -92,11 +92,10 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 	// each the sectors facing us first (the far ones only if fewer than 2 near sectors yield a cell, and never if
 	// nearOnly). A point is a cell if we can reach it, its threat is below the allowance (the pick's power and
 	// reference) and it sees the target. Each sector keeps its best-scoring point; cells scoring over score_slack
-	// worse than the best one are left out. Call after threatMap->SetThreatType(leader)
+	// worse than the best one are left out
 	outCells.clear();
 	const CMilitaryManager::SAttackCells& cfg = GetMilitaryMgr()->GetAttackCells();
 	CCircuitAI* circuit = manager->GetCircuit();
-	CThreatMap* threatMap = circuit->GetThreatMap();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const AIFloat3& tPos = anchor;
 	const AIFloat3& lPos = leader->GetPos(circuit->GetLastFrame());
@@ -112,8 +111,8 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 		return p;
 	};
 	// Fast path: undefended (no threat at it, nor at the outer ring point facing us): a disc
-	if ((threatMap->GetThreatAt(tPos) <= THREAT_MIN)
-		&& (threatMap->GetThreatAt(pointAt(bearingUs, fireRange * cfg.rings[0])) <= THREAT_MIN))
+	if ((GetTaskThreatAt(leader, tPos) <= THREAT_MIN)
+		&& (GetTaskThreatAt(leader, pointAt(bearingUs, fireRange * cfg.rings[0])) <= THREAT_MIN))
 	{
 		return true;
 	}
@@ -159,7 +158,7 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 			return false;
 		}
 		isReachable = true;
-		const float threat = threatMap->GetThreatAt(p);
+		const float threat = GetTaskThreatAt(leader, p);
 		if ((threat > 0.f) && (threat >= GetAllowedThreatAt(p, power, ref))) {  // the allowance is always above 0
 			return false;
 		}
@@ -242,8 +241,7 @@ bool CAttackTask::GetPlannedCell(ICoreUnit::Id targetId, float strength, float r
 	if (!lastRoute.IsCell() || (lastRoute.targetId != targetId)
 		|| !IsSameAnchor(circuit->GetEnemyInfo(targetId), lastRoute.epoch, frame)  // moved, or out of view
 		|| IsRejected(targetId, lastRoute.sector, lastRoute.epoch, frame)
-		|| (circuit->GetThreatMap()->GetThreatAt(leader, lastRoute.cell)
-			>= GetAllowedThreatAt(lastRoute.cell, strength, refSqDist)))
+		|| IsDangerAt(leader, lastRoute.cell, strength, refSqDist))
 	{
 		return false;
 	}
@@ -275,7 +273,7 @@ bool CAttackTask::IsCellBanned(ICoreUnit::Id id, int frame) const
 void CAttackTask::BanCell(const CEnemyInfo* enemy, int epoch, int frame)
 {
 	// At its range position: a radar-only parked mobile's wobble would change the threat read and drop the ban
-	const float threat = manager->GetCircuit()->GetThreatMap()->GetThreatAt(GetRangePos(enemy, frame));
+	const float threat = GetTaskThreatAt(leader, GetRangePos(enemy, frame));
 	auto it = cellBans.find(enemy->GetId());
 	if (it == cellBans.end()) {
 		cellBans[enemy->GetId()] = {frame + CELL_BAN_FRAMES, frame, threat, 0, epoch};
@@ -290,13 +288,12 @@ void CAttackTask::BanCell(const CEnemyInfo* enemy, int epoch, int frame)
 void CAttackTask::UpdateCellBans(int frame)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	CThreatMap* threatMap = circuit->GetThreatMap();
 	for (auto it = cellBans.begin(); it != cellBans.end();) {
 		const SCellBan& ban = it->second;
 		const CEnemyInfo* enemy = circuit->GetEnemyInfo(it->first);
 		bool isDrop = (frame >= ban.since + CELL_BAN_RESET_FRAMES) || !IsSameAnchor(enemy, ban.epoch, frame);
 		if (!isDrop) {
-			const float threat = threatMap->GetThreatAt(GetRangePos(enemy, frame));
+			const float threat = GetTaskThreatAt(leader, GetRangePos(enemy, frame));
 			isDrop = fabsf(threat - ban.threat) > CELL_BAN_THREAT_CHANGE * std::max(ban.threat, THREAT_MIN);
 		}
 		it = isDrop ? cellBans.erase(it) : std::next(it);

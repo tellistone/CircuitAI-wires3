@@ -241,7 +241,12 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
-	float GetGroupCountPower() const { return groupCountPower; }
+	// quota.group_count_aoe: an armed type whose fire's area of effect (CCircuitDef::GetFireAoe, radius) is at least
+	// this. A squad mostly of these doesn't count the enemies (IFighterTask::IsSquadThreat): one shot hits several of
+	// a swarm
+	bool IsAreaDamage(const CCircuitDef* cdef) const {
+		return (countAoe > 0.f) && cdef->IsAttacker() && (cdef->GetFireAoe() >= countAoe);
+	}
 	// quota.attack_own_ground_time: before this frame attack groups only walk to targets on our ground
 	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }
 	// quota.attack_floor_hold: a group past quota.attack (the floor) stays past it until its power drops below
@@ -262,8 +267,8 @@ public:
 		springai::AIFloat3 pos;
 		float sqRadius;
 	};
-	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below allowedAt(centre),
-	// reachable within 'reach'. Call after threatMap->SetThreatType(unit). Empty when quota.contested.bonus <= 1
+	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below allowedAt(centre)
+	// (squad threat for a squad), reachable within 'reach'. Empty when quota.contested.bonus <= 1
 	void GetTakeableContested(CCircuitUnit* unit, float reach, const std::function<float (const springai::AIFloat3&)>& allowedAt,
 			std::vector<SContestedSpot>& outSpots);
 	static bool IsInContested(const std::vector<SContestedSpot>& spots, const springai::AIFloat3& pos) {
@@ -487,7 +492,7 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackKeepThreat;  // quota.attack_keep_threat
-	float groupCountPower;  // quota.group_count_power
+	float countAoe;  // quota.group_count_aoe, elmos (radius); 0 = off
 	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
 	float attackFloorHold;  // quota.attack_floor_hold
 	struct SThreatFloor {
