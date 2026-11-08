@@ -63,6 +63,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, scoutIdx(0)
 		, armyCost(0.f)
 		, attackBaseGather(true)
+		, attackIdleMerge(true)
 		, rallyHost(nullptr)
 		, prevRallyHost(nullptr)
 		, rallyStartFrame(-1)
@@ -541,6 +542,12 @@ void CMilitaryManager::ReadConfig()
 			circuit->LOG("CONFIG %s: quota.attack_merge.base_gather must be true or false, using true", cfgName.c_str());
 		}
 		attackBaseGather = qgather.isBool() ? qgather.asBool() : true;
+
+		const Json::Value& qidle = qmerge.isObject() ? qmerge["idle_merge"] : Json::Value();
+		if (!qidle.isNull() && !qidle.isBool()) {
+			circuit->LOG("CONFIG %s: quota.attack_merge.idle_merge must be true or false, using true", cfgName.c_str());
+		}
+		attackIdleMerge = qidle.isBool() ? qidle.asBool() : true;
 
 		const Json::Value& qrally = qmerge.isObject() ? qmerge["rally"] : Json::Value();
 		if (!qrally.isNull() && !qrally.isObject()) {
@@ -1113,10 +1120,21 @@ float CMilitaryManager::GetAttackGatherPower() const
 	return std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
 }
 
+bool CMilitaryManager::IsRankedAbove(float power, const CCircuitUnit* leader, float otherPower,
+		const CCircuitUnit* otherLeader)
+{
+	return (power > otherPower) || ((power == otherPower) && (leader->GetId() < otherLeader->GetId()));
+}
+
+bool CMilitaryManager::CanReinforce(const CAttackTask* squad, CCircuitUnit* unit) const
+{
+	return squad->IsCompatible(unit) && circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(),
+			squad->GetLeader()->GetPos(circuit->GetLastFrame()));
+}
+
 CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self,
 		bool isRally) const
 {
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
 	// Rally: everything compatible reinforces the host, whatever its size
@@ -1129,17 +1147,13 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float powe
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
 		CAttackTask* squad = static_cast<CAttackTask*>(t);
 		CCircuitUnit* squadLeader = squad->GetLeader();
-		if ((squad == self) || squad->IsDead() || (squadLeader == nullptr) || (squad->GetAttackPower() <= power)
-			|| !squad->IsCompatible(unit))
+		if ((squad == self) || squad->IsDead() || (squadLeader == nullptr)
+			|| !IsRankedAbove(squad->GetAttackPower(), squadLeader, power, unit))
 		{
 			continue;
 		}
-		const AIFloat3& squadPos = squadLeader->GetPos(frame);
-		if (!terrainMgr->CanMoveToPos(unit->GetArea(), squadPos)) {
-			continue;
-		}
-		const float sqDist = pos.SqDistance2D(squadPos);
-		if (sqDist < minSqDist) {
+		const float sqDist = pos.SqDistance2D(squadLeader->GetPos(frame));
+		if ((sqDist < minSqDist) && CanReinforce(squad, unit)) {
 			minSqDist = sqDist;
 			best = squad;
 		}
@@ -1172,9 +1186,7 @@ CAttackTask* CMilitaryManager::GetRallyHostFor(CCircuitUnit* unit, const IFighte
 {
 	// Compatible with the host and able to reach it (another terrain area would hold for the whole rally)
 	CAttackTask* host = GetRallyHost();
-	return ((host != nullptr) && (host != self) && host->IsCompatible(unit)
-		&& circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), host->GetLeader()->GetPos(circuit->GetLastFrame())))
-		? host : nullptr;
+	return ((host != nullptr) && (host != self) && CanReinforce(host, unit)) ? host : nullptr;
 }
 
 bool CMilitaryManager::IsRallyJoiner(const CAttackTask* task) const
