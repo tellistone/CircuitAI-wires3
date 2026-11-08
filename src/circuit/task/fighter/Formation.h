@@ -75,6 +75,8 @@ public:
 	void Update(int frame, bool isActive, std::vector<CCircuitUnit*>& outStuck);
 	void Remove(CCircuitUnit* unit);  // it left the squad
 	bool IsOn() const { return isOn; }  // the line is formed: its units walk to GetOrder
+	// Front to back row while IsOn (else 0): the leader stands up to this far from the front row
+	float GetDepth() const { return isOn ? depth : 0.f; }
 	// While IsOn: the stretch of line the group stands on to stop where it is (CAttackTask::Regroup)
 	void GetStandPath(F3Vec& outPath) const;
 	// Where the unit walks now; false: it has no slot (busy, no_formation, or the line is off): follow the path

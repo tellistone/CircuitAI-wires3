@@ -600,7 +600,8 @@ bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 	// At most quota.attack_merge.travel_sec (30 s) of straight travel: with a long merge distance a slow group could
 	// otherwise still be walking when the regroup's 60 s limit drops far-away units as stuck
 	const CMilitaryManager::SAttackMerge& cfg = GetMilitaryMgr()->GetAttackMerge();
-	if (from.SqDistance2D(to) >= SQUARE(cfg.travelSec * lowestSpeed)) {
+	// Our line stands with its front row at a route's end, the leader up to its depth behind: that much more
+	if (from.SqDistance2D(to) >= SQUARE(cfg.travelSec * lowestSpeed + GetLineDepth())) {
 		return false;
 	}
 	const float own = GetSafeThreat();
@@ -833,13 +834,16 @@ bool CAttackTask::SeekIdleMerge(int frame, bool isReuse)
 void CAttackTask::RunGroupRoute(int frame, const AIFloat3& goal, float range,
 		std::function<void (const CQueryPathSingle*)>&& onComplete)
 {
-	// A capped route (reinforce costs) from our leader to within range of goal
+	// A capped route (reinforce costs) from our leader to within range of goal. In line, the front row stands at the
+	// route's end and the leader up to the line's depth behind it, so the route ends that much closer: the leader
+	// gets within range (merge reach, the meeting point) rather than parking short of it
 	CCircuitAI* circuit = manager->GetCircuit();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const AIFloat3& startPos = leader->GetPos(frame);
+	const float goalRange = std::max(range - GetLineDepth(), static_cast<float>(pathfinder->GetSquareSize()));
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, goal, std::max(range, static_cast<float>(pathfinder->GetSquareSize())), nullptr,
+			startPos, goal, goalRange, nullptr,
 			GetPathThreatCap(startPos, {goal}));
 	SetRouteThreat(query.get(), AttackRoute::REINFORCE);
 	RunRoute(query, [onComplete = std::move(onComplete)](const IPathQuery* query) {
@@ -1002,6 +1006,12 @@ void CAttackTask::CollectSignificantJoiners(int frame, std::vector<CAttackTask*>
 	}), meetTracks.end());
 }
 
+float CAttackTask::GetLineDepth() const
+{
+	const CFormation* line = GetFormation();  // nullptr: the line is off
+	return (line != nullptr) ? line->GetDepth() : 0.f;
+}
+
 bool CAttackTask::IsAtMeetPoint(const AIFloat3& pos)
 {
 	// Arrived within MEET_ARRIVE_DIST of the point; still there until pushed farther than MEET_LEAVE_DIST away
@@ -1009,12 +1019,13 @@ bool CAttackTask::IsAtMeetPoint(const AIFloat3& pos)
 	constexpr float MEET_LEAVE_DIST = 600.f;
 	constexpr float MEET_MOVED_DIST = 400.f;
 	const float sqMeetDist = meetPos.SqDistance2D(pos);
+	const float arriveDist = MEET_ARRIVE_DIST + GetLineDepth();  // the line stands with its front row there
 	if (isMeetArrived && ((sqMeetDist > SQUARE(MEET_LEAVE_DIST))
 		|| (meetPos.SqDistance2D(meetArrivePos) > SQUARE(MEET_MOVED_DIST))))
 	{
 		isMeetArrived = false;
 	}
-	if (!isMeetArrived && (sqMeetDist < SQUARE(MEET_ARRIVE_DIST))) {
+	if (!isMeetArrived && (sqMeetDist < SQUARE(arriveDist))) {
 		isMeetArrived = true;
 		meetArrivePos = meetPos;
 	}

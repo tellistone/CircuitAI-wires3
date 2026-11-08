@@ -355,6 +355,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Attack groups in line merge again.** A route to another group (reinforcing, idle merging, a rally) or to a rally
+  meeting point ends where the line's front row stands, but merging and arriving are judged at the group's leader,
+  which stands up to the line's depth behind (its row, or turned by facing). A group whose leader walked in a back row
+  could park just outside merge reach (`travel_sec` at its slowest speed, with the 20% margin of `reinforce_range`) and
+  never merge; a rally host could fail to arrive at its meeting point. Such routes now end the line's depth closer, the
+  merge reach and the meeting point's arrival distance allow for it too, and with no line nothing changes.
 - **Geothermal plants are actually queued.** Three checks shared with other energy kept geo off the build list in
   practice. The energy-job cap allowed a 500-metal job only while no energy job at all was queued (below 62.5 build
   power), and solar or wind jobs nearly always were; geo now has its own cap of one geo job at a time. The energy

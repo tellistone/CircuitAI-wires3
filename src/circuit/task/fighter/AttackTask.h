@@ -173,6 +173,9 @@ private:
 	bool UpdateMeet(int frame, bool isReuse);
 	void CollectSignificantJoiners(int frame, std::vector<CAttackTask*>& outSignificant);
 	bool IsAtMeetPoint(const springai::AIFloat3& pos);  // updates isMeetArrived
+	// How far behind its line's front row our leader may stand (the line's depth; 0 with no line). A route's end is
+	// where the front row stands, but merging and arriving are judged at the leader
+	float GetLineDepth() const;
 	// Updates the joiner's track; true: it counts as significant (strong enough, not stalled)
 	bool TrackJoiner(const CAttackTask* joiner, float gapSec, float ourStrength, int frame);
 	// Where the host and its joiners arrive together, stepped back towards the host until safe and reachable
