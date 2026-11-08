@@ -407,6 +407,7 @@ void CFactoryManager::ReadConfig()
 			cdef->SetTargetDistMod(std::max(distMod.asFloat(), 0.01f));
 		}
 
+		cdef->SetFormationRow(std::max(-1, behaviour.get("formation_row", -1).asInt()));
 		cdef->SetIgnore(behaviour.get("ignore", cdef->IsIgnore()).asBool());
 	}
 

@@ -7,6 +7,50 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Line formation for attack groups** (`formation` block in `behaviour.json`; code default off, shipped on; per unit
+  `formation_row` and the `no_formation` attribute). Attack groups of 3 or more land or sea units used to send every
+  unit to the same path points, so they walked single file and clumped at turns. While a group walks its path and
+  isn't engaging, it now walks as a line across the path its leader walks, centred on the leader:
+  neighbours `spacing` apart (closer as the group grows), at most `width_range` x its median weapon range wide,
+  narrower where terrain or buildings in the next 3 s of walking leave less room, or where a flank would step into
+  more enemy threat than the path itself is in (between two turrets the line narrows to the gap). Rows shift sideways
+  to fit, and no slot lies past a spot that isn't free, seen from the path. Spacing squeezes to 0.7 before a second row
+  is added; rows fill front to back by `row_order` (riots and assaults in front, artillery at the back) and follow the
+  leader's path (behind the leader, the track of its spot on that path; a re-plan that turns back by more than 120°
+  from where the line was heading lays the rows behind the new heading instead; a sharp corner of the same route
+  doesn't count, since it turns the heading gradually). In a row units take places in the order they stand across the path,
+  then swap where that shortens two units' walks to their places, so they don't walk across each other; places are
+  matched again when the group, its columns or its leader change, or the path turns back. Where not even 2 fit abreast the units follow
+  the path as before, until 2 fit again for 3 s. The line walks at the speed of its slowest unit (support units such as
+  capture cars included) and slows in proportion as its furthest-behind unit, or a busy leader, falls behind its slot,
+  stopping when that unit is `lead_sec` behind, so even the slowest can catch up (but not while an enemy is in LOS of
+  any unit in the group, or was in the last 5 s: near the enemy the line walks on at its slowest unit's speed); each unit gets a move a few seconds
+  ahead of its slot and a wanted speed that lets it catch up, re-sent only when it nears that move's end or the slot
+  moves off its way. At the end of its walk the group stands in line. A unit out of its slot for 12 s catches up at full
+  speed and isn't waited for (the usual regroup still gathers the group if it falls far behind); while the line walks,
+  one that hasn't moved 64 elmos in 30 s while out of its slot is released to find a new task (the leader too, and the
+  line re-centres on the next one). Units with the `jump` attribute (jump on the move; none in the shipped config)
+  still jump along the path whenever their jump is ready, then walk back into line; jumps in combat and when fleeing
+  don't go through the line and are unchanged. If the group's most restricted mover is a `no_formation` unit, the
+  group walks as before. While the line is on, the regroup check (stop and gather when units spread too far)
+  ignores units the line steers that keep up (in line, or stragglers at least 10% faster than the line), so a group in
+  line no longer stops to gather for them. A holding group (nothing to attack, no front to walk to, no safe route) now
+  walks to its quiet spot along a threat-capped path when the spot is more than 256 elmos away, so the line takes it
+  there and it stands in line instead of clumped; it keeps that spot unless another is 20% quieter. Stepping out of an
+  attacker's range while holding, and moves where no path was found, stay straight moves. Once the line stands at the end of its
+  walk it faces the threat (`face_range`, 0 = off): it reads the enemy threat 8 ways at 1 and 2 x its fire range
+  around the block and, if the threat has a clear side, turns the block about its centre to face it, its front row
+  short of more threat than at the centre (else it faces the way it came, not the path's last jog). It turns only
+  where the block fits that way (walkable, 2 columns wide), and again only for a clear threat more than 45° off for
+  2 s, and keeps facing across new paths that end within 256 elmos of the same spot, so
+  re-plans to the same spot don't turn it to and fro. Units keep their places on a turn of up to 120°. Fleeing groups, and cornered groups moving to a quieter spot, also
+  run as a line (they used to run single file along the escape path, which splash weapons punished): rows in reverse
+  `row_order` while they walk (riots at the back, towards the pursuers; artillery and skirmishers lead; normal order
+  again once a cornered line stands and faces), at the slowest unit's speed, waiting for no one and with no unit
+  dropping back towards the pursuers. With splash near (`splash_spacing`: a finished enemy that can hit the ground, or a mobile bomb, whose weapon area of
+  effect or blast is 16 or more, mobile ones seen in the last 10 s, within its range + 600 of the group, held 10 s), neighbours and rows stay at least 1.2 x its
+  radius apart (at most 256), adding rows where the width runs out. Other squads
+  (raid, defend, anti-air, anti-heavy) and units' own facing come in later steps.
 - **Reload scoot for any squad unit** (per unit `reload_scoot`, default 0 = off; `true` = 0.8; per unit
   `reload_scoot_margin`, default 100, or the anti-heavy flee margin in anti-heavy squads). While engaged, a unit whose
   main weapon is less than `reload_scoot` reloaded and that stands in ground threat steps straight away from the
