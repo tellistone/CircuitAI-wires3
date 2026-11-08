@@ -784,6 +784,12 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 			&& !IsUnsafePrioRepair(task, worker, pos)
 			&& !IsRepairTargetFleeing(task, worker, worker->GetPos(frame)))
 		{
+			// Other builders with the flee on (retreat.builder_flee): as their own job picks, not into a flee zone,
+			// else each one pulled walks in and flees; and not off the defence they were cornered into
+			const SCommState* state = worker->GetCircuitDef()->IsRoleComm() ? nullptr : GetCommState(worker);
+			if (IsFinishingDefence(worker, state) || !IsCommJobSafe(state, pos, task)) {
+				continue;
+			}
 			minSqDist = sqDist;
 			bestWorker = worker;
 		}
