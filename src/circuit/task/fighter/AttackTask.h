@@ -104,8 +104,8 @@ private:
 	/*
 	 * Group strength and the threat it tolerates
 	 */
-	// Like attackPower (def power incl. pwr_mod) but scaled by current health (GetStrengthSum), times the task's powerMod
-	float GetSafeThreat() const;
+	// GetSafeThreat (ISquadTask) of this group and squad together, with the group size bonus for both groups' units
+	float GetJointSafeThreat(const CAttackTask* squad) const;
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
 	// Strength for picking a target and checking its approach: lower for a few seconds after an escape
 	float GetPickStrength(int frame) const;

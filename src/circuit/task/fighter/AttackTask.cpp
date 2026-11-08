@@ -445,9 +445,12 @@ bool CAttackTask::EngageInRange(int frame, bool isWalking)
  * Group strength and the threat it tolerates
  */
 
-float CAttackTask::GetSafeThreat() const
+float CAttackTask::GetJointSafeThreat(const CAttackTask* squad) const
 {
-	return std::max(GetStrengthSum(), THREAT_MIN) * powerMod;  // the thr_mod.distance curve is applied per judged spot
+	// Both groups' safe threat with the group size bonus of the joint count, not each group's own
+	const float own = GetSafeThreat() / GetCountPowerMod();
+	const float other = squad->GetSafeThreat() / squad->GetCountPowerMod();
+	return (own + other) * GetCountPowerMod(units.size() + squad->GetAssignees().size());
 }
 
 float CAttackTask::GetPickStrength(int frame) const
@@ -581,7 +584,7 @@ bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 		return false;
 	}
 	const float own = GetSafeThreat();
-	const float together = own + squad->GetSafeThreat();
+	const float together = GetJointSafeThreat(squad);
 	const float sqSupport = SQUARE(cfg.supportRadius);
 	return IsLineSafe(from, to, std::numeric_limits<float>::max(), [&](const AIFloat3& p) {
 		return GetAllowedThreatAt(p, (p.SqDistance2D(to) < sqSupport) ? together : own);
@@ -1191,7 +1194,7 @@ AIFloat3 CAttackTask::FindFleeDest(int frame) const
 	CAttackTask* squad = militaryMgr->FindReinforceSquad(leader, attackPower, this, false);
 	if (squad != nullptr) {
 		const AIFloat3& squadPos = squad->GetLeaderPos(frame);
-		const float together = GetSafeThreat() + squad->GetSafeThreat();
+		const float together = GetJointSafeThreat(squad);
 		if (threatMap->GetThreatAt(leader, squadPos) < GetAllowedThreatAt(squadPos, together)) {
 			return squadPos;
 		}

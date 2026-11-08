@@ -43,6 +43,11 @@ public:
 	const springai::AIFloat3& GetPosition() const { return position; }
 
 	float GetAttackPower() const { return attackPower; }
+	// Group size bonus to the group's own power where it is compared against enemy threat (Lanchester's square
+	// law): 1 + quota.group_count_power x count, so 10 units at 0.025 count as 1.25x. The no-argument form uses
+	// the task's unit count
+	float GetCountPowerMod(size_t count) const;
+	float GetCountPowerMod() const { return GetCountPowerMod(units.size()); }
 	CEnemyInfo* GetTarget() const { return target; }
 	void ClearTarget() { target = nullptr; }  // Only for ~CEnemyUnit
 

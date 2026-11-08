@@ -166,7 +166,9 @@ protected:
 	// none of OUTRANGE_CHASED_ROLES? sqSpeed must be at least sqOutrangeSpeed. Unknown type (radar blip): not outranging
 	static bool IsRunningAway(CEnemyInfo* enemy, const springai::AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
 			float ourRange);
-	float GetSafeThreat() const;  // current squad strength (health-scaled power) x powerMod
+	// Current squad strength (health-scaled power) x powerMod x the group size bonus (GetCountPowerMod). The
+	// thr_mod.distance curve and base bonus are applied per judged spot
+	float GetSafeThreat() const;
 	// Multiplier on GetPathThreatCap's squad allowance; < 0 = no cap at all
 	virtual float GetPathThreatMod() const { return 1.f; }
 	// Pathfinder threat cap for a route from startPos to goals (see .cpp)

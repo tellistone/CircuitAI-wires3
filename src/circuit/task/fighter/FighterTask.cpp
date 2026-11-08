@@ -326,14 +326,17 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 
 	// Local support: the unit stands alone at its spot, so a spot is judged against the strength of our units
 	// heading to within SUPPORT_RADIUS of it (itself included), not the whole group's; never more than that
+	// The group size bonus (GetCountPowerMod) counts only those units
 	auto supportAt = [&](const AIFloat3& p) {
-		float s = strength * powerMod;
+		float s = strength;
+		size_t count = 1;
 		for (size_t i = 0; i < claims.size(); ++i) {
 			if ((i != self) && (claims[i].pos.SqDistance2D(p) < SQUARE(SUPPORT_RADIUS))) {
-				s += claims[i].power * powerMod;
+				s += claims[i].power;
+				++count;
 			}
 		}
-		return std::min(s, safeThreat);
+		return std::min(s * powerMod * GetCountPowerMod(count), safeThreat);
 	};
 	// Danger = what the task's escape calls dangerous (same allowance as its IsInDanger), for the local support.
 	// The allowance is always above 0, so where there is no threat there is no danger (no need to work it out)
@@ -486,6 +489,11 @@ float IFighterTask::GetStrengthSum() const
 {
 	GetUnitStrengths();
 	return strengthSum;
+}
+
+float IFighterTask::GetCountPowerMod(size_t count) const
+{
+	return 1.f + manager->GetCircuit()->GetMilitaryManager()->GetGroupCountPower() * count;
 }
 
 #ifdef DEBUG_VIS
