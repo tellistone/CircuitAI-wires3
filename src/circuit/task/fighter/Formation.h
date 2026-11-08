@@ -31,7 +31,8 @@ struct SFormationOrder {
  * a line across the path, with more rows only where the line has to narrow. The task plans its path as before; the
  * formation decides where along and beside it each unit walks, and how fast. The travel action asks GetOrder.
  * - The line: the path the leader walks, through the leader's spot on it, and behind the spot its track. A new path
- *   that turns back by more than 120 degrees drops the track, so the rows behind are laid behind the new heading.
+ *   that turns back by more than 120 degrees from where the line was heading drops the track, so the rows behind are
+ *   laid behind the new heading (a sharp corner of the same route doesn't: it turns the heading gradually).
  * - Width: the free width across the line where it walks in the next few seconds, at most width_range x the
  *   squad's fire range. Free: ground the leader's type can walk, with no more than 1.5 x the threat on the line
  *   there (the threat map's grain), so flanks don't step into a turret's range the path kept out of, or deeper into
@@ -98,8 +99,9 @@ private:
 	void MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed);
 	int FitColumns(int frame, float frontArc, int count, float baseSpacing, float gap);  // returns the columns
 	void SwitchOn(int frame);
-	void Rematch(int cols, bool isSwitchOn, float frontArc, float gap);
+	void Rematch(int cols);  // rows, and places by side
 	void LayOut(float gap);
+	void SwapPlaces(float startArc);  // after a Rematch and LayOut: uncross walks to the places
 	float StartArc(bool isSwitchOn, float frontArc) const;  // the anchor before this solve's step
 	float MoveAnchor(bool isSwitchOn, float frontArc, float dt, float leadSec);  // returns the pace
 	void ShiftRows(float pace, float gap);
@@ -130,6 +132,7 @@ private:
 	int matchCols = 0;  // columns of the current match
 
 	std::deque<springai::AIFloat3> track;  // the leader's last spots on its path, oldest first
+	springai::AIFloat3 heading = ZeroVector;  // where the line headed at the last solve (Heading), for turn-backs
 	F3Vec line;  // BuildLine
 	std::vector<float> arcs;
 	bool isLineToEnd = false;  // the line reaches the path's end

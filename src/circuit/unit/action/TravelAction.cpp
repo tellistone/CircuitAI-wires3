@@ -158,8 +158,8 @@ bool ITravelAction::IsFormationMoveDue(const AIFloat3& pos, const SFormationOrde
 	}
 	// Within the order interval + 1 s of the last target: the next one, unless it is the same spot
 	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
-	const float speed = (formSpeed > 0.f) ? formSpeed : unit->GetCircuitDef()->GetSpeed();
-	const float reach = std::max<float>(speed * (GetOrderInterval() + FRAMES_PER_SEC) / FRAMES_PER_SEC, DEFAULT_SLACK);
+	const float walkSpeed = (formSpeed > 0.f) ? formSpeed : unit->GetCircuitDef()->GetSpeed();
+	const float reach = std::max<float>(walkSpeed * (GetOrderInterval() + FRAMES_PER_SEC) / FRAMES_PER_SEC, DEFAULT_SLACK);
 	const float3 toLast = formPos - pos;
 	const float sqLast = toLast.SqLength2D();
 	if (sqLast < SQUARE(reach)) {

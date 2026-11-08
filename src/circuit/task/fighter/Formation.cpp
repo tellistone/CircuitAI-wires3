@@ -44,6 +44,7 @@ constexpr float SLOT_SEC = 1.5f;  // near its slot: within max(spacing, this man
 constexpr float THREAT_TOLERANCE = 1.5f;  // the threat map's cells differ up to this much within one enemy's reach
 constexpr float THREAT_EPS = 1e-3f;
 constexpr float TURN_BACK_COS = -0.5f;  // a new path that turns back by more than 120 degrees starts the rows afresh
+constexpr float TURN_LOOK = 256.f;  // the path's heading: towards its point this far along
 constexpr size_t PATH_SEARCH = 32;  // path segments searched for the leader's spot, from the last one
 constexpr int SWAP_PASSES = 8;  // Rematch: passes of place swaps at most
 
@@ -53,6 +54,23 @@ float ProjectOnSegment(const AIFloat3& p, const AIFloat3& a, const AIFloat3& b)
 	const float3 ab = b - a;
 	const float sqLen = ab.SqLength2D();
 	return (sqLen < 1e-3f) ? 0.f : utils::clamp((p - a).dot2D(ab) / sqLen, 0.f, 1.f);
+}
+
+// Where the path heads from spot on segment seg: towards its point TURN_LOOK further along (zero at the path's end)
+float3 Heading(const F3Vec& pts, size_t seg, const AIFloat3& spot)
+{
+	AIFloat3 p = spot;
+	float left = TURN_LOOK;
+	for (size_t i = seg + 1; i < pts.size(); ++i) {
+		const float d = p.distance2D(pts[i]);
+		if (d >= left) {
+			p += (pts[i] - p) * (left / d);
+			break;
+		}
+		left -= d;
+		p = pts[i];
+	}
+	return p - spot;
 }
 }  // namespace
 
@@ -119,10 +137,14 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	if (isSwitchOn) {
 		SwitchOn(frame);
 	}
-	if (isSwitchOn || isDirty || (cols != matchCols)) {
-		Rematch(cols, isSwitchOn, frontArc, cfg.gap);
+	const bool isMatch = isSwitchOn || isDirty || (cols != matchCols);
+	if (isMatch) {
+		Rematch(cols);
 	}
 	LayOut(cfg.gap);
+	if (isMatch) {
+		SwapPlaces(StartArc(isSwitchOn, frontArc));
+	}
 	const float pace = MoveAnchor(isSwitchOn, frontArc, dt, cfg.leadSec);
 	ShiftRows(pace, cfg.gap);
 	PlaceSlots(frame, pace, cfg.leadSec, outStuck);
@@ -226,6 +248,7 @@ void CFormation::SwitchOn(int frame)
 {
 	// Everyone starts afresh where it stands (after a fight, a collapse or a flee)
 	isOn = true;
+	rows.clear();  // and no row keeps a sideways shift from before
 	for (auto& kv : members) {
 		SMember& m = kv.second;
 		m.isStraggler = false;
@@ -234,7 +257,7 @@ void CFormation::SwitchOn(int frame)
 	}
 }
 
-void CFormation::Rematch(int cols, bool isSwitchOn, float frontArc, float gap)
+void CFormation::Rematch(int cols)
 {
 	// Rows front to back: stragglers last, then by row order; within a rank, units further along first. Within a row,
 	// left to right as the units stand, so none walk across each other; the leader takes the middle column of its row
@@ -265,18 +288,19 @@ void CFormation::Rematch(int cols, bool isSwitchOn, float frontArc, float gap)
 	}
 	matchCols = cols;
 	isDirty = false;
+}
 
-	// Then two units of a row swap places where that shortens their walks to the slots by more than half a spacing
-	// (the order by side alone crosses paths when a column turns into a row); the leader keeps the middle
-	LayOut(gap);
-	const float startArc = StartArc(isSwitchOn, frontArc);
+void CFormation::SwapPlaces(float startArc)
+{
+	// After LayOut: two units of a row swap places where that shortens their walks to the places by more than half a
+	// spacing (the order by side alone crosses paths when a column turns into a row); the leader keeps the middle
 	for (SRow& row : rows) {
 		const float arc = startArc - row.offset;
 		const AIFloat3 base = PointAt(arc);
 		const AIFloat3 axis = AxisAt(arc);
 		std::vector<SMember*>& units = row.units;
-		auto walk = [&](size_t unitIdx, size_t slotIdx) {
-			return units[unitIdx]->pos.distance2D(base + axis * units[slotIdx]->x);  // x: the slot's, by place in the row
+		auto walk = [&](size_t unitIdx, size_t placeIdx) {
+			return units[unitIdx]->pos.distance2D(base + axis * (row.shift + units[placeIdx]->x));
 		};
 		bool isSwapped = true;
 		for (int pass = 0; isSwapped && (pass < SWAP_PASSES); ++pass) {
@@ -288,7 +312,7 @@ void CFormation::Rematch(int cols, bool isSwitchOn, float frontArc, float gap)
 					{
 						continue;
 					}
-					std::swap(units[i]->x, units[j]->x);  // x stays with the place; LayOut sets it again
+					std::swap(units[i]->x, units[j]->x);  // x belongs to the place
 					std::swap(units[i], units[j]);
 					isSwapped = true;
 				}
@@ -441,6 +465,7 @@ void CFormation::Reset()
 	leader = nullptr;
 	leaderM = nullptr;
 	track.clear();
+	heading = ZeroVector;
 	solvedPath = nullptr;
 	heldWidth = width = depth = 0.f;
 	widenFrame = -WIDEN_FRAMES;
@@ -484,18 +509,18 @@ bool CFormation::BuildLine(const AIFloat3& leaderPos, const PathInfo& path, bool
 		}
 	}
 	pathIndex = seg;
-	// A new path that turns back over the leader's track: the track lies ahead now, so it is dropped (the rows behind
-	// are laid straight behind the new heading) and units are matched to slots afresh
-	if (isNewPath && (track.size() > 1)) {
-		size_t i = seg + 1;
-		for (; (i + 1 < pts.size()) && (pts[i].SqDistance2D(spot) < SQUARE(DEFAULT_SLACK)); ++i);
-		const float3 ahead = pts[std::min(i, pts.size() - 1)] - spot;
-		const float3 behind = track.back() - track.front();
-		const float lens = ahead.Length2D() * behind.Length2D();
-		if ((lens > 1.f) && (ahead.dot2D(behind) < TURN_BACK_COS * lens)) {
-			track.clear();
-			isDirty = true;
-		}
+	// A new path that turns back from where the line was heading at the last solve: the track lies ahead now, so it
+	// is dropped (the rows behind are laid straight behind the new heading) and units are matched to slots afresh.
+	// Along one path the heading turns gradually between solves, even round a sharp corner; a reversal jumps
+	const float3 ahead = Heading(pts, seg, spot);
+	if (isNewPath && (track.size() > 1)
+		&& (ahead.dot2D(heading) < TURN_BACK_COS * ahead.Length2D() * heading.Length2D()))
+	{
+		track.clear();
+		isDirty = true;
+	}
+	if (ahead.SqLength2D() > 1.f) {
+		heading = ahead;  // at the path's end: the way it came
 	}
 
 	if (sqOff > SQUARE(maxWidth)) {

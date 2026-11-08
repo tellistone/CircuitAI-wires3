@@ -17,7 +17,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   to fit, and no slot lies past a spot that isn't free, seen from the path. Spacing squeezes to 0.7 before a second row
   is added; rows fill front to back by `row_order` (riots and assaults in front, artillery at the back) and follow the
   leader's path (behind the leader, the track of its spot on that path; a re-plan that turns back by more than 120°
-  lays the rows behind the new heading instead). In a row units take places in the order they stand across the path,
+  from where the line was heading lays the rows behind the new heading instead; a sharp corner of the same route
+  doesn't count, since it turns the heading gradually). In a row units take places in the order they stand across the path,
   then swap where that shortens two units' walks to their places, so they don't walk across each other; places are
   matched again when the group, its columns or its leader change, or the path turns back. Where not even 2 fit abreast the units follow
   the path as before, until 2 fit again for 3 s. The line walks at the speed of its slowest unit (support units such as
