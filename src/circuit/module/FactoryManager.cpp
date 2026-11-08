@@ -1173,6 +1173,16 @@ void CFactoryManager::EnableFactory(CCircuitUnit* unit)
 	}
 }
 
+bool CFactoryManager::HasBuilderFactory(int frame) const
+{
+	for (const SFactory& fac : factories) {
+		if ((fac.builder != nullptr) && fac.builder->IsAvailable(frame)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void CFactoryManager::DisableFactory(CCircuitUnit* unit)
 {
 	std::vector<CRecruitTask*> garbageTasks;
@@ -1187,14 +1197,7 @@ void CFactoryManager::DisableFactory(CCircuitUnit* unit)
 
 	auto checkBuilderFactory = [this](const int frame) {
 		CBuilderManager* builderMgr = this->circuit->GetBuilderManager();
-		// check if any factory with builders left
-		bool hasBuilder = false;
-		for (SFactory& fac : factories) {
-			if ((fac.builder != nullptr) && fac.builder->IsAvailable(frame)) {
-				hasBuilder = true;
-				break;
-			}
-		}
+		bool hasBuilder = HasBuilderFactory(frame);
 		if (!hasBuilder) {
 			// check queued factories
 			std::set<IBuilderTask*> tasks = builderMgr->GetTasks(IBuilderTask::BuildType::FACTORY);
@@ -1203,10 +1206,14 @@ void CFactoryManager::DisableFactory(CCircuitUnit* unit)
 				if (it != factoryDefs.end()) {
 					const SFactoryDef& facDef = it->second;
 					CCircuitDef* bdef = facDef.GetRoleDef(ROLE_TYPE(BUILDER));
-					hasBuilder = ((bdef != nullptr) && bdef->IsAvailable(frame));
-					if (hasBuilder) {
-						break;
+					const bool isBuilderFac = ((bdef != nullptr) && bdef->IsAvailable(frame));
+					if (isBuilderFac && (task->GetTarget() != nullptr)) {
+						// A placed frame is the replacement: raise it to NOW (it may be a NORMAL expansion)
+						task->SetPriority(IBuilderTask::Priority::NOW);
+						hasBuilder = true;
 					} else if (task->GetTarget() == nullptr) {
+						// Not started: often a NORMAL expansion out at a front cluster. Drop it, the NOW job below
+						// is built next to the first constructor that takes it
 						builderMgr->AbortTask(task);
 					}
 				}

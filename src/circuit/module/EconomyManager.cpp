@@ -1446,9 +1446,10 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
 		lastFacFrame = frame;
-		IBuilderTask::Priority priority = (builderMgr->GetWorkerCount() <= 2) ?
-										  IBuilderTask::Priority::NOW :
-										  IBuilderTask::Priority::NORMAL;
+		// NOW while few constructors, or while no factory of ours can make constructors (the replacement job was lost)
+		IBuilderTask::Priority priority = ((builderMgr->GetWorkerCount() <= 2) || !factoryMgr->HasBuilderFactory(frame))
+				? IBuilderTask::Priority::NOW
+				: IBuilderTask::Priority::NORMAL;
 		return builderMgr->EnqueueFactory(priority, facDef, buildPos);
 	}
 

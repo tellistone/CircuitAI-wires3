@@ -59,6 +59,8 @@ public:
 	virtual void FallbackTask(CCircuitUnit* unit) override;
 
 	int GetFactoryCount() const { return factories.size(); }
+	// A finished factory of ours can make constructors now
+	bool HasBuilderFactory(int frame) const;
 	float GetFactoryPower() const { return factoryPower; }
 	bool CanEnqueueTask() const { return factoryTasks.size() < factories.size() * 2; }
 	const std::vector<CRecruitTask*>& GetTasks() const { return factoryTasks; }
