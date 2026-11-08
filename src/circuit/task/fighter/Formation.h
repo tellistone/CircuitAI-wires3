@@ -75,10 +75,14 @@ public:
 	void Update(int frame, bool isActive, std::vector<CCircuitUnit*>& outStuck);
 	void Remove(CCircuitUnit* unit);  // it left the squad
 	bool IsOn() const { return isOn; }  // the line is formed: its units walk to GetOrder
+	// While IsOn: the stretch of line the group stands on to stop where it is (CAttackTask::Regroup)
+	void GetStandPath(F3Vec& outPath) const;
 	// Where the unit walks now; false: it has no slot (busy, no_formation, or the line is off): follow the path
 	bool GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const;
 	// The line steers the unit and it keeps up (in line, or a straggler faster than the line): no regroup for it
 	bool IsKeptUp(const CCircuitUnit* unit) const;
+	bool IsSteered(const CCircuitUnit* unit) const;  // the line steers the unit (GetOrder has a slot for it)
+	bool IsInSlot(const CCircuitUnit* unit) const;  // the line steers the unit and it was near its slot at the last solve
 
 #ifdef DEBUG_VIS
 	void Log() const;
@@ -91,6 +95,7 @@ private:
 		int rank;  // row order, front first
 		bool isSteered;  // walks the leader's path now (not busy, not on an order of its own): GetOrder steers it
 		bool isStraggler;
+		bool isInSlot;  // near its slot at the last solve
 		int slotFrame;  // last time near its slot
 		int moveFrame;  // progress watchdog: last time it was 64 elmos from movePos (or had nowhere to go)
 		springai::AIFloat3 movePos;
@@ -107,6 +112,8 @@ private:
 		float offset;  // behind the front row, along the line
 		float shift;  // sideways, to fit between obstacles
 	};
+
+	const SMember* FindSteered(const CCircuitUnit* unit) const;  // nullptr: the line is off, or it doesn't steer the unit
 
 	// The steps of Update, in order
 	float AddMembers(int frame);  // returns the slowest support unit's speed

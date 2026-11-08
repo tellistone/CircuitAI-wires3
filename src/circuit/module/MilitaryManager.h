@@ -59,8 +59,13 @@ public:
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
 	// Power an attack-bound group gathers at base before it leaves: max(quota.attack, enemy threat / allies)
 	float GetAttackGatherPower() const;
-	// Nearest attack group stronger than `power` that the group led by `unit` may join and can reach;
-	// nullptr if none. `self` is skipped. With `isRally` the rally host comes first, wherever it is
+	// Attack group rank: more attack power, ties broken by the lower leader id. A strict order, so groups that each
+	// walk to a higher-ranked one (reinforcing, quota.attack_merge.idle_merge) end at one group per movement class
+	static bool IsRankedAbove(float power, const CCircuitUnit* leader, float otherPower, const CCircuitUnit* otherLeader);
+	// The group led by `unit` may join `squad` (CAttackTask::IsCompatible) and can reach its leader; `squad` has one
+	bool CanReinforce(const CAttackTask* squad, CCircuitUnit* unit) const;
+	// Nearest attack group ranked above (`power`, `unit`) (IsRankedAbove) that the group led by `unit` may join and
+	// can reach (CanReinforce); nullptr if none. `self` is skipped. With `isRally` the rally host comes first, wherever it is
 	// (quota.attack_merge.rally); fleeing passes false and keeps the nearest stronger group.
 	CAttackTask* FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self = nullptr,
 			bool isRally = true) const;
@@ -69,6 +74,16 @@ public:
 	// An attack-bound unit's first task: a gathering group at base (quota.attack_merge.base_gather true), else
 	// reinforce the rally host or the nearest compatible group, else a new attack group
 	IFighterTask* EnqueueAttackBound(CCircuitUnit* unit);
+	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
+	// Mines always get a new one (each lays its field somewhere else)
+	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
+	// An enemy heavy (enemy role, as GetEnemyCost) in radar or LOS within the last frames (CEnemyUnit::IsRecentlySeen).
+	// Anti-heavy hunting starts on a fresh sighting (AH_HUNT_FRAMES: new units, the army pull) and stops once none
+	// has been seen for much longer (AH_KEEP_FRAMES: squads disband), so a heavy dipping in and out of radar can't
+	// send the units back and forth
+	static constexpr int AH_HUNT_FRAMES = FRAMES_PER_SEC * 10;
+	static constexpr int AH_KEEP_FRAMES = FRAMES_PER_SEC * 60;
+	bool IsEnemyHeavySeen(int frames);
 	CRetreatTask* EnqueueRetreat();
 private:
 	void DequeueTask(IUnitTask* task, bool done = false);
@@ -271,6 +286,9 @@ public:
 		int reinforceRetry;  // frames to act as a small attack group after giving up, before looking again
 	};
 	const SAttackMerge& GetAttackMerge() const { return attackMerge; }
+	// quota.attack_merge.idle_merge: an army with nothing to attack for a while reinforces the nearest compatible group
+	// ranked above it (IsRankedAbove) and merges, so all attack groups converge into one army
+	bool IsAttackIdleMerge() const { return attackIdleMerge; }
 	// quota.attack_merge.rally: when a recently seen enemy blob near our attack groups has more threat than
 	// match x the largest group's raw strength, every compatible attack group (and new unit) reinforces that group
 	// (the host) until it is (1 + margin) x match x the blob, or no blob is found for seen_sec. match 0 = off
@@ -334,6 +352,9 @@ private:
 	void UpdateIdle();
 	void UpdateFight();
 	void UpdateCaptureHide();
+	// An enemy heavy seen within AH_HUNT_FRAMES: anti-heavy units in attack and gathering groups (where they go while
+	// there is none) leave for anti-heavy squads, every 2 s; not while their group is fighting or fleeing
+	void UpdateAhPull();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
@@ -470,9 +491,12 @@ private:
 	int drownedFrames;  // "drowned".time in frames; < 0 = off
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	bool attackBaseGather;  // quota.attack_merge.base_gather
+	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
 	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use
 	int rallyStartFrame;
+	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at
+	int heavySeenAge;  // frames since an enemy heavy was last in radar or LOS; max = none
 	int rallyEndFrame;  // a new rally can't start within RALLY_GAP_FRAMES of this
 	int rallyBlobFrame;  // last frame a qualifying blob was found
 	springai::AIFloat3 rallyBlobPos;

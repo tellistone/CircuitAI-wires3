@@ -138,6 +138,13 @@ private:
 	void AbsorbWeakerTasks();
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame, bool isReuse);
+	// quota.attack_merge.idle_merge: an army without a target for a while reinforces the group GetReinforceSquad picks
+	// (ranked above us: CMilitaryManager::IsRankedAbove) and merges with it; false: not yet idle long enough, no
+	// such group, or none we could route to lately
+	bool SeekIdleMerge(int frame, bool isReuse);
+	// A fight here (isHunt false) or a target route accepted (true): the idle clock restarts; a hunt also ends an
+	// army's walk to merge
+	void SetHasTarget(int frame, bool isHunt);
 	// Rally: where to walk when reinforcing the host; false: stand still
 	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, bool& outIsToMeet) const;
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, bool isToMeet, float slack);
@@ -258,8 +265,9 @@ private:
 	// below the allowance for 'strength'
 	bool IsApproachSafe(const F3Vec& path, const springai::AIFloat3& targetPos, float strength, float refSqDist,
 			const springai::AIFloat3* cell = nullptr) const;
-	// No target: route to the front line, or hold nearby when past it on enemy-held ground (or no front / no safe
-	// route). isReuse: a normal decision no unit asked to re-plan, which may keep a fresh route to the same front
+	// No target: an army idle long enough walks to merge (SeekIdleMerge); else route to the front line, or hold nearby
+	// when past it on enemy-held ground (or no front / no safe route). isReuse: a normal decision no unit asked to
+	// re-plan, which may keep a fresh route to the same front
 	void FallbackFrontPos(bool isReuse = false);
 	void ApplyFrontPos(const CQueryPathMulti* query, const springai::AIFloat3& goal);
 	// Threat cap for capped routes (target, front, reinforce): never above what the escape tolerates
@@ -298,16 +306,22 @@ private:
 	// returns the threat there
 	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
 	// Units more than 600 from pos walk there, the rest stand; sets isHolding
+	void Regroup(int frame);  // the regroup's move (state REGROUP): in line where it can
+	std::shared_ptr<PathInfo> MakeRegroupPath() const;
 	void GatherAt(const springai::AIFloat3& pos);
 	void MoveGroupTo(const springai::AIFloat3& pos);
 	void MoveUnitTo(CCircuitUnit* unit, const springai::AIFloat3& pos, int frame);
 
 	float minPower;
+	bool IsArmy() const { return attackPower >= minPower; }  // at or above quota.attack
 
 	// Reinforcing
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
+	int reinforceGiveUps;  // reinforce_fails give-ups in a row: each doubles the retry wait (up to 8x)
+	int lastTargetFrame;  // last decision that fought or went for a target (SetHasTarget); SeekIdleMerge's delay
+	bool isDecisionReuse;  // the last decision's isReuse, for the fallbacks of its target route
 	int rallyRouteFrame;  // rally: our last route to the host came back empty, hold until this frame
 	springai::AIFloat3 meetFailPos;  // rally: the host's meeting point our last route to came back empty
 
@@ -350,6 +364,8 @@ private:
 	// Holding
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)
 	springai::AIFloat3 holdPos;  // the spot HoldPosition walks the group to along a path (-RgtVector: none)
+	std::shared_ptr<PathInfo> regroupPath;  // the short path a regroup in line stands on (Regroup)
+	int regroupFrame = -1;  // groupFrame of the regroup that made it
 	int stepFrame;  // last step back after being hit while holding
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
 	float hitRadius;

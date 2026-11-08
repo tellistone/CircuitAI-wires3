@@ -122,6 +122,8 @@ public:
 	// Before this frame a non-combat constructor needs an escort (or a defended cluster) to build a mex
 	int GetMexEscortFrame() const { return mexEscortFrame; }
 	IBuilderTask* UpdateEnergyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	// Queue a geo on the nearest free, safe vent when none is queued and income allows
+	IBuilderTask* UpdateGeoTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateFactoryTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateFactoryTasks();
 	IBuilderTask* UpdateStorageTasks();
