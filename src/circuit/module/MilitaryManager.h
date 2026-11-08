@@ -159,6 +159,10 @@ public:
 		float mexShare;  // resign only while our ally team holds less than this share of the map's metal spots
 		float threatMult;  // ... and the known enemy mobile threat is more than this x ours
 	};
+	struct SDrownedState {
+		int stuckFrame;  // first frame of the current spell in water too deep for the unit's move type
+		bool isSelfD;  // self-destruct ordered (the engine command toggles the countdown)
+	};
 	bool IsGuardRole(CCircuitDef* cdef) const;
 	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
 	bool IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const;
@@ -322,6 +326,8 @@ private:
 	void UpdateCaptureHide();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
+	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
+	bool IsDrowned(CCircuitUnit* unit, int frame) const;
 	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
 	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
 	// Host candidate: the strongest group (raw strength) in the movement class with the most total strength;
@@ -449,6 +455,8 @@ private:
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SAttackRally attackRally;  // quota.attack_merge.rally
 	SResignCfg resign;  // "resign"
+	int drownedFrames;  // "drowned".time in frames; < 0 = off
+	std::unordered_map<int, SDrownedState> drownedUnits;  // by unit id
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
 	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use
