@@ -334,6 +334,7 @@ private:
 	void UpdateCaptureHide();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
+	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	void CollectRallyGroups(std::vector<CAttackTask*>& outGroups) const;
 	void ReplaceRallyHost(const IFighterTask* gone);  // PickRallyHost among the other groups
 	// Host candidate: the strongest group (raw strength) in the movement class with the most total strength;
@@ -462,6 +463,8 @@ private:
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SAttackRally attackRally;  // quota.attack_merge.rally
 	SResignCfg resign;  // "resign"
+	int drownedFrames;  // "drowned".time in frames; < 0 = off
+	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	CAttackTask* rallyHost;  // nullptr: no rally; cleared in DequeueTask when the task ends
 	CAttackTask* prevRallyHost;  // host of the last rally (preferred on a restart); validated before use

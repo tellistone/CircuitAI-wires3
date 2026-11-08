@@ -159,6 +159,14 @@
 	"threat": 4.0
 },
 
+// Self-destruct own ground units stuck under water deeper than their move type can walk in (knocked or pushed off a
+// shore, dropped there, or the seabed terraformed under them). Checked every second; hovers, ships, subs, amphibious
+// units and aircraft never count, nor does a unit held above the water by a transport. The order is sent once and
+// never cancelled. Missing block or time < 0 = off
+"drowned": {
+	"time": 10.0  // seconds stuck before the self-destruct order
+},
+
 // Anti-heavy squads (main role anti_heavy: Lance, Ultimatum, Scorpion, Merlin, ...)
 "antiheavy": {
 	"path_threat": 1.0,  // routes (to a heavy, to safety, home) may not cross enemy threat above this x the squad's allowance: its strength (power x sqrt(health %)) x the task's power mod x base_bonus / thr_mod.distance at the strictest end, as anti-air's routes. The route to a heavy ends at its stand-off point (on our side, the first walkable spot from just outside the heavy's own threat ring, never nearer than the squad's LOS, whose threat is under the cap; a heavy with no such spot within a few cells isn't walked to), so the cap meets only its escorts; from there the squad attacks it. Never below the threat where the squad stands; the way home tries once more through any threat; -1 = no cap and the old routes straight to the heavy (threat is only avoided where cheap). Aircraft never get the cap
