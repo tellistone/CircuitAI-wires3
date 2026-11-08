@@ -1351,9 +1351,6 @@ void CAttackTask::FindTarget()
 	const float weaponRange = cdef->GetMaxRange();
 	const float sqMaxSpeed = SQUARE(highestSpeed * 0.8f / FRAMES_PER_SEC);
 	const float sqHighestRange = SQUARE(highestRange);
-	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (below)
-	CInfluenceMap* inflMap = circuit->GetInflMap();
-	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
 	// Divided by the thr_mod.distance curve at each judged spot
 	const float maxPower = GetPickStrength(frame);
 	// The current target is judged against a looser allowance (quota.attack_keep_threat x) at its spot and on
@@ -1446,6 +1443,9 @@ void CAttackTask::FindTarget()
 		AIFloat3 rangePos;
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
+	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop)
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1477,7 +1477,7 @@ void CAttackTask::FindTarget()
 		// shift its rank
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
-		// quota.attack_own_ground_time: ground our buildings, builders or static defences cover (enemy influence
+		// quota.attack_own_ground_time: ground our buildings, land builders or static defences cover (enemy influence
 		// ignored; armed mobiles don't count, else a group would license its own surroundings and creep forward).
 		// A target already within range is always fair game, so fights at the edge aren't dropped
 		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && (inflMap->GetAllyDefendInflAt(c.rangePos) <= INFL_EPS)) {
