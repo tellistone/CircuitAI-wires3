@@ -10,7 +10,7 @@
 //       points, first/last value outside them. 0 = no response at that income (tier weights may still pick it)
 //   "territory_max": 0.6  not built while ally mexes / map spots > this
 //   "unlock_after": {"income": 25, "territory": 0.3}  locked until both are exceeded at once, then unlocked for good.
-//       A missing or 0 field counts as met
+//       A missing or 0 field counts as met. Its income leaves out reclaim (ZK mex + overdrive + constructor share)
 //   territory_max and unlock_after keep the role out of the response roll and the factory's tier-weight roll (unless
 //   they would leave the factory nothing to build). Changes must hold 3 samples in a row (2 s apart, ~4 s).
 //   Income = min(metal, energy) income * economy ecoFactor (the economy.json eps_step), as factory.json income_tier.

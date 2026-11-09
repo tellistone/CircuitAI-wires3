@@ -50,6 +50,7 @@
 
 #include "AISCommands.h"
 #include "Command.h"
+#include "Team.h"
 #include "Log.h"
 
 namespace circuit {
@@ -2530,22 +2531,30 @@ void CMilitaryManager::UpdateResponseGates()
 	const float share = isTerritory ? (float)metalMgr->GetMexCount() / spotCount : 0.f;
 	// Income as factory income_tier reads it: economy eps_step (ecoFactor) included
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const float income = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome()) * economyMgr->GetEcoFactor();
+	const float energyIncome = economyMgr->GetAvgEnergyIncome();
+	const float income = std::min(economyMgr->GetAvgMetalIncome(), energyIncome) * economyMgr->GetEcoFactor();
+	// unlock_after reads the same without reclaim (a wreck field must not unlock a role for good): our share of the
+	// ally team's mex, overdrive and constructor metal, from ZK's overdrive gadget; total income without it
+	Team* team = circuit->GetTeam();
+	const float odBase = team->GetRulesParamFloat("OD_metalBase", -1.f);
+	const float ecoMetal = (odBase < 0.f) ? economyMgr->GetAvgMetalIncome()
+			: odBase + team->GetRulesParamFloat("OD_metalOverdrive", 0.f) + team->GetRulesParamFloat("OD_metalMisc", 0.f);
+	const float unlockIncome = std::min(ecoMetal, energyIncome) * economyMgr->GetEcoFactor();
 	const int frame = circuit->GetLastFrame();
 
 	for (SRoleInfo& info : roleInfos) {
 		info.incomeMult = utils::eval_curve(info.incomeCurve, income);
 
-		// unlock_after: one-off, both exceeded on RESPONSE_HOLD samples in a row (not a reclaim or transfer spike)
+		// unlock_after: one-off, both exceeded on RESPONSE_HOLD samples in a row (not a transfer spike)
 		bool isJustUnlocked = false;
 		if (!info.isUnlocked) {
-			const bool isIncome = (info.unlockIncome <= 0.f) || (income > info.unlockIncome);
+			const bool isIncome = (info.unlockIncome <= 0.f) || (unlockIncome > info.unlockIncome);
 			const bool isShare = !isTerritory || (info.unlockTerritory <= 0.f) || (share > info.unlockTerritory);
 			info.unlockHold = (isIncome && isShare) ? info.unlockHold + 1 : 0;
 			if (info.unlockHold >= RESPONSE_HOLD) {
 				info.isUnlocked = isJustUnlocked = true;
 				circuit->LOG("RESPONSE: %s unlocked at frame %i (income %.1f > %.1f, territory %.2f > %.2f)",
-						info.name.c_str(), frame, income, info.unlockIncome, share, info.unlockTerritory);
+						info.name.c_str(), frame, unlockIncome, info.unlockIncome, share, info.unlockTerritory);
 			}
 		}
 
@@ -2574,8 +2583,8 @@ void CMilitaryManager::UpdateResponseGates()
 				closed += " " + info.name;
 			}
 		}
-		circuit->LOG("RESPONSE: frame %i share %.2f (%i / %i) income %.1f locked [%s ] closed [%s ]", frame, share,
-				metalMgr->GetMexCount(), spotCount, income, locked.c_str(), closed.c_str());
+		circuit->LOG("RESPONSE: frame %i share %.2f (%i / %i) income %.1f (no reclaim %.1f) locked [%s ] closed [%s ]",
+				frame, share, metalMgr->GetMexCount(), spotCount, income, unlockIncome, locked.c_str(), closed.c_str());
 	}
 	++responseSamples;
 }
