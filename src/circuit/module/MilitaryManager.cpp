@@ -44,6 +44,7 @@
 
 #include "spring/SpringCallback.h"
 #include "spring/SpringMap.h"
+#include "Game.h"
 
 #include <cmath>
 #include <limits>
@@ -2993,11 +2994,20 @@ void CMilitaryManager::UpdateAttackThreatFloor()
 	// armies don't count: each AI judges its own). Commanders count on neither side
 	const float enemyPerTeam = circuit->GetEnemyManager()->GetMobileThreatNoComm()
 			/ std::max(circuit->GetEnemyTeamSize(), 1);
+	const bool wasFloor = isAttackThreatFloor;
 	if (armyThreat < attackThreatFloor.on * enemyPerTeam) {
 		isAttackThreatFloor = true;
 	} else if (armyThreat >= attackThreatFloor.off * enemyPerTeam) {
 		isAttackThreatFloor = false;
 	}  // else: keep, so the floor doesn't flip on every unit made or lost
+	if (isAttackThreatFloor == wasFloor) {
+		return;
+	}
+	// Say it in public chat (Game_sendTextMessage only runs "/" commands, as for the resign), and log the numbers
+	circuit->GetGame()->SendTextMessage(isAttackThreatFloor ? "/say <CircuitAI> Defending" : "/say <CircuitAI> Attacking", 0);
+	circuit->LOG("THREAT FLOOR %s: army %.1f vs enemy %.1f per team (%.2f; on below %.2f, off from %.2f)",
+			isAttackThreatFloor ? "on" : "off", armyThreat, enemyPerTeam,
+			(enemyPerTeam > 0.f) ? armyThreat / enemyPerTeam : 0.f, attackThreatFloor.on, attackThreatFloor.off);
 }
 
 } // namespace circuit
