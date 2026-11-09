@@ -307,11 +307,6 @@ bool ISquadTask::IsMustRegroup()
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	if (isCheck) {
-		for (auto it = joinFrames.begin(); it != joinFrames.end();) {
-			it = IsNewcomer(it->first, frame) ? std::next(it) : joinFrames.erase(it);
-		}
-	}
 	if (IsNewcomer(leader, frame)) {
 		// The leader joined lately (the old one died or left): the old units would be "far" from it and walk to it
 		state = State::ROAM;
@@ -422,6 +417,7 @@ void ISquadTask::LateUpdate()
 {
 	static std::vector<CCircuitUnit*> stuckUnits;  // NOTE: micro-opt
 	const int frame = manager->GetCircuit()->GetLastFrame();
+	UpdateNewcomers(frame);
 	formation.Update(frame, IsFormationActive(frame), stuckUnits);
 	ReleaseStuck(stuckUnits);  // may leave leader == nullptr (task aborted)
 }
@@ -454,12 +450,29 @@ bool ISquadTask::IsNewcomer(const CCircuitUnit* unit, int frame) const
 	return (it != joinFrames.end()) && (frame < it->second + NEWCOMER_FRAMES);
 }
 
-float ISquadTask::GetPathSpeed(CCircuitUnit* unit, int frame, float speed) const
+void ISquadTask::UpdateNewcomers(int frame)
 {
-	// Full speed only while catching up: one that reached the group would otherwise run on ahead of it
-	return (IsNewcomer(unit, frame) && (leader != nullptr)
-			&& (unit->GetPos(frame).SqDistance2D(leader->GetPos(frame)) > SQUARE(NEWCOMER_NEAR_DIST)))
-		? NO_SPEED_LIMIT : speed;
+	if (joinFrames.empty() || (leader == nullptr)) {
+		return;
+	}
+	// One that reached the group walks on at the leader's speed, on the leader's path: else it would run on ahead of
+	// the group until the next route is sent. A newcomer leader stays one for its time (IsMustRegroup)
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	ITravelAction* leaderAct = leader->GetTravelAct();
+	for (auto it = joinFrames.begin(); it != joinFrames.end();) {
+		CCircuitUnit* unit = it->first;
+		if (frame >= it->second + NEWCOMER_FRAMES) {
+			it = joinFrames.erase(it);
+		} else if ((unit != leader) && (unit->GetPos(frame).SqDistance2D(leaderPos) <= SQUARE(NEWCOMER_NEAR_DIST))) {
+			ITravelAction* travelAct = unit->GetTravelAct();
+			if ((travelAct != nullptr) && (leaderAct != nullptr) && (travelAct->GetPath() == leaderAct->GetPath())) {
+				travelAct->SetSpeed(leaderAct->GetSpeed());
+			}
+			it = joinFrames.erase(it);
+		} else {
+			++it;
+		}
+	}
 }
 
 void ISquadTask::ActivePath(float speed)

@@ -133,19 +133,21 @@ private:
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
 	void AbsorbWeakerTasks();
 	CAttackTask* GetReinforceSquad();
-	// false: a rally joiner near the host's fight with no safe spot at its edge, act as a normal group (rallyRouteFrame set)
-	bool Reinforce(const int frame, bool isReuse);
+	// Walk to goal (the group's leader; rally host: PickRallyGoal) by a route capped for routeStrength
+	void Reinforce(const int frame, bool isReuse, const springai::AIFloat3& goal, float routeStrength);
 	// quota.attack_merge.idle_merge: an army outside the rally walks to the group GetReinforceSquad picks (ranked above
 	// us: CMilitaryManager::IsRankedAbove) and merges, when that group is nearer than its best target by the target
 	// ranking (sqTargetKey: FindTarget's key; no target: max). Once walking, only a target ranked under
 	// MERGE_BREAK_OFF_SHARE of the group's distance breaks the walk off. false: hunt, or no target and the front fallback
 	bool SeekMerge(int frame, bool isReuse, float sqTargetKey);
-	// Rally: where to walk when reinforcing the host; false: nothing safe near its fight and we are close already
-	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal) const;
+	// Rally: where to walk when reinforcing the host, and the strength its route is capped for (in: ours); false:
+	// nowhere to stand near its fight and we are close already
+	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, float& inOutStrength) const;
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, float slack);
-	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, springai::AIFloat3& outPos) const;
+	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, float farDist, springai::AIFloat3& outPos,
+			float& outStrength) const;
 	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES
-	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range,
+	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range, float strength,
 			std::function<void (const CQueryPathSingle*)>&& onComplete);
 	bool ApplyGroupRoute(const CQueryPathSingle* query, ICoreUnit::Id routeId, const springai::AIFloat3& goal,
 			float slack);
@@ -249,6 +251,7 @@ private:
 	void ApplyFrontPos(const CQueryPathMulti* query, const springai::AIFloat3& goal);
 	// Threat cap for capped routes (target, front, reinforce): never above what the escape tolerates
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
+	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals, float strength) const;
 	// Threat cost of a route: quota.attack_path_dynamic_cost, and on capped routes quota.attack_path_ignore_threat
 	void SetRouteThreat(IPathQuery* query, AttackRoute route) const;
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
@@ -302,7 +305,8 @@ private:
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
 	bool isDecisionReuse;  // the last decision's isReuse, for the fallbacks of its target route
-	int rallyRouteFrame;  // rally: our last route to the host came back empty, act as a normal group until this frame
+	int rallyRouteFrame;  // rally: no route or spot near the host, act as a normal group until this frame
+	int rallyEdgeFailFrame;  // rally: last time FindFightEdge found nowhere to stand near the host's fight
 
 	// Rally host (quota.attack_merge.rally)
 	int engageFrame;  // last Engage (IsRallyFighting)

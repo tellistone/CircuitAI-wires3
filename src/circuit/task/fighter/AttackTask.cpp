@@ -73,6 +73,15 @@ static constexpr int GROUP_ROUTE_REUSE_FRAMES = FRAMES_PER_SEC * 6;
 static constexpr float GROUP_ROUTE_SLACK = 0.1f;
 // Rally: after an empty route to the host (or its fight), act as a normal attack group this long before routing again
 static constexpr int RALLY_ROUTE_RETRY_FRAMES = FRAMES_PER_SEC * 6;
+// Rally joiners near the host's fight (FindFightEdge): steps of the edge search back from the host towards us, and the
+// distance beyond which a joiner with no safe step still walks in to that far point (a 400 gap past the last step).
+// For RALLY_EDGE_MEMORY_FRAMES after a search found nothing near enough, that distance is RALLY_EDGE_HYSTERESIS more,
+// so a joiner acting as a normal group that drifts out a little isn't called back in at once
+static constexpr float RALLY_EDGE_STEP = 200.f;
+static constexpr int RALLY_EDGE_STEPS = 12;
+static constexpr float RALLY_EDGE_FAR_DIST = (RALLY_EDGE_STEPS + 2) * RALLY_EDGE_STEP;  // 2800
+static constexpr float RALLY_EDGE_HYSTERESIS = 800.f;
+static constexpr int RALLY_EDGE_MEMORY_FRAMES = FRAMES_PER_SEC * 20;
 // Rally host: counts as fighting this long after its last Engage, so a target blinking at the edge of its range
 // doesn't swap its joiners' goal (fight edge or the host) every decision
 static constexpr int RALLY_FIGHT_MEMORY_FRAMES = FRAMES_PER_SEC * 6;
@@ -119,6 +128,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, reinforceRetryFrame(-1)
 		, isDecisionReuse(false)
 		, rallyRouteFrame(-1)
+		, rallyEdgeFailFrame(-RALLY_EDGE_MEMORY_FRAMES)
 		, engageFrame(-RALLY_FIGHT_MEMORY_FRAMES)
 		, fleeFrame(0)
 		, fleePathFrame(0)
@@ -353,15 +363,22 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		reinforce = militaryMgr->FindReinforceSquad(leader, attackPower, this);
 	}
 	if (!isFreeArmy && (reinforce != nullptr) && (GetReinforceSquad() != nullptr)) {
-		// Fight back on the way; otherwise keep walking
-		if (EngageInRange(frame, true)) {
+		AIFloat3 goal = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad
+		float routeStrength = GetSafeThreat();
+		if ((reinforce != rallyHost) || PickRallyGoal(frame, goal, routeStrength)) {
+			// Fight back on the way; otherwise keep walking
+			if (EngageInRange(frame, true)) {
+				return;
+			}
+			Reinforce(frame, isReuse, goal, routeStrength);
 			return;
 		}
-		if (Reinforce(frame, isReuse)) {
-			return;
-		}
-		// The rally host's fight has no safe spot at its edge near us: act as a normal attack group (below), as
-		// after an empty route to the host, rather than walk into the fight or stand still
+		// The rally host's fight has no spot near us where we can stand, alone or beside it: act as a normal attack
+		// group for a while (below), as after an empty route to the host, rather than walk into the fight or stand still.
+		// No route into it (a doomed search, or one the escape would turn back from)
+		rallyRouteFrame = frame + RALLY_ROUTE_RETRY_FRAMES;
+		rallyEdgeFailFrame = frame;
+		reinforce = nullptr;
 	}  // else: nothing to join, carry on as a small attack group
 
 	const AIFloat3& startPos = leader->GetPos(frame);
@@ -623,31 +640,23 @@ CAttackTask* CAttackTask::GetReinforceSquad()
 	return reinforce;
 }
 
-bool CAttackTask::Reinforce(const int frame, bool isReuse)
+void CAttackTask::Reinforce(const int frame, bool isReuse, const AIFloat3& goal, float routeStrength)
 {
 	SetTarget(nullptr);
 	ClearScaleAnchor();  // walking to a group, not into an accepted fight
 	state = State::ROAM;
 
 	if (!IsQueryReady(leader)) {
-		return true;
+		return;
 	}
-	// Threat-aware path to the group's leader, capped like every other route (GetPathThreatCap: the common
-	// allowance). It only has to get within reinforce_range (800), so the hot zone around a fighting group doesn't block
-	// it; merging takes over inside the merge distance (CheckMergeTask from our side, AbsorbWeakerTasks from
-	// an army's side). Range: quota.attack_merge.reinforce_range. Rally host: PickRallyGoal
+	// Threat-aware path to the group's leader (rally host: PickRallyGoal), capped like every other route
+	// (GetPathThreatCap: the common allowance, for routeStrength). It only has to get within reinforce_range (800), so
+	// the hot zone around a fighting group doesn't block it; merging takes over inside the merge distance
+	// (CheckMergeTask from our side, AbsorbWeakerTasks from an army's side). Range: quota.attack_merge.reinforce_range
 	const AIFloat3& startPos = leader->GetPos(frame);
-	const bool isRally = (reinforce == GetMilitaryMgr()->GetRallyHost());
-	AIFloat3 goal = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad this update
-	if (isRally && !PickRallyGoal(frame, goal)) {
-		// No route into the fight (a doomed search, or one the escape would turn back from): act as a normal group a while
-		rallyRouteFrame = frame + RALLY_ROUTE_RETRY_FRAMES;
-		reinforce = nullptr;
-		return false;
-	}
 	position = goal;
 	if (isReuse && ReuseRoute(REINFORCE_ROUTE_ID, goal, frame)) {
-		return true;
+		return;
 	}
 	// Never stop farther out than we can merge from (the merge distance, or travel_sec at our slowest speed), with
 	// a margin for the host moving: otherwise a slow group would park short of the host and never merge
@@ -655,22 +664,25 @@ bool CAttackTask::Reinforce(const int frame, bool isReuse)
 	const float mergeReach = std::min(cfg.distance, cfg.travelSec * lowestSpeed);
 	const float pathRange = std::min(cfg.reinforceRange, mergeReach * 0.8f);
 	const float slack = GROUP_ROUTE_SLACK * startPos.distance2D(goal);
-	RunGroupRoute(frame, goal, pathRange, [this, goal, slack](const CQueryPathSingle* query) {
+	RunGroupRoute(frame, goal, pathRange, routeStrength, [this, goal, slack](const CQueryPathSingle* query) {
 		this->ApplyReinforcePath(query, goal, slack);
 	});
-	return true;
 }
 
-bool CAttackTask::PickRallyGoal(int frame, AIFloat3& inOutGoal) const
+bool CAttackTask::PickRallyGoal(int frame, AIFloat3& inOutGoal, float& inOutStrength) const
 {
 	// Reinforcing the rally host (quota.attack_merge.rally), one goal rule:
-	// - the host fights: the safe edge of its fight (FindFightEdge), to add our strength without walking into it alone;
+	// - the host fights: the safe edge of its fight (FindFightEdge), to add our strength without walking into it alone,
+	//   else beside the host if the two groups together can stand there;
 	// - otherwise: the host itself (inOutGoal as given; inside the merge distance, so the merge always fires).
-	// false: nothing safe near the fight and we are close already, the caller acts as a normal group for a while
+	// inOutStrength: what the route's cap allows for (in: ours; both groups' for the spot beside a fighting host).
+	// false: nowhere to stand near the fight and we are close already, the caller acts as a normal group for a while
 	// (FindTarget still picks targets at the fight's edge that pass its own approach checks)
 	if (reinforce->IsRallyFighting(frame)) {
 		const AIFloat3 hostPos = inOutGoal;
-		return FindFightEdge(frame, hostPos, inOutGoal);
+		const bool isRecentFail = (frame < rallyEdgeFailFrame + RALLY_EDGE_MEMORY_FRAMES);
+		const float farDist = RALLY_EDGE_FAR_DIST + (isRecentFail ? RALLY_EDGE_HYSTERESIS : 0.f);
+		return FindFightEdge(frame, hostPos, farDist, inOutGoal, inOutStrength);
 	}
 	return true;
 }
@@ -740,21 +752,21 @@ bool CAttackTask::SeekMerge(int frame, bool isReuse, float sqTargetKey)
 		}
 		return false;
 	}
-	Reinforce(frame, isReuse);  // never false: armies outside the rally only
+	Reinforce(frame, isReuse, host->GetLeaderPos(frame), GetSafeThreat());
 	return true;
 }
 
-void CAttackTask::RunGroupRoute(int frame, const AIFloat3& goal, float range,
+void CAttackTask::RunGroupRoute(int frame, const AIFloat3& goal, float range, float strength,
 		std::function<void (const CQueryPathSingle*)>&& onComplete)
 {
-	// A capped route (reinforce costs) from our leader to within range of goal
+	// A capped route (reinforce costs, the cap for strength) from our leader to within range of goal
 	CCircuitAI* circuit = manager->GetCircuit();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const AIFloat3& startPos = leader->GetPos(frame);
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
 			startPos, goal, std::max(range, static_cast<float>(pathfinder->GetSquareSize())), nullptr,
-			GetPathThreatCap(startPos, {goal}));
+			GetPathThreatCap(startPos, {goal}, strength));
 	SetRouteThreat(query.get(), AttackRoute::REINFORCE);
 	RunRoute(query, [onComplete = std::move(onComplete)](const IPathQuery* query) {
 		onComplete(static_cast<const CQueryPathSingle*>(query));
@@ -778,15 +790,14 @@ bool CAttackTask::ApplyGroupRoute(const CQueryPathSingle* query, ICoreUnit::Id r
 	return true;
 }
 
-bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& outPos) const
+bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, float farDist, AIFloat3& outPos,
+		float& outStrength) const
 {
 	// The rally host is fighting: its position stepped back towards us until the threat there is under our own
 	// allowance (as our route judges it), so we join the fight from its safe side.
-	// Nothing safe on the steps: from farther away than one step past them, walk to that point (the edge is looked
-	// for again on the way); closer: false
-	constexpr float STEP = 200.f;
-	constexpr int MAX_STEPS = 12;
-	constexpr float FAR_DIST = (MAX_STEPS + 2) * STEP;  // 2800: a 400 gap past the last step checked
+	// Nothing safe on the steps: from farther away than farDist, walk to the point that far out (the edge is looked
+	// for again on the way); closer: beside the host, if the two groups together can stand there (the flee's rule,
+	// FindFleeDest: on the way in our escape picks the same spot), with a route capped for both; else false
 	const AIFloat3& ownPos = leader->GetPos(frame);
 	const float dist = ownPos.distance2D(hostPos);
 	if (dist < 1.f) {
@@ -796,8 +807,8 @@ bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& ou
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const AIFloat3 dir = (ownPos - hostPos) / dist;
 	const float own = GetSafeThreat();
-	for (int k = 0; (k <= MAX_STEPS) && (k * STEP < dist); ++k) {
-		AIFloat3 p = hostPos + dir * (k * STEP);
+	for (int k = 0; (k <= RALLY_EDGE_STEPS) && (k * RALLY_EDGE_STEP < dist); ++k) {
+		AIFloat3 p = hostPos + dir * (k * RALLY_EDGE_STEP);
 		CTerrainManager::CorrectPosition(p);
 		if (!terrainMgr->CanMoveToPos(leader->GetArea(), p)) {
 			continue;
@@ -807,10 +818,15 @@ bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& ou
 			return true;
 		}
 	}
-	if (dist > FAR_DIST) {
-		outPos = hostPos + dir * FAR_DIST;
+	if (dist > farDist) {
+		outPos = hostPos + dir * RALLY_EDGE_FAR_DIST;
 		CTerrainManager::CorrectPosition(outPos);
 		return true;
+	}
+	const float together = GetJointSafeThreat(reinforce);
+	if (!IsDangerAt(leader, hostPos, together)) {
+		outStrength = together;
+		return true;  // outPos: the host (as given)
 	}
 	return false;
 }
@@ -1687,6 +1703,11 @@ void CAttackTask::ApplyFrontPos(const CQueryPathMulti* query, const AIFloat3& go
 
 float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals) const
 {
+	return GetPathThreatCap(startPos, goals, GetSafeThreat());
+}
+
+float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals, float strength) const
+{
 	// One cap for the whole route (the pathfinder takes a single value): the common allowance with the
 	// strictest thr_mod.distance value of start and goals, but the loosest base_bonus and near-base scale,
 	// so a target that passed picking thanks to them stays reachable. Spots on the way that are hotter than
@@ -1702,7 +1723,7 @@ float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals
 		bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(g)));
 		scale = std::min(scale, GetNearBaseScaleAt(g, scaleRefSqDist));
 	}
-	return GetSafeThreat() * bonus / curve / std::max(scale, 1e-3f);
+	return strength * bonus / curve / std::max(scale, 1e-3f);
 }
 
 void CAttackTask::SetRouteThreat(IPathQuery* query, AttackRoute route) const

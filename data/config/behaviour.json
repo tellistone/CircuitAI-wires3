@@ -208,8 +208,8 @@
 // units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; when one
 // falls far behind, the usual regroup stops the line where it stands (just after a fight: at the leader, facing the
 // nearest strong enemy group) and the units take their slots in it, until the line is whole (as a gather where no
-// line fits). Newcomers (units that joined in the last 20 s, by a merge or a new assignment, in attack and raid groups)
-// are waited for by neither: they catch up at full speed. At the end of its walk the group stands in line. Missing block or
+// line fits). Newcomers (units that joined attack and raid groups by a merge or a new assignment, until they come within
+// 200 elmos of the leader, 20 s at most) are waited for by neither: they catch up at full speed. At the end of its walk the group stands in line. Missing block or
 // "enable": false = groups walk as before, except that a holding group still takes a threat-capped path to a quiet spot
 // more than 256 elmos away instead of a straight move (it ends bunched on the path's last point, as it did before)
 "formation": {
