@@ -40,6 +40,8 @@
 #define CHASE_ROUTE_SLACK_MIN	200.f  // ...or than this many elmos (near the end 10% is a few elmos)
 #define CHASE_FAILS	3  // empty chase routes in a row before...
 #define CHASE_RETRY_FRAMES	(FRAMES_PER_SEC * 15)  // ...raiding normally for this long
+#define CHASE_NEAR_MOVE	100.f  // beside the chased group: the Fight order is re-sent once its leader moved this far...
+#define CHASE_NEAR_FRAMES	(FRAMES_PER_SEC * 3)  // ...or this long after the last one
 
 namespace circuit {
 
@@ -54,6 +56,8 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, chaseRouteFrame(-FRAMES_PER_SEC * 60)
 		, chaseGoal(-RgtVector)
 		, isChaseDest(false)
+		, nearFightFrame(-FRAMES_PER_SEC * 60)
+		, nearFightPos(-RgtVector)
 		, maxPower(maxPower)
 		, fleeFrame(0)
 		, fleePathFrame(0)
@@ -86,6 +90,11 @@ CMilitaryManager* CRaidTask::GetMilitaryMgr() const
 
 bool CRaidTask::CanAssignTo(CCircuitUnit* unit) const
 {
+	// Distance first: during a raid rally every group checks every other one every 2 updates, and most are far
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
+		return false;
+	}
 	CCircuitDef* udef = unit->GetCircuitDef();
 	if (!udef->IsRoleRaider()) {
 		return false;
@@ -98,14 +107,7 @@ bool CRaidTask::CanAssignTo(CCircuitUnit* unit) const
 	{
 		return false;
 	}
-	if (!HasRoom()) {
-		return false;
-	}
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
-		return false;
-	}
-	return true;
+	return HasRoom();
 }
 
 bool CRaidTask::IsRallyCompatible(CCircuitUnit* unit) const
@@ -309,6 +311,7 @@ void CRaidTask::Update()
 			return;
 		}
 	}
+	nearFightPos = -RgtVector;  // not staying beside a chased group: other orders follow
 
 	state = State::ROAM;
 	if (target != nullptr) {
@@ -832,9 +835,16 @@ void CRaidTask::Chase(int frame, const CRaidTask* group)
 	position = goal;
 	isChaseDest = true;  // FallbackRaid picks a new destination once we raid again
 	if (startPos.SqDistance2D(goal) < SQUARE(CHASE_PATH_RANGE)) {
-		SendPendingFight(frame);  // beside it already (merging waits for a safe line or room): stay with it
+		// Beside it already (merging waits for a safe line): stay with it. A Fight order every second would make the
+		// units stutter and turn: re-send it only once the leader moved on, or now and then (other orders since)
+		if ((goal.SqDistance2D(nearFightPos) > SQUARE(CHASE_NEAR_MOVE)) || (frame >= nearFightFrame + CHASE_NEAR_FRAMES)) {
+			SendPendingFight(frame);
+			nearFightPos = goal;
+			nearFightFrame = frame;
+		}
 		return;
 	}
+	nearFightPos = -RgtVector;  // walking a route again: the next near Fight goes out at once
 	if (!IsQueryReady(leader)) {
 		return;
 	}
@@ -950,6 +960,7 @@ bool CRaidTask::Flee(int frame)
 	SetTarget(nullptr);
 	state = State::ROAM;
 	isFightPending = false;  // the escape replaces any pending roam order
+	nearFightPos = -RgtVector;  // and any Fight order beside a chased group
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {

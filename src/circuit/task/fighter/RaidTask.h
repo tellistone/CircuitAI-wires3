@@ -69,6 +69,8 @@ private:
 	springai::AIFloat3 chaseGoal;
 	std::shared_ptr<PathInfo> chaseRoute;  // ...once it arrived (kept only while the leader walks it)
 	bool isChaseDest;  // 'position' is a chase goal: FallbackRaid picks a new destination
+	int nearFightFrame;  // beside the chased group: the last Fight order to its leader, when and where
+	springai::AIFloat3 nearFightPos;  // -RgtVector: none since other orders
 
 	bool FindTarget();
 	void ApplyTargetPath(const CQueryPathMulti* query);
