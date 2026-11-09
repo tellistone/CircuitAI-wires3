@@ -115,6 +115,8 @@ float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::Ran
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
+		, isPastFloor(false)
+		, isOwnGroundOnly(false)
 		, reinforce(nullptr)
 		, reinforceFails(0)
 		, reinforceRetryFrame(-1)
@@ -465,6 +467,12 @@ float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, float strength, float
 float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) const
 {
 	return GetAllowedThreatAt(pos, strength, scaleRefSqDist);
+}
+
+bool CAttackTask::IsDangerAt(CCircuitUnit* unit, const AIFloat3& p, float strength, float refSqDist) const
+{
+	const float threat = GetTaskThreatAt(unit, p);
+	return (threat > 0.f) && (threat >= GetAllowedThreatAt(p, strength, refSqDist));
 }
 
 float CAttackTask::GetNearBaseScaleAt(const AIFloat3& pos, float refSqDist) const
@@ -827,7 +835,6 @@ bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& ou
 		return true;
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
-	CThreatMap* threatMap = circuit->GetThreatMap();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const AIFloat3 dir = (ownPos - hostPos) / dist;
 	const float own = GetSafeThreat();
@@ -837,8 +844,7 @@ bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& ou
 		if (!terrainMgr->CanMoveToPos(leader->GetArea(), p)) {
 			continue;
 		}
-		const float threat = threatMap->GetThreatAt(leader, p);
-		if ((threat <= 0.f) || (threat < GetAllowedThreatAt(p, own))) {
+		if (!IsDangerAt(leader, p, own)) {
 			outPos = p;
 			return true;
 		}
@@ -1098,8 +1104,7 @@ bool CAttackTask::IsMeetSpotOk(const AIFloat3& pos, int frame, const std::vector
 	}
 	const float own = GetSafeThreat();
 	const AIFloat3& hostPos = leader->GetPos(frame);
-	const float threat = manager->GetCircuit()->GetThreatMap()->GetThreatAt(leader, pos);
-	if ((threat > 0.f) && (threat >= GetAllowedThreatAt(pos, own))) {
+	if (IsDangerAt(leader, pos, own)) {
 		return false;
 	}
 	return IsLineSafe(hostPos, pos, std::numeric_limits<float>::max(), [&](const AIFloat3& p) {
@@ -1215,7 +1220,6 @@ AIFloat3 CAttackTask::FindFleeDest(int frame) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	CThreatMap* threatMap = circuit->GetThreatMap();
 
 	// The nearest stronger attack group (fight beside it, then merge), if the two groups together can stand there:
 	// it may be in this same fight, or past the enemy. Not the rally host by preference: it may be far away
@@ -1223,7 +1227,7 @@ AIFloat3 CAttackTask::FindFleeDest(int frame) const
 	if (squad != nullptr) {
 		const AIFloat3& squadPos = squad->GetLeaderPos(frame);
 		const float together = GetJointSafeThreat(squad);
-		if (threatMap->GetThreatAt(leader, squadPos) < GetAllowedThreatAt(squadPos, together)) {
+		if (!IsDangerAt(leader, squadPos, together)) {
 			return squadPos;
 		}
 	}
@@ -1242,7 +1246,7 @@ AIFloat3 CAttackTask::FindFleeDest(int frame) const
 	for (const AIFloat3& p : clusterPositions) {
 		const float sqDist = pos.SqDistance2D(p);
 		if ((sqDist >= SQUARE(FLEE_ARRIVE_DIST)) && (sqDist < minSqDist) && (p.SqDistance2D(basePos) <= sqBaseDist)
-			&& (threatMap->GetThreatAt(leader, p) < GetAllowedThreatAt(p, strength, 0.f)))
+			&& !IsDangerAt(leader, p, strength, 0.f))
 		{
 			minSqDist = sqDist;
 			dest = p;
@@ -1295,7 +1299,7 @@ void CAttackTask::Cornered(int frame)
 	const float quietThreat = FindQuietSpot(pos, quietPos);
 	// Already heading somewhere: switch only to a clearly (20%) quieter spot
 	const bool isMoving = utils::is_valid(corneredPos) && (corneredPos.SqDistance2D(pos) > SQUARE(200.f));
-	const float refThreat = threatMap->GetThreatAt(leader, isMoving ? corneredPos : pos);
+	const float refThreat = GetTaskThreatAt(leader, isMoving ? corneredPos : pos);
 	if ((quietPos.SqDistance2D(pos) > SQUARE(200.f)) && (quietThreat < refThreat * 0.8f)) {
 		corneredPos = quietPos;
 		SetTarget(nullptr);
@@ -1333,6 +1337,36 @@ void CAttackTask::ApplyCorneredPath(const CQueryPathSingle* query)
 		return;
 	}
 	ActivePath();
+}
+
+CEnemyInfo* CAttackTask::FindNearestHittable(int frame, float radius) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CCircuitDef* cdef = leader->GetCircuitDef();
+	const AIFloat3& pos = leader->GetPos(frame);
+	const int canTargetCat = cdef->GetTargetCategory();
+	const bool notAA = !cdef->HasAntiAir();
+	const float maxSqDist = SQUARE(radius);
+	CEnemyInfo* best = nullptr;
+	float minSqDist = maxSqDist;
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		CEnemyInfo* enemy = kv.second;
+		if (enemy->IsHidden()) {
+			continue;
+		}
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef != nullptr)
+			&& (((edef->GetCategory() & canTargetCat) == 0) || (edef->IsAbleToFly() && notAA)))
+		{
+			continue;
+		}
+		const float sqDist = enemy->GetPos().SqDistance2D(pos);
+		if (sqDist < minSqDist) {
+			minSqDist = sqDist;
+			best = enemy;
+		}
+	}
+	return best;
 }
 
 /*
@@ -1394,7 +1428,7 @@ void CAttackTask::FindTarget()
 	pickSqDist = isEnemyGround ? 0.f : sqOBDist;  // 0: ApplyTargetPath keeps no anchor either
 
 	SetTarget(nullptr);  // make adequate enemy->GetTasks().size()
-	threatMap->SetThreatType(leader);
+	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
 	UpdateCellBans(frame);
 
 	// The current target's planned firing cell (quota.attack_static_cells), while still under its allowance: the side
@@ -1455,9 +1489,13 @@ void CAttackTask::FindTarget()
 		AIFloat3 rangePos;
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
-	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop)
+	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop).
+	// The same under the quota.attack floor (UpdatePastFloor) and while the enemy army outweighs ours
+	// (quota.attack_threat_floor), at any time
 	CInfluenceMap* inflMap = circuit->GetInflMap();
-	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
+	UpdatePastFloor();
+	isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
+			|| militaryMgr->IsAttackThreatFloor();
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1472,7 +1510,7 @@ void CAttackTask::FindTarget()
 			continue;  // runs away faster than we chase (or nearly as fast, and outranges us)
 		}
 		const AIFloat3& ePos = enemy->GetPos();
-		if ((threatMap->GetThreatAt(ePos) >= GetAllowedThreatAt(ePos, powerFor(enemy), refFor(enemy)))
+		if (IsDangerAt(leader, ePos, powerFor(enemy), refFor(enemy))
 			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange)
 			|| !isTargetableHeight(enemy))
 		{
@@ -1488,10 +1526,15 @@ void CAttackTask::FindTarget()
 		// shift its rank
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
-		// quota.attack_own_ground_time: ground our buildings, land builders or static defences cover (enemy influence
-		// ignored; armed mobiles don't count, else a group would license its own surroundings and creep forward).
-		// A target already within range is always fair game, so fights at the edge aren't dropped
-		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && (inflMap->GetAllyDefendInflAt(c.rangePos) <= INFL_EPS)) {
+		// quota.attack_own_ground_time and the floors: our territory (IsAllyTerritory: our buildings, land builders
+		// or static defences outweigh the enemy's buildings and static defences; mobiles on neither side count, else
+		// a group would license its own surroundings and creep forward, and the target would veto itself).
+		// A target already within range is always fair game, so fights at the edge aren't dropped. The current target
+		// stays ours until the enemy outweighs us there by half a building, so it doesn't flicker on the border
+		// as our constructors move or enemy buildings come into view
+		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange)
+			&& !inflMap->IsAllyTerritory(c.rangePos, (enemy->GetId() == prevTargetId) ? -1.f : INFL_EPS))
+		{
 			continue;
 		}
 		c.rawKey = sqOEDist * scale;
@@ -1627,6 +1670,17 @@ void CAttackTask::FindTarget()
 		ClearScaleAnchor();  // no fight accepted: no near-base discount
 	}
 	// Return: target, startPos=leader->pos, endPos=position
+}
+
+void CAttackTask::UpdatePastFloor()
+{
+	// Hysteresis: a group that loses a unit or two just past the floor keeps going; a beaten one falls back to
+	// targets on our ground. Power is the units' def power (not health), so it changes only as units join or die
+	if (attackPower >= minPower) {
+		isPastFloor = true;
+	} else if (attackPower < minPower * GetMilitaryMgr()->GetAttackFloorHold()) {
+		isPastFloor = false;
+	}
 }
 
 bool CAttackTask::IsOnEnemyGround() const
@@ -1872,7 +1926,9 @@ void CAttackTask::FallbackFrontPos(bool isReuse)
 
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& startPos = leader->GetPos(frame);
-	if (IsOnEnemyGround()) {
+	// Restricted to our ground (isOwnGroundOnly): nothing out here may be picked, so walk back to the front
+	// (a floor can switch on mid-push); there is no border to bounce on
+	if (!isOwnGroundOnly && IsOnEnemyGround()) {
 		// The front is our own cluster on friendly ground. Already past it (farther from our base than its
 		// nearest point): routing there walks the group back, and it would bounce on the border, so hold at
 		// the quietest spot nearby. Not past it (an enemy-held patch on the way): keep going to the front.
@@ -2107,7 +2163,7 @@ void CAttackTask::HoldPosition(bool isWalk)
 		ITravelAction* travelAct = leader->GetTravelAct();
 		if (travelAct->IsActive() && (travelAct->GetPath() == pPath) && !pPath->posPath.empty()
 			&& (pPath->posPath.back().SqDistance2D(holdPos) < SQUARE(DEFAULT_SLACK * 4))
-			&& (bestThreat >= circuit->GetThreatMap()->GetThreatAt(leader, holdPos) * 0.8f))
+			&& (bestThreat >= GetTaskThreatAt(leader, holdPos) * 0.8f))
 		{
 			return;
 		}
@@ -2146,7 +2202,6 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 	// or reach leave no threat on the map)
 	CCircuitAI* circuit = manager->GetCircuit();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CThreatMap* threatMap = circuit->GetThreatMap();
 	const int frame = circuit->GetLastFrame();
 	STerrainMapArea* area = leader->GetArea();
 	const bool isAvoidHit = (frame < hitFrame + FRAMES_PER_SEC * 30);
@@ -2155,7 +2210,7 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 	};
 
 	AIFloat3 bestPos = pos;
-	float bestThreat = isHitZone(pos) ? std::numeric_limits<float>::max() : threatMap->GetThreatAt(leader, pos);
+	float bestThreat = isHitZone(pos) ? std::numeric_limits<float>::max() : GetTaskThreatAt(leader, pos);
 	float bestSqDist = 0.f;
 	const float maxDist = std::max(highestRange * 2.f, 400.f);
 	for (int ring = 1; ring <= 3; ++ring) {
@@ -2167,7 +2222,7 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 			if (isHitZone(p) || !terrainMgr->CanMoveToPos(area, p)) {
 				continue;
 			}
-			const float threat = threatMap->GetThreatAt(leader, p);
+			const float threat = GetTaskThreatAt(leader, p);
 			const float sqDist = p.SqDistance2D(pos);
 			// Clearly quieter wins; equally quiet: the nearer one (so a quiet spot keeps us where we are)
 			if ((threat < bestThreat - THREAT_MIN * 0.1f)
@@ -2180,7 +2235,7 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 		}
 	}
 	outPos = bestPos;
-	return (bestThreat < std::numeric_limits<float>::max()) ? bestThreat : threatMap->GetThreatAt(leader, pos);
+	return (bestThreat < std::numeric_limits<float>::max()) ? bestThreat : GetTaskThreatAt(leader, pos);
 }
 
 void CAttackTask::Regroup(int frame)

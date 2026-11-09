@@ -44,6 +44,9 @@ ISquadTask::ISquadTask(ITaskManager* mgr, FightType type, float powerMod)
 		, groupFrame(0)
 		, formation(this)
 {
+	// Squads weigh their own power with the group size bonus (GetCountPowerMod), so they judge threat with the
+	// same bonus on the enemy side (IsSquadThreat)
+	isSquad = true;
 }
 
 ISquadTask::~ISquadTask()
@@ -126,6 +129,7 @@ void ISquadTask::Merge(ISquadTask* task)
 	scoots.insert(task->scoots.begin(), task->scoots.end());  // still on hold position: ended (and released) here
 	task->scoots.clear();
 	attackPower += task->GetAttackPower();
+	areaPower += task->GetAreaPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
 	shields.insert(sh.begin(), sh.end());
 
@@ -161,35 +165,6 @@ bool ISquadTask::IsMoveCompatible(CCircuitUnit* unit, float speedRatio) const
 		|| (ldef->IsFloater() && udef->IsFloater());
 }
 
-CEnemyInfo* ISquadTask::FindNearestHittable(int frame, float radius) const
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	CCircuitDef* cdef = leader->GetCircuitDef();
-	const AIFloat3& pos = leader->GetPos(frame);
-	const int canTargetCat = cdef->GetTargetCategory();
-	const bool notAA = !cdef->HasAntiAir();
-	CEnemyInfo* best = nullptr;
-	float minSqDist = SQUARE(radius);
-	for (auto& kv : circuit->GetEnemyInfos()) {
-		CEnemyInfo* enemy = kv.second;
-		if (enemy->IsHidden()) {
-			continue;
-		}
-		CCircuitDef* edef = enemy->GetCircuitDef();
-		if ((edef != nullptr)
-			&& (((edef->GetCategory() & canTargetCat) == 0) || (edef->IsAbleToFly() && notAA)))
-		{
-			continue;
-		}
-		const float sqDist = enemy->GetPos().SqDistance2D(pos);
-		if (sqDist < minSqDist) {
-			minSqDist = sqDist;
-			best = enemy;
-		}
-	}
-	return best;
-}
-
 float ISquadTask::GetLineStep() const
 {
 	return manager->GetCircuit()->GetThreatMap()->GetSquareSize();
@@ -198,7 +173,7 @@ float ISquadTask::GetLineStep() const
 float ISquadTask::GetLineThreatAt(AIFloat3& p) const
 {
 	CTerrainManager::CorrectPosition(p);
-	return manager->GetCircuit()->GetThreatMap()->GetThreatAt(leader, p);
+	return GetTaskThreatAt(leader, p);  // squad threat when the task judges by it
 }
 
 void ISquadTask::FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd)
@@ -503,15 +478,12 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 {
 	isPathAheadUnsafe = false;
 	endangered.clear();
-	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
 	const float safeThreat = GetEscapeSafeThreat();
 	float dangerPower = 0.f;
 	for (const SUnitStrength& s : GetUnitStrengths()) {
 		const AIFloat3& pos = s.unit->GetPos(frame);
 		// Cloaked: unseen, enemies in range can't shoot it (asked last: an engine call)
-		if ((threatMap->GetThreatAt(s.unit, pos) >= GetAllowedThreatAt(pos, safeThreat))
-			&& !s.unit->GetUnit()->IsCloaked())
-		{
+		if (IsDangerAt(s.unit, pos, safeThreat) && !s.unit->GetUnit()->IsCloaked()) {
 			endangered.push_back(s.unit);
 			dangerPower += s.power;
 		}
@@ -532,7 +504,7 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
 	const float sqLookAhead = SQUARE(lookAhead);
 	for (const AIFloat3& p : path->posPath) {
-		if ((p.SqDistance2D(pos) < sqLookAhead) && (threatMap->GetThreatAt(leader, p) >= GetAllowedThreatAt(p, safeThreat))) {
+		if ((p.SqDistance2D(pos) < sqLookAhead) && IsDangerAt(leader, p, safeThreat)) {
 			isPathAheadUnsafe = !leader->GetUnit()->IsCloaked();  // a cloaked leader walks through unseen
 			break;
 		}
@@ -646,19 +618,18 @@ void ISquadTask::UpdateScoots(int frame)
 void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margin)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	CThreatMap* threatMap = circuit->GetThreatMap();
 	const AIFloat3& uPos = unit->GetPos(frame);
 	// Outside every ground threat (this unit's threat layer), whatever the target's range or kind (planes count
 	// through their ground threat): no new scoot, the unit fights on. A scooting unit keeps its order (no stop and
 	// go at the threat's edge; the turn-back still brings it in on time)
-	const float hereThreat = threatMap->GetThreatAt(unit, uPos);
+	const float hereThreat = GetTaskThreatAt(unit, uPos);
 	if (hereThreat <= THREAT_MIN) {
 		return;
 	}
 	// Straight back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here,
 	// where the target's own threat still counts. Else a new scoot doesn't start, and a running one keeps its order
 	const AIFloat3 dest = GetScootSpot(unit, uPos, margin);
-	if (threatMap->GetThreatAt(unit, dest) > hereThreat) {
+	if (GetTaskThreatAt(unit, dest) > hereThreat) {
 		return;
 	}
 
@@ -808,7 +779,7 @@ float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos,
 		bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(g)));
 	}
 	const float cap = GetSafeThreat() * bonus / curve * capMod;
-	return std::max(cap, circuit->GetThreatMap()->GetThreatAt(unit, startPos) + THREAT_MIN);
+	return std::max(cap, GetTaskThreatAt(unit, startPos) + THREAT_MIN);  // on the squad path layer (CPathFinder)
 }
 
 void ISquadTask::QueryPath(CCircuitUnit* unit, const AIFloat3& goal, float range, bool isCapped,

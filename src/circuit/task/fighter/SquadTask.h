@@ -78,8 +78,6 @@ protected:
 	// than ours (a smaller terrain area: it would take the lead (FindLeader) and drag the group back, or get stranded on
 	// routes only our leader takes), and the same movement type (amphibious may join landers and floaters)
 	bool IsMoveCompatible(CCircuitUnit* unit, float speedRatio) const;
-	// Nearest enemy within radius that our leader can hit (category, air)
-	CEnemyInfo* FindNearestHittable(int frame, float radius) const;
 	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below allowedAt(spot) at each sampled spot
 	// (one threat square apart); allowances are above 0, so no threat is always safe
 	template<typename AllowedAt>

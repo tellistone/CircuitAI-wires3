@@ -155,6 +155,7 @@ const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame,
 	struct SMember {
 		AIFloat3 pos;
 		float threat;
+		float count;
 		float sum;
 		bool isTaken;
 	};
@@ -178,7 +179,7 @@ const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame,
 		if (!e->IsInRadarOrLOS() && ((lastSeen == -1) || (frame - lastSeen > seenFrames))) {
 			continue;
 		}
-		members.push_back({e->GetPos(), e->GetThreat(), 0.f, false});
+		members.push_back({e->GetPos(), e->GetThreat(), e->GetCountWeight(), 0.f, false});
 	}
 	if (members.empty()) {
 		return blobs;
@@ -202,13 +203,15 @@ const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame,
 			continue;
 		}
 		float threat = 0.f;
+		float count = 0.f;
 		for (SMember& m : members) {
 			if (!m.isTaken && (m.pos.SqDistance2D(seed.pos) < sqRadius)) {
 				m.isTaken = true;
 				threat += m.threat;
+				count += m.count;
 			}
 		}
-		blobs.push_back({seed.pos, threat});
+		blobs.push_back({seed.pos, threat, count});
 		if (blobs.size() >= MAX_BLOBS) {
 			break;
 		}

@@ -43,6 +43,7 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	inflData0.enemyInfl.resize(mapSize, INFL_BASE);
 	inflData0.allyInfl.resize(mapSize, INFL_BASE);
 	inflData0.allyDefendInfl.resize(mapSize, INFL_BASE);
+	inflData0.enemyStaticInfl.resize(mapSize, INFL_BASE);
 	inflData0.influence.resize(mapSize, INFL_BASE);
 //	inflData0.tension.resize(mapSize, INFL_BASE);
 //	inflData0.vulnerability.resize(mapSize, INFL_BASE);
@@ -50,6 +51,7 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	enemyInfl = inflData0.enemyInfl.data();
 	allyInfl = inflData0.allyInfl.data();
 	allyDefendInfl = inflData0.allyDefendInfl.data();
+	enemyStaticInfl = inflData0.enemyStaticInfl.data();
 	influence = inflData0.influence.data();
 //	tension = inflData0.tension.data();
 //	vulnerability = inflData0.vulnerability.data();
@@ -58,6 +60,7 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	inflData1.enemyInfl.resize(mapSize, INFL_BASE);
 	inflData1.allyInfl.resize(mapSize, INFL_BASE);
 	inflData1.allyDefendInfl.resize(mapSize, INFL_BASE);
+	inflData1.enemyStaticInfl.resize(mapSize, INFL_BASE);
 	inflData1.influence.resize(mapSize, INFL_BASE);
 //	inflData1.tension.resize(mapSize, INFL_BASE);
 //	inflData1.vulnerability.resize(mapSize, INFL_BASE);
@@ -65,6 +68,7 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	drawEnemyInfl = inflData1.enemyInfl.data();
 	drawAllyInfl = inflData1.allyInfl.data();
 	drawAllyDefendInfl = inflData1.allyDefendInfl.data();
+	drawEnemyStaticInfl = inflData1.enemyStaticInfl.data();
 	drawInfluence = inflData1.influence.data();
 //	drawTension = inflData1.tension.data();
 //	drawVulnerability = inflData1.vulnerability.data();
@@ -108,6 +112,7 @@ void CInfluenceMap::Prepare(SInfluenceData& inflData)
 	std::fill(inflData.enemyInfl.begin(), inflData.enemyInfl.end(), INFL_BASE);
 	std::fill(inflData.allyInfl.begin(), inflData.allyInfl.end(), INFL_BASE);
 	std::fill(inflData.allyDefendInfl.begin(), inflData.allyDefendInfl.end(), INFL_BASE);
+	std::fill(inflData.enemyStaticInfl.begin(), inflData.enemyStaticInfl.end(), INFL_BASE);
 	std::fill(inflData.influence.begin(), inflData.influence.end(), INFL_BASE);
 //	std::fill(inflData.tension.begin(), inflData.tension.end(), INFL_BASE);
 //	std::fill(inflData.vulnerability.begin(), inflData.vulnerability.end(), INFL_BASE);
@@ -116,6 +121,7 @@ void CInfluenceMap::Prepare(SInfluenceData& inflData)
 	drawEnemyInfl = inflData.enemyInfl.data();
 	drawAllyInfl = inflData.allyInfl.data();
 	drawAllyDefendInfl = inflData.allyDefendInfl.data();
+	drawEnemyStaticInfl = inflData.enemyStaticInfl.data();
 	drawInfluence = inflData.influence.data();
 //	drawTension = inflData.tension.data();
 //	drawVulnerability = inflData.vulnerability.data();
@@ -130,6 +136,11 @@ void CInfluenceMap::Update()
 
 	for (const SEnemyData& e : enemyMgr->GetHostileDatas()) {
 		AddEnemy(e);
+	}
+	for (const SEnemyData& e : enemyMgr->GetPeaceDatas()) {
+		if ((e.cdef != nullptr) && !e.cdef->IsMobile()) {
+			AddEnemyUnarmed(e);
+		}
 	}
 }
 
@@ -192,6 +203,7 @@ void CInfluenceMap::SwapBuffers()
 	enemyInfl = inflData.enemyInfl.data();
 	allyInfl = inflData.allyInfl.data();
 	allyDefendInfl = inflData.allyDefendInfl.data();
+	enemyStaticInfl = inflData.enemyStaticInfl.data();
 	influence = inflData.influence.data();
 //	tension = inflData.tension.data();
 //	vulnerability = inflData.vulnerability.data();
@@ -224,6 +236,14 @@ float CInfluenceMap::GetInfluenceAt(const AIFloat3& position) const
 	int x, z;
 	PosToXZ(position, x, z);
 	return influence[z * width + x] - INFL_BASE;
+}
+
+bool CInfluenceMap::IsAllyTerritory(const AIFloat3& position, float margin) const
+{
+	int x, z;
+	PosToXZ(position, x, z);
+	const int index = z * width + x;
+	return allyDefendInfl[index] - enemyStaticInfl[index] > margin;  // both INFL_BASE-offset
 }
 
 int CInfluenceMap::Pos2Index(const AIFloat3& pos) const
@@ -358,30 +378,7 @@ void CInfluenceMap::AddUnarmed(CAllyUnit* u)
 	CCircuitAI* circuit = manager->GetCircuit();  // FIXME: not thread-safe
 	int posx, posz;
 	PosToXZ(u->GetPos(circuit->GetLastFrame()), posx, posz);
-
-	const float val = 2.f;
-	const int range = DEFAULT_SLACK * 4 * defRadius / squareSize;
-	const int rangeSq = SQUARE(range);
-
-	const int beginX = std::max(int(posx - range + 1),       0);
-	const int endX   = std::min(int(posx + range    ),  width);
-	const int beginZ = std::max(int(posz - range + 1),       0);
-	const int endZ   = std::min(int(posz + range    ), height);
-
-	for (int z = beginZ; z < endZ; ++z) {
-		const int dzSq = SQUARE(posz - z);
-		for (int x = beginX; x < endX; ++x) {
-			const int dxSq = SQUARE(posx - x);
-			const int lenSq = dxSq + dzSq;
-			if (lenSq > rangeSq) {
-				continue;
-			}
-
-			const int index = z * width + x;
-			const float infl = val * (1.0f - 1.0f * sqrtf(lenSq) / range);
-			drawAllyDefendInfl[index] += infl;
-		}
-	}
+	AddDisc(drawAllyDefendInfl, posx, posz, DEFAULT_SLACK * 4 * defRadius / squareSize, 2.f);
 }
 
 void CInfluenceMap::AddEnemy(const SEnemyData& e)
@@ -398,6 +395,8 @@ void CInfluenceMap::AddEnemy(const SEnemyData& e)
 					? e.GetRange(CCircuitDef::ThreatType::LAND)
 					: e.GetRange(CCircuitDef::ThreatType::LAND) / 2;
 	const int rangeSq = SQUARE(range);
+	// A static defence also holds enemy territory (IsAllyTerritory), as AddStaticArmed does ours
+	float* staticInfl = ((e.cdef != nullptr) && !e.cdef->IsMobile()) ? drawEnemyStaticInfl : nullptr;
 
 	const int beginX = std::max(int(posx - range + 1),       0);
 	const int endX   = std::min(int(posx + range    ),  width);
@@ -416,6 +415,38 @@ void CInfluenceMap::AddEnemy(const SEnemyData& e)
 			const int index = z * width + x;
 			const float infl = val * (1.0f - 1.0f * sqrtf(lenSq) / range);
 			drawEnemyInfl[index] += infl;
+			if (staticInfl != nullptr) {
+				staticInfl[index] += infl;
+			}
+		}
+	}
+}
+
+void CInfluenceMap::AddEnemyUnarmed(const SEnemyData& e)
+{
+	int posx, posz;
+	PosToXZ(e.pos, posx, posz);
+	AddDisc(drawEnemyStaticInfl, posx, posz, DEFAULT_SLACK * 4 * defRadius / squareSize, 2.f);  // as AddUnarmed
+}
+
+void CInfluenceMap::AddDisc(float* layer, int posx, int posz, int range, float val)
+{
+	const int rangeSq = SQUARE(range);
+
+	const int beginX = std::max(int(posx - range + 1),       0);
+	const int endX   = std::min(int(posx + range    ),  width);
+	const int beginZ = std::max(int(posz - range + 1),       0);
+	const int endZ   = std::min(int(posz + range    ), height);
+
+	for (int z = beginZ; z < endZ; ++z) {
+		const int dzSq = SQUARE(posz - z);
+		for (int x = beginX; x < endX; ++x) {
+			const int dxSq = SQUARE(posx - x);
+			const int lenSq = dxSq + dzSq;
+			if (lenSq > rangeSq) {
+				continue;
+			}
+			layer[z * width + x] += val * (1.0f - 1.0f * sqrtf(lenSq) / range);
 		}
 	}
 }

@@ -109,7 +109,9 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, weaponMount(nullptr)
 		, pwrDmg(.0f)
 		, thrDmg(.0f)
+		, thrMod(1.f)
 		, aoe(.0f)
+		, fireAoe(.0f)
 		, power(.0f)
 		, threat(.0f)
 		, minRange(.0f)
@@ -269,6 +271,9 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	float bestWpRange = std::numeric_limits<float>::max();
 	float dps = .0f;  // TODO: split dps like ranges on air, land, water
 	float dmg = .0f;
+	// GetFireAoe sums; double, so that weapons of one radius average to exactly that radius (group_count_aoe edge)
+	double fireDps = .0;
+	double fireAoeDps = .0;
 	CWeaponDef* bestDGunDef = nullptr;
 	WeaponMount* bestDGunMnt = nullptr;
 	WeaponMount* bestWpMnt = nullptr;
@@ -286,6 +291,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 			continue;
 		}
 
+		const float prevDps = dps;
 		float scale = wd->IsParalyzer() ? 0.5f : 1.0f;
 
 		float extraDmg = .0f;
@@ -356,6 +362,11 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		targetCategory |= weaponCat;
 
 		aoe = std::max(aoe, wd->GetAreaOfEffect());
+		if (!wd->IsManualFire() && !wd->IsShield()) {  // GetFireAoe: its radius weighted by its dps
+			const double wpDps = dps - prevDps;
+			fireDps += wpDps;
+			fireAoeDps += wpDps * wd->GetAreaOfEffect();
+		}
 
 		std::string wt(wd->GetType());  // @see https://springrts.com/wiki/Gamedev:WeaponDefs
 		const float projectileSpeed = wd->GetProjectileSpeed();
@@ -445,10 +456,12 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		weaponMount = bestWpMnt;
 	}
 
+	fireAoe = (fireDps > 0.) ? static_cast<float>(fireAoeDps / fireDps) : 0.f;
+
 	isAttacker = dps > .1f;
 	if (IsMobile() && !IsAttacker()) {  // mobile bomb?
 		WeaponDef* wd = def->GetDeathExplosion();
-		aoe = wd->GetAreaOfEffect();
+		aoe = fireAoe = wd->GetAreaOfEffect();
 		if (aoe > 64.0f) {
 			// power
 			float ldmg = .0f;

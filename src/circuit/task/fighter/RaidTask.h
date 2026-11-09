@@ -36,9 +36,9 @@ public:
 
 private:
 	CMilitaryManager* GetMilitaryMgr() const;
-	// Units of other types may join only during a raid rally, and only compatible ones; the group may then grow up to
-	// the rally's goal instead of maxPower
-	float GetMaxPower() const;
+	// May take more units: up to maxPower, and during a raid rally until its strength (with the group size bonus)
+	// reaches the rally's goal. Units of other types may join only during a raid rally, and only compatible ones
+	bool HasRoom() const;
 	bool IsInRally() const;  // a raid rally is on and we are its host or a joiner
 	bool IsCautious(int frame) const { return frame < fleeFrame + FRAMES_PER_SEC * 4; }  // just escaped
 	// GetMergeTask, but in a rally every 2 updates, and judged by the straight line (IsSafeMergeLine), not influence
@@ -66,6 +66,7 @@ private:
 	int chaseRouteFrame;  // the last chase route: when asked, for which goal (reused CHASE_ROUTE_FRAMES)
 	springai::AIFloat3 chaseGoal;
 	std::shared_ptr<PathInfo> chaseRoute;  // ...once it arrived (kept only while the leader walks it)
+	bool isChaseDest;  // 'position' is a chase goal: FallbackRaid picks a new destination
 
 	bool FindTarget();
 	void ApplyTargetPath(const CQueryPathMulti* query);

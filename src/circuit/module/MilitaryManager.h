@@ -245,9 +245,21 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
-	float GetGroupCountPower() const { return groupCountPower; }
+	// quota.group_count_aoe: an armed type whose fire's area of effect (CCircuitDef::GetFireAoe, radius) is at least
+	// this. A squad mostly of these doesn't count the enemies (IFighterTask::IsSquadThreat): one shot hits several of
+	// a swarm
+	bool IsAreaDamage(const CCircuitDef* cdef) const {
+		return (countAoe > 0.f) && cdef->IsAttacker() && (cdef->GetFireAoe() >= countAoe);
+	}
 	// quota.attack_own_ground_time: before this frame attack groups only walk to targets on our ground
 	int GetAttackOwnGroundFrame() const { return attackOwnGroundFrame; }
+	// quota.attack_floor_hold: a group past quota.attack (the floor) stays past it until its power drops below
+	// quota.attack x this; under the floor it only walks to targets on our ground (as attack_own_ground_time)
+	float GetAttackFloorHold() const { return attackFloorHold; }
+	// quota.attack_threat_floor [<on>, <off>]: every attack group only walks to targets on our ground (as
+	// attack_own_ground_time) from when our army's threat drops below <on> x the known enemy mobile threat per enemy
+	// team, until it is back to <off> x that. Commanders don't count on either side. Judged once a second
+	bool IsAttackThreatFloor() const { return isAttackThreatFloor; }
 	// quota.contested: clusters whose threat blocks mex expansion (CMetalManager::GetMexToBuild walls)
 	struct SContested {
 		float bonus;  // enemies there count as this many times closer (attack ranking, raid route goals); 1 = off
@@ -259,8 +271,8 @@ public:
 		springai::AIFloat3 pos;
 		float sqRadius;
 	};
-	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below allowedAt(centre),
-	// reachable within 'reach'. Call after threatMap->SetThreatType(unit). Empty when quota.contested.bonus <= 1
+	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below allowedAt(centre)
+	// (squad threat for a squad), reachable within 'reach'. Empty when quota.contested.bonus <= 1
 	void GetTakeableContested(CCircuitUnit* unit, float reach, const std::function<float (const springai::AIFloat3&)>& allowedAt,
 			std::vector<SContestedSpot>& outSpots);
 	static bool IsInContested(const std::vector<SContestedSpot>& spots, const springai::AIFloat3& pos) {
@@ -370,6 +382,7 @@ private:
 	void UpdateAhPull();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
+	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
@@ -475,6 +488,7 @@ private:
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;
+	float armyThreat;  // our army's threat (CCircuitDef::GetThreat, as the enemy's mobile threat counts it; no builders, so no commanders)
 	struct SCapturedUnit {
 		int controllerId;  // our unit that captured it
 		float cost;
@@ -514,8 +528,14 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackKeepThreat;  // quota.attack_keep_threat
-	float groupCountPower;  // quota.group_count_power
+	float countAoe;  // quota.group_count_aoe, elmos (radius); 0 = off
 	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
+	float attackFloorHold;  // quota.attack_floor_hold
+	struct SThreatFloor {
+		float on = 0.f;  // our army / enemy per team below this: floor on; 0 = off
+		float off = 0.f;  // ... at or above this: floor off
+	} attackThreatFloor;  // quota.attack_threat_floor
+	bool isAttackThreatFloor;
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost

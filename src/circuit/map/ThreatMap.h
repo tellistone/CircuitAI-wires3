@@ -39,11 +39,29 @@ public:
 	void SetThreatType(CCircuitUnit* unit);
 	float GetThreatAt(const springai::AIFloat3& position) const;
 	float GetThreatAt(CCircuitUnit* unit, const springai::AIFloat3& position) const;
+	/*
+	 * Squad threat, for squads (IFighterTask::IsSquadThreat) and their routes (Lanchester's square law): the
+	 * threat x (1 + quota.group_count_power x the number of enemies that can fire at the cell, each weighted by
+	 * SEnemyData::GetCountWeight). Squads weigh their own power the same way (IFighterTask::GetCountPowerMod),
+	 * so the bonus cancels out at equal numbers. With group_count_power 0 it is GetThreatAt
+	 */
+	float GetSquadThreatAt(CCircuitUnit* unit, const springai::AIFloat3& position) const;
+	// Squad threat at position without one enemy's threat there. The enemy stays in the count, which overstates
+	// by at most group_count_power
+	float GetSquadThreatExcl(CCircuitUnit* unit, const springai::AIFloat3& position, float exclThreat) const;
+	static constexpr float MAX_COUNT_POWER = 0.1f;  // quota.group_count_power is clamped to 0..this
+	float GetCountPower() const { return countPower; }  // quota.group_count_power, for both sides
+	// The group size bonus for count units: 1 + quota.group_count_power x count. Ours (IFighterTask::GetCountPowerMod)
+	// and the enemy's (squad threat, enemy blobs, defences) alike
+	float GetCountMod(float count) const { return 1.f + countPower * count; }
 
 	float* GetAirThreatArray() { return airThreat; }
 	float* GetSurfThreatArray() { return surfThreat; }
 	float* GetAmphThreatArray() { return amphThreat; }
 	float* GetCloakThreatArray() { return cloakThreat; }
+	float* GetAirSquadArray() { return airSquad; }
+	float* GetSurfSquadArray() { return surfSquad; }
+	float* GetAmphSquadArray() { return amphSquad; }
 	int GetThreatMapWidth() const { return width; }
 	int GetThreatMapHeight() const { return height; }
 
@@ -62,27 +80,39 @@ private:
 		FloatVec amphThreat;  // under water and surface on land
 		FloatVec cloakThreat;  // decloakers
 		FloatVec shield;  // total shield power that covers tile
+		// Squad layers of air, surf and amph (GetSquadThreatAt); while drawing, the enemy unit count.
+		// Empty when group_count_power is 0
+		FloatVec airSquad;
+		FloatVec surfSquad;
+		FloatVec amphSquad;
 	};
 
 	CMapManager* manager;
 	SAreaData* areaData;
 
 	inline void PosToXZ(const springai::AIFloat3& pos, int& x, int& z) const;
+	inline int PosToIndex(const springai::AIFloat3& pos) const;  // the cell's index in a layer
 	inline springai::AIFloat3 XZToPos(int x, int z) const;
 
 	void AddEnemyUnit(const SEnemyData& e);
 	void AddEnemyUnitAll(const SEnemyData& e);
-	void AddEnemyAir(const SEnemyData& e, const int slack = 0);  // Enemy AntiAir
-	void AddEnemyAmphConst(const SEnemyData& e, const int slack = 0);  // Enemy AntiAmph
-	void AddEnemyAmphGradient(const SEnemyData& e, const int slack = 0);  // Enemy AntiAmph
+	// count: what the enemy adds to the unit count of the squad layers where it adds threat
+	// (SEnemyData::GetCountWeight; 0 unless isCounting)
+	void AddEnemyAir(const SEnemyData& e, const int slack = 0, const float count = 0.f);  // Enemy AntiAir
+	void AddEnemyAmphConst(const SEnemyData& e, const int slack = 0, const float count = 0.f);  // Enemy AntiAmph
+	void AddEnemyAmphGradient(const SEnemyData& e, const int slack = 0, const float count = 0.f);  // Enemy AntiAmph
 	void AddDecloaker(const SEnemyData& e);
 	void AddShield(const SEnemyData& e);
 
 	int GetCloakRange(const CCircuitDef* edef) const;
 	int GetShieldRange(const CCircuitDef* edef) const;
 	float GetEnemyUnitThreat(const CEnemyUnit* e) const;
+	// The unit's threat layer: air for aircraft, amph for amphibious units, else surf; isSquad: its squad layer
+	float* GetLayer(CCircuitUnit* unit, bool isSquad) const;
+	void ApplyCountPower(SThreatData& threatData);  // squad layers: enemy unit count -> squad threat
 
 	void Prepare(SThreatData& threatData);
+	void SetReadPointers(SThreatData& threatData);  // the layers GetThreatAt etc read: threatData's
 	void Update();
 	void Apply();
 	void SwapBuffers();
@@ -94,6 +124,11 @@ private:
 	int width;
 	int height;
 	int mapSize;
+
+	float countPower;  // quota.group_count_power
+	bool isCounting;  // countPower > 0: squad layers of their own, else they are the threat layers
+	float maxCount;  // most enemies (weighted) that could fire at one cell, last update
+	int countLogFrame;
 
 	int rangeDefault;
 	int distCloak;
@@ -111,6 +146,9 @@ private:
 	float* drawAmphThreat;
 	float* drawCloakThreat;
 	float* drawShieldArray;
+	float* drawAirSquad;  // nullptr unless isCounting
+	float* drawSurfSquad;
+	float* drawAmphSquad;
 	bool isUpdating;
 
 	float* airThreat;
@@ -118,6 +156,9 @@ private:
 	float* amphThreat;
 	float* cloakThreat;
 	float* shieldArray;
+	float* airSquad;  // the threat layers themselves unless isCounting
+	float* surfSquad;
+	float* amphSquad;
 	float* threatArray;  // current threat array for multiple GetThreatAt() calls
 
 #ifdef DEBUG_VIS
