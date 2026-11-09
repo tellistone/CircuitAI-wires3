@@ -221,6 +221,9 @@ public:
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
 	void DiceBigGun();
 	float ClampMobileCostRatio() const;
+	// Our army's threat against the known enemy mobile threat per enemy team (commanders on neither side), as
+	// quota.attack_threat_floor judges it; negative while no enemy army is known
+	float GetArmyThreatRatio() const;
 	void UpdateDefenceTasks();
 	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without
 	// crossing threat it couldn't take, divided by the number of enemy players: the mex bonus of each quota
@@ -394,6 +397,7 @@ private:
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
+	float GetEnemyThreatPerTeam() const;  // known enemy mobile threat (no commanders) per enemy team
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s

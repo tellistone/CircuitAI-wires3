@@ -58,6 +58,10 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, energyIncome(.0f)
 		, metalProduced(.0f)
 		, metalUsed(.0f)
+		, mspArmyFrame(0)
+		, mspIncomeMult(1.f)
+		, mspArmyMult(1.f)
+		, mspLogFrame(0)
 		, ecoFrame(-1)
 		, isMetalEmpty(false)
 		, isMetalFull(false)
@@ -451,6 +455,38 @@ void CEconomyManager::Init()
 	}
 	std::sort(mspInfos.begin(), mspInfos.end());
 	pullMtoS = mspInfos.front().pull;
+
+	// ms_pull multipliers (ms_pull_income, ms_pull_army): [[<x>, <mult >= 0>], ...], linear between points and
+	// clamped at the ends; a missing key takes the defaults below, [] turns that multiplier off
+	{
+		const std::string& cfgName = circuit->GetSetupManager()->GetConfigName();
+		auto readCurve = [this, &cfgName](const Json::Value& value, const char* key,
+				std::vector<std::pair<float, float>> def) {
+			if (value.isNull()) {
+				return def;
+			}
+			std::vector<std::pair<float, float>> curve;
+			if (!value.isArray()) {
+				circuit->LOG("CONFIG %s: %s must be a list of [<x>, <multiplier>] points, using none", cfgName.c_str(), key);
+				return curve;
+			}
+			for (const Json::Value& pt : value) {
+				if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
+					circuit->LOG("CONFIG %s: %s points must be [<x>, <multiplier >= 0>]", cfgName.c_str(), key);
+					continue;
+				}
+				curve.emplace_back(pt[0].asFloat(), pt[1].asFloat());
+			}
+			std::sort(curve.begin(), curve.end());
+			return curve;
+		};
+		mspIncomeCurve = readCurve(econ["ms_pull_income"], "economy.ms_pull_income", {{30.f, 1.f}, {160.f, 0.7f}});
+		const Json::Value& army = econ["ms_pull_army"];
+		const Json::Value armyCurve = army.isObject() ? army["curve"] : Json::Value();
+		mspArmyCurve = readCurve(armyCurve, "economy.ms_pull_army.curve", {{0.5f, 1.3f}, {2.f, 0.7f}});
+		const float since = army.isObject() ? std::max(army.get("since", 300.f).asFloat(), 0.f) : 300.f;
+		mspArmyFrame = since * FRAMES_PER_SEC;
+	}
 
 	CSetupManager::StartFunc subinit = [this](const AIFloat3& pos) {
 		metalProduced = economy->GetCurrent(metalRes) * metalMod;
@@ -1720,7 +1756,20 @@ void CEconomyManager::UpdateEconomy()
 		const SPullMtoS& mspInfo = *--it;
 		pullMtoS = mspInfo.fraction * (mexCount - mspInfo.mex) + mspInfo.pull;
 	}
-	pullMtoS *= circuit->GetMilitaryManager()->ClampMobileCostRatio();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	// ms_pull_income: average metal income (reclaim included); ms_pull_army: our army threat against the enemy's per
+	// team (as quota.attack_threat_floor), from ms_pull_army.since and once any enemy army is known
+	mspIncomeMult = utils::eval_curve(mspIncomeCurve, GetAvgMetalIncome());
+	const float armyRatio = militaryMgr->GetArmyThreatRatio();
+	mspArmyMult = ((ecoFrame >= mspArmyFrame) && (armyRatio >= 0.f)) ? utils::eval_curve(mspArmyCurve, armyRatio) : 1.f;
+	const float basePull = pullMtoS;
+	pullMtoS *= mspIncomeMult * mspArmyMult * militaryMgr->ClampMobileCostRatio();
+	if (ecoFrame >= mspLogFrame) {
+		mspLogFrame = ecoFrame + FRAMES_PER_SEC * 30;
+		circuit->LOG("MS_PULL %.2f: base %.2f x income %.2f (%.1f m) x army %.2f (ratio %.2f%s) x cost clamp %.2f",
+				pullMtoS, basePull, mspIncomeMult, GetAvgMetalIncome(), mspArmyMult, armyRatio,
+				(ecoFrame >= mspArmyFrame) ? "" : ", before since", militaryMgr->ClampMobileCostRatio());
+	}
 }
 
 } // namespace circuit

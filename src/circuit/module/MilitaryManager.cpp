@@ -2676,6 +2676,19 @@ float CMilitaryManager::ClampMobileCostRatio() const
 	return (enemyMobileCost > armyCost) ? (armyCost / enemyMobileCost) : 1.f;
 }
 
+float CMilitaryManager::GetArmyThreatRatio() const
+{
+	const float enemyPerTeam = GetEnemyThreatPerTeam();
+	return (enemyPerTeam > 0.f) ? armyThreat / enemyPerTeam : -1.f;
+}
+
+float CMilitaryManager::GetEnemyThreatPerTeam() const
+{
+	// Known enemy mobile threat (thr_mod.mobile applied) shared over the enemy teams, against our own army (allies'
+	// armies don't count: each AI judges its own). Commanders count on neither side
+	return circuit->GetEnemyManager()->GetMobileThreatNoComm() / std::max(circuit->GetEnemyTeamSize(), 1);
+}
+
 void CMilitaryManager::UpdateDefenceTasks()
 {
 	/*
@@ -3132,10 +3145,7 @@ void CMilitaryManager::DelArmyCost(CCircuitUnit* unit)
 
 void CMilitaryManager::UpdateAttackThreatFloor()
 {
-	// Known enemy mobile threat (thr_mod.mobile applied) shared over the enemy teams, against our own army (allies'
-	// armies don't count: each AI judges its own). Commanders count on neither side
-	const float enemyPerTeam = circuit->GetEnemyManager()->GetMobileThreatNoComm()
-			/ std::max(circuit->GetEnemyTeamSize(), 1);
+	const float enemyPerTeam = GetEnemyThreatPerTeam();
 	const bool wasFloor = isAttackThreatFloor;
 	if (armyThreat < attackThreatFloor.on * enemyPerTeam) {
 		isAttackThreatFloor = true;

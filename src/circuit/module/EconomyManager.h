@@ -260,6 +260,14 @@ private:
 	};
 	std::vector<SPullMtoS> mspInfos;
 	float pullMtoS;  // mobile to static metal pull ratio
+	// ms_pull multipliers: ms_pull_income [[<metal income>, <mult>], ...] from the start, ms_pull_army
+	// {"since": <seconds>, "curve": [[<army threat ratio>, <mult>], ...]} from that game time; empty curve = 1
+	std::vector<std::pair<float, float>> mspIncomeCurve;
+	std::vector<std::pair<float, float>> mspArmyCurve;
+	int mspArmyFrame;
+	float mspIncomeMult;
+	float mspArmyMult;
+	int mspLogFrame;  // next periodic MS_PULL log line
 
 	int ecoFrame;
 	bool isMetalEmpty;
