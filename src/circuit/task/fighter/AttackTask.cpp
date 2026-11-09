@@ -220,8 +220,8 @@ void CAttackTask::Merge(ISquadTask* task)
 	ISquadTask::Merge(task);
 	UpdateHighestRange();
 	lastRoute.path = nullptr;  // the group changed: next decision plans anew (speed, strength)
-	// The newcomers usually start a regroup. A leader standing where the last regroup began counts as stuck
-	// (IsMustRegroup), which would drop the leader of a group that holds still while taking in several groups
+	// The newcomers don't count for a regroup for a while (ISquadTask::IsNewcomer), but one may still follow. A leader
+	// standing where the last regroup began counts as stuck (IsMustRegroup): start that check afresh
 	prevGroupPos = -RgtVector;
 }
 
@@ -357,8 +357,11 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		if (EngageInRange(frame, true)) {
 			return;
 		}
-		Reinforce(frame, isReuse);
-		return;
+		if (Reinforce(frame, isReuse)) {
+			return;
+		}
+		// The rally host's fight has no safe spot at its edge near us: act as a normal attack group (below), as
+		// after an empty route to the host, rather than walk into the fight or stand still
 	}  // else: nothing to join, carry on as a small attack group
 
 	const AIFloat3& startPos = leader->GetPos(frame);
@@ -620,14 +623,14 @@ CAttackTask* CAttackTask::GetReinforceSquad()
 	return reinforce;
 }
 
-void CAttackTask::Reinforce(const int frame, bool isReuse)
+bool CAttackTask::Reinforce(const int frame, bool isReuse)
 {
 	SetTarget(nullptr);
 	ClearScaleAnchor();  // walking to a group, not into an accepted fight
 	state = State::ROAM;
 
 	if (!IsQueryReady(leader)) {
-		return;
+		return true;
 	}
 	// Threat-aware path to the group's leader, capped like every other route (GetPathThreatCap: the common
 	// allowance). It only has to get within reinforce_range (800), so the hot zone around a fighting group doesn't block
@@ -636,12 +639,15 @@ void CAttackTask::Reinforce(const int frame, bool isReuse)
 	const AIFloat3& startPos = leader->GetPos(frame);
 	const bool isRally = (reinforce == GetMilitaryMgr()->GetRallyHost());
 	AIFloat3 goal = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad this update
-	if (isRally) {
-		PickRallyGoal(frame, goal);
+	if (isRally && !PickRallyGoal(frame, goal)) {
+		// No route into the fight (a doomed search, or one the escape would turn back from): act as a normal group a while
+		rallyRouteFrame = frame + RALLY_ROUTE_RETRY_FRAMES;
+		reinforce = nullptr;
+		return false;
 	}
 	position = goal;
 	if (isReuse && ReuseRoute(REINFORCE_ROUTE_ID, goal, frame)) {
-		return;
+		return true;
 	}
 	// Never stop farther out than we can merge from (the merge distance, or travel_sec at our slowest speed), with
 	// a margin for the host moving: otherwise a slow group would park short of the host and never merge
@@ -652,18 +658,21 @@ void CAttackTask::Reinforce(const int frame, bool isReuse)
 	RunGroupRoute(frame, goal, pathRange, [this, goal, slack](const CQueryPathSingle* query) {
 		this->ApplyReinforcePath(query, goal, slack);
 	});
+	return true;
 }
 
-void CAttackTask::PickRallyGoal(int frame, AIFloat3& inOutGoal) const
+bool CAttackTask::PickRallyGoal(int frame, AIFloat3& inOutGoal) const
 {
 	// Reinforcing the rally host (quota.attack_merge.rally), one goal rule:
 	// - the host fights: the safe edge of its fight (FindFightEdge), to add our strength without walking into it alone;
 	// - otherwise: the host itself (inOutGoal as given; inside the merge distance, so the merge always fires).
-	// Never a reason to stand still: the capped route judges the goal, and an empty one has us act as a normal group
+	// false: nothing safe near the fight and we are close already, the caller acts as a normal group for a while
+	// (FindTarget still picks targets at the fight's edge that pass its own approach checks)
 	if (reinforce->IsRallyFighting(frame)) {
 		const AIFloat3 hostPos = inOutGoal;
-		FindFightEdge(frame, hostPos, inOutGoal);
+		return FindFightEdge(frame, hostPos, inOutGoal);
 	}
+	return true;
 }
 
 void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloat3& goal, float slack)
@@ -731,7 +740,7 @@ bool CAttackTask::SeekMerge(int frame, bool isReuse, float sqTargetKey)
 		}
 		return false;
 	}
-	Reinforce(frame, isReuse);
+	Reinforce(frame, isReuse);  // never false: armies outside the rally only
 	return true;
 }
 
@@ -769,20 +778,19 @@ bool CAttackTask::ApplyGroupRoute(const CQueryPathSingle* query, ICoreUnit::Id r
 	return true;
 }
 
-void CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& outPos) const
+bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& outPos) const
 {
 	// The rally host is fighting: its position stepped back towards us until the threat there is under our own
 	// allowance (as our route judges it), so we join the fight from its safe side.
 	// Nothing safe on the steps: from farther away than one step past them, walk to that point (the edge is looked
-	// for again on the way); closer: the host itself, to fight beside it (outPos as given; the capped route
-	// judges it)
+	// for again on the way); closer: false
 	constexpr float STEP = 200.f;
 	constexpr int MAX_STEPS = 12;
 	constexpr float FAR_DIST = (MAX_STEPS + 2) * STEP;  // 2800: a 400 gap past the last step checked
 	const AIFloat3& ownPos = leader->GetPos(frame);
 	const float dist = ownPos.distance2D(hostPos);
 	if (dist < 1.f) {
-		return;
+		return true;  // outPos: the host (as given)
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -796,13 +804,15 @@ void CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, AIFloat3& ou
 		}
 		if (!IsDangerAt(leader, p, own)) {
 			outPos = p;
-			return;
+			return true;
 		}
 	}
 	if (dist > FAR_DIST) {
 		outPos = hostPos + dir * FAR_DIST;
 		CTerrainManager::CorrectPosition(outPos);
+		return true;
 	}
+	return false;
 }
 
 /*

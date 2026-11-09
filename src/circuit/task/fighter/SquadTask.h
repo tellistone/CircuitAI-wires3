@@ -102,21 +102,24 @@ protected:
 	// IsMustRegroup ignores this unit. Default: it is scooting (stepping out of reach while it reloads)
 	virtual bool IsRegroupExempt(CCircuitUnit* unit) const { return IsScooting(unit); }
 	void ReleaseStuck(std::vector<CCircuitUnit*>& stuck);
-	// speed caps every unit but newcomers (IsNewcomer), which walk at full speed to catch up
+	// speed caps every unit but newcomers still catching up (GetPathSpeed)
 	void ActivePath(float speed = NO_SPEED_LIMIT);
 
-	/*
-	 * Newcomers (attack and raid groups: isNewcomerOn): units that joined a group that had units already (a merge, or a
-	 * new unit assigned to it) don't count for a regroup for NEWCOMER_FRAMES (20 s) and walk the group's routes at full
-	 * speed, so the group never stops to wait for them. No regroup at all while the leader itself is one
-	 */
-	static constexpr int NEWCOMER_FRAMES = FRAMES_PER_SEC * 20;
-	bool IsNewcomer(CCircuitUnit* unit, int frame) const;
-	float GetPathSpeed(CCircuitUnit* unit, int frame, float speed) const {
-		return IsNewcomer(unit, frame) ? NO_SPEED_LIMIT : speed;
-	}
+	// A path's speed for this unit: speed, or no limit for a newcomer farther than NEWCOMER_NEAR_DIST from the leader
+	float GetPathSpeed(CCircuitUnit* unit, int frame, float speed) const;
 	bool isNewcomerOn = false;  // set by the task
 	std::map<CCircuitUnit*, int> joinFrames;  // newcomer -> frame it joined
+public:
+	/*
+	 * Newcomers (attack and raid groups: isNewcomerOn): units that joined a group that had units already (a merge, or a
+	 * new unit assigned to it). For NEWCOMER_FRAMES (20 s) they don't count for a regroup, the line formation doesn't
+	 * slow for them, and they walk the group's routes at full speed while farther than NEWCOMER_NEAR_DIST from the
+	 * leader, so the group never stops to wait for them. No regroup at all while the leader itself is one
+	 */
+	static constexpr int NEWCOMER_FRAMES = FRAMES_PER_SEC * 20;
+	static constexpr float NEWCOMER_NEAR_DIST = 200.f;
+	bool IsNewcomer(const CCircuitUnit* unit, int frame) const;
+protected:
 	NSMicroPather::TestFunc GetHitTest() const;
 	// Line of sight over terrain between two path-map squares (sector max elevation), from aimLift above the start to
 	// targetLift above the end

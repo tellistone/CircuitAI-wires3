@@ -448,10 +448,18 @@ bool ISquadTask::IsIdleInLine(CCircuitUnit* unit) const
 		&& unit->GetTravelAct()->IsFormationMoveDone(unit->GetPos(manager->GetCircuit()->GetLastFrame()));
 }
 
-bool ISquadTask::IsNewcomer(CCircuitUnit* unit, int frame) const
+bool ISquadTask::IsNewcomer(const CCircuitUnit* unit, int frame) const
 {
-	auto it = joinFrames.find(unit);
+	auto it = joinFrames.find(const_cast<CCircuitUnit*>(unit));
 	return (it != joinFrames.end()) && (frame < it->second + NEWCOMER_FRAMES);
+}
+
+float ISquadTask::GetPathSpeed(CCircuitUnit* unit, int frame, float speed) const
+{
+	// Full speed only while catching up: one that reached the group would otherwise run on ahead of it
+	return (IsNewcomer(unit, frame) && (leader != nullptr)
+			&& (unit->GetPos(frame).SqDistance2D(leader->GetPos(frame)) > SQUARE(NEWCOMER_NEAR_DIST)))
+		? NO_SPEED_LIMIT : speed;
 }
 
 void ISquadTask::ActivePath(float speed)
