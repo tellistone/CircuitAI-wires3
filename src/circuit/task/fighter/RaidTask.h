@@ -111,7 +111,6 @@ private:
 	springai::AIFloat3 roamGoal;  // ...and to where: re-planned only every 3 s while walking it safely
 	std::shared_ptr<PathInfo> roamPath;  // the route to roamGoal once it arrived (kept only while the leader walks it)
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
-	bool IsAllHolding() const;  // every ranged unit holds without a spot, target out of their reach
 	void SendPendingFight(int frame);  // short roam path: the Fight order sent from Update() (not from the path callback)
 };
 
