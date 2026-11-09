@@ -90,9 +90,11 @@ bool CRaidTask::CanAssignTo(CCircuitUnit* unit) const
 	if (!udef->IsRoleRaider()) {
 		return false;
 	}
-	// Our type only; during a raid rally (quota.raid_rally) any raider that moves like us
+	// Our type only; during a raid rally (quota.raid_rally) any raider that moves like us. A group of our type that
+	// is mixed since a rally must still have all its speeds within the ratio of ours
 	if ((udef != leader->GetCircuitDef())
-		&& ((GetMilitaryMgr()->GetRaidRallyHost() == nullptr) || !IsRallyCompatible(unit)))
+		? ((GetMilitaryMgr()->GetRaidRallyHost() == nullptr) || !IsRallyCompatible(unit))
+		: !IsSpeedSpreadOk(unit))
 	{
 		return false;
 	}
@@ -113,8 +115,15 @@ bool CRaidTask::IsRallyCompatible(CCircuitUnit* unit) const
 	if (!udef->IsRoleRaider() || udef->IsAbleToFly() || !IsMoveCompatible(unit, speedRatio)) {
 		return false;
 	}
+	return IsSpeedSpreadOk(unit);
+}
+
+bool CRaidTask::IsSpeedSpreadOk(CCircuitUnit* unit) const
+{
 	// Leading a raid group: all its units' speeds and ours within the ratio, not only the leaders' (merges in a chain
-	// would otherwise widen the spread a step at a time)
+	// would otherwise widen the spread a step at a time). Groups of one type always pass
+	const CCircuitDef* udef = unit->GetCircuitDef();
+	const float speedRatio = GetMilitaryMgr()->GetAttackMerge().speedRatio;  // quota.attack_merge.speed_ratio
 	float slowest = udef->GetSpeed();
 	float fastest = slowest;
 	IUnitTask* task = unit->GetTask();

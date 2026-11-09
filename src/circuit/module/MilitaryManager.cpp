@@ -1400,12 +1400,15 @@ void CMilitaryManager::UpdateRally(SRally& rally)
 	if (host == nullptr) {  // fallback: DequeueTask normally replaces a host that ends
 		ReplaceRallyHost(rally, nullptr);
 		host = rally.host;
-	} else if (isRally) {
-		// Another group grew past the host (raid joiners merge into the nearest bigger group, not only the host):
-		// it takes over once it is 25% stronger (PickRallyHost keeps the host within 20%), so the end check reads the
-		// group that is actually growing
+	} else if (isRally && rally.isRaiders) {
+		// Raid rally: another group grew past the host (joiners merge into the nearest bigger group, not only the
+		// host): it takes over once it is 25% stronger (PickRallyHost keeps the host within 20%), so the end check
+		// reads the group that is actually growing. Only a group of the host's movement class: class totals have no
+		// hysteresis, so close ones would swap the host and its joiners each second.
+		// Not the attack rally: its joiners all go to the host, and a bigger army arriving there must still walk to
+		// the host's fight instead of taking over and judging the blob alone
 		ISquadTask* best = PickRallyHost(groups, host);
-		if (best != host) {
+		if ((best != host) && best->IsRallyCompatible(host->GetLeader())) {
 			rally.host = host = best;
 			circuit->LOG("%s new host %.1f (grew past the old one)", rally.tag, host->GetRallyStrength());
 		}

@@ -33,6 +33,8 @@ public:
 
 	// quota.raid_rally: a raider whose group moves like ours (IsMoveCompatible at quota.attack_merge.speed_ratio)
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const override;
+	// The group led by unit (or the unit alone) and ours together keep all speeds within quota.attack_merge.speed_ratio
+	bool IsSpeedSpreadOk(CCircuitUnit* unit) const;
 
 private:
 	CMilitaryManager* GetMilitaryMgr() const;
