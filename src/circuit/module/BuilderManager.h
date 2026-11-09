@@ -100,7 +100,9 @@ public:
 	bool IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	bool IsRepairAssigned(ICoreUnit::Id unitId) const;
 	float GetPrioRepairLeash() const { return prioRepairLeash; }
-	void OnPrioRepairLeash(ICoreUnit::Id unitId);  // target drove off mid-repair: hold off new priority jobs
+	void OnPrioRepairLeash(ICoreUnit::Id unitId, int cooldown = -1);  // -1 = repair_leash cooldown
+	bool IsRepairHitBuilder() const { return isRepairHitBuilder; }
+	int GetRepairHitCooldown() const { return repairHitCooldown; }  // target drove off mid-repair: hold off new priority jobs
 	// Mobile, not retreating repair target out of builder's reach (builder at pos) and moving away from it
 	// faster than repair_flee share of its own max speed
 	bool IsRepairTargetFleeing(const IBuilderTask* task, CCircuitUnit* builder, const springai::AIFloat3& pos,
@@ -347,6 +349,10 @@ private:
 	float jobSwitch;  // walking builder switches to a same-type job nearer than this share of its current one; 0 = off
 	bool isPrioRepairSafe;  // apply builder threat check to NOW repair of mobile units
 	bool isPrioRepairSafeStatic;  // same for static units
+	bool isPrioRepairSafeHeld;  // the threat check also needs an enemy-held area (as regular jobs); false = threat alone
+	bool isRepairHitBuilder;  // drop a priority repair when one of its builders is hit
+	bool isRepairHitTarget;  // drop a priority repair of a mobile unit when the unit is hit while builders are on it
+	int repairHitCooldown;  // frames without new priority repair for the unit after such a drop
 	float prioRepairLeash;  // cancel started priority repair if target gets this far beyond build range, 0 = off
 	int prioRepairCooldown;  // frames without new priority repair job after leash break
 	float repairFleeShare;  // target moving away faster than this share of its max speed counts as fleeing, 0 = off

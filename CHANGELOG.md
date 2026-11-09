@@ -7,6 +7,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Priority repairs leave dangerous spots** (`retreat` block; code defaults keep the old behaviour, the shipped
+  config turns both on).
+  - `repair_safe_held` (default `true`): with `false`, the `repair_safe` / `repair_safe_static` check ends or skips a
+    priority repair on threat alone. Before, it also needed the spot to be enemy-held, so a repair on a front where
+    our own army stood counted as safe even under heavy fire.
+  - `repair_hit_exit: [builder hit, unit hit, cooldown sec]` (default `[false, false, 5]`, shipped `[true, false, 5]`):
+    drop a priority repair as soon as one of its builders takes damage, and/or when the mobile unit being repaired takes
+    damage while builders are on it. That unit then gets no new priority repair for `cooldown` seconds.
+
 - **Line formation for attack groups** (`formation` block in `behaviour.json`; code default off, shipped on; per unit
   `formation_row` and the `no_formation` attribute). Attack groups of 3 or more land or sea units used to send every
   unit to the same path points, so they walked single file and clumped at turns. While a group walks its path and
