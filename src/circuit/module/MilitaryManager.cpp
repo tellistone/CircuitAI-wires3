@@ -62,6 +62,8 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, defenceIdx(0)
 		, scoutIdx(0)
 		, armyCost(0.f)
+		, armyThreat(0.f)
+		, isAttackThreatFloor(false)
 		, attackBaseGather(true)
 		, attackIdleMerge(true)
 		, rallyHost(nullptr)
@@ -473,6 +475,16 @@ void CMilitaryManager::ReadConfig()
 				names.empty() ? "none" : names.c_str());
 	}
 	attackOwnGroundFrame = static_cast<int>(readAttackNum("attack_own_ground_time", 270.f, 0.f, 3600.f) * FRAMES_PER_SEC);  // 0 = off
+	attackFloorHold = readAttackNum("attack_floor_hold", 0.75f, 0.f, 1.f);  // 1 = no hysteresis
+	{
+		const Json::Value& q = quotas["attack_threat_floor"];
+		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
+				&& (q[0u].asFloat() >= 0.f) && (q[1u].asFloat() >= q[0u].asFloat()));
+		if (!isOk) {
+			circuit->LOG("CONFIG %s: quota.attack_threat_floor must be [<on >= 0>, <off >= on>], using [0.66, 0.8]", cfgName.c_str());
+		}
+		attackThreatFloor = (isOk && !q.isNull()) ? SThreatFloor{q[0u].asFloat(), q[1u].asFloat()} : SThreatFloor{0.66f, 0.8f};
+	}
 	{
 		const Json::Value& qcont = quotas["contested"];
 		if (!qcont.isNull() && !qcont.isObject()) {
@@ -967,6 +979,9 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhPull, this), FRAMES_PER_SEC * 2, offset + 1);
 		if (attackRally.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
+		}
+		if (attackThreatFloor.on > 0.f) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackThreatFloor, this), FRAMES_PER_SEC, offset + 3);
 		}
 
 		if (resign.frame >= 0) {
@@ -2885,12 +2900,27 @@ void CMilitaryManager::AddArmyCost(CCircuitUnit* unit)
 {
 	AddResponse(unit);
 	armyCost += unit->GetCircuitDef()->GetCostM();
+	armyThreat += unit->GetCircuitDef()->GetThreat();
 }
 
 void CMilitaryManager::DelArmyCost(CCircuitUnit* unit)
 {
 	DelResponse(unit);
 	armyCost = std::max(armyCost - unit->GetCircuitDef()->GetCostM(), .0f);
+	armyThreat = std::max(armyThreat - unit->GetCircuitDef()->GetThreat(), .0f);
+}
+
+void CMilitaryManager::UpdateAttackThreatFloor()
+{
+	// Known enemy mobile threat (thr_mod.mobile applied) shared over the enemy teams, against our own army (allies'
+	// armies don't count: each AI judges its own). Commanders count on neither side
+	const float enemyPerTeam = circuit->GetEnemyManager()->GetMobileThreatNoComm()
+			/ std::max(circuit->GetEnemyTeamSize(), 1);
+	if (armyThreat < attackThreatFloor.on * enemyPerTeam) {
+		isAttackThreatFloor = true;
+	} else if (armyThreat >= attackThreatFloor.off * enemyPerTeam) {
+		isAttackThreatFloor = false;
+	}  // else: keep, so the floor doesn't flip on every unit made or lost
 }
 
 } // namespace circuit

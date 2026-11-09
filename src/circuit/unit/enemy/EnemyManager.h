@@ -76,6 +76,10 @@ public:
 	void AddEnemyCost(const CEnemyUnit* e);
 	void DelEnemyCost(const CEnemyUnit* e);
 	float GetMobileThreat() const { return mobileThreat; }
+	// Without commanders (their enemy role COMM, FactoryManager), thr_mod.mobile applied as in mobileThreat
+	float GetMobileThreatNoComm() const {
+		return std::max(mobileThreat - GetEnemyThreat(ROLE_TYPE(COMM)) * initThrMod.inMobile, 0.f);
+	}
 	float GetStaticThreat() const { return staticThreat; }
 	float GetEnemyThreat() const { return mobileThreat + staticThreat; }
 	bool IsAirValid() const { return GetEnemyThreat(ROLE_TYPE(AA)) <= maxAAThreat; }

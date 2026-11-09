@@ -115,6 +115,8 @@ float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::Ran
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
 		, minPower(minPower)
+		, isPastFloor(false)
+		, isOwnGroundOnly(false)
 		, reinforce(nullptr)
 		, reinforceFails(0)
 		, reinforceRetryFrame(-1)
@@ -1569,9 +1571,13 @@ void CAttackTask::FindTarget()
 		AIFloat3 rangePos;
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
-	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop)
+	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop).
+	// The same under the quota.attack floor (UpdatePastFloor) and while the enemy army outweighs ours
+	// (quota.attack_threat_floor), at any time
 	CInfluenceMap* inflMap = circuit->GetInflMap();
-	const bool isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame());
+	UpdatePastFloor();
+	isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
+			|| militaryMgr->IsAttackThreatFloor();
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1602,10 +1608,15 @@ void CAttackTask::FindTarget()
 		// shift its rank
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
-		// quota.attack_own_ground_time: ground our buildings, land builders or static defences cover (enemy influence
-		// ignored; armed mobiles don't count, else a group would license its own surroundings and creep forward).
-		// A target already within range is always fair game, so fights at the edge aren't dropped
-		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange) && (inflMap->GetAllyDefendInflAt(c.rangePos) <= INFL_EPS)) {
+		// quota.attack_own_ground_time and the floors: our territory (IsAllyTerritory: our buildings, land builders
+		// or static defences outweigh the enemy's buildings and static defences; mobiles on neither side count, else
+		// a group would license its own surroundings and creep forward, and the target would veto itself).
+		// A target already within range is always fair game, so fights at the edge aren't dropped. The current target
+		// stays ours until the enemy outweighs us there by half a building, so it doesn't flicker on the border
+		// as our constructors move or enemy buildings come into view
+		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange)
+			&& !inflMap->IsAllyTerritory(c.rangePos, (enemy->GetId() == prevTargetId) ? -1.f : INFL_EPS))
+		{
 			continue;
 		}
 		c.rawKey = sqOEDist * scale;
@@ -1741,6 +1752,17 @@ void CAttackTask::FindTarget()
 		ClearScaleAnchor();  // no fight accepted: no near-base discount
 	}
 	// Return: target, startPos=leader->pos, endPos=position
+}
+
+void CAttackTask::UpdatePastFloor()
+{
+	// Hysteresis: a group that loses a unit or two just past the floor keeps going; a beaten one falls back to
+	// targets on our ground. Power is the units' def power (not health), so it changes only as units join or die
+	if (attackPower >= minPower) {
+		isPastFloor = true;
+	} else if (attackPower < minPower * GetMilitaryMgr()->GetAttackFloorHold()) {
+		isPastFloor = false;
+	}
 }
 
 bool CAttackTask::IsOnEnemyGround() const
@@ -1986,7 +2008,9 @@ void CAttackTask::FallbackFrontPos(bool isReuse)
 
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& startPos = leader->GetPos(frame);
-	if (IsOnEnemyGround()) {
+	// Restricted to our ground (isOwnGroundOnly): nothing out here may be picked, so walk back to the front
+	// (a floor can switch on mid-push); there is no border to bounce on
+	if (!isOwnGroundOnly && IsOnEnemyGround()) {
 		// The front is our own cluster on friendly ground. Already past it (farther from our base than its
 		// nearest point): routing there walks the group back, and it would bounce on the border, so hold at
 		// the quietest spot nearby. Not past it (an enemy-held patch on the way): keep going to the front.
