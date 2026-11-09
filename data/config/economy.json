@@ -107,6 +107,18 @@
 	// [[<value>, <start_mex_percent>], [<value>, <end_mex_percent>]]
 	"ms_pull": [[2.0, 0.0], [0.45, 0.20], [0.99, 0.90]],
 
+	// Multipliers on ms_pull (lower ms_pull = more metal to factories): [[<x>, <multiplier>], ...], linear between
+	// points and clamped at the ends; [] = off. A missing key uses the defaults shown.
+	// ms_pull_income: x = metal income without reclaim (mex + overdrive + constructor share), from the start
+	"ms_pull_income": [[30, 1.0], [160, 0.7]],
+	// ms_pull_army: x = known enemy mobile threat per enemy team / our army threat (commanders on neither side), from
+	// <since> seconds of game time and while any enemy army is known (else 1). Enemies out of radar and LOS fade
+	// as behaviour.json quota.enemy_half_life says
+	"ms_pull_army": {
+		"since": 300,
+		"curve": [[0.5, 1.3], [2.0, 0.7]]
+	},
+
 	// Max percent of mexes circuit team allowed to take.
 	// If its <1.0 then expansion obeys ms_pull rule, if >=1.0 then ms_pull doesn't affect expansion (mex, pylon, energy).
 	// [<cap_percent>, <is_ally_cap>]

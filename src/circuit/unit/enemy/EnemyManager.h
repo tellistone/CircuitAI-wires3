@@ -80,6 +80,10 @@ public:
 	float GetMobileThreatNoComm() const {
 		return std::max(mobileThreat - GetEnemyThreat(ROLE_TYPE(COMM)) * initThrMod.inMobile, 0.f);
 	}
+	// As GetMobileThreatNoComm, summed over the enemies we know of now: one in radar or LOS counts in full, one out of
+	// both fades by half every halfLife frames since it was last seen (halfLife <= 0: no fading). Enemies seen
+	// dying or forgotten (20 min unseen) don't count. Walks all known enemies: call it about once a second at most
+	float GetMobileThreatNoCommFaded(int frame, float halfLife) const;
 	float GetStaticThreat() const { return staticThreat; }
 	float GetEnemyThreat() const { return mobileThreat + staticThreat; }
 	bool IsAirValid() const { return GetEnemyThreat(ROLE_TYPE(AA)) <= maxAAThreat; }

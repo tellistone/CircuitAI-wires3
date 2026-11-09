@@ -220,7 +220,11 @@ public:
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
 	void DiceBigGun();
-	float ClampMobileCostRatio() const;
+	// Known enemy mobile threat (no commanders) per enemy team, enemies out of radar and LOS fading by half every
+	// quota.enemy_half_life (EnemyManager::GetMobileThreatNoCommFaded). Walks all known enemies
+	float GetEnemyThreatPerTeam() const;
+	// GetEnemyThreatPerTeam over our army's threat (no commanders either); negative while no enemy army is known
+	float GetEnemyArmyRatio() const;
 	void UpdateDefenceTasks();
 	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without
 	// crossing threat it couldn't take, divided by the number of enemy players: the mex bonus of each quota
@@ -563,6 +567,7 @@ private:
 		float off = 0.f;  // ... at or above this: floor off
 	} attackThreatFloor;  // quota.attack_threat_floor
 	bool isAttackThreatFloor;
+	float enemyHalfLife;  // quota.enemy_half_life, frames; 0 = enemies out of sight never fade
 	int attackThreatFloorLogFrame;  // next periodic THREAT FLOOR log line
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat

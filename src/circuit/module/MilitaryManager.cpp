@@ -69,6 +69,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, armyCost(0.f)
 		, armyThreat(0.f)
 		, isAttackThreatFloor(false)
+		, enemyHalfLife(0.f)
 		, attackThreatFloorLogFrame(0)
 		, attackRally(IFighterTask::FightType::ATTACK, false, "RALLY")
 		, raidRally(IFighterTask::FightType::RAID, true, "RAID RALLY")
@@ -543,6 +544,7 @@ void CMilitaryManager::ReadConfig()
 		}
 		attackThreatFloor = (isOk && !q.isNull()) ? SThreatFloor{q[0u].asFloat(), q[1u].asFloat()} : SThreatFloor{0.66f, 0.8f};
 	}
+	enemyHalfLife = readAttackNum("enemy_half_life", 180.f, 0.f, 3600.f) * FRAMES_PER_SEC;  // 0 = no fading
 	{
 		const Json::Value& qcont = quotas["contested"];
 		if (!qcont.isNull() && !qcont.isObject()) {
@@ -2537,10 +2539,7 @@ void CMilitaryManager::UpdateResponseGates()
 	const float income = std::min(economyMgr->GetAvgMetalIncome(), energyIncome) * economyMgr->GetEcoFactor();
 	// unlock_after reads the same without reclaim (a wreck field must not unlock a role for good): our share of the
 	// ally team's mex, overdrive and constructor metal, from ZK's overdrive gadget; total income without it
-	Team* team = circuit->GetTeam();
-	const float odBase = team->GetRulesParamFloat("OD_metalBase", -1.f);
-	const float ecoMetal = (odBase < 0.f) ? economyMgr->GetAvgMetalIncome()
-			: odBase + team->GetRulesParamFloat("OD_metalOverdrive", 0.f) + team->GetRulesParamFloat("OD_metalMisc", 0.f);
+	const float ecoMetal = economyMgr->GetEcoMetalIncome();
 	const float unlockIncome = std::min(ecoMetal, energyIncome) * economyMgr->GetEcoFactor();
 	const int frame = circuit->GetLastFrame();
 
@@ -2670,10 +2669,22 @@ void CMilitaryManager::DiceBigGun()
 	bigGunDef = candidates[choice].cdef;
 }
 
-float CMilitaryManager::ClampMobileCostRatio() const
+float CMilitaryManager::GetEnemyThreatPerTeam() const
 {
-	const float enemyMobileCost = circuit->GetEnemyManager()->GetEnemyMobileCost();
-	return (enemyMobileCost > armyCost) ? (armyCost / enemyMobileCost) : 1.f;
+	// Known enemy mobile threat (thr_mod.mobile applied) shared over the enemy teams, against our own army (allies'
+	// armies don't count: each AI judges its own). Commanders count on neither side
+	return circuit->GetEnemyManager()->GetMobileThreatNoCommFaded(circuit->GetLastFrame(), enemyHalfLife)
+			/ std::max(circuit->GetEnemyTeamSize(), 1);
+}
+
+float CMilitaryManager::GetEnemyArmyRatio() const
+{
+	const float enemyPerTeam = GetEnemyThreatPerTeam();
+	if (enemyPerTeam <= 0.f) {
+		return -1.f;
+	}
+	// No army of ours: the enemy's counts as far ahead (the curve's last point)
+	return (armyThreat > 0.f) ? enemyPerTeam / armyThreat : std::numeric_limits<float>::max();
 }
 
 void CMilitaryManager::UpdateDefenceTasks()
@@ -3132,10 +3143,7 @@ void CMilitaryManager::DelArmyCost(CCircuitUnit* unit)
 
 void CMilitaryManager::UpdateAttackThreatFloor()
 {
-	// Known enemy mobile threat (thr_mod.mobile applied) shared over the enemy teams, against our own army (allies'
-	// armies don't count: each AI judges its own). Commanders count on neither side
-	const float enemyPerTeam = circuit->GetEnemyManager()->GetMobileThreatNoComm()
-			/ std::max(circuit->GetEnemyTeamSize(), 1);
+	const float enemyPerTeam = GetEnemyThreatPerTeam();
 	const bool wasFloor = isAttackThreatFloor;
 	if (armyThreat < attackThreatFloor.on * enemyPerTeam) {
 		isAttackThreatFloor = true;
