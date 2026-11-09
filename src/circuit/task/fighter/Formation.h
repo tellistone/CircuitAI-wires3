@@ -17,6 +17,7 @@
 
 namespace circuit {
 
+class CCircuitDef;
 class CCircuitUnit;
 class ISquadTask;
 
@@ -59,7 +60,8 @@ struct SFormationOrder {
  *   turns only where the block fits that way (walkable behind, 2 columns wide at the front), and again only for a
  *   clear threat more than 45 degrees off, two reads a second apart; a turn back (> 120 degrees) matches slots
  *   afresh. It keeps facing across new paths that end within 256 elmos of the same end, and stops on a path
- *   elsewhere or when the line switches off.
+ *   elsewhere or when the line switches off. A hold's step to a spot nearby slides the facing block there as it
+ *   stands, its front still the same way, where it fits (SlideBy); a hold's walk elsewhere stops facing.
  * - A unit out of its slot for 12 s straggles: full speed, and the line no longer waits for it (the squad's regroup
  *   gathers it if it falls far behind). While the line walks, one that hasn't moved 64 elmos in 30 s while out of
  *   its slot is released (ISquadTask::ReleaseStuck), the leader too.
@@ -75,8 +77,18 @@ public:
 	void Update(int frame, bool isActive, std::vector<CCircuitUnit*>& outStuck);
 	void Remove(CCircuitUnit* unit);  // it left the squad
 	bool IsOn() const { return isOn; }  // the line is formed: its units walk to GetOrder
-	// While IsOn: the stretch of line the group stands on to stop where it is (CAttackTask::Regroup)
+	// Front to back row while IsOn (else 0): the leader stands up to this far from the front row
+	float GetDepth() const { return isOn ? depth : 0.f; }
+	// While IsOn: the stretch of line the group stands on to stop where it is (CAttackTask::Regroup); facing, it ends
+	// where facing began, so the block keeps facing as it stands
 	void GetStandPath(F3Vec& outPath) const;
+	// Standing facing: the block moves by shift as it stands, its front still the same way (a hold's step to a spot
+	// nearby), where it fits there; no units re-matched. outPath: the stand path there. False: not facing, or it
+	// doesn't fit there (walk there instead, EndFacing)
+	bool SlideBy(const springai::AIFloat3& shift, F3Vec& outPath);
+	void EndFacing();  // the squad walks elsewhere: stop facing now (as on a path that ends elsewhere)
+	// Takes a slot in the line (a land or sea unit, not support or no_formation), as AddMembers counts it
+	static bool IsSlotUnit(const CCircuitDef* cdef);
 	// Where the unit walks now; false: it has no slot (busy, no_formation, or the line is off): follow the path
 	bool GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const;
 	// The line steers the unit and it keeps up (in line, or a straggler faster than the line): no regroup for it
@@ -130,6 +142,7 @@ private:
 	void ShiftRows(float pace, float gap);
 	void PlaceSlots(int frame, float pace, float leadSec, std::vector<CCircuitUnit*>& outStuck);
 	void UpdateFacing(int frame, const springai::AIFloat3& pathEnd, float radius);  // start facing at the path's end, or turn
+	bool IsAtEnd() const { return isLineToEnd && (anchorArc >= arcs.back()); }  // the front row stands at the path's end
 	void Reset();
 
 	// The centre line: the track of the leader's spot on its path, the spot, then the path ahead; arc 0 at the spot.

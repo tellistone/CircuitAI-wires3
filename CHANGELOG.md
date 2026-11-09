@@ -41,11 +41,21 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   per distance), else away from our base; standing, it still turns to a clear threat around it. Where no line fits, the
   units walk to that spot, as the gather did. A regroup in line ends as soon as every unit the line steers stands in its
   slot and the rest are near (else at the usual check, every 16 updates); the walk then resumes in line on the same path,
-  unless a unit asked for a new route. A holding group that is hit and steps away ends its regroup, so the step isn't undone. A holding group (nothing to attack, no front to walk to, no safe route) now
-  walks to its quiet spot along a threat-capped path when the spot is more than 256 elmos away, so the line takes it
-  there and it stands in line instead of clumped; it keeps that spot unless another is 20% quieter. A group with no line
-  (line off, too few units, or no room for 2 columns) takes this path too, and ends bunched on its last point as before. Stepping out of an
-  attacker's range while holding, and moves where no path was found, stay straight moves. Once the line stands at the end of its
+  unless a unit asked for a new route. A holding group that is hit and steps away ends its regroup, so the step isn't undone. A holding group (nothing to attack, no front to walk to, no safe route)
+  stands in line where it is, as a regroup's line stands, instead of every unit walking straight to one spot at each
+  decision. It moves only to a spot with at most 80% of the threat here, and keeps that spot until another has at most
+  80% of its threat, so two spots can't take turns. To a spot within 256 elmos a block standing facing the threat
+  slides there as it stands, its front still to the threat and no unit changing slot (where it fits there; else the
+  line walks straight there); farther, the line walks a threat-capped path and faces anew at its end. A group already
+  beside the group it reinforces stands in line the same way (it used to gather: units within 600 elmos stood where
+  they were, the rest walked straight in), and units that join walk into its slots. A unit pulled back from danger while the line stands rejoins
+  with the next path rather than walk back into the slot that endangered it, and a line that switches off while
+  standing (no room left for 2 columns) stands again at the next decision. A group with no line (formation off, or
+  fewer than `min_units` units that take a slot) holds with the same 80% rule, straight to a quiet spot within 256
+  elmos, else along a threat-capped path (ending bunched on its last point), and gathers beside the group it reinforces as
+  before.
+  Where no line fits, a stand's units stand together at its end. Stepping out of an attacker's range while holding,
+  and escapes where no path was found, stay straight moves. Once the line stands at the end of its
   walk it faces the threat (`face_range`, 0 = off): it reads the enemy threat 8 ways at 1 and 2 x its fire range
   around the block and, if the threat has a clear side, turns the block about its centre to face it, its front row
   short of more threat than at the centre (else it faces the way it came, not the path's last jog). It turns only
@@ -355,6 +365,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Attack groups in line merge again.** A route to another group (reinforcing, idle merging, a rally) ends where the
+  line's front row stands, but merging is judged at the group's leader, which stands up to the line's depth behind
+  (its row, or turned by facing). A group whose leader walked in a back row could park just outside merge reach
+  (`travel_sec` at its slowest speed, with the 20% margin of `reinforce_range`) and never merge. Such routes now end
+  the line's depth closer, the merge reach allows for it too, and with no line nothing changes.
 - **Geothermal plants are actually queued.** Three checks shared with other energy kept geo off the build list in
   practice. The energy-job cap allowed a 500-metal job only while no energy job at all was queued (below 62.5 build
   power), and solar or wind jobs nearly always were; geo now has its own cap of one geo job at a time. The energy

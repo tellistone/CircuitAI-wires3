@@ -65,6 +65,10 @@ protected:
 	// Idle on purpose: the line formation steers it and it stands where its last formation move sent it, so
 	// re-activating its path (Start) would only send it there again, and again once it is idle
 	bool IsIdleInLine(CCircuitUnit* unit) const;
+	// Standing facing, the line moves by shift (a step to a spot nearby), its front still that way; outPath: the path it
+	// stands on there. False: not facing, or no room there (CFormation::SlideBy)
+	bool SlideLine(const springai::AIFloat3& shift, F3Vec& outPath) { return formation.SlideBy(shift, outPath); }
+	void EndLineFacing() { formation.EndFacing(); }  // the squad walks elsewhere: the line stops facing now
 
 private:
 	void FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd);

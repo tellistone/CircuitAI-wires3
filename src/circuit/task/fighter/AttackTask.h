@@ -146,6 +146,9 @@ private:
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, float slack);
 	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, float farDist, springai::AIFloat3& outPos,
 			float& outStrength) const;
+	// How far behind its line's front row our leader may stand (the line's depth; 0 with no line). A route's end is
+	// where the front row stands, but merging is judged at the leader
+	float GetLineDepth() const;
 	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES
 	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range, float strength,
 			std::function<void (const CQueryPathSingle*)>&& onComplete);
@@ -277,19 +280,33 @@ private:
 	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Attack (firing spots), and walk stragglers (IsOutOfReach) to the leader if they have no path
 	void Engage(int frame);
-	// Nothing to go to: hold at the quietest reachable spot within 2x our range (never head home),
-	// avoiding the spot we were last hit at while holding; retry next decision
-	// Walk to the quietest spot nearby (FindQuietSpot) and hold there; isHolding. isWalk: along a planned path, so the
-	// line formation takes the group there and it stands in line (a spot within 256 elmos, or no path: straight
-	// moves); false: straight moves at once (stepping out of an attacker's range)
+	// Nothing to go to: hold at the quietest reachable spot within 2x our range (never head home), avoiding the spot
+	// we were last hit at while holding; isHolding, retry next decision. Stay (in line where we can) unless a spot has
+	// at most HOLD_SWITCH_SHARE of the threat here, then go there: within 256 elmos straight (in line: a facing block
+	// slides there, else the line walks), else along a planned path; kept until another spot is that much quieter
+	// than it. isWalk false: a straight move at once (stepping out of an attacker's range)
 	void HoldPosition(bool isWalk = true);
 	void ApplyHoldPath(const CQueryPathSingle* query);
 	// Quietest reachable spot within 2x our range (24 samples + where we stand), avoiding the last hit area;
-	// returns the threat there
-	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos);
-	// Units more than 600 from pos walk there, the rest stand; sets isHolding
+	// returns the threat there. outHereThreat: where we stand (max inside the last hit area)
+	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos, float* outHereThreat = nullptr);
 	void Regroup(int frame);  // the regroup's move (state REGROUP): in line where it can
-	std::shared_ptr<PathInfo> MakeRegroupPath() const;
+	// Formation on and enough units that take a slot: a regroup, a hold or a wait may stand in line
+	bool IsStandAllowed(int frame) const;
+	// The unit walks path, or stands at its end (not waiting): it has had it
+	static bool IsOnPath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& path);
+	bool IsHoldKept() const;  // the leader walks holdPath (in line: stands on it), its travel not finished
+	// The path to every unit not in danger (and with isKept, not on it already), activated
+	void SendStandPath(const std::shared_ptr<PathInfo>& path, bool isKept);
+	// Stand in line where we are (holding, waiting): holdPath and holdPos; false: no line (IsStandAllowed), move as
+	// before
+	bool StandInLine(int frame);
+	// A hold's walk in line to pos, a straight one (holdPath and holdPos); false: no line, move as before
+	bool WalkLineTo(const springai::AIFloat3& pos, int frame);
+	// The short path the line stands on: where it stands while on, else its front row at pos facing the nearest
+	// strong enemy group (away from our base if none)
+	std::shared_ptr<PathInfo> MakeStandPath(const springai::AIFloat3& pos) const;
+	// Units more than 600 from pos walk there, the rest stand; sets isHolding
 	void GatherAt(const springai::AIFloat3& pos);
 	void MoveGroupTo(const springai::AIFloat3& pos);
 	void MoveUnitTo(CCircuitUnit* unit, const springai::AIFloat3& pos, int frame);
@@ -344,7 +361,8 @@ private:
 
 	// Holding
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)
-	springai::AIFloat3 holdPos;  // the spot HoldPosition walks the group to along a path (-RgtVector: none)
+	springai::AIFloat3 holdPos;  // the spot holdPath walks the group to, or stands at (-RgtVector: none)
+	std::shared_ptr<PathInfo> holdPath;  // the path a hold or a wait walks or stands on (set with holdPos)
 	std::shared_ptr<PathInfo> regroupPath;  // the short path a regroup in line stands on (Regroup)
 	int regroupFrame = -1;  // groupFrame of the regroup that made it
 	int stepFrame;  // last step back after being hit while holding

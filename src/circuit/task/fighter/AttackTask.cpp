@@ -85,6 +85,11 @@ static constexpr int RALLY_EDGE_MEMORY_FRAMES = FRAMES_PER_SEC * 20;
 // Rally host: counts as fighting this long after its last Engage, so a target blinking at the edge of its range
 // doesn't swap its joiners' goal (fight edge or the host) every decision
 static constexpr int RALLY_FIGHT_MEMORY_FRAMES = FRAMES_PER_SEC * 6;
+// Holding moves to another spot (or switches spots) only for one with at most this share of the threat: two spots
+// can't each beat the other, so small changes in threat don't walk and turn the line every few seconds
+static constexpr float HOLD_SWITCH_SHARE = 0.8f;
+// A hold spot this near is reached straight (no route query); a block standing facing slides there
+static constexpr float HOLD_NEAR = DEFAULT_SLACK * 4;
 
 namespace {
 // Power-weighted median weapon range against one target type, of the non-support units that can hit it (or of all
@@ -562,7 +567,8 @@ bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 	// At most quota.attack_merge.travel_sec (30 s) of straight travel: with a long merge distance a slow group could
 	// otherwise still be walking when the regroup's 60 s limit drops far-away units as stuck
 	const CMilitaryManager::SAttackMerge& cfg = GetMilitaryMgr()->GetAttackMerge();
-	if (from.SqDistance2D(to) >= SQUARE(cfg.travelSec * lowestSpeed)) {
+	// Our line stands with its front row at a route's end, the leader up to its depth behind: that much more
+	if (from.SqDistance2D(to) >= SQUARE(cfg.travelSec * lowestSpeed + GetLineDepth())) {
 		return false;
 	}
 	const float own = GetSafeThreat();
@@ -694,8 +700,10 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 		reinforceFails = 0;
 		if (!isRally && (pPath->path.size() <= 2)) {
 			// Already beside the group: a short route isn't walked (ApplyGroupRoute), so stop here rather than carry
-			// on with older orders (a front route) out of merge distance
-			GatherAt(goal);
+			// on with older orders (a front route) out of merge distance; in line where we can
+			if (!StandInLine(manager->GetCircuit()->GetLastFrame())) {
+				GatherAt(goal);
+			}
 		}
 		return;
 	}
@@ -756,16 +764,25 @@ bool CAttackTask::SeekMerge(int frame, bool isReuse, float sqTargetKey)
 	return true;
 }
 
+float CAttackTask::GetLineDepth() const
+{
+	const CFormation* line = GetFormation();  // nullptr: the line is off
+	return (line != nullptr) ? line->GetDepth() : 0.f;
+}
+
 void CAttackTask::RunGroupRoute(int frame, const AIFloat3& goal, float range, float strength,
 		std::function<void (const CQueryPathSingle*)>&& onComplete)
 {
-	// A capped route (reinforce costs, the cap for strength) from our leader to within range of goal
+	// A capped route (reinforce costs, the cap for strength) from our leader to within range of goal. In line, the
+	// front row stands at the route's end and the leader up to the line's depth behind it, so the route ends that much
+	// closer: the leader gets within range (merge reach) rather than parking short of it
 	CCircuitAI* circuit = manager->GetCircuit();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const AIFloat3& startPos = leader->GetPos(frame);
+	const float goalRange = std::max(range - GetLineDepth(), static_cast<float>(pathfinder->GetSquareSize()));
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(), frame,
-			startPos, goal, std::max(range, static_cast<float>(pathfinder->GetSquareSize())), nullptr,
+			startPos, goal, goalRange, nullptr,
 			GetPathThreatCap(startPos, {goal}, strength));
 	SetRouteThreat(query.get(), AttackRoute::REINFORCE);
 	RunRoute(query, [onComplete = std::move(onComplete)](const IPathQuery* query) {
@@ -1895,32 +1912,47 @@ void CAttackTask::Engage(int frame)
 void CAttackTask::HoldPosition(bool isWalk)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = leader->GetPos(frame);
 	AIFloat3 bestPos;
-	const float bestThreat = FindQuietSpot(pos, bestPos);
+	float hereThreat;
+	const float bestThreat = FindQuietSpot(pos, bestPos, &hereThreat);
 	isHolding = true;
 	if (isWalk && utils::is_valid(holdPos)) {
 		if (!IsQueryReady(leader)) {
 			return;  // its path is on the way
 		}
-		// Walking to the spot, or standing there in line: keep it unless the new one is clearly (20%) quieter
-		ITravelAction* travelAct = leader->GetTravelAct();
-		if (travelAct->IsActive() && (travelAct->GetPath() == pPath) && !pPath->posPath.empty()
-			&& (pPath->posPath.back().SqDistance2D(holdPos) < SQUARE(DEFAULT_SLACK * 4))
-			&& (bestThreat >= GetTaskThreatAt(leader, holdPos) * 0.8f))
-		{
+		// Walking to the spot, or standing there in line: keep it unless another one is clearly quieter. Nothing is
+		// sent again (a unit pulled back from danger rejoins with the next path, or a regroup)
+		if (IsHoldKept() && (bestThreat >= GetTaskThreatAt(leader, holdPos) * HOLD_SWITCH_SHARE)) {
+			pPath = holdPath;  // Start() and regrouping re-send pPath
 			return;
 		}
 	}
 	holdPos = -RgtVector;
-	if (!isWalk || (bestPos.SqDistance2D(pos) < SQUARE(DEFAULT_SLACK * 4))) {
-		MoveGroupTo(bestPos);
+	holdPath = nullptr;
+	if (!isWalk) {
+		MoveGroupTo(bestPos);  // hit: away at once (a danger step)
+		return;
+	}
+	// Stay unless a spot is clearly quieter (in line where we can). Then go there: to a spot nearby straight (no route
+	// query, as the straight move had none), in line where we can, else along a route
+	if ((bestPos.SqDistance2D(pos) < 1.f) || (bestThreat >= hereThreat * HOLD_SWITCH_SHARE)) {
+		if (!StandInLine(frame)) {
+			MoveGroupTo(pos);
+		}
+		return;
+	}
+	if (bestPos.SqDistance2D(pos) < SQUARE(HOLD_NEAR)) {
+		if (!WalkLineTo(bestPos, frame)) {
+			MoveGroupTo(bestPos);
+		}
 		return;
 	}
 	holdPos = bestPos;
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), circuit->GetLastFrame(), pos, bestPos, pathfinder->GetSquareSize(), nullptr,
+			leader, circuit->GetThreatMap(), frame, pos, bestPos, pathfinder->GetSquareSize(), nullptr,
 			GetPathThreatCap(pos, {bestPos}));
 	SetRouteThreat(query.get(), AttackRoute::FRONT);
 	RunRoute(query, [this](const IPathQuery* query) {
@@ -1932,14 +1964,20 @@ void CAttackTask::ApplyHoldPath(const CQueryPathSingle* query)
 {
 	pPath = query->GetPathInfo();
 	if (pPath->posPath.size() > 2) {
+		holdPath = pPath;  // to holdPos
+		EndLineFacing();  // a walk elsewhere, even if the route ends near where the line faces from (FACE_KEEP)
 		ActivePath();  // the line walks it, and stands in line at its end
 		return;
 	}
-	MoveGroupTo(holdPos);  // no path (or a trivial one): straight there, as before
-	holdPos = -RgtVector;
+	// No path (or a trivial one): straight there, in line where we can
+	const AIFloat3 spot = holdPos;
+	if (!WalkLineTo(spot, manager->GetCircuit()->GetLastFrame())) {
+		MoveGroupTo(spot);  // as before
+		holdPos = -RgtVector;
+	}
 }
 
-float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
+float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos, float* outHereThreat)
 {
 	// Quietest reachable spot within 2x our range: stay put when it is as quiet as anywhere around
 	// (no creeping), and keep away from where we were last hit while holding (attackers we can't see
@@ -1955,6 +1993,9 @@ float CAttackTask::FindQuietSpot(const AIFloat3& pos, AIFloat3& outPos)
 
 	AIFloat3 bestPos = pos;
 	float bestThreat = isHitZone(pos) ? std::numeric_limits<float>::max() : GetTaskThreatAt(leader, pos);
+	if (outHereThreat != nullptr) {
+		*outHereThreat = bestThreat;  // max: we stand where we were hit, any spot outside it beats here
+	}
 	float bestSqDist = 0.f;
 	const float maxDist = std::max(highestRange * 2.f, 400.f);
 	for (int ring = 1; ring <= 3; ++ring) {
@@ -1989,26 +2030,15 @@ void CAttackTask::Regroup(int frame)
 	// path to its end (the leader's spot), as a gather would take them.
 	// The path is made once per regroup; each check sends it again to units taken off it (pulled back from danger
 	// and safe again, or skipped by Start), not to those still in danger
-	const CMilitaryManager::SFormationCfg& cfg = GetMilitaryMgr()->GetFormationCfg();
-	if (cfg.isEnable && IsFormationAllowed(frame) && ((int)units.size() >= cfg.minUnits)) {
+	if (IsStandAllowed(frame)) {
 		// This regroup's path (one that began at groupFrame), still walked: a route that came back since replaces it
 		const bool isKept = (regroupPath != nullptr) && (regroupFrame == groupFrame)
 				&& (leader->GetTravelAct()->GetPath() == regroupPath);
 		if (!isKept) {
-			regroupPath = MakeRegroupPath();
+			regroupPath = MakeStandPath(groupPos);
 			regroupFrame = groupFrame;
 		}
-		auto isOnPath = [this, isKept](ITravelAction* travelAct) {  // walking it, or at its end
-			return isKept && (travelAct->GetPath() == regroupPath) && !travelAct->IsWait();
-		};
-		for (CCircuitUnit* unit : units) {
-			ITravelAction* travelAct = unit->GetTravelAct();
-			if (isOnPath(travelAct) || (std::find(endangered.begin(), endangered.end(), unit) != endangered.end())) {
-				continue;
-			}
-			travelAct->SetPath(regroupPath);  // full speed when not steered, as a gather
-			travelAct->StateActivate();
-		}
+		SendStandPath(regroupPath, isKept);
 		return;
 	}
 	const int timeout = frame + FRAMES_PER_SEC * 60;
@@ -2018,7 +2048,95 @@ void CAttackTask::Regroup(int frame)
 	}
 }
 
-std::shared_ptr<PathInfo> CAttackTask::MakeRegroupPath() const
+bool CAttackTask::IsStandAllowed(int frame) const
+{
+	// Formation on, and enough units that take a slot (aircraft, support and no_formation units don't): with fewer no
+	// line forms, and the short stand path would only pack every unit onto one spot
+	const CMilitaryManager::SFormationCfg& cfg = GetMilitaryMgr()->GetFormationCfg();
+	if (!cfg.isEnable || !IsFormationAllowed(frame) || ((int)units.size() < cfg.minUnits)) {
+		return false;
+	}
+	int count = 0;
+	for (CCircuitUnit* unit : units) {
+		if (CFormation::IsSlotUnit(unit->GetCircuitDef()) && (++count >= cfg.minUnits)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool CAttackTask::IsOnPath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& path)
+{
+	ITravelAction* travelAct = unit->GetTravelAct();
+	return (path != nullptr) && (travelAct->GetPath() == path) && !travelAct->IsWait();
+}
+
+bool CAttackTask::IsHoldKept() const
+{
+	// Not once its travel finished: a line that switched off while standing (no room for 2 columns) has its units
+	// walk to the stand path's end and stop there, and it forms again only on a path walked anew
+	ITravelAction* travelAct = leader->GetTravelAct();
+	return (holdPath != nullptr) && (travelAct->GetPath() == holdPath) && travelAct->IsActive();
+}
+
+void CAttackTask::SendStandPath(const std::shared_ptr<PathInfo>& path, bool isKept)
+{
+	// Not to units still in danger (PullBackEndangered sent them away); with isKept (a regroup's path sent again) not
+	// to units already on it (walking it, or at its end), so a stand sends no orders again
+	for (CCircuitUnit* unit : units) {
+		if ((isKept && IsOnPath(unit, path))
+			|| (std::find(endangered.begin(), endangered.end(), unit) != endangered.end()))
+		{
+			continue;
+		}
+		ITravelAction* travelAct = unit->GetTravelAct();
+		travelAct->SetPath(path);  // full speed when not steered, as a gather
+		travelAct->StateActivate();
+	}
+}
+
+bool CAttackTask::StandInLine(int frame)
+{
+	// Holding or waiting (beside the group we reinforce): the line stands where it is, as a
+	// regroup's does, and faces the threat; units out of line walk to their slots. Kept while the leader walks it
+	// (IsHoldKept): later calls send nothing (a unit pulled back from danger rejoins with the next path). Where no
+	// line fits, the units follow the short path to its end, and the next call stands again. False: no line to stand
+	// in (IsStandAllowed), the caller moves as before
+	if (!IsStandAllowed(frame)) {
+		return false;
+	}
+	isHolding = true;
+	if (!IsHoldKept()) {
+		holdPos = leader->GetPos(frame);  // a hold keeps this stand while no spot is clearly quieter than here
+		holdPath = MakeStandPath(holdPos);
+		SendStandPath(holdPath, false);
+	}
+	pPath = holdPath;  // Start() and regrouping re-send pPath
+	return true;
+}
+
+bool CAttackTask::WalkLineTo(const AIFloat3& pos, int frame)
+{
+	// A hold's walk to pos, where it stands. Standing facing with pos nearby, the block slides there as it stands,
+	// its front still to the threat (SlideLine); else the line walks the straight 2-point path there and faces anew.
+	// False: no line (IsStandAllowed), the caller moves as before
+	if (!IsStandAllowed(frame)) {
+		return false;
+	}
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	holdPos = pos;
+	holdPath = std::make_shared<PathInfo>();
+	const bool isNear = (pos.SqDistance2D(leaderPos) < SQUARE(HOLD_NEAR));
+	if (!isNear || !SlideLine(pos - leaderPos, holdPath->posPath)) {
+		EndLineFacing();  // the path may end within FACE_KEEP of where the line faces from: it walks all the same
+		holdPath->posPath = {leaderPos, pos};
+	}
+	pPath = holdPath;
+	SendStandPath(holdPath, false);  // as a stand: not to units still in danger
+	return true;
+}
+
+std::shared_ptr<PathInfo> CAttackTask::MakeStandPath(const AIFloat3& pos) const
 {
 	// The line stands at the path's end, its rows back along the leader's track (else along the path's last stretch)
 	std::shared_ptr<PathInfo> path = std::make_shared<PathInfo>();
@@ -2027,7 +2145,7 @@ std::shared_ptr<PathInfo> CAttackTask::MakeRegroupPath() const
 		line->GetStandPath(path->posPath);  // on: it stops where it stands
 		return path;
 	}
-	// Off (often just after a fight, with no track to go by): the front row at the leader, facing the nearest strong
+	// Off (often just after a fight, with no track to go by): the front row at pos, facing the nearest strong
 	// enemy group (the most threat per distance), else away from our base. Standing, the line still turns to a clear
 	// threat around it (facing)
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -2037,21 +2155,21 @@ std::shared_ptr<PathInfo> CAttackTask::MakeRegroupPath() const
 		if (group.units.empty() || (group.threat <= 0.f)) {
 			continue;
 		}
-		const float score = group.threat / std::max(groupPos.distance2D(group.pos), float(DEFAULT_SLACK * 4));
+		const float score = group.threat / std::max(pos.distance2D(group.pos), float(DEFAULT_SLACK * 4));
 		if (score > bestScore) {
 			bestScore = score;
 			best = &group;
 		}
 	}
-	AIFloat3 dir = (best != nullptr) ? (best->pos - groupPos) : (groupPos - circuit->GetSetupManager()->GetBasePos());
+	AIFloat3 dir = (best != nullptr) ? (best->pos - pos) : (pos - circuit->GetSetupManager()->GetBasePos());
 	dir.y = 0.f;
 	if (dir.SqLength2D() >= 1.f) {
-		// A first stretch of DEFAULT_SLACK towards the leader gives the line its way (BuildLine, with no track)
-		AIFloat3 back = groupPos - dir.Normalize2D() * DEFAULT_SLACK;
+		// A first stretch of DEFAULT_SLACK towards pos gives the line its way (BuildLine, with no track)
+		AIFloat3 back = pos - dir.Normalize2D() * DEFAULT_SLACK;
 		CTerrainManager::CorrectPosition(back);
 		path->posPath.push_back(back);
 	}
-	path->posPath.push_back(groupPos);
+	path->posPath.push_back(pos);
 	return path;
 }
 
@@ -2115,7 +2233,12 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
 	}
 
-	if ((units.find(unit) != units.end()) && !IsIdleInLine(unit)) {
+	// Holding or waiting, only a unit walking our path is started again (Start sends the stand path then): one pulled
+	// back from danger would walk straight back into the slot that endangered it, and one at the path's end would
+	// get the same move every second; they rejoin with the next path, or a regroup
+	if ((units.find(unit) != units.end()) && !IsIdleInLine(unit)
+		&& (!isHolding || unit->GetTravelAct()->IsActive()))
+	{
 		Start(unit);  // NOTE: Not sure if it has effect
 	}
 }
