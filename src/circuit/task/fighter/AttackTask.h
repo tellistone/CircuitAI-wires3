@@ -141,19 +141,11 @@ private:
 	void AbsorbWeakerTasks();
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame, bool isReuse);
-	// quota.attack_merge.idle_merge: on for this group now (an army outside the rally, not waiting after failed
-	// routes to a group); off, or waiting: drops an army's reinforce
-	bool IsIdleMergeOn(int frame);
-	// An army without a target for a while reinforces the group GetReinforceSquad picks (ranked above us:
-	// CMilitaryManager::IsRankedAbove) and merges with it; false: not yet idle long enough, no such group, or none we
-	// could route to lately
-	bool SeekIdleMerge(int frame, bool isReuse);
-	// An army with a target out of range: the group GetReinforceSquad picks is nearer than the target (while walking
-	// to it: unless the target is under half its distance), so merge first
-	bool IsMergeFirst(int frame);
-	// A fight here (isHunt false) or a target route accepted (true): the idle clock restarts; a hunt also ends an
-	// army's walk to merge
-	void SetHasTarget(int frame, bool isHunt);
+	// quota.attack_merge.idle_merge: an army outside the rally walks to the group GetReinforceSquad picks (ranked above
+	// us: CMilitaryManager::IsRankedAbove) and merges, when that group is nearer than its best target by the target
+	// ranking (sqTargetKey: FindTarget's key; no target: max). Once walking, only a target ranked under
+	// MERGE_BREAK_OFF_SHARE of the group's distance breaks the walk off. false: hunt, or no target and the front fallback
+	bool SeekMerge(int frame, bool isReuse, float sqTargetKey);
 	// Rally: where to walk when reinforcing the host; false: stand still
 	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, bool& outIsToMeet) const;
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, bool isToMeet, float slack);
@@ -274,7 +266,7 @@ private:
 	// below the allowance for 'strength'
 	bool IsApproachSafe(const F3Vec& path, const springai::AIFloat3& targetPos, float strength, float refSqDist,
 			const springai::AIFloat3* cell = nullptr) const;
-	// No target: an army idle long enough walks to merge (SeekIdleMerge); else route to the front line, or hold nearby
+	// No target: an army walks to merge (SeekMerge); else route to the front line, or hold nearby
 	// when past it on enemy-held ground (or no front / no safe route). isReuse: a normal decision no unit asked to
 	// re-plan, which may keep a fresh route to the same front
 	void FallbackFrontPos(bool isReuse = false);
@@ -333,7 +325,6 @@ private:
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
-	int lastTargetFrame;  // last decision that fought or went for a target (SetHasTarget); SeekIdleMerge's delay
 	bool isDecisionReuse;  // the last decision's isReuse, for the fallbacks of its target route
 	int rallyRouteFrame;  // rally: our last route to the host came back empty, hold until this frame
 	springai::AIFloat3 meetFailPos;  // rally: the host's meeting point our last route to came back empty
@@ -372,6 +363,7 @@ private:
 	float scaleRefSqDist;  // leader-to-base distance^2 when the current target was first picked: reference of the near-base scale
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget (0: on enemy-held ground)
+	float targetSqKey;  // the last FindTarget's pick: its ranking key (squared distance, scaled), for SeekMerge
 	SRoute lastRoute;  // dropped when a unit joins or leaves: a fresh route re-sends the path at the group's new speed
 
 	// Holding
