@@ -65,6 +65,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, armyCost(0.f)
 		, armyThreat(0.f)
 		, isAttackThreatFloor(false)
+		, attackThreatFloorLogFrame(0)
 		, attackRally(IFighterTask::FightType::ATTACK, false, "RALLY")
 		, raidRally(IFighterTask::FightType::RAID, true, "RAID RALLY")
 		, attackBaseGather(true)
@@ -3000,14 +3001,19 @@ void CMilitaryManager::UpdateAttackThreatFloor()
 	} else if (armyThreat >= attackThreatFloor.off * enemyPerTeam) {
 		isAttackThreatFloor = false;
 	}  // else: keep, so the floor doesn't flip on every unit made or lost
-	if (isAttackThreatFloor == wasFloor) {
-		return;
+	const bool isSwitch = (isAttackThreatFloor != wasFloor);
+	// The numbers go to the log on every switch and every 30 s, so the floor can be checked against a game
+	const int frame = circuit->GetLastFrame();
+	if (isSwitch || (frame >= attackThreatFloorLogFrame)) {
+		attackThreatFloorLogFrame = frame + FRAMES_PER_SEC * 30;
+		circuit->LOG("THREAT FLOOR %s%s: army %.1f vs enemy %.1f per team (%.2f; on below %.2f, off from %.2f)",
+				isAttackThreatFloor ? "on" : "off", isSwitch ? " (switched)" : "", armyThreat, enemyPerTeam,
+				(enemyPerTeam > 0.f) ? armyThreat / enemyPerTeam : 0.f, attackThreatFloor.on, attackThreatFloor.off);
 	}
-	// Say it in public chat (Game_sendTextMessage only runs "/" commands, as for the resign), and log the numbers
-	circuit->GetGame()->SendTextMessage(isAttackThreatFloor ? "/say <CircuitAI> Defending" : "/say <CircuitAI> Attacking", 0);
-	circuit->LOG("THREAT FLOOR %s: army %.1f vs enemy %.1f per team (%.2f; on below %.2f, off from %.2f)",
-			isAttackThreatFloor ? "on" : "off", armyThreat, enemyPerTeam,
-			(enemyPerTeam > 0.f) ? armyThreat / enemyPerTeam : 0.f, attackThreatFloor.on, attackThreatFloor.off);
+	if (isSwitch) {
+		// Public chat (Game_sendTextMessage only runs "/" commands, as for the resign)
+		circuit->GetGame()->SendTextMessage(isAttackThreatFloor ? "/say <CircuitAI> Defending" : "/say <CircuitAI> Attacking", 0);
+	}
 }
 
 } // namespace circuit
