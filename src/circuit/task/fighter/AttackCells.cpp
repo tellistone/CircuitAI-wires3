@@ -217,7 +217,7 @@ bool CAttackTask::CollectFiringCells(const CEnemyInfo* enemy, const AIFloat3& an
 	// sectors only
 	const bool isMobile = enemy->GetCircuitDef()->IsMobile();
 	if (!FillFiringCells(enemy, anchor, power, ref, isMobile, outCells) && (planned == nullptr)) {
-		BanCell(enemy, epoch, frame);
+		Ban(cellBans, enemy, epoch, frame);
 		return false;
 	}
 	// Sides whose walk in was unsafe stay out for a while (RejectGoal); all of them: so does the target. The planned
@@ -264,19 +264,19 @@ bool CAttackTask::GetFireArcBearing(float& outBearing) const
 	return true;
 }
 
-bool CAttackTask::IsCellBanned(ICoreUnit::Id id, int frame) const
+bool CAttackTask::IsBanned(const Bans& bans, ICoreUnit::Id id, int frame)
 {
-	auto it = cellBans.find(id);
-	return (it != cellBans.end()) && (frame < it->second.until);
+	auto it = bans.find(id);
+	return (it != bans.end()) && (frame < it->second.until);
 }
 
-void CAttackTask::BanCell(const CEnemyInfo* enemy, int epoch, int frame)
+void CAttackTask::Ban(Bans& bans, const CEnemyInfo* enemy, int epoch, int frame)
 {
 	// At its range position: a radar-only parked mobile's wobble would change the threat read and drop the ban
 	const float threat = GetTaskThreatAt(leader, GetRangePos(enemy, frame));
-	auto it = cellBans.find(enemy->GetId());
-	if (it == cellBans.end()) {
-		cellBans[enemy->GetId()] = {frame + CELL_BAN_FRAMES, frame, threat, 0, epoch};
+	auto it = bans.find(enemy->GetId());
+	if (it == bans.end()) {
+		bans[enemy->GetId()] = {frame + CELL_BAN_FRAMES, frame, threat, 0, epoch};
 		return;
 	}
 	SCellBan& ban = it->second;  // banned again with nothing changed: longer
@@ -288,15 +288,18 @@ void CAttackTask::BanCell(const CEnemyInfo* enemy, int epoch, int frame)
 void CAttackTask::UpdateCellBans(int frame)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	for (auto it = cellBans.begin(); it != cellBans.end();) {
-		const SCellBan& ban = it->second;
-		const CEnemyInfo* enemy = circuit->GetEnemyInfo(it->first);
-		bool isDrop = (frame >= ban.since + CELL_BAN_RESET_FRAMES) || !IsSameAnchor(enemy, ban.epoch, frame);
-		if (!isDrop) {
-			const float threat = GetTaskThreatAt(leader, GetRangePos(enemy, frame));
-			isDrop = fabsf(threat - ban.threat) > CELL_BAN_THREAT_CHANGE * std::max(ban.threat, THREAT_MIN);
+	for (Bans* bans : {&cellBans, &heldBans}) {
+		for (auto it = bans->begin(); it != bans->end();) {
+			const SCellBan& ban = it->second;
+			const CEnemyInfo* enemy = circuit->GetEnemyInfo(it->first);
+			bool isDrop = (enemy == nullptr) || (frame >= ban.since + CELL_BAN_RESET_FRAMES)
+					|| ((ban.epoch >= 0) && !IsSameAnchor(enemy, ban.epoch, frame));
+			if (!isDrop) {
+				const float threat = GetTaskThreatAt(leader, GetRangePos(enemy, frame));
+				isDrop = fabsf(threat - ban.threat) > CELL_BAN_THREAT_CHANGE * std::max(ban.threat, THREAT_MIN);
+			}
+			it = isDrop ? bans->erase(it) : std::next(it);
 		}
-		it = isDrop ? cellBans.erase(it) : std::next(it);
 	}
 }
 

@@ -94,6 +94,9 @@ protected:
 	float GetSpotRange(CCircuitUnit* unit) const;
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x spot range (melee 0-0.95x)
 	bool GetKeptFireSpot(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // last spot, if still usable
+	// After Attack: every unit with spots (melee too) holds without one (HOLD: every spot dangerous) and the target is
+	// out of their weapon range. The group would stand still for as long as it keeps this target
+	bool IsAllHolding() const;
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
 	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
 	// each unit's own bearing from the target

@@ -488,6 +488,26 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	return FireSpot::NONE;
 }
 
+bool IFighterTask::IsAllHolding() const
+{
+	// HOLD (IFighterTask::Attack): unit with a spot range (melee too) ordered on this target without a firing spot
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	int ranged = 0;
+	for (CCircuitUnit* unit : units) {
+		if (GetSpotRange(unit) < SQUARE_SIZE * 4) {
+			continue;  // direct Attack (no spot)
+		}
+		++ranged;
+		// Weapon range, not spot range: a melee unit with a real gun (Reaver) shoots from well outside its spot
+		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())
+			|| (unit->GetPos(frame).SqDistance2D(target->GetPos()) <= SQUARE(GetFireRange(unit))))
+		{
+			return false;  // has a spot, or can already shoot it
+		}
+	}
+	return ranged > 0;
+}
+
 const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths() const
 {
 	// Still valid: read this frame, for the same units
