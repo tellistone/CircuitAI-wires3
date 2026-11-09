@@ -7,6 +7,21 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **ms_pull scales with income and the army balance** (`economy.json`; [#105](https://github.com/tellistone/CircuitAI-wires3/pull/105)).
+  Two `[[x, multiplier], ...]` curves multiply `ms_pull` (lower = more metal to factories while metal stalls), linear
+  between points and clamped at the ends; a missing key uses the defaults, `[]` turns one off.
+  - `ms_pull_income` (default `[[30, 1.0], [160, 0.7]]`): x = metal income without reclaim (mex + overdrive +
+    constructor share, as the response gates' `unlock_after`), from the start.
+  - `ms_pull_army` (default `{"since": 300, "curve": [[0.5, 1.3], [2.0, 0.7]]}`): x = known enemy mobile threat per
+    enemy team / our army threat (commanders on neither side), from `since` seconds and while any enemy army is known.
+  - The old army cost clamp on `ms_pull` (`ClampMobileCostRatio`) is removed; `ms_pull_army` replaces it.
+  - `MS_PULL` log line every 30 s with each factor.
+
+- **Known enemy army fades out of sight** (`quota.enemy_half_life` in `behaviour.json`, default 180 s, 0 = off). The
+  enemy army count that `ms_pull_army` and `quota.attack_threat_floor` read counts an enemy in radar or LOS in full and
+  one out of both at half per `enemy_half_life` seconds since last seen; enemies seen dying or forgotten don't count.
+  Before, the threat floor counted every enemy ever seen and not seen dying, for up to 20 minutes.
+
 - **Priority repairs leave dangerous spots** (`retreat` block; code defaults keep the old behaviour, the shipped
   config turns both on).
   - `repair_safe_held` (default `true`): with `false`, the `repair_safe` / `repair_safe_static` check ends or skips a

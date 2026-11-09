@@ -395,6 +395,27 @@ void CEnemyManager::GarbageEnemy(CEnemyUnit* enemy)
 	++enemyIterator;
 }
 
+float CEnemyManager::GetMobileThreatNoCommFaded(int frame, float halfLife) const
+{
+	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));
+	float threat = 0.f;
+	for (const auto& kv : enemyUnits) {
+		const CEnemyUnit* e = kv.second;
+		const CCircuitDef* cdef = e->GetCircuitDef();
+		// The units AddEnemyCost counts as mobile (seen in LOS once, so their type is known), commanders left out
+		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsEnemyRoleAny(commMask) || !e->IsKnown(frame)) {
+			continue;
+		}
+		float weight = 1.f;
+		const int lastSeen = e->GetLastSeen();  // -1 while in radar or LOS
+		if ((halfLife > 0.f) && !e->IsInRadarOrLOS() && (lastSeen >= 0)) {
+			weight = std::exp2(-(frame - lastSeen) / halfLife);
+		}
+		threat += cdef->GetThreat() * weight;
+	}
+	return threat * initThrMod.inMobile;
+}
+
 void CEnemyManager::AddEnemyCost(const CEnemyUnit* e)
 {
 	CCircuitDef* cdef = e->GetCircuitDef();
