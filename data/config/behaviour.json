@@ -81,7 +81,7 @@
 	"idle_merge": true,  // an army (at or above quota.attack) walks to the nearest compatible group ranked above it (more attack power; ties: lower leader id) and merges when that group is nearer than its best target by the target ranking (near-base scale, target_dist_mod, contested bonus: a raid near our base or a commander counts as nearer, a scout as farther) or it has no target; once walking, only a target ranked under half that distance breaks it off; targets in range are fought first; so all attack groups converge into one army; it keeps that group while it has 80% of the army's power; false: it hunts, heads for the front or holds as before. Small groups reinforcing get the ranking (with the tie-break), the 80% keep, stopping beside the group on a short route and merge checks every update whatever this is, and any group absorbs groups walking to it: so false is not the zk behaviour, compare against a zk build for A/B games
 	"base_gather": false,  // false: attack-bound units never gather at base; they reinforce the rally host or the nearest compatible group, else start a group. true: the first army gathers at base
 	// Rally: when a recently seen enemy blob (mobile, armed enemies within 800 elmos of each other, threat summed) near our attack groups has more threat than match x the largest group's raw strength,
-	// that group (the host) walks to meet its significant joiners and every compatible attack group and new unit reinforces it, until it reaches (1 + margin) x match x the blob or the blob is lost
+	// that group (the host) carries on as usual (it never waits for joiners) while every compatible attack group and new unit reinforces it, until it reaches (1 + margin) x match x the blob or the blob is lost
 	"rally": {
 		"match": 1.0,  // rally while host strength < match x blob threat; 0 = off
 		"margin": 0.25,  // end once host strength >= match x blob x (1 + margin)
@@ -209,7 +209,8 @@
 // units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; when one
 // falls far behind, the usual regroup stops the line where it stands (just after a fight: at the leader, facing the
 // nearest strong enemy group) and the units take their slots in it, until the line is whole (as a gather where no
-// line fits). At the end of its walk the group stands in line. Missing block or
+// line fits). Newcomers (units that joined attack and raid groups by a merge or a new assignment, until they come within
+// 200 elmos of the leader, 20 s at most) are waited for by neither: they catch up at full speed. At the end of its walk the group stands in line. Missing block or
 // "enable": false = groups walk as before, except that a holding group still takes a threat-capped path to a quiet spot
 // more than 256 elmos away instead of a straight move (it ends bunched on the path's last point, as it did before)
 "formation": {

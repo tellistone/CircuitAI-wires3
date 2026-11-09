@@ -326,7 +326,6 @@ public:
 	bool IsRallyJoiner(const CAttackTask* task) const;
 	// The rally host if the group led by unit (task self) may reinforce it: compatible and able to reach it; else nullptr
 	CAttackTask* GetRallyHostFor(CCircuitUnit* unit, const IFighterTask* self) const;
-	const springai::AIFloat3& GetRallyBlobPos() const { return attackRally.blobPos; }
 	// quota.raid_rally: the host while a raid rally is on (validated), else nullptr
 	CRaidTask* GetRaidRallyHost() const;
 	// A raid rally is on and this raid group joins it: not the host, compatible with it and able to reach it

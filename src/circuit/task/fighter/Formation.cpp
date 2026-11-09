@@ -407,13 +407,13 @@ float CFormation::MoveAnchor(int frame, bool isSwitchOn, float frontArc, float d
 {
 	// Pace: the slowest unit's speed, slowing in proportion as the unit furthest behind its slot along the line falls
 	// behind (one still spreading sideways isn't behind), to a stop at lead_sec behind: the line waits for everyone,
-	// so the slowest can catch up too. Stragglers and busy units don't count; the leader always does, as the line is
-	// centred on it
+	// so the slowest can catch up too. Stragglers, busy units and the squad's newcomers (ISquadTask::IsNewcomer: a
+	// merge or a new unit, which catch up on their own) don't count; the leader always does, as the line is centred on it
 	anchorArc = StartArc(isSwitchOn, frontArc);
 	float lag = 0.f;
 	for (const auto& kv : members) {
 		const SMember& m = kv.second;
-		if ((m.isSteered && !m.isStraggler) || (&m == leaderM)) {
+		if ((m.isSteered && !m.isStraggler && !task->IsNewcomer(kv.first, frame)) || (&m == leaderM)) {
 			lag = std::max(lag, LagAt(anchorArc - rows[m.row].offset, m.pos));
 		}
 	}

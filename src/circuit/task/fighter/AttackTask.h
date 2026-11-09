@@ -30,8 +30,6 @@ public:
 	// Walk to this stronger group and merge into it instead of hunting targets alone (while a safe route exists)
 	void SetReinforce(CAttackTask* squad) { reinforce = squad; }
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const override { return IsCompatible(unit); }
-	// The rally host's meeting point, while it walks or waits there (not engaged, not fleeing); false: go to the host
-	bool GetMeetPoint(int frame, springai::AIFloat3& outPos) const;
 	// A guard slot may pull this group's unit (CFGuardTask::Pull): it is alone, not fighting and not the rally host.
 	// With quota.attack_merge.base_gather false a new riot walks out alone, so this is how it gets pulled
 	bool IsGuardPullable() const;
@@ -135,42 +133,27 @@ private:
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
 	void AbsorbWeakerTasks();
 	CAttackTask* GetReinforceSquad();
-	void Reinforce(const int frame, bool isReuse);
+	// Walk to goal (the group's leader; rally host: PickRallyGoal) by a route capped for routeStrength
+	void Reinforce(const int frame, bool isReuse, const springai::AIFloat3& goal, float routeStrength);
 	// quota.attack_merge.idle_merge: an army outside the rally walks to the group GetReinforceSquad picks (ranked above
 	// us: CMilitaryManager::IsRankedAbove) and merges, when that group is nearer than its best target by the target
 	// ranking (sqTargetKey: FindTarget's key; no target: max). Once walking, only a target ranked under
 	// MERGE_BREAK_OFF_SHARE of the group's distance breaks the walk off. false: hunt, or no target and the front fallback
 	bool SeekMerge(int frame, bool isReuse, float sqTargetKey);
-	// Rally: where to walk when reinforcing the host; false: stand still
-	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, bool& outIsToMeet) const;
-	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, bool isToMeet, float slack);
-	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, springai::AIFloat3& outPos) const;
-	// Routes to a group or a meeting point: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES
-	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range,
+	// Rally: where to walk when reinforcing the host, and the strength its route is capped for (in: ours); false:
+	// nowhere to stand near its fight and we are close already
+	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, float& inOutStrength) const;
+	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, float slack);
+	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, float farDist, springai::AIFloat3& outPos,
+			float& outStrength) const;
+	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES
+	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range, float strength,
 			std::function<void (const CQueryPathSingle*)>&& onComplete);
 	bool ApplyGroupRoute(const CQueryPathSingle* query, ICoreUnit::Id routeId, const springai::AIFloat3& goal,
 			float slack);
 
-	// Rally host: while a significant joiner (>= 25% of our strength, within 60 s, closing in) is on its way, walk to a
-	// meeting point with the significant ones and wait there. true: this decision is done
-	struct SMeetTrack {  // progress of one joiner towards us: a joiner that stops closing in no longer holds us
-		const CAttackTask* task;  // compared only, never dereferenced (may be gone)
-		float bestSec;  // smallest gap (travel time at its speed) seen, in steps of MEET_PROGRESS_SEC
-		int bestFrame;  // when bestSec was set
-		int seenFrame;  // last decision that looked at it
-		bool isSignificant;  // counted as significant last decision (it keeps counting down to a lower share)
-	};
 	// Engaged, or engaged within RALLY_FIGHT_MEMORY_FRAMES: as a rally host, joiners go to the fight edge
 	bool IsRallyFighting(int frame) const;
-	void ResetMeet();
-	bool UpdateMeet(int frame, bool isReuse);
-	void CollectSignificantJoiners(int frame, std::vector<CAttackTask*>& outSignificant);
-	bool IsAtMeetPoint(const springai::AIFloat3& pos);  // updates isMeetArrived
-	// Updates the joiner's track; true: it counts as significant (strong enough, not stalled)
-	bool TrackJoiner(const CAttackTask* joiner, float gapSec, float ourStrength, int frame);
-	// Where the host and its joiners arrive together, stepped back towards the host until safe and reachable
-	springai::AIFloat3 FindMeetPoint(int frame, const std::vector<CAttackTask*>& joiners) const;
-	bool IsMeetSpotOk(const springai::AIFloat3& pos, int frame, const std::vector<CAttackTask*>& joiners) const;
 
 	/*
 	 * Escape: checked on every update. True: this update is done (running, or cornered)
@@ -270,6 +253,7 @@ private:
 	void ApplyFrontPos(const CQueryPathMulti* query, const springai::AIFloat3& goal);
 	// Threat cap for capped routes (target, front, reinforce): never above what the escape tolerates
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
+	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals, float strength) const;
 	// Threat cost of a route: quota.attack_path_dynamic_cost, and on capped routes quota.attack_path_ignore_threat
 	void SetRouteThreat(IPathQuery* query, AttackRoute route) const;
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
@@ -323,17 +307,11 @@ private:
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
 	bool isDecisionReuse;  // the last decision's isReuse, for the fallbacks of its target route
-	int rallyRouteFrame;  // rally: our last route to the host came back empty, hold until this frame
-	springai::AIFloat3 meetFailPos;  // rally: the host's meeting point our last route to came back empty
+	int rallyRouteFrame;  // rally: no route or spot near the host, act as a normal group until this frame
+	int rallyEdgeFailFrame;  // rally: last time FindFightEdge found nowhere to stand near the host's fight
 
-	// Rally host meeting its joiners (quota.attack_merge.rally)
-	bool isMeetWalk;  // walking to the meeting point this decision: no regroup on the way
-	bool isMeetArrived;  // at the meeting point: stand there until pushed away from it, or it moves
-	bool isJoinerNear;  // a joiner is within the merge distance: absorb every 2 updates
+	// Rally host (quota.attack_merge.rally)
 	int engageFrame;  // last Engage (IsRallyFighting)
-	springai::AIFloat3 meetPos;  // -RgtVector: not meeting
-	springai::AIFloat3 meetArrivePos;  // the meeting point when we arrived
-	std::vector<SMeetTrack> meetTracks;
 
 	// Escape
 	int fleeFrame;  // keep running until this frame
