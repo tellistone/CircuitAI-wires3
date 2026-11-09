@@ -68,6 +68,9 @@ public:
 
 	void UpdateResourceIncome();
 	float GetAvgMetalIncome() const { return metalIncome; }
+	// Metal income without reclaim: our share of the ally team's mex, overdrive and constructor metal, from ZK's
+	// overdrive gadget (GetAvgMetalIncome when the gadget doesn't report it)
+	float GetEcoMetalIncome() const;
 	float GetAvgEnergyIncome() const { return energyIncome; }
 	float GetEcoFactor() const { return ecoFactor; }
 	float GetPullMtoS() const { return pullMtoS; }
@@ -265,6 +268,7 @@ private:
 	std::vector<std::pair<float, float>> mspIncomeCurve;
 	std::vector<std::pair<float, float>> mspArmyCurve;
 	int mspArmyFrame;
+	float mspArmyHalfLife;  // frames; 0 = enemies out of sight never fade
 	float mspIncomeMult;
 	float mspArmyMult;
 	int mspLogFrame;  // next periodic MS_PULL log line

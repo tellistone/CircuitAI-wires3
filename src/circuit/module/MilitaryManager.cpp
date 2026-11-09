@@ -2537,10 +2537,7 @@ void CMilitaryManager::UpdateResponseGates()
 	const float income = std::min(economyMgr->GetAvgMetalIncome(), energyIncome) * economyMgr->GetEcoFactor();
 	// unlock_after reads the same without reclaim (a wreck field must not unlock a role for good): our share of the
 	// ally team's mex, overdrive and constructor metal, from ZK's overdrive gadget; total income without it
-	Team* team = circuit->GetTeam();
-	const float odBase = team->GetRulesParamFloat("OD_metalBase", -1.f);
-	const float ecoMetal = (odBase < 0.f) ? economyMgr->GetAvgMetalIncome()
-			: odBase + team->GetRulesParamFloat("OD_metalOverdrive", 0.f) + team->GetRulesParamFloat("OD_metalMisc", 0.f);
+	const float ecoMetal = economyMgr->GetEcoMetalIncome();
 	const float unlockIncome = std::min(ecoMetal, energyIncome) * economyMgr->GetEcoFactor();
 	const int frame = circuit->GetLastFrame();
 
@@ -2676,10 +2673,15 @@ float CMilitaryManager::ClampMobileCostRatio() const
 	return (enemyMobileCost > armyCost) ? (armyCost / enemyMobileCost) : 1.f;
 }
 
-float CMilitaryManager::GetArmyThreatRatio() const
+float CMilitaryManager::GetEnemyArmyRatio(float halfLife) const
 {
-	const float enemyPerTeam = GetEnemyThreatPerTeam();
-	return (enemyPerTeam > 0.f) ? armyThreat / enemyPerTeam : -1.f;
+	const float enemyPerTeam = circuit->GetEnemyManager()->GetMobileThreatNoCommFaded(circuit->GetLastFrame(), halfLife)
+			/ std::max(circuit->GetEnemyTeamSize(), 1);
+	if (enemyPerTeam <= 0.f) {
+		return -1.f;
+	}
+	// No army of ours: the enemy's counts as far ahead (the curve's last point)
+	return (armyThreat > 0.f) ? enemyPerTeam / armyThreat : std::numeric_limits<float>::max();
 }
 
 float CMilitaryManager::GetEnemyThreatPerTeam() const

@@ -221,9 +221,10 @@ public:
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
 	void DiceBigGun();
 	float ClampMobileCostRatio() const;
-	// Our army's threat against the known enemy mobile threat per enemy team (commanders on neither side), as
-	// quota.attack_threat_floor judges it; negative while no enemy army is known
-	float GetArmyThreatRatio() const;
+	// Known enemy mobile threat per enemy team over our army's threat (commanders on neither side; the sides as
+	// quota.attack_threat_floor counts them), enemies out of radar and LOS fading by half every halfLife frames
+	// (EnemyManager::GetMobileThreatNoCommFaded); negative while no enemy army is known. Walks all known enemies
+	float GetEnemyArmyRatio(float halfLife) const;
 	void UpdateDefenceTasks();
 	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without
 	// crossing threat it couldn't take, divided by the number of enemy players: the mex bonus of each quota
