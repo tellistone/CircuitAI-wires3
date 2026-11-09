@@ -138,6 +138,9 @@ private:
 	ISquadTask* GetAttackMergeTask();
 	// Straight line from our leader to the host's: threat below our allowance, both groups' strength near the host
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
+	// We may merge into host now (the join and absorb checks): a group walking over in line to a host that stands in
+	// line merges once the lines meet, its own line stands, or after quota.attack_merge.travel_sec; otherwise at once
+	bool IsReadyToJoin(const CAttackTask* host, int frame);
 	void AbsorbWeakerTasks();
 	CAttackTask* GetReinforceSquad();
 	void Reinforce(const int frame, bool isReuse);
@@ -337,6 +340,9 @@ private:
 	CAttackTask* reinforce;  // stronger group to join; validated through CMilitaryManager::GetTasks before use
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
+	const CAttackTask* joinHost = nullptr;  // IsReadyToJoin: the host we walk over to before merging (compared only)
+	int joinWaitFrame = 0;  // since when we could have merged into it
+	int joinCheckFrame = 0;  // its last check: after a gap of JOIN_RESTART_FRAMES the wait starts again
 	bool isDecisionReuse;  // the last decision's isReuse, for the fallbacks of its target route
 	int rallyRouteFrame;  // rally: our last route to the host came back empty, hold until this frame
 	springai::AIFloat3 meetFailPos;  // rally: the host's meeting point our last route to came back empty

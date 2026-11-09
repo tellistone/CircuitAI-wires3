@@ -585,13 +585,16 @@ ISquadTask* CAttackTask::GetAttackMergeTask()
 	// Not while fighting: walking off to another group would leave a fight we accepted (absorbing skips us too)
 	// A group walking to another (reinforce: a small group, an army merging (SeekMerge), a rally joiner) checks every
 	// update, so the merge fires as soon as it gets there, before a group on the move walks out of reach again.
+	// Walking over in line to a group that stands in line, it gets there when the lines meet (IsReadyToJoin).
 	// During a rally (quota.attack_merge.rally) the host and joiners not walking check at the small-group interval.
 	// The rally is looked up only on updates where either interval falls
 	if (IsFighting()) {
 		return nullptr;
 	}
 	if (reinforce != nullptr) {
-		return CheckMergeTask();
+		ISquadTask* task = CheckMergeTask();
+		const int frame = manager->GetCircuit()->GetLastFrame();
+		return ((task != nullptr) && IsReadyToJoin(static_cast<CAttackTask*>(task), frame)) ? task : nullptr;
 	}
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
 	const CMilitaryManager::SAttackMerge& cfg = militaryMgr->GetAttackMerge();  // quota.attack_merge.join_interval
@@ -628,6 +631,33 @@ bool CAttackTask::IsSafeMergeLine(const ISquadTask* host) const
 	});
 }
 
+bool CAttackTask::IsReadyToJoin(const CAttackTask* host, int frame)
+{
+	// A group walking over in line merges once it has got there, so its units take a short step into the host's slots
+	// rather than run in from up to the merge distance: its line and the host's meet (the leaders within both depths +
+	// JOIN_GAP), or its own line stands (as close as its route takes it: reinforce_range), or after travel_sec.
+	// At once, as before: no line of ours, not walking to that host (a group passing by), or the host not standing in
+	// line (walking, fighting, or no line: merging at once keeps a host on the move from walking out of reach)
+	const CFormation* line = GetFormation();
+	const CFormation* hostLine = host->GetFormation();
+	if ((line == nullptr) || (reinforce != host) || line->IsStanding()
+		|| (hostLine == nullptr) || !hostLine->IsStanding())
+	{
+		return true;
+	}
+	const float joinDist = line->GetDepth() + hostLine->GetDepth() + JOIN_GAP;
+	if (leader->GetPos(frame).SqDistance2D(host->GetLeaderPos(frame)) < SQUARE(joinDist)) {
+		return true;
+	}
+	// The wait runs from the first check that found the host in reach; a gap between checks starts it again
+	if ((joinHost != host) || (frame > joinCheckFrame + JOIN_RESTART_FRAMES)) {
+		joinHost = host;
+		joinWaitFrame = frame;
+	}
+	joinCheckFrame = frame;
+	return frame >= joinWaitFrame + int(GetMilitaryMgr()->GetAttackMerge().travelSec * FRAMES_PER_SEC);
+}
+
 void CAttackTask::AbsorbWeakerTasks()
 {
 	// Every quota.attack_merge.absorb_interval (8) updates, a group pulls in groups near it: an army those under
@@ -660,7 +690,8 @@ void CAttackTask::AbsorbWeakerTasks()
 			|| !CanAssignTo(candyLeader)
 			|| candy->IsFighting()  // let it finish its fight (it doesn't join either)
 			|| !terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)
-			|| !candy->IsSafeMergeLine(this))
+			|| !candy->IsSafeMergeLine(this)
+			|| !candy->IsReadyToJoin(this, circuit->GetLastFrame()))  // last: it counts the wait
 		{
 			continue;
 		}
