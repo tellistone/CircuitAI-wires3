@@ -1,6 +1,21 @@
 // Mono-space font required
 {
-// Build special units when enemy_metal*ratio > response_metal*eps; eps=teamSize*eps_step+(1-eps_step)
+// Build special units when enemy_metal*ratio*income_mult > response_metal*eps
+//   eps = 1 + (teamSize-1)*eps_step, floored at 0.1 (eps_step default 1.0 = teamSize). 1v1 is always 1.
+//   Bigger eps = less response. enemy_metal is the whole enemy team, response_metal this AI's own, so eps_step 1 =
+//   each AI answers its 1/teamSize share; > 1 = less than its share, < 1 or negative = more
+//
+// Optional per role (all off when missing):
+//   "income_curve": [[income, mult], ...]  scales the amount of the role wanted (income_mult above), linear between
+//       points, first/last value outside them. 0 = no response at that income (tier weights may still pick it)
+//   "territory_max": 0.6  not built while ally mexes / map spots > this
+//   "unlock_after": {"income": 25, "territory": 0.3}  locked until both are exceeded at once, then unlocked for good.
+//       A missing or 0 field counts as met
+//   territory_max and unlock_after keep the role out of the response roll and the factory's tier-weight roll (unless
+//   they would leave the factory nothing to build). Changes must hold ~6 s (3 samples, 2 s apart).
+//   Income = min(metal, energy) income * economy ecoFactor (the economy.json eps_step), as factory.json income_tier.
+//   Gate luxury roles (artillery, heavy, super, transport), not counters (anti_air, riot, anti_heavy): a gate on a
+//   counter stops it when the AI is behind and needs it most
 // AA condition for 3v3: (enemy_air_metal*0.67 > (aa_metal+aa_cost)*1.12) and (aa_metal+aa_cost < army_metal*0.5)
 //
 // Probability of UnitDef for AA role depends on income tier: (tierN[UnitDef]+_weight_)*enemy_air_metal/aa_metal*importance

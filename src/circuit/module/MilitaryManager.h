@@ -19,6 +19,10 @@
 #include <set>
 #include <unordered_map>
 
+namespace Json {
+class Value;
+}
+
 namespace circuit {
 
 class CGameTask;
@@ -40,6 +44,9 @@ public:
 
 private:
 	void ReadConfig();
+	// [[x, multiplier], ...] config curve (quota.*_map_size, response.<role>.income_curve) for utils::eval_curve
+	void ReadCurve(const Json::Value& value, const std::string& key, const char* xName,
+			std::vector<std::pair<float, float>>& curve) const;
 	void Init();
 public:
 	void Release();
@@ -207,6 +214,9 @@ public:
 	float GetArmyCost() const { return armyCost; }
 	const std::set<CCircuitUnit*>& GetArmy() const { return army; }
 	float RoleProbability(const CCircuitDef* cdef) const;
+	// The main role's response gates (response.<role>.territory_max, unlock_after) let it be built now: false keeps it
+	// out of both the response roll and the factory's tier-weight roll. Updated every 2 s by UpdateResponseGates
+	bool IsRoleAllowed(const CCircuitDef* cdef) const;
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
 	void DiceBigGun();
@@ -386,6 +396,8 @@ private:
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
+	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
+	void UpdateResponseGates();
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
 	struct SRally {
 		SRallyCfg cfg;
@@ -477,6 +489,19 @@ private:
 		float maxPerc;
 		float factor;
 		std::set<CCircuitUnit*> units;
+		std::string name;  // response.<name>, for logs
+		// Response gates (UpdateResponseGates). Share = finished ally mexes / map spots; income = factory income_tier
+		// measure, min(metal, energy) * economy ecoFactor
+		float territoryMax = 1.f;  // not built while share > this; 1 = off
+		float unlockIncome = 0.f;  // unlock_after.income: one-off, income must exceed it (0 = met)
+		float unlockTerritory = 0.f;  // unlock_after.territory: one-off, share must exceed it (0 = met)
+		bool isUnlocked = true;  // false until unlock_after is met (held RESPONSE_HOLD samples), then for good
+		bool isAllowed = true;  // unlocked and within territory_max, debounced
+		int unlockHold = 0;  // consecutive samples unlock_after held
+		int flipHold = 0;  // consecutive samples the wanted isAllowed differed from the current one
+		std::vector<std::pair<float, float>> incomeCurve;  // income_curve: [income, multiplier] points; empty = 1
+		float incomeMult = 1.f;  // incomeCurve at the last sample: scales the response amount
+		bool HasGates() const { return (territoryMax < 1.f) || !isUnlocked; }
 		struct SVsInfo {
 			SVsInfo(CCircuitDef::RoleT t, float r, float i) : role(t), ratio(r), importance(i) {}
 			CCircuitDef::RoleT role;
@@ -486,6 +511,8 @@ private:
 		std::vector<SVsInfo> vs;
 	};
 	std::vector<SRoleInfo> roleInfos;
+	bool isResponseGates = false;  // some role has a gate or an income curve: UpdateResponseGates runs
+	int responseSamples = 0;  // UpdateResponseGates calls so far (first sets the gates directly, every 30th logs)
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;

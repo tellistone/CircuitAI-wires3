@@ -56,6 +56,9 @@ namespace circuit {
 
 using namespace springai;
 
+#define RESPONSE_EPS_MIN	0.1f  // response eps floor
+#define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
+
 CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
 		, fightIterator(0)
@@ -307,6 +310,28 @@ CMilitaryManager::~CMilitaryManager()
 	}
 }
 
+void CMilitaryManager::ReadCurve(const Json::Value& value, const std::string& key, const char* xName,
+		std::vector<std::pair<float, float>>& curve) const
+{
+	// [[x, multiplier >= 0], ...], sorted by x; bad points are logged and skipped; missing = empty
+	if (value.isNull()) {
+		return;
+	}
+	const std::string& cfgName = circuit->GetSetupManager()->GetConfigName();
+	if (!value.isArray()) {
+		circuit->LOG("CONFIG %s: %s must be a list of [<%s>, <multiplier>] points", cfgName.c_str(), key.c_str(), xName);
+		return;
+	}
+	for (const Json::Value& pt : value) {
+		if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
+			circuit->LOG("CONFIG %s: %s points must be [<%s>, <multiplier >= 0>]", cfgName.c_str(), key.c_str(), xName);
+			continue;
+		}
+		curve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
+	}
+	std::sort(curve.begin(), curve.end());
+}
+
 void CMilitaryManager::ReadConfig()
 {
 	const Json::Value& root = circuit->GetSetupManager()->GetConfig();
@@ -316,9 +341,11 @@ void CMilitaryManager::ReadConfig()
 	const Json::Value& responses = root["response"];
 	const float teamSize = circuit->GetAllyTeam()->GetSize();
 	roleInfos.resize(roleNames.size(), {.0f});
+	isResponseGates = false;
 	for (const auto& pair : roleNames) {
 		SRoleInfo& info = roleInfos[pair.second.type];
 		const Json::Value& response = responses[pair.first];
+		info.name = pair.first;
 
 		if (response.isNull()) {
 			info.maxPerc = 1.0f;
@@ -327,8 +354,50 @@ void CMilitaryManager::ReadConfig()
 		}
 
 		info.maxPerc = response.get("max_percent", 1.0f).asFloat();
+		// eps = 1 + (teamSize - 1) * eps_step. Enemy metal is the whole enemy team's, our role metal this AI's own:
+		// eps_step 1 = each AI answers its 1/teamSize share, > 1 less, < 1 (or negative) more. Floored: at 0 one
+		// sighting would let the role grow to max_percent whatever the enemy amount
 		const float step = response.get("eps_step", 1.0f).asFloat();
 		info.factor  = (teamSize - 1.0f) * step + 1.0f;
+		if (info.factor < RESPONSE_EPS_MIN) {
+			circuit->LOG("CONFIG %s: response.%s eps %g clamped to %g (teamSize %g, eps_step %g)", cfgName.c_str(),
+					pair.first.c_str(), info.factor, RESPONSE_EPS_MIN, teamSize, step);
+			info.factor = RESPONSE_EPS_MIN;
+		}
+
+		// Number in [lo, hi] or the default, logged
+		auto readFrac = [&](const Json::Value& v, const std::string& key, float def, float lo, float hi) {
+			if (v.isNull()) {
+				return def;
+			}
+			if (!v.isNumeric()) {
+				circuit->LOG("CONFIG %s: response.%s.%s must be a number, using %g", cfgName.c_str(), pair.first.c_str(), key.c_str(), def);
+				return def;
+			}
+			const float val = v.asFloat();
+			const float clamped = utils::clamp(val, lo, hi);
+			if (clamped != val) {
+				circuit->LOG("CONFIG %s: response.%s.%s %g clamped to %g", cfgName.c_str(), pair.first.c_str(), key.c_str(), val, clamped);
+			}
+			return clamped;
+		};
+		info.territoryMax = readFrac(response["territory_max"], "territory_max", 1.f, 0.f, 1.f);
+		const Json::Value& unlock = response["unlock_after"];
+		if (!unlock.isNull()) {
+			if (!unlock.isObject()) {
+				circuit->LOG("CONFIG %s: response.%s.unlock_after must be an object {income, territory}, ignored", cfgName.c_str(), pair.first.c_str());
+			} else {
+				info.unlockIncome = readFrac(unlock["income"], "unlock_after.income", 0.f, 0.f, std::numeric_limits<float>::max());
+				info.unlockTerritory = readFrac(unlock["territory"], "unlock_after.territory", 0.f, 0.f, 1.f);
+				info.isUnlocked = false;
+				info.isAllowed = false;  // until the first UpdateResponseGates
+			}
+		}
+		info.incomeCurve.clear();
+		ReadCurve(response["income_curve"], "response." + pair.first + ".income_curve", "income", info.incomeCurve);
+		if (info.HasGates() || !info.incomeCurve.empty()) {
+			isResponseGates = true;
+		}
 
 		const Json::Value& vs = response["vs"];
 		const Json::Value& ratio = response["ratio"];
@@ -369,18 +438,7 @@ void CMilitaryManager::ReadConfig()
 				curve = def;
 				return;
 			}
-			if (!qmap.isArray()) {
-				circuit->LOG("CONFIG %s: quota.%s must be a list of [<map size>, <multiplier>] points", cfgName.c_str(), key.c_str());
-				return;
-			}
-			for (const Json::Value& pt : qmap) {
-				if (!pt.isArray() || (pt.size() < 2) || !pt[0].isNumeric() || !pt[1].isNumeric() || (pt[1].asFloat() < 0.f)) {
-					circuit->LOG("CONFIG %s: quota.%s points must be [<map size>, <multiplier >= 0>]", cfgName.c_str(), key.c_str());
-					continue;
-				}
-				curve.push_back(std::make_pair(pt[0].asFloat(), pt[1].asFloat()));
-			}
-			std::sort(curve.begin(), curve.end());
+			ReadCurve(qmap, "quota." + key, "map size", curve);
 		};
 		auto readQuota = [&](const std::string& name, SUnitQuota& q, float defMin, float defPerMex, float defMax,
 				const MapCurve& defCurve) {
@@ -993,6 +1051,9 @@ void CMilitaryManager::Init()
 		}
 		if (drownedFrames >= 0) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDrowned, this), FRAMES_PER_SEC, offset + 2);
+		}
+		if (isResponseGates) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResponseGates, this), FRAMES_PER_SEC * 2, offset + 3);
 		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
@@ -2452,17 +2513,94 @@ void CMilitaryManager::DelResponse(CCircuitUnit* unit)
 	}
 }
 
+bool CMilitaryManager::IsRoleAllowed(const CCircuitDef* cdef) const
+{
+	return roleInfos[cdef->GetMainRole()].isAllowed;
+}
+
+void CMilitaryManager::UpdateResponseGates()
+{
+	// Territory share: finished ally mexes over all map spots (no spots, e.g. a metal map: territory checks pass)
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	metalMgr->MarkAllyMexes();
+	const int spotCount = metalMgr->GetSpots().size();
+	const bool isTerritory = (spotCount > 0);
+	const float share = isTerritory ? (float)metalMgr->GetMexCount() / spotCount : 0.f;
+	// Income as factory income_tier reads it: economy eps_step (ecoFactor) included
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const float income = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome()) * economyMgr->GetEcoFactor();
+	const int frame = circuit->GetLastFrame();
+	const bool isFirst = (responseSamples == 0);
+
+	for (SRoleInfo& info : roleInfos) {
+		info.incomeMult = utils::eval_curve(info.incomeCurve, income);
+
+		// unlock_after: one-off, both exceeded on RESPONSE_HOLD samples in a row (not a reclaim or transfer spike)
+		if (!info.isUnlocked) {
+			const bool isIncome = (info.unlockIncome <= 0.f) || (income > info.unlockIncome);
+			const bool isShare = !isTerritory || (info.unlockTerritory <= 0.f) || (share > info.unlockTerritory);
+			info.unlockHold = (isIncome && isShare) ? info.unlockHold + 1 : 0;
+			if (info.unlockHold >= RESPONSE_HOLD) {
+				info.isUnlocked = true;
+				circuit->LOG("RESPONSE: %s unlocked at frame %i (income %.1f > %.1f, territory %.2f > %.2f)",
+						info.name.c_str(), frame, income, info.unlockIncome, share, info.unlockTerritory);
+			}
+		}
+
+		// Live gate, debounced: the wanted state must hold RESPONSE_HOLD samples (raids, rebuilt mexes); the first
+		// sample and an unlock (held already) set it straight away
+		const bool isWant = info.isUnlocked && (!isTerritory || (share <= info.territoryMax));
+		if (isWant == info.isAllowed) {
+			info.flipHold = 0;
+			continue;
+		}
+		const bool isJustUnlocked = isWant && (info.unlockHold >= RESPONSE_HOLD);
+		if (isFirst || isJustUnlocked || (++info.flipHold >= RESPONSE_HOLD)) {
+			info.isAllowed = isWant;
+			info.flipHold = 0;
+			if (!isFirst && !isJustUnlocked) {
+				circuit->LOG("RESPONSE: %s %s at frame %i (territory %.2f, max %.2f)", info.name.c_str(),
+						isWant ? "reopened" : "closed", frame, share, info.territoryMax);
+			}
+		}
+	}
+	for (SRoleInfo& info : roleInfos) {
+		if (info.isUnlocked) {
+			info.unlockHold = 0;  // isJustUnlocked only on the unlocking sample
+		}
+	}
+
+	// Once a minute, for tuning thresholds against real games
+	if (responseSamples % 30 == 0) {
+		std::string locked, closed;
+		for (const SRoleInfo& info : roleInfos) {
+			if (!info.isUnlocked) {
+				locked += " " + info.name;
+			} else if (!info.isAllowed) {
+				closed += " " + info.name;
+			}
+		}
+		circuit->LOG("RESPONSE: frame %i share %.2f (%i / %i) income %.1f locked [%s ] closed [%s ]", frame, share,
+				metalMgr->GetMexCount(), spotCount, income, locked.c_str(), closed.c_str());
+	}
+	++responseSamples;
+}
+
 float CMilitaryManager::RoleProbability(const CCircuitDef* cdef) const
 {
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	const SRoleInfo& info = roleInfos[cdef->GetMainRole()];
+	if (!info.isAllowed) {
+		return 0.f;
+	}
 	float maxProb = 0.f;
 	for (const SRoleInfo::SVsInfo& vs : info.vs) {
 		const float enemyMetal = enemyMgr->GetEnemyCost(vs.role);
 		const float nextMetal = info.cost + cdef->GetCostM();
 		const float prob = enemyMetal / (info.cost + 1.f) * vs.importance;
+		// income_curve scales the amount wanted (not the roll weight); max_percent still caps it
 		if ((prob > maxProb) &&
-			(enemyMetal * vs.ratio >= nextMetal * info.factor) &&
+			(enemyMetal * vs.ratio * info.incomeMult >= nextMetal * info.factor) &&
 			(nextMetal <= (armyCost + cdef->GetCostM()) * info.maxPerc))
 		{
 			maxProb = prob;

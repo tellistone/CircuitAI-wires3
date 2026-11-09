@@ -275,7 +275,9 @@ void CMetalManager::MarkAllyMexes()
 //	tmpMexes.reserve(friendlies.size());
 	for (auto& kv : friendlies) {
 		CAllyUnit* unit = kv.second;
-		if (unit->GetCircuitDef()->IsMex()) {
+		// Finished only, as CEnergyGrid::Update marks them: both write markedMexes, so the count must not depend on
+		// which ran last
+		if (unit->GetCircuitDef()->IsMex() && !unit->GetUnit()->IsBeingBuilt()) {
 			tmpMexes.push_back(unit);
 		}
 	}
