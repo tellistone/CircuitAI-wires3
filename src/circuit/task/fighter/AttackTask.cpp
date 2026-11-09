@@ -1593,6 +1593,9 @@ void CAttackTask::FindTarget()
 	size_t targetCount = 0;  // goals are counted by target: a cell target may bring several cells
 	for (const SCandidate& c : candidates) {
 		const ICoreUnit::Id id = c.enemy->GetId();
+		if (IsBanned(heldBans, id, frame)) {
+			continue;  // the whole group held off it last time (no safe firing spot): something else for a while
+		}
 		const AIFloat3& rangePos = c.rangePos;  // a radar-only parked mobile's spot (GetRangePos)
 		const bool isPrev = (id == prevTargetId);
 		const bool isInRange = (rangePos.SqDistance2D(pos) < sqHighestRange);
@@ -1623,7 +1626,7 @@ void CAttackTask::FindTarget()
 		// could shoot it from is too hot
 		cells.clear();
 		if (c.hasAnchor && !isInRange && (cellChecks < MAX_CELL_CHECKS)) {
-			if (IsCellBanned(id, frame)) {
+			if (IsBanned(cellBans, id, frame)) {
 				continue;
 			}
 			++cellChecks;
@@ -2158,6 +2161,11 @@ void CAttackTask::Engage(int frame)
 {
 	engageFrame = frame;  // IsRallyFighting
 	Attack(frame);
+	// Every unit holds off the target (no safe firing spot) while out of its range: the next pick passes on it
+	// (6, 12, 24 s, as cell bans) instead of the group standing still. Not while banned: no level-up from a re-check
+	if ((target != nullptr) && IsAllHolding() && !IsBanned(heldBans, target->GetId(), frame)) {
+		Ban(heldBans, target, -1, frame);
+	}
 	// Stragglers (IsOutOfReach) got no attack order. One without an active path (e.g. it merged in while we were
 	// engaged: it took the leader's waiting travel state) would idle where it is: walk it to the leader, along the
 	// line the merge check judged safe, rather than straight to a firing spot next to the enemy

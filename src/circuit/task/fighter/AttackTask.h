@@ -239,10 +239,12 @@ private:
 	// The cell the last accepted route to this target led to (lastRoute), while the target keeps that route's
 	// anchor, its side isn't rejected and it is below the allowance for strength (the caller's: the keep allowance)
 	bool GetPlannedCell(ICoreUnit::Id targetId, float strength, float refSqDist, springai::AIFloat3& outCell) const;
-	bool IsCellBanned(ICoreUnit::Id id, int frame) const;
-	void BanCell(const CEnemyInfo* enemy, int epoch, int frame);
-	// Drops bans whose target died or lost its anchor, whose threat changed by more than 25%, or that started over
-	// 60 s ago
+	using Bans = std::map<ICoreUnit::Id, SCellBan>;
+	static bool IsBanned(const Bans& bans, ICoreUnit::Id id, int frame);
+	// Ban for 6 s, longer (12, 24 s) when banned again with nothing changed. epoch < 0: not tied to an anchor
+	void Ban(Bans& bans, const CEnemyInfo* enemy, int epoch, int frame);
+	// Drops bans whose target died or lost its anchor (cell bans), whose threat changed by more than 25%, or that
+	// started over 60 s ago
 	void UpdateCellBans(int frame);
 
 	bool IsOnEnemyGround() const;  // influence at the leader < 0
@@ -367,7 +369,8 @@ private:
 	std::vector<STargetGoal> screenedGoals;  // FindTarget: all screened targets before stickiness trims them (retry goals)
 	// (target, sector; -1: the whole target) dropped for an unsafe route approach -> skip until frame
 	std::map<std::pair<ICoreUnit::Id, int>, SRejection> rejectedUntil;
-	std::map<ICoreUnit::Id, SCellBan> cellBans;  // cell targets with no safe firing cell (beyond LOS range only)
+	Bans cellBans;  // cell targets with no safe firing cell (beyond LOS range only)
+	Bans heldBans;  // targets the whole group held off from (IsAllHolding: no safe firing spot), in range or not
 	// Power-weighted median of the weapon ranges of the non-support units that can hit land / under-water targets
 	float fireRangeLand;
 	float fireRangeWater;

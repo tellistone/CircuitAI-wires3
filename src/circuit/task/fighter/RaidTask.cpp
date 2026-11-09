@@ -903,26 +903,6 @@ void CRaidTask::AttackDirect(int frame)
 	}
 }
 
-bool CRaidTask::IsAllHolding() const
-{
-	// HOLD (IFighterTask::Attack): ranged unit ordered on this target without a firing spot
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	int ranged = 0;
-	for (CCircuitUnit* unit : units) {
-		const float range = GetFireRange(unit);
-		if (unit->GetCircuitDef()->IsAttrMelee() || (range < SQUARE_SIZE * 4)) {
-			continue;
-		}
-		++ranged;
-		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())
-			|| (unit->GetPos(frame).SqDistance2D(target->GetPos()) <= SQUARE(range)))
-		{
-			return false;  // has a spot, or can already shoot it
-		}
-	}
-	return ranged > 0;
-}
-
 void CRaidTask::SendPendingFight(int frame)
 {
 	isFightPending = false;
