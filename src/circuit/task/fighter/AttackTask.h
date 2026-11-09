@@ -149,6 +149,9 @@ private:
 	// How far behind its line's front row our leader may stand (the line's depth; 0 with no line). A route's end is
 	// where the front row stands, but merging is judged at the leader
 	float GetLineDepth() const;
+	// How far behind its line's front row our leader stands (its row's offset; 0 in the front row, or with no line).
+	// A target route's end is where the front row stands, but the engage check is at the leader (EngageInRange)
+	float GetLeaderLineOffset() const;
 	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES
 	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range, float strength,
 			std::function<void (const CQueryPathSingle*)>&& onComplete);
