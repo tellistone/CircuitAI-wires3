@@ -31,6 +31,17 @@
 #include "AISCommands.h"
 
 #define MOVING_SPEED	0.5f  // elmos per frame: a target faster than this counts as moving (no firing spots)
+// quota.raid_rally joiners
+#define CHASE_TRAVEL_SEC	30.f  // chase a bigger group only within this many seconds of straight travel...
+#define CHASE_KEEP_SEC	36.f  // ...and keep chasing it out to this (no flip-flop at the edge)
+#define CHASE_PATH_RANGE	300.f  // the chase route ends this near the group's leader (merging needs 1000)
+#define CHASE_ROUTE_FRAMES	(FRAMES_PER_SEC * 6)  // a chase route is kept this long...
+#define CHASE_ROUTE_SLACK	0.1f  // ...while the chased leader moved less than this share of the way...
+#define CHASE_ROUTE_SLACK_MIN	200.f  // ...or than this many elmos (near the end 10% is a few elmos)
+#define CHASE_FAILS	3  // empty chase routes in a row before...
+#define CHASE_RETRY_FRAMES	(FRAMES_PER_SEC * 15)  // ...raiding normally for this long
+#define CHASE_NEAR_MOVE	100.f  // beside the chased group: the Fight order is re-sent once its leader moved this far...
+#define CHASE_NEAR_FRAMES	(FRAMES_PER_SEC * 3)  // ...or this long after the last one
 
 namespace circuit {
 
@@ -38,6 +49,15 @@ using namespace springai;
 
 CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		: ISquadTask(mgr, FightType::RAID, powerMod)
+		, chaseTask(nullptr)
+		, chaseFails(0)
+		, chaseRetryFrame(-FRAMES_PER_SEC * 60)
+		, isChaseSkip(false)
+		, chaseRouteFrame(-FRAMES_PER_SEC * 60)
+		, chaseGoal(-RgtVector)
+		, isChaseDest(false)
+		, nearFightFrame(-FRAMES_PER_SEC * 60)
+		, nearFightPos(-RgtVector)
 		, maxPower(maxPower)
 		, fleeFrame(0)
 		, fleePathFrame(0)
@@ -63,21 +83,104 @@ CRaidTask::~CRaidTask()
 {
 }
 
+CMilitaryManager* CRaidTask::GetMilitaryMgr() const
+{
+	return static_cast<CMilitaryManager*>(manager);
+}
+
 bool CRaidTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!unit->GetCircuitDef()->IsRoleRaider() ||
-		(unit->GetCircuitDef() != leader->GetCircuitDef()))
-	{
-		return false;
-	}
-	if (attackPower > maxPower) {
-		return false;
-	}
+	// Distance first: during a raid rally every group checks every other one every 2 updates, and most are far
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
 		return false;
 	}
-	return true;
+	CCircuitDef* udef = unit->GetCircuitDef();
+	if (!udef->IsRoleRaider()) {
+		return false;
+	}
+	// Our type only; during a raid rally (quota.raid_rally) any raider that moves like us. A group of our type that
+	// is mixed since a rally must still have all its speeds within the ratio of ours
+	if ((udef != leader->GetCircuitDef())
+		? ((GetMilitaryMgr()->GetRaidRallyHost() == nullptr) || !IsRallyCompatible(unit))
+		: !IsSpeedSpreadOk(unit))
+	{
+		return false;
+	}
+	return HasRoom();
+}
+
+bool CRaidTask::IsRallyCompatible(CCircuitUnit* unit) const
+{
+	const CCircuitDef* udef = unit->GetCircuitDef();
+	const float speedRatio = GetMilitaryMgr()->GetAttackMerge().speedRatio;  // quota.attack_merge.speed_ratio
+	if (!udef->IsRoleRaider() || udef->IsAbleToFly() || !IsMoveCompatible(unit, speedRatio)) {
+		return false;
+	}
+	return IsSpeedSpreadOk(unit);
+}
+
+bool CRaidTask::IsSpeedSpreadOk(CCircuitUnit* unit) const
+{
+	// Leading a raid group: all its units' speeds and ours within the ratio, not only the leaders' (merges in a chain
+	// would otherwise widen the spread a step at a time). Groups of one type always pass
+	const CCircuitDef* udef = unit->GetCircuitDef();
+	const float speedRatio = GetMilitaryMgr()->GetAttackMerge().speedRatio;  // quota.attack_merge.speed_ratio
+	float slowest = udef->GetSpeed();
+	float fastest = slowest;
+	IUnitTask* task = unit->GetTask();
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+		&& (static_cast<IFighterTask*>(task)->GetFightType() == FightType::RAID))
+	{
+		const CRaidTask* group = static_cast<const CRaidTask*>(task);
+		if (group->GetLeader() == unit) {
+			slowest = group->lowestSpeed;
+			fastest = group->highestSpeed;
+		}
+	}
+	return std::max(fastest, highestSpeed) <= std::min(slowest, lowestSpeed) * speedRatio;
+}
+
+bool CRaidTask::HasRoom() const
+{
+	if (attackPower <= maxPower) {
+		return true;
+	}
+	// A raid rally lets the group grow until its strength reaches the rally's goal, the measure the rally ends on
+	const float goal = GetMilitaryMgr()->GetRaidRallyGoal();  // 0 without a rally
+	return GetRallyStrength() * GetCountPowerMod() < goal;
+}
+
+bool CRaidTask::IsInRally() const
+{
+	const CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	const CRaidTask* host = militaryMgr->GetRaidRallyHost();
+	return (host != nullptr) && ((host == this) || militaryMgr->IsRaidRallyJoiner(this));
+}
+
+ISquadTask* CRaidTask::GetRaidMergeTask()
+{
+	// GetMergeTask runs on updates where updCount % 32 == 1, which are among these
+	if ((updCount % 2 == 1) && IsInRally()) {
+		return CheckMergeTask();
+	}
+	return GetMergeTask();
+}
+
+bool CRaidTask::IsSafeMergeLine(const ISquadTask* host) const
+{
+	if (!IsInRally()) {
+		return ISquadTask::IsSafeMergeLine(host);
+	}
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const float safeThreat = GetSafeThreat();
+	return IsLineSafe(leader->GetPos(frame), host->GetLeaderPos(frame), std::numeric_limits<float>::max(),
+			[this, safeThreat](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat); });
+}
+
+float CRaidTask::GetPathThreatMod() const
+{
+	return IsCautious(manager->GetCircuit()->GetLastFrame()) ? 0.75f : 1.f;
 }
 
 void CRaidTask::AssignTo(CCircuitUnit* unit)
@@ -128,7 +231,7 @@ void CRaidTask::Update()
 	/*
 	 * Merge tasks if possible
 	 */
-	ISquadTask* task = GetMergeTask();
+	ISquadTask* task = GetRaidMergeTask();
 	if (task != nullptr) {
 		task->Merge(this);
 		units.clear();
@@ -198,6 +301,17 @@ void CRaidTask::Update()
 	 * Update target
 	 */
 	const bool isTargetsFound = FindTarget();
+	// Raid rally joiner: with no target in range (FindTarget picks only those) and no enemy at our base to defend,
+	// head for the bigger group
+	if ((target == nullptr) && urgentPositions.empty()) {
+		const CRaidTask* chase = UpdateChase(frame);
+		if (chase != nullptr) {
+			state = State::ROAM;
+			Chase(frame, chase);
+			return;
+		}
+	}
+	nearFightPos = -RgtVector;  // not staying beside a chased group: other orders follow
 
 	state = State::ROAM;
 	if (target != nullptr) {
@@ -323,8 +437,7 @@ bool CRaidTask::FindTarget()
 	const float sqOutrangeSpeed = SQUARE(highestSpeed * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
 	// Current health, same measure as the escape check; for 4s after an escape demand a 25% margin,
 	// so the group doesn't pick a target at the edge of the danger it just left and bounce back and forth
-	const bool isCautious = (circuit->GetLastFrame() < fleeFrame + FRAMES_PER_SEC * 4);
-	const float maxPower = GetSafeThreat() * (isCautious ? 0.75f : 1.f);
+	const float maxPower = GetSafeThreat() * (IsCautious(circuit->GetLastFrame()) ? 0.75f : 1.f);
 	const float weaponRange = cdef->GetMaxRange();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
@@ -516,7 +629,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	contested.clear();
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
 	if (isContestedAllowed) {
-		const float cautionMod = (frame < fleeFrame + FRAMES_PER_SEC * 4) ? 0.75f : 1.f;  // same as FindTarget
+		const float cautionMod = IsCautious(frame) ? 0.75f : 1.f;  // same as FindTarget
 		militaryMgr->GetTakeableContested(leader, highestRange,
 				[this, safeThreat, cautionMod](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
 				contested);
@@ -530,8 +643,10 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 			bestContested = &c;
 		}
 	}
-	// A contested destination from before is dropped too when contested ones aren't allowed now
-	const bool mustRepick = !isContestedAllowed && isContestedDest;
+	// A contested destination from before is dropped too when contested ones aren't allowed now, and so is a raid
+	// rally chase goal (where a group's leader was)
+	const bool mustRepick = (!isContestedAllowed && isContestedDest) || isChaseDest;
+	isChaseDest = false;
 	isContestedDest = (bestContested != nullptr);
 	const bool isDanger = (safeThreat / GetThrDistModAt(threatPos) <= GetTaskThreatAt(leader, threatPos));
 	// quota.raider_spot: roam between scored spots instead of the shared mex list
@@ -643,6 +758,133 @@ void CRaidTask::ApplyRaidPath(const CQueryPathSingle* query)
 	isFightPending = true;
 }
 
+/*
+ * Raid rally joiner (quota.raid_rally)
+ */
+
+CRaidTask* CRaidTask::UpdateChase(int frame)
+{
+	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	if (!militaryMgr->IsRaidRallyJoiner(this)) {
+		chaseTask = nullptr;
+		chaseFails = 0;
+		return nullptr;
+	}
+	if (frame < chaseRetryFrame) {
+		chaseTask = nullptr;
+		return nullptr;  // CHASE_FAILS empty routes in a row: raid normally for a while
+	}
+	if (isChaseSkip) {
+		isChaseSkip = false;
+		return nullptr;  // the last chase route came back empty: raid normally this time, never wait
+	}
+	// Keep the group we chase while it is still bigger and in reach (it may be gone: look it up first)
+	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(fightType);
+	auto it = tasks.find(const_cast<CRaidTask*>(chaseTask));
+	const bool isKeep = (it != tasks.end()) && IsChaseable(chaseTask, frame, SQUARE(CHASE_KEEP_SEC * lowestSpeed));
+	if (!isKeep) {
+		chaseTask = FindChaseTask(frame);
+	}
+	if ((chaseTask != nullptr) && utils::is_valid(raidSpot)) {
+		militaryMgr->ReleaseRaidSpot(leader);  // no longer heading for our raid spot: free it for other groups
+		raidSpot = -RgtVector;
+	}
+	return const_cast<CRaidTask*>(chaseTask);
+}
+
+const CRaidTask* CRaidTask::FindChaseTask(int frame) const
+{
+	// The nearest bigger one within CHASE_TRAVEL_SEC
+	const AIFloat3& pos = leader->GetPos(frame);
+	const CRaidTask* best = nullptr;
+	float minSqDist = SQUARE(CHASE_TRAVEL_SEC * lowestSpeed);
+	for (IFighterTask* t : GetMilitaryMgr()->GetTasks(fightType)) {
+		const CRaidTask* group = static_cast<const CRaidTask*>(t);
+		if ((group == this) || (group->GetLeader() == nullptr)) {
+			continue;
+		}
+		const float sqDist = pos.SqDistance2D(group->GetLeader()->GetPos(frame));
+		if ((sqDist < minSqDist) && IsChaseable(group, frame, minSqDist)) {
+			minSqDist = sqDist;
+			best = group;
+		}
+	}
+	return best;
+}
+
+bool CRaidTask::IsChaseable(const CRaidTask* group, int frame, float sqMaxDist) const
+{
+	CCircuitUnit* gLeader = group->GetLeader();
+	// Bigger than us, with room for us (it may grow up to the rally's goal; a full group would only be escorted)
+	if (group->IsDead() || (gLeader == nullptr) || !group->HasRoom()
+		|| !CMilitaryManager::IsRankedAbove(group->GetAttackPower(), gLeader, attackPower, leader))
+	{
+		return false;
+	}
+	const AIFloat3& gPos = gLeader->GetPos(frame);
+	return (leader->GetPos(frame).SqDistance2D(gPos) < sqMaxDist) && group->IsRallyCompatible(leader)
+			&& manager->GetCircuit()->GetTerrainManager()->CanMoveToPos(leader->GetArea(), gPos);
+}
+
+void CRaidTask::Chase(int frame, const CRaidTask* group)
+{
+	isContestedDest = false;
+	isFightPending = false;
+	const AIFloat3& startPos = leader->GetPos(frame);
+	const AIFloat3 goal = group->GetLeader()->GetPos(frame);
+	position = goal;
+	isChaseDest = true;  // FallbackRaid picks a new destination once we raid again
+	if (startPos.SqDistance2D(goal) < SQUARE(CHASE_PATH_RANGE)) {
+		// Beside it already (merging waits for a safe line): stay with it. A Fight order every second would make the
+		// units stutter and turn: re-send it only once the leader moved on, or now and then (other orders since)
+		if ((goal.SqDistance2D(nearFightPos) > SQUARE(CHASE_NEAR_MOVE)) || (frame >= nearFightFrame + CHASE_NEAR_FRAMES)) {
+			SendPendingFight(frame);
+			nearFightPos = goal;
+			nearFightFrame = frame;
+		}
+		return;
+	}
+	nearFightPos = -RgtVector;  // walking a route again: the next near Fight goes out at once
+	if (!IsQueryReady(leader)) {
+		return;
+	}
+	// Still walking a fresh route to where the group's leader is now (it moved less than CHASE_ROUTE_SLACK of the way)
+	if ((chaseRoute != nullptr) && (frame < chaseRouteFrame + CHASE_ROUTE_FRAMES)
+		&& (goal.SqDistance2D(chaseGoal)
+			< SQUARE(std::max(CHASE_ROUTE_SLACK * startPos.distance2D(chaseGoal), CHASE_ROUTE_SLACK_MIN)))
+		&& leader->GetTravelAct()->IsActive() && (leader->GetTravelAct()->GetPath() == chaseRoute))
+	{
+		pPath = chaseRoute;  // Start() and regrouping re-send pPath
+		return;
+	}
+	chaseRouteFrame = frame;
+	chaseGoal = goal;
+	chaseRoute = nullptr;  // set again when this route arrives
+	// Capped like target routes (GetPathThreatCap: our strength, distance curve, base bonus; caution: GetPathThreatMod)
+	QueryPath(leader, goal, CHASE_PATH_RANGE, true, [this](const CQueryPathSingle* query) {
+		this->ApplyChasePath(query);
+	});
+}
+
+void CRaidTask::ApplyChasePath(const CQueryPathSingle* query)
+{
+	pPath = query->GetPathInfo();
+	if (!pPath->posPath.empty()) {
+		chaseFails = 0;
+		chaseRoute = pPath;
+		ActivePath();
+		return;
+	}
+	// No safe route: raid normally at once (the next update decides), never wait for one
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	isChaseSkip = true;
+	lastTouched = frame - FRAMES_PER_SEC;
+	if (++chaseFails >= CHASE_FAILS) {
+		chaseFails = 0;
+		chaseRetryFrame = frame + CHASE_RETRY_FRAMES;
+	}
+}
+
 void CRaidTask::AttackDirect(int frame)
 {
 	// Same re-order rule as IFighterTask::Attack, without firing spots
@@ -718,6 +960,7 @@ bool CRaidTask::Flee(int frame)
 	SetTarget(nullptr);
 	state = State::ROAM;
 	isFightPending = false;  // the escape replaces any pending roam order
+	nearFightPos = -RgtVector;  // and any Fight order beside a chased group
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {

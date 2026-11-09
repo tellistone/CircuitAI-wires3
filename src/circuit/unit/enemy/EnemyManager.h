@@ -93,13 +93,14 @@ public:
 	// quota.attack_merge.rally: clusters of recently seen, armed, mobile enemies of known type. A blob's threat is the
 	// plain sum of the threat of such enemies within BLOB_RADIUS of its seed (no weapon ranges, no falloff): it sizes
 	// the enemy army the way attack groups size their own. Hottest first, at most MAX_BLOBS; computed once per frame
-	// (allied AIs share this manager) for enemies seen within seenFrames
+	// (allied AIs share this manager) for enemies seen within seenFrames.
+	// isRaiders (quota.raid_rally): enemies of the raider role only, a separate cache
 	struct SEnemyBlob {
 		springai::AIFloat3 pos;  // the seed: the enemy with the most such threat around it
 		float threat;
 		float count;  // its enemy unit count, as squad threat counts them (CEnemyUnit::GetCountWeight)
 	};
-	const std::vector<SEnemyBlob>& GetBlobs(int frame, int seenFrames);
+	const std::vector<SEnemyBlob>& GetBlobs(int frame, int seenFrames, bool isRaiders = false);
 
 	void UpdateAreaUsers(CCircuitAI* ai);
 	void SetAreaUpdated(bool value) { isAreaUpdated = value; }
@@ -157,9 +158,11 @@ private:
 	};
 	std::array<SEnemyInfo, CMaskHandler::GetMaxMasks()> enemyInfos;
 
-	std::vector<SEnemyBlob> blobs;  // GetBlobs cache
-	int blobFrame = -1;
-	int blobSeenFrames = -1;
+	struct SBlobCache {  // GetBlobs
+		std::vector<SEnemyBlob> blobs;
+		int frame = -1;
+		int seenFrames = -1;
+	} blobCaches[2];  // all, raiders
 
 	bool isAreaUpdated;
 	std::unordered_set<const STerrainMapArea*> enemyAreas;

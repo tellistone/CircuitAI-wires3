@@ -29,8 +29,7 @@ public:
 	bool IsCompatible(CCircuitUnit* unit) const;
 	// Walk to this stronger group and merge into it instead of hunting targets alone (while a safe route exists)
 	void SetReinforce(CAttackTask* squad) { reinforce = squad; }
-	// Raw current strength (GetStrengthSum: power x sqrt(health share)): quota.attack_merge.rally compares it with blobs
-	float GetRallyStrength() const { return GetStrengthSum(); }
+	virtual bool IsRallyCompatible(CCircuitUnit* unit) const override { return IsCompatible(unit); }
 	// The rally host's meeting point, while it walks or waits there (not engaged, not fleeing); false: go to the host
 	bool GetMeetPoint(int frame, springai::AIFloat3& outPos) const;
 	// A guard slot may pull this group's unit (CFGuardTask::Pull): it is alone, not fighting and not the rally host.
@@ -127,10 +126,6 @@ private:
 	void SetScaleAnchor(const CEnemyInfo* enemy, float refSqDist);
 	void ClearScaleAnchor();
 	bool IsInBaseRadius(const springai::AIFloat3& pos) const;  // inside the base defence radius
-	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below allowedAt(spot) at each sampled spot
-	template<typename AllowedAt>
-	bool IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
-			AllowedAt allowedAt) const;
 
 	/*
 	 * Merging and reinforcing

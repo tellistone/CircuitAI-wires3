@@ -184,30 +184,7 @@ bool CAttackTask::CanAssignTo(CCircuitUnit* unit) const
 
 bool CAttackTask::IsCompatible(CCircuitUnit* unit) const
 {
-	assert(leader != nullptr);
-
-	CCircuitDef* ldef = leader->GetCircuitDef();
-	CCircuitDef* udef = unit->GetCircuitDef();
-	const float slower = std::min(ldef->GetSpeed(), udef->GetSpeed());
-	const float faster = std::max(ldef->GetSpeed(), udef->GetSpeed());
-	if (slower * GetMilitaryMgr()->GetAttackMerge().speedRatio < faster) {  // quota.attack_merge.speed_ratio
-		return false;
-	}
-
-	// The joining group's leader must not move worse than ours (smaller terrain area). Otherwise it
-	// would take the lead (ISquadTask::FindLeader) and drag the group back to it, or, if kept out of
-	// the lead, get stranded on routes only our leader can take.
-	const STerrainMapArea* ourArea = leader->GetArea();
-	const STerrainMapArea* newArea = unit->GetArea();
-	if ((newArea != nullptr) && ((ourArea == nullptr) || (newArea->percentOfMap < ourArea->percentOfMap))) {
-		return false;
-	}
-	if (udef->IsAmphibious() && (ldef->IsAmphibious() || ldef->IsLander() || ldef->IsFloater())) {
-		return true;
-	}
-	return (ldef->IsAbleToFly() && udef->IsAbleToFly())
-		|| (ldef->IsLander() && udef->IsLander())
-		|| (ldef->IsFloater() && udef->IsFloater());
+	return IsMoveCompatible(unit, GetMilitaryMgr()->GetAttackMerge().speedRatio);  // quota.attack_merge.speed_ratio
 }
 
 void CAttackTask::AssignTo(CCircuitUnit* unit)
@@ -538,31 +515,6 @@ bool CAttackTask::IsInBaseRadius(const AIFloat3& pos) const
 	const float baseRange = GetMilitaryMgr()->GetBaseDefRange();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	return (baseRange > 0.f) && (pos.SqDistance2D(basePos) < SQUARE(baseRange));
-}
-
-template<typename AllowedAt>
-bool CAttackTask::IsLineSafe(const AIFloat3& from, const AIFloat3& to, float maxReach, AllowedAt allowedAt) const
-{
-	// Walk from 'from' towards 'to', out to maxReach (or to 'to' if closer), one threat square at a time
-	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
-	AIFloat3 dir = to - from;
-	dir.y = 0.f;
-	const float dist = dir.Length2D();
-	if (dist < 1.f) {
-		return true;
-	}
-	dir /= dist;
-	const float reach = std::min(maxReach, dist);
-	const float step = threatMap->GetSquareSize();
-	for (float d = step; d <= reach; d += step) {
-		AIFloat3 p = from + dir * d;
-		CTerrainManager::CorrectPosition(p);
-		const float threat = GetTaskThreatAt(leader, p);
-		if ((threat > 0.f) && (threat >= allowedAt(p))) {  // allowances are above 0: no threat is always safe
-			return false;
-		}
-	}
-	return true;
 }
 
 /*
