@@ -139,10 +139,10 @@ private:
 	// ranking (sqTargetKey: FindTarget's key; no target: max). Once walking, only a target ranked under
 	// MERGE_BREAK_OFF_SHARE of the group's distance breaks the walk off. false: hunt, or no target and the front fallback
 	bool SeekMerge(int frame, bool isReuse, float sqTargetKey);
-	// Rally: where to walk when reinforcing the host; false: stand still
-	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal) const;
+	// Rally: where to walk when reinforcing the host
+	void PickRallyGoal(int frame, springai::AIFloat3& inOutGoal) const;
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, float slack);
-	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, springai::AIFloat3& outPos) const;
+	void FindFightEdge(int frame, const springai::AIFloat3& hostPos, springai::AIFloat3& outPos) const;
 	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES
 	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range,
 			std::function<void (const CQueryPathSingle*)>&& onComplete);
@@ -301,7 +301,7 @@ private:
 	int reinforceFails;  // consecutive reinforce paths that came back empty
 	int reinforceRetryFrame;  // after giving up, don't look for a group to reinforce before this frame
 	bool isDecisionReuse;  // the last decision's isReuse, for the fallbacks of its target route
-	int rallyRouteFrame;  // rally: our last route to the host came back empty, hold until this frame
+	int rallyRouteFrame;  // rally: our last route to the host came back empty, act as a normal group until this frame
 
 	// Rally host (quota.attack_merge.rally)
 	int engageFrame;  // last Engage (IsRallyFighting)
