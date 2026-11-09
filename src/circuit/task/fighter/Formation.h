@@ -79,6 +79,8 @@ public:
 	bool IsOn() const { return isOn; }  // the line is formed: its units walk to GetOrder
 	// Front to back row while IsOn (else 0): the leader stands up to this far from the front row
 	float GetDepth() const { return isOn ? depth : 0.f; }
+	// While IsOn (else 0): how far the leader's row stands behind the front row (0 in the front row)
+	float GetLeaderOffset() const;
 	// While IsOn: the stretch of line the group stands on to stop where it is (CAttackTask::Regroup); facing, it ends
 	// where facing began, so the block keeps facing as it stands
 	void GetStandPath(F3Vec& outPath) const;

@@ -770,6 +770,12 @@ float CAttackTask::GetLineDepth() const
 	return (line != nullptr) ? line->GetDepth() : 0.f;
 }
 
+float CAttackTask::GetLeaderLineOffset() const
+{
+	const CFormation* line = GetFormation();  // nullptr: the line is off
+	return (line != nullptr) ? line->GetLeaderOffset() : 0.f;
+}
+
 void CAttackTask::RunGroupRoute(int frame, const AIFloat3& goal, float range, float strength,
 		std::function<void (const CQueryPathSingle*)>&& onComplete)
 {
@@ -1447,7 +1453,10 @@ void CAttackTask::RequestTargetPath(const std::vector<STargetGoal>& goals)
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& startPos = leader->GetPos(frame);
 	const float eps = pathfinder->GetSquareSize();
-	const float pathRange = std::max(highestRange - eps, eps);
+	// In line, the front row stands at the route's end and the leader its row's offset behind it: the route ends that
+	// much closer, so the leader gets within range and engages (EngageInRange). A leader in the front row, or no
+	// line: as before
+	const float pathRange = std::max(highestRange - eps - GetLeaderLineOffset(), eps);
 
 	// A firing cell's goal: the cell is its node (search heuristic, threat cap); its end nodes are a wedge of its
 	// sector around the target, out to our range, so the route stops about where we engage, on the cell's side
@@ -1556,6 +1565,9 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		reinforce = nullptr;  // a hunt ends an army's walk to merge
 	}
 	pPath = path;
+	// A line standing facing (a hold, the end of a walk) keeps facing on a path that ends nearby (FACE_KEEP) and
+	// doesn't follow it: a target route is always walked, else a target just out of range is never engaged
+	EndLineFacing();
 	ActivePath(lowestSpeed);
 	if (reached != nullptr) {
 		// With its cell: the side we'll fight it from; the goal is then its anchor (the wedges' centre). A disc: where

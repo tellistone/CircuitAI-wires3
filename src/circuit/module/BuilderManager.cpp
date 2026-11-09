@@ -74,6 +74,10 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, prioRepairShare(0.f)
 		, isPrioRepairSafe(false)
 		, isPrioRepairSafeStatic(false)
+		, isPrioRepairSafeHeld(true)
+		, isRepairHitBuilder(false)
+		, isRepairHitTarget(false)
+		, repairHitCooldown(0)
 		, prioRepairLeash(0.f)
 		, prioRepairCooldown(0)
 		, repairFleeShare(0.f)
@@ -195,6 +199,11 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	prioRepairShare = pull.get((unsigned)1, 0.34f).asFloat();
 	isPrioRepairSafe = root["retreat"].get("repair_safe", false).asBool();
 	isPrioRepairSafeStatic = root["retreat"].get("repair_safe_static", false).asBool();
+	isPrioRepairSafeHeld = root["retreat"].get("repair_safe_held", true).asBool();
+	const Json::Value& hitExit = root["retreat"]["repair_hit_exit"];
+	isRepairHitBuilder = hitExit.get((unsigned)0, false).asBool();
+	isRepairHitTarget = hitExit.get((unsigned)1, false).asBool();
+	repairHitCooldown = hitExit.get((unsigned)2, 5.f).asFloat() * FRAMES_PER_SEC;
 	const Json::Value& leash = root["retreat"]["repair_leash"];
 	prioRepairLeash = leash.get((unsigned)0, 0.f).asFloat();
 	prioRepairCooldown = leash.get((unsigned)1, 20.f).asFloat() * FRAMES_PER_SEC;
@@ -712,6 +721,17 @@ IBuilderTask* CBuilderManager::EnqueueRepair(IBuilderTask::Priority priority,
 			}
 			leashUntil.erase(itl);
 		}
+		// Unit hit while builders work on it: they are in the fight too, call them off (retreat.repair_hit_exit)
+		if (isRepairHitTarget && target->GetCircuitDef()->IsMobile()) {
+			auto it = repairedUnits.find(target->GetId());
+			if ((it != repairedUnits.end()) && (it->second->GetPriority() == IBuilderTask::Priority::NOW)
+				&& !it->second->GetAssignees().empty())
+			{
+				OnPrioRepairLeash(target->GetId(), repairHitCooldown);
+				AbortTask(it->second);
+				return nullptr;
+			}
+		}
 	}
 	CBRepairTask* task;
 	auto it = repairedUnits.find(target->GetId());
@@ -799,9 +819,9 @@ void CBuilderManager::PullRepairer(IBuilderTask* task, CCircuitUnit* target)
 	}
 }
 
-void CBuilderManager::OnPrioRepairLeash(ICoreUnit::Id unitId)
+void CBuilderManager::OnPrioRepairLeash(ICoreUnit::Id unitId, int cooldown)
 {
-	leashUntil[unitId] = circuit->GetLastFrame() + prioRepairCooldown;
+	leashUntil[unitId] = circuit->GetLastFrame() + ((cooldown < 0) ? prioRepairCooldown : cooldown);
 }
 
 bool CBuilderManager::IsRepairTargetFleeing(const IBuilderTask* task, CCircuitUnit* builder, const AIFloat3& pos,
@@ -907,8 +927,9 @@ bool CBuilderManager::IsUnsafePrioRepair(const IBuilderTask* task, CCircuitUnit*
 	// Same rule as regular builder tasks: threat beyond the builder's strength in enemy-held area
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	threatMap->SetThreatType(unit);
+	// retreat.repair_safe_held false: threat alone, our army nearby doesn't make a fight safe
 	return (threatMap->GetThreatAt(pos) > threatMap->GetUnitThreat(unit))
-		&& (circuit->GetInflMap()->GetInfluenceAt(pos) < -INFL_EPS);
+		&& (!isPrioRepairSafeHeld || (circuit->GetInflMap()->GetInfluenceAt(pos) < -INFL_EPS));
 }
 
 IBuilderTask* CBuilderManager::EnqueueReclaim(IBuilderTask::Priority priority,

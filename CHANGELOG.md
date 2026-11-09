@@ -7,6 +7,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Priority repairs leave dangerous spots** (`retreat` block; code defaults keep the old behaviour, the shipped
+  config turns both on).
+  - `repair_safe_held` (default `true`): with `false`, the `repair_safe` / `repair_safe_static` check ends or skips a
+    priority repair on threat alone. Before, it also needed the spot to be enemy-held, so a repair on a front where
+    our own army stood counted as safe even under heavy fire.
+  - `repair_hit_exit: [builder hit, unit hit, cooldown sec]` (default `[false, false, 5]`, shipped `[true, false, 5]`):
+    drop a priority repair as soon as one of its builders takes damage, and/or when the mobile unit being repaired takes
+    damage while builders are on it. That unit then gets no new priority repair for `cooldown` seconds.
+
 - **Line formation for attack groups** (`formation` block in `behaviour.json`; code default off, shipped on; per unit
   `formation_row` and the `no_formation` attribute). Attack groups of 3 or more land or sea units used to send every
   unit to the same path points, so they walked single file and clumped at turns. While a group walks its path and
@@ -61,7 +70,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   short of more threat than at the centre (else it faces the way it came, not the path's last jog). It turns only
   where the block fits that way (walkable, 2 columns wide), and again only for a clear threat more than 45° off for
   2 s, and keeps facing across new paths that end within 256 elmos of the same spot, so
-  re-plans to the same spot don't turn it to and fro. Units keep their places on a turn of up to 120°. Fleeing groups, and cornered groups moving to a quieter spot, also
+  re-plans to the same spot don't turn it to and fro (a route to a target is always walked). Units keep their places on a turn of up to 120°. Fleeing groups, and cornered groups moving to a quieter spot, also
   run as a line (they used to run single file along the escape path, which splash weapons punished): rows in reverse
   `row_order` while they walk (riots at the back, towards the pursuers; artillery and skirmishers lead; normal order
   again once a cornered line stands and faces), at the slowest unit's speed, waiting for no one and with no unit
@@ -370,6 +379,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   (its row, or turned by facing). A group whose leader walked in a back row could park just outside merge reach
   (`travel_sec` at its slowest speed, with the 20% margin of `reinforce_range`) and never merge. Such routes now end
   the line's depth closer, the merge reach allows for it too, and with no line nothing changes.
+- **Attack groups in line engage again.** Two things kept a group in line standing just outside engage range,
+  facing the enemy without attacking. A group engages once its leader is within the group's highest weapon or sight
+  range of the target, but a route to a target ends where the line's front row stands, and the leader stands its
+  row's offset behind (rows are 64 to 90 elmos apart, up to 256 with enemy splash near). So a group whose leader
+  walked in a back row stopped short, and a new route from there ended at the same spot. Target routes now end the
+  leader's row offset closer; with the leader in the front row, or no line, nothing changes. And a line standing
+  facing (a hold, the end of a walk) ignored a new path ending within 256 elmos of where it faced from, so it didn't
+  move for a target just out of range; it now always walks a route to a target. Since holding groups stand in line,
+  facing the threat, this happened often.
 - **Geothermal plants are actually queued.** Three checks shared with other energy kept geo off the build list in
   practice. The energy-job cap allowed a 500-metal job only while no energy job at all was queued (below 62.5 build
   power), and solar or wind jobs nearly always were; geo now has its own cap of one geo job at a time. The energy

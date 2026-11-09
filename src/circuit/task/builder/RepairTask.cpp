@@ -143,6 +143,12 @@ void CBRepairTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	const int frame = circuit->GetLastFrame();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float healthPerc = unit->GetHealthPercent();
+	// Builder hit on a priority repair: the spot is under fire, call the job off (retreat.repair_hit_exit)
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	if ((priority == Priority::NOW) && builderMgr->IsRepairHitBuilder()) {
+		builderMgr->OnPrioRepairLeash(targetId, builderMgr->GetRepairHitCooldown());
+		manager->AbortTask(this);  // the builder goes idle, or retreats below
+	}
 	if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
 		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
 			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
