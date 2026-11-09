@@ -501,7 +501,6 @@ private:
 		int flipHold = 0;  // consecutive samples the wanted isAllowed differed from the current one
 		std::vector<std::pair<float, float>> incomeCurve;  // income_curve: [income, multiplier] points; empty = 1
 		float incomeMult = 1.f;  // incomeCurve at the last sample: scales the response amount
-		bool HasGates() const { return (territoryMax < 1.f) || !isUnlocked; }
 		struct SVsInfo {
 			SVsInfo(CCircuitDef::RoleT t, float r, float i) : role(t), ratio(r), importance(i) {}
 			CCircuitDef::RoleT role;
@@ -512,7 +511,7 @@ private:
 	};
 	std::vector<SRoleInfo> roleInfos;
 	bool isResponseGates = false;  // some role has a gate or an income curve: UpdateResponseGates runs
-	int responseSamples = 0;  // UpdateResponseGates calls so far (first sets the gates directly, every 30th logs)
+	int responseSamples = 0;  // UpdateResponseGates calls so far (every 30th logs)
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;

@@ -1056,17 +1056,21 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 
 	// Otherwise the tier weights alone, without roles the response gates hold back (territory_max, unlock_after).
 	// Gates leaving nothing to roll: roll without them, an idle factory only floats metal
+	auto addTiers = [&](bool isGated) {
+		for (unsigned i = 0; i < facDef.buildDefs.size(); ++i) {
+			CCircuitDef* bd = facDef.buildDefs[i];
+			if (isBuildable(bd) && (!isGated || militaryMgr->IsRoleAllowed(bd))) {
+				candidates.push_back(std::make_pair(bd, probs[i]));
+				magnitude += probs[i];
+			}
+		}
+	};
 	bool isResponse = !candidates.empty();
 	if (!isResponse) {
-		for (int pass = 0; (pass < 2) && (magnitude <= 0.f); ++pass) {
+		addTiers(true);
+		if (magnitude <= 0.f) {
 			candidates.clear();
-			for (unsigned i = 0; i < facDef.buildDefs.size(); ++i) {
-				CCircuitDef* bd = facDef.buildDefs[i];
-				if (isBuildable(bd) && ((pass > 0) || militaryMgr->IsRoleAllowed(bd))) {
-					candidates.push_back(std::make_pair(bd, probs[i]));
-					magnitude += probs[i];
-				}
-			}
+			addTiers(false);
 		}
 	}
 

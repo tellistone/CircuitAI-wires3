@@ -366,7 +366,7 @@ void CMilitaryManager::ReadConfig()
 		}
 
 		// Number in [lo, hi] or the default, logged
-		auto readFrac = [&](const Json::Value& v, const std::string& key, float def, float lo, float hi) {
+		auto readNum = [&](const Json::Value& v, const std::string& key, float def, float lo, float hi) {
 			if (v.isNull()) {
 				return def;
 			}
@@ -381,21 +381,23 @@ void CMilitaryManager::ReadConfig()
 			}
 			return clamped;
 		};
-		info.territoryMax = readFrac(response["territory_max"], "territory_max", 1.f, 0.f, 1.f);
+		info.territoryMax = readNum(response["territory_max"], "territory_max", 1.f, 0.f, 1.f);
 		const Json::Value& unlock = response["unlock_after"];
 		if (!unlock.isNull()) {
 			if (!unlock.isObject()) {
 				circuit->LOG("CONFIG %s: response.%s.unlock_after must be an object {income, territory}, ignored", cfgName.c_str(), pair.first.c_str());
 			} else {
-				info.unlockIncome = readFrac(unlock["income"], "unlock_after.income", 0.f, 0.f, std::numeric_limits<float>::max());
-				info.unlockTerritory = readFrac(unlock["territory"], "unlock_after.territory", 0.f, 0.f, 1.f);
-				info.isUnlocked = false;
-				info.isAllowed = false;  // until the first UpdateResponseGates
+				info.unlockIncome = readNum(unlock["income"], "unlock_after.income", 0.f, 0.f, std::numeric_limits<float>::max());
+				info.unlockTerritory = readNum(unlock["territory"], "unlock_after.territory", 0.f, 0.f, 1.f);
+				// Both 0 = nothing to wait for: unlocked from the start
+				info.isUnlocked = info.isAllowed = (info.unlockIncome <= 0.f) && (info.unlockTerritory <= 0.f);
 			}
 		}
-		info.incomeCurve.clear();
 		ReadCurve(response["income_curve"], "response." + pair.first + ".income_curve", "income", info.incomeCurve);
-		if (info.HasGates() || !info.incomeCurve.empty()) {
+		if (std::all_of(info.incomeCurve.begin(), info.incomeCurve.end(), [](const auto& pt) { return pt.second == 1.f; })) {
+			info.incomeCurve.clear();  // flat 1 = no curve
+		}
+		if ((info.territoryMax < 1.f) || !info.isUnlocked || !info.incomeCurve.empty()) {
 			isResponseGates = true;
 		}
 
@@ -2530,43 +2532,35 @@ void CMilitaryManager::UpdateResponseGates()
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	const float income = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome()) * economyMgr->GetEcoFactor();
 	const int frame = circuit->GetLastFrame();
-	const bool isFirst = (responseSamples == 0);
 
 	for (SRoleInfo& info : roleInfos) {
 		info.incomeMult = utils::eval_curve(info.incomeCurve, income);
 
 		// unlock_after: one-off, both exceeded on RESPONSE_HOLD samples in a row (not a reclaim or transfer spike)
+		bool isJustUnlocked = false;
 		if (!info.isUnlocked) {
 			const bool isIncome = (info.unlockIncome <= 0.f) || (income > info.unlockIncome);
 			const bool isShare = !isTerritory || (info.unlockTerritory <= 0.f) || (share > info.unlockTerritory);
 			info.unlockHold = (isIncome && isShare) ? info.unlockHold + 1 : 0;
 			if (info.unlockHold >= RESPONSE_HOLD) {
-				info.isUnlocked = true;
+				info.isUnlocked = isJustUnlocked = true;
 				circuit->LOG("RESPONSE: %s unlocked at frame %i (income %.1f > %.1f, territory %.2f > %.2f)",
 						info.name.c_str(), frame, income, info.unlockIncome, share, info.unlockTerritory);
 			}
 		}
 
-		// Live gate, debounced: the wanted state must hold RESPONSE_HOLD samples (raids, rebuilt mexes); the first
-		// sample and an unlock (held already) set it straight away
+		// Live gate, debounced: the wanted state must hold RESPONSE_HOLD samples in a row; an unlock (held already)
+		// opens it straight away. Starting states (share 0) need no first sample: open unless locked
 		const bool isWant = info.isUnlocked && (!isTerritory || (share <= info.territoryMax));
 		if (isWant == info.isAllowed) {
 			info.flipHold = 0;
-			continue;
-		}
-		const bool isJustUnlocked = isWant && (info.unlockHold >= RESPONSE_HOLD);
-		if (isFirst || isJustUnlocked || (++info.flipHold >= RESPONSE_HOLD)) {
+		} else if (isJustUnlocked || (++info.flipHold >= RESPONSE_HOLD)) {
 			info.isAllowed = isWant;
 			info.flipHold = 0;
-			if (!isFirst && !isJustUnlocked) {
+			if (!isJustUnlocked) {
 				circuit->LOG("RESPONSE: %s %s at frame %i (territory %.2f, max %.2f)", info.name.c_str(),
 						isWant ? "reopened" : "closed", frame, share, info.territoryMax);
 			}
-		}
-	}
-	for (SRoleInfo& info : roleInfos) {
-		if (info.isUnlocked) {
-			info.unlockHold = 0;  // isJustUnlocked only on the unlocking sample
 		}
 	}
 
