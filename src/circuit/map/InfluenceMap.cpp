@@ -43,7 +43,8 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	inflData0.enemyInfl.resize(mapSize, INFL_BASE);
 	inflData0.allyInfl.resize(mapSize, INFL_BASE);
 	inflData0.allyDefendInfl.resize(mapSize, INFL_BASE);
-	inflData0.enemyStaticInfl.resize(mapSize, INFL_BASE);
+	inflData0.allyTerritory.resize(mapSize, INFL_BASE);
+	inflData0.enemyTerritory.resize(mapSize, INFL_BASE);
 	inflData0.influence.resize(mapSize, INFL_BASE);
 //	inflData0.tension.resize(mapSize, INFL_BASE);
 //	inflData0.vulnerability.resize(mapSize, INFL_BASE);
@@ -51,7 +52,8 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	enemyInfl = inflData0.enemyInfl.data();
 	allyInfl = inflData0.allyInfl.data();
 	allyDefendInfl = inflData0.allyDefendInfl.data();
-	enemyStaticInfl = inflData0.enemyStaticInfl.data();
+	allyTerritory = inflData0.allyTerritory.data();
+	enemyTerritory = inflData0.enemyTerritory.data();
 	influence = inflData0.influence.data();
 //	tension = inflData0.tension.data();
 //	vulnerability = inflData0.vulnerability.data();
@@ -60,7 +62,8 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	inflData1.enemyInfl.resize(mapSize, INFL_BASE);
 	inflData1.allyInfl.resize(mapSize, INFL_BASE);
 	inflData1.allyDefendInfl.resize(mapSize, INFL_BASE);
-	inflData1.enemyStaticInfl.resize(mapSize, INFL_BASE);
+	inflData1.allyTerritory.resize(mapSize, INFL_BASE);
+	inflData1.enemyTerritory.resize(mapSize, INFL_BASE);
 	inflData1.influence.resize(mapSize, INFL_BASE);
 //	inflData1.tension.resize(mapSize, INFL_BASE);
 //	inflData1.vulnerability.resize(mapSize, INFL_BASE);
@@ -68,7 +71,8 @@ CInfluenceMap::CInfluenceMap(CMapManager* manager)
 	drawEnemyInfl = inflData1.enemyInfl.data();
 	drawAllyInfl = inflData1.allyInfl.data();
 	drawAllyDefendInfl = inflData1.allyDefendInfl.data();
-	drawEnemyStaticInfl = inflData1.enemyStaticInfl.data();
+	drawAllyTerritory = inflData1.allyTerritory.data();
+	drawEnemyTerritory = inflData1.enemyTerritory.data();
 	drawInfluence = inflData1.influence.data();
 //	drawTension = inflData1.tension.data();
 //	drawVulnerability = inflData1.vulnerability.data();
@@ -112,7 +116,8 @@ void CInfluenceMap::Prepare(SInfluenceData& inflData)
 	std::fill(inflData.enemyInfl.begin(), inflData.enemyInfl.end(), INFL_BASE);
 	std::fill(inflData.allyInfl.begin(), inflData.allyInfl.end(), INFL_BASE);
 	std::fill(inflData.allyDefendInfl.begin(), inflData.allyDefendInfl.end(), INFL_BASE);
-	std::fill(inflData.enemyStaticInfl.begin(), inflData.enemyStaticInfl.end(), INFL_BASE);
+	std::fill(inflData.allyTerritory.begin(), inflData.allyTerritory.end(), INFL_BASE);
+	std::fill(inflData.enemyTerritory.begin(), inflData.enemyTerritory.end(), INFL_BASE);
 	std::fill(inflData.influence.begin(), inflData.influence.end(), INFL_BASE);
 //	std::fill(inflData.tension.begin(), inflData.tension.end(), INFL_BASE);
 //	std::fill(inflData.vulnerability.begin(), inflData.vulnerability.end(), INFL_BASE);
@@ -121,7 +126,8 @@ void CInfluenceMap::Prepare(SInfluenceData& inflData)
 	drawEnemyInfl = inflData.enemyInfl.data();
 	drawAllyInfl = inflData.allyInfl.data();
 	drawAllyDefendInfl = inflData.allyDefendInfl.data();
-	drawEnemyStaticInfl = inflData.enemyStaticInfl.data();
+	drawAllyTerritory = inflData.allyTerritory.data();
+	drawEnemyTerritory = inflData.enemyTerritory.data();
 	drawInfluence = inflData.influence.data();
 //	drawTension = inflData.tension.data();
 //	drawVulnerability = inflData.vulnerability.data();
@@ -134,13 +140,18 @@ void CInfluenceMap::Update()
 
 	CEnemyManager* enemyMgr = manager->GetCircuit()->GetEnemyManager();
 
+	// Known enemy buildings, armed or not, hold enemy territory; not fakes (guessed from unseen shots)
+	auto addBuilding = [this](const SEnemyData& e) {
+		if ((e.cdef != nullptr) && !e.cdef->IsMobile() && !e.IsFake()) {
+			AddTerritory(drawEnemyTerritory, e.pos);
+		}
+	};
 	for (const SEnemyData& e : enemyMgr->GetHostileDatas()) {
 		AddEnemy(e);
+		addBuilding(e);
 	}
 	for (const SEnemyData& e : enemyMgr->GetPeaceDatas()) {
-		if ((e.cdef != nullptr) && !e.cdef->IsMobile()) {
-			AddEnemyUnarmed(e);
-		}
+		addBuilding(e);
 	}
 }
 
@@ -158,9 +169,11 @@ void CInfluenceMap::Apply()
 				AddMobileArmed(u);
 			} else {
 				AddStaticArmed(u);
+				AddTerritory(drawAllyTerritory, u->GetPos(circuit->GetLastFrame()));
 			}
 		} else if (!u->GetCircuitDef()->IsAbleToFly()) {
 			AddUnarmed(u);  // not aircraft: a scout plane or air builder over enemy land doesn't make it our ground
+			AddTerritory(drawAllyTerritory, u->GetPos(circuit->GetLastFrame()));  // our buildings and land constructors
 		}
 	}
 	for (int i = 0; i < mapSize; ++i) {
@@ -203,7 +216,8 @@ void CInfluenceMap::SwapBuffers()
 	enemyInfl = inflData.enemyInfl.data();
 	allyInfl = inflData.allyInfl.data();
 	allyDefendInfl = inflData.allyDefendInfl.data();
-	enemyStaticInfl = inflData.enemyStaticInfl.data();
+	allyTerritory = inflData.allyTerritory.data();
+	enemyTerritory = inflData.enemyTerritory.data();
 	influence = inflData.influence.data();
 //	tension = inflData.tension.data();
 //	vulnerability = inflData.vulnerability.data();
@@ -243,7 +257,7 @@ bool CInfluenceMap::IsAllyTerritory(const AIFloat3& position, float margin) cons
 	int x, z;
 	PosToXZ(position, x, z);
 	const int index = z * width + x;
-	return allyDefendInfl[index] - enemyStaticInfl[index] > margin;  // both INFL_BASE-offset
+	return allyTerritory[index] - enemyTerritory[index] > margin;  // both INFL_BASE-offset
 }
 
 int CInfluenceMap::Pos2Index(const AIFloat3& pos) const
@@ -395,8 +409,6 @@ void CInfluenceMap::AddEnemy(const SEnemyData& e)
 					? e.GetRange(CCircuitDef::ThreatType::LAND)
 					: e.GetRange(CCircuitDef::ThreatType::LAND) / 2;
 	const int rangeSq = SQUARE(range);
-	// A static defence also holds enemy territory (IsAllyTerritory), as AddStaticArmed does ours
-	float* staticInfl = ((e.cdef != nullptr) && !e.cdef->IsMobile()) ? drawEnemyStaticInfl : nullptr;
 
 	const int beginX = std::max(int(posx - range + 1),       0);
 	const int endX   = std::min(int(posx + range    ),  width);
@@ -415,18 +427,15 @@ void CInfluenceMap::AddEnemy(const SEnemyData& e)
 			const int index = z * width + x;
 			const float infl = val * (1.0f - 1.0f * sqrtf(lenSq) / range);
 			drawEnemyInfl[index] += infl;
-			if (staticInfl != nullptr) {
-				staticInfl[index] += infl;
-			}
 		}
 	}
 }
 
-void CInfluenceMap::AddEnemyUnarmed(const SEnemyData& e)
+void CInfluenceMap::AddTerritory(float* layer, const AIFloat3& pos)
 {
 	int posx, posz;
-	PosToXZ(e.pos, posx, posz);
-	AddDisc(drawEnemyStaticInfl, posx, posz, DEFAULT_SLACK * 4 * defRadius / squareSize, 2.f);  // as AddUnarmed
+	PosToXZ(pos, posx, posz);
+	AddDisc(layer, posx, posz, DEFAULT_SLACK * 4 * defRadius / squareSize, 2.f);  // as AddUnarmed
 }
 
 void CInfluenceMap::AddDisc(float* layer, int posx, int posz, int range, float val)
