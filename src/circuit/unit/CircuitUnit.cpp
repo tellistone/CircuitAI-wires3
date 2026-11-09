@@ -27,7 +27,7 @@
 namespace circuit {
 
 // A melee unit nearer its firing spot than this walks there (no jump wasted on a short hop, or in place)
-static const float SPOT_JUMP_MIN = SQUARE_SIZE * 16;
+static const float SPOT_JUMP_MIN = SQUARE_SIZE * 50;  // 400 elmos
 
 using namespace springai;
 
