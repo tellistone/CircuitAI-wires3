@@ -537,6 +537,7 @@ private:
 		float off = 0.f;  // ... at or above this: floor off
 	} attackThreatFloor;  // quota.attack_threat_floor
 	bool isAttackThreatFloor;
+	int attackThreatFloorLogFrame;  // next periodic THREAT FLOOR log line
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
