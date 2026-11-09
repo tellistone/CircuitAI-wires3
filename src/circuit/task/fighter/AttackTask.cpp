@@ -146,6 +146,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, hitFrame(-1)
 {
 	attackRepeat = FRAMES_PER_SEC * 2;  // same ~2 s tempo as the decisions
+	isNewcomerOn = true;  // newcomers never make the group stop for them (ISquadTask::IsNewcomer)
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
 	float z = rand() % circuit->GetTerrainManager()->GetTerrainHeight();
@@ -242,7 +243,7 @@ void CAttackTask::Start(CCircuitUnit* unit)
 		return;
 	}
 	if (!pPath->posPath.empty()) {
-		unit->GetTravelAct()->SetPath(pPath, lowestSpeed);
+		unit->GetTravelAct()->SetPath(pPath, GetPathSpeed(unit, manager->GetCircuit()->GetLastFrame(), lowestSpeed));
 		unit->GetTravelAct()->StateActivate();
 	}
 }

@@ -56,6 +56,9 @@ ISquadTask::~ISquadTask()
 void ISquadTask::AssignTo(CCircuitUnit* unit)
 {
 	IFighterTask::AssignTo(unit);
+	if (isNewcomerOn && (leader != nullptr)) {
+		joinFrames[unit] = manager->GetCircuit()->GetLastFrame();  // joins a group that has units already
+	}
 
 	if (leader == nullptr) {
 		lowestRange  = unit->GetCircuitDef()->GetMaxRange();
@@ -84,6 +87,7 @@ void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	IFighterTask::RemoveAssignee(unit);
 	formation.Remove(unit);
+	joinFrames.erase(unit);
 	if (scoots.erase(unit) > 0) {
 		SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
 	}
@@ -109,6 +113,7 @@ void ISquadTask::Stop(bool done)
 void ISquadTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	scoots.erase(unit);
+	joinFrames.erase(unit);
 	IFighterTask::OnUnitDestroyed(unit, attacker);
 }
 
@@ -117,8 +122,12 @@ void ISquadTask::Merge(ISquadTask* task)
 	const std::set<CCircuitUnit*>& rookies = task->GetAssignees();
 	IAction::State state = leader->GetTravelAct()->GetState();
 	const std::shared_ptr<PathInfo>& lPath = leader->GetTravelAct()->GetPath();
+	const int frame = manager->GetCircuit()->GetLastFrame();
 	for (CCircuitUnit* unit : rookies) {
 		unit->SetTask(this);
+		if (isNewcomerOn) {
+			joinFrames[unit] = frame;
+		}
 		if (unit->GetCircuitDef()->IsRoleSupport()) {
 			continue;
 		}
@@ -298,6 +307,16 @@ bool ISquadTask::IsMustRegroup()
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+	if (isCheck) {
+		for (auto it = joinFrames.begin(); it != joinFrames.end();) {
+			it = IsNewcomer(it->first, frame) ? std::next(it) : joinFrames.erase(it);
+		}
+	}
+	if (IsNewcomer(leader, frame)) {
+		// The leader joined lately (the old one died or left): the old units would be "far" from it and walk to it
+		state = State::ROAM;
+		return false;
+	}
 	if (circuit->GetInflMap()->GetInfluenceAt(leader->GetPos(frame)) < -INFL_EPS) {
 		state = State::ROAM;
 		return false;
@@ -311,7 +330,7 @@ bool ISquadTask::IsMustRegroup()
 	// While it stands for a regroup, only those in their slots: one still walking to its slot counts
 	for (CCircuitUnit* unit : units) {
 		const bool isInLine = isLineRegroup ? formation.IsInSlot(unit) : formation.IsKeptUp(unit);
-		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !isInLine &&
+		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !isInLine && !IsNewcomer(unit, frame) &&
 			terrainMgr->CanMoveToPos(unit->GetArea(), unit->GetPos(frame)))
 		{
 			validUnits.push_back(unit);
@@ -429,10 +448,17 @@ bool ISquadTask::IsIdleInLine(CCircuitUnit* unit) const
 		&& unit->GetTravelAct()->IsFormationMoveDone(unit->GetPos(manager->GetCircuit()->GetLastFrame()));
 }
 
+bool ISquadTask::IsNewcomer(CCircuitUnit* unit, int frame) const
+{
+	auto it = joinFrames.find(unit);
+	return (it != joinFrames.end()) && (frame < it->second + NEWCOMER_FRAMES);
+}
+
 void ISquadTask::ActivePath(float speed)
 {
+	const int frame = manager->GetCircuit()->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
-		unit->GetTravelAct()->SetPath(pPath, speed);
+		unit->GetTravelAct()->SetPath(pPath, GetPathSpeed(unit, frame, speed));
 		unit->GetTravelAct()->StateActivate();
 	}
 }

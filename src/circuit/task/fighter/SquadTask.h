@@ -102,7 +102,21 @@ protected:
 	// IsMustRegroup ignores this unit. Default: it is scooting (stepping out of reach while it reloads)
 	virtual bool IsRegroupExempt(CCircuitUnit* unit) const { return IsScooting(unit); }
 	void ReleaseStuck(std::vector<CCircuitUnit*>& stuck);
+	// speed caps every unit but newcomers (IsNewcomer), which walk at full speed to catch up
 	void ActivePath(float speed = NO_SPEED_LIMIT);
+
+	/*
+	 * Newcomers (attack and raid groups: isNewcomerOn): units that joined a group that had units already (a merge, or a
+	 * new unit assigned to it) don't count for a regroup for NEWCOMER_FRAMES (20 s) and walk the group's routes at full
+	 * speed, so the group never stops to wait for them. No regroup at all while the leader itself is one
+	 */
+	static constexpr int NEWCOMER_FRAMES = FRAMES_PER_SEC * 20;
+	bool IsNewcomer(CCircuitUnit* unit, int frame) const;
+	float GetPathSpeed(CCircuitUnit* unit, int frame, float speed) const {
+		return IsNewcomer(unit, frame) ? NO_SPEED_LIMIT : speed;
+	}
+	bool isNewcomerOn = false;  // set by the task
+	std::map<CCircuitUnit*, int> joinFrames;  // newcomer -> frame it joined
 	NSMicroPather::TestFunc GetHitTest() const;
 	// Line of sight over terrain between two path-map squares (sector max elevation), from aimLift above the start to
 	// targetLift above the end
