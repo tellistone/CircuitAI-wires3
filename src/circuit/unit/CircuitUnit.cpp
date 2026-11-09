@@ -26,6 +26,9 @@
 
 namespace circuit {
 
+// A melee unit nearer its firing spot than this walks there (no jump wasted on a short hop, or in place)
+static const float SPOT_JUMP_MIN = SQUARE_SIZE * 16;
+
 using namespace springai;
 
 CCircuitUnit::CCircuitUnit(CCircuitAI* circuit, Id unitId, Unit* unit, CCircuitDef* cdef)
@@ -291,6 +294,18 @@ void CCircuitUnit::CmdMoveTo(const AIFloat3& pos, short options, int timeout)
 	unit->ExecuteCustomCommand(CMD_RAW_MOVE, {pos.x, pos.y, pos.z}, options, timeout);
 }
 
+bool CCircuitUnit::CmdMoveOrJumpTo(const AIFloat3& pos, int timeout, float minJump)
+{
+	if (circuitDef->IsAttrMelee() && IsJumpReady()
+		&& (GetPos(manager->GetCircuit()->GetLastFrame()).SqDistance2D(pos) > SQUARE(minJump)))
+	{
+		CmdJumpTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		return true;
+	}
+	CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+	return false;
+}
+
 void CCircuitUnit::CmdJumpTo(const AIFloat3& pos, short options, int timeout)
 {
 	unit->ExecuteCustomCommand(CMD_JUMP, {pos.x, pos.y, pos.z}, options, timeout);
@@ -364,13 +379,8 @@ void CCircuitUnit::Attack(CEnemyInfo* enemy, int timeout)
 	TRY_UNIT(manager->GetCircuit(), this,
 		const AIFloat3& pos = enemy->GetPos();
 		if (circuitDef->IsAttrMelee()) {
-			if (IsJumpReady()) {
-				CmdJumpTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-				unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
-			} else {
-				CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-				unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
-			}
+			CmdMoveOrJumpTo(pos, timeout);
+			unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
 		} else {
 			unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 		}
@@ -391,11 +401,8 @@ void CCircuitUnit::Attack(const AIFloat3& position, int timeout)
 	const AIFloat3& pos = utils::get_radial_pos(position, SQUARE_SIZE * 8);
 	TRY_UNIT(manager->GetCircuit(), this,
 		if (circuitDef->IsAttrMelee()) {
-			if (IsJumpReady()) {
-				CmdJumpTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+			if (CmdMoveOrJumpTo(pos, timeout)) {
 				unit->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
-			} else {
-				CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 			}
 		} else {
 			unit->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
@@ -409,11 +416,8 @@ void CCircuitUnit::Attack(const AIFloat3& position, CEnemyInfo* enemy, int timeo
 	const AIFloat3& pos = utils::get_radial_pos(position, SQUARE_SIZE * 8);
 	TRY_UNIT(manager->GetCircuit(), this,
 		if (circuitDef->IsAttrMelee()) {
-			if (IsJumpReady()) {
-				CmdJumpTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+			if (CmdMoveOrJumpTo(pos, timeout)) {
 				unit->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
-			} else {
-				CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 			}
 		} else {
 			unit->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
@@ -438,12 +442,8 @@ void CCircuitUnit::AttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int ti
 	targetTile = tile;
 	TRY_UNIT(manager->GetCircuit(), this,
 		// Move, not Fight: go straight to the firing spot (weapons still shoot what's in range on the way);
-		// melee jumps there when it can, as its direct Attack does
-		if (circuitDef->IsAttrMelee() && IsJumpReady()) {
-			CmdJumpTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-		} else {
-			CmdMoveTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-		}
+		// melee jumps there when it can and the spot isn't close
+		CmdMoveOrJumpTo(firePos, timeout, SPOT_JUMP_MIN);
 		unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
 		// Then fight from the spot (not toward the target's position: once it dies the unit stays put)
 		unit->Fight(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
@@ -457,11 +457,7 @@ void CCircuitUnit::FightFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int til
 	target = enemy;
 	targetTile = tile;
 	TRY_UNIT(manager->GetCircuit(), this,
-		if (circuitDef->IsAttrMelee() && IsJumpReady()) {
-			CmdJumpTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-		} else {
-			CmdMoveTo(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-		}
+		CmdMoveOrJumpTo(firePos, timeout, SPOT_JUMP_MIN);
 		// Fight at the spot: shoots what comes into range (the set target first), stays put
 		unit->Fight(firePos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
 		CmdWantedSpeed(NO_SPEED_LIMIT);

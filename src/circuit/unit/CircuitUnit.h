@@ -120,6 +120,9 @@ public:
 	void CmdRemove(std::vector<float>&& params, short options = 0);
 	void CmdMoveTo(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
 	void CmdJumpTo(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
+	// Melee units jump there when the jump is ready and pos is farther than minJump, else (and all others) move.
+	// true: jumped. Must be called inside TRY_UNIT
+	bool CmdMoveOrJumpTo(const springai::AIFloat3& pos, int timeout, float minJump = 0.f);
 	void CmdAttackGround(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
 	void CmdWantedSpeed(float speed = NO_SPEED_LIMIT);
 	void CmdSetTarget(CEnemyInfo* enemy);
