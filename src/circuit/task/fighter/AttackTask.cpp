@@ -1544,6 +1544,7 @@ void CAttackTask::FindTarget()
 	UpdatePastFloor();
 	isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
 			|| militaryMgr->IsAttackThreatFloor();
+	const float sqOwnGroundFree = SQUARE(groundRange + DEFAULT_SLACK);  // fire range + 64 elmos
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1574,13 +1575,14 @@ void CAttackTask::FindTarget()
 		// shift its rank
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
-		// quota.attack_own_ground_time and the floors: our territory (IsAllyTerritory: our buildings, land builders
-		// or static defences outweigh the enemy's buildings and static defences; mobiles on neither side count, else
-		// a group would license its own surroundings and creep forward, and the target would veto itself).
-		// A target already within range is always fair game, so fights at the edge aren't dropped. The current target
-		// stays ours until the enemy outweighs us there by half a building, so it doesn't flicker on the border
-		// as our constructors move or enemy buildings come into view
-		if (isOwnGroundOnly && (sqOEDist >= sqHighestRange)
+		// quota.attack_own_ground_time and the floors: our territory (IsAllyTerritory: our buildings and land
+		// builders outweigh the enemy's buildings; mobiles on neither side count, else a group would license its own
+		// surroundings and creep forward, and the target would veto itself).
+		// A target within fire range (not LOS: a group would hop forward one LOS radius at a time) is always fair
+		// game, so fights at the edge aren't dropped. The current target stays ours until the enemy outweighs us
+		// there by half a building, so it doesn't flicker on the border as our constructors move or enemy buildings
+		// come into view
+		if (isOwnGroundOnly && (sqOEDist >= sqOwnGroundFree)
 			&& !inflMap->IsAllyTerritory(c.rangePos, (enemy->GetId() == prevTargetId) ? -1.f : INFL_EPS))
 		{
 			continue;
