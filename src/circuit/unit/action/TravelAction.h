@@ -28,6 +28,9 @@ public:
 
 	void SetPath(const std::shared_ptr<PathInfo>& pPath, float speed = NO_SPEED_LIMIT);
 	const std::shared_ptr<PathInfo>& GetPath() const { return pPath; }
+	float GetSpeed() const { return speed; }
+	// A new speed on the same path, sent with the next step
+	void SetSpeed(float value) { if (value != speed) { speed = value; isForce = true; } }
 	void ResetUpdateTimer() { lastFrame = -1; }  // next Update issues commands at once
 	// Frames between Updates that send orders: Fight (siege units) every 2 s, Move every second
 	int GetOrderInterval() const { return IsEqual(Mask::FIGHT) ? FRAMES_PER_SEC * 2 : FRAMES_PER_SEC; }

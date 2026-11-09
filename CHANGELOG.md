@@ -46,14 +46,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   decision. It moves only to a spot with at most 80% of the threat here, and keeps that spot until another has at most
   80% of its threat, so two spots can't take turns. To a spot within 256 elmos a block standing facing the threat
   slides there as it stands, its front still to the threat and no unit changing slot (where it fits there; else the
-  line walks straight there); farther, the line walks a threat-capped path and faces anew at its end. A rally host at
-  its meeting point, a group already beside the group it reinforces, and a rally joiner close to a fight with no safe
-  edge stand in line the same way (they used to gather: units within 600 elmos stood where they were, the rest walked
-  straight in), and units that join walk into its slots. A unit pulled back from danger while the line stands rejoins
+  line walks straight there); farther, the line walks a threat-capped path and faces anew at its end. A group already
+  beside the group it reinforces stands in line the same way (it used to gather: units within 600 elmos stood where
+  they were, the rest walked straight in), and units that join walk into its slots. A unit pulled back from danger while the line stands rejoins
   with the next path rather than walk back into the slot that endangered it, and a line that switches off while
   standing (no room left for 2 columns) stands again at the next decision. A group with no line (formation off, or
   fewer than `min_units` units that take a slot) holds with the same 80% rule, straight to a quiet spot within 256
-  elmos, else along a threat-capped path (ending bunched on its last point), and gathers at a meeting point as before.
+  elmos, else along a threat-capped path (ending bunched on its last point), and gathers beside the group it reinforces as
+  before.
   Where no line fits, a stand's units stand together at its end. Stepping out of an attacker's range while holding,
   and escapes where no path was found, stay straight moves. Once the line stands at the end of its
   walk it faces the threat (`face_range`, 0 = off): it reads the enemy threat 8 ways at 1 and 2 x its fire range
@@ -365,12 +365,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
-- **Attack groups in line merge again.** A route to another group (reinforcing, idle merging, a rally) or to a rally
-  meeting point ends where the line's front row stands, but merging and arriving are judged at the group's leader,
-  which stands up to the line's depth behind (its row, or turned by facing). A group whose leader walked in a back row
-  could park just outside merge reach (`travel_sec` at its slowest speed, with the 20% margin of `reinforce_range`) and
-  never merge; a rally host could fail to arrive at its meeting point. Such routes now end the line's depth closer, the
-  merge reach and the meeting point's arrival distance allow for it too, and with no line nothing changes.
+- **Attack groups in line merge again.** A route to another group (reinforcing, idle merging, a rally) ends where the
+  line's front row stands, but merging is judged at the group's leader, which stands up to the line's depth behind
+  (its row, or turned by facing). A group whose leader walked in a back row could park just outside merge reach
+  (`travel_sec` at its slowest speed, with the 20% margin of `reinforce_range`) and never merge. Such routes now end
+  the line's depth closer, the merge reach allows for it too, and with no line nothing changes.
 - **Geothermal plants are actually queued.** Three checks shared with other energy kept geo off the build list in
   practice. The energy-job cap allowed a 500-metal job only while no energy job at all was queued (below 62.5 build
   power), and solar or wind jobs nearly always were; geo now has its own cap of one geo job at a time. The energy

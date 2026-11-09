@@ -81,7 +81,7 @@
 	"idle_merge": true,  // an army (at or above quota.attack) walks to the nearest compatible group ranked above it (more attack power; ties: lower leader id) and merges when that group is nearer than its best target by the target ranking (near-base scale, target_dist_mod, contested bonus: a raid near our base or a commander counts as nearer, a scout as farther) or it has no target; once walking, only a target ranked under half that distance breaks it off; targets in range are fought first; so all attack groups converge into one army; it keeps that group while it has 80% of the army's power; false: it hunts, heads for the front or holds as before. Small groups reinforcing get the ranking (with the tie-break), the 80% keep, stopping beside the group on a short route and merge checks every update whatever this is, and any group absorbs groups walking to it: so false is not the zk behaviour, compare against a zk build for A/B games
 	"base_gather": false,  // false: attack-bound units never gather at base; they reinforce the rally host or the nearest compatible group, else start a group. true: the first army gathers at base
 	// Rally: when a recently seen enemy blob (mobile, armed enemies within 800 elmos of each other, threat summed) near our attack groups has more threat than match x the largest group's raw strength,
-	// that group (the host) walks to meet its significant joiners and every compatible attack group and new unit reinforces it, until it reaches (1 + margin) x match x the blob or the blob is lost
+	// that group (the host) carries on as usual (it never waits for joiners) while every compatible attack group and new unit reinforces it, until it reaches (1 + margin) x match x the blob or the blob is lost
 	"rally": {
 		"match": 1.0,  // rally while host strength < match x blob threat; 0 = off
 		"margin": 0.25,  // end once host strength >= match x blob x (1 + margin)
@@ -209,13 +209,14 @@
 // units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; when one
 // falls far behind, the usual regroup stops the line where it stands (just after a fight: at the leader, facing the
 // nearest strong enemy group) and the units take their slots in it, until the line is whole (as a gather where no
-// line fits). At the end of its walk the group stands in line. Missing block or
+// line fits). Newcomers (units that joined attack and raid groups by a merge or a new assignment, until they come within
+// 200 elmos of the leader, 20 s at most) are waited for by neither: they catch up at full speed. At the end of its walk the group stands in line. Missing block or
 // "enable": false = groups walk as before, except that a holding group moves only to a spot with at most 80% of the
 // threat where it stands (and keeps it until another has at most 80% of that spot's), and takes a threat-capped path
 // to one more than 256 elmos away instead of a straight move (it ends bunched on the path's last point, as it did before)
 "formation": {
 	"enable": true,
-	"min_units": 3,  // land or sea units needed to form a line (off again below 2); aircraft, support units and no_formation units don't take a slot. With at least this many that do (and the formation on), holding and waiting groups (at a rally meeting point, beside the group they reinforce) stand in line where they are, and a hold walks in line to a quieter spot; fewer: as before
+	"min_units": 3,  // land or sea units needed to form a line (off again below 2); aircraft, support units and no_formation units don't take a slot. With at least this many that do (and the formation on), holding groups and groups waiting beside the group they reinforce stand in line where they are, and a hold walks in line to a quieter spot; fewer: as before
 	"spacing": [96.0, 4, 0.35],  // [<elmos>, <units>, <exponent>]: neighbours this far apart up to this many units, closer beyond: x (units / n)^exponent (6 units 83, 10 units 70, 25 units 51); never closer than half their footprints + gap. Squeezed down to 0.7 of it before a second row is added
 	"gap": 16.0,  // elmos between footprints, and clearance at the line's ends; rows are their widest footprint + 3 gaps apart
 	"width_range": 1.5,  // the line is at most this x the group's power-weighted median weapon range wide (at least 3 spacings, at most 900 elmos), less where terrain, buildings or more enemy threat than on the path leave less room in the next 3 s of walking; rows shift sideways to fit, and no slot lies past a spot that isn't free, seen from the path

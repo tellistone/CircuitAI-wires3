@@ -73,6 +73,7 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, roamPathFrame(-FRAMES_PER_SEC * 60)
 		, roamGoal(-RgtVector)
 {
+	isNewcomerOn = true;  // newcomers never make the group stop for them (ISquadTask::IsNewcomer)
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
 	float z = rand() % circuit->GetTerrainManager()->GetTerrainHeight();
