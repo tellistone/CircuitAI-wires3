@@ -142,9 +142,7 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	const float backLen = depth + maxWidth / 2 + baseSpacing;  // rows behind the leader, and smoothing
 	// Facing stops on a path that ends elsewhere, or once the line is off
 	if (isFacing && (!isOn || (path->posPath.back().SqDistance2D(faceEnd) > SQUARE(FACE_KEEP)))) {
-		isFacing = false;
-		track.clear();  // the rows stood across faceDir, not along the track
-		isDirty = true;  // and walk a new way: match units to slots afresh
+		EndFacing();
 	}
 	// Running away: rows in reverse (riots at the back, towards the pursuers), matched afresh on the change. Not once
 	// it stands facing (a cornered line at its quiet spot): the threat is ahead then
@@ -419,8 +417,7 @@ float CFormation::MoveAnchor(int frame, bool isSwitchOn, float frontArc, float d
 	}
 	// Running away or near the enemy the line doesn't wait: it walks on at the slowest unit's speed and units catch up
 	// as they can. Standing at the path's end the pace doesn't matter
-	const bool isStanding = isLineToEnd && (anchorArc >= arcs.back());
-	if ((lag > 0.f) && !isStanding && (isFlee || IsEnemyInSight(frame))) {
+	if ((lag > 0.f) && !IsAtEnd() && (isFlee || IsEnemyInSight(frame))) {
 		lag = 0.f;
 	}
 	const float pace = std::max(slowest - lag / leadSec, 0.f);
@@ -511,7 +508,7 @@ void CFormation::PlaceSlots(int frame, float pace, float leadSec, std::vector<CC
 {
 	// Running away, a unit ahead of its slot keeps the line's pace rather than dropping back towards the pursuers
 	const float minSpeed = isFlee ? std::max(pace, MIN_SPEED * slowest) : std::max(0.5f * pace, MIN_SPEED * slowest);
-	const bool isWalking = !isLineToEnd || (anchorArc < arcs.back());  // not yet standing at the path's end
+	const bool isWalking = !IsAtEnd();  // not yet standing at the path's end
 	for (auto& kv : members) {
 		CCircuitUnit* unit = kv.first;
 		SMember& m = kv.second;
@@ -606,16 +603,57 @@ bool CFormation::IsInSlot(const CCircuitUnit* unit) const
 void CFormation::GetStandPath(F3Vec& outPath) const
 {
 	// From the line's point level with the leader (not the leader itself, which walks a little off the line) to the
-	// front row's centre, along the line as it lies
+	// front row's centre, along the line as it lies. Facing, to where it began to face instead: a block that turned
+	// has its front up to its depth from there, past FACE_KEEP for a deep one, which would stop facing and match the
+	// slots afresh; the facing block doesn't follow the path, so it stands as it is
 	outPath.push_back(PointAt(0.f));
 	for (size_t i = 0; i < line.size(); ++i) {
 		if ((arcs[i] > 0.f) && (arcs[i] < anchorArc)) {
 			outPath.push_back(line[i]);
 		}
 	}
-	if (outPath.back().SqDistance2D(anchorPos) >= 1.f) {
-		outPath.push_back(anchorPos);
+	const AIFloat3& end = isFacing ? faceEnd : anchorPos;
+	if (outPath.back().SqDistance2D(end) >= 1.f) {
+		outPath.push_back(end);
 	}
+}
+
+bool CFormation::SlideBy(const AIFloat3& shift, F3Vec& outPath)
+{
+	// The block's centre and the end it faces from move by shift; the next solve lays the block out there (the path
+	// ends at the new faceEnd, so it keeps facing) and each unit walks to its slot, shifted as it is
+	if (!isOn || !isFacing) {
+		return false;
+	}
+	const AIFloat3 d(shift.x, 0.f, shift.z);
+	const AIFloat3 oldCentre = faceCentre;
+	faceCentre = oldCentre + d;
+	float ahead;
+	if (!FitFacing(faceDir, ahead)) {
+		faceCentre = oldCentre;
+		return false;
+	}
+	faceAhead = ahead;
+	faceEnd = faceEnd + d;
+	AIFloat3 start = PointAt(0.f) + d;  // level with the leader there
+	CTerrainManager::CorrectPosition(start);
+	outPath.assign({start, faceEnd});
+	return true;
+}
+
+void CFormation::EndFacing()
+{
+	if (!isFacing) {
+		return;
+	}
+	isFacing = false;
+	track.clear();  // the rows stood across faceDir, not along the track
+	isDirty = true;  // and walk a new way: match units to slots afresh
+}
+
+bool CFormation::IsSlotUnit(const CCircuitDef* cdef)
+{
+	return !cdef->IsAbleToFly() && !cdef->IsAttrNoForm() && !cdef->IsRoleSupport();
 }
 
 void CFormation::Reset()
@@ -765,7 +803,7 @@ void CFormation::UpdateFacing(int frame, const AIFloat3& pathEnd, float radius)
 		}
 		return;
 	}
-	if (!isLineToEnd || (anchorArc < arcs.back())) {
+	if (!IsAtEnd()) {
 		return;  // not standing at the path's end yet
 	}
 	// Standing at the path's end: face the way the line came (over its last TURN_LOOK, not the last jog of the path),

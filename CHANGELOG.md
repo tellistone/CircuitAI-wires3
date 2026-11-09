@@ -43,19 +43,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   slot and the rest are near (else at the usual check, every 16 updates); the walk then resumes in line on the same path,
   unless a unit asked for a new route. A holding group that is hit and steps away ends its regroup, so the step isn't undone. A holding group (nothing to attack, no front to walk to, no safe route)
   stands in line where it is, as a regroup's line stands, instead of every unit walking straight to one spot at each
-  decision; it walks in line to another spot only if that spot has at most 80% of the threat here (straight within
-  256 elmos, else along a threat-capped path) and stands there, and it keeps its hold until another spot is that much
-  quieter. A rally host at its meeting point, a group already beside the group it reinforces, and a rally joiner close
-  to a fight with no safe edge stand in line the same way (they used to gather: units within 600 elmos stood where they
-  were, the rest walked straight in), and units that join walk into its slots. A group walking over in line to a group
-  that stands in line (holding, waiting, regrouping) merges once the two lines meet (the leaders within both lines'
-  depths + 200 elmos), once its own line stands at its route's end, or after `travel_sec`, so its units take a short
-  step into the host's slots instead of running in from up to 800 elmos; a group passing by, or a host that walks or
-  fights, merges at once as before, so a host on the move can't walk out of reach. A group with no line (formation off
-  or fewer than `min_units` units) holds and waits as before: straight to a quiet spot within 256 elmos, else along a
-  threat-capped path (ending bunched on its last point), and the gather at a meeting point. Where no line fits, a
-  stand's units stand together at its end. Stepping out of an attacker's range while holding, and escapes where no path
-  was found, stay straight moves. Once the line stands at the end of its
+  decision. It moves only to a spot with at most 80% of the threat here, and keeps that spot until another has at most
+  80% of its threat, so two spots can't take turns. To a spot within 256 elmos a block standing facing the threat
+  slides there as it stands, its front still to the threat and no unit changing slot (where it fits there; else the
+  line walks straight there); farther, the line walks a threat-capped path and faces anew at its end. A rally host at
+  its meeting point, a group already beside the group it reinforces, and a rally joiner close to a fight with no safe
+  edge stand in line the same way (they used to gather: units within 600 elmos stood where they were, the rest walked
+  straight in), and units that join walk into its slots. A unit pulled back from danger while the line stands rejoins
+  with the next path rather than walk back into the slot that endangered it. A group with no line (formation off, or
+  fewer than `min_units` units that take a slot) holds with the same 80% rule, straight to a quiet spot within 256
+  elmos, else along a threat-capped path (ending bunched on its last point), and gathers at a meeting point as before.
+  Where no line fits, a stand's units stand together at its end. Stepping out of an attacker's range while holding,
+  and escapes where no path was found, stay straight moves. Once the line stands at the end of its
   walk it faces the threat (`face_range`, 0 = off): it reads the enemy threat 8 ways at 1 and 2 x its fire range
   around the block and, if the threat has a clear side, turns the block about its centre to face it, its front row
   short of more threat than at the centre (else it faces the way it came, not the path's last jog). It turns only
