@@ -601,6 +601,17 @@ bool CFormation::IsInSlot(const CCircuitUnit* unit) const
 	return (m != nullptr) && m->isInSlot;
 }
 
+float CFormation::GetLeaderOffset() const
+{
+	// leader: nullptr once the leader left the squad (Remove), until the next solve
+	if (!isOn || (leader == nullptr) || (leaderM == nullptr) || (leaderM->row < 0)
+		|| (leaderM->row >= (int)rows.size()))
+	{
+		return 0.f;
+	}
+	return rows[leaderM->row].offset;
+}
+
 void CFormation::GetStandPath(F3Vec& outPath) const
 {
 	// From the line's point level with the leader (not the leader itself, which walks a little off the line) to the
