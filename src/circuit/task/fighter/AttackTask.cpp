@@ -714,7 +714,10 @@ void CAttackTask::Reinforce(const int frame, bool isReuse)
 	bool isToMeet = false;
 	if (isRally && !PickRallyGoal(frame, goal, isToMeet)) {
 		position = startPos;
-		GatherAt(startPos);  // nothing safe near the host's fight and we are close already: stand here
+		// Nothing safe near the host's fight and we are close already: stand here, in line where we can
+		if (!StandInLine(frame)) {
+			GatherAt(startPos);
+		}
 		return;
 	}
 	position = goal;
@@ -770,8 +773,10 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 		}
 		if (!isRally && (pPath->path.size() <= 2)) {
 			// Already beside the group: a short route isn't walked (ApplyGroupRoute), so stop here rather than carry
-			// on with older orders (a front route) out of merge distance
-			GatherAt(goal);
+			// on with older orders (a front route) out of merge distance; in line where we can
+			if (!StandInLine(manager->GetCircuit()->GetLastFrame())) {
+				GatherAt(goal);
+			}
 		}
 		return;
 	}
@@ -964,9 +969,11 @@ bool CAttackTask::UpdateMeet(int frame, bool isReuse)
 	meetPos = FindMeetPoint(frame, significant);
 	position = meetPos;
 	if (IsAtMeetPoint(leader->GetPos(frame))) {
-		// Wait at the point (regrouping allowed). No quiet-spot search: the point was judged safe, and the joiners
-		// aim at it
-		GatherAt(meetPos);
+		// Wait at the point (regrouping allowed), in line where we can: the joiners walk into its slots. No quiet-spot
+		// search: the point was judged safe, and the joiners aim at it
+		if (!StandInLine(frame)) {
+			GatherAt(meetPos);
+		}
 		return true;
 	}
 	isMeetWalk = true;
@@ -2234,6 +2241,7 @@ void CAttackTask::HoldPosition(bool isWalk)
 			&& (bestThreat >= GetTaskThreatAt(leader, holdPos) * HOLD_SWITCH_SHARE))
 		{
 			pPath = holdPath;  // Start() and regrouping re-send pPath
+			SendStandPath(holdPath, true);  // to units taken off it (pulled back from danger and safe again)
 			return;
 		}
 	}
@@ -2367,11 +2375,11 @@ bool CAttackTask::IsStandAllowed(int frame) const
 
 void CAttackTask::SendStandPath(const std::shared_ptr<PathInfo>& path, bool isKept)
 {
-	// Not to units still in danger (PullBackEndangered sent them away); with isKept not to units already on it
-	// (walking it, or at its end), so a stand sends no orders again
+	// Not to units still in danger (PullBackEndangered sent them away) or stepping back after a shot (reload_scoot);
+	// with isKept not to units already on it (walking it, or at its end), so a stand sends no orders again
 	for (CCircuitUnit* unit : units) {
 		ITravelAction* travelAct = unit->GetTravelAct();
-		if ((isKept && (travelAct->GetPath() == path) && !travelAct->IsWait())
+		if ((isKept && (travelAct->GetPath() == path) && !travelAct->IsWait()) || IsScooting(unit)
 			|| (std::find(endangered.begin(), endangered.end(), unit) != endangered.end()))
 		{
 			continue;

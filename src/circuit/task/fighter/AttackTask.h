@@ -312,7 +312,7 @@ private:
 	float FindQuietSpot(const springai::AIFloat3& pos, springai::AIFloat3& outPos, float* outHereThreat = nullptr);
 	void Regroup(int frame);  // the regroup's move (state REGROUP): in line where it can
 	bool IsStandAllowed(int frame) const;  // formation on and enough units: a regroup or a hold may stand in line
-	// The path to every unit not in danger (and with isKept, not on it already), activated
+	// The path to every unit not in danger or scooting (and with isKept, not on it already), activated
 	void SendStandPath(const std::shared_ptr<PathInfo>& path, bool isKept);
 	// Stand in line where we are (holding, waiting); false: no line to stand in (IsStandAllowed), move as before
 	bool StandInLine(int frame);
