@@ -214,7 +214,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			|| (unit->GetTarget() != target)
 			|| ((unit->GetTargetTile() != targetTile) && isTileMoveOrder))
 		{
-			orders.push_back({i, GetFireRange(unit)});
+			orders.push_back({i, GetSpotRange(unit)});
 		}
 	}
 	if (orders.empty()) {
@@ -230,8 +230,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		SFireClaim& claim = claims[order.claim];
 		CCircuitUnit* unit = claim.unit;
 		AIFloat3 firePos;
-		const FireSpot spot = unit->GetCircuitDef()->IsAttrMelee() ? FireSpot::NONE
-				: FindFireSpot(claims, order.claim, safeThreat, arc, firePos);
+		const FireSpot spot = FindFireSpot(claims, order.claim, safeThreat, arc, firePos);
 		switch (spot) {
 			case FireSpot::SPOT:
 			case FireSpot::RISKY: {  // RISKY: nowhere safe, not here either: the least dangerous spot
@@ -248,7 +247,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 				fireSpots.erase(unit);
 				unit->HoldFire(firePos, target, targetTile, timeout);
 			} break;
-			default: {  // melee / no usable range
+			default: {  // no usable range (or melee spots off)
 				fireSpots.erase(unit);
 				if (isDirect) {
 					unit->Attack(target, targetTile, timeout);  // keeps target priority
@@ -288,11 +287,30 @@ float IFighterTask::GetFireRange(CCircuitUnit* unit) const
 	return unit->GetCircuitDef()->GetMaxRange(rt);
 }
 
-bool IFighterTask::IsInFireBand(CCircuitUnit* unit, const AIFloat3& pos) const
+float IFighterTask::GetSpotRange(CCircuitUnit* unit) const
 {
 	const float range = GetFireRange(unit);
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	if (!cdef->IsAttrMelee()) {
+		return range;
+	}
+	const float gap = manager->GetCircuit()->GetMilitaryManager()->GetAttackMeleeSpot();
+	if (gap < 0.f) {
+		return 0.f;  // off: no usable range, direct Attack as before
+	}
+	// Right next to the target: both bodies plus the gap, never beyond the weapon's reach
+	CCircuitDef* edef = target->GetCircuitDef();
+	const float bodies = cdef->GetRadius() + ((edef != nullptr) ? edef->GetRadius() : 0.f);
+	return std::min(range, bodies + gap);
+}
+
+bool IFighterTask::IsInFireBand(CCircuitUnit* unit, const AIFloat3& pos) const
+{
+	const float range = GetSpotRange(unit);
+	// Melee: no lower bound, closer is fine
+	const float bandMin = unit->GetCircuitDef()->IsAttrMelee() ? 0.f : FIRE_BAND_MIN;
 	const float sqDist = pos.SqDistance2D(target->GetPos());
-	return (sqDist >= SQUARE(range * FIRE_BAND_MIN)) && (sqDist <= SQUARE(range * FIRE_BAND_MAX));
+	return (sqDist >= SQUARE(range * bandMin)) && (sqDist <= SQUARE(range * FIRE_BAND_MAX));
 }
 
 bool IFighterTask::GetKeptFireSpot(CCircuitUnit* unit, AIFloat3& outPos) const
@@ -318,7 +336,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		const float* arcBearing, AIFloat3& outPos) const
 {
 	CCircuitUnit* unit = claims[self].unit;
-	const float range = GetFireRange(unit);
+	const float range = GetSpotRange(unit);  // melee: right next to the target
 	if (range < SQUARE_SIZE * 4) {
 		return FireSpot::NONE;
 	}

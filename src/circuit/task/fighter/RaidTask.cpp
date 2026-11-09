@@ -905,13 +905,13 @@ void CRaidTask::AttackDirect(int frame)
 
 bool CRaidTask::IsAllHolding() const
 {
-	// HOLD (IFighterTask::Attack): ranged unit ordered on this target without a firing spot
+	// HOLD (IFighterTask::Attack): unit with a spot range (melee too) ordered on this target without a firing spot
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	int ranged = 0;
 	for (CCircuitUnit* unit : units) {
-		const float range = GetFireRange(unit);
-		if (unit->GetCircuitDef()->IsAttrMelee() || (range < SQUARE_SIZE * 4)) {
-			continue;
+		const float range = GetSpotRange(unit);
+		if (range < SQUARE_SIZE * 4) {
+			continue;  // direct Attack (no spot)
 		}
 		++ranged;
 		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())

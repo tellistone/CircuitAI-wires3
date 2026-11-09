@@ -72,11 +72,11 @@ protected:
 	// The task's thr_mod multiplier from its distance-from-base curve (quota.thr_mod.distance.<task>), read at the spot
 	// being judged (an enemy, a destination, a unit's own position): divide a threat allowance by it. 1 if not configured.
 	float GetThrDistModAt(const springai::AIFloat3& pos) const;
-	// Ranged units move to a firing spot (FindFireSpot), then Attack the target. isDirect: units without a spot
-	// (melee, no usable range) get a direct Attack instead of a fight-move, so the target keeps priority.
+	// Units move to a firing spot (FindFireSpot; melee: one right next to the target), then Attack the target.
+	// isDirect: units without a spot (no usable range, or quota.attack_melee_spot < 0 for melee) get a direct Attack instead of a fight-move, so the target keeps priority.
 	// The engine still lets weapons shoot other units while the ordered target can't be hit.
 	void Attack(const int frame, const bool isDirect = false);
-	// Firing spot for a ranged unit: within its weapon range of the target, trading walking distance against
+	// Firing spot for a unit: within its spot range (GetSpotRange) of the target, trading walking distance against
 	// threat and against spots other units are heading to.
 	// NONE: no usable range (old orders); SPOT: a safe spot; HOLD: every spot dangerous but the unit's own
 	// spot is safe; RISKY: nowhere safe, the unit's spot neither: the least dangerous spot
@@ -89,7 +89,10 @@ protected:
 		float power;
 	};
 	float GetFireRange(CCircuitUnit* unit) const;  // max range against the current target's kind
-	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x range from the target
+	// Where its firing spots go: GetFireRange; melee: both bodies + quota.attack_melee_spot (never beyond the fire
+	// range), 0 if that is < 0 (no spot)
+	float GetSpotRange(CCircuitUnit* unit) const;
+	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x spot range (melee 0-0.95x)
 	bool GetKeptFireSpot(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // last spot, if still usable
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
 	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
