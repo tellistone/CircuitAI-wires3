@@ -13,6 +13,7 @@
 #include "terrain/path/MicroPather.h"
 #include "unit/CircuitDef.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 
@@ -42,6 +43,14 @@ public:
 	const springai::AIFloat3& GetLeaderPos(int frame) const;
 
 	/*
+	 * Rallies (quota.attack_merge.rally, quota.raid_rally: CMilitaryManager::UpdateRally)
+	 */
+	// Raw current strength (GetStrengthSum: power x sqrt(health share)): a rally compares it with enemy blobs
+	float GetRallyStrength() const { return GetStrengthSum(); }
+	// May the group led by unit join this one in a rally? Default: never (tasks without rallies)
+	virtual bool IsRallyCompatible(CCircuitUnit* unit) const { return false; }
+
+	/*
 	 * Line formation (CFormation, behaviour.json "formation") while the squad walks its path outside combat
 	 */
 	// Lays the line out (at most twice a second) and releases units it finds stuck
@@ -67,6 +76,20 @@ private:
 	bool IsFormationActive(int frame) const;
 
 	bool IsMergeSafe() const;
+
+protected:
+	// The group led by unit moves like ours: top speeds within speedRatio of each other, its leader no worse a mover
+	// than ours (a smaller terrain area: it would take the lead (FindLeader) and drag the group back, or get stranded on
+	// routes only our leader takes), and the same movement type (amphibious may join landers and floaters)
+	bool IsMoveCompatible(CCircuitUnit* unit, float speedRatio) const;
+	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below allowedAt(spot) at each sampled spot
+	// (one threat square apart); allowances are above 0, so no threat is always safe
+	template<typename AllowedAt>
+	bool IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
+			AllowedAt allowedAt) const;
+private:
+	float GetLineStep() const;  // IsLineSafe sampling step: the threat map square
+	float GetLineThreatAt(springai::AIFloat3& p) const;  // corrects p onto the map, then our threat there
 
 protected:
 	// Nearest same-type task this one may join (no ground/influence check, see GetMergeTask)
@@ -229,6 +252,29 @@ public:
 	virtual void Log() override;
 #endif
 };
+
+template<typename AllowedAt>
+bool ISquadTask::IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
+		AllowedAt allowedAt) const
+{
+	springai::AIFloat3 dir = to - from;
+	dir.y = 0.f;
+	const float dist = dir.Length2D();
+	if (dist < 1.f) {
+		return true;
+	}
+	dir /= dist;
+	const float reach = std::min(maxReach, dist);
+	const float step = GetLineStep();
+	for (float d = step; d <= reach; d += step) {
+		springai::AIFloat3 p = from + dir * d;
+		const float threat = GetLineThreatAt(p);
+		if ((threat > 0.f) && (threat >= allowedAt(p))) {
+			return false;
+		}
+	}
+	return true;
+}
 
 } // namespace circuit
 

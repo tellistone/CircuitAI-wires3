@@ -141,6 +141,41 @@ const AIFloat3& ISquadTask::GetLeaderPos(int frame) const
 	return (leader != nullptr) ? leader->GetPos(frame) : GetPosition();
 }
 
+bool ISquadTask::IsMoveCompatible(CCircuitUnit* unit, float speedRatio) const
+{
+	assert(leader != nullptr);
+
+	CCircuitDef* ldef = leader->GetCircuitDef();
+	CCircuitDef* udef = unit->GetCircuitDef();
+	const float slower = std::min(ldef->GetSpeed(), udef->GetSpeed());
+	const float faster = std::max(ldef->GetSpeed(), udef->GetSpeed());
+	if (slower * speedRatio < faster) {
+		return false;
+	}
+	const STerrainMapArea* ourArea = leader->GetArea();
+	const STerrainMapArea* newArea = unit->GetArea();
+	if ((newArea != nullptr) && ((ourArea == nullptr) || (newArea->percentOfMap < ourArea->percentOfMap))) {
+		return false;
+	}
+	if (udef->IsAmphibious() && (ldef->IsAmphibious() || ldef->IsLander() || ldef->IsFloater())) {
+		return true;
+	}
+	return (ldef->IsAbleToFly() && udef->IsAbleToFly())
+		|| (ldef->IsLander() && udef->IsLander())
+		|| (ldef->IsFloater() && udef->IsFloater());
+}
+
+float ISquadTask::GetLineStep() const
+{
+	return manager->GetCircuit()->GetThreatMap()->GetSquareSize();
+}
+
+float ISquadTask::GetLineThreatAt(AIFloat3& p) const
+{
+	CTerrainManager::CorrectPosition(p);
+	return GetTaskThreatAt(leader, p);  // squad threat when the task judges by it
+}
+
 void ISquadTask::FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd)
 {
 	if (leader == nullptr) {
