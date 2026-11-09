@@ -46,9 +46,8 @@ public:
 	float GetAllyInflAt(const springai::AIFloat3& position) const;
 	float GetAllyDefendInflAt(const springai::AIFloat3& position) const;
 	float GetInfluenceAt(const springai::AIFloat3& position) const;
-	// Our territory: our buildings, land constructors and static defences (allyDefendInfl) outweigh the enemy's
-	// buildings and static defences (enemyStaticInfl, the same formulas) by more than margin there; enemy mobile units
-	// don't count
+	// Our territory: our buildings (static defences too) and land constructors outweigh the enemy's known buildings
+	// by more than margin there. Every one of them counts the same (AddTerritory); enemy mobile units don't count
 	bool IsAllyTerritory(const springai::AIFloat3& position, float margin) const;
 	// What one mobile armed ally adds to allyInfl at position, by the same formula as AddMobileArmed
 	float GetMobileArmedInflAt(CAllyUnit* u, const springai::AIFloat3& position) const;
@@ -60,7 +59,8 @@ private:
 		FloatVec enemyInfl;
 		FloatVec allyInfl;
 		FloatVec allyDefendInfl;
-		FloatVec enemyStaticInfl;
+		FloatVec allyTerritory;
+		FloatVec enemyTerritory;
 		FloatVec influence;
 //		FloatVec tension;
 //		FloatVec vulnerability;
@@ -75,7 +75,7 @@ private:
 	void AddStaticArmed(CAllyUnit* u);
 	void AddUnarmed(CAllyUnit* u);
 	void AddEnemy(const SEnemyData& e);
-	void AddEnemyUnarmed(const SEnemyData& e);  // an unarmed enemy building, as AddUnarmed
+	void AddTerritory(float* layer, const springai::AIFloat3& pos);  // IsAllyTerritory: 2 over defence.infl_rad
 	// Adds val, fading linearly to 0 at range cells, to layer around cell (posx, posz)
 	void AddDisc(float* layer, int posx, int posz, int range, float val);
 //	void AddFeature(springai::Feature* f);
@@ -101,7 +101,8 @@ private:
 	float* drawEnemyInfl;
 	float* drawAllyInfl;
 	float* drawAllyDefendInfl;
-	float* drawEnemyStaticInfl;
+	float* drawAllyTerritory;
+	float* drawEnemyTerritory;
 	float* drawInfluence;
 //	float* drawTension;
 //	float* drawVulnerability;
@@ -113,7 +114,8 @@ private:
 	float* enemyInfl;
 	float* allyInfl;
 	float* allyDefendInfl;
-	float* enemyStaticInfl;
+	float* allyTerritory;
+	float* enemyTerritory;
 	float* influence;
 //	float* tension;
 //	float* vulnerability;
