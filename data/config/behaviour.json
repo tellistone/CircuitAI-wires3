@@ -40,7 +40,8 @@
 	"raid": [9.0, 20.0],  // [<min>, <avg>] power of raider squad
 	"attack": 10.0,  // attack group floor: a group under this power reinforces (walks to) a stronger attack group if one can be reached, else only walks to targets on our ground, as attack_own_ground_time (a target already within range is always fair game; with none it goes to the front line)
 	"attack_floor_hold": 0.75,  // hysteresis for the attack floor: a group that reached quota.attack keeps walking to targets anywhere until its power drops below quota.attack x this; 1 = none
-	"attack_threat_floor": [0.66, 0.8],  // [<on>, <off>]: all attack groups only walk to targets on our ground (as under quota.attack) from when our own army's threat (our mobile fighters, not allies') drops below <on> x the known enemy mobile threat / enemy team count, until it is back to <off> x that; commanders count on neither side; checked once a second; on 0 = off
+	"attack_threat_floor": [0.66, 0.8],  // [<on>, <off>]: all attack groups only walk to targets on our ground (as under quota.attack) from when our own army's threat (our mobile fighters, not allies') drops below <on> x the known enemy mobile threat (faded as enemy_half_life) / enemy team count, until it is back to <off> x that; commanders count on neither side; checked once a second; on 0 = off
+	"enemy_half_life": 180,  // seconds: the known enemy army (attack_threat_floor here, economy.ms_pull_army) counts an enemy in radar or LOS in full, and one out of both at half for every this many seconds since it was last seen; enemies seen dying or 20 min unseen don't count; 0 = no fading
 
 	"raid_flee_share": 0.33,
 	// Raid rally: when a recently seen pack of enemy raiders (mobile, armed enemies of the raider role within 800 elmos of each other, threat summed) has more threat than match x our strongest raid group's raw strength,

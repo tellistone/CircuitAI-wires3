@@ -268,7 +268,6 @@ private:
 	std::vector<std::pair<float, float>> mspIncomeCurve;
 	std::vector<std::pair<float, float>> mspArmyCurve;
 	int mspArmyFrame;
-	float mspArmyHalfLife;  // frames; 0 = enemies out of sight never fade
 	float mspIncomeMult;
 	float mspArmyMult;
 	int mspLogFrame;  // next periodic MS_PULL log line

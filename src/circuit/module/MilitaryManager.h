@@ -220,11 +220,11 @@ public:
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
 	void DiceBigGun();
-	float ClampMobileCostRatio() const;
-	// Known enemy mobile threat per enemy team over our army's threat (commanders on neither side; the sides as
-	// quota.attack_threat_floor counts them), enemies out of radar and LOS fading by half every halfLife frames
-	// (EnemyManager::GetMobileThreatNoCommFaded); negative while no enemy army is known. Walks all known enemies
-	float GetEnemyArmyRatio(float halfLife) const;
+	// Known enemy mobile threat (no commanders) per enemy team, enemies out of radar and LOS fading by half every
+	// quota.enemy_half_life (EnemyManager::GetMobileThreatNoCommFaded). Walks all known enemies
+	float GetEnemyThreatPerTeam() const;
+	// GetEnemyThreatPerTeam over our army's threat (no commanders either); negative while no enemy army is known
+	float GetEnemyArmyRatio() const;
 	void UpdateDefenceTasks();
 	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without
 	// crossing threat it couldn't take, divided by the number of enemy players: the mex bonus of each quota
@@ -398,7 +398,6 @@ private:
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
-	float GetEnemyThreatPerTeam() const;  // known enemy mobile threat (no commanders) per enemy team
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
@@ -568,6 +567,7 @@ private:
 		float off = 0.f;  // ... at or above this: floor off
 	} attackThreatFloor;  // quota.attack_threat_floor
 	bool isAttackThreatFloor;
+	float enemyHalfLife;  // quota.enemy_half_life, frames; 0 = enemies out of sight never fade
 	int attackThreatFloorLogFrame;  // next periodic THREAT FLOOR log line
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat

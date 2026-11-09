@@ -59,7 +59,6 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, metalProduced(.0f)
 		, metalUsed(.0f)
 		, mspArmyFrame(0)
-		, mspArmyHalfLife(0.f)
 		, mspIncomeMult(1.f)
 		, mspArmyMult(1.f)
 		, mspLogFrame(0)
@@ -484,12 +483,11 @@ void CEconomyManager::Init()
 		mspIncomeCurve = readCurve(econ["ms_pull_income"], "economy.ms_pull_income", {{30.f, 1.f}, {160.f, 0.7f}});
 		const Json::Value& army = econ["ms_pull_army"];
 		if (!army.isNull() && !army.isObject()) {
-			circuit->LOG("CONFIG %s: economy.ms_pull_army must be {\"since\", \"half_life\", \"curve\"}, using the defaults", cfgName.c_str());
+			circuit->LOG("CONFIG %s: economy.ms_pull_army must be {\"since\", \"curve\"}, using the defaults", cfgName.c_str());
 		}
 		const bool isArmy = army.isObject();
 		mspArmyCurve = readCurve(isArmy ? army["curve"] : Json::Value(), "economy.ms_pull_army.curve", {{0.5f, 1.3f}, {2.f, 0.7f}});
 		mspArmyFrame = std::max(isArmy ? army.get("since", 300.f).asFloat() : 300.f, 0.f) * FRAMES_PER_SEC;
-		mspArmyHalfLife = std::max(isArmy ? army.get("half_life", 180.f).asFloat() : 180.f, 0.f) * FRAMES_PER_SEC;
 	}
 
 	CSetupManager::StartFunc subinit = [this](const AIFloat3& pos) {
@@ -1774,15 +1772,14 @@ void CEconomyManager::UpdateEconomy()
 	const float ecoIncome = GetEcoMetalIncome();
 	mspIncomeMult = utils::eval_curve(mspIncomeCurve, ecoIncome);
 	const bool isArmyOn = (ecoFrame >= mspArmyFrame);
-	const float armyRatio = isArmyOn ? militaryMgr->GetEnemyArmyRatio(mspArmyHalfLife) : -1.f;
+	const float armyRatio = isArmyOn ? militaryMgr->GetEnemyArmyRatio() : -1.f;
 	mspArmyMult = (armyRatio >= 0.f) ? utils::eval_curve(mspArmyCurve, armyRatio) : 1.f;
 	const float basePull = pullMtoS;
-	pullMtoS *= mspIncomeMult * mspArmyMult * militaryMgr->ClampMobileCostRatio();
+	pullMtoS *= mspIncomeMult * mspArmyMult;
 	if (ecoFrame >= mspLogFrame) {
 		mspLogFrame = ecoFrame + FRAMES_PER_SEC * 30;
-		circuit->LOG("MS_PULL %.2f: base %.2f x income %.2f (%.1f m) x army %.2f (enemy/ours %.2f%s) x cost clamp %.2f",
-				pullMtoS, basePull, mspIncomeMult, ecoIncome, mspArmyMult, armyRatio,
-				isArmyOn ? "" : ", before since", militaryMgr->ClampMobileCostRatio());
+		circuit->LOG("MS_PULL %.2f: base %.2f x income %.2f (%.1f m) x army %.2f (enemy/ours %.2f%s)",
+				pullMtoS, basePull, mspIncomeMult, ecoIncome, mspArmyMult, armyRatio, isArmyOn ? "" : ", before since");
 	}
 }
 
