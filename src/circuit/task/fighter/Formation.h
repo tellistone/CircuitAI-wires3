@@ -79,8 +79,6 @@ public:
 	float GetDepth() const { return isOn ? depth : 0.f; }
 	// While IsOn: the stretch of line the group stands on to stop where it is (CAttackTask::Regroup)
 	void GetStandPath(F3Vec& outPath) const;
-	// On, and its front row stands at the path's end (facing or not)
-	bool IsStanding() const { return isOn && isLineToEnd && !arcs.empty() && (anchorArc >= arcs.back()); }
 	// Where the unit walks now; false: it has no slot (busy, no_formation, or the line is off): follow the path
 	bool GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const;
 	// The line steers the unit and it keeps up (in line, or a straggler faster than the line): no regroup for it
