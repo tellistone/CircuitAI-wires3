@@ -127,6 +127,8 @@
         "repair_safe_static": true,  // same as repair_safe, for static units with prio_repair
 	"wait_timeout": 120,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
 	"repair_safe": true,  // true = builders skip priority repair (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs, and leave a mobile unit's repair (priority or retreat) once it leads them into such an area
+	"repair_safe_held": false,  // true = the repair_safe / repair_safe_static threat check also needs an enemy-held area, like regular jobs; false = threat alone, so our army nearby doesn't make a fight count as safe
+	"repair_hit_exit": [true, false, 5],  // [<builder hit>, <unit hit>, <cooldown sec>]: drop a priority repair when one of its builders takes damage, and/or when the mobile unit being repaired takes damage while builders are on it; no new priority repair for that unit during cooldown
 	"repair_pull": [600, 0.4],  // [<range>, <max share of builders>]: nearest busy builder in range drops its work to repair a damaged heavy/prio_repair unit, range 0 = disabled
         "repair_leash": [300, 5],  // [<distance>, <cooldown sec>]: cancel a started priority or retreat (HIGH) repair if the unit, no longer retreating, drives this far beyond build range, then no new priority repair for it during cooldown, distance 0 = disabled
 	"repair_flee": [0.5],  // [<speed share>]: a mobile unit (not retreating) out of a builder's reach and moving away from it faster than this share of its own max speed is not picked for repair, 0 = disabled
