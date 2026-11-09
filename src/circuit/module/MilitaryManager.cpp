@@ -529,6 +529,7 @@ void CMilitaryManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.attack_spot_threat must be a number >= 0, using 1.0", cfgName.c_str());
 	}
 	attackSpotThreat = (qspotThreat.isNumeric() && (qspotThreat.asFloat() >= 0.f)) ? qspotThreat.asFloat() : 1.f;
+	attackMeleeSpot = readAttackNum("attack_melee_spot", 32.f, -1.f, noMax);
 	// quota.attack_merge.rally, quota.raid_rally: {match, margin, range, seen_sec}; not an object (or match 0) = off
 	auto readRallyCfg = [&](const Json::Value& q, const char* name, float defRange, SRallyCfg& outCfg) {
 		if (!q.isNull() && !q.isObject()) {

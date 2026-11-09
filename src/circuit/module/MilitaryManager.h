@@ -289,6 +289,8 @@ public:
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
+	// quota.attack_melee_spot: melee units pick a firing spot this many elmos beyond both units' bodies; < 0: off
+	float GetAttackMeleeSpot() const { return attackMeleeSpot; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other
 	struct SAttackMerge {
 		float speedRatio;  // leaders' speeds within this factor of each other
@@ -540,6 +542,7 @@ private:
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
+	float attackMeleeSpot;  // quota.attack_melee_spot
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SRally attackRally;  // quota.attack_merge.rally
 	SRally raidRally;  // quota.raid_rally

@@ -72,11 +72,12 @@ protected:
 	// The task's thr_mod multiplier from its distance-from-base curve (quota.thr_mod.distance.<task>), read at the spot
 	// being judged (an enemy, a destination, a unit's own position): divide a threat allowance by it. 1 if not configured.
 	float GetThrDistModAt(const springai::AIFloat3& pos) const;
-	// Ranged units move to a firing spot (FindFireSpot), then Attack the target. isDirect: units without a spot
-	// (melee, no usable range) get a direct Attack instead of a fight-move, so the target keeps priority.
+	// Units move to a firing spot (FindFireSpot; melee: one right next to the target, else a safe one within weapon
+	// range), then Attack the target.
+	// isDirect: units without a spot (no usable range, or quota.attack_melee_spot < 0 for melee) get a direct Attack instead of a fight-move, so the target keeps priority.
 	// The engine still lets weapons shoot other units while the ordered target can't be hit.
 	void Attack(const int frame, const bool isDirect = false);
-	// Firing spot for a ranged unit: within its weapon range of the target, trading walking distance against
+	// Firing spot for a unit: within its spot range (GetSpotRange) of the target, trading walking distance against
 	// threat and against spots other units are heading to.
 	// NONE: no usable range (old orders); SPOT: a safe spot; HOLD: every spot dangerous but the unit's own
 	// spot is safe; RISKY: nowhere safe, the unit's spot neither: the least dangerous spot
@@ -89,16 +90,24 @@ protected:
 		float power;
 	};
 	float GetFireRange(CCircuitUnit* unit) const;  // max range against the current target's kind
-	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos) const;  // 0.6-0.95x range from the target
-	bool GetKeptFireSpot(CCircuitUnit* unit, springai::AIFloat3& outPos) const;  // last spot, if still usable
+	// Where its firing spots go: GetFireRange; melee: both bodies + quota.attack_melee_spot (never beyond the fire
+	// range), 0 if that is < 0 (no spot)
+	float GetSpotRange(CCircuitUnit* unit) const;
+	// isClose (melee's close spots): 0-0.95x GetSpotRange from the target; else 0.6-0.95x GetFireRange
+	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isClose) const;
+	bool GetKeptFireSpot(CCircuitUnit* unit, bool isClose, springai::AIFloat3& outPos) const;  // last spot, if still in that band
+	// After Attack: every unit with spots (melee too) holds without one (HOLD: every spot dangerous) and the target is
+	// out of their weapon range. The group would stand still for as long as it keeps this target
+	bool IsAllHolding() const;
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
 	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
 	// each unit's own bearing from the target
 	virtual bool GetFireArcBearing(float& outBearing) const { return false; }
 	// For the unit of claims[self]; the other claims crowd spots and back them up. arcBearing: GetFireArcBearing
-	// (nullptr: none), then the unit's own and kept spots count only if on that arc
+	// (nullptr: none), then the unit's own and kept spots count only if on that arc. isClose: melee's close spots
+	// (GetSpotRange), else within weapon range (Attack tries this for melee too when no close spot is safe)
 	FireSpot FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
-			const float* arcBearing, springai::AIFloat3& outPos) const;
+			const float* arcBearing, bool isClose, springai::AIFloat3& outPos) const;
 
 	// Each unit's health-scaled power (pwr_mod power x sqrt(health %)), in the order of 'units'. Health takes engine
 	// calls, so it is read once per frame, and again when the group changed or a unit was hit
