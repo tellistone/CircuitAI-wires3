@@ -193,8 +193,9 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 
 float CFormation::AddMembers(int frame)
 {
-	// Land and sea units take slots (not support, not no_formation). Newcomers to a formed line straggle to theirs.
-	// Support units follow the leader instead (CSupportAction), so the line walks no faster than they do
+	// Land and sea units take slots (not support, not no_formation: the same tests as IsSlotUnit, kept in step with
+	// it). Newcomers to a formed line straggle to theirs. Support units follow the leader instead (CSupportAction), so
+	// the line walks no faster than they do
 	CCircuitAI* circuit = task->GetManager()->GetCircuit();
 	const CMilitaryManager::SFormationCfg& cfg = circuit->GetMilitaryManager()->GetFormationCfg();
 	float supportSpeed = std::numeric_limits<float>::max();

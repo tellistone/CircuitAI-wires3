@@ -50,7 +50,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   its meeting point, a group already beside the group it reinforces, and a rally joiner close to a fight with no safe
   edge stand in line the same way (they used to gather: units within 600 elmos stood where they were, the rest walked
   straight in), and units that join walk into its slots. A unit pulled back from danger while the line stands rejoins
-  with the next path rather than walk back into the slot that endangered it. A group with no line (formation off, or
+  with the next path rather than walk back into the slot that endangered it, and a line that switches off while
+  standing (no room left for 2 columns) stands again at the next decision. A group with no line (formation off, or
   fewer than `min_units` units that take a slot) holds with the same 80% rule, straight to a quiet spot within 256
   elmos, else along a threat-capped path (ending bunched on its last point), and gathers at a meeting point as before.
   Where no line fits, a stand's units stand together at its end. Stepping out of an attacker's range while holding,

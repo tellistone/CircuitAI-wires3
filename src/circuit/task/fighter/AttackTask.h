@@ -309,6 +309,7 @@ private:
 	bool IsStandAllowed(int frame) const;
 	// The unit walks path, or stands at its end (not waiting): it has had it
 	static bool IsOnPath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& path);
+	bool IsHoldKept() const;  // the leader walks holdPath (in line: stands on it), its travel not finished
 	// The path to every unit not in danger (and with isKept, not on it already), activated
 	void SendStandPath(const std::shared_ptr<PathInfo>& path, bool isKept);
 	// Stand in line where we are (holding, waiting): holdPath and holdPos; false: no line (IsStandAllowed), move as
