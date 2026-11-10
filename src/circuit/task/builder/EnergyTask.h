@@ -23,8 +23,6 @@ public:
 
 protected:
 	virtual void Execute(CCircuitUnit* unit) override;
-
-	bool isEnergyShort;  // IsEnergyShort at the last update
 };
 
 } // namespace circuit

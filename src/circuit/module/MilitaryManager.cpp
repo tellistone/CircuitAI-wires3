@@ -301,6 +301,20 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		}
 	}
 
+	if (prevent.isGeo) {
+		// Our finished geothermal (a morph into the upgrade finishes again: no new tower, same point) is defended
+		// as a finished mex is by its build_chain "porc", at its vent's point (CDefenceMatrix::AddGeoPoints)
+		auto geoFinishedHandler = [this](CCircuitUnit* unit) {
+			MakeDefence(unit->GetPos(this->circuit->GetLastFrame()));
+		};
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
+		for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
+			if (economyMgr->IsGeoDef(&cdef)) {
+				finishedHandler[cdef.GetId()] = geoFinishedHandler;
+			}
+		}
+	}
+
 	defence = circuit->GetAllyTeam()->GetDefenceMatrix().get();
 
 	fightTasks.resize(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_));
@@ -978,6 +992,7 @@ void CMilitaryManager::ReadConfig()
 		}
 		prevent.rerollFrames = int(std::max(rerollSec, 1.f) * FRAMES_PER_SEC);
 		prevent.sightFrames = int(std::max(sightSec, 1.f) * FRAMES_PER_SEC);
+		prevent.isGeo = porc.get("geo", false).asBool();
 		// Missing or [] = x1
 		std::vector<std::pair<float, float>> mapCurve;
 		ReadCurve(porc["prevent_map"], "porcupine.prevent_map", "map area per player", mapCurve);
@@ -1659,9 +1674,18 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	const float metalIncome = std::min(em->GetAvgMetalIncome(), em->GetAvgEnergyIncome()) * em->GetEcoFactor();
 	float maxCost = MIN_BUILD_SEC * amountFactor * metalIncome;
 	CDefenceMatrix::SDefPoint* closestPoint = nullptr;
+	CDefenceMatrix::SDefPoint* geoPoint = nullptr;
 	float minDist = std::numeric_limits<float>::max();
 	std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(cluster);
 	for (CDefenceMatrix::SDefPoint& defPoint : points) {
+		// A vent's point serves only that vent (our geo, its job, a sighting there): not the cluster's sweep,
+		// and a vent's towers never spill over to the mex points
+		if (defPoint.isGeo) {
+			if (defPoint.position.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 16)) {
+				geoPoint = &defPoint;
+			}
+			continue;
+		}
 		if (defPoint.cost < maxCost) {
 			float dist = defPoint.position.SqDistance2D(pos);
 			if ((closestPoint == nullptr) || (dist < minDist)) {
@@ -1669,6 +1693,9 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 				minDist = dist;
 			}
 		}
+	}
+	if (geoPoint != nullptr) {
+		closestPoint = (geoPoint->cost < maxCost) ? geoPoint : nullptr;
 	}
 	if (closestPoint == nullptr) {
 		return;
@@ -1878,17 +1905,25 @@ void CMilitaryManager::UpdatePreventSight()
 	}
 
 	CMetalManager* mm = circuit->GetMetalManager();
-	CCircuitDef* mexDef = circuit->GetEconomyManager()->GetMexDef();
+	CEconomyManager* em = circuit->GetEconomyManager();
+	CCircuitDef* mexDef = em->GetMexDef();
 	const float sqLos = SQUARE((mexDef != nullptr) ? mexDef->GetLosRadius() : 0.f);
 	const int frame = circuit->GetLastFrame();
 	for (const auto& kv : circuit->GetTeamUnits()) {
 		CCircuitUnit* unit = kv.second;
-		if (!unit->GetCircuitDef()->IsMex()) {
+		// Geothermals too (porcupine.geo), by the nearest cluster as their vent's point is (CDefenceMatrix::AddGeoPoints)
+		const bool isGeo = prevent.isGeo && em->IsGeoDef(unit->GetCircuitDef());
+		if (!unit->GetCircuitDef()->IsMex() && !isGeo) {
 			continue;
 		}
 		const AIFloat3& mexPos = unit->GetPos(frame);
-		const int spotId = mm->FindNearestSpot(mexPos);
-		const int cluster = (spotId >= 0) ? mm->GetCluster(spotId) : -1;
+		int cluster = -1;
+		if (isGeo) {
+			cluster = mm->FindNearestCluster(mexPos);
+		} else {
+			const int spotId = mm->FindNearestSpot(mexPos);
+			cluster = (spotId >= 0) ? mm->GetCluster(spotId) : -1;
+		}
 		if ((cluster < 0) || (cluster >= (int)preventRolls.size())) {
 			continue;
 		}
@@ -1936,7 +1971,7 @@ bool CMilitaryManager::HasDefence(int cluster)
 {
 	const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(cluster);
 	for (const CDefenceMatrix::SDefPoint& defPoint : points) {
-		if (defPoint.cost > .5f) {
+		if ((defPoint.cost > .5f) && !defPoint.isGeo) {  // a vent's towers don't guard the mexes
 			return true;
 		}
 	}
@@ -2456,7 +2491,9 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 	if (index >= 0) {
 		const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(index);
 		for (const CDefenceMatrix::SDefPoint& defPoint : points) {
-			outPositions.push_back(defPoint.position);
+			if (!defPoint.isGeo) {  // the cluster's own front, not a vent off to its side
+				outPositions.push_back(defPoint.position);
+			}
 		}
 	}
 }
@@ -2477,7 +2514,9 @@ void CMilitaryManager::FillFriendlyClusterPos(CCircuitUnit* unit, F3Vec& outPosi
 			&& terrainMgr->CanMoveToPos(area, clusters[index].position))
 		{
 			for (const CDefenceMatrix::SDefPoint& defPoint : defence->GetDefPoints(index)) {
-				outPositions.push_back(defPoint.position);
+				if (!defPoint.isGeo) {  // as FillFrontPos
+					outPositions.push_back(defPoint.position);
+				}
 			}
 		}
 	}
@@ -2531,7 +2570,9 @@ void CMilitaryManager::FillStaticSafePos(CCircuitUnit* unit, F3Vec& outPositions
 	if (index >= 0) {
 		const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(index);
 		for (const CDefenceMatrix::SDefPoint& defPoint : points) {
-			outPositions.push_back(defPoint.position);
+			if (!defPoint.isGeo || (defPoint.cost > 100.0f)) {  // a vent only once defended, as the test above
+				outPositions.push_back(defPoint.position);
+			}
 		}
 	}
 }
@@ -2575,7 +2616,9 @@ void CMilitaryManager::FillSafePos(CCircuitUnit* unit, F3Vec& outPositions)
 	if (index >= 0) {
 		const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(index);
 		for (const CDefenceMatrix::SDefPoint& defPoint : points) {
-			outPositions.push_back(defPoint.position);
+			if (!defPoint.isGeo || (defPoint.cost > 100.0f)) {  // a vent only once defended, as the test above
+				outPositions.push_back(defPoint.position);
+			}
 		}
 	}
 

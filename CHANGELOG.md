@@ -18,6 +18,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     is attacked from where the squad stands, whatever escorts it.
   - Squad units keep their own `fire_state` (default fire at will); cloakers are no longer held to return fire.
 
+- **Geothermal build priority** (`economy.energy.geo.priority`: `"low"`, `"normal"` or `"high"`, default and
+  shipped `"high"`). Before, an energygeo job was NORMAL unless energy was short. It now takes this priority while
+  energy isn't short (job choice weight and travel cap, and ZK build priority), and drops to normal while metal
+  stalls so mex jobs get the scarce metal first. Energy short: HIGH, as before. Only one geo job exists at a time.
+  `CBEnergyTask` re-applies the same rule (`CEconomyManager::GetEnergyPriority`), which also returns any energy job
+  queued during a shortage to NORMAL once it ends.
+
+- **Geothermal vents defended like mex clusters** (`porcupine.geo` in `build_chain.json`, default off; shipped on).
+  Each vent that no mex defence point covers becomes a defence point of its nearest cluster, sharing that cluster's
+  preventive roll. Our geo there is defended like a mex: when it finishes and on a sighting. Towers for a vent stay
+  at the vent, and vents we don't hold get none. Vent points don't count as the cluster's defence (mex escort) or as
+  its front positions, and count as safe positions only once defended.
+
 - **Scout share floor** (`quota.scout_share`, 0..1, default 0 = off; shipped 0.25). This share of our
   scout-attribute units of a movement type (scouting or not, player-controlled ones left out), rounded down, may
   scout even when `scout` + bonus is lower. `scout_max` caps it too: scouting raiders don't fill the raider floor, so

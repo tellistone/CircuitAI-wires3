@@ -36,6 +36,10 @@
 		// Geothermal (energygeo): built exactly on the nearest free vent our builder can reach
 		"geo": {
 			"threat": 1.0,  // skip vents (and don't morph geos) where enemy surface threat is above this
+			// Job and ZK build priority for an energygeo job while energy isn't short: "low", "normal" or "high" (default).
+			// "high" ranks it with mex jobs for builders and gives it resources before normal jobs. It drops to normal
+			// while metal stalls, so mexes come first then. Energy short: high whatever this says
+			"priority": "high",
 			"morph": [30.0, 900]  // [<min avg metal income>, <earliest second>]: morph one finished energygeo at a time into energyheavygeo; income -1 = never
 		},
 

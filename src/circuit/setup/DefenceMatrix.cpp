@@ -6,6 +6,7 @@
  */
 
 #include "setup/DefenceMatrix.h"
+#include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
@@ -17,6 +18,8 @@
 #include "util/Scheduler.h"
 #include "util/Utils.h"
 #include "json/json.h"
+
+#include <algorithm>
 
 #include "spring/SpringMap.h"
 
@@ -93,6 +96,34 @@ void CDefenceMatrix::Init(CCircuitAI* circuit)
 			defPoints.push_back({pos, .0f});
 		}
 	}
+
+	if (militaryMgr->IsGeoDefence()) {
+		AddGeoPoints(circuit, maxDistance * 0.5f);
+	}
+}
+
+void CDefenceMatrix::AddGeoPoints(CCircuitAI* circuit, float coverRange)
+{
+	// Same nearest-cluster rule as GetDefPoint and MakeDefence(pos), so the towers built for a vent and their
+	// losses are counted on its point. A vent within coverRange of a point (towers merge into one point up to
+	// twice that apart) is left to that point
+	CMap* map = circuit->GetMap();
+	for (const AIFloat3& spot : circuit->GetEconomyManager()->GetGeoSpots()) {
+		const int index = metalManager->FindNearestCluster(spot);
+		if (index < 0) {
+			continue;
+		}
+		DefPoints& defPoints = clusterInfos[index].defPoints;
+		const bool isCovered = std::any_of(defPoints.begin(), defPoints.end(), [&spot, coverRange](const SDefPoint& p) {
+			return p.position.SqDistance2D(spot) < SQUARE(coverRange);
+		});
+		if (!isCovered) {
+			AIFloat3 pos = spot;
+			pos.y = map->GetElevationAt(pos.x, pos.z);
+			geoPoints.push_back({index, (unsigned)defPoints.size()});
+			defPoints.push_back({pos, .0f, true});
+		}
+	}
 }
 
 CDefenceMatrix::SDefPoint* CDefenceMatrix::GetDefPoint(const AIFloat3& pos, float defCost)
@@ -114,7 +145,19 @@ CDefenceMatrix::SDefPoint* CDefenceMatrix::GetDefPoint(const AIFloat3& pos, floa
 			}
 		}
 	}
-	return &defPoints[idx];
+	SDefPoint* point = &defPoints[idx];
+	// A vent is off to its cluster's side, so a tower built for it can be nearer another cluster: check them all
+	for (const std::pair<int, unsigned>& gp : geoPoints) {
+		SDefPoint& geoPoint = clusterInfos[gp.first].defPoints[gp.second];
+		if (geoPoint.cost >= defCost) {
+			const float tmp = pos.distance2D(geoPoint.position);
+			if (tmp < dist) {
+				dist = tmp;
+				point = &geoPoint;
+			}
+		}
+	}
+	return point;
 }
 
 void CDefenceMatrix::SetBaseRange(float range)
