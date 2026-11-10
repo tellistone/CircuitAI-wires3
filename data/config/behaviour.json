@@ -201,6 +201,11 @@
 	// cloaked anti-heavy (Ultimatum, Widow, ...) routes, picks its stand-off spot and flees on the normal threat map
 	// like the others, so a decloak (firing, splash, a close enemy, energy stall) doesn't leave it deep in enemy fire.
 	// Mines (Skuttle: "mine" attribute) always route as with cloak_route. Under water (no sonar stealth) cloak doesn't count
+	// Fixed rules (no keys): once an enemy heavy is seen, anti-heavy units leave attack, gathering and support tasks for
+	// a squad every 2 s; not while their group flees, and while it fights only if a heavy they can shoot is in their
+	// weapon range. A heavy already in weapon range (x1.2 for the current target) is attacked from where the squad
+	// stands, whatever escorts it. Cloakers (not fire_state "open") hold to return fire in the squad; a hit opens fire
+	// for 10 s after the last one, then back to return fire
 },
 
 "artillery": {

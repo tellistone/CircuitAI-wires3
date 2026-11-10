@@ -11,6 +11,8 @@
 #include "task/fighter/SquadTask.h"
 #include "module/MilitaryManager.h"
 
+#include <unordered_map>
+
 namespace circuit {
 
 class CAntiHeavyTask: public ISquadTask {
@@ -27,6 +29,9 @@ public:
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
+
+	// A heavy or commander a unit of type cdef can shoot (role, target category, anti-static, air)
+	static bool IsQuarryFor(const CCircuitDef* cdef, CEnemyInfo* enemy);
 
 protected:
 	// Cloaked units route like the rest (threat map, path_threat cap) unless their type has the cloak_route attribute
@@ -51,8 +56,7 @@ private:
 	// Flee off: the leader's long-reload weapon (5 s or more) isn't ready (old blind pull-back to the attack groups)
 	bool IsReloading(int frame) const;
 	bool AttackTarget(CCircuitUnit* unit, int frame, float& minePower);  // the engage orders for one unit
-	// A heavy or commander the squad can shoot (role, target category, anti-static, air)
-	bool IsQuarry(CEnemyInfo* enemy) const;
+	bool IsQuarry(CEnemyInfo* enemy) const;  // IsQuarryFor the leader's type
 
 	// Stand-off distance from a heavy: just outside its own threat ring on our threat layer, but never less than
 	// the old engage range (LOS / jump range). Routes end there; within it the squad attacks
@@ -67,6 +71,12 @@ private:
 	// time, a few cells at most) towards pos whose threat is under the route cap; false if none
 	bool ProbeStandOff(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float standOff,
 			springai::AIFloat3& outPos) const;
+
+	// Cloakers hold to return fire in the squad (AssignTo); a hit opens fire for OPEN_FIRE_FRAMES after the last one
+	static bool IsCloakReturnFire(CCircuitUnit* unit);
+	void UpdateOpenFire(int frame);
+	static constexpr int OPEN_FIRE_FRAMES = FRAMES_PER_SEC * 10;
+	std::unordered_map<CCircuitUnit*, int> openFireUntil;  // unit -> frame it goes back to return fire
 
 	bool FindTarget();
 	void ApplyTargetPath(const CQueryPathMulti* query);

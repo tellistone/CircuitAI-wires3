@@ -3087,14 +3087,37 @@ void CMilitaryManager::UpdateAhPull()
 			continue;  // retreat, player control, idle, ...
 		}
 		const IFighterTask::FightType type = static_cast<IFighterTask*>(task)->GetFightType();
-		if ((type != IFighterTask::FightType::ATTACK) && (type != IFighterTask::FightType::DEFEND)) {
+		if ((type != IFighterTask::FightType::ATTACK) && (type != IFighterTask::FightType::DEFEND)
+			&& (type != IFighterTask::FightType::SUPPORT))  // support: anti-heavies with the support attribute (Phantom, Lance)
+		{
 			continue;  // already anti-heavy, or a guard
 		}
-		if ((task->GetState() == IUnitTask::State::ENGAGE) || (task->GetState() == IUnitTask::State::DISENGAGE)) {
-			continue;  // fighting or fleeing: losing it now could tip the fight; the next pass takes it
+		if (task->GetState() == IUnitTask::State::DISENGAGE) {
+			continue;  // fleeing: the next pass takes it
+		}
+		if ((task->GetState() == IUnitTask::State::ENGAGE) && !IsQuarryInRange(unit)) {
+			continue;  // fighting with no heavy in reach: losing it now could tip the fight; the next pass takes it
 		}
 		AssignTask(unit, EnqueueAntiHeavy(unit));
 	}
+}
+
+bool CMilitaryManager::IsQuarryInRange(CCircuitUnit* unit) const
+{
+	// A heavy (or commander) it can shoot, in radar or LOS now, within its weapon range: in a fight the group's
+	// targets are chaff to a long-reload anti-heavy weapon
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	const float sqRange = SQUARE(cdef->GetMaxRange());
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		CEnemyInfo* enemy = kv.second;
+		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= sqRange)
+			&& CAntiHeavyTask::IsQuarryFor(cdef, enemy))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 IFighterTask* CMilitaryManager::EnqueueAntiHeavy(CCircuitUnit* unit)

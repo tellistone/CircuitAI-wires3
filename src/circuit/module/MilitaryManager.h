@@ -395,8 +395,10 @@ private:
 	void UpdateFight();
 	void UpdateCaptureHide();
 	// An enemy heavy seen within AH_HUNT_FRAMES: anti-heavy units in attack and gathering groups (where they go while
-	// there is none) leave for anti-heavy squads, every 2 s; not while their group is fighting or fleeing
+	// there is none) and support tasks leave for anti-heavy squads, every 2 s; not while their group is fleeing, nor
+	// while it is fighting unless such a heavy is within the unit's weapon range (IsQuarryInRange)
 	void UpdateAhPull();
+	bool IsQuarryInRange(CCircuitUnit* unit) const;
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
