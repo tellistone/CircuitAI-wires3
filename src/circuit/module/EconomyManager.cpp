@@ -1820,12 +1820,19 @@ void CEconomyManager::UpdateEconomy()
 	{
 		mspChatPull = pullMtoS;
 		mspChatFrame = ecoFrame + FRAMES_PER_SEC * 20;
+		// Each factor with the measure it reads: mex share of all spots, metal income without reclaim, and the two
+		// armies' metal value (enemy per enemy team, as GetEnemyArmyRatio)
+		const size_t spotCount = circuit->GetMetalManager()->GetSpots().size();
 		std::string msg = "/say <CircuitAI> ms_pull: " + utils::float_to_string(pullMtoS, "%.2f")
 				+ " = base " + utils::float_to_string(basePull, "%.2f")
+				+ utils::int_to_string((spotCount > 0) ? int(100 * mexCount / spotCount) : 0, " (mex %i%%)")
 				+ " x income " + utils::float_to_string(mspIncomeMult, "%.2f")
+				+ utils::float_to_string(ecoIncome, " (%.1f m/s)")
 				+ " x army " + utils::float_to_string(mspArmyMult, "%.2f");
 		msg += (armyRatio >= 0.f)
-				? " (enemy/ours " + utils::float_to_string(std::min(armyRatio, 99.f), "%.2f") + ")"
+				? " (enemy " + utils::float_to_string(enemyMetal, "%.0f") + " / ours "
+					+ utils::float_to_string(ourMetal, "%.0f") + " metal = "
+					+ utils::float_to_string(std::min(armyRatio, 99.f), "%.2f") + ")"
 				: (isArmyOn ? std::string(" (no enemy army known)") : std::string(" (before since)"));
 		circuit->GetGame()->SendTextMessage(msg.c_str(), 0);
 	}

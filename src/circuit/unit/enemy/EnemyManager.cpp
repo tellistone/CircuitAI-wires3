@@ -397,55 +397,53 @@ void CEnemyManager::GarbageEnemy(CEnemyUnit* enemy)
 	++enemyIterator;
 }
 
+float CEnemyManager::GetArmyCostWeight(const CEnemyUnit* e, int frame, float halfLife) const
+{
+	const CCircuitDef* cdef = e->GetCircuitDef();
+	// Mobile, its type known (seen in LOS once), no constructors or commanders. A nanoframe in LOS doesn't count yet
+	// (ours count once finished); out of LOS its flag is stale, as it may have finished, so it counts
+	if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsBuilder()
+		|| cdef->IsEnemyRoleAny(CCircuitDef::GetMask(ROLE_TYPE(COMM))) || !e->IsKnown(frame)
+		|| (e->IsBeingBuilt() && e->IsInLOS()))
+	{
+		return 0.f;
+	}
+	const int lastSeen = e->GetLastSeen();  // -1 while in radar or LOS
+	if ((halfLife > 0.f) && !e->IsInRadarOrLOS() && (lastSeen >= 0)) {
+		return std::exp2(-(frame - lastSeen) / halfLife);
+	}
+	return 1.f;
+}
+
 float CEnemyManager::GetMobileCostNoCommFaded(int frame, float halfLife) const
 {
-	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));
 	float cost = 0.f;
 	for (const auto& kv : enemyUnits) {
-		const CEnemyUnit* e = kv.second;
-		const CCircuitDef* cdef = e->GetCircuitDef();
-		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsBuilder() || cdef->IsEnemyRoleAny(commMask)
-			|| !e->IsKnown(frame))
-		{
-			continue;
-		}
-		float weight = 1.f;
-		const int lastSeen = e->GetLastSeen();  // -1 while in radar or LOS
-		if ((halfLife > 0.f) && !e->IsInRadarOrLOS() && (lastSeen >= 0)) {
-			weight = std::exp2(-(frame - lastSeen) / halfLife);
-		}
-		cost += e->GetCost() * weight;
+		cost += kv.second->GetCost() * GetArmyCostWeight(kv.second, frame, halfLife);
 	}
 	return cost;
 }
 
 std::string CEnemyManager::GetMobileCostReport(int frame, float halfLife) const
 {
-	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));
 	struct SType { int count = 0; int hidden = 0; float cost = 0.f; };
 	std::map<const CCircuitDef*, SType> types;
 	float inView = 0.f, hidden = 0.f, hiddenRaw = 0.f;
 	int numView = 0, numHidden = 0;
 	for (const auto& kv : enemyUnits) {
 		const CEnemyUnit* e = kv.second;
-		const CCircuitDef* cdef = e->GetCircuitDef();
-		// The enemies GetMobileCostNoCommFaded counts
-		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsBuilder() || cdef->IsEnemyRoleAny(commMask)
-			|| !e->IsKnown(frame))
-		{
+		const float weight = GetArmyCostWeight(e, frame, halfLife);
+		if (weight <= 0.f) {
 			continue;
 		}
-		const float raw = e->GetCost();
-		const int lastSeen = e->GetLastSeen();
-		const bool isHidden = !e->IsInRadarOrLOS() && (lastSeen >= 0);
-		const float cost = (isHidden && (halfLife > 0.f)) ? raw * std::exp2(-(frame - lastSeen) / halfLife) : raw;
-		SType& t = types[cdef];
+		const float cost = e->GetCost() * weight;
+		SType& t = types[e->GetCircuitDef()];
 		++t.count;
 		t.cost += cost;
-		if (isHidden) {
+		if (!e->IsInRadarOrLOS() && (e->GetLastSeen() >= 0)) {
 			++t.hidden;
 			hidden += cost;
-			hiddenRaw += raw;
+			hiddenRaw += e->GetCost();
 			++numHidden;
 		} else {
 			inView += cost;

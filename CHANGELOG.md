@@ -13,8 +13,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   carrying most of it), to check the army ratio behind the floor and `ms_pull_army`.
 
 - **ms_pull in chat**: the threat floor line adds the army factor (`ms_pull: 1.21 (army x1.50)`, `(army off)` before
-  `ms_pull_army.since` or with no enemy army known), and a line `ms_pull: <v> = base x income x army (enemy/ours)`
-  posts whenever `ms_pull` moves by `economy.ms_pull_chat` (default 0.25 = 25%, 0 = off) since the last one, at most
+  `ms_pull_army.since` or with no enemy army known), and a line `ms_pull: 0.85 = base 1.20 (mex 35%) x income 0.90 (82.0 m/s) x army 0.79
+  (enemy 1450 / ours 2340 metal = 0.62)` (each factor with the measure it reads) posts whenever `ms_pull` moves by `economy.ms_pull_chat` (default 0.25 = 25%, 0 = off) since the last one, at most
   every 20 s.
 
 - **ms_pull scales with income and the army balance** (`economy.json`; [#105](https://github.com/tellistone/CircuitAI-wires3/pull/105)).
@@ -280,6 +280,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - `quota.attack_merge.base_gather` (when `true`): the army at base gathers until it has `quota.attack` power and the
     known enemy mobile army's metal value per ally. It was power against the enemy's total threat, statics and
     commanders included.
+  - An enemy nanoframe in LOS (a unit still in its factory) no longer counts in any of these, as our own count only
+    once finished. One seen being built that left LOS counts, since it may have finished.
 
 - **Anti-heavy units leave the army while a heavy is around.** Anti-heavy hunting used to switch on for good at the
   first sighting of any enemy heavy (the enemy cost only drops when we see it die), and units already in the army
