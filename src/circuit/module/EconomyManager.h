@@ -156,9 +156,9 @@ public:
 	// Nearest free geothermal vent for cdef (a geo def) that is safe and,
 	// with a unit, reachable by it; -RgtVector if none
 	springai::AIFloat3 FindGeoSpot(CCircuitDef* cdef, const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
-	// Rear spot for a def listed in economy.energy.rear: behind our base, as far from the enemy as the
-	// min/max distance from the base and the clear radius allow; safe and, with a unit, reachable. -RgtVector if none
-	springai::AIFloat3 FindRearPos(CCircuitDef* cdef, CCircuitUnit* unit);
+	bool IsRearDef(CCircuitDef* cdef) const { return rearInfos.find(cdef) != rearInfos.end(); }
+	// Cached rear spot of a rear def (economy.energy.rear), if safe and, with a unit, reachable by it; -RgtVector if none
+	springai::AIFloat3 GetRearPos(CCircuitDef* cdef, CCircuitUnit* unit);
 	// Known geothermal vents (refreshed at most once a minute; vents are added as they are seen, never removed)
 	const std::vector<springai::AIFloat3>& GetGeoSpots();
 
@@ -326,10 +326,16 @@ private:
 	struct SRearInfo {
 		float minDist;  // min distance from the base position
 		float maxDist;  // max distance from the base position
-		float clear;  // no own building within this radius (blast radius); 0 = no check
+		float clear;  // no own building (or energy job) within this radius (blast radius); 0 = no check
 		float clearCost;  // buildings cheaper than this don't count for clear
+		bool isLink;  // prefer spots whose pylon range touches one of our grid buildings
+		springai::AIFloat3 pos;  // cached spot, -RgtVector = none
+		int nextFrame;  // when to search again
 	};
 	std::map<CCircuitDef*, SRearInfo> rearInfos;  // economy.energy.rear: energy built behind the base
+	// Spot behind the base furthest back along base->lane within min/max distance from the base, clear of
+	// own buildings and energy jobs within clear radius, and safe; -RgtVector if none
+	springai::AIFloat3 FindRearPos(CCircuitDef* cdef, const SRearInfo& info) const;
 };
 
 } // namespace circuit
