@@ -13,8 +13,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   were often built unpowered. Every 10 s each of ours is read for the game's `lowpower`; after 2 unpowered reads in
   a row it gets energypylons, one at a time, from its own grid towards the nearest other grid with margin x
   neededlink (the game's `gridNumber` and `OD_gridMaximum`), until it is powered or the cap is reached. Never towards
-  its own grid, and a failed attempt waits 60 s, doubling up to 5 min.
-  - The superweapon dice only draws a grid consumer while some grid has margin x its need; a queued gun is kept.
+  its own grid, and a failed attempt waits 60 s, doubling up to 5 min. Paralysed or disarmed units are skipped (the
+  game takes them out of the grid and leaves their gridNumber stale).
+  - The superweapon dice only draws a grid consumer while a grid with margin x its need is within `max_pylons` reach
+    of where it would be built; a queued gun is kept.
   - Porc grid consumers are only built at a defence point with such a grid within `max_pylons` reach.
   - Removed the 4 hub pylons of raveparty, mahlazer and zenith and the strider hub's `"pylon": true` in
     `build_chain.json`: they didn't reach an energised grid.

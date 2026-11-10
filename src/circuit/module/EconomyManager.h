@@ -156,9 +156,10 @@ public:
 	IBuilderTask* UpdatePylonTasks();
 
 	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
-	// that much energy. Can cdef be powered: some grid has margin x its need (true for non-consumers)
-	bool IsGridPowerable(CCircuitDef* cdef);
-	// Is a grid with enough energy for cdef within reach of pos, counting the pylons the watchdog may build
+	// that much energy. False before Init
+	bool IsGridConsumer(CCircuitDef* cdef) const;
+	// Is a grid with margin x cdef's need within reach of pos, counting the pylons the watchdog may build
+	// (true for non-consumers)
 	bool IsGridReachable(CCircuitDef* cdef, const springai::AIFloat3& pos);
 
 	// Needs a geothermal vent (energygeo, energyheavygeo); read once per def, no engine call.

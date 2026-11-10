@@ -2890,19 +2890,25 @@ AIFloat3 CMilitaryManager::GetBigGunPos(CCircuitDef* bigDef) const
 	return pos;
 }
 
+bool CMilitaryManager::IsBigGunPowerable(CCircuitDef* cdef) const
+{
+	// A grid consumer (customParams.neededlink: Big Bertha, superweapons) needs a grid with enough energy in pylon
+	// reach of where it would be built, else it stands unpowered
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	return !economyMgr->IsGridConsumer(cdef) || economyMgr->IsGridReachable(cdef, GetBigGunPos(cdef));
+}
+
 void CMilitaryManager::DiceBigGun()
 {
 	if (superInfos.empty()) {
 		return;
 	}
 
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	std::vector<SSuperInfo> candidates;
 	candidates.reserve(superInfos.size());
 	float magnitude = 0.f;
 	for (SSuperInfo& info : superInfos) {
-		// Skip guns no grid has the energy for (customParams.neededlink): they would stand unpowered
-		if (info.cdef->IsAvailable(circuit->GetLastFrame()) && economyMgr->IsGridPowerable(info.cdef)) {
+		if (info.cdef->IsAvailable(circuit->GetLastFrame()) && IsBigGunPowerable(info.cdef)) {
 			candidates.push_back(info);
 			magnitude += info.weight;
 		}

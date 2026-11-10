@@ -1857,13 +1857,9 @@ IBuilderTask* CEconomyManager::UpdatePylonTasks()
 	return nullptr;
 }
 
-bool CEconomyManager::IsGridPowerable(CCircuitDef* cdef)
+bool CEconomyManager::IsGridConsumer(CCircuitDef* cdef) const
 {
-	if ((cdef == nullptr) || (energyGrid == nullptr)) {
-		return true;
-	}
-	const float needed = energyGrid->GetNeededLink(cdef->GetId());
-	return (needed <= 0.f) || (energyGrid->GetMaxCapacity() >= needed * gridLinkMargin);
+	return (cdef != nullptr) && (energyGrid != nullptr) && (energyGrid->GetNeededLink(cdef->GetId()) > 0.f);
 }
 
 bool CEconomyManager::IsGridReachable(CCircuitDef* cdef, const AIFloat3& pos)
@@ -1912,7 +1908,12 @@ void CEconomyManager::UpdateGridLinks()
 			continue;
 		}
 		info.nextFrame = frame + FRAMES_PER_SEC * 10;
-		if (unit->GetUnit()->GetRulesParamFloat("lowpower", 0.f) <= 0.f) {
+		// Paralysed or disarmed: out of the grid for now, and its gridNumber is stale. Not a read
+		Unit* u = unit->GetUnit();
+		if (u->IsParalyzed() || (u->GetRulesParamFloat("disarmed", 0.f) > 0.f)) {
+			continue;
+		}
+		if (u->GetRulesParamFloat("lowpower", 0.f) <= 0.f) {
 			info.darkReads = 0;
 			info.pylons = 0;
 			info.backoff = 0;

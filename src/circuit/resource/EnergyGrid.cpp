@@ -106,7 +106,6 @@ CEnergyGrid::CEnergyGrid(CCircuitAI* circuit)
 		: circuit(circuit)
 		, markFrame(-1)
 		, gridNodesFrame(-FRAMES_PER_SEC)
-		, maxCapacity(0.f)
 		, isForceRebuild(false)
 		, ownedFilter(nullptr)
 		, ownedClusters(nullptr)
@@ -309,10 +308,10 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 	}
 	gridNodesFrame = frame;
 	gridNodes.clear();
-	maxCapacity = 0.f;
 
 	// The overdrive gadget puts gridNumber on every grid building, and the grid's capacity (OD_gridMaximum) on its
 	// energy buildings and pylons, not on mexes or consumers. All of a grid carry the same value: read it once per grid.
+	// Paralysed or disarmed ones are out of the grid and keep a stale gridNumber, so they are left out.
 	// By def id: allied units' defs can belong to another AI instance on our ally team
 	std::unordered_map<int, float> capacities;
 	circuit->UpdateFriendlyUnits();
@@ -323,16 +322,17 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 			continue;
 		}
 		const float range = GetPylonRange(cdef->GetId());
-		if ((range <= 0.f) || unit->GetUnit()->IsBeingBuilt()) {
+		Unit* u = unit->GetUnit();
+		if ((range <= 0.f) || u->IsBeingBuilt() || u->IsParalyzed() || (u->GetRulesParamFloat("disarmed", 0.f) > 0.f)) {
 			continue;
 		}
-		const int grid = (int)unit->GetUnit()->GetRulesParamFloat("gridNumber", 0.f);
+		const int grid = (int)u->GetRulesParamFloat("gridNumber", 0.f);
 		if (grid <= 0) {
 			continue;
 		}
 		gridNodes.push_back({unit->GetPos(frame), range, grid, 0.f});
 		if (!cdef->IsMex() && (GetNeededLink(cdef->GetId()) <= 0.f) && (capacities.find(grid) == capacities.end())) {
-			const float capacity = unit->GetUnit()->GetRulesParamFloat("OD_gridMaximum", -1.f);
+			const float capacity = u->GetRulesParamFloat("OD_gridMaximum", -1.f);
 			if (capacity >= 0.f) {
 				capacities[grid] = capacity;
 			}
@@ -342,7 +342,6 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 		auto it = capacities.find(node.grid);
 		if (it != capacities.end()) {
 			node.capacity = it->second;
-			maxCapacity = std::max(maxCapacity, it->second);
 		}
 	}
 	return gridNodes;

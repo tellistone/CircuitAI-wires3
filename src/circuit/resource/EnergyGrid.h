@@ -50,8 +50,6 @@ public:
 	};
 	// Finished grid buildings of our ally team (ours and allies'), as the game groups them. Cached for 1 s
 	const std::vector<SGridNode>& GetGridNodes();
-	// Capacity of the biggest grid
-	float GetMaxCapacity() { GetGridNodes(); return maxCapacity; }
 
 	void SetAuthority(CCircuitAI* authority) { circuit = authority; }
 
@@ -69,7 +67,6 @@ private:
 
 	std::vector<SGridNode> gridNodes;
 	int gridNodesFrame;
-	float maxCapacity;
 
 	std::vector<bool> linkedClusters;
 	std::set<int> linkPylons, unlinkPylons;
