@@ -55,6 +55,16 @@
 			"energysingu": {"min": 800, "max": 1800}
 		},
 
+		// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, Desolator, Lucifer, strider hub, superweapons)
+		// work only on a grid with that much energy. Finished ones the game reports unpowered for 2 reads in a row
+		// (10 s apart) get energypylons, one at a time, from their own grid towards the nearest other grid with
+		// margin x neededlink, until they are powered. Superweapons are only drawn while some grid has that much, and
+		// porc consumers are only built where such a grid is in reach of max_pylons
+		"grid_link": {
+			"max_pylons": 6,  // most pylons per structure until it's powered; 0 = off
+			"margin": 1.1  // grid capacity needed = margin x neededlink
+		},
+
 		"link_inc": 16.0,  // minimum metal-income for energy linking
 		"pylon": ["energypylon", "energysolar", "energywind"]
 	},

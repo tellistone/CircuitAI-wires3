@@ -1771,6 +1771,10 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 		if (!defDef->IsAvailable(frame) || (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))) {
 			continue;
 		}
+		// A grid consumer (Cerberus, Desolator, ...) only where a grid with enough energy is in pylon reach
+		if (!em->IsGridReachable(defDef, closestPoint->position)) {
+			continue;
+		}
 		float defCost = defDef->GetCostM();
 		totalCost += defCost;
 		if (totalCost <= closestPoint->cost) {
@@ -2892,11 +2896,13 @@ void CMilitaryManager::DiceBigGun()
 		return;
 	}
 
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	std::vector<SSuperInfo> candidates;
 	candidates.reserve(superInfos.size());
 	float magnitude = 0.f;
 	for (SSuperInfo& info : superInfos) {
-		if (info.cdef->IsAvailable(circuit->GetLastFrame())) {
+		// Skip guns no grid has the energy for (customParams.neededlink): they would stand unpowered
+		if (info.cdef->IsAvailable(circuit->GetLastFrame()) && economyMgr->IsGridPowerable(info.cdef)) {
 			candidates.push_back(info);
 			magnitude += info.weight;
 		}

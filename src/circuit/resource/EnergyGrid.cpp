@@ -106,6 +106,8 @@ CEnergyGrid::CEnergyGrid(CCircuitAI* circuit)
 		: circuit(circuit)
 		, markFrame(-1)
 		, isForceRebuild(false)
+		, gridNodesFrame(-FRAMES_PER_SEC)
+		, maxCapacity(0.f)
 		, ownedFilter(nullptr)
 		, ownedClusters(nullptr)
 		, edgeCosts(nullptr)
@@ -131,6 +133,13 @@ CEnergyGrid::CEnergyGrid(CCircuitAI* circuit)
 		if (it != customParams.end()) {
 			pylonRanges[cdef.GetId()] = utils::string_to_float(it->second) - 1.f;
 			cdef.SetIsPylon(true);
+		}
+		it = customParams.find("neededlink");
+		if (it != customParams.end()) {
+			const float needed = utils::string_to_float(it->second);
+			if (needed > 0.f) {
+				neededLinks[cdef.GetId()] = needed;
+			}
 		}
 	}
 
@@ -284,6 +293,59 @@ float CEnergyGrid::GetPylonRange(CCircuitDef::Id defId)
 {
 	auto it = pylonRanges.find(defId);
 	return (it != pylonRanges.end()) ? it->second : .0f;
+}
+
+float CEnergyGrid::GetNeededLink(CCircuitDef::Id defId) const
+{
+	auto it = neededLinks.find(defId);
+	return (it != neededLinks.end()) ? it->second : .0f;
+}
+
+const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
+{
+	const int frame = circuit->GetLastFrame();
+	if (gridNodesFrame + FRAMES_PER_SEC > frame) {
+		return gridNodes;
+	}
+	gridNodesFrame = frame;
+	gridNodes.clear();
+	maxCapacity = 0.f;
+
+	// The overdrive gadget puts gridNumber on every grid building, and the grid's capacity (OD_gridMaximum) on its
+	// energy buildings and pylons, not on mexes or consumers. All of a grid carry the same value: read it once per grid.
+	// By def id: allied units' defs can belong to another AI instance on our ally team
+	std::unordered_map<int, float> capacities;
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* unit = kv.second;
+		const CCircuitDef* cdef = unit->GetCircuitDef();
+		if (cdef == nullptr) {
+			continue;
+		}
+		const float range = GetPylonRange(cdef->GetId());
+		if ((range <= 0.f) || unit->GetUnit()->IsBeingBuilt()) {
+			continue;
+		}
+		const int grid = (int)unit->GetUnit()->GetRulesParamFloat("gridNumber", 0.f);
+		if (grid <= 0) {
+			continue;
+		}
+		gridNodes.push_back({unit->GetPos(frame), range, grid, 0.f});
+		if (!cdef->IsMex() && (GetNeededLink(cdef->GetId()) <= 0.f) && (capacities.find(grid) == capacities.end())) {
+			const float capacity = unit->GetUnit()->GetRulesParamFloat("OD_gridMaximum", -1.f);
+			if (capacity >= 0.f) {
+				capacities[grid] = capacity;
+			}
+		}
+	}
+	for (SGridNode& node : gridNodes) {
+		auto it = capacities.find(node.grid);
+		if (it != capacities.end()) {
+			node.capacity = it->second;
+			maxCapacity = std::max(maxCapacity, it->second);
+		}
+	}
+	return gridNodes;
 }
 
 CEnergyNode* CEnergyGrid::FindNodeDef(CCircuitDef*& outDef, AIFloat3& outPos, CEnergyNode* node)

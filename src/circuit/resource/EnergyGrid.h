@@ -39,6 +39,19 @@ public:
 	IGridLink* GetLinkToBuild(CCircuitDef*& outDef, springai::AIFloat3& outPos);
 
 	float GetPylonRange(CCircuitDef::Id defId);
+	// Grid energy a structure needs to work (Zero-K customParams.neededlink), 0 = none
+	float GetNeededLink(CCircuitDef::Id defId) const;
+
+	struct SGridNode {
+		springai::AIFloat3 pos;
+		float range;  // link range: two buildings link when closer than the sum of theirs
+		int grid;  // the game's gridNumber
+		float capacity;  // that grid's energy capacity (OD_gridMaximum), 0 = no energy in it
+	};
+	// Finished grid buildings of our ally team (ours and allies'), as the game groups them. Cached for 1 s
+	const std::vector<SGridNode>& GetGridNodes();
+	// Capacity of the biggest grid
+	float GetMaxCapacity() { GetGridNodes(); return maxCapacity; }
 
 	void SetAuthority(CCircuitAI* authority) { circuit = authority; }
 
@@ -52,6 +65,11 @@ private:
 	std::deque<std::pair<ICoreUnit::Id, std::vector<CEnergyNode*>>> markedPylons;  // sorted by insertion
 	std::unordered_map<CCircuitDef::Id, float> pylonRanges;
 	std::map<float, CCircuitDef::Id> rangePylons;
+	std::unordered_map<CCircuitDef::Id, float> neededLinks;
+
+	std::vector<SGridNode> gridNodes;
+	int gridNodesFrame;
+	float maxCapacity;
 
 	std::vector<bool> linkedClusters;
 	std::set<int> linkPylons, unlinkPylons;

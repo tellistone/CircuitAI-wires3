@@ -1605,8 +1605,17 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 	} else {
 		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 		buildDef = militaryMgr->GetBigGunDef();
+		const std::set<IBuilderTask*>& tasks = GetTasks(IBuilderTask::BuildType::BIG_GUN);
+		// A gun that needs more grid energy than any grid has would stand unpowered: draw again among the ones that
+		// can be powered, and keep that choice. A queued gun is never dropped for it
+		if (tasks.empty() && !ecoMgr->IsGridPowerable(buildDef)) {
+			militaryMgr->DiceBigGun();
+			buildDef = militaryMgr->GetBigGunDef();
+			if (!ecoMgr->IsGridPowerable(buildDef)) {
+				buildDef = nullptr;
+			}
+		}
 		if ((buildDef != nullptr) && (buildDef->GetCostM() < super.maxTime * metalIncome)) {
-			const std::set<IBuilderTask*>& tasks = GetTasks(IBuilderTask::BuildType::BIG_GUN);
 			if (tasks.empty()) {
 				if (buildDef->IsAvailable(circuit->GetLastFrame()) && militaryMgr->IsNeedBigGun(buildDef)) {
 					AIFloat3 pos = militaryMgr->GetBigGunPos(buildDef);
