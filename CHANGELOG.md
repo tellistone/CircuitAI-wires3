@@ -7,10 +7,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
-- **Scout share floor** (`quota.scout_share`, 0..1, default 0 = off; shipped 0.25). At least this share of our
-  scout-attribute units of a movement type (scouting or not, player-controlled ones left out) is allowed to scout,
-  rounded down, even above `scout` + bonus and `scout_max`. Like the rest of the scout quota it is checked when a unit
-  gets a new task, so it never pulls a raider off a raid. With 0.25: 4 Glaives -> at least 1 scouting, 8 -> 2.
+- **Scout share floor** (`quota.scout_share`, 0..1, default 0 = off; shipped 0.25). This share of our
+  scout-attribute units of a movement type (scouting or not, player-controlled ones left out), rounded down, may
+  scout even when `scout` + bonus is lower. `scout_max` caps it too: scouting raiders don't fill the raider floor, so
+  an uncapped high share would keep factories building raiders that all go scouting (share 1 with `scout_max` 0 is
+  read as 0.9). Like the rest of the scout quota it is checked when a unit gets a new task, so it never pulls a raider
+  off a raid. With 0.25: 4 Glaives -> at least 1 scouting, 8 -> 2.
 
 - **Fractional preventive defences** (`porcupine` block in `build_chain.json`). `prevent` (towers a cluster gets
   outside porc mode) can be a fraction: count = its whole part, plus 1 with the odds of its fraction, so 0.5 = a 50%

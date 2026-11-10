@@ -459,6 +459,11 @@ void CMilitaryManager::ReadConfig()
 			circuit->LOG("CONFIG %s: quota.scout_share must be 0..1, using 1", cfgName.c_str());
 			scoutShare = 1.f;
 		}
+		if ((scoutShare >= 1.f) && (scoutQuota.max == 0)) {
+			// Every such raider would scout, so the raider floor would never fill and factories would build raiders forever
+			circuit->LOG("CONFIG %s: quota.scout_share 1 needs a scout_max, using 0.9", cfgName.c_str());
+			scoutShare = 0.9f;
+		}
 
 		// Returns whether the object was given
 		auto readSpot = [&](const std::string& name, SSpotCfg& cfg) {
@@ -2166,6 +2171,14 @@ bool CMilitaryManager::IsRaider(const CCircuitDef* cdef) const
 	return circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(RAIDER);
 }
 
+// The unit is on a fighter task of this type
+static bool IsOnFightTask(const CCircuitUnit* unit, IFighterTask::FightType type)
+{
+	const IUnitTask* task = unit->GetTask();
+	return (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+		&& (static_cast<const IFighterTask*>(task)->GetFightType() == type);
+}
+
 unsigned int CMilitaryManager::GetRaiderCount() const
 {
 	unsigned int count = 0;
@@ -2174,10 +2187,7 @@ unsigned int CMilitaryManager::GetRaiderCount() const
 			continue;
 		}
 		// Raiders taken as scouts (quota.scout) don't raid, so they don't fill the floor
-		IUnitTask* task = unit->GetTask();
-		if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
-			&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::SCOUT))
-		{
+		if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
 			continue;
 		}
 		++count;
@@ -2192,43 +2202,36 @@ bool CMilitaryManager::IsQuotaScout(const CCircuitDef* cdef) const
 	return cdef->IsRoleScout() && (role != ROLE_TYPE(SCOUT)) && (role != ROLE_TYPE(MINE));
 }
 
-unsigned int CMilitaryManager::GetMaxScouts(const CCircuitDef* cdef) const
+bool CMilitaryManager::IsScoutSlotFree(const CCircuitDef* cdef) const
 {
-	const unsigned int quota = scoutQuota.Get(cdef->GetMobileId());
-	if (scoutShare <= 0.f) {
-		return quota;
-	}
-	// Floor: quota.scout_share of our scout-attribute units of this movement type (scouting or not, the deciding
-	// unit included; not player-controlled), rounded down. Never cut by quota.scout_max
+	// Slots are per movement type, as the quota and its mex bonus are, and only scouts through the attribute take
+	// one: comparing against every scout task let Ticks, Fleas, Darts, Swifts or another type's scouts fill them.
+	// One pass over the army: those already scouting, and all of them for quota.scout_share (scouting or not,
+	// the deciding unit included, player-controlled ones left out)
 	const int mobileId = cdef->GetMobileId();
+	unsigned int scouting = 0;
 	unsigned int units = 0;
 	for (const CCircuitUnit* unit : army) {
 		const CCircuitDef* udef = unit->GetCircuitDef();
-		if ((udef->GetMobileId() == mobileId) && IsQuotaScout(udef)
-			&& (unit->GetTask()->GetType() != IUnitTask::Type::PLAYER))
-		{
-			++units;
+		if ((udef->GetMobileId() != mobileId) || !IsQuotaScout(udef)) {
+			continue;
+		}
+		if (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER) {
+			continue;
+		}
+		++units;
+		if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
+			++scouting;
 		}
 	}
-	// The epsilon keeps e.g. 0.7 x 10 at 7: 0.7f is a hair under 0.7
-	return std::max(quota, static_cast<unsigned int>(scoutShare * units + 1e-3f));
-}
-
-unsigned int CMilitaryManager::GetQuotaScoutCount(const CCircuitDef* cdef) const
-{
-	// The quota (and its mex bonus) is per movement type, so the slots are too. It used to compare against every
-	// scout task, so Ticks, Fleas, Darts, Swifts or another movement type's scouts used up the Glaives' slots
-	const int mobileId = cdef->GetMobileId();
-	unsigned int count = 0;
-	for (const IFighterTask* task : GetTasks(IFighterTask::FightType::SCOUT)) {
-		for (const CCircuitUnit* unit : task->GetAssignees()) {
-			const CCircuitDef* udef = unit->GetCircuitDef();
-			if ((udef->GetMobileId() == mobileId) && IsQuotaScout(udef)) {
-				++count;
-			}
-		}
+	// quota.scout + bonus (capped by scout_max), or quota.scout_share of the units rounded down (also capped by
+	// scout_max, which keeps a high share from sending every new raider scouting while the raider floor keeps
+	// building more). The epsilon keeps e.g. 0.7 x 10 at 7: 0.7f is a hair under 0.7
+	unsigned int share = static_cast<unsigned int>(scoutShare * units + 1e-3f);
+	if (scoutQuota.max > 0) {
+		share = std::min(share, scoutQuota.max);
 	}
-	return count;
+	return scouting < std::max(scoutQuota.Get(mobileId), share);
 }
 
 void CMilitaryManager::UpdateScoutQuota()
@@ -2262,11 +2265,7 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 		auto it = refUnits.find(cdef->GetMobileId());
 		if (it == refUnits.end()) {
 			refUnits[cdef->GetMobileId()] = unit;
-		} else if ((unit->GetTask()->GetType() == IUnitTask::Type::FIGHTER)
-			&& (static_cast<IFighterTask*>(unit->GetTask())->GetFightType() == fightType)
-			&& !((it->second->GetTask()->GetType() == IUnitTask::Type::FIGHTER)
-				&& (static_cast<IFighterTask*>(it->second->GetTask())->GetFightType() == fightType)))
-		{
+		} else if (IsOnFightTask(unit, fightType) && !IsOnFightTask(it->second, fightType)) {
 			it->second = unit;  // a unit already on that task is the best stand-in
 		}
 	}
@@ -3048,7 +3047,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
 	// Any main role with the scout attribute (scout as a secondary role) fills the scout quota first.
 	// Units whose main role already leads to scouting keep their own path below and take no slot.
-	if (IsQuotaScout(cdef) && (GetQuotaScoutCount(cdef) < GetMaxScouts(cdef))) {
+	if (IsQuotaScout(cdef) && IsScoutSlotFree(cdef)) {
 		task = EnqueueTask(IFighterTask::FightType::SCOUT);
 	}
 	if (task != nullptr) {

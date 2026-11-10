@@ -4,7 +4,7 @@
 	"scout": 1,  // max scout units out of raiders
 	"scout_per_mex": 1.0,
 	"scout_max": 12,  // cap on "scout" + bonus ("scout" itself is never cut); 0 = no cap
-	"scout_share": 0.25,  // floor: at least this share (0..1, rounded down) of our scout-attribute units of a movement type scout, whatever "scout" + bonus and "scout_max" say; 0 = off (default)
+	"scout_share": 0.25,  // floor: this share (0..1, rounded down) of our scout-attribute units of a movement type may scout even when "scout" + bonus is lower; capped by "scout_max" too; 0 = off (default)
 	"scout_spot": {
 		"enemy": 2.5,       // weight for closeness to the enemy (default 1.0)
 		"stale": 1.0,       // weight for time since the spot was last seen (default 1.0)
