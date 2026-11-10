@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_MODULE_ECONOMYMANAGER_H_
 
 #include "module/Module.h"
+#include "task/UnitTask.h"
 #include "util/AvailList.h"
 
 #include "AIFloat3.h"
@@ -96,6 +97,9 @@ public:
 	bool IsStalling() { return IsMetalStall() || IsEnergyStall(); }
 	// Short of energy: worse off than metal (IsEnergyStalling), or the energy stall latch is on
 	bool IsEnergyShort() { return IsEnergyStalling() || IsEnergyStall(); }
+	// Job and ZK build priority for an energy job: HIGH while short of energy, else NORMAL. Geothermal gets
+	// economy.energy.geo.priority instead when that is higher, except while metal stalls (mex jobs go first then)
+	IUnitTask::Priority GetEnergyPriority(const CCircuitDef* cdef);
 	bool IsExcessed() const { return metalProduced > metalUsed; }
 	int GetBuildDelay() const { return buildDelay; }
 
@@ -315,6 +319,7 @@ private:
 	std::map<STerrainMapArea*, std::pair<float, int>> reclaimMetal;  // area: <metal, next refresh frame>
 	std::vector<float> featureDefMetal;  // by FeatureDef id, see GetFeatureDefMetal; < 0 = not read yet
 	float geoThreat;  // max enemy threat at a vent to build there
+	IUnitTask::Priority geoPriority;  // economy.energy.geo.priority: job priority for geothermal when energy isn't short
 	float geoMorphIncome;  // min avg metal income to morph a geothermal into its upgrade, <0 = never
 	int geoMorphFrame;  // earliest frame for geothermal morph
 	std::set<CCircuitUnit*> geoMorphees;  // finished geothermals that can morph

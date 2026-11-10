@@ -86,6 +86,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, energyUse(.0f)
 		, geoSpotsFrame(-1)
 		, geoThreat(1.f)
+		, geoPriority(IUnitTask::Priority::HIGH)
 		, geoMorphIncome(-1.f)
 		, geoMorphFrame(0)
 		, geoMorphing(nullptr)
@@ -368,6 +369,17 @@ void CEconomyManager::ReadConfig()
 	{
 		const Json::Value& geo = energy["geo"];
 		geoThreat = geo.get("threat", 1.0f).asFloat();
+		const std::string prio = geo.get("priority", "high").asString();
+		if (prio == "low") {
+			geoPriority = IUnitTask::Priority::LOW;
+		} else if (prio == "normal") {
+			geoPriority = IUnitTask::Priority::NORMAL;
+		} else {
+			if (prio != "high") {
+				circuit->LOG("CONFIG %s: economy.energy.geo.priority '%s' is not low/normal/high, using high", cfgName.c_str(), prio.c_str());
+			}
+			geoPriority = IUnitTask::Priority::HIGH;
+		}
 		const Json::Value& morph = geo["morph"];
 		geoMorphIncome = morph.get((unsigned)0, -1.f).asFloat();
 		geoMorphFrame = morph.get((unsigned)1, 0).asInt() * FRAMES_PER_SEC;
@@ -1078,6 +1090,19 @@ bool CEconomyManager::IsReclaimSafe(CCircuitUnit* unit, const AIFloat3& pos) con
 	return isCovered && circuit->GetTerrainManager()->CanReachAt(unit, pos, unit->GetCircuitDef()->GetBuildDistance());
 }
 
+IUnitTask::Priority CEconomyManager::GetEnergyPriority(const CCircuitDef* cdef)
+{
+	if (IsEnergyShort()) {
+		return IUnitTask::Priority::HIGH;
+	}
+	// A geo is the cheapest energy per metal, so it may outrank normal jobs (factories, solars, defence that isn't
+	// urgent). Not in a metal stall: at ZK's high build priority it would take the scarce metal from the mex jobs
+	if (IsGeoDef(cdef) && (geoPriority > IUnitTask::Priority::NORMAL) && !IsMetalStall()) {
+		return geoPriority;
+	}
+	return (IsGeoDef(cdef) && (geoPriority < IUnitTask::Priority::NORMAL)) ? geoPriority : IUnitTask::Priority::NORMAL;
+}
+
 float CEconomyManager::GetReclaimRank(float sqDist, float metalLeft) const
 {
 	return std::sqrt(sqDist) / std::pow(std::max(metalLeft, 1.f), reclaimValueExp);
@@ -1113,7 +1138,7 @@ IBuilderTask* CEconomyManager::UpdateGeoTasks(const AIFloat3& position, CCircuit
 		}
 		const AIFloat3 ventPos = FindGeoSpot(engy.cdef, position, unit);  // also checks safety and reach
 		if (utils::is_valid(ventPos)) {
-			const IBuilderTask::Priority priority = IsEnergyShort() ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
+			const IBuilderTask::Priority priority = GetEnergyPriority(engy.cdef);
 			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
 			IBuilderTask* task = builderMgr->EnqueueTask(priority, engy.cdef, ventPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
 			task->SetBuildPos(ventPos);

@@ -21,7 +21,7 @@ CBEnergyTask::CBEnergyTask(ITaskManager* mgr, Priority priority,
 						   CCircuitDef* buildDef, const AIFloat3& position,
 						   float cost, float shake, int timeout)
 		: IBuilderTask(mgr, priority, buildDef, position, Type::BUILDER, BuildType::ENERGY, cost, shake, timeout)
-		, isEnergyShort(false)
+		, lastWanted(priority)
 {
 }
 
@@ -36,13 +36,14 @@ void CBEnergyTask::Update()
 		return;
 	}
 
-	// Same test as CEconomyManager::UpdateEnergyTasks: high build priority while short of energy
-	const bool isShort = manager->GetCircuit()->GetEconomyManager()->IsEnergyShort();
-	if (isEnergyShort == isShort) {
+	// Same rule as when the job was queued (CEconomyManager::GetEnergyPriority): high build priority while short of
+	// energy, and a geothermal's own priority otherwise. Only on a change, so a raise from elsewhere is kept until then
+	const Priority wanted = manager->GetCircuit()->GetEconomyManager()->GetEnergyPriority(buildDef);
+	if (lastWanted == wanted) {
 		return;
 	}
-	isEnergyShort = isShort;
-	ChangePriority(isShort ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL);
+	lastWanted = wanted;
+	ChangePriority(wanted);
 }
 
 void CBEnergyTask::Execute(CCircuitUnit* unit)
