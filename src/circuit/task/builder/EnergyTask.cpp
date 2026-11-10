@@ -21,7 +21,6 @@ CBEnergyTask::CBEnergyTask(ITaskManager* mgr, Priority priority,
 						   CCircuitDef* buildDef, const AIFloat3& position,
 						   float cost, float shake, int timeout)
 		: IBuilderTask(mgr, priority, buildDef, position, Type::BUILDER, BuildType::ENERGY, cost, shake, timeout)
-		, isEnergyShort(false)
 {
 }
 
@@ -36,13 +35,12 @@ void CBEnergyTask::Update()
 		return;
 	}
 
-	// Same test as CEconomyManager::UpdateEnergyTasks: high build priority while short of energy
-	const bool isShort = manager->GetCircuit()->GetEconomyManager()->IsEnergyShort();
-	if (isEnergyShort == isShort) {
-		return;
+	// Same rule as when the job was queued (CEconomyManager::GetEnergyPriority). Nothing else changes an energy
+	// job's priority; ChangePriority only sends ZK a command when its build priority changes
+	const Priority wanted = manager->GetCircuit()->GetEconomyManager()->GetEnergyPriority(buildDef);
+	if (wanted != priority) {
+		ChangePriority(wanted);
 	}
-	isEnergyShort = isShort;
-	ChangePriority(isShort ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL);
 }
 
 void CBEnergyTask::Execute(CCircuitUnit* unit)

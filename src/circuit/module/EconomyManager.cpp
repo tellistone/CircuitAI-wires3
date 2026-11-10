@@ -64,6 +64,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, mspArmyMult(1.f)
 		, mspLogFrame(0)
 		, mspArmyRatio(-1.f)
+		, isChat(false)
 		, mspChatChange(0.f)
 		, mspChatPull(-1.f)
 		, mspChatFrame(0)
@@ -86,6 +87,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, energyUse(.0f)
 		, geoSpotsFrame(-1)
 		, geoThreat(1.f)
+		, geoPriority(IUnitTask::Priority::HIGH)
 		, geoMorphIncome(-1.f)
 		, geoMorphFrame(0)
 		, geoMorphing(nullptr)
@@ -368,6 +370,13 @@ void CEconomyManager::ReadConfig()
 	{
 		const Json::Value& geo = energy["geo"];
 		geoThreat = geo.get("threat", 1.0f).asFloat();
+		const std::string prio = geo.get("priority", "high").asString();
+		geoPriority = (prio == "low") ? IUnitTask::Priority::LOW
+				: (prio == "normal") ? IUnitTask::Priority::NORMAL
+				: IUnitTask::Priority::HIGH;
+		if ((prio != "low") && (prio != "normal") && (prio != "high")) {
+			circuit->LOG("CONFIG %s: economy.energy.geo.priority: unknown value '%s', using 'high'", cfgName.c_str(), prio.c_str());
+		}
 		const Json::Value& morph = geo["morph"];
 		geoMorphIncome = morph.get((unsigned)0, -1.f).asFloat();
 		geoMorphFrame = morph.get((unsigned)1, 0).asInt() * FRAMES_PER_SEC;
@@ -512,7 +521,8 @@ void CEconomyManager::Init()
 		const bool isArmy = army.isObject();
 		mspArmyCurve = readCurve(isArmy ? army["curve"] : Json::Value(), "economy.ms_pull_army.curve", {{0.5f, 1.3f}, {2.f, 0.7f}});
 		mspArmyFrame = std::max(isArmy ? army.get("since", 300.f).asFloat() : 300.f, 0.f) * FRAMES_PER_SEC;
-		mspChatChange = std::max(econ.get("ms_pull_chat", 0.25f).asFloat(), 0.f);
+		isChat = econ.get("chat", false).asBool();
+		mspChatChange = isChat ? std::max(econ.get("ms_pull_chat", 0.25f).asFloat(), 0.f) : 0.f;
 	}
 
 	CSetupManager::StartFunc subinit = [this](const AIFloat3& pos) {
@@ -1097,6 +1107,19 @@ bool CEconomyManager::IsReclaimSafe(CCircuitUnit* unit, const AIFloat3& pos) con
 	return isCovered && circuit->GetTerrainManager()->CanReachAt(unit, pos, unit->GetCircuitDef()->GetBuildDistance());
 }
 
+IUnitTask::Priority CEconomyManager::GetEnergyPriority(const CCircuitDef* cdef)
+{
+	if (IsEnergyShort()) {
+		return IUnitTask::Priority::HIGH;
+	}
+	if (!IsGeoDef(cdef)) {
+		return IUnitTask::Priority::NORMAL;
+	}
+	// A geo is the cheapest energy per metal, so it may outrank normal jobs. Not in a metal stall: at ZK's high
+	// build priority it would take the scarce metal from the mex jobs (the latch's hysteresis keeps this from flickering)
+	return ((geoPriority == IUnitTask::Priority::HIGH) && IsMetalStall()) ? IUnitTask::Priority::NORMAL : geoPriority;
+}
+
 float CEconomyManager::GetReclaimRank(float sqDist, float metalLeft) const
 {
 	return std::sqrt(sqDist) / std::pow(std::max(metalLeft, 1.f), reclaimValueExp);
@@ -1132,7 +1155,7 @@ IBuilderTask* CEconomyManager::UpdateGeoTasks(const AIFloat3& position, CCircuit
 		}
 		const AIFloat3 ventPos = FindGeoSpot(engy.cdef, position, unit);  // also checks safety and reach
 		if (utils::is_valid(ventPos)) {
-			const IBuilderTask::Priority priority = IsEnergyShort() ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
+			const IBuilderTask::Priority priority = GetEnergyPriority(engy.cdef);
 			// exactly on the vent: no shake, build position fixed (also marks the vent as taken)
 			IBuilderTask* task = builderMgr->EnqueueTask(priority, engy.cdef, ventPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
 			task->SetBuildPos(ventPos);

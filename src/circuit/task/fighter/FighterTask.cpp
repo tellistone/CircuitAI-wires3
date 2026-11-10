@@ -533,13 +533,50 @@ const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths()
 		strengthFrame = frame;
 		strengthSum = 0.f;
 		unitStrengths.clear();
+		const std::vector<float> shieldShares = GetShieldShares(frame);
+		size_t i = 0;
 		for (CCircuitUnit* unit : units) {
-			const float power = unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+			CCircuitDef* cdef = unit->GetCircuitDef();
+			// Def power has the unit's own full shield; with shields in the group, its share of theirs instead
+			const float basePower = shieldShares.empty() ? cdef->GetPower()
+					: cdef->GetPwrDamage() * sqrtf(std::max(cdef->GetHealth() + shieldShares[i] * SHIELD_MOD, 0.f));
+			const float power = basePower * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
 			unitStrengths.push_back({unit, power});
 			strengthSum += power;
+			++i;
 		}
 	}
 	return unitStrengths;
+}
+
+std::vector<float> IFighterTask::GetShieldShares(int frame) const
+{
+	// Each group shield's full charge shared by the group's armed units inside it, as CThreatMap::AddShields shares
+	// an enemy shield: an area shield (Aspis, unarmed) counts for the units it covers, and once. Full, not current:
+	// Felon spends its shield to fire, and a strength that dips with every shot would flip the escape; shields
+	// below retreat.shield leave the group (Update). Empty: no shields in the group
+	std::vector<float> shares;
+	if (shields.empty()) {
+		return shares;
+	}
+	shares.resize(units.size(), 0.f);
+	std::vector<size_t> inside;
+	for (CCircuitUnit* shield : shields) {
+		const AIFloat3& sPos = shield->GetPos(frame);
+		const float sqRadius = SQUARE(shield->GetCircuitDef()->GetShieldRadius());
+		inside.clear();
+		size_t i = 0;
+		for (CCircuitUnit* unit : units) {
+			if (unit->GetCircuitDef()->IsAttacker() && (unit->GetPos(frame).SqDistance2D(sPos) <= sqRadius)) {
+				inside.push_back(i);
+			}
+			++i;
+		}
+		for (size_t j : inside) {
+			shares[j] += shield->GetCircuitDef()->GetMaxShield() / inside.size();
+		}
+	}
+	return shares;
 }
 
 float IFighterTask::GetStrengthSum() const
@@ -558,6 +595,22 @@ bool IFighterTask::IsSquadThreat(CCircuitUnit* unit)
 	IUnitTask* task = unit->GetTask();
 	return (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
 			&& static_cast<IFighterTask*>(task)->IsSquadThreat();
+}
+
+bool IFighterTask::IsCloakRoute(CCircuitUnit* unit) const
+{
+	// As CPathFinder::FillMapData: cloak doesn't work under water (sonar), there it routes on the usual layer
+	return ((unit->GetPos(manager->GetCircuit()->GetLastFrame()).y >= 0.f) || unit->GetCircuitDef()->IsSonarStealth())
+		&& unit->GetUnit()->IsCloaked();
+}
+
+bool IFighterTask::IsCloakRouteUnit(CCircuitUnit* unit)
+{
+	IUnitTask* task = unit->GetTask();
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)) {
+		return static_cast<IFighterTask*>(task)->IsCloakRoute(unit);
+	}
+	return unit->GetUnit()->IsCloaked();  // no fighter task: CPathFinder checks water first
 }
 
 float IFighterTask::GetTaskThreatAt(CCircuitUnit* unit, const AIFloat3& pos) const

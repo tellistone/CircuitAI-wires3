@@ -813,8 +813,8 @@ float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos,
 	// GetPathThreatMod. Never below the threat where the unit stands, so a squad already in
 	// danger can still walk out through ground no hotter than here.
 	const float capMod = GetPathThreatMod();
-	if ((capMod < 0.f) || unit->GetUnit()->IsCloaked()) {
-		return std::numeric_limits<float>::max();  // off, or cloaked: the pathfinder uses the decloak-range array, a different scale
+	if ((capMod < 0.f) || IsCloakRoute(unit)) {
+		return std::numeric_limits<float>::max();  // off, or cloaked (IsCloakRoute): the pathfinder uses the decloak-range array, a different scale
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();

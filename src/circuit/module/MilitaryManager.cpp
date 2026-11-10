@@ -301,6 +301,20 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		}
 	}
 
+	if (prevent.isGeo) {
+		// Our finished geothermal (a morph into the upgrade finishes again: no new tower, same point) is defended
+		// as a finished mex is by its build_chain "porc", at its vent's point (CDefenceMatrix::AddGeoPoints)
+		auto geoFinishedHandler = [this](CCircuitUnit* unit) {
+			MakeDefence(unit->GetPos(this->circuit->GetLastFrame()));
+		};
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
+		for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
+			if (economyMgr->IsGeoDef(&cdef)) {
+				finishedHandler[cdef.GetId()] = geoFinishedHandler;
+			}
+		}
+	}
+
 	defence = circuit->GetAllyTeam()->GetDefenceMatrix().get();
 
 	fightTasks.resize(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_));
@@ -454,6 +468,16 @@ void CMilitaryManager::ReadConfig()
 		};
 		readQuota("scout", scoutQuota, 3.f, 1.f, 12.f, {{8.f, 1.f}, {20.f, 4.f}});
 		readQuota("raider", raiderQuota, 0.f, 0.f, 0.f, scoutQuota.mapCurve);  // missing curve = the scout one
+		scoutShare = readCount("scout_share", 0.f);
+		if (scoutShare > 1.f) {
+			circuit->LOG("CONFIG %s: quota.scout_share must be 0..1, using 1", cfgName.c_str());
+			scoutShare = 1.f;
+		}
+		if ((scoutShare >= 1.f) && (scoutQuota.max == 0)) {
+			// Every such raider would scout, so the raider floor would never fill and factories would build raiders forever
+			circuit->LOG("CONFIG %s: quota.scout_share 1 needs a scout_max, using 0.9", cfgName.c_str());
+			scoutShare = 0.9f;
+		}
 
 		// Returns whether the object was given
 		auto readSpot = [&](const std::string& name, SSpotCfg& cfg) {
@@ -968,6 +992,7 @@ void CMilitaryManager::ReadConfig()
 		}
 		prevent.rerollFrames = int(std::max(rerollSec, 1.f) * FRAMES_PER_SEC);
 		prevent.sightFrames = int(std::max(sightSec, 1.f) * FRAMES_PER_SEC);
+		prevent.isGeo = porc.get("geo", false).asBool();
 		// Missing or [] = x1
 		std::vector<std::pair<float, float>> mapCurve;
 		ReadCurve(porc["prevent_map"], "porcupine.prevent_map", "map area per player", mapCurve);
@@ -1649,9 +1674,18 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	const float metalIncome = std::min(em->GetAvgMetalIncome(), em->GetAvgEnergyIncome()) * em->GetEcoFactor();
 	float maxCost = MIN_BUILD_SEC * amountFactor * metalIncome;
 	CDefenceMatrix::SDefPoint* closestPoint = nullptr;
+	CDefenceMatrix::SDefPoint* geoPoint = nullptr;
 	float minDist = std::numeric_limits<float>::max();
 	std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(cluster);
 	for (CDefenceMatrix::SDefPoint& defPoint : points) {
+		// A vent's point serves only that vent (our geo, its job, a sighting there): not the cluster's sweep,
+		// and a vent's towers never spill over to the mex points
+		if (defPoint.isGeo) {
+			if (defPoint.position.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 16)) {
+				geoPoint = &defPoint;
+			}
+			continue;
+		}
 		if (defPoint.cost < maxCost) {
 			float dist = defPoint.position.SqDistance2D(pos);
 			if ((closestPoint == nullptr) || (dist < minDist)) {
@@ -1659,6 +1693,9 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 				minDist = dist;
 			}
 		}
+	}
+	if (geoPoint != nullptr) {
+		closestPoint = (geoPoint->cost < maxCost) ? geoPoint : nullptr;
 	}
 	if (closestPoint == nullptr) {
 		return;
@@ -1868,17 +1905,25 @@ void CMilitaryManager::UpdatePreventSight()
 	}
 
 	CMetalManager* mm = circuit->GetMetalManager();
-	CCircuitDef* mexDef = circuit->GetEconomyManager()->GetMexDef();
+	CEconomyManager* em = circuit->GetEconomyManager();
+	CCircuitDef* mexDef = em->GetMexDef();
 	const float sqLos = SQUARE((mexDef != nullptr) ? mexDef->GetLosRadius() : 0.f);
 	const int frame = circuit->GetLastFrame();
 	for (const auto& kv : circuit->GetTeamUnits()) {
 		CCircuitUnit* unit = kv.second;
-		if (!unit->GetCircuitDef()->IsMex()) {
+		// Geothermals too (porcupine.geo), by the nearest cluster as their vent's point is (CDefenceMatrix::AddGeoPoints)
+		const bool isGeo = prevent.isGeo && em->IsGeoDef(unit->GetCircuitDef());
+		if (!unit->GetCircuitDef()->IsMex() && !isGeo) {
 			continue;
 		}
 		const AIFloat3& mexPos = unit->GetPos(frame);
-		const int spotId = mm->FindNearestSpot(mexPos);
-		const int cluster = (spotId >= 0) ? mm->GetCluster(spotId) : -1;
+		int cluster = -1;
+		if (isGeo) {
+			cluster = mm->FindNearestCluster(mexPos);
+		} else {
+			const int spotId = mm->FindNearestSpot(mexPos);
+			cluster = (spotId >= 0) ? mm->GetCluster(spotId) : -1;
+		}
 		if ((cluster < 0) || (cluster >= (int)preventRolls.size())) {
 			continue;
 		}
@@ -1926,7 +1971,7 @@ bool CMilitaryManager::HasDefence(int cluster)
 {
 	const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(cluster);
 	for (const CDefenceMatrix::SDefPoint& defPoint : points) {
-		if (defPoint.cost > .5f) {
+		if ((defPoint.cost > .5f) && !defPoint.isGeo) {  // a vent's towers don't guard the mexes
 			return true;
 		}
 	}
@@ -2161,6 +2206,14 @@ bool CMilitaryManager::IsRaider(const CCircuitDef* cdef) const
 	return circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(RAIDER);
 }
 
+// The unit is on a fighter task of this type
+static bool IsOnFightTask(const CCircuitUnit* unit, IFighterTask::FightType type)
+{
+	const IUnitTask* task = unit->GetTask();
+	return (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+		&& (static_cast<const IFighterTask*>(task)->GetFightType() == type);
+}
+
 unsigned int CMilitaryManager::GetRaiderCount() const
 {
 	unsigned int count = 0;
@@ -2169,15 +2222,51 @@ unsigned int CMilitaryManager::GetRaiderCount() const
 			continue;
 		}
 		// Raiders taken as scouts (quota.scout) don't raid, so they don't fill the floor
-		IUnitTask* task = unit->GetTask();
-		if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
-			&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::SCOUT))
-		{
+		if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
 			continue;
 		}
 		++count;
 	}
 	return count;
+}
+
+bool CMilitaryManager::IsQuotaScout(const CCircuitDef* cdef) const
+{
+	// Same main role -> fight type mapping as DefaultMakeTask: scout and mine roles scout on their own
+	const CCircuitDef::RoleT role = circuit->GetBindedRole(cdef->GetMainRole());
+	return cdef->IsRoleScout() && (role != ROLE_TYPE(SCOUT)) && (role != ROLE_TYPE(MINE));
+}
+
+bool CMilitaryManager::IsScoutSlotFree(const CCircuitDef* cdef) const
+{
+	// Slots are per movement type, as the quota and its mex bonus are, and only scouts through the attribute take
+	// one: comparing against every scout task let Ticks, Fleas, Darts, Swifts or another type's scouts fill them.
+	// One pass over the army: those already scouting, and all of them for quota.scout_share (scouting or not,
+	// the deciding unit included, player-controlled ones left out)
+	const int mobileId = cdef->GetMobileId();
+	unsigned int scouting = 0;
+	unsigned int units = 0;
+	for (const CCircuitUnit* unit : army) {
+		const CCircuitDef* udef = unit->GetCircuitDef();
+		if ((udef->GetMobileId() != mobileId) || !IsQuotaScout(udef)) {
+			continue;
+		}
+		if (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER) {
+			continue;
+		}
+		++units;
+		if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
+			++scouting;
+		}
+	}
+	// quota.scout + bonus (capped by scout_max), or quota.scout_share of the units rounded down (also capped by
+	// scout_max, which keeps a high share from sending every new raider scouting while the raider floor keeps
+	// building more). The epsilon keeps e.g. 0.7 x 10 at 7: 0.7f is a hair under 0.7
+	unsigned int share = static_cast<unsigned int>(scoutShare * units + 1e-3f);
+	if (scoutQuota.max > 0) {
+		share = std::min(share, scoutQuota.max);
+	}
+	return scouting < std::max(scoutQuota.Get(mobileId), share);
 }
 
 void CMilitaryManager::UpdateScoutQuota()
@@ -2211,11 +2300,7 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 		auto it = refUnits.find(cdef->GetMobileId());
 		if (it == refUnits.end()) {
 			refUnits[cdef->GetMobileId()] = unit;
-		} else if ((unit->GetTask()->GetType() == IUnitTask::Type::FIGHTER)
-			&& (static_cast<IFighterTask*>(unit->GetTask())->GetFightType() == fightType)
-			&& !((it->second->GetTask()->GetType() == IUnitTask::Type::FIGHTER)
-				&& (static_cast<IFighterTask*>(it->second->GetTask())->GetFightType() == fightType)))
-		{
+		} else if (IsOnFightTask(unit, fightType) && !IsOnFightTask(it->second, fightType)) {
 			it->second = unit;  // a unit already on that task is the best stand-in
 		}
 	}
@@ -2238,7 +2323,8 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 	// Second multiplier: map size curve / all players. Size = side of a square map with the same area,
 	// in Spring map units (512 elmos), so 8x8 -> 8 and a 10x16 map -> ~12.6
 	const float mapSize = sqrtf(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
-	const float mapMult = utils::eval_curve(quota.mapCurve, mapSize) / players;
+	const float mapCurve = utils::eval_curve(quota.mapCurve, mapSize);
+	const float mapMult = mapCurve / players;
 	const float perMex = quota.perMex;
 
 	for (auto& kv : refUnits) {
@@ -2262,7 +2348,7 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 				isRaider && !IsAreaDamage(cdef));
 		// The quota is a member: it outlives the query (a pointer, so that is plain to see)
 		std::map<int, unsigned int>* bonus = &mexBonus;
-		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
+		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult, mapCurve, mapSize, players, isRaider](const IPathQuery* query) {
 			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
 			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
 			unsigned int count = 0;
@@ -2286,7 +2372,16 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 				}
 			}
 			// (reachable mexes / enemy players) x (map size curve / all players) x *_per_mex, rounded down
-			(*bonus)[mobileId] = (unsigned int)(perMex * mapMult * count / enemyPlayers);
+			const unsigned int value = (unsigned int)(perMex * mapMult * count / enemyPlayers);
+			auto it = bonus->find(mobileId);
+			if ((it == bonus->end()) || (it->second != value)) {
+				// On change only (at most every 15 s per movement type): to check the quota and its curve in infolog
+				const char* name = isRaider ? "raider" : "scout";
+				circuit->LOG("QUOTA %s bonus %u (movement type %i) = %u reachable enemy mexes / %i enemy players"
+						" x %s_map_size %.2f (map size %.1f) / %i players x %s_per_mex %.2f",
+						name, value, mobileId, count, enemyPlayers, name, mapCurve, mapSize, players, name, perMex);
+			}
+			(*bonus)[mobileId] = value;
 		});
 	}
 }
@@ -2396,7 +2491,9 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 	if (index >= 0) {
 		const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(index);
 		for (const CDefenceMatrix::SDefPoint& defPoint : points) {
-			outPositions.push_back(defPoint.position);
+			if (!defPoint.isGeo) {  // the cluster's own front, not a vent off to its side
+				outPositions.push_back(defPoint.position);
+			}
 		}
 	}
 }
@@ -2417,7 +2514,9 @@ void CMilitaryManager::FillFriendlyClusterPos(CCircuitUnit* unit, F3Vec& outPosi
 			&& terrainMgr->CanMoveToPos(area, clusters[index].position))
 		{
 			for (const CDefenceMatrix::SDefPoint& defPoint : defence->GetDefPoints(index)) {
-				outPositions.push_back(defPoint.position);
+				if (!defPoint.isGeo) {  // as FillFrontPos
+					outPositions.push_back(defPoint.position);
+				}
 			}
 		}
 	}
@@ -2471,7 +2570,9 @@ void CMilitaryManager::FillStaticSafePos(CCircuitUnit* unit, F3Vec& outPositions
 	if (index >= 0) {
 		const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(index);
 		for (const CDefenceMatrix::SDefPoint& defPoint : points) {
-			outPositions.push_back(defPoint.position);
+			if (!defPoint.isGeo || (defPoint.cost > 100.0f)) {  // a vent only once defended, as the test above
+				outPositions.push_back(defPoint.position);
+			}
 		}
 	}
 }
@@ -2515,7 +2616,9 @@ void CMilitaryManager::FillSafePos(CCircuitUnit* unit, F3Vec& outPositions)
 	if (index >= 0) {
 		const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(index);
 		for (const CDefenceMatrix::SDefPoint& defPoint : points) {
-			outPositions.push_back(defPoint.position);
+			if (!defPoint.isGeo || (defPoint.cost > 100.0f)) {  // a vent only once defended, as the test above
+				outPositions.push_back(defPoint.position);
+			}
 		}
 	}
 
@@ -2986,10 +3089,8 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
 	// Any main role with the scout attribute (scout as a secondary role) fills the scout quota first.
-	// Units whose main role already leads to scouting keep their own path below.
-	if (cdef->IsRoleScout() && ((it == types.end()) || (it->second != IFighterTask::FightType::SCOUT))
-		&& (GetTasks(IFighterTask::FightType::SCOUT).size() < GetMaxScouts(cdef)))
-	{
+	// Units whose main role already leads to scouting keep their own path below and take no slot.
+	if (IsQuotaScout(cdef) && IsScoutSlotFree(cdef)) {
 		task = EnqueueTask(IFighterTask::FightType::SCOUT);
 	}
 	if (task != nullptr) {
@@ -3087,14 +3188,37 @@ void CMilitaryManager::UpdateAhPull()
 			continue;  // retreat, player control, idle, ...
 		}
 		const IFighterTask::FightType type = static_cast<IFighterTask*>(task)->GetFightType();
-		if ((type != IFighterTask::FightType::ATTACK) && (type != IFighterTask::FightType::DEFEND)) {
+		if ((type != IFighterTask::FightType::ATTACK) && (type != IFighterTask::FightType::DEFEND)
+			&& (type != IFighterTask::FightType::SUPPORT))  // support: anti-heavies with the support attribute (Phantom, Lance)
+		{
 			continue;  // already anti-heavy, or a guard
 		}
-		if ((task->GetState() == IUnitTask::State::ENGAGE) || (task->GetState() == IUnitTask::State::DISENGAGE)) {
-			continue;  // fighting or fleeing: losing it now could tip the fight; the next pass takes it
+		if (task->GetState() == IUnitTask::State::DISENGAGE) {
+			continue;  // fleeing: the next pass takes it
+		}
+		if ((task->GetState() == IUnitTask::State::ENGAGE) && !IsQuarryInRange(unit)) {
+			continue;  // fighting with no heavy in reach: losing it now could tip the fight; the next pass takes it
 		}
 		AssignTask(unit, EnqueueAntiHeavy(unit));
 	}
+}
+
+bool CMilitaryManager::IsQuarryInRange(CCircuitUnit* unit) const
+{
+	// A heavy (or commander) it can shoot, in radar or LOS now, within its weapon range: in a fight the group's
+	// targets are chaff to a long-reload anti-heavy weapon
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	const float sqRange = SQUARE(cdef->GetMaxRange());
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		CEnemyInfo* enemy = kv.second;
+		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= sqRange)
+			&& CAntiHeavyTask::IsQuarryFor(cdef, enemy))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 IFighterTask* CMilitaryManager::EnqueueAntiHeavy(CCircuitUnit* unit)
@@ -3313,8 +3437,8 @@ void CMilitaryManager::UpdateAttackThreatFloor()
 		circuit->LOG("THREAT FLOOR ours: %s", msg.c_str());
 		circuit->LOG("THREAT FLOOR enemy: %s", circuit->GetEnemyManager()->GetMobileCostReport(frame, enemyHalfLife).c_str());
 	}
-	if (isSwitch) {
-		// Public chat (Game_sendTextMessage only runs "/" commands, as for the resign), with the numbers behind the
+	if (isSwitch && circuit->GetEconomyManager()->IsChat()) {
+		// Public chat (economy.chat) (Game_sendTextMessage only runs "/" commands, as for the resign), with the numbers behind the
 		// switch: enemy metal per team and our army's (as compared above), and the economy's mobile:static metal pull
 		// with its army factor (economy.ms_pull_army; off before its since or with no enemy army known)
 		const CEconomyManager* economyMgr = circuit->GetEconomyManager();

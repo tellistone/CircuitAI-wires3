@@ -7,6 +7,41 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **`economy.chat` switch for the test chat lines** (default `false`). The threat floor's `Defending` / `Attacking` line
+  and the `ms_pull` line (`economy.ms_pull_chat`) only post with `"chat": true`. The resign line `I am defeated.` and
+  the start-up line are unchanged.
+
+- **Anti-heavy cloak routes** (per-unit attribute `cloak_route`, default off). Cloaked anti-heavies (Ultimatum,
+  Widow) used to route on the decloak layer with no `antiheavy.path_threat` cap and an unchecked stand-off spot,
+  so they walked through enemy weapon range and died once they decloaked. Without the attribute they now route,
+  pick stand-off spots and flee on the normal threat map like Lance; with it, the old behaviour. Mines (Skuttle)
+  always keep cloak routes. Under water without sonar stealth cloak doesn't count (one `IsCloakRoute` check, also
+  used by artillery and scouts).
+  - Once a heavy is seen, anti-heavies also leave support tasks (Phantom, Lance), and leave a fighting group when a
+    heavy they can shoot is within their weapon range; a heavy already in weapon range (x1.2 for the current target)
+    is attacked from where the squad stands, whatever escorts it.
+  - Squad units keep their own `fire_state` (default fire at will); cloakers are no longer held to return fire.
+
+- **Geothermal build priority** (`economy.energy.geo.priority`: `"low"`, `"normal"` or `"high"`, default and
+  shipped `"high"`). Before, an energygeo job was NORMAL unless energy was short. It now takes this priority while
+  energy isn't short (job choice weight and travel cap, and ZK build priority), and drops to normal while metal
+  stalls so mex jobs get the scarce metal first. Energy short: HIGH, as before. Only one geo job exists at a time.
+  `CBEnergyTask` re-applies the same rule (`CEconomyManager::GetEnergyPriority`), which also returns any energy job
+  queued during a shortage to NORMAL once it ends.
+
+- **Geothermal vents defended like mex clusters** (`porcupine.geo` in `build_chain.json`, default off; shipped on).
+  Each vent that no mex defence point covers becomes a defence point of its nearest cluster, sharing that cluster's
+  preventive roll. Our geo there is defended like a mex: when it finishes and on a sighting. Towers for a vent stay
+  at the vent, and vents we don't hold get none. Vent points don't count as the cluster's defence (mex escort) or as
+  its front positions, and count as safe positions only once defended.
+
+- **Scout share floor** (`quota.scout_share`, 0..1, default 0 = off; shipped 0.25). This share of our
+  scout-attribute units of a movement type (scouting or not, player-controlled ones left out), rounded down, may
+  scout even when `scout` + bonus is lower. `scout_max` caps it too: scouting raiders don't fill the raider floor, so
+  an uncapped high share would keep factories building raiders that all go scouting (share 1 with `scout_max` 0 is
+  read as 0.9). Like the rest of the scout quota it is checked when a unit gets a new task, so it never pulls a raider
+  off a raid. With 0.25: 4 Glaives -> at least 1 scouting, 8 -> 2.
+
 - **Fractional preventive defences** (`porcupine` block in `build_chain.json`). `prevent` (towers a cluster gets
   outside porc mode) can be a fraction: count = its whole part, plus 1 with the odds of its fraction, so 0.5 = a 50%
   chance of 1 tower and 1.5 = 1 tower and a 50% chance of a 2nd. Before, it was read as a whole number and 0.5 meant 0.
@@ -439,6 +474,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   When waiting for a builder, its own build range is used instead of the nano tower's.
 
 ### Fixed
+
+- **Scout slots are per movement type and only for raiders that scout.** The scout quota (`quota.scout` + mex bonus)
+  is worked out per movement type, but a raider with the scout attribute compared it with every scout task, so Ticks
+  (`mine` role), Fleas, Darts, Swifts, Blastwings and scouts of other movement types used up its slots. It now counts
+  only units of its own movement type that scout through the attribute. A `QUOTA scout|raider bonus` log line shows
+  each bonus (reachable enemy mexes, enemy players, `*_map_size` multiplier / all players, `*_per_mex`) when it changes.
 
 - **Defence cost refunds go to the right defence point.** `CDefenceMatrix::GetDefPoint` never kept the nearest
   distance it found (`tmp = dist` instead of `dist = tmp`), so in a cluster with several defence points a destroyed or

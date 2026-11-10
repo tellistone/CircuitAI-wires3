@@ -78,12 +78,6 @@ void CAntiHeavyTask::AssignTo(CCircuitUnit* unit)
 	highestRange = std::max(highestRange, cdef->GetJumpRange());
 
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (cdef->IsAbleToCloak() && !cdef->IsOpenFire()) {
-		TRY_UNIT(circuit, unit,
-			unit->GetUnit()->SetFireState(CCircuitDef::FireType::RETURN);
-		)
-	}
-
 	if (unit->GetDGunAct() != nullptr) {
 		unit->GetDGunAct()->StateWait();
 	}
@@ -110,12 +104,6 @@ void CAntiHeavyTask::RemoveAssignee(CCircuitUnit* unit)
 		highestRange = std::max(highestRange, leader->GetCircuitDef()->GetJumpRange());
 	}
 
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	if (cdef->IsAbleToCloak()) {
-		TRY_UNIT(manager->GetCircuit(), unit,
-			unit->GetUnit()->SetFireState(cdef->GetFireState());
-		)
-	}
 }
 
 void CAntiHeavyTask::Start(CCircuitUnit* unit)
@@ -273,11 +261,6 @@ void CAntiHeavyTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	ISquadTask::OnUnitDamaged(unit, attacker);
 
 	if (attacker != nullptr) {
-		if (unit->GetCircuitDef()->IsAbleToCloak()) {
-			TRY_UNIT(manager->GetCircuit(), unit,
-				unit->GetUnit()->SetFireState(CCircuitDef::FireType::OPEN);
-			)
-		}
 		if (unit->GetDGunAct() != nullptr) {
 			unit->GetDGunAct()->StateActivate();
 		}
@@ -287,6 +270,14 @@ void CAntiHeavyTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 const CMilitaryManager::SAntiHeavyCfg& CAntiHeavyTask::GetCfg() const
 {
 	return manager->GetCircuit()->GetMilitaryManager()->GetAntiHeavyCfg();
+}
+
+bool CAntiHeavyTask::IsCloakRoute(CCircuitUnit* unit) const
+{
+	// Without cloak_route the cloak is only extra safety: a decloak (firing, splash, a close enemy, low energy)
+	// must not leave the unit on a route planned past enemy weapons. Mines (Skuttle) live by sneaking up: always
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	return (cdef->IsAttrCloakRoute() || cdef->IsRoleMine()) && IFighterTask::IsCloakRoute(unit);
 }
 
 float CAntiHeavyTask::GetPathThreatMod() const
@@ -374,11 +365,15 @@ bool CAntiHeavyTask::AttackTarget(CCircuitUnit* unit, int frame, float& minePowe
 
 bool CAntiHeavyTask::IsQuarry(CEnemyInfo* enemy) const
 {
+	return IsQuarryFor(leader->GetCircuitDef(), enemy);
+}
+
+bool CAntiHeavyTask::IsQuarryFor(const CCircuitDef* cdef, CEnemyInfo* enemy)
+{
 	CCircuitDef* edef = enemy->GetCircuitDef();
 	if ((edef == nullptr) || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY | CCircuitDef::RoleMask::COMM)) {
 		return false;
 	}
-	CCircuitDef* cdef = leader->GetCircuitDef();
 	return !(cdef->IsAttrAntiStat() && edef->IsMobile())
 		&& ((edef->GetCategory() & cdef->GetTargetCategory()) != 0)
 		&& !(edef->IsAbleToFly() && !cdef->HasAntiAir());
@@ -561,8 +556,14 @@ bool CAntiHeavyTask::FindTarget()
 			continue;
 		}
 		const AIFloat3& ePos = enemy->GetPos();
+		const float sqDist = pos.SqDistance2D(ePos);
+		// Already within weapon range (pulled from a fight, IsQuarryInRange; or outranging it): attack from here,
+		// no walk in, so its escorts don't rule it out; the flee still guards the squad. The current target keeps
+		// it a bit further out, so a heavy at the edge of range isn't dropped and picked again every check
+		const float reach = (enemy == target) ? weaponRange * 1.2f : weaponRange;
+		const bool isInReach = (sqDist <= SQUARE(reach));
 		if ((ePos.y - map->GetElevationAt(ePos.x, ePos.z) > weaponRange)
-			|| (maxPower / GetThrDistModAt(ePos) <= GetTaskThreatExcl(leader, ePos, enemy->GetThreat()))
+			|| (!isInReach && (maxPower / GetThrDistModAt(ePos) <= GetTaskThreatExcl(leader, ePos, enemy->GetThreat())))
 			|| !terrainMgr->CanMoveToPos(area, ePos))
 		{
 			continue;
@@ -572,8 +573,7 @@ bool CAntiHeavyTask::FindTarget()
 		// its escorts' threat (what the test above judges); the squad attacks from there
 		float standOff = isStandOff ? GetStandOff(enemy, engageRange) : engageRange;
 		AIFloat3 standPos = GetPointTowards(ePos, pos, standOff);
-		const float sqDist = pos.SqDistance2D(ePos);
-		const bool isFar = (sqDist > SQUARE(standOff + pathSlack));
+		const bool isFar = !isInReach && (sqDist > SQUARE(standOff + pathSlack));
 		if (isStandOff && isFar) {
 			if (!ProbeStandOff(ePos, pos, standOff, standPos)) {
 				continue;  // no point near its ring under the route cap: the route there would fail
@@ -586,12 +586,12 @@ bool CAntiHeavyTask::FindTarget()
 				CollectDangers(fleeMargin);
 			}
 			// Where the attack ends up (weapon range) and where the route ends
-			if (!IsSpotSafe(GetPointTowards(ePos, pos, weaponRange * 0.9f)) || !IsSpotSafe(standPos)) {
+			if (!IsSpotSafe(GetPointTowards(ePos, pos, weaponRange * 0.9f)) || (!isInReach && !IsSpotSafe(standPos))) {
 				continue;
 			}
 		}
 
-		if (sqDist <= SQUARE(standOff + pathSlack)) {
+		if (!isFar) {
 			if (sqDist < minSqDist) {
 				minSqDist = sqDist;
 				bestTarget = enemy;
