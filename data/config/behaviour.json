@@ -204,8 +204,8 @@
 	// Fixed rules (no keys): once an enemy heavy is seen, anti-heavy units leave attack, gathering and support tasks for
 	// a squad every 2 s; not while their group flees, and while it fights only if a heavy they can shoot is in their
 	// weapon range. A heavy already in weapon range (x1.2 for the current target) is attacked from where the squad
-	// stands, whatever escorts it. Cloakers (not fire_state "open") hold to return fire in the squad; a hit opens fire
-	// for 10 s after the last one, then back to return fire
+	// stands, whatever escorts it. Squad units keep their own fire state
+	// (fire_state, default fire at will); cloakers are no longer held to return fire
 },
 
 "artillery": {

@@ -78,12 +78,6 @@ void CAntiHeavyTask::AssignTo(CCircuitUnit* unit)
 	highestRange = std::max(highestRange, cdef->GetJumpRange());
 
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (IsCloakReturnFire(unit)) {
-		TRY_UNIT(circuit, unit,
-			unit->GetUnit()->SetFireState(CCircuitDef::FireType::RETURN);
-		)
-	}
-
 	if (unit->GetDGunAct() != nullptr) {
 		unit->GetDGunAct()->StateWait();
 	}
@@ -110,36 +104,6 @@ void CAntiHeavyTask::RemoveAssignee(CCircuitUnit* unit)
 		highestRange = std::max(highestRange, leader->GetCircuitDef()->GetJumpRange());
 	}
 
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	openFireUntil.erase(unit);
-	if (cdef->IsAbleToCloak()) {
-		TRY_UNIT(manager->GetCircuit(), unit,
-			unit->GetUnit()->SetFireState(cdef->GetFireState());
-		)
-	}
-}
-
-bool CAntiHeavyTask::IsCloakReturnFire(CCircuitUnit* unit)
-{
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	return cdef->IsAbleToCloak() && !cdef->IsOpenFire();
-}
-
-void CAntiHeavyTask::UpdateOpenFire(int frame)
-{
-	// Fire at will only for a while after the last hit, then back to return fire: else it shoots the nearest
-	// chaff for the rest of the task (each long reload wasted, and a decloak for most cloakers)
-	for (auto it = openFireUntil.begin(); it != openFireUntil.end();) {
-		if (frame < it->second) {
-			++it;
-			continue;
-		}
-		CCircuitUnit* unit = it->first;
-		TRY_UNIT(manager->GetCircuit(), unit,
-			unit->GetUnit()->SetFireState(CCircuitDef::FireType::RETURN);
-		)
-		it = openFireUntil.erase(it);
-	}
 }
 
 void CAntiHeavyTask::Start(CCircuitUnit* unit)
@@ -171,10 +135,6 @@ void CAntiHeavyTask::Update()
 		}
 	}
 
-	if (!openFireUntil.empty()) {
-		UpdateOpenFire(manager->GetCircuit()->GetLastFrame());
-	}
-
 	/*
 	 * Flee from approaching enemies before anything else (every update)
 	 */
@@ -187,7 +147,6 @@ void CAntiHeavyTask::Update()
 	 */
 	ISquadTask* task = GetMergeTask();
 	if (task != nullptr) {
-		UpdateOpenFire(std::numeric_limits<int>::max());  // back to return fire: the map doesn't move with the units
 		task->Merge(this);
 		units.clear();
 		manager->AbortTask(this);
@@ -302,15 +261,6 @@ void CAntiHeavyTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	ISquadTask::OnUnitDamaged(unit, attacker);
 
 	if (attacker != nullptr) {
-		if (IsCloakReturnFire(unit) && (units.find(unit) != units.end())) {  // open-fire types are open already
-			auto ins = openFireUntil.emplace(unit, 0);
-			if (ins.second) {  // not open yet: one order per hit streak
-				TRY_UNIT(manager->GetCircuit(), unit,
-					unit->GetUnit()->SetFireState(CCircuitDef::FireType::OPEN);
-				)
-			}
-			ins.first->second = manager->GetCircuit()->GetLastFrame() + OPEN_FIRE_FRAMES;
-		}
 		if (unit->GetDGunAct() != nullptr) {
 			unit->GetDGunAct()->StateActivate();
 		}

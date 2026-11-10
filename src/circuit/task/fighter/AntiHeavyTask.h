@@ -11,8 +11,6 @@
 #include "task/fighter/SquadTask.h"
 #include "module/MilitaryManager.h"
 
-#include <unordered_map>
-
 namespace circuit {
 
 class CAntiHeavyTask: public ISquadTask {
@@ -71,12 +69,6 @@ private:
 	// time, a few cells at most) towards pos whose threat is under the route cap; false if none
 	bool ProbeStandOff(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float standOff,
 			springai::AIFloat3& outPos) const;
-
-	// Cloakers hold to return fire in the squad (AssignTo); a hit opens fire for OPEN_FIRE_FRAMES after the last one
-	static bool IsCloakReturnFire(CCircuitUnit* unit);
-	void UpdateOpenFire(int frame);
-	static constexpr int OPEN_FIRE_FRAMES = FRAMES_PER_SEC * 10;
-	std::unordered_map<CCircuitUnit*, int> openFireUntil;  // unit -> frame it goes back to return fire
 
 	bool FindTarget();
 	void ApplyTargetPath(const CQueryPathMulti* query);
