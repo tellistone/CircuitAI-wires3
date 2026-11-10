@@ -231,8 +231,12 @@ public:
 	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without
 	// crossing threat it couldn't take, divided by the number of enemy players: the mex bonus of each quota
 	void UpdateScoutQuota();
-	// Most scout tasks at once (quota.scout + bonus)
+	// Most units of this movement type scouting through the scout attribute at once (quota.scout + bonus)
 	unsigned int GetMaxScouts(const CCircuitDef* cdef) const { return scoutQuota.Get(cdef->GetMobileId()); }
+	// Units of cdef's movement type on a scout task that took a quota.scout slot: scouts through the scout attribute,
+	// not units whose own role sends them scouting (dedicated scouts, air scouts, "mine" units such as Ticks)
+	unsigned int GetQuotaScoutCount(const CCircuitDef* cdef) const;
+	bool IsQuotaScout(const CCircuitDef* cdef) const;  // scouts through the scout attribute, not its own role
 	// quota.raider (+ bonus): factories build a raider while we have fewer raider units (main role raider or bound
 	// to it, not scouting; alive plus queued) than this. 0 = no floor
 	unsigned int GetMinRaiders(const CCircuitDef* cdef) const { return raiderQuota.Get(cdef->GetMobileId()); }

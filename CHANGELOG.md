@@ -440,6 +440,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Scout slots are per movement type and only for raiders that scout.** The scout quota (`quota.scout` + mex bonus)
+  is worked out per movement type, but a raider with the scout attribute compared it with every scout task, so Ticks
+  (`mine` role), Fleas, Darts, Swifts, Blastwings and scouts of other movement types used up its slots. It now counts
+  only units of its own movement type that scout through the attribute. A `QUOTA scout|raider bonus` log line shows
+  each bonus (reachable enemy mexes, enemy players, `*_map_size` multiplier / all players, `*_per_mex`) when it changes.
+
 - **Defence cost refunds go to the right defence point.** `CDefenceMatrix::GetDefPoint` never kept the nearest
   distance it found (`tmp = dist` instead of `dist = tmp`), so in a cluster with several defence points a destroyed or
   cancelled tower's metal could be refunded to the wrong point: one point then looked defended while it wasn't, and

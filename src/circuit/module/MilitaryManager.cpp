@@ -2180,6 +2180,30 @@ unsigned int CMilitaryManager::GetRaiderCount() const
 	return count;
 }
 
+bool CMilitaryManager::IsQuotaScout(const CCircuitDef* cdef) const
+{
+	// Same main role -> fight type mapping as DefaultMakeTask: scout and mine roles scout on their own
+	const CCircuitDef::RoleT role = circuit->GetBindedRole(cdef->GetMainRole());
+	return cdef->IsRoleScout() && (role != ROLE_TYPE(SCOUT)) && (role != ROLE_TYPE(MINE));
+}
+
+unsigned int CMilitaryManager::GetQuotaScoutCount(const CCircuitDef* cdef) const
+{
+	// The quota (and its mex bonus) is per movement type, so the slots are too. It used to compare against every
+	// scout task, so Ticks, Fleas, Darts, Swifts or another movement type's scouts used up the Glaives' slots
+	const int mobileId = cdef->GetMobileId();
+	unsigned int count = 0;
+	for (const IFighterTask* task : GetTasks(IFighterTask::FightType::SCOUT)) {
+		for (const CCircuitUnit* unit : task->GetAssignees()) {
+			const CCircuitDef* udef = unit->GetCircuitDef();
+			if ((udef->GetMobileId() == mobileId) && IsQuotaScout(udef)) {
+				++count;
+			}
+		}
+	}
+	return count;
+}
+
 void CMilitaryManager::UpdateScoutQuota()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
@@ -2262,7 +2286,7 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 				isRaider && !IsAreaDamage(cdef));
 		// The quota is a member: it outlives the query (a pointer, so that is plain to see)
 		std::map<int, unsigned int>* bonus = &mexBonus;
-		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult](const IPathQuery* query) {
+		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult, mapSize, isRaider](const IPathQuery* query) {
 			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
 			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
 			unsigned int count = 0;
@@ -2286,7 +2310,16 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 				}
 			}
 			// (reachable mexes / enemy players) x (map size curve / all players) x *_per_mex, rounded down
-			(*bonus)[mobileId] = (unsigned int)(perMex * mapMult * count / enemyPlayers);
+			const unsigned int value = (unsigned int)(perMex * mapMult * count / enemyPlayers);
+			auto it = bonus->find(mobileId);
+			if ((it == bonus->end()) || (it->second != value)) {
+				// Logged on change only: to check the quota (and its *_map_size curve) in infolog
+				circuit->LOG("QUOTA %s bonus, movement type %i: %u = %u reachable enemy mexes / %i enemy players"
+						" x %.2f (%s_map_size at %.1f / all players) x %.2f %s_per_mex",
+						isRaider ? "raider" : "scout", mobileId, value, count, enemyPlayers,
+						mapMult, isRaider ? "raider" : "scout", mapSize, perMex, isRaider ? "raider" : "scout");
+			}
+			(*bonus)[mobileId] = value;
 		});
 	}
 }
@@ -2986,10 +3019,8 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
 	// Any main role with the scout attribute (scout as a secondary role) fills the scout quota first.
-	// Units whose main role already leads to scouting keep their own path below.
-	if (cdef->IsRoleScout() && ((it == types.end()) || (it->second != IFighterTask::FightType::SCOUT))
-		&& (GetTasks(IFighterTask::FightType::SCOUT).size() < GetMaxScouts(cdef)))
-	{
+	// Units whose main role already leads to scouting keep their own path below and take no slot.
+	if (IsQuotaScout(cdef) && (GetQuotaScoutCount(cdef) < GetMaxScouts(cdef))) {
 		task = EnqueueTask(IFighterTask::FightType::SCOUT);
 	}
 	if (task != nullptr) {
