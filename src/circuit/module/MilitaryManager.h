@@ -231,8 +231,10 @@ public:
 	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without
 	// crossing threat it couldn't take, divided by the number of enemy players: the mex bonus of each quota
 	void UpdateScoutQuota();
-	// Most scout tasks at once (quota.scout + bonus)
-	unsigned int GetMaxScouts(const CCircuitDef* cdef) const { return scoutQuota.Get(cdef->GetMobileId()); }
+	// May a unit of cdef's movement type that scouts through the scout attribute take a scout slot: fewer of them are
+	// scouting than quota.scout + bonus, or than quota.scout_share of them (rounded down), both capped by scout_max
+	bool IsScoutSlotFree(const CCircuitDef* cdef) const;
+	bool IsQuotaScout(const CCircuitDef* cdef) const;  // scouts through the scout attribute, not its own role
 	// quota.raider (+ bonus): factories build a raider while we have fewer raider units (main role raider or bound
 	// to it, not scouting; alive plus queued) than this. 0 = no floor
 	unsigned int GetMinRaiders(const CCircuitDef* cdef) const { return raiderQuota.Get(cdef->GetMobileId()); }
@@ -556,6 +558,7 @@ private:
 			return (max > 0) ? std::max(std::min(count, max), min) : count;
 		}
 	} scoutQuota, raiderQuota;
+	float scoutShare = 0.f;  // quota.scout_share: share of scout-attribute units (per movement type) that may always scout
 	void UpdateMexBonus(SUnitQuota& quota, bool isRaider);  // UpdateScoutQuota for one quota
 	float minAttackers;
 	CCircuitDef::RoleM raidTargetRoles;
