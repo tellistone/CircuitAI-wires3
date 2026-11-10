@@ -66,8 +66,8 @@ public:
 	IFighterTask* EnqueueDefend(IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType check, IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
-	// Power an attack-bound group gathers at base before it leaves: max(quota.attack, enemy threat / allies)
-	// quota.attack_merge.base_gather: metal value of the known enemy army (as GetEnemyArmyRatio) per ally alive
+	// quota.attack_merge.base_gather: an attack-bound group gathers at base until it has quota.attack power and this
+	// metal value: the known enemy army's (as GetEnemyArmyRatio) per ally alive
 	float GetAttackGatherMetal() const;
 	// Attack group rank: more attack power, ties broken by the lower leader id. A strict order, so groups that each
 	// walk to a higher-ranked one (reinforcing, quota.attack_merge.idle_merge) end at one group per movement class
@@ -221,9 +221,9 @@ public:
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
 	void DiceBigGun();
-	// economy.ms_pull_army and quota.attack_threat_floor: metal value of the known enemy army (EnemyManager::GetMobileCostNoCommFaded, faded as
-	// quota.enemy_half_life) per enemy team over our army's (no constructors or commanders on either side); negative
-	// while no enemy army is known. Writes the two values to enemyPerTeam and ours
+	// economy.ms_pull_army and quota.attack_threat_floor: metal value of the known enemy army
+	// (EnemyManager::GetMobileCostNoCommFaded, faded as quota.enemy_half_life) per enemy team over our army's (no
+	// constructors or commanders on either side); negative while no enemy army is known. Writes both values out
 	float GetEnemyArmyRatio(float& enemyPerTeam, float& ours) const;
 	void UpdateDefenceTasks();
 	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without

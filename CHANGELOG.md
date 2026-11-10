@@ -8,9 +8,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Added
 
 - **Threat floor breakdown in the log**: every 30 s with the `THREAT FLOOR` line, `THREAT FLOOR ours:` (our army's
-  unit count, its power with `pwr_mod`, and the types carrying most of its threat) and `THREAT FLOOR enemy:` (the
-  known enemy mobile threat split into enemies in radar or LOS and hidden ones, faded and unfaded, and the types
-  carrying most of it), to check the army ratio behind the floor and `ms_pull_army`.
+  unit count, its power with `pwr_mod`, and the types carrying most of its metal) and `THREAT FLOOR enemy:` (the
+  known enemy mobile army's metal split into enemies in radar or LOS and hidden ones, faded and unfaded, and the
+  types carrying most of it), to check the army ratio behind the floor and `ms_pull_army`.
 
 - **ms_pull in chat**: the threat floor line adds the army factor (`ms_pull: 1.21 (army x1.50)`, `(army off)` before
   `ms_pull_army.since` or with no enemy army known), and a line `ms_pull: 0.85 = base 1.20 (mex 35%) x income 0.90 (82.0 m/s) x army 0.79
