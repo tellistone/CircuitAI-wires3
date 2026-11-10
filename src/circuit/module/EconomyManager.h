@@ -327,13 +327,15 @@ private:
 		float minDist;  // min distance from the base position
 		float maxDist;  // max distance from the base position
 		bool isLink;  // prefer spots whose pylon range touches our (or an ally's) grid
-		springai::AIFloat3 pos;  // cached spot, -RgtVector = none
+		springai::AIFloat3 pos;  // cached site, -RgtVector = none
+		int facing;  // towards the front, for pos
 		int nextFrame;  // when to search again
 	};
 	std::map<CCircuitDef*, SRearInfo> rearInfos;  // economy.energy.rear: energy built behind the base
-	// Rear-most open site (block_map spacing) behind the base (away from start->lane), min..max from the base,
-	// safe and, with a unit, reachable by it; -RgtVector if none
-	springai::AIFloat3 FindRearPos(CCircuitDef* cdef, const SRearInfo& info, CCircuitUnit* unit);
+	// Open site behind the base (away from start->lane), min..max from the base, safe and, with a unit, reachable
+	// by it: linked to the grid if possible, else nearest straight back at max distance; -RgtVector if none.
+	// Sets info.facing
+	springai::AIFloat3 FindRearPos(CCircuitDef* cdef, SRearInfo& info, CCircuitUnit* unit);
 };
 
 } // namespace circuit

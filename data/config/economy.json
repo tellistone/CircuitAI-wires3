@@ -42,10 +42,10 @@
 		// Built behind the base, as far from the enemy as allowed, instead of at the nearest mex spot.
 		// "<energy_def>": {"min": <min distance from base>, "max": <max distance from base>,
 		//                  "link": <prefer sites touching our (or an ally's) energy grid, so the energy can overdrive mexes; default true>}
-		// "Behind" = away from the lane (the fixed base->front direction mex_front uses). Spots are tried in a fan behind the
-		// base (90 deg either side), furthest back first, at the nearest open site: block_map.json's spacing (fusion and singu:
-		// their blast radius) keeps them off factories and each other. The spot is kept 10 s unless it turns unsafe.
-		// No safe site: cheaper energy is built instead
+		// "Behind" = within 90 deg of straight back from the lane (the fixed start->front direction mex_front uses).
+		// The site is the nearest open one (block_map.json's spacing: fusion and singu keep their blast radius off
+		// factories and each other) to a grid building behind the base when link is on, else to the point straight back
+		// at max distance. Reserved when queued; searched again every 10 s. No safe site: cheaper energy is built instead
 		"rear": {
 			"energyfusion": {"min": 0, "max": 1200},
 			"energysingu": {"min": 800, "max": 1800}
