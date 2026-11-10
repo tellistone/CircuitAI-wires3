@@ -3437,8 +3437,8 @@ void CMilitaryManager::UpdateAttackThreatFloor()
 		circuit->LOG("THREAT FLOOR ours: %s", msg.c_str());
 		circuit->LOG("THREAT FLOOR enemy: %s", circuit->GetEnemyManager()->GetMobileCostReport(frame, enemyHalfLife).c_str());
 	}
-	if (isSwitch) {
-		// Public chat (Game_sendTextMessage only runs "/" commands, as for the resign), with the numbers behind the
+	if (isSwitch && circuit->GetEconomyManager()->IsChat()) {
+		// Public chat (economy.chat) (Game_sendTextMessage only runs "/" commands, as for the resign), with the numbers behind the
 		// switch: enemy metal per team and our army's (as compared above), and the economy's mobile:static metal pull
 		// with its army factor (economy.ms_pull_army; off before its since or with no enemy army known)
 		const CEconomyManager* economyMgr = circuit->GetEconomyManager();
