@@ -301,6 +301,20 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		}
 	}
 
+	if (prevent.isGeo) {
+		// Our finished geothermal (a morph into the upgrade finishes again: no new tower, same point) is defended
+		// as a finished mex is by its build_chain "porc", at its vent's point (CDefenceMatrix::AddGeoPoints)
+		auto geoFinishedHandler = [this](CCircuitUnit* unit) {
+			MakeDefence(unit->GetPos(this->circuit->GetLastFrame()));
+		};
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
+		for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
+			if (economyMgr->IsGeoDef(&cdef)) {
+				finishedHandler[cdef.GetId()] = geoFinishedHandler;
+			}
+		}
+	}
+
 	defence = circuit->GetAllyTeam()->GetDefenceMatrix().get();
 
 	fightTasks.resize(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_));
@@ -968,7 +982,7 @@ void CMilitaryManager::ReadConfig()
 		}
 		prevent.rerollFrames = int(std::max(rerollSec, 1.f) * FRAMES_PER_SEC);
 		prevent.sightFrames = int(std::max(sightSec, 1.f) * FRAMES_PER_SEC);
-		prevent.isGeo = porc.get("geo", false).asBool();  // also read by CDefenceMatrix::Init
+		prevent.isGeo = porc.get("geo", false).asBool();
 		// Missing or [] = x1
 		std::vector<std::pair<float, float>> mapCurve;
 		ReadCurve(porc["prevent_map"], "porcupine.prevent_map", "map area per player", mapCurve);

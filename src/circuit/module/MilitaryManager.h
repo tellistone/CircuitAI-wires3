@@ -104,6 +104,8 @@ public:
 	virtual void DoneTask(IUnitTask* task) override;
 	virtual void FallbackTask(CCircuitUnit* unit) override;
 
+	// porcupine.geo: geothermal vents get defence points (CDefenceMatrix::AddGeoPoints) and our geos are defended
+	bool IsGeoDefence() const { return prevent.isGeo; }
 	void MakeDefence(const springai::AIFloat3& pos);
 	void MakeDefence(int cluster);
 	// sightDef: a sighting of that enemy near our mex at pos (UpdatePreventSight): the preventive roll can only
@@ -618,7 +620,7 @@ private:
 		float mapMult;  // prevent_map at mapX, fixed for the game
 		std::vector<std::pair<float, float>> mexCurve;  // prevent_mex: x = ally-team finished mexes / all spots
 		CCircuitDef* airDef;  // prevent_air: first tower after a sighting of a flying enemy, nullptr = off
-		bool isGeo;  // porcupine.geo: sightings at our geothermals count as at a mex
+		bool isGeo;  // porcupine.geo: geothermal vents are defended like mex clusters
 	} prevent;
 	struct SPreventRoll {
 		int count = -1;  // -1 = never rolled

@@ -97,7 +97,7 @@ void CDefenceMatrix::Init(CCircuitAI* circuit)
 		}
 	}
 
-	if (circuit->GetSetupManager()->GetConfig()["porcupine"].get("geo", false).asBool()) {
+	if (militaryMgr->IsGeoDefence()) {
 		AddGeoPoints(circuit, maxDistance * 0.5f);
 	}
 }
@@ -120,6 +120,7 @@ void CDefenceMatrix::AddGeoPoints(CCircuitAI* circuit, float coverRange)
 		if (!isCovered) {
 			AIFloat3 pos = spot;
 			pos.y = map->GetElevationAt(pos.x, pos.z);
+			geoPoints.push_back({index, (unsigned)defPoints.size()});
 			defPoints.push_back({pos, .0f, true});
 		}
 	}
@@ -144,7 +145,19 @@ CDefenceMatrix::SDefPoint* CDefenceMatrix::GetDefPoint(const AIFloat3& pos, floa
 			}
 		}
 	}
-	return &defPoints[idx];
+	SDefPoint* point = &defPoints[idx];
+	// A vent is off to its cluster's side, so a tower built for it can be nearer another cluster: check them all
+	for (const std::pair<int, unsigned>& gp : geoPoints) {
+		SDefPoint& geoPoint = clusterInfos[gp.first].defPoints[gp.second];
+		if (geoPoint.cost >= defCost) {
+			const float tmp = pos.distance2D(geoPoint.position);
+			if (tmp < dist) {
+				dist = tmp;
+				point = &geoPoint;
+			}
+		}
+	}
+	return point;
 }
 
 void CDefenceMatrix::SetBaseRange(float range)

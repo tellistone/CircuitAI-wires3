@@ -10,6 +10,7 @@
 
 #include "AIFloat3.h"
 
+#include <utility>
 #include <vector>
 
 namespace circuit {
@@ -53,6 +54,7 @@ public:
 private:
 	CMetalManager* metalManager;
 	std::vector<SClusterInfo> clusterInfos;
+	std::vector<std::pair<int, unsigned>> geoPoints;  // AddGeoPoints: {cluster, index in its defPoints}
 
 	float baseRadMin;
 	float baseRadMax;
