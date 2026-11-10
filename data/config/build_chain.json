@@ -13,7 +13,19 @@
 	// Actual number of defences per cluster bounded by income
 	"land":  [0, 0, 1, 3, 5, 1, 2, 14, 1, 9, 5, 6, 2, 3, 5, 0, 8, 9, 14, 1, 3, 6, 16, 12, 11, 13],
 	"water": [4, 1, 6, 4, 4, 3, 5, 9, 16],
-	"prevent": 1,  // number of preventive defences
+	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of "land"/"water".
+	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction
+	// (0.5 = a 50% chance of 1 tower, 1.5 = 1 tower and a 50% chance of a 2nd). Each cluster rolls the first time
+	// it is defended, again every prevent_reroll[0] s (the new count replaces the old), and on a sighting: an enemy
+	// in LOS that can hit ground (air included) within mex LOS of our mex there, at most once per prevent_reroll[1] s
+	// since the last roll; a sighting's roll can only raise the count. A roll never cancels a queued or built tower.
+	// Missing keys: prevent 1, prevent_reroll [180, 30], curves x1 (missing or []), prevent_air off.
+	"prevent": 0.5,
+	"prevent_reroll": [180, 30],  // [seconds between rolls, min seconds since the last roll for a sighting to force one]
+	// Multiplier curves [[<x>, <multiplier>], ...], linear between points, flat beyond the ends
+	"prevent_map": [[32, 1.5], [128, 0.7]],  // x = map area in 512-elmo squares (16x16 = 256) / players on our team
+	"prevent_mex": [[0.2, 0.6], [0.5, 1.2]],  // x = ally-team finished mexes / all metal spots
+	"prevent_air": "turretmissile",  // first tower after a sighting of a flying enemy; "" = off
 	"amount": {  // income bound factor
 		"offset": [-0.15, 0.4],
 		// Amount factor: 4x4 ~ 1.85, 20x20 ~ 1.45

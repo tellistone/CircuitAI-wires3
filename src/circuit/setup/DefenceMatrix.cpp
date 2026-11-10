@@ -109,7 +109,7 @@ CDefenceMatrix::SDefPoint* CDefenceMatrix::GetDefPoint(const AIFloat3& pos, floa
 		if (defPoints[i].cost >= defCost) {
 			float tmp = pos.distance2D(defPoints[i].position);
 			if (tmp < dist) {
-				tmp = dist;
+				dist = tmp;
 				idx = i;
 			}
 		}

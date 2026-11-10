@@ -106,7 +106,9 @@ public:
 
 	void MakeDefence(const springai::AIFloat3& pos);
 	void MakeDefence(int cluster);
-	void MakeDefence(int cluster, const springai::AIFloat3& pos);
+	// sightDef: a sighting of that enemy near our mex at pos (UpdatePreventSight): the preventive roll can only
+	// raise the count, and a half-taken cluster below 10 m/s stays out of porc mode
+	void MakeDefence(int cluster, const springai::AIFloat3& pos, CCircuitDef* sightDef = nullptr);
 	void AbortDefence(const CBDefenceTask* task);
 	bool HasDefence(int cluster);
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
@@ -602,7 +604,30 @@ private:
 	std::vector<CCircuitDef*> waterDefenders;
 	using BuildVector = std::vector<std::pair<CCircuitDef*, int>>;
 	BuildVector baseDefence;
-	unsigned int preventCount;
+	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of landDefenders/waterDefenders.
+	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction.
+	// Each cluster rolls the first time it is defended, again once prevent_reroll[0] s have passed (the new count
+	// replaces the old), and on a sighting (an enemy that can hit ground within mex LOS of our mex there, at most
+	// once per prevent_reroll[1] s since its last roll or sighting; that roll can only raise the count).
+	// A roll never cancels a tower already queued or built.
+	struct SPrevent {
+		float base;  // prevent
+		int rerollFrames;  // prevent_reroll[0]
+		int sightFrames;  // prevent_reroll[1]
+		float mapX;  // map area in 512-elmo squares / players on our team
+		float mapMult;  // prevent_map at mapX, fixed for the game
+		std::vector<std::pair<float, float>> mexCurve;  // prevent_mex: x = ally-team finished mexes / all spots
+		CCircuitDef* airDef;  // prevent_air: first tower after a sighting of a flying enemy, nullptr = off
+	} prevent;
+	struct SPreventRoll {
+		int count = -1;  // -1 = never rolled
+		int rollFrame = -1;
+		int sightFrame = -1;  // last sighting acted on
+	};
+	std::vector<SPreventRoll> preventRolls;  // by cluster
+	// Rolls when due; sightDef != nullptr: a sighting (raise only; a flying one makes the first slot prevent.airDef)
+	unsigned GetPreventCount(int cluster, CCircuitDef* sightDef, bool& outIsAir);
+	void UpdatePreventSight();
 	float amountFactor;
 	CCircuitDef* radarDef;
 	CCircuitDef* sonarDef;
