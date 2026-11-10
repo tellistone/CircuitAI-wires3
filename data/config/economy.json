@@ -40,14 +40,15 @@
 		},
 
 		// Built behind the base, as far from the enemy as allowed, instead of at the nearest mex spot.
-		// "<energy_def>": {"min": <min distance from base>, "max": <max distance from base>, "clear": <no own building this near>, "clear_cost": <buildings cheaper than this don't count, default 150>,
-		//                  "link": <prefer spots touching our energy grid, so the energy can overdrive mexes; default true>}
+		// "<energy_def>": {"min": <min distance from base>, "max": <max distance from base>,
+		//                  "link": <prefer sites touching our (or an ally's) energy grid, so the energy can overdrive mexes; default true>}
 		// "Behind" = away from the lane (the fixed base->front direction mex_front uses). Spots are tried in a fan behind the
-		// base (90 deg either side), furthest back first; the spot is kept 10 s unless taken or unsafe.
-		// No safe, clear spot: cheaper energy is built instead
+		// base (90 deg either side), furthest back first, at the nearest open site: block_map.json's spacing (fusion and singu:
+		// their blast radius) keeps them off factories and each other. The spot is kept 10 s unless it turns unsafe.
+		// No safe site: cheaper energy is built instead
 		"rear": {
-			"energyfusion": {"min": 0, "max": 1200, "clear": 320},  // blast 240 radius, 2400 damage: kills a neighbouring fusion (2200 hp)
-			"energysingu": {"min": 800, "max": 1800, "clear": 800}  // blast 640 radius, 9500 damage
+			"energyfusion": {"min": 0, "max": 1200},
+			"energysingu": {"min": 800, "max": 1800}
 		},
 
 		"link_inc": 16.0,  // minimum metal-income for energy linking

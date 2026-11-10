@@ -326,16 +326,14 @@ private:
 	struct SRearInfo {
 		float minDist;  // min distance from the base position
 		float maxDist;  // max distance from the base position
-		float clear;  // no own building (or energy job) within this radius (blast radius); 0 = no check
-		float clearCost;  // buildings cheaper than this don't count for clear
-		bool isLink;  // prefer spots whose pylon range touches one of our grid buildings
+		bool isLink;  // prefer spots whose pylon range touches our (or an ally's) grid
 		springai::AIFloat3 pos;  // cached spot, -RgtVector = none
 		int nextFrame;  // when to search again
 	};
 	std::map<CCircuitDef*, SRearInfo> rearInfos;  // economy.energy.rear: energy built behind the base
-	// Spot behind the base furthest back along base->lane within min/max distance from the base, clear of
-	// own buildings and energy jobs within clear radius, and safe; -RgtVector if none
-	springai::AIFloat3 FindRearPos(CCircuitDef* cdef, const SRearInfo& info) const;
+	// Rear-most open site (block_map spacing) behind the base (away from start->lane), min..max from the base,
+	// safe and, with a unit, reachable by it; -RgtVector if none
+	springai::AIFloat3 FindRearPos(CCircuitDef* cdef, const SRearInfo& info, CCircuitUnit* unit);
 };
 
 } // namespace circuit

@@ -385,8 +385,6 @@ void CEconomyManager::ReadConfig()
 		SRearInfo info;
 		info.minDist = std::max(r.get("min", 0.f).asFloat(), 0.f);
 		info.maxDist = std::max(r.get("max", 1200.f).asFloat(), info.minDist + SQUARE_SIZE * 16);
-		info.clear = std::max(r.get("clear", 0.f).asFloat(), 0.f);
-		info.clearCost = r.get("clear_cost", 150.f).asFloat();
 		info.isLink = r.get("link", true).asBool();
 		info.pos = -RgtVector;
 		info.nextFrame = 0;
@@ -1221,7 +1219,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		} else if (!isEnergyStalling) {
 			bestDef = nullptr;
 			break;
-		} else if (hopeDef == nullptr) {
+		} else if ((hopeDef == nullptr) && (!isRear || utils::is_valid(GetRearPos(engy.cdef, unit)))) {
 			hopeDef = engy.cdef;
 			isLastHope = isLastHope && canQueue(hopeDef);
 		}
@@ -1238,7 +1236,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	AIFloat3 buildPos = -RgtVector;
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	if (IsRearDef(bestDef)) {
-		buildPos = GetRearPos(bestDef, unit);  // invalid (last-hope def without a spot): nothing this time
+		buildPos = GetRearPos(bestDef, unit);  // checked in the loop, so valid
 	} else if (!bestDef->IsRoleSupport()) {
 		const CMetalData::Metals& spots = metalMgr->GetSpots();
 		CMetalData::PointPredicate predicate = [&spots, terrainMgr](int index) {
@@ -1268,29 +1266,25 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	if (utils::is_valid(buildPos) && terrainMgr->CanBeBuiltAtSafe(bestDef, buildPos) &&
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
-		auto it = rearInfos.find(bestDef);
-		const bool isRear = (it != rearInfos.end());
-		if (isRear) {
-			it->second.nextFrame = 0;  // spot taken: the next one must keep clear of this job
-		}
-		// No random shake for rear energy: the spot was chosen to keep its blast clear of the base
+		// No random shake for rear energy: the spot is already an open site, as far back as allowed
+		const bool isRear = IsRearDef(bestDef);
 		return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, isRear ? 0.f : SQUARE_SIZE * 16.0f, true);
 	}
 
 	return nullptr;
 }
 
-#define REAR_INTERVAL	(FRAMES_PER_SEC * 10)
-
 AIFloat3 CEconomyManager::GetRearPos(CCircuitDef* cdef, CCircuitUnit* unit)
 {
 	SRearInfo& info = rearInfos.find(cdef)->second;
 	const int frame = circuit->GetLastFrame();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	// Cached: the spot only moves when it is taken, turns unsafe, or every REAR_INTERVAL (new buildings)
+	// Cached: the ranking is fixed, so the spot only changes as sites fill up or turn unsafe. Searched again every
+	// 10 s or when it turns unsafe. Jobs queued on the same spot meanwhile are spaced apart by their own
+	// FindBuildSite (block_map) when they start
 	if ((frame >= info.nextFrame) || (utils::is_valid(info.pos) && !terrainMgr->CanBeBuiltAtSafe(cdef, info.pos))) {
-		info.pos = FindRearPos(cdef, info);
-		info.nextFrame = frame + REAR_INTERVAL;
+		info.pos = FindRearPos(cdef, info, unit);
+		info.nextFrame = frame + FRAMES_PER_SEC * 10;
 	}
 	if (!utils::is_valid(info.pos)
 		|| ((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, info.pos, unit->GetCircuitDef()->GetBuildDistance())))
@@ -1300,7 +1294,7 @@ AIFloat3 CEconomyManager::GetRearPos(CCircuitDef* cdef, CCircuitUnit* unit)
 	return info.pos;
 }
 
-AIFloat3 CEconomyManager::FindRearPos(CCircuitDef* cdef, const SRearInfo& info) const
+AIFloat3 CEconomyManager::FindRearPos(CCircuitDef* cdef, const SRearInfo& info, CCircuitUnit* unit)
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CSetupManager* setupMgr = circuit->GetSetupManager();
@@ -1308,58 +1302,22 @@ AIFloat3 CEconomyManager::FindRearPos(CCircuitDef* cdef, const SRearInfo& info) 
 	if (!utils::is_valid(basePos)) {
 		return -RgtVector;
 	}
-	// Front = base->lane, the fixed direction mex_front uses too, so the rear doesn't swing as enemies are seen.
-	// No lane: away from the seen enemies, else from the map centre
-	AIFloat3 front = setupMgr->GetLanePos() - basePos;
+	// Front = start->lane: both fixed, so the rear doesn't swing as enemies are seen, nor flip when the base
+	// moves to a surviving forward factory (the lane is mex_front's front too). The fan is centred on the base.
+	// No lane yet: towards the seen enemies, else the map centre
+	const AIFloat3& startPos = utils::is_valid(setupMgr->GetStartPos()) ? setupMgr->GetStartPos() : basePos;
+	AIFloat3 front = setupMgr->GetLanePos() - startPos;
 	if (!utils::is_valid(setupMgr->GetLanePos()) || (front.SqLength2D() < SQUARE(SQUARE_SIZE * 8))) {
-		front = circuit->GetEnemyManager()->GetEnemyPos() - basePos;
+		front = circuit->GetEnemyManager()->GetEnemyPos() - startPos;
 		if (front.SqLength2D() < SQUARE(SQUARE_SIZE * 8)) {
-			front = CTerrainManager::GetTerrainCenter() - basePos;
+			front = CTerrainManager::GetTerrainCenter() - startPos;
 		}
 	}
 	const float frontAngle = (front.SqLength2D() < 1.f) ? 0.f : atan2f(front.z, front.x);
-
-	// One pass over our buildings. Blast check: those worth at least clear_cost, and the spots of energy jobs
-	// not started yet. Grid check: those whose pylon range overlaps ours (else its energy can't overdrive mexes)
-	CEnergyGrid* grid = GetEnergyGrid();
-	const float ourRange = grid->GetPylonRange(cdef->GetId());
-	std::vector<AIFloat3> blocks;
-	std::vector<std::pair<AIFloat3, float>> nodes;  // <position, squared link distance>
-	const int frame = circuit->GetLastFrame();
-	for (const auto& kv : circuit->GetTeamUnits()) {
-		CCircuitDef* udef = kv.second->GetCircuitDef();
-		if (udef->IsMobile()) {
-			continue;
-		}
-		if ((info.clear > 0.f) && (udef->GetCostM() >= info.clearCost)) {
-			blocks.push_back(kv.second->GetPos(frame));
-		}
-		if (info.isLink && udef->IsPylon()) {
-			nodes.push_back(std::make_pair(kv.second->GetPos(frame), SQUARE(ourRange + grid->GetPylonRange(udef->GetId()))));
-		}
-	}
-	if (info.clear > 0.f) {
-		for (const IBuilderTask* task : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY)) {
-			if ((task->GetTarget() == nullptr) && (task->GetBuildDef()->GetCostM() >= info.clearCost)) {
-				blocks.push_back(task->GetPosition());
-			}
-		}
-	}
-	const float sqClear = SQUARE(info.clear);
-	auto isClear = [&blocks, sqClear](const AIFloat3& pos) {
-		return std::none_of(blocks.begin(), blocks.end(), [&pos, sqClear](const AIFloat3& b) {
-			return b.SqDistance2D(pos) < sqClear;
-		});
-	};
-	auto isLinked = [&nodes](const AIFloat3& pos) {
-		return std::any_of(nodes.begin(), nodes.end(), [&pos](const std::pair<AIFloat3, float>& n) {
-			return n.first.SqDistance2D(pos) < n.second;
-		});
-	};
+	const AIFloat3 frontDir(cosf(frontAngle), 0.f, sinf(frontAngle));
 
 	// Fan of spots behind the base, up to 90 deg either side of straight back, ranked by how far back they are
-	// (projection on the front direction; the map edge clamps spots, so the side ones can win near an edge)
-	const AIFloat3 frontDir(cosf(frontAngle), 0.f, sinf(frontAngle));
+	// (projection on the front direction; near a map edge the clamped side spots can win)
 	struct SCand { AIFloat3 pos; float back; };
 	std::vector<SCand> cands;
 	const int RINGS = 8;
@@ -1369,27 +1327,50 @@ AIFloat3 CEconomyManager::FindRearPos(CCircuitDef* cdef, const SRearInfo& info) 
 		for (int j = -ANGLES; j <= ANGLES; ++j) {
 			const float a = frontAngle + (float)M_PI * (1.f + 0.5f * j / ANGLES);
 			AIFloat3 pos = basePos + AIFloat3(cosf(a), 0.f, sinf(a)) * dist;
-			CTerrainManager::CorrectPosition(pos);
-			cands.push_back({pos, -(pos - basePos).dot2D(frontDir)});
+			CTerrainManager::CorrectPosition(pos);  // map edge: only moves it nearer the base
+			if (pos.SqDistance2D(basePos) >= SQUARE(info.minDist)) {
+				cands.push_back({pos, -(pos - basePos).dot2D(frontDir)});
+			}
 		}
 	}
 	std::stable_sort(cands.begin(), cands.end(), [](const SCand& a, const SCand& b) { return a.back > b.back; });
 
-	// A spot in a sector the building fits (CanBeBuiltAt); the job's FindBuildSite picks the exact tile.
-	// The fan already keeps it within min..max of the base (map-edge clamping only moves it nearer).
-	// With link: the rear-most spot touching our grid; none: the rear-most spot (its build chain may add a pylon)
+	// Grid buildings (ours and allies', the grid is shared) whose pylon range would touch ours
+	CEnergyGrid* grid = GetEnergyGrid();
+	const float ourRange = grid->GetPylonRange(cdef->GetId());
+	std::vector<std::pair<AIFloat3, float>> nodes;  // <position, squared link distance>
+	if (info.isLink) {
+		const int frame = circuit->GetLastFrame();
+		circuit->UpdateFriendlyUnits();
+		for (const auto& kv : circuit->GetFriendlyUnits()) {
+			CCircuitDef* udef = kv.second->GetCircuitDef();
+			if ((udef != nullptr) && udef->IsPylon()) {
+				nodes.push_back(std::make_pair(kv.second->GetPos(frame), SQUARE(ourRange + grid->GetPylonRange(udef->GetId()))));
+			}
+		}
+	}
+	auto isLinked = [&nodes](const AIFloat3& pos) {
+		return std::any_of(nodes.begin(), nodes.end(), [&pos](const std::pair<AIFloat3, float>& n) {
+			return n.first.SqDistance2D(pos) < n.second;
+		});
+	};
+
+	// The site: FindBuildSite near the spot keeps block_map.json's spacing, which for fusion and singu is
+	// their blast radius, so the blast stays off factories and other big energy. The job finds the same site.
+	// Link: the rear-most site touching the grid; none: the rear-most site (its build chain may add a pylon)
 	AIFloat3 unlinkedPos = -RgtVector;
 	for (const SCand& cand : cands) {
-		if ((cand.pos.SqDistance2D(basePos) < SQUARE(info.minDist)) || !isClear(cand.pos)
-			|| !terrainMgr->CanBeBuiltAtSafe(cdef, cand.pos))
+		const AIFloat3 pos = terrainMgr->FindBuildSite(cdef, cand.pos, SQUARE_SIZE * 8, UNIT_COMMAND_BUILD_NO_FACING);
+		if (!utils::is_valid(pos) || !terrainMgr->CanBeBuiltAtSafe(cdef, pos)
+			|| ((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())))
 		{
 			continue;
 		}
-		if (!info.isLink || isLinked(cand.pos)) {
-			return cand.pos;
+		if (!info.isLink || isLinked(pos)) {
+			return pos;
 		}
 		if (!utils::is_valid(unlinkedPos)) {
-			unlinkedPos = cand.pos;
+			unlinkedPos = pos;
 		}
 	}
 	return unlinkedPos;
