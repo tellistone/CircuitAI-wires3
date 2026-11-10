@@ -454,6 +454,11 @@ void CMilitaryManager::ReadConfig()
 		};
 		readQuota("scout", scoutQuota, 3.f, 1.f, 12.f, {{8.f, 1.f}, {20.f, 4.f}});
 		readQuota("raider", raiderQuota, 0.f, 0.f, 0.f, scoutQuota.mapCurve);  // missing curve = the scout one
+		scoutShare = readCount("scout_share", 0.f);
+		if (scoutShare > 1.f) {
+			circuit->LOG("CONFIG %s: quota.scout_share must be 0..1, using 1", cfgName.c_str());
+			scoutShare = 1.f;
+		}
 
 		// Returns whether the object was given
 		auto readSpot = [&](const std::string& name, SSpotCfg& cfg) {
@@ -2185,6 +2190,28 @@ bool CMilitaryManager::IsQuotaScout(const CCircuitDef* cdef) const
 	// Same main role -> fight type mapping as DefaultMakeTask: scout and mine roles scout on their own
 	const CCircuitDef::RoleT role = circuit->GetBindedRole(cdef->GetMainRole());
 	return cdef->IsRoleScout() && (role != ROLE_TYPE(SCOUT)) && (role != ROLE_TYPE(MINE));
+}
+
+unsigned int CMilitaryManager::GetMaxScouts(const CCircuitDef* cdef) const
+{
+	const unsigned int quota = scoutQuota.Get(cdef->GetMobileId());
+	if (scoutShare <= 0.f) {
+		return quota;
+	}
+	// Floor: quota.scout_share of our scout-attribute units of this movement type (scouting or not, the deciding
+	// unit included; not player-controlled), rounded down. Never cut by quota.scout_max
+	const int mobileId = cdef->GetMobileId();
+	unsigned int units = 0;
+	for (const CCircuitUnit* unit : army) {
+		const CCircuitDef* udef = unit->GetCircuitDef();
+		if ((udef->GetMobileId() == mobileId) && IsQuotaScout(udef)
+			&& (unit->GetTask()->GetType() != IUnitTask::Type::PLAYER))
+		{
+			++units;
+		}
+	}
+	// The epsilon keeps e.g. 0.7 x 10 at 7: 0.7f is a hair under 0.7
+	return std::max(quota, static_cast<unsigned int>(scoutShare * units + 1e-3f));
 }
 
 unsigned int CMilitaryManager::GetQuotaScoutCount(const CCircuitDef* cdef) const
