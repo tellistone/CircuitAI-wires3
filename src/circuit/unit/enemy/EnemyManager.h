@@ -13,6 +13,8 @@
 #include "unit/enemy/EnemyUnit.h"
 #include "util/MaskHandler.h"
 
+#include <string>
+
 namespace circuit {
 
 class CCircuitAI;
@@ -84,6 +86,9 @@ public:
 	// both fades by half every halfLife frames since it was last seen (halfLife <= 0: no fading). Enemies seen
 	// dying or forgotten (20 min unseen) don't count. Walks all known enemies: call it about once a second at most
 	float GetMobileThreatNoCommFaded(int frame, float halfLife) const;
+	// Log text for the same sum: its part from enemies in radar or LOS and from hidden ones (with their unfaded total),
+	// and the enemy types that carry most of it
+	std::string GetMobileThreatReport(int frame, float halfLife) const;
 	float GetStaticThreat() const { return staticThreat; }
 	float GetEnemyThreat() const { return mobileThreat + staticThreat; }
 	bool IsAirValid() const { return GetEnemyThreat(ROLE_TYPE(AA)) <= maxAAThreat; }

@@ -74,6 +74,14 @@ public:
 	float GetAvgEnergyIncome() const { return energyIncome; }
 	float GetEcoFactor() const { return ecoFactor; }
 	float GetPullMtoS() const { return pullMtoS; }
+	float GetPullMtoSArmyMult() const { return mspArmyMult; }
+	float GetPullMtoSArmyRatio() const { return mspArmyRatio; }  // enemy/ours; < 0 = army factor off (before since, no enemy army)
+	// ms_pull splits metal between constructors and factories while metal stalls (IsMetalStall). Pulls are the build
+	// power on jobs (ITaskManager::GetMetalPull; mex and pylon jobs left out while mex_max >= 1), the deciding unit's
+	// own included. A constructor may start new spending while its side is within ms_pull x the factories' pull; a
+	// factory waits while its side x ms_pull is above the constructors' pull, unless no constructor spends at all
+	bool IsBuilderUnderShare(CCircuitUnit* unit);
+	bool IsFactoryOverShare(CCircuitUnit* unit);
 	float GetMetalCur();
 	float GetMetalPull();
 	float GetEnergyCur();
@@ -271,6 +279,11 @@ private:
 	float mspIncomeMult;
 	float mspArmyMult;
 	int mspLogFrame;  // next periodic MS_PULL log line
+	float mspArmyRatio;  // last army ratio read, < 0 = off
+	float mspChatChange;  // ms_pull_chat: relative change that posts an ms_pull chat line, 0 = off
+	float mspChatPull;  // ms_pull at the last chat line
+	int mspChatFrame;  // no ms_pull chat line before this frame
+	float GetOwnPull(CCircuitUnit* unit) const;  // unit's build power unless a job of its already counts it
 
 	int ecoFrame;
 	bool isMetalEmpty;
