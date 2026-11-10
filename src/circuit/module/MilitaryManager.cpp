@@ -2262,7 +2262,8 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 	// Second multiplier: map size curve / all players. Size = side of a square map with the same area,
 	// in Spring map units (512 elmos), so 8x8 -> 8 and a 10x16 map -> ~12.6
 	const float mapSize = sqrtf(float(terrainMgr->GetTerrainWidth()) * terrainMgr->GetTerrainHeight()) / 512.f;
-	const float mapMult = utils::eval_curve(quota.mapCurve, mapSize) / players;
+	const float mapCurve = utils::eval_curve(quota.mapCurve, mapSize);
+	const float mapMult = mapCurve / players;
 	const float perMex = quota.perMex;
 
 	for (auto& kv : refUnits) {
@@ -2286,7 +2287,7 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 				isRaider && !IsAreaDamage(cdef));
 		// The quota is a member: it outlives the query (a pointer, so that is plain to see)
 		std::map<int, unsigned int>* bonus = &mexBonus;
-		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult, mapSize, isRaider](const IPathQuery* query) {
+		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult, mapCurve, mapSize, players, isRaider](const IPathQuery* query) {
 			const CQueryCostMap* q = static_cast<const CQueryCostMap*>(query);
 			const int sqSize = circuit->GetPathfinder()->GetSquareSize();
 			unsigned int count = 0;
@@ -2313,11 +2314,11 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 			const unsigned int value = (unsigned int)(perMex * mapMult * count / enemyPlayers);
 			auto it = bonus->find(mobileId);
 			if ((it == bonus->end()) || (it->second != value)) {
-				// Logged on change only: to check the quota (and its *_map_size curve) in infolog
-				circuit->LOG("QUOTA %s bonus, movement type %i: %u = %u reachable enemy mexes / %i enemy players"
-						" x %.2f (%s_map_size at %.1f / all players) x %.2f %s_per_mex",
-						isRaider ? "raider" : "scout", mobileId, value, count, enemyPlayers,
-						mapMult, isRaider ? "raider" : "scout", mapSize, perMex, isRaider ? "raider" : "scout");
+				// On change only (at most every 15 s per movement type): to check the quota and its curve in infolog
+				const char* name = isRaider ? "raider" : "scout";
+				circuit->LOG("QUOTA %s bonus %u (movement type %i) = %u reachable enemy mexes / %i enemy players"
+						" x %s_map_size %.2f (map size %.1f) / %i players x %s_per_mex %.2f",
+						name, value, mobileId, count, enemyPlayers, name, mapCurve, mapSize, players, name, perMex);
 			}
 			(*bonus)[mobileId] = value;
 		});
