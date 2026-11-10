@@ -10,6 +10,7 @@
 
 #include "module/Module.h"
 #include "task/UnitTask.h"
+#include "unit/CoreUnit.h"
 #include "util/AvailList.h"
 
 #include "AIFloat3.h"
