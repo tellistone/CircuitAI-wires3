@@ -952,7 +952,36 @@ void CMilitaryManager::ReadConfig()
 		}
 	}
 
-	preventCount = porc.get("prevent", 1).asUInt();
+	// Preventive defences per cluster (see SPrevent)
+	{
+		const Json::Value& prv = porc["prevent"];
+		prevent.base = prv.isNumeric() ? std::max(prv.asFloat(), 0.f) : 1.f;
+		const Json::Value& reroll = porc["prevent_reroll"];
+		float rerollSec = 180.f, sightSec = 30.f;
+		if (reroll.isNumeric()) {
+			rerollSec = reroll.asFloat();
+		} else if (reroll.isArray()) {
+			rerollSec = reroll.get((unsigned)0, rerollSec).asFloat();
+			sightSec = reroll.get((unsigned)1, sightSec).asFloat();
+		}
+		prevent.rerollFrames = int(std::max(rerollSec, 1.f) * FRAMES_PER_SEC);
+		prevent.sightFrames = int(std::max(sightSec, 1.f) * FRAMES_PER_SEC);
+		// Missing or [] = x1
+		std::vector<std::pair<float, float>> mapCurve;
+		ReadCurve(porc["prevent_map"], "porcupine.prevent_map", "map area per player", mapCurve);
+		ReadCurve(porc["prevent_mex"], "porcupine.prevent_mex", "mex share", prevent.mexCurve);
+		const float mapArea = float(circuit->GetMap()->GetWidth() / 64) * (circuit->GetMap()->GetHeight() / 64);
+		prevent.mapX = mapArea / std::max(circuit->GetAllyTeam()->GetSize(), 1);
+		prevent.mapMult = utils::eval_curve(mapCurve, prevent.mapX);
+		const std::string airName = porc.get("prevent_air", "").asString();
+		prevent.airDef = airName.empty() ? nullptr : circuit->GetCircuitDef(airName.c_str());
+		if (!airName.empty() && (prevent.airDef == nullptr)) {
+			circuit->LOG("CONFIG %s: porcupine.prevent_air has unknown UnitDef '%s'", cfgName.c_str(), airName.c_str());
+		}
+		circuit->LOG("PREVENT config: %.2f per cluster x map %.2f (%.0f per player on our team), reroll %.0f s, sighting %.0f s, air %s",
+				prevent.base, prevent.mapMult, prevent.mapX, rerollSec, sightSec,
+				(prevent.airDef != nullptr) ? prevent.airDef->GetDef()->GetName() : "off");
+	}
 	const Json::Value& amount = porc["amount"];
 	const Json::Value& amOff = amount["offset"];
 	const Json::Value& amFac = amount["factor"];
@@ -1023,6 +1052,8 @@ void CMilitaryManager::Init()
 	for (unsigned i = 0; i < clusters.size(); ++i) {
 		raidPath.push_back({i, -1, 1.f});
 	}
+
+	preventRolls.resize(clusters.size());
 
 	CSetupManager::StartFunc subinit = [this, &spots](const AIFloat3& pos) {
 		auto compare = [&pos, &spots](int a, int b) {
@@ -1682,7 +1713,8 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos)
 			}
 		}
 	}
-	unsigned num = std::min<unsigned>(isPorc ? defenders.size() : preventCount, defenders.size());
+	bool isAirSlot = false;  // a flying enemy was sighted: the first slot is prevent.airDef
+	unsigned num = std::min<unsigned>(isPorc ? defenders.size() : GetPreventCount(cluster, isAirSlot), defenders.size());
 
 	AIFloat3 backDir = circuit->GetSetupManager()->GetBasePos() - closestPoint->position;
 	AIFloat3 backPos = closestPoint->position + backDir.Normalize2D() * SQUARE_SIZE * 16;
@@ -1691,7 +1723,7 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos)
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	const int frame = circuit->GetLastFrame();
 	for (unsigned i = 0; i < num; ++i) {
-		CCircuitDef* defDef = defenders[i];
+		CCircuitDef* defDef = (isAirSlot && (i == 0) && prevent.airDef->IsAvailable(frame)) ? prevent.airDef : defenders[i];
 		if (!defDef->IsAvailable(frame) || (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))) {
 			continue;
 		}
@@ -1702,14 +1734,18 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos)
 		}
 		if (totalCost < maxCost) {
 			closestPoint->cost += defCost;
-			bool isFirst = (parentTask == nullptr);
+			// Porc towers go in a chain, one after another. Preventive ones are queued each on its own, because the
+			// chain abort above cancels any unstarted chain outside porc mode, and would re-queue them on every call
+			const bool isFirst = !isPorc || (parentTask == nullptr);
 			const AIFloat3& buildPos = defDef->IsAttacker() ? closestPoint->position : backPos;
 			IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, defDef, buildPos,
 					IBuilderTask::BuildType::DEFENCE, defCost, SQUARE_SIZE * 32, isFirst);
-			if (parentTask != nullptr) {
-				parentTask->SetNextTask(task);
+			if (isPorc) {
+				if (parentTask != nullptr) {
+					parentTask->SetNextTask(task);
+				}
+				parentTask = task;
 			}
-			parentTask = task;
 		} else {
 			// TODO: Auto-sort defenders by cost OR remove break?
 			break;
@@ -1753,6 +1789,107 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos)
 	// sonar
 	if (isWater && (sonarDef != nullptr) && sonarDef->IsAvailable(frame) && (sonarDef->GetCostM() < maxCost)) {
 		checkSensor(IBuilderTask::BuildType::SONAR, sonarDef, sonarDef->GetDef()->GetSonarRadius());
+	}
+}
+
+unsigned CMilitaryManager::GetPreventCount(int cluster, bool& outIsAir)
+{
+	// Preventive towers for a cluster outside porc mode (see SPrevent)
+	if ((cluster < 0) || (cluster >= (int)preventRolls.size())) {  // before Init
+		outIsAir = false;
+		return (unsigned)prevent.base;
+	}
+	SPreventRoll& roll = preventRolls[cluster];
+	const int frame = circuit->GetLastFrame();
+	const bool isFirst = (roll.count < 0);
+	CCircuitDef* sightDef = roll.dueDef;
+	roll.dueDef = nullptr;
+	const bool isTimer = !isFirst && (frame >= roll.rollFrame + prevent.rerollFrames);
+	outIsAir = (sightDef != nullptr) && sightDef->IsAbleToFly() && (prevent.airDef != nullptr);
+	if (!isFirst && !isTimer && (sightDef == nullptr)) {
+		return roll.count;
+	}
+
+	CMetalManager* mm = circuit->GetMetalManager();
+	const size_t spotCount = mm->GetSpots().size();
+	const float mexX = (spotCount > 0) ? float(mm->GetMexCount()) / spotCount : 0.f;
+	const float mexMult = utils::eval_curve(prevent.mexCurve, mexX);
+	const float chance = prevent.base * prevent.mapMult * mexMult;
+	const float whole = std::floor(chance);
+	const float dice = (float)rand() / ((float)RAND_MAX + 1.f);  // [0, 1)
+	int count = std::min(int(whole) + ((dice < chance - whole) ? 1 : 0), 64);
+	const int prevCount = roll.count;
+	if ((sightDef != nullptr) && !isFirst) {
+		count = std::max(count, prevCount);  // a sighting only raises it: being raided must not lower the defence
+	}
+	roll.count = count;
+	roll.rollFrame = frame;
+
+	const char* why = (sightDef != nullptr) ? "sight" : isFirst ? "first" : "timer";
+	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f -> %i (was %i)%s",
+			cluster, why, (sightDef != nullptr) ? " " : "", (sightDef != nullptr) ? sightDef->GetDef()->GetName() : "",
+			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, count, prevCount,
+			outIsAir ? ", air: first slot is prevent_air" : "");
+	return count;
+}
+
+void CMilitaryManager::UpdatePreventSight()
+{
+	// Sightings: an enemy in LOS that can hit ground (air included, no cost floor: even a Flea kills a mex), within
+	// mex LOS of a finished mex of ours, marks that mex's cluster due, at most once per prevent_reroll[1] s since its
+	// last roll. Polled, not on EnemyEnterLOS: that fires once on entering the ally team's LOS, so a raider seen at
+	// the front that walks on to a rear mex inside our LOS would never fire again
+	struct SSighted {
+		AIFloat3 pos;
+		CCircuitDef* cdef;
+	};
+	static std::vector<SSighted> sighted;  // NOTE: micro-opt
+	sighted.clear();
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+		const CEnemyUnit* enemy = kv.second;
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		if (!enemy->IsInLOS() || enemy->IsFake() || (edef == nullptr) || !edef->IsMobile()
+			|| ((edef->GetThreatRange(CCircuitDef::ThreatType::LAND) <= 0)
+				&& (edef->GetThreatRange(CCircuitDef::ThreatType::WATER) <= 0)))
+		{
+			continue;
+		}
+		sighted.push_back({enemy->GetPos(), edef});
+	}
+	if (sighted.empty()) {
+		return;
+	}
+
+	CMetalManager* mm = circuit->GetMetalManager();
+	CCircuitDef* mexDef = circuit->GetEconomyManager()->GetMexDef();
+	const float sqLos = SQUARE((mexDef != nullptr) ? mexDef->GetLosRadius() : 0.f);
+	const int frame = circuit->GetLastFrame();
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		CCircuitUnit* unit = kv.second;
+		if (!unit->GetCircuitDef()->IsMex()) {
+			continue;
+		}
+		const AIFloat3& mexPos = unit->GetPos(frame);
+		const int spotId = mm->FindNearestSpot(mexPos);
+		const int cluster = (spotId >= 0) ? mm->GetCluster(spotId) : -1;
+		if ((cluster < 0) || (cluster >= (int)preventRolls.size())) {
+			continue;
+		}
+		SPreventRoll& roll = preventRolls[cluster];
+		if ((roll.dueDef != nullptr) || ((roll.count >= 0) && (frame < roll.rollFrame + prevent.sightFrames))) {
+			continue;
+		}
+		for (const SSighted& s : sighted) {
+			if (mexPos.SqDistance2D(s.pos) <= sqLos) {
+				if (unit->GetUnit()->IsBeingBuilt()) {
+					break;
+				}
+				roll.dueDef = s.cdef;
+				roll.duePos = mexPos;
+				preventDue.push_back(cluster);
+				break;
+			}
+		}
 	}
 }
 
@@ -2740,6 +2877,17 @@ void CMilitaryManager::UpdateDefenceTasks()
 	/*
 	 * Porc update
 	 */
+	// Preventive sightings first: one due cluster per tick, at the sighted mex. Half-taken clusters count here,
+	// unlike the sweep below. A cluster whose MakeDefence returns before rolling (ally zone, income cap, porc mode)
+	// drops its sighting; a new one can mark it again
+	UpdatePreventSight();
+	if (!preventDue.empty()) {
+		const int index = preventDue.front();
+		preventDue.erase(preventDue.begin());
+		MakeDefence(index, preventRolls[index].duePos);
+		preventRolls[index].dueDef = nullptr;
+	}
+
 	decltype(defenceIdx) prevIdx = defenceIdx;
 	while (defenceIdx < clusters.size()) {
 		int index = defenceIdx++;

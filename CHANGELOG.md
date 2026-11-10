@@ -7,6 +7,24 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Fractional preventive defences** (`porcupine` block in `build_chain.json`). `prevent` (towers a cluster gets
+  outside porc mode) can be a fraction: count = its whole part, plus 1 with the odds of its fraction, so 0.5 = a 50%
+  chance of 1 tower and 1.5 = 1 tower and a 50% chance of a 2nd. Before, it was read as a whole number and 0.5 meant 0.
+  - The chance is `prevent` x `prevent_map` x `prevent_mex`: `[[x, multiplier], ...]` curves, linear between points,
+    flat beyond the ends, missing or `[]` = x1. `prevent_map` x = map area in 512-elmo squares / players on our team
+    (fixed for the game); `prevent_mex` x = ally-team finished mexes / all metal spots, read at each roll.
+  - Each cluster rolls the first time it is defended and again every `prevent_reroll[0]` s (default 180); the new
+    count replaces the old. A roll never cancels a tower already queued or built.
+  - Sightings: every 5 s, an enemy in LOS that can hit ground (air included, no cost floor) within mex LOS of one of
+    our finished mexes marks that cluster for a roll right away, at most once per `prevent_reroll[1]` s (default 30)
+    since its last roll. Half-taken clusters count. A sighting's roll can only raise the count, so being raided never
+    lowers a cluster's defence. After a sighting of a flying enemy the first tower is `prevent_air` (shipped
+    `turretmissile`, which hits air and ground; `""` = off).
+  - Shipped: `prevent` 0.5, `prevent_reroll` [180, 30], `prevent_map` [[32, 1.5], [128, 0.7]], `prevent_mex`
+    [[0.2, 0.6], [0.5, 1.2]] (starting numbers to tune). `PREVENT` log line on each roll with every factor.
+  - Preventive towers are now queued each on its own rather than as a chain. A count of 2+ would otherwise have been
+    cancelled and re-queued on every call by the porc-chain abort, which cancels any unstarted chain outside porc mode.
+
 - **Threat floor breakdown in the log**: every 30 s with the `THREAT FLOOR` line, `THREAT FLOOR ours:` (our army's
   unit count, its power with `pwr_mod`, and the types carrying most of its metal) and `THREAT FLOOR enemy:` (the
   known enemy mobile army's metal split into enemies in radar or LOS and hidden ones, faded and unfaded, and the
