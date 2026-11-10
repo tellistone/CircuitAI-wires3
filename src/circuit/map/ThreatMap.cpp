@@ -528,7 +528,7 @@ void CThreatMap::AddShield(const SEnemyData& e, const std::vector<int>& armedCel
 	}
 	const float shieldVal = e.shieldPower / count;
 
-	const int rangeShield = GetShieldRange(e.cdef);  // bounds only: cells are tested by radius
+	const int rangeShield = e.cdef->GetThreatRange(CCircuitDef::ThreatType::SHIELD);  // bounds: cells test the radius
 	const int beginX = std::max(int(posx - rangeShield + 1),      0);
 	const int endX   = std::min(int(posx + rangeShield    ),  width);
 	const int beginZ = std::max(int(posz - rangeShield + 1),      0);

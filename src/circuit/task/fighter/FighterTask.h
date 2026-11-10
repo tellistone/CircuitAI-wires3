@@ -110,15 +110,15 @@ protected:
 			const float* arcBearing, bool isClose, springai::AIFloat3& outPos) const;
 
 	// Each unit's health-scaled power (pwr_mod power x sqrt(health %)), in the order of 'units'. With shields in
-	// the group, power has the unit's share of their charge (GetShieldShares) in place of its own full shield.
+	// the group, power has the unit's share of their charges (GetShieldShares) in place of its own full shield.
 	// Health takes engine calls, so it is read once per frame, and again when the group changed or a unit was hit
 	struct SUnitStrength {
 		CCircuitUnit* unit;
 		float power;
 	};
 	const std::vector<SUnitStrength>& GetUnitStrengths() const;
-	// Per unit (order of 'units'): its share of the group's shields (each charge split over the armed units inside
-	// it, as the threat map splits enemy shields); empty when the group has no shields
+	// Per unit (order of 'units'): its share of the group's shields (each full charge split over the armed units
+	// inside it, as the threat map splits enemy shields); empty when the group has no shields
 	std::vector<float> GetShieldShares(int frame) const;
 	float GetStrengthSum() const;  // sum of GetUnitStrengths
 	// Group strength the task's escape compares threat against; <= 0: no escape, firing spots aren't limited

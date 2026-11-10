@@ -534,9 +534,8 @@ const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths()
 		strengthSum = 0.f;
 		unitStrengths.clear();
 		const std::vector<float> shieldShares = GetShieldShares(frame);
-		auto it = units.begin();
-		for (size_t i = 0; i < units.size(); ++i, ++it) {
-			CCircuitUnit* unit = *it;
+		size_t i = 0;
+		for (CCircuitUnit* unit : units) {
 			CCircuitDef* cdef = unit->GetCircuitDef();
 			// Def power has the unit's own full shield; with shields in the group, its share of theirs instead
 			const float basePower = shieldShares.empty() ? cdef->GetPower()
@@ -544,6 +543,7 @@ const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths()
 			const float power = basePower * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
 			unitStrengths.push_back({unit, power});
 			strengthSum += power;
+			++i;
 		}
 	}
 	return unitStrengths;
@@ -551,36 +551,29 @@ const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths()
 
 std::vector<float> IFighterTask::GetShieldShares(int frame) const
 {
-	// Each group shield's current charge shared by the group's armed units inside it, as CThreatMap::AddShields
-	// shares an enemy shield: a ball's area shield (Aspis, unarmed) counts for the units it covers, and once.
-	// Empty: no shields in the group
+	// Each group shield's full charge shared by the group's armed units inside it, as CThreatMap::AddShields shares
+	// an enemy shield: an area shield (Aspis, unarmed) counts for the units it covers, and once. Full, not current:
+	// Felon spends its shield to fire, and a strength that dips with every shot would flip the escape; shields
+	// below retreat.shield leave the group (Update). Empty: no shields in the group
 	std::vector<float> shares;
 	if (shields.empty()) {
 		return shares;
 	}
 	shares.resize(units.size(), 0.f);
-	std::vector<AIFloat3> positions;
-	positions.reserve(units.size());
-	for (CCircuitUnit* unit : units) {
-		positions.push_back(unit->GetPos(frame));
-	}
 	std::vector<size_t> inside;
 	for (CCircuitUnit* shield : shields) {
-		const float charge = shield->GetShieldPower();
-		if (charge <= 0.f) {
-			continue;
-		}
 		const AIFloat3& sPos = shield->GetPos(frame);
 		const float sqRadius = SQUARE(shield->GetCircuitDef()->GetShieldRadius());
 		inside.clear();
-		auto it = units.begin();
-		for (size_t i = 0; i < units.size(); ++i, ++it) {
-			if ((((*it) == shield) || (positions[i].SqDistance2D(sPos) <= sqRadius)) && (*it)->GetCircuitDef()->IsAttacker()) {
+		size_t i = 0;
+		for (CCircuitUnit* unit : units) {
+			if (unit->GetCircuitDef()->IsAttacker() && (unit->GetPos(frame).SqDistance2D(sPos) <= sqRadius)) {
 				inside.push_back(i);
 			}
+			++i;
 		}
-		for (size_t i : inside) {
-			shares[i] += charge / inside.size();
+		for (size_t j : inside) {
+			shares[j] += shield->GetCircuitDef()->GetMaxShield() / inside.size();
 		}
 	}
 	return shares;
