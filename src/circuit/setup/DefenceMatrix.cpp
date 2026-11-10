@@ -6,6 +6,7 @@
  */
 
 #include "setup/DefenceMatrix.h"
+#include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
@@ -17,6 +18,8 @@
 #include "util/Scheduler.h"
 #include "util/Utils.h"
 #include "json/json.h"
+
+#include <algorithm>
 
 #include "spring/SpringMap.h"
 
@@ -91,6 +94,33 @@ void CDefenceMatrix::Init(CCircuitAI* circuit)
 			AIFloat3 pos = enclose.GetCenter();
 			pos.y = map->GetElevationAt(pos.x, pos.z);
 			defPoints.push_back({pos, .0f});
+		}
+	}
+
+	if (circuit->GetSetupManager()->GetConfig()["porcupine"].get("geo", false).asBool()) {
+		AddGeoPoints(circuit, maxDistance * 0.5f);
+	}
+}
+
+void CDefenceMatrix::AddGeoPoints(CCircuitAI* circuit, float coverRange)
+{
+	// Same nearest-cluster rule as GetDefPoint and MakeDefence(pos), so the towers built for a vent and their
+	// losses are counted on its point. A vent within coverRange of a point (towers merge into one point up to
+	// twice that apart) is left to that point
+	CMap* map = circuit->GetMap();
+	for (const AIFloat3& spot : circuit->GetEconomyManager()->GetGeoSpots()) {
+		const int index = metalManager->FindNearestCluster(spot);
+		if (index < 0) {
+			continue;
+		}
+		DefPoints& defPoints = clusterInfos[index].defPoints;
+		const bool isCovered = std::any_of(defPoints.begin(), defPoints.end(), [&spot, coverRange](const SDefPoint& p) {
+			return p.position.SqDistance2D(spot) < SQUARE(coverRange);
+		});
+		if (!isCovered) {
+			AIFloat3 pos = spot;
+			pos.y = map->GetElevationAt(pos.x, pos.z);
+			defPoints.push_back({pos, .0f, true});
 		}
 	}
 }

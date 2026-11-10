@@ -618,6 +618,7 @@ private:
 		float mapMult;  // prevent_map at mapX, fixed for the game
 		std::vector<std::pair<float, float>> mexCurve;  // prevent_mex: x = ally-team finished mexes / all spots
 		CCircuitDef* airDef;  // prevent_air: first tower after a sighting of a flying enemy, nullptr = off
+		bool isGeo;  // porcupine.geo: sightings at our geothermals count as at a mex
 	} prevent;
 	struct SPreventRoll {
 		int count = -1;  // -1 = never rolled

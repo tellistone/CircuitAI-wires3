@@ -22,6 +22,7 @@ public:
 	struct SDefPoint {
 		springai::AIFloat3 position;
 		float cost;
+		bool isGeo = false;  // a geothermal vent's own point (porcupine.geo): defended only for that vent
 	};
 	using DefPoints = std::vector<SDefPoint>;
 	struct SClusterInfo {
@@ -35,6 +36,8 @@ public:
 private:
 	void ReadConfig(CCircuitAI* circuit);
 	void Init(CCircuitAI* circuit);
+	// porcupine.geo: each vent that no mex point covers becomes a point of its nearest cluster
+	void AddGeoPoints(CCircuitAI* circuit, float coverRange);
 
 public:
 	std::vector<SDefPoint>& GetDefPoints(int index) { return clusterInfos[index].defPoints; }

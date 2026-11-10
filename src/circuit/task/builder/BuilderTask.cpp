@@ -679,7 +679,10 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 		} else {
 			CMetalManager* metalMgr = circuit->GetMetalManager();
 			int index = metalMgr->FindNearestCluster(buildPos);
-			if ((index >= 0) && (metalMgr->IsClusterQueued(index) || metalMgr->IsClusterFinished(index))) {
+			// A geothermal is itself the taken spot (porcupine.geo gives its vent a point of the nearest cluster)
+			if ((index >= 0) && (metalMgr->IsClusterQueued(index) || metalMgr->IsClusterFinished(index)
+				|| economyMgr->IsGeoDef(buildDef)))
+			{
 				circuit->GetMilitaryManager()->MakeDefence(index, buildPos);
 			}
 		}

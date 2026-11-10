@@ -26,6 +26,11 @@
 	"prevent_map": [[32, 1.5], [128, 0.7]],  // x = map area in 512-elmo squares (16x16 = 256) / players on our team
 	"prevent_mex": [[0.2, 0.6], [0.5, 1.2]],  // x = ally-team finished mexes / all metal spots
 	"prevent_air": "turretmissile",  // first tower after a sighting of a flying enemy; "" = off
+	// Geothermal vents as clusters: a vent that no mex defence point covers gets its own point (in its nearest
+	// cluster's list, sharing that cluster's preventive roll). Our geo there is defended like a mex: on finishing
+	// (build_chain energygeo "porc") and on a sighting (prevent_reroll[1]); towers for a vent stay at the vent.
+	// Vent points never count as the cluster's defence (mex escort) or its front positions. Missing = false
+	"geo": true,
 	"amount": {  // income bound factor
 		"offset": [-0.15, 0.4],
 		// Amount factor: 4x4 ~ 1.85, 20x20 ~ 1.45
@@ -100,6 +105,10 @@
 					{"unit": "turretaaflak", "category": "defence", "offset": {"front": 120}, "condition": "no_air"}
 				]
 			]
+		},
+		"energygeo": {
+			// Defend the vent like a mex cluster (see porcupine.geo)
+			"porc": true
 		},
 		"energyfusion": {
 //			"pylon": true,
