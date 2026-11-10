@@ -1266,9 +1266,15 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	if (utils::is_valid(buildPos) && terrainMgr->CanBeBuiltAtSafe(bestDef, buildPos) &&
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
-		// No random shake for rear energy: the spot is already an open site, as far back as allowed
-		const bool isRear = IsRearDef(bestDef);
-		return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, isRear ? 0.f : SQUARE_SIZE * 16.0f, true);
+		auto it = rearInfos.find(bestDef);
+		if (it == rearInfos.end()) {
+			return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 16.0f, true);
+		}
+		// Rear: build exactly on the open site found, reserved now (like mex and geo) so the next search skips it
+		IBuilderTask* task = builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
+		task->SetBuildPos(buildPos);
+		it->second.nextFrame = 0;
+		return task;
 	}
 
 	return nullptr;
@@ -1280,13 +1286,13 @@ AIFloat3 CEconomyManager::GetRearPos(CCircuitDef* cdef, CCircuitUnit* unit)
 	const int frame = circuit->GetLastFrame();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	// Cached: the ranking is fixed, so the spot only changes as sites fill up or turn unsafe. Searched again every
-	// 10 s or when it turns unsafe. Jobs queued on the same spot meanwhile are spaced apart by their own
-	// FindBuildSite (block_map) when they start
-	if ((frame >= info.nextFrame) || (utils::is_valid(info.pos) && !terrainMgr->CanBeBuiltAtSafe(cdef, info.pos))) {
+	// 10 s and right after a job takes the spot. Unsafe meanwhile (enemies behind the base): cheaper energy for now,
+	// no search on every call while raiders move about
+	if (frame >= info.nextFrame) {
 		info.pos = FindRearPos(cdef, info, unit);
 		info.nextFrame = frame + FRAMES_PER_SEC * 10;
 	}
-	if (!utils::is_valid(info.pos)
+	if (!utils::is_valid(info.pos) || !terrainMgr->CanBeBuiltAtSafe(cdef, info.pos)
 		|| ((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, info.pos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
 		return -RgtVector;
@@ -1356,7 +1362,7 @@ AIFloat3 CEconomyManager::FindRearPos(CCircuitDef* cdef, const SRearInfo& info, 
 	};
 
 	// The site: FindBuildSite near the spot keeps block_map.json's spacing, which for fusion and singu is
-	// their blast radius, so the blast stays off factories and other big energy. The job finds the same site.
+	// their blast radius, so the blast stays off factories and other big energy (ours, allies' and queued jobs').
 	// Link: the rear-most site touching the grid; none: the rear-most site (its build chain may add a pylon)
 	AIFloat3 unlinkedPos = -RgtVector;
 	for (const SCand& cand : cands) {
