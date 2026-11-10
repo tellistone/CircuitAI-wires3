@@ -439,6 +439,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Defence cost refunds go to the right defence point.** `CDefenceMatrix::GetDefPoint` never kept the nearest
+  distance it found (`tmp = dist` instead of `dist = tmp`), so in a cluster with several defence points a destroyed or
+  cancelled tower's metal could be refunded to the wrong point: one point then looked defended while it wasn't, and
+  another would rebuild a tower it already had.
+
 - **ms_pull splits metal again** (`economy.json` `ms_pull` and its multipliers). It had little or no effect:
   - A factory's own build power was left out of the factory pull when it picked its next unit (it had just left its
     last job), so with one factory and no caretakers on it the factory never waited, whatever `ms_pull` said.
