@@ -597,6 +597,22 @@ bool IFighterTask::IsSquadThreat(CCircuitUnit* unit)
 			&& static_cast<IFighterTask*>(task)->IsSquadThreat();
 }
 
+bool IFighterTask::IsCloakRoute(CCircuitUnit* unit) const
+{
+	// As CPathFinder::FillMapData: cloak doesn't work under water (sonar), there it routes on the usual layer
+	return ((unit->GetPos(manager->GetCircuit()->GetLastFrame()).y >= 0.f) || unit->GetCircuitDef()->IsSonarStealth())
+		&& unit->GetUnit()->IsCloaked();
+}
+
+bool IFighterTask::IsCloakRouteUnit(CCircuitUnit* unit)
+{
+	IUnitTask* task = unit->GetTask();
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)) {
+		return static_cast<IFighterTask*>(task)->IsCloakRoute(unit);
+	}
+	return unit->GetUnit()->IsCloaked();  // no fighter task: CPathFinder checks water first
+}
+
 float IFighterTask::GetTaskThreatAt(CCircuitUnit* unit, const AIFloat3& pos) const
 {
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();

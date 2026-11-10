@@ -28,7 +28,12 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
+	// A heavy or commander a unit of type cdef can shoot (role, target category, anti-static, air)
+	static bool IsQuarryFor(const CCircuitDef* cdef, CEnemyInfo* enemy);
+
 protected:
+	// Cloaked units route like the rest (threat map, path_threat cap) unless their type has the cloak_route attribute
+	virtual bool IsCloakRoute(CCircuitUnit* unit) const override;
 	virtual float GetPathThreatMod() const override;  // antiheavy.path_threat; < 0 = no cap (old behaviour, and aircraft)
 	// The squad flee doesn't run from the heavies it hunts (IsQuarry); reloading units step away from the target
 	// on their own (Scoot)
@@ -49,8 +54,7 @@ private:
 	// Flee off: the leader's long-reload weapon (5 s or more) isn't ready (old blind pull-back to the attack groups)
 	bool IsReloading(int frame) const;
 	bool AttackTarget(CCircuitUnit* unit, int frame, float& minePower);  // the engage orders for one unit
-	// A heavy or commander the squad can shoot (role, target category, anti-static, air)
-	bool IsQuarry(CEnemyInfo* enemy) const;
+	bool IsQuarry(CEnemyInfo* enemy) const;  // IsQuarryFor the leader's type
 
 	// Stand-off distance from a heavy: just outside its own threat ring on our threat layer, but never less than
 	// the old engage range (LOS / jump range). Routes end there; within it the squad attacks

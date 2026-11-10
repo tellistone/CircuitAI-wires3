@@ -56,6 +56,10 @@ public:
 	bool IsSquadThreat() const { return isSquad && (areaPower * 2.f <= attackPower); }
 	// The unit's task IsSquadThreat: its routes use the squad threat layers (CPathFinder)
 	static bool IsSquadThreat(CCircuitUnit* unit);
+	// Route this unit on the cloak (decloak-range) layer with no threat cap: it is cloaked (not under water without
+	// sonar stealth) and its task trusts the cloak (CAntiHeavyTask: mines and the cloak_route attribute only)
+	virtual bool IsCloakRoute(CCircuitUnit* unit) const;
+	static bool IsCloakRouteUnit(CCircuitUnit* unit);
 	// Enemy threat at pos as this task judges it: squad threat if IsSquadThreat, else the plain threat. Use it
 	// wherever the task weighs threat; threatMap->GetThreatAt only where our side gets no group size bonus (one unit
 	// judged alone)
