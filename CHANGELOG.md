@@ -7,6 +7,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **ms_pull in chat**: the threat floor line adds the army factor (`ms_pull: 1.21 (army x1.50)`, `(army off)` before
+  `ms_pull_army.since` or with no enemy army known), and a line `ms_pull: <v> = base x income x army (enemy/ours)`
+  posts whenever `ms_pull` moves by `economy.ms_pull_chat` (default 0.25 = 25%, 0 = off) since the last one, at most
+  every 20 s.
+
 - **ms_pull scales with income and the army balance** (`economy.json`; [#105](https://github.com/tellistone/CircuitAI-wires3/pull/105)).
   Two `[[x, multiplier], ...]` curves multiply `ms_pull` (lower = more metal to factories while metal stalls), linear
   between points and clamped at the ends; a missing key uses the defaults, `[]` turns one off.
@@ -388,6 +393,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   When waiting for a builder, its own build range is used instead of the nano tower's.
 
 ### Fixed
+
+- **ms_pull splits metal again** (`economy.json` `ms_pull` and its multipliers). It had little or no effect:
+  - A factory's own build power was left out of the factory pull when it picked its next unit (it had just left its
+    last job), so with one factory and no caretakers on it the factory never waited, whatever `ms_pull` said.
+  - Since the stall rule, constructors held all new spending in a stall whatever `ms_pull` said.
+  - Now, in a metal stall (the constructors' latch, for both sides), a constructor may start new spending while
+    constructors pull at most `ms_pull` x the factories, its own build power included; a factory waits 3 s while
+    factories, it included, x `ms_pull` pull more than the constructors (not while no constructor spends). An energy
+    stall still holds all new constructor spending. The constructors' flee-turret skip uses the same share.
 
 - **Attack groups in line merge again.** A route to another group (reinforcing, idle merging, a rally) ends where the
   line's front row stands, but merging is judged at the group's leader, which stands up to the line's depth behind

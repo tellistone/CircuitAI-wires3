@@ -3162,10 +3162,15 @@ void CMilitaryManager::UpdateAttackThreatFloor()
 	if (isSwitch) {
 		// Public chat (Game_sendTextMessage only runs "/" commands, as for the resign), with the numbers behind the
 		// switch: enemy threat per team and our army's (as compared above), and the economy's mobile:static metal pull
+		// with its army factor (economy.ms_pull_army; off before its since or with no enemy army known)
+		const CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		const std::string msg = std::string("/say <CircuitAI> ") + (isAttackThreatFloor ? "Defending" : "Attacking")
 				+ " | enemy threat: " + utils::float_to_string(enemyPerTeam, "%.0f")
 				+ " | our threat: " + utils::float_to_string(armyThreat, "%.0f")
-				+ " | ms_pull: " + utils::float_to_string(circuit->GetEconomyManager()->GetPullMtoS(), "%.2f");
+				+ " | ms_pull: " + utils::float_to_string(economyMgr->GetPullMtoS(), "%.2f")
+				+ ((economyMgr->GetPullMtoSArmyRatio() >= 0.f)
+					? " (army x" + utils::float_to_string(economyMgr->GetPullMtoSArmyMult(), "%.2f") + ")"
+					: std::string(" (army off)"));
 		circuit->GetGame()->SendTextMessage(msg.c_str(), 0);
 	}
 }

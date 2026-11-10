@@ -1322,9 +1322,8 @@ IUnitTask* CFactoryManager::CreateFactoryTask(CCircuitUnit* unit)
 	}
 
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const bool isStalling = economyMgr->IsMetalEmpty() &&
-							(economyMgr->GetAvgMetalIncome() * 1.2f < economyMgr->GetMetalPull()) &&
-							(metalPull * economyMgr->GetPullMtoS() > circuit->GetBuilderManager()->GetMetalPull());
+	// Metal stalls (the constructors' latch) and the factories are over their ms_pull share, this one included: wait
+	const bool isStalling = economyMgr->IsMetalStall() && economyMgr->IsFactoryOverShare(unit);
 	const bool isNotReady = !economyMgr->IsExcessed() || isStalling;
 	if (isNotReady) {
 		return EnqueueWait(false, FRAMES_PER_SEC * 3);

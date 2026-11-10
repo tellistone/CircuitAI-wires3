@@ -30,6 +30,7 @@
 #include "Feature.h"
 #include "FeatureDef.h"
 #include "Team.h"
+#include "Game.h"
 #include "Log.h"
 
 #include <algorithm>
@@ -62,6 +63,10 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, mspIncomeMult(1.f)
 		, mspArmyMult(1.f)
 		, mspLogFrame(0)
+		, mspArmyRatio(-1.f)
+		, mspChatChange(0.f)
+		, mspChatPull(-1.f)
+		, mspChatFrame(0)
 		, ecoFrame(-1)
 		, isMetalEmpty(false)
 		, isMetalFull(false)
@@ -488,6 +493,7 @@ void CEconomyManager::Init()
 		const bool isArmy = army.isObject();
 		mspArmyCurve = readCurve(isArmy ? army["curve"] : Json::Value(), "economy.ms_pull_army.curve", {{0.5f, 1.3f}, {2.f, 0.7f}});
 		mspArmyFrame = std::max(isArmy ? army.get("since", 300.f).asFloat() : 300.f, 0.f) * FRAMES_PER_SEC;
+		mspChatChange = std::max(econ.get("ms_pull_chat", 0.25f).asFloat(), 0.f);
 	}
 
 	CSetupManager::StartFunc subinit = [this](const AIFloat3& pos) {
@@ -781,6 +787,34 @@ bool CEconomyManager::IsIgnorePull(const IBuilderTask* task) const
 	}
 	return ((task->GetBuildType() == IBuilderTask::BuildType::MEX) ||
 			(task->GetBuildType() == IBuilderTask::BuildType::PYLON));
+}
+
+float CEconomyManager::GetOwnPull(CCircuitUnit* unit) const
+{
+	// IBuilderTask::ShowAssignee adds the build power of a unit on a job with a buildDef (pull not ignored)
+	const IUnitTask* task = unit->GetTask();
+	if ((task != nullptr) && ((task->GetType() == IUnitTask::Type::BUILDER) || (task->GetType() == IUnitTask::Type::FACTORY))) {
+		const IBuilderTask* bt = static_cast<const IBuilderTask*>(task);
+		if ((bt->GetBuildDef() != nullptr) && !IsIgnorePull(bt)) {
+			return 0.f;
+		}
+	}
+	return unit->GetBuildSpeed();
+}
+
+bool CEconomyManager::IsBuilderUnderShare(CCircuitUnit* unit)
+{
+	UpdateEconomy();
+	const float builderPull = circuit->GetBuilderManager()->GetMetalPull() + GetOwnPull(unit);
+	return builderPull <= pullMtoS * circuit->GetFactoryManager()->GetMetalPull();
+}
+
+bool CEconomyManager::IsFactoryOverShare(CCircuitUnit* unit)
+{
+	UpdateEconomy();
+	const float builderPull = circuit->GetBuilderManager()->GetMetalPull();
+	const float factoryPull = circuit->GetFactoryManager()->GetMetalPull() + GetOwnPull(unit);
+	return (builderPull > 0.f) && (factoryPull * pullMtoS > builderPull);
 }
 
 bool CEconomyManager::IsIgnoreStallingPull(const IBuilderTask* task) const
@@ -1776,10 +1810,29 @@ void CEconomyManager::UpdateEconomy()
 	mspArmyMult = (armyRatio >= 0.f) ? utils::eval_curve(mspArmyCurve, armyRatio) : 1.f;
 	const float basePull = pullMtoS;
 	pullMtoS *= mspIncomeMult * mspArmyMult;
+	mspArmyRatio = armyRatio;
 	if (ecoFrame >= mspLogFrame) {
 		mspLogFrame = ecoFrame + FRAMES_PER_SEC * 30;
 		circuit->LOG("MS_PULL %.2f: base %.2f x income %.2f (%.1f m) x army %.2f (enemy/ours %.2f%s)",
 				pullMtoS, basePull, mspIncomeMult, ecoIncome, mspArmyMult, armyRatio, isArmyOn ? "" : ", before since");
+	}
+	// Public chat when ms_pull has moved by ms_pull_chat (relative) since the last line, at most every 20 s; the first
+	// value is only noted. A float compare, so a value that moved and came back posts nothing
+	if (mspChatPull < 0.f) {
+		mspChatPull = pullMtoS;
+	} else if ((mspChatChange > 0.f) && (ecoFrame >= mspChatFrame)
+		&& (std::fabs(pullMtoS - mspChatPull) > mspChatChange * std::max(mspChatPull, 0.01f)))
+	{
+		mspChatPull = pullMtoS;
+		mspChatFrame = ecoFrame + FRAMES_PER_SEC * 20;
+		std::string msg = "/say <CircuitAI> ms_pull: " + utils::float_to_string(pullMtoS, "%.2f")
+				+ " = base " + utils::float_to_string(basePull, "%.2f")
+				+ " x income " + utils::float_to_string(mspIncomeMult, "%.2f")
+				+ " x army " + utils::float_to_string(mspArmyMult, "%.2f");
+		msg += (armyRatio >= 0.f)
+				? " (enemy/ours " + utils::float_to_string(std::min(armyRatio, 99.f), "%.2f") + ")"
+				: (isArmyOn ? std::string(" (no enemy army known)") : std::string(" (before since)"));
+		circuit->GetGame()->SendTextMessage(msg.c_str(), 0);
 	}
 }
 

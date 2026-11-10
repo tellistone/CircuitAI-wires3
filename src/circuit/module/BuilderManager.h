@@ -285,8 +285,8 @@ private:
 	bool IsCommCornered(CCircuitUnit* unit, SCommState* state);
 	// Other builders: on the defence they were cornered into (cornerTask), which they finish unless metal stalls
 	bool IsFinishingDefence(CCircuitUnit* unit, const SCommState* state) const;
-	// Metal is short and builders pull more than income: their new metal jobs wait (MakeBuilderTask)
-	bool IsMetalStalling() const;
+	// Metal stalls and the constructors are over their ms_pull share: their new metal jobs wait (MakeBuilderTask)
+	bool IsMetalStalling(CCircuitUnit* unit) const;
 	// A job at pos: always with no state (flee off); else outside the flee zones (wide line, recently seen dangers
 	// included), or covered 1.25x there. Other builders: a fight-back task is measured at the start line, and the
 	// flee scars count
