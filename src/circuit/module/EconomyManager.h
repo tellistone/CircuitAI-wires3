@@ -76,11 +76,10 @@ public:
 	float GetPullMtoS() const { return pullMtoS; }
 	float GetPullMtoSArmyMult() const { return mspArmyMult; }
 	float GetPullMtoSArmyRatio() const { return mspArmyRatio; }  // enemy/ours; < 0 = army factor off (before since, no enemy army)
-	// ms_pull splits metal between constructors and factories while metal stalls (IsMetalStall). Pulls are the build
-	// power on jobs (ITaskManager::GetMetalPull; mex and pylon jobs left out while mex_max >= 1), the deciding unit's
-	// own included. A constructor may start new spending while its side is within ms_pull x the factories' pull; a
-	// factory waits while its side x ms_pull is above the constructors' pull, unless no constructor spends at all
-	bool IsBuilderUnderShare(CCircuitUnit* unit);
+	// ms_pull while metal stalls (IsMetalStall): a factory waits while the factories' pull, its own build power
+	// included, x ms_pull is above the constructors' pull, unless no constructor spends at all. Pulls are the build
+	// power on jobs (ITaskManager::GetMetalPull; mex and pylon jobs left out while mex_max >= 1). Constructors hold
+	// all new spending in a stall (CBuilderManager stall rule), whatever ms_pull says
 	bool IsFactoryOverShare(CCircuitUnit* unit);
 	float GetMetalCur();
 	float GetMetalPull();
@@ -272,7 +271,7 @@ private:
 	std::vector<SPullMtoS> mspInfos;
 	float pullMtoS;  // mobile to static metal pull ratio
 	// ms_pull multipliers: ms_pull_income [[<metal income>, <mult>], ...] from the start, ms_pull_army
-	// {"since": <seconds>, "curve": [[<army threat ratio>, <mult>], ...]} from that game time; empty curve = 1
+	// {"since": <seconds>, "curve": [[<enemy/ours army metal>, <mult>], ...]} from that game time; empty curve = 1
 	std::vector<std::pair<float, float>> mspIncomeCurve;
 	std::vector<std::pair<float, float>> mspArmyCurve;
 	int mspArmyFrame;

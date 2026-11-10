@@ -40,8 +40,8 @@
 	"raid": [9.0, 20.0],  // [<min>, <avg>] power of raider squad
 	"attack": 10.0,  // attack group floor: a group under this power reinforces (walks to) a stronger attack group if one can be reached, else only walks to targets on our ground, as attack_own_ground_time (a target already within range is always fair game; with none it goes to the front line)
 	"attack_floor_hold": 0.75,  // hysteresis for the attack floor: a group that reached quota.attack keeps walking to targets anywhere until its power drops below quota.attack x this; 1 = none
-	"attack_threat_floor": [0.66, 0.8],  // [<on>, <off>]: all attack groups only walk to targets on our ground (as under quota.attack) from when our own army's threat (our mobile fighters, not allies') drops below <on> x the known enemy mobile threat (faded as enemy_half_life) / enemy team count, until it is back to <off> x that; commanders count on neither side; checked once a second; on 0 = off
-	"enemy_half_life": 180,  // seconds: the known enemy army (attack_threat_floor here, economy.ms_pull_army) counts an enemy in radar or LOS in full, and one out of both at half for every this many seconds since it was last seen; enemies seen dying or 20 min unseen don't count; 0 = no fading
+	"attack_threat_floor": [0.66, 0.8],  // [<on>, <off>]: all attack groups only walk to targets on our ground (as under quota.attack) from when our own army's metal value (our mobile fighters, not allies') drops below <on> x the metal value of the known enemy mobile army (faded as enemy_half_life) / enemy team count, until it is back to <off> x that; commanders and constructors count on neither side; checked once a second; on 0 = off
+	"enemy_half_life": 180,  // seconds: the known enemy army's metal value (attack_threat_floor and base_gather here, economy.ms_pull_army) counts an enemy in radar or LOS in full, and one out of both at half for every this many seconds since it was last seen; enemies seen dying or 20 min unseen don't count; 0 = no fading
 
 	"raid_flee_share": 0.33,
 	// Raid rally: when a recently seen pack of enemy raiders (mobile, armed enemies of the raider role within 800 elmos of each other, threat summed) has more threat than match x our strongest raid group's raw strength,
@@ -80,7 +80,7 @@
 	"reinforce_fails": 4,  // empty reinforce routes in a row (one per ~2 s decision) before a small group gives up; an army (idle_merge) gives up at the first
 	"reinforce_retry": 15,  // seconds to act as a small attack group after giving up, before looking for a group again
 	"idle_merge": true,  // an army (at or above quota.attack) walks to the nearest compatible group ranked above it (more attack power; ties: lower leader id) and merges when that group is nearer than its best target by the target ranking (near-base scale, target_dist_mod, contested bonus: a raid near our base or a commander counts as nearer, a scout as farther) or it has no target; once walking, only a target ranked under half that distance breaks it off; targets in range are fought first; so all attack groups converge into one army; it keeps that group while it has 80% of the army's power; false: it hunts, heads for the front or holds as before. Small groups reinforcing get the ranking (with the tie-break), the 80% keep, stopping beside the group on a short route and merge checks every update whatever this is, and any group absorbs groups walking to it: so false is not the zk behaviour, compare against a zk build for A/B games
-	"base_gather": false,  // false: attack-bound units never gather at base; they reinforce the rally host or the nearest compatible group, else start a group. true: the first army gathers at base
+	"base_gather": false,  // false: attack-bound units never gather at base; they reinforce the rally host or the nearest compatible group, else start a group. true: the first army gathers at base until it has quota.attack power and the metal value of the known enemy mobile army (no commanders or constructors, faded as enemy_half_life) / our allies
 	// Rally: when a recently seen enemy blob (mobile, armed enemies within 800 elmos of each other, threat summed) near our attack groups has more threat than match x the largest group's raw strength,
 	// that group (the host) carries on as usual (it never waits for joiners) while every compatible attack group and new unit reinforces it, until it reaches (1 + margin) x match x the blob or the blob is lost
 	"rally": {
@@ -169,13 +169,14 @@
 
 // Concede a lost 1v1 (our ally team is just us, one enemy team): checked every 10 s from "time" on. It reads lost
 // while our mexes are fewer than "mex" x the map's metal spots AND either we have no army left, or the enemy army we
-// have seen alive has more than "threat" x our army's threat (commanders left out on both sides). Once it has read
+// have seen alive is worth more than "threat" x our army's metal value (mobile units; commanders and constructors left
+// out on both sides). Once it has read
 // lost on every check for "hold" seconds, the AI says "<CircuitAI> I am defeated." in public chat and leaves the game
 // (/aikill), which Zero-K counts as a resign. Missing block = these defaults; time < 0 = never resign
 "resign": {
 	"time": 480,  // seconds of game time
 	"mex": 0.1,
-	"threat": 4.0,
+	"threat": 4.0,  // enemy army metal / ours (the key keeps its old name)
 	"hold": 30  // seconds
 },
 

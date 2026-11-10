@@ -8,13 +8,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Added
 
 - **Threat floor breakdown in the log**: every 30 s with the `THREAT FLOOR` line, `THREAT FLOOR ours:` (our army's
-  unit count, its power with `pwr_mod`, and the types carrying most of its threat) and `THREAT FLOOR enemy:` (the
-  known enemy mobile threat split into enemies in radar or LOS and hidden ones, faded and unfaded, and the types
-  carrying most of it), to check the army ratio behind the floor and `ms_pull_army`.
+  unit count, its power with `pwr_mod`, and the types carrying most of its metal) and `THREAT FLOOR enemy:` (the
+  known enemy mobile army's metal split into enemies in radar or LOS and hidden ones, faded and unfaded, and the
+  types carrying most of it), to check the army ratio behind the floor and `ms_pull_army`.
 
 - **ms_pull in chat**: the threat floor line adds the army factor (`ms_pull: 1.21 (army x1.50)`, `(army off)` before
-  `ms_pull_army.since` or with no enemy army known), and a line `ms_pull: <v> = base x income x army (enemy/ours)`
-  posts whenever `ms_pull` moves by `economy.ms_pull_chat` (default 0.25 = 25%, 0 = off) since the last one, at most
+  `ms_pull_army.since` or with no enemy army known), and a line `ms_pull: 0.85 = base 1.20 (mex 35%) x income 0.90 (82.0 m/s) x army 0.79
+  (enemy 1450 / ours 2340 metal = 0.62)` (each factor with the measure it reads) posts whenever `ms_pull` moves by `economy.ms_pull_chat` (default 0.25 = 25%, 0 = off) since the last one, at most
   every 20 s.
 
 - **ms_pull scales with income and the army balance** (`economy.json`; [#105](https://github.com/tellistone/CircuitAI-wires3/pull/105)).
@@ -260,6 +260,28 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `behaviour.json` gains `energygeo` and `energyheavygeo` entries.
 
 ### Changed
+
+- **Constructors freeze in every stall again** (reverts that part of #108). In a metal stall a constructor within
+  `ms_pull` x the factory pull no longer starts new spending: constructors hold all new spending in any stall, as
+  before #108, and the flee-turret skip is back to its old test. The factory side of #108 stays.
+
+- **ms_pull_army compares metal value** (`economy.json`). Its x is now the known enemy mobile army's metal value per
+  enemy team over our army's metal value, constructors and commanders left out on both sides, hidden enemies fading
+  as before. It was the two armies' threat, which weights units by `thr_mod` (artillery and bombers at 0 counted as
+  nothing on either side) and by health and damage, so a big army of light units could read smaller than a few
+  enemy heavies. The `MS_PULL` log line shows both metal values.
+
+- **The threat floor, resign and base gather compare metal value too** (`behaviour.json`; the keys keep their names).
+  - `quota.attack_threat_floor`: our army's metal value against the known enemy mobile army's per enemy team (faded,
+    no commanders or constructors), the same two numbers as `ms_pull_army`. The `THREAT FLOOR` log lines and the
+    Defending / Attacking chat line show metal (`enemy metal: X | our metal: Y`), with the types carrying most of it.
+  - `resign.threat`: the game reads lost when the enemy army seen alive is worth more than this x our army's metal
+    (enemy constructors no longer count). The `RESIGN` log line shows both.
+  - `quota.attack_merge.base_gather` (when `true`): the army at base gathers until it has `quota.attack` power and the
+    known enemy mobile army's metal value per ally. It was power against the enemy's total threat, statics and
+    commanders included.
+  - An enemy nanoframe in LOS (a unit still in its factory) no longer counts in any of these, as our own count only
+    once finished. One seen being built that left LOS counts, since it may have finished.
 
 - **Anti-heavy units leave the army while a heavy is around.** Anti-heavy hunting used to switch on for good at the
   first sighting of any enemy heavy (the enemy cost only drops when we see it die), and units already in the army

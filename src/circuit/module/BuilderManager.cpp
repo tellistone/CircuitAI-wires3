@@ -1362,10 +1362,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	// Same cap as the pull: idle builders would otherwise all pick priority repairs (NOW outweighs everything)
 	const bool isPrioRepairFull = IsPrioRepairFull(unit);
 	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
-	// While metal or energy stalls, no new spending (urgent jobs included): more build power only spreads the stall.
-	// In a metal stall a builder within the constructors' ms_pull share of the factories' pull still may
-	const bool isStalling = economyMgr->IsEnergyStall()
-		|| (economyMgr->IsMetalStall() && !economyMgr->IsBuilderUnderShare(unit));
+	// While metal or energy stalls, no new spending (urgent jobs included): more build power only spreads the stall
+	const bool isStalling = economyMgr->IsStalling();
 	// Never send the commander into a flee zone, measured at the line the flee stops at; nullptr = flee off.
 	// Hide mode's territory test goes with the flee
 	const SCommState* commState = GetCommState(unit);
@@ -1471,10 +1469,8 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 //		return task;
 //	}
 	const bool isNotReady = !economyMgr->IsExcessed();  // rarely true with excess -1 (economy.json); stalls are below
-	// While metal or energy stalls, no new spending (urgent jobs included): more build power only spreads the stall.
-	// In a metal stall a builder within the constructors' ms_pull share of the factories' pull still may
-	const bool isStalling = economyMgr->IsEnergyStall()
-		|| (economyMgr->IsMetalStall() && !economyMgr->IsBuilderUnderShare(unit));
+	// While metal or energy stalls, no new spending (urgent jobs included): more build power only spreads the stall
+	const bool isStalling = economyMgr->IsStalling();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CInfluenceMap* inflMap = circuit->GetInflMap();
@@ -2010,14 +2006,16 @@ bool CBuilderManager::IsCommCornered(CCircuitUnit* unit, SCommState* state)
 bool CBuilderManager::IsFinishingDefence(CCircuitUnit* unit, const SCommState* state) const
 {
 	return (state != nullptr) && (state->cornerTask != nullptr) && (unit->GetTask() == state->cornerTask)
-		&& !IsMetalStalling(unit);
+		&& !IsMetalStalling();
 }
 
-bool CBuilderManager::IsMetalStalling(CCircuitUnit* unit) const
+bool CBuilderManager::IsMetalStalling() const
 {
-	// The metal stall latch, and the constructors over their ms_pull share (the job rule of MakeBuilderTask)
+	// Low metal (IsMetalEmpty: under 20% of storage) alone is the usual state of an economy that spends its income
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	return economyMgr->IsMetalStall() && !economyMgr->IsBuilderUnderShare(unit);
+	return economyMgr->IsMetalEmpty()
+		&& (economyMgr->GetAvgMetalIncome() * 1.2f < economyMgr->GetMetalPull())
+		&& (metalPull > economyMgr->GetPullMtoS() * circuit->GetFactoryManager()->GetMetalPull());
 }
 
 bool CBuilderManager::IsCommJobSafe(const SCommState* state, const AIFloat3& pos, const IBuilderTask* task)
@@ -2071,7 +2069,7 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 	// they are, and nearer them than the danger), only help or build one that can hit the danger and outranges it
 	// from behind them (else none), and keep it as cornerTask, to finish it (StartCommFlee)
 	const bool isBuilder = !state->IsComm();
-	if (IsBuildingDefence(unit) || (isBuilder ? IsMetalStalling(unit) : circuit->GetEconomyManager()->IsMetalEmpty())) {
+	if (IsBuildingDefence(unit) || (isBuilder ? IsMetalStalling() : circuit->GetEconomyManager()->IsMetalEmpty())) {
 		return nullptr;
 	}
 	const int frame = circuit->GetLastFrame();
