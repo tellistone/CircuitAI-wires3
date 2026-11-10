@@ -466,7 +466,7 @@ float CScoutTask::GetSafeThreat(CCircuitUnit* unit) const
 float CScoutTask::GetPathThreatCap(CCircuitUnit* unit, float goalMod) const
 {
 	// NOTE: The pathfinder uses the decloak-range array for cloaked units, which is a different scale
-	if (unit->GetUnit()->IsCloaked()) {
+	if (IsCloakRoute(unit)) {
 		return std::numeric_limits<float>::max();
 	}
 	// The cap is uniform along the path: use the stricter of start and goal, so a path planned near home

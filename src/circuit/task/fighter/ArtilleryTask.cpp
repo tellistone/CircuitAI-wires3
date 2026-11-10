@@ -327,11 +327,10 @@ bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
 	}
 
 	// The waypoints left stay under the cap. Not for a cloaked unit: the pathfinder plans its route on the
-	// decloak layer, which GetThreatAt doesn't read (cloak doesn't work under water: there it uses the usual layer)
+	// decloak layer, which GetThreatAt doesn't read (IsCloakRoute)
 	const AIFloat3& pos = unit->GetPos(frame);
-	const bool isCloakRoute = ((pos.y >= 0.f) || unit->GetCircuitDef()->IsSonarStealth()) && unit->GetUnit()->IsCloaked();
 	const float maxPathThreat = GetMaxPathThreat(unit);
-	if ((maxPathThreat < std::numeric_limits<float>::max()) && !isCloakRoute) {
+	if ((maxPathThreat < std::numeric_limits<float>::max()) && !IsCloakRoute(unit)) {
 		// From the waypoint nearest to us
 		size_t next = 0;
 		float minSqDist = std::numeric_limits<float>::max();

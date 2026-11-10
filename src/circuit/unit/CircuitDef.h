@@ -73,6 +73,7 @@ public:
 	 * NO_FORM:   never takes a slot in a squad's line formation (behaviour.json "formation"): walks the path as before
 	 * CLOAK_ROUTE: in an anti-heavy squad, routes while cloaked on the decloak layer with no threat cap (old behaviour);
 	 *            without it a cloaked anti-heavy routes, picks stand-off spots and flees on the normal threat map
+	 *            (mines always route as with it)
 	 */
 	enum class AttrType: RoleT {NONE = -1,
 		MELEE = 0, BOOST, NO_JUMP, NO_STRAFE,

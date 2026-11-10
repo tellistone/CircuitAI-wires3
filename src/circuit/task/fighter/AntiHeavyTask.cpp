@@ -292,8 +292,9 @@ const CMilitaryManager::SAntiHeavyCfg& CAntiHeavyTask::GetCfg() const
 bool CAntiHeavyTask::IsCloakRoute(CCircuitUnit* unit) const
 {
 	// Without cloak_route the cloak is only extra safety: a decloak (firing, splash, a close enemy, low energy)
-	// must not leave the unit on a route planned past enemy weapons
-	return unit->GetCircuitDef()->IsAttrCloakRoute() && IFighterTask::IsCloakRoute(unit);
+	// must not leave the unit on a route planned past enemy weapons. Mines (Skuttle) live by sneaking up: always
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	return (cdef->IsAttrCloakRoute() || cdef->IsRoleMine()) && IFighterTask::IsCloakRoute(unit);
 }
 
 float CAntiHeavyTask::GetPathThreatMod() const

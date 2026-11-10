@@ -199,7 +199,8 @@
 	// "attribute": ["cloak_route"] = while cloaked it routes on the decloak layer with no path_threat cap, and its
 	// stand-off spot isn't checked against threat (the old behaviour: it trusts the cloak). Without it (default) a
 	// cloaked anti-heavy (Ultimatum, Widow, ...) routes, picks its stand-off spot and flees on the normal threat map
-	// like the others, so a decloak (firing, splash, a close enemy, energy stall) doesn't leave it deep in enemy fire
+	// like the others, so a decloak (firing, splash, a close enemy, energy stall) doesn't leave it deep in enemy fire.
+	// Mines (Skuttle: "mine" attribute) always route as with cloak_route. Under water (no sonar stealth) cloak doesn't count
 },
 
 "artillery": {
