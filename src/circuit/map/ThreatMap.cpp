@@ -301,10 +301,7 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 		cdef->IsAlwaysHit() ? AddEnemyAmphConst(e, vsl, count) : AddEnemyAmphGradient(e, vsl, count);
 	}
 	AddDecloaker(e);
-
-	if (cdef->GetShieldMount() != nullptr) {
-		AddShield(e);
-	}
+	// Shields: AddShields, once all enemies are known
 }
 
 void CThreatMap::AddEnemyUnitAll(const SEnemyData& e)
@@ -477,27 +474,71 @@ void CThreatMap::AddDecloaker(const SEnemyData& e)
 	}
 }
 
-void CThreatMap::AddShield(const SEnemyData& e)
+void CThreatMap::AddShields(const std::vector<SEnemyData>& hostiles, const std::vector<SEnemyData>& peaces)
 {
+	// Each shield's charge is shared by the armed enemies inside it, so that a ball's shields count once in all.
+	// Painting the whole charge on every cell it covers counted it again for every unit under it (and a ball of
+	// overlapping shields looked several times stronger than it is). Armed: unarmed units (Aspis, cons) add no
+	// threat, so a share on them would be lost. A cell is inside when its centre is within the real shield radius
+	// (or it is the shield's own cell); the units are counted by the same test, so the shares add up to the charge.
+	std::vector<int> armedCells;  // cell of each armed enemy that a shield can cover
+	armedCells.reserve(hostiles.size());
+	for (const SEnemyData& e : hostiles) {
+		if ((e.cdef == nullptr) || e.isBeingBuilt || e.IsFake()) {
+			continue;
+		}
+		int x, z;
+		PosToXZ(e.pos, x, z);
+		if ((x >= 0) && (x < width) && (z >= 0) && (z < height)) {
+			armedCells.push_back(z * width + x);
+		}
+	}
+	if (armedCells.empty()) {
+		return;
+	}
+	for (const std::vector<SEnemyData>* enemies : {&hostiles, &peaces}) {
+		for (const SEnemyData& e : *enemies) {
+			if ((e.cdef != nullptr) && (e.cdef->GetShieldMount() != nullptr) && !e.isBeingBuilt && !e.IsFake()) {
+				AddShield(e, armedCells);
+			}
+		}
+	}
+}
+
+void CThreatMap::AddShield(const SEnemyData& e, const std::vector<int>& armedCells)
+{
+	if (e.shieldPower <= 0.f) {
+		return;
+	}
 	int posx, posz;
 	PosToXZ(e.pos, posx, posz);
+	const float sqRadius = SQUARE(e.cdef->GetShieldRadius());
+	auto isInside = [&](int x, int z) {
+		return ((x == posx) && (z == posz)) || (XZToPos(x, z).SqDistance2D(e.pos) <= sqRadius);
+	};
 
-	const float shieldVal = e.shieldPower;
-	const int rangeShield = e.GetRange(CCircuitDef::ThreatType::SHIELD);
-	const int rangeShieldSq = SQUARE(rangeShield);
+	int count = 0;
+	for (int index : armedCells) {
+		if (isInside(index % width, index / width)) {
+			++count;
+		}
+	}
+	if (count == 0) {
+		return;  // shields no armed enemy
+	}
+	const float shieldVal = e.shieldPower / count;
 
+	const int rangeShield = GetShieldRange(e.cdef);  // bounds only: cells are tested by radius
 	const int beginX = std::max(int(posx - rangeShield + 1),      0);
 	const int endX   = std::min(int(posx + rangeShield    ),  width);
 	const int beginZ = std::max(int(posz - rangeShield + 1),      0);
 	const int endZ   = std::min(int(posz + rangeShield    ), height);
 
 	for (int z = beginZ; z < endZ; ++z) {
-		const int rrz = rangeShieldSq - SQUARE(posz - z);
 		for (int x = beginX; x < endX; ++x) {
-			if (SQUARE(posx - x) > rrz) {
-				continue;
+			if (isInside(x, z)) {
+				drawShieldArray[z * width + x] += shieldVal;
 			}
-			drawShieldArray[z * width + x] += shieldVal;
 		}
 	}
 }
@@ -527,6 +568,7 @@ float CThreatMap::GetEnemyUnitThreat(const CEnemyUnit* e) const
 	if (health <= .0f) {
 		return .0f;
 	}
+	// Its share of the shields over its cell (AddShields), its own shield included
 	int x, z;
 	PosToXZ(e->GetPos(), x, z);
 	return e->GetDamage() * sqrtf(health + shieldArray[z * width + x] * SHIELD_MOD);  // / unit->GetUnit()->GetMaxHealth();
@@ -584,6 +626,8 @@ void CThreatMap::Update()
 	for (const SEnemyData& e : enemyMgr->GetPeaceDatas()) {
 		AddDecloaker(e);
 	}
+
+	AddShields(enemyMgr->GetHostileDatas(), enemyMgr->GetPeaceDatas());
 
 	if (isCounting) {
 		ApplyCountPower(*GetNextThreatData());

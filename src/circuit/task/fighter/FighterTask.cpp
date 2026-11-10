@@ -533,13 +533,57 @@ const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths()
 		strengthFrame = frame;
 		strengthSum = 0.f;
 		unitStrengths.clear();
-		for (CCircuitUnit* unit : units) {
-			const float power = unit->GetCircuitDef()->GetPower() * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
+		const std::vector<float> shieldShares = GetShieldShares(frame);
+		auto it = units.begin();
+		for (size_t i = 0; i < units.size(); ++i, ++it) {
+			CCircuitUnit* unit = *it;
+			CCircuitDef* cdef = unit->GetCircuitDef();
+			// Def power has the unit's own full shield; with shields in the group, its share of theirs instead
+			const float basePower = shieldShares.empty() ? cdef->GetPower()
+					: cdef->GetPwrDamage() * sqrtf(std::max(cdef->GetHealth() + shieldShares[i] * SHIELD_MOD, 0.f));
+			const float power = basePower * sqrtf(std::max(unit->GetHealthPercent(), 0.f));
 			unitStrengths.push_back({unit, power});
 			strengthSum += power;
 		}
 	}
 	return unitStrengths;
+}
+
+std::vector<float> IFighterTask::GetShieldShares(int frame) const
+{
+	// Each group shield's current charge shared by the group's armed units inside it, as CThreatMap::AddShields
+	// shares an enemy shield: a ball's area shield (Aspis, unarmed) counts for the units it covers, and once.
+	// Empty: no shields in the group
+	std::vector<float> shares;
+	if (shields.empty()) {
+		return shares;
+	}
+	shares.resize(units.size(), 0.f);
+	std::vector<AIFloat3> positions;
+	positions.reserve(units.size());
+	for (CCircuitUnit* unit : units) {
+		positions.push_back(unit->GetPos(frame));
+	}
+	std::vector<size_t> inside;
+	for (CCircuitUnit* shield : shields) {
+		const float charge = shield->GetShieldPower();
+		if (charge <= 0.f) {
+			continue;
+		}
+		const AIFloat3& sPos = shield->GetPos(frame);
+		const float sqRadius = SQUARE(shield->GetCircuitDef()->GetShieldRadius());
+		inside.clear();
+		auto it = units.begin();
+		for (size_t i = 0; i < units.size(); ++i, ++it) {
+			if ((((*it) == shield) || (positions[i].SqDistance2D(sPos) <= sqRadius)) && (*it)->GetCircuitDef()->IsAttacker()) {
+				inside.push_back(i);
+			}
+		}
+		for (size_t i : inside) {
+			shares[i] += charge / inside.size();
+		}
+	}
+	return shares;
 }
 
 float IFighterTask::GetStrengthSum() const
