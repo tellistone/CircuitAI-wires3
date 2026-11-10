@@ -418,6 +418,28 @@ float CEnemyManager::GetMobileThreatNoCommFaded(int frame, float halfLife) const
 	return threat * initThrMod.inMobile;
 }
 
+float CEnemyManager::GetMobileCostNoCommFaded(int frame, float halfLife) const
+{
+	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));
+	float cost = 0.f;
+	for (const auto& kv : enemyUnits) {
+		const CEnemyUnit* e = kv.second;
+		const CCircuitDef* cdef = e->GetCircuitDef();
+		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsBuilder() || cdef->IsEnemyRoleAny(commMask)
+			|| !e->IsKnown(frame))
+		{
+			continue;
+		}
+		float weight = 1.f;
+		const int lastSeen = e->GetLastSeen();  // -1 while in radar or LOS
+		if ((halfLife > 0.f) && !e->IsInRadarOrLOS() && (lastSeen >= 0)) {
+			weight = std::exp2(-(frame - lastSeen) / halfLife);
+		}
+		cost += e->GetCost() * weight;
+	}
+	return cost;
+}
+
 std::string CEnemyManager::GetMobileThreatReport(int frame, float halfLife) const
 {
 	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));

@@ -2677,14 +2677,16 @@ float CMilitaryManager::GetEnemyThreatPerTeam() const
 			/ std::max(circuit->GetEnemyTeamSize(), 1);
 }
 
-float CMilitaryManager::GetEnemyArmyRatio() const
+float CMilitaryManager::GetEnemyArmyRatio(float& enemyPerTeam, float& ours) const
 {
-	const float enemyPerTeam = GetEnemyThreatPerTeam();
+	enemyPerTeam = circuit->GetEnemyManager()->GetMobileCostNoCommFaded(circuit->GetLastFrame(), enemyHalfLife)
+			/ std::max(circuit->GetEnemyTeamSize(), 1);
+	ours = armyCost;
 	if (enemyPerTeam <= 0.f) {
 		return -1.f;
 	}
 	// No army of ours: the enemy's counts as far ahead (the curve's last point)
-	return (armyThreat > 0.f) ? enemyPerTeam / armyThreat : std::numeric_limits<float>::max();
+	return (armyCost > 0.f) ? enemyPerTeam / armyCost : std::numeric_limits<float>::max();
 }
 
 void CMilitaryManager::UpdateDefenceTasks()

@@ -802,13 +802,6 @@ float CEconomyManager::GetOwnPull(CCircuitUnit* unit) const
 	return unit->GetBuildSpeed();
 }
 
-bool CEconomyManager::IsBuilderUnderShare(CCircuitUnit* unit)
-{
-	UpdateEconomy();
-	const float builderPull = circuit->GetBuilderManager()->GetMetalPull() + GetOwnPull(unit);
-	return builderPull <= pullMtoS * circuit->GetFactoryManager()->GetMetalPull();
-}
-
 bool CEconomyManager::IsFactoryOverShare(CCircuitUnit* unit)
 {
 	UpdateEconomy();
@@ -1801,20 +1794,22 @@ void CEconomyManager::UpdateEconomy()
 		pullMtoS = mspInfo.fraction * (mexCount - mspInfo.mex) + mspInfo.pull;
 	}
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	// ms_pull_income: metal income without reclaim; ms_pull_army: known enemy army threat per enemy team over ours
-	// (hidden enemies fading), from ms_pull_army.since and while any enemy army is known
+	// ms_pull_income: metal income without reclaim; ms_pull_army: known enemy army metal value per enemy team over
+	// ours (hidden enemies fading), from ms_pull_army.since and while any enemy army is known
 	const float ecoIncome = GetEcoMetalIncome();
 	mspIncomeMult = utils::eval_curve(mspIncomeCurve, ecoIncome);
 	const bool isArmyOn = (ecoFrame >= mspArmyFrame);
-	const float armyRatio = isArmyOn ? militaryMgr->GetEnemyArmyRatio() : -1.f;
+	float enemyMetal = 0.f, ourMetal = 0.f;
+	const float armyRatio = isArmyOn ? militaryMgr->GetEnemyArmyRatio(enemyMetal, ourMetal) : -1.f;
 	mspArmyMult = (armyRatio >= 0.f) ? utils::eval_curve(mspArmyCurve, armyRatio) : 1.f;
 	const float basePull = pullMtoS;
 	pullMtoS *= mspIncomeMult * mspArmyMult;
 	mspArmyRatio = armyRatio;
 	if (ecoFrame >= mspLogFrame) {
 		mspLogFrame = ecoFrame + FRAMES_PER_SEC * 30;
-		circuit->LOG("MS_PULL %.2f: base %.2f x income %.2f (%.1f m) x army %.2f (enemy/ours %.2f%s)",
-				pullMtoS, basePull, mspIncomeMult, ecoIncome, mspArmyMult, armyRatio, isArmyOn ? "" : ", before since");
+		circuit->LOG("MS_PULL %.2f: base %.2f x income %.2f (%.1f m) x army %.2f (enemy/ours %.2f metal: %.0f / %.0f%s)",
+				pullMtoS, basePull, mspIncomeMult, ecoIncome, mspArmyMult, armyRatio, enemyMetal, ourMetal,
+				isArmyOn ? "" : ", before since");
 	}
 	// Public chat when ms_pull has moved by ms_pull_chat (relative) since the last line, at most every 20 s; the first
 	// value is only noted. A float compare, so a value that moved and came back posts nothing

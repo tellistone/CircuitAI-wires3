@@ -223,8 +223,10 @@ public:
 	// Known enemy mobile threat (no commanders) per enemy team, enemies out of radar and LOS fading by half every
 	// quota.enemy_half_life (EnemyManager::GetMobileThreatNoCommFaded). Walks all known enemies
 	float GetEnemyThreatPerTeam() const;
-	// GetEnemyThreatPerTeam over our army's threat (no commanders either); negative while no enemy army is known
-	float GetEnemyArmyRatio() const;
+	// economy.ms_pull_army: metal value of the known enemy army (EnemyManager::GetMobileCostNoCommFaded, faded as
+	// quota.enemy_half_life) per enemy team over our army's (no constructors or commanders on either side); negative
+	// while no enemy army is known. Writes the two values to enemyPerTeam and ours
+	float GetEnemyArmyRatio(float& enemyPerTeam, float& ours) const;
 	void UpdateDefenceTasks();
 	// Every 15s: count known enemy mexes each scout (and raider) movement type can reach from our base without
 	// crossing threat it couldn't take, divided by the number of enemy players: the mex bonus of each quota

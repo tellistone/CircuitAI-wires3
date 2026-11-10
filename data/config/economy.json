@@ -103,11 +103,10 @@
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,
 
-	// Mobile constructor to static constructor (factory) metal pull ratio: how metal splits while it stalls (the
-	// constructors' stall latch). Pulls are build power on jobs (mex and pylon jobs left out while mex_max >= 1), the
-	// deciding unit's own included. A constructor may start new spending while constructors pull at most ms_pull x
-	// the factories; a factory waits 3 s while factories x ms_pull pull more than the constructors (unless no
-	// constructor spends at all). Higher = more metal to constructors, lower = more to factories.
+	// Mobile constructor to static constructor (factory) metal pull ratio, read while metal stalls (the constructors'
+	// stall latch): a factory waits 3 s while factories, it included, x ms_pull pull more than the constructors
+	// (unless no constructor spends at all). Pulls are build power on jobs (mex and pylon jobs left out while
+	// mex_max >= 1). Higher = factories give way sooner. Constructors hold all new spending in a stall regardless.
 	// [[<value>, <start_mex_percent>], [<value>, <end_mex_percent>]]: mex percent = our mexes (queued jobs included)
 	// / all metal spots on the map, linear between points and flat beyond the ends
 	"ms_pull": [[2.0, 0.0], [0.45, 0.20], [0.99, 0.90]],
@@ -116,9 +115,9 @@
 	// points and clamped at the ends; [] = off. A missing key uses the defaults shown.
 	// ms_pull_income: x = metal income without reclaim (mex + overdrive + constructor share), from the start
 	"ms_pull_income": [[30, 1.0], [160, 0.7]],
-	// ms_pull_army: x = known enemy mobile threat per enemy team / our army threat (commanders on neither side), from
-	// <since> seconds of game time and while any enemy army is known (else 1). Enemies out of radar and LOS fade
-	// as behaviour.json quota.enemy_half_life says
+	// ms_pull_army: x = metal value of the known enemy mobile army per enemy team / our army's metal value (no
+	// constructors or commanders on either side), from <since> seconds of game time and while any enemy army is known
+	// (else 1). Enemies out of radar and LOS fade as behaviour.json quota.enemy_half_life says
 	"ms_pull_army": {
 		"since": 300,
 		"curve": [[0.5, 1.3], [2.0, 0.7]]

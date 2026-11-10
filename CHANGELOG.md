@@ -261,6 +261,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Constructors freeze in every stall again** (reverts that part of #108). In a metal stall a constructor within
+  `ms_pull` x the factory pull no longer starts new spending: constructors hold all new spending in any stall, as
+  before #108, and the flee-turret skip is back to its old test. The factory side of #108 stays.
+
+- **ms_pull_army compares metal value** (`economy.json`). Its x is now the known enemy mobile army's metal value per
+  enemy team over our army's metal value, constructors and commanders left out on both sides, hidden enemies fading
+  as before. It was the two armies' threat, which weights units by `thr_mod` (artillery and bombers at 0 counted as
+  nothing on either side) and by health and damage, so a big army of light units could read smaller than a few
+  enemy heavies. The `MS_PULL` log line shows both metal values. The threat floor still compares threat.
+
 - **Anti-heavy units leave the army while a heavy is around.** Anti-heavy hunting used to switch on for good at the
   first sighting of any enemy heavy (the enemy cost only drops when we see it die), and units already in the army
   never left it. Now it follows sightings: while an enemy heavy has been in radar or LOS within the last 10 s, new
