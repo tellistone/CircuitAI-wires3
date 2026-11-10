@@ -67,7 +67,8 @@ public:
 	IFighterTask* EnqueueDefend(IFighterTask::FightType check, IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
 	// Power an attack-bound group gathers at base before it leaves: max(quota.attack, enemy threat / allies)
-	float GetAttackGatherPower() const;
+	// quota.attack_merge.base_gather: metal value of the known enemy army (as GetEnemyArmyRatio) per ally alive
+	float GetAttackGatherMetal() const;
 	// Attack group rank: more attack power, ties broken by the lower leader id. A strict order, so groups that each
 	// walk to a higher-ranked one (reinforcing, quota.attack_merge.idle_merge) end at one group per movement class
 	static bool IsRankedAbove(float power, const CCircuitUnit* leader, float otherPower, const CCircuitUnit* otherLeader);
@@ -220,10 +221,7 @@ public:
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
 	void DiceBigGun();
-	// Known enemy mobile threat (no commanders) per enemy team, enemies out of radar and LOS fading by half every
-	// quota.enemy_half_life (EnemyManager::GetMobileThreatNoCommFaded). Walks all known enemies
-	float GetEnemyThreatPerTeam() const;
-	// economy.ms_pull_army: metal value of the known enemy army (EnemyManager::GetMobileCostNoCommFaded, faded as
+	// economy.ms_pull_army and quota.attack_threat_floor: metal value of the known enemy army (EnemyManager::GetMobileCostNoCommFaded, faded as
 	// quota.enemy_half_life) per enemy team over our army's (no constructors or commanders on either side); negative
 	// while no enemy army is known. Writes the two values to enemyPerTeam and ours
 	float GetEnemyArmyRatio(float& enemyPerTeam, float& ours) const;
@@ -521,7 +519,6 @@ private:
 
 	std::set<CCircuitUnit*> army;
 	float armyCost;
-	float armyThreat;  // our army's threat (CCircuitDef::GetThreat, as the enemy's mobile threat counts it; no builders, so no commanders)
 	struct SCapturedUnit {
 		int controllerId;  // our unit that captured it
 		float cost;

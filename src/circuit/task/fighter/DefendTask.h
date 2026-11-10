@@ -27,12 +27,17 @@ public:
 
 	void SetPosition(const springai::AIFloat3& pos) { position = pos; }
 	void SetMaxPower(float power) { maxPower = power * powerMod; }
+	// Also gather up to this metal value of units before promoting (base gather: the enemy army per ally); 0 = none
+	void SetMaxCost(float cost) { maxCost = cost * powerMod; }
 //	void SetWantedTarget(CEnemyInfo* enemy) { SetTarget(enemy); }
 
 	FightType GetPromote() const { return promote; }
 
 protected:
 	float GetMaxPower() const { return maxPower; }
+	float GetMaxCost() const { return maxCost; }
+	float GetAttackCost() const { return attackCost; }
+	bool IsGathered() const { return (attackPower >= maxPower) && (attackCost >= maxCost); }
 
 private:
 	virtual void Merge(ISquadTask* task) override;
@@ -47,6 +52,8 @@ private:
 	FightType check;
 	FightType promote;
 	float maxPower;
+	float maxCost = 0.f;
+	float attackCost = 0.f;  // metal value of the units in the group
 };
 
 } // namespace circuit

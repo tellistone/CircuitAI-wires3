@@ -397,27 +397,6 @@ void CEnemyManager::GarbageEnemy(CEnemyUnit* enemy)
 	++enemyIterator;
 }
 
-float CEnemyManager::GetMobileThreatNoCommFaded(int frame, float halfLife) const
-{
-	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));
-	float threat = 0.f;
-	for (const auto& kv : enemyUnits) {
-		const CEnemyUnit* e = kv.second;
-		const CCircuitDef* cdef = e->GetCircuitDef();
-		// The units AddEnemyCost counts as mobile (seen in LOS once, so their type is known), commanders left out
-		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsEnemyRoleAny(commMask) || !e->IsKnown(frame)) {
-			continue;
-		}
-		float weight = 1.f;
-		const int lastSeen = e->GetLastSeen();  // -1 while in radar or LOS
-		if ((halfLife > 0.f) && !e->IsInRadarOrLOS() && (lastSeen >= 0)) {
-			weight = std::exp2(-(frame - lastSeen) / halfLife);
-		}
-		threat += cdef->GetThreat() * weight;
-	}
-	return threat * initThrMod.inMobile;
-}
-
 float CEnemyManager::GetMobileCostNoCommFaded(int frame, float halfLife) const
 {
 	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));
@@ -440,47 +419,48 @@ float CEnemyManager::GetMobileCostNoCommFaded(int frame, float halfLife) const
 	return cost;
 }
 
-std::string CEnemyManager::GetMobileThreatReport(int frame, float halfLife) const
+std::string CEnemyManager::GetMobileCostReport(int frame, float halfLife) const
 {
 	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));
-	struct SType { int count = 0; int hidden = 0; float threat = 0.f; };
+	struct SType { int count = 0; int hidden = 0; float cost = 0.f; };
 	std::map<const CCircuitDef*, SType> types;
 	float inView = 0.f, hidden = 0.f, hiddenRaw = 0.f;
 	int numView = 0, numHidden = 0;
 	for (const auto& kv : enemyUnits) {
 		const CEnemyUnit* e = kv.second;
 		const CCircuitDef* cdef = e->GetCircuitDef();
-		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsEnemyRoleAny(commMask) || !e->IsKnown(frame)
-			|| (cdef->GetThreat() <= 0.f))
+		// The enemies GetMobileCostNoCommFaded counts
+		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsBuilder() || cdef->IsEnemyRoleAny(commMask)
+			|| !e->IsKnown(frame))
 		{
 			continue;
 		}
-		const float raw = cdef->GetThreat() * initThrMod.inMobile;
+		const float raw = e->GetCost();
 		const int lastSeen = e->GetLastSeen();
 		const bool isHidden = !e->IsInRadarOrLOS() && (lastSeen >= 0);
-		const float threat = (isHidden && (halfLife > 0.f)) ? raw * std::exp2(-(frame - lastSeen) / halfLife) : raw;
+		const float cost = (isHidden && (halfLife > 0.f)) ? raw * std::exp2(-(frame - lastSeen) / halfLife) : raw;
 		SType& t = types[cdef];
 		++t.count;
-		t.threat += threat;
+		t.cost += cost;
 		if (isHidden) {
 			++t.hidden;
-			hidden += threat;
+			hidden += cost;
 			hiddenRaw += raw;
 			++numHidden;
 		} else {
-			inView += threat;
+			inView += cost;
 			++numView;
 		}
 	}
 	std::vector<std::pair<const CCircuitDef*, SType>> top(types.begin(), types.end());
-	std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second.threat > b.second.threat; });
-	std::string msg = utils::float_to_string(inView, "in view %.1f") + utils::int_to_string(numView, " (%i)")
-			+ utils::float_to_string(hidden, ", hidden %.1f") + utils::int_to_string(numHidden, " (%i")
-			+ utils::float_to_string(hiddenRaw, ", %.1f unfaded)") + "; top:";
+	std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second.cost > b.second.cost; });
+	std::string msg = utils::float_to_string(inView, "in view %.0f m") + utils::int_to_string(numView, " (%i)")
+			+ utils::float_to_string(hidden, ", hidden %.0f m") + utils::int_to_string(numHidden, " (%i")
+			+ utils::float_to_string(hiddenRaw, ", %.0f unfaded)") + "; top:";
 	for (size_t i = 0; (i < top.size()) && (i < 6); ++i) {
 		const SType& t = top[i].second;
 		msg += " " + std::string(top[i].first->GetDef()->GetName()) + utils::int_to_string(t.count, " %ix")
-				+ utils::float_to_string(t.threat, " %.1f");
+				+ utils::float_to_string(t.cost, " %.0f");
 		if (t.hidden > 0) {
 			msg += utils::int_to_string(t.hidden, " (%i hidden)");
 		}

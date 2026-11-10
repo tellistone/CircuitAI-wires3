@@ -82,16 +82,15 @@ public:
 	float GetMobileThreatNoComm() const {
 		return std::max(mobileThreat - GetEnemyThreat(ROLE_TYPE(COMM)) * initThrMod.inMobile, 0.f);
 	}
-	// As GetMobileThreatNoComm, summed over the enemies we know of now: one in radar or LOS counts in full, one out of
-	// both fades by half every halfLife frames since it was last seen (halfLife <= 0: no fading). Enemies seen
-	// dying or forgotten (20 min unseen) don't count. Walks all known enemies: call it about once a second at most
-	float GetMobileThreatNoCommFaded(int frame, float halfLife) const;
-	// Metal value of the same enemies, constructors left out too (as our army has none): what economy.ms_pull_army
-	// compares; faded as GetMobileThreatNoCommFaded
+	// Metal value of the known enemy army: mobile units, commanders (enemy role COMM) and constructors left out (as our
+	// army has neither), summed over the enemies we know of now. One in radar or LOS counts in full, one out of both
+	// fades by half every halfLife frames since it was last seen (halfLife <= 0: no fading). Enemies seen dying or
+	// forgotten (20 min unseen) don't count. Used by economy.ms_pull_army, quota.attack_threat_floor, the base gather
+	// size and resign. Walks all known enemies: call it about once a second at most
 	float GetMobileCostNoCommFaded(int frame, float halfLife) const;
 	// Log text for the same sum: its part from enemies in radar or LOS and from hidden ones (with their unfaded total),
 	// and the enemy types that carry most of it
-	std::string GetMobileThreatReport(int frame, float halfLife) const;
+	std::string GetMobileCostReport(int frame, float halfLife) const;
 	float GetStaticThreat() const { return staticThreat; }
 	float GetEnemyThreat() const { return mobileThreat + staticThreat; }
 	bool IsAirValid() const { return GetEnemyThreat(ROLE_TYPE(AA)) <= maxAAThreat; }

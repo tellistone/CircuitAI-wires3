@@ -67,7 +67,6 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		, defenceIdx(0)
 		, scoutIdx(0)
 		, armyCost(0.f)
-		, armyThreat(0.f)
 		, isAttackThreatFloor(false)
 		, enemyHalfLife(0.f)
 		, attackThreatFloorLogFrame(0)
@@ -1228,9 +1227,10 @@ IFighterTask* CMilitaryManager::EnqueueDefend(IFighterTask::FightType check, IFi
 	return task;
 }
 
-float CMilitaryManager::GetAttackGatherPower() const
+float CMilitaryManager::GetAttackGatherMetal() const
 {
-	return std::max(minAttackers, circuit->GetEnemyManager()->GetEnemyThreat() / circuit->GetAllyTeam()->GetAliveSize());
+	return circuit->GetEnemyManager()->GetMobileCostNoCommFaded(circuit->GetLastFrame(), enemyHalfLife)
+			/ std::max(circuit->GetAllyTeam()->GetAliveSize(), 1);
 }
 
 bool CMilitaryManager::IsRankedAbove(float power, const CCircuitUnit* leader, float otherPower,
@@ -1524,7 +1524,10 @@ void CMilitaryManager::UpdateRally(SRally& rally)
 IFighterTask* CMilitaryManager::EnqueueAttackBound(CCircuitUnit* unit)
 {
 	if (attackBaseGather) {
-		return EnqueueDefend(IFighterTask::FightType::ATTACK, GetAttackGatherPower());
+		// Gathers until it has quota.attack power and the metal value of the known enemy army per ally
+		CDefendTask* task = static_cast<CDefendTask*>(EnqueueDefend(IFighterTask::FightType::ATTACK, minAttackers));
+		task->SetMaxCost(GetAttackGatherMetal());
+		return task;
 	}
 	// No gathering at base: reinforce the rally host, else the nearest compatible group, else start a group
 	IFighterTask* task = EnqueueReinforce(unit, 0.f);
@@ -2669,14 +2672,6 @@ void CMilitaryManager::DiceBigGun()
 	bigGunDef = candidates[choice].cdef;
 }
 
-float CMilitaryManager::GetEnemyThreatPerTeam() const
-{
-	// Known enemy mobile threat (thr_mod.mobile applied) shared over the enemy teams, against our own army (allies'
-	// armies don't count: each AI judges its own). Commanders count on neither side
-	return circuit->GetEnemyManager()->GetMobileThreatNoCommFaded(circuit->GetLastFrame(), enemyHalfLife)
-			/ std::max(circuit->GetEnemyTeamSize(), 1);
-}
-
 float CMilitaryManager::GetEnemyArmyRatio(float& enemyPerTeam, float& ours) const
 {
 	enemyPerTeam = circuit->GetEnemyManager()->GetMobileCostNoCommFaded(circuit->GetLastFrame(), enemyHalfLife)
@@ -3057,24 +3052,14 @@ void CMilitaryManager::UpdateResign()
 	const int mexCount = metalMgr->GetMexCount();
 	const int spotCount = metalMgr->GetSpots().size();
 
-	// Army against army, commanders left out on both sides (a levelled commander dwarfs any unit; builders have no
-	// threat). Ours: the finished army (no commander, no builders). Theirs: every live enemy seen in LOS
-	float ourThreat = 0.f;
-	for (const CCircuitUnit* unit : army) {
-		ourThreat += unit->GetCircuitDef()->GetThreat();
-	}
-	float enemyThreat = 0.f;
-	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
-		const CEnemyUnit* enemy = kv.second;
-		const CCircuitDef* edef = enemy->GetCircuitDef();
-		if (!enemy->IsDead() && (edef != nullptr) && enemy->IsKnown(frame) && edef->IsMobile() && !edef->IsRoleComm()) {
-			enemyThreat += edef->GetThreat();
-		}
-	}
+	// Army against army by metal value, commanders and constructors left out on both sides (a levelled commander
+	// dwarfs any unit). Ours: the finished army. Theirs: every live mobile enemy seen in LOS, not faded
+	const float ourMetal = armyCost;
+	const float enemyMetal = circuit->GetEnemyManager()->GetMobileCostNoCommFaded(frame, 0.f);
 
 	// No army left reads lost whatever we have seen of theirs (their artillery or bombers may never show)
 	const bool isLost = (mexCount < resign.mexShare * spotCount)
-			&& ((ourThreat <= 0.f) || (enemyThreat > resign.threatMult * ourThreat));
+			&& ((ourMetal <= 0.f) || (enemyMetal > resign.threatMult * ourMetal));
 	if (!isLost) {
 		if (resignSince >= 0) {
 			circuit->LOG("RESIGN: no longer reads lost (frame %i)", frame);
@@ -3084,8 +3069,8 @@ void CMilitaryManager::UpdateResign()
 	}
 	if (resignSince < 0) {
 		resignSince = frame;
-		circuit->LOG("RESIGN: reads lost (frame %i): mexes %i / %i spots, army threat %.1f vs enemy %.1f",
-				frame, mexCount, spotCount, ourThreat, enemyThreat);
+		circuit->LOG("RESIGN: reads lost (frame %i): mexes %i / %i spots, army metal %.0f vs enemy %.0f",
+				frame, mexCount, spotCount, ourMetal, enemyMetal);
 	}
 	// It must read lost on every check for resign.holdFrames: a trade or a raid can look lost for a moment
 	if (frame - resignSince >= resign.holdFrames) {
@@ -3133,23 +3118,23 @@ void CMilitaryManager::AddArmyCost(CCircuitUnit* unit)
 {
 	AddResponse(unit);
 	armyCost += unit->GetCircuitDef()->GetCostM();
-	armyThreat += unit->GetCircuitDef()->GetThreat();
 }
 
 void CMilitaryManager::DelArmyCost(CCircuitUnit* unit)
 {
 	DelResponse(unit);
 	armyCost = std::max(armyCost - unit->GetCircuitDef()->GetCostM(), .0f);
-	armyThreat = std::max(armyThreat - unit->GetCircuitDef()->GetThreat(), .0f);
 }
 
 void CMilitaryManager::UpdateAttackThreatFloor()
 {
-	const float enemyPerTeam = GetEnemyThreatPerTeam();
+	// Metal value of the known enemy mobile army per enemy team against our army's, as economy.ms_pull_army
+	float enemyPerTeam = 0.f, ours = 0.f;
+	GetEnemyArmyRatio(enemyPerTeam, ours);
 	const bool wasFloor = isAttackThreatFloor;
-	if (armyThreat < attackThreatFloor.on * enemyPerTeam) {
+	if (ours < attackThreatFloor.on * enemyPerTeam) {
 		isAttackThreatFloor = true;
-	} else if (armyThreat >= attackThreatFloor.off * enemyPerTeam) {
+	} else if (ours >= attackThreatFloor.off * enemyPerTeam) {
 		isAttackThreatFloor = false;
 	}  // else: keep, so the floor doesn't flip on every unit made or lost
 	const bool isSwitch = (isAttackThreatFloor != wasFloor);
@@ -3157,45 +3142,45 @@ void CMilitaryManager::UpdateAttackThreatFloor()
 	const int frame = circuit->GetLastFrame();
 	if (isSwitch || (frame >= attackThreatFloorLogFrame)) {
 		attackThreatFloorLogFrame = frame + FRAMES_PER_SEC * 30;
-		circuit->LOG("THREAT FLOOR %s%s: army %.1f vs enemy %.1f per team (%.2f; on below %.2f, off from %.2f)",
-				isAttackThreatFloor ? "on" : "off", isSwitch ? " (switched)" : "", armyThreat, enemyPerTeam,
-				(enemyPerTeam > 0.f) ? armyThreat / enemyPerTeam : 0.f, attackThreatFloor.on, attackThreatFloor.off);
-		// Where the two numbers come from: our army by type (threat, as compared, and power, pwr_mod's view), and the
-		// known enemies split into seen now and hidden (fading), all enemy teams together
-		struct SType { int count = 0; float threat = 0.f; };
+		circuit->LOG("THREAT FLOOR %s%s: army %.0f vs enemy %.0f metal per team (%.2f; on below %.2f, off from %.2f)",
+				isAttackThreatFloor ? "on" : "off", isSwitch ? " (switched)" : "", ours, enemyPerTeam,
+				(enemyPerTeam > 0.f) ? ours / enemyPerTeam : 0.f, attackThreatFloor.on, attackThreatFloor.off);
+		// Where the two numbers come from: our army by type (metal, as compared; power, pwr_mod's view, for reference),
+		// and the known enemies split into seen now and hidden (fading), all enemy teams together
+		struct SType { int count = 0; float cost = 0.f; };
 		std::map<const CCircuitDef*, SType> types;
 		float armyPower = 0.f;
 		for (CCircuitUnit* unit : army) {
 			const CCircuitDef* cdef = unit->GetCircuitDef();
 			SType& t = types[cdef];
 			++t.count;
-			t.threat += cdef->GetThreat();
+			t.cost += cdef->GetCostM();
 			armyPower += cdef->GetPower();
 		}
 		std::vector<std::pair<const CCircuitDef*, SType>> top(types.begin(), types.end());
-		std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second.threat > b.second.threat; });
-		std::string ours = utils::int_to_string(army.size(), "%i units") + utils::float_to_string(armyPower, ", power %.1f")
+		std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second.cost > b.second.cost; });
+		std::string msg = utils::int_to_string(army.size(), "%i units") + utils::float_to_string(armyPower, ", power %.1f")
 				+ "; top:";
 		for (size_t i = 0; (i < top.size()) && (i < 6); ++i) {
-			ours += " " + std::string(top[i].first->GetDef()->GetName()) + utils::int_to_string(top[i].second.count, " %ix")
-					+ utils::float_to_string(top[i].second.threat, " %.1f");
+			msg += " " + std::string(top[i].first->GetDef()->GetName()) + utils::int_to_string(top[i].second.count, " %ix")
+					+ utils::float_to_string(top[i].second.cost, " %.0f");
 		}
-		circuit->LOG("THREAT FLOOR ours: %s", ours.c_str());
-		circuit->LOG("THREAT FLOOR enemy: %s", circuit->GetEnemyManager()->GetMobileThreatReport(frame, enemyHalfLife).c_str());
+		circuit->LOG("THREAT FLOOR ours: %s", msg.c_str());
+		circuit->LOG("THREAT FLOOR enemy: %s", circuit->GetEnemyManager()->GetMobileCostReport(frame, enemyHalfLife).c_str());
 	}
 	if (isSwitch) {
 		// Public chat (Game_sendTextMessage only runs "/" commands, as for the resign), with the numbers behind the
-		// switch: enemy threat per team and our army's (as compared above), and the economy's mobile:static metal pull
+		// switch: enemy metal per team and our army's (as compared above), and the economy's mobile:static metal pull
 		// with its army factor (economy.ms_pull_army; off before its since or with no enemy army known)
 		const CEconomyManager* economyMgr = circuit->GetEconomyManager();
-		const std::string msg = std::string("/say <CircuitAI> ") + (isAttackThreatFloor ? "Defending" : "Attacking")
-				+ " | enemy threat: " + utils::float_to_string(enemyPerTeam, "%.0f")
-				+ " | our threat: " + utils::float_to_string(armyThreat, "%.0f")
+		const std::string chat = std::string("/say <CircuitAI> ") + (isAttackThreatFloor ? "Defending" : "Attacking")
+				+ " | enemy metal: " + utils::float_to_string(enemyPerTeam, "%.0f")
+				+ " | our metal: " + utils::float_to_string(ours, "%.0f")
 				+ " | ms_pull: " + utils::float_to_string(economyMgr->GetPullMtoS(), "%.2f")
 				+ ((economyMgr->GetPullMtoSArmyRatio() >= 0.f)
 					? " (army x" + utils::float_to_string(economyMgr->GetPullMtoSArmyMult(), "%.2f") + ")"
 					: std::string(" (army off)"));
-		circuit->GetGame()->SendTextMessage(msg.c_str(), 0);
+		circuit->GetGame()->SendTextMessage(chat.c_str(), 0);
 	}
 }
 

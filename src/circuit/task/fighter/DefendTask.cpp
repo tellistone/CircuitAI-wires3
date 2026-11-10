@@ -48,13 +48,14 @@ CDefendTask::~CDefendTask()
 
 bool CDefendTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	return (attackPower < maxPower) && (static_cast<CDefendTask*>(unit->GetTask())->GetPromote() == promote);
+	return !IsGathered() && (static_cast<CDefendTask*>(unit->GetTask())->GetPromote() == promote);
 }
 
 void CDefendTask::AssignTo(CCircuitUnit* unit)
 {
 	ISquadTask::AssignTo(unit);
 	CCircuitDef* cdef = unit->GetCircuitDef();
+	attackCost += cdef->GetCostM();
 	highestRange = std::max(highestRange, cdef->GetLosRadius());
 
 	if (cdef->IsRoleSupport() && (leader != unit)) {
@@ -76,6 +77,7 @@ void CDefendTask::AssignTo(CCircuitUnit* unit)
 void CDefendTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	ISquadTask::RemoveAssignee(unit);
+	attackCost = std::max(attackCost - unit->GetCircuitDef()->GetCostM(), 0.f);
 	if (leader == nullptr) {
 		manager->AbortTask(this);
 	}
@@ -105,7 +107,7 @@ void CDefendTask::Update()
 	if (updCount % 32 == 1) {
 		CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 		IFighterTask* task = nullptr;
-		if (attackPower >= maxPower) {
+		if (IsGathered()) {
 			task = militaryMgr->EnqueueTask(promote);  // big enough: leave as a new group
 		} else if (!militaryMgr->GetTasks(check).empty()) {
 			// Attack-bound groups reinforce the nearest army they can join; with none, leave as a small group
@@ -208,8 +210,11 @@ void CDefendTask::Merge(ISquadTask* task)
 		unit->SetTask(this);
 	}
 	units.insert(rookies.begin(), rookies.end());
-	maxPower = std::max(maxPower, static_cast<CDefendTask*>(task)->GetMaxPower());
+	CDefendTask* other = static_cast<CDefendTask*>(task);
+	maxPower = std::max(maxPower, other->GetMaxPower());
+	maxCost = std::max(maxCost, other->GetMaxCost());
 	attackPower += task->GetAttackPower();
+	attackCost += other->GetAttackCost();
 	areaPower += task->GetAreaPower();
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
 	shields.insert(sh.begin(), sh.end());

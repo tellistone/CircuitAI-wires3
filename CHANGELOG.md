@@ -269,7 +269,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   enemy team over our army's metal value, constructors and commanders left out on both sides, hidden enemies fading
   as before. It was the two armies' threat, which weights units by `thr_mod` (artillery and bombers at 0 counted as
   nothing on either side) and by health and damage, so a big army of light units could read smaller than a few
-  enemy heavies. The `MS_PULL` log line shows both metal values. The threat floor still compares threat.
+  enemy heavies. The `MS_PULL` log line shows both metal values.
+
+- **The threat floor, resign and base gather compare metal value too** (`behaviour.json`; the keys keep their names).
+  - `quota.attack_threat_floor`: our army's metal value against the known enemy mobile army's per enemy team (faded,
+    no commanders or constructors), the same two numbers as `ms_pull_army`. The `THREAT FLOOR` log lines and the
+    Defending / Attacking chat line show metal (`enemy metal: X | our metal: Y`), with the types carrying most of it.
+  - `resign.threat`: the game reads lost when the enemy army seen alive is worth more than this x our army's metal
+    (enemy constructors no longer count). The `RESIGN` log line shows both.
+  - `quota.attack_merge.base_gather` (when `true`): the army at base gathers until it has `quota.attack` power and the
+    known enemy mobile army's metal value per ally. It was power against the enemy's total threat, statics and
+    commanders included.
 
 - **Anti-heavy units leave the army while a heavy is around.** Anti-heavy hunting used to switch on for good at the
   first sighting of any enemy heavy (the enemy cost only drops when we see it die), and units already in the army
