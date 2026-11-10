@@ -39,6 +39,14 @@
 			"morph": [30.0, 900]  // [<min avg metal income>, <earliest second>]: morph one finished energygeo at a time into energyheavygeo; income -1 = never
 		},
 
+		// Built behind the base, as far from the enemy as allowed, instead of at the nearest mex spot.
+		// "<energy_def>": {"min": <min distance from base>, "max": <max distance from base>, "clear": <no own building this near>, "clear_cost": <buildings cheaper than this don't count, default 150>}
+		// Rear spots are tried in a fan behind the base (90 deg either side); none safe and free = not built for now
+		"rear": {
+			"energyfusion": {"min": 0, "max": 1200},
+			"energysingu": {"min": 700, "max": 1800, "clear": 700}  // singularity blast radius is 640
+		},
+
 		"link_inc": 16.0,  // minimum metal-income for energy linking
 		"pylon": ["energypylon", "energysolar", "energywind"]
 	},

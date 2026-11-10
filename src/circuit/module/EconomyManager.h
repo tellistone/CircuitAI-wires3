@@ -156,6 +156,9 @@ public:
 	// Nearest free geothermal vent for cdef (a geo def) that is safe and,
 	// with a unit, reachable by it; -RgtVector if none
 	springai::AIFloat3 FindGeoSpot(CCircuitDef* cdef, const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	// Rear spot for a def listed in economy.energy.rear: behind our base, as far from the enemy as the
+	// min/max distance from the base and the clear radius allow; safe and, with a unit, reachable. -RgtVector if none
+	springai::AIFloat3 FindRearPos(CCircuitDef* cdef, CCircuitUnit* unit);
 	// Known geothermal vents (refreshed at most once a minute; vents are added as they are seen, never removed)
 	const std::vector<springai::AIFloat3>& GetGeoSpots();
 
@@ -320,6 +323,13 @@ private:
 	std::set<CCircuitUnit*> geoMorphees;  // finished geothermals that can morph
 	CCircuitUnit* geoMorphing;  // geothermal being morphed (one at a time)
 	int geoMorphStart;
+	struct SRearInfo {
+		float minDist;  // min distance from the base position
+		float maxDist;  // max distance from the base position
+		float clear;  // no own building within this radius (blast radius); 0 = no check
+		float clearCost;  // buildings cheaper than this don't count for clear
+	};
+	std::map<CCircuitDef*, SRearInfo> rearInfos;  // economy.energy.rear: energy built behind the base
 };
 
 } // namespace circuit
