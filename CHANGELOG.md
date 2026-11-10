@@ -16,10 +16,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - Each cluster rolls the first time it is defended and again every `prevent_reroll[0]` s (default 180); the new
     count replaces the old. A roll never cancels a tower already queued or built.
   - Sightings: every 5 s, an enemy in LOS that can hit ground (air included, no cost floor) within mex LOS of one of
-    our finished mexes marks that cluster for a roll right away, at most once per `prevent_reroll[1]` s (default 30)
-    since its last roll. Half-taken clusters count. A sighting's roll can only raise the count, so being raided never
-    lowers a cluster's defence. After a sighting of a flying enemy the first tower is `prevent_air` (shipped
-    `turretmissile`, which hits air and ground; `""` = off).
+    our finished mexes makes that cluster roll and defend at that mex right away, at most once per
+    `prevent_reroll[1]` s (default 30) since its last roll or sighting. Half-taken clusters count, but below 10 m/s a
+    sighting there never starts porc mode (the mex chain only porcs half-taken clusters above 10 m/s). A sighting's
+    roll can only raise the count, so being raided never lowers a cluster's defence. After a sighting of a flying
+    enemy the first tower is `prevent_air` (shipped `turretmissile`, which hits air and ground; `""` = off).
   - Shipped: `prevent` 0.5, `prevent_reroll` [180, 30], `prevent_map` [[32, 1.5], [128, 0.7]], `prevent_mex`
     [[0.2, 0.6], [0.5, 1.2]] (starting numbers to tune). `PREVENT` log line on each roll with every factor.
   - Preventive towers are now queued each on its own rather than as a chain. A count of 2+ would otherwise have been
@@ -442,7 +443,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Defence cost refunds go to the right defence point.** `CDefenceMatrix::GetDefPoint` never kept the nearest
   distance it found (`tmp = dist` instead of `dist = tmp`), so in a cluster with several defence points a destroyed or
   cancelled tower's metal could be refunded to the wrong point: one point then looked defended while it wasn't, and
-  another would rebuild a tower it already had.
+  another would rebuild a tower it already had. A destroyed tower's refund also no longer takes a point's cost below 0
+  (`GetDefPoint` falls back to the cluster's first point even when that point holds less metal).
 
 - **ms_pull splits metal again** (`economy.json` `ms_pull` and its multipliers). It had little or no effect:
   - A factory's own build power was left out of the factory pull when it picked its next unit (it had just left its
