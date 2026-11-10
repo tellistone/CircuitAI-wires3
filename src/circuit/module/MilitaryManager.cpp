@@ -3158,6 +3158,28 @@ void CMilitaryManager::UpdateAttackThreatFloor()
 		circuit->LOG("THREAT FLOOR %s%s: army %.1f vs enemy %.1f per team (%.2f; on below %.2f, off from %.2f)",
 				isAttackThreatFloor ? "on" : "off", isSwitch ? " (switched)" : "", armyThreat, enemyPerTeam,
 				(enemyPerTeam > 0.f) ? armyThreat / enemyPerTeam : 0.f, attackThreatFloor.on, attackThreatFloor.off);
+		// Where the two numbers come from: our army by type (threat, as compared, and power, pwr_mod's view), and the
+		// known enemies split into seen now and hidden (fading), all enemy teams together
+		struct SType { int count = 0; float threat = 0.f; };
+		std::map<const CCircuitDef*, SType> types;
+		float armyPower = 0.f;
+		for (CCircuitUnit* unit : army) {
+			const CCircuitDef* cdef = unit->GetCircuitDef();
+			SType& t = types[cdef];
+			++t.count;
+			t.threat += cdef->GetThreat();
+			armyPower += cdef->GetPower();
+		}
+		std::vector<std::pair<const CCircuitDef*, SType>> top(types.begin(), types.end());
+		std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second.threat > b.second.threat; });
+		std::string ours = utils::int_to_string(army.size(), "%i units") + utils::float_to_string(armyPower, ", power %.1f")
+				+ "; top:";
+		for (size_t i = 0; (i < top.size()) && (i < 6); ++i) {
+			ours += " " + std::string(top[i].first->GetDef()->GetName()) + utils::int_to_string(top[i].second.count, " %ix")
+					+ utils::float_to_string(top[i].second.threat, " %.1f");
+		}
+		circuit->LOG("THREAT FLOOR ours: %s", ours.c_str());
+		circuit->LOG("THREAT FLOOR enemy: %s", circuit->GetEnemyManager()->GetMobileThreatReport(frame, enemyHalfLife).c_str());
 	}
 	if (isSwitch) {
 		// Public chat (Game_sendTextMessage only runs "/" commands, as for the resign), with the numbers behind the

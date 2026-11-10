@@ -24,6 +24,8 @@
 #include "Cheats.h"
 
 #include <algorithm>
+#include <map>
+#include <cmath>
 #include <limits>
 
 namespace circuit {
@@ -414,6 +416,54 @@ float CEnemyManager::GetMobileThreatNoCommFaded(int frame, float halfLife) const
 		threat += cdef->GetThreat() * weight;
 	}
 	return threat * initThrMod.inMobile;
+}
+
+std::string CEnemyManager::GetMobileThreatReport(int frame, float halfLife) const
+{
+	const CCircuitDef::RoleM commMask = CCircuitDef::GetMask(ROLE_TYPE(COMM));
+	struct SType { int count = 0; int hidden = 0; float threat = 0.f; };
+	std::map<const CCircuitDef*, SType> types;
+	float inView = 0.f, hidden = 0.f, hiddenRaw = 0.f;
+	int numView = 0, numHidden = 0;
+	for (const auto& kv : enemyUnits) {
+		const CEnemyUnit* e = kv.second;
+		const CCircuitDef* cdef = e->GetCircuitDef();
+		if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsEnemyRoleAny(commMask) || !e->IsKnown(frame)
+			|| (cdef->GetThreat() <= 0.f))
+		{
+			continue;
+		}
+		const float raw = cdef->GetThreat() * initThrMod.inMobile;
+		const int lastSeen = e->GetLastSeen();
+		const bool isHidden = !e->IsInRadarOrLOS() && (lastSeen >= 0);
+		const float threat = (isHidden && (halfLife > 0.f)) ? raw * std::exp2(-(frame - lastSeen) / halfLife) : raw;
+		SType& t = types[cdef];
+		++t.count;
+		t.threat += threat;
+		if (isHidden) {
+			++t.hidden;
+			hidden += threat;
+			hiddenRaw += raw;
+			++numHidden;
+		} else {
+			inView += threat;
+			++numView;
+		}
+	}
+	std::vector<std::pair<const CCircuitDef*, SType>> top(types.begin(), types.end());
+	std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second.threat > b.second.threat; });
+	std::string msg = utils::float_to_string(inView, "in view %.1f") + utils::int_to_string(numView, " (%i)")
+			+ utils::float_to_string(hidden, ", hidden %.1f") + utils::int_to_string(numHidden, " (%i")
+			+ utils::float_to_string(hiddenRaw, ", %.1f unfaded)") + "; top:";
+	for (size_t i = 0; (i < top.size()) && (i < 6); ++i) {
+		const SType& t = top[i].second;
+		msg += " " + std::string(top[i].first->GetDef()->GetName()) + utils::int_to_string(t.count, " %ix")
+				+ utils::float_to_string(t.threat, " %.1f");
+		if (t.hidden > 0) {
+			msg += utils::int_to_string(t.hidden, " (%i hidden)");
+		}
+	}
+	return msg;
 }
 
 void CEnemyManager::AddEnemyCost(const CEnemyUnit* e)
