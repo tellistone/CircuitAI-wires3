@@ -21,7 +21,6 @@ CBEnergyTask::CBEnergyTask(ITaskManager* mgr, Priority priority,
 						   CCircuitDef* buildDef, const AIFloat3& position,
 						   float cost, float shake, int timeout)
 		: IBuilderTask(mgr, priority, buildDef, position, Type::BUILDER, BuildType::ENERGY, cost, shake, timeout)
-		, lastWanted(priority)
 {
 }
 
@@ -36,14 +35,12 @@ void CBEnergyTask::Update()
 		return;
 	}
 
-	// Same rule as when the job was queued (CEconomyManager::GetEnergyPriority): high build priority while short of
-	// energy, and a geothermal's own priority otherwise. Only on a change, so a raise from elsewhere is kept until then
+	// Same rule as when the job was queued (CEconomyManager::GetEnergyPriority). Nothing else changes an energy
+	// job's priority; ChangePriority only sends ZK a command when its build priority changes
 	const Priority wanted = manager->GetCircuit()->GetEconomyManager()->GetEnergyPriority(buildDef);
-	if (lastWanted == wanted) {
-		return;
+	if (wanted != priority) {
+		ChangePriority(wanted);
 	}
-	lastWanted = wanted;
-	ChangePriority(wanted);
 }
 
 void CBEnergyTask::Execute(CCircuitUnit* unit)

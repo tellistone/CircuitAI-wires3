@@ -370,15 +370,11 @@ void CEconomyManager::ReadConfig()
 		const Json::Value& geo = energy["geo"];
 		geoThreat = geo.get("threat", 1.0f).asFloat();
 		const std::string prio = geo.get("priority", "high").asString();
-		if (prio == "low") {
-			geoPriority = IUnitTask::Priority::LOW;
-		} else if (prio == "normal") {
-			geoPriority = IUnitTask::Priority::NORMAL;
-		} else {
-			if (prio != "high") {
-				circuit->LOG("CONFIG %s: economy.energy.geo.priority '%s' is not low/normal/high, using high", cfgName.c_str(), prio.c_str());
-			}
-			geoPriority = IUnitTask::Priority::HIGH;
+		geoPriority = (prio == "low") ? IUnitTask::Priority::LOW
+				: (prio == "normal") ? IUnitTask::Priority::NORMAL
+				: IUnitTask::Priority::HIGH;
+		if ((prio != "low") && (prio != "normal") && (prio != "high")) {
+			circuit->LOG("CONFIG %s: economy.energy.geo.priority: unknown value '%s', using 'high'", cfgName.c_str(), prio.c_str());
 		}
 		const Json::Value& morph = geo["morph"];
 		geoMorphIncome = morph.get((unsigned)0, -1.f).asFloat();
@@ -1095,12 +1091,12 @@ IUnitTask::Priority CEconomyManager::GetEnergyPriority(const CCircuitDef* cdef)
 	if (IsEnergyShort()) {
 		return IUnitTask::Priority::HIGH;
 	}
-	// A geo is the cheapest energy per metal, so it may outrank normal jobs (factories, solars, defence that isn't
-	// urgent). Not in a metal stall: at ZK's high build priority it would take the scarce metal from the mex jobs
-	if (IsGeoDef(cdef) && (geoPriority > IUnitTask::Priority::NORMAL) && !IsMetalStall()) {
-		return geoPriority;
+	if (!IsGeoDef(cdef)) {
+		return IUnitTask::Priority::NORMAL;
 	}
-	return (IsGeoDef(cdef) && (geoPriority < IUnitTask::Priority::NORMAL)) ? geoPriority : IUnitTask::Priority::NORMAL;
+	// A geo is the cheapest energy per metal, so it may outrank normal jobs. Not in a metal stall: at ZK's high
+	// build priority it would take the scarce metal from the mex jobs (the latch's hysteresis keeps this from flickering)
+	return ((geoPriority == IUnitTask::Priority::HIGH) && IsMetalStall()) ? IUnitTask::Priority::NORMAL : geoPriority;
 }
 
 float CEconomyManager::GetReclaimRank(float sqDist, float metalLeft) const

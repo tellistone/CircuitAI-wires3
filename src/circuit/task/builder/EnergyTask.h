@@ -23,8 +23,6 @@ public:
 
 protected:
 	virtual void Execute(CCircuitUnit* unit) override;
-
-	Priority lastWanted;  // CEconomyManager::GetEnergyPriority at the last update (or the queued priority)
 };
 
 } // namespace circuit
