@@ -560,6 +560,20 @@ bool IFighterTask::IsSquadThreat(CCircuitUnit* unit)
 			&& static_cast<IFighterTask*>(task)->IsSquadThreat();
 }
 
+bool IFighterTask::IsCloakRoute(CCircuitUnit* unit) const
+{
+	return unit->GetUnit()->IsCloaked();
+}
+
+bool IFighterTask::IsCloakRouteUnit(CCircuitUnit* unit)
+{
+	IUnitTask* task = unit->GetTask();
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)) {
+		return static_cast<IFighterTask*>(task)->IsCloakRoute(unit);
+	}
+	return unit->GetUnit()->IsCloaked();
+}
+
 float IFighterTask::GetTaskThreatAt(CCircuitUnit* unit, const AIFloat3& pos) const
 {
 	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();

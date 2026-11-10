@@ -289,6 +289,13 @@ const CMilitaryManager::SAntiHeavyCfg& CAntiHeavyTask::GetCfg() const
 	return manager->GetCircuit()->GetMilitaryManager()->GetAntiHeavyCfg();
 }
 
+bool CAntiHeavyTask::IsCloakRoute(CCircuitUnit* unit) const
+{
+	// Without cloak_route the cloak is only extra safety: a decloak (firing, splash, a close enemy, low energy)
+	// must not leave the unit on a route planned past enemy weapons
+	return unit->GetCircuitDef()->IsAttrCloakRoute() && IFighterTask::IsCloakRoute(unit);
+}
+
 float CAntiHeavyTask::GetPathThreatMod() const
 {
 	if ((leader != nullptr) && leader->GetCircuitDef()->IsAbleToFly()) {

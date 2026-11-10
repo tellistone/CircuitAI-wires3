@@ -196,6 +196,10 @@
 	"flee_ally_radius": 500.0  // see flee_ally_threat
 	// Per unit type, in its "behaviour" entry: "antiheavy_max_group": <n> = at most n units of that type in one
 	// anti-heavy squad (squads only grow by merging; a merge that would go over is skipped); missing or 0 = no limit
+	// "attribute": ["cloak_route"] = while cloaked it routes on the decloak layer with no path_threat cap, and its
+	// stand-off spot isn't checked against threat (the old behaviour: it trusts the cloak). Without it (default) a
+	// cloaked anti-heavy (Ultimatum, Widow, ...) routes, picks its stand-off spot and flees on the normal threat map
+	// like the others, so a decloak (firing, splash, a close enemy, energy stall) doesn't leave it deep in enemy fire
 },
 
 "artillery": {

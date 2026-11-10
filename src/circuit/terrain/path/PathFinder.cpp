@@ -421,7 +421,7 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap*
 		threatFun = [threatArray](int index) {
 			return 2.f * threatArray[index];
 		};
-	} else if (allowCloak && unit->GetUnit()->IsCloaked()) {
+	} else if (allowCloak && IFighterTask::IsCloakRouteUnit(unit)) {  // cloaked, and its task trusts the cloak
 		threatArray = threatMap->GetCloakThreatArray();
 		moveFun = [&sectors, maxSlope](int index) {
 			return sectors[index].maxSlope / maxSlope;

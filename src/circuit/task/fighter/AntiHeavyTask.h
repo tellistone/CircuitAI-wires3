@@ -29,6 +29,8 @@ public:
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 protected:
+	// Cloaked units route like the rest (threat map, path_threat cap) unless their type has the cloak_route attribute
+	virtual bool IsCloakRoute(CCircuitUnit* unit) const override;
 	virtual float GetPathThreatMod() const override;  // antiheavy.path_threat; < 0 = no cap (old behaviour, and aircraft)
 	// The squad flee doesn't run from the heavies it hunts (IsQuarry); reloading units step away from the target
 	// on their own (Scoot)

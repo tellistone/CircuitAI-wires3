@@ -48,6 +48,7 @@ CCircuitDef::AttrName CCircuitDef::attrNames = {
 	{"guarded",     CCircuitDef::AttrType::GUARDED},
 	{"raid_target", CCircuitDef::AttrType::RAID_TARGET},
 	{"no_formation", CCircuitDef::AttrType::NO_FORM},
+	{"cloak_route",  CCircuitDef::AttrType::CLOAK_ROUTE},
 };
 CCircuitDef::FireName CCircuitDef::fireNames = {
 	{"hold",   CCircuitDef::FireType::HOLD},
