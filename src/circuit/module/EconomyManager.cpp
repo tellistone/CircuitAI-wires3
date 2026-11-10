@@ -1329,15 +1329,15 @@ AIFloat3 CEconomyManager::FindRearPos(CCircuitDef* cdef, SRearInfo& info, CCircu
 			? ((frontDir.x > 0.f) ? UNIT_FACING_EAST : UNIT_FACING_WEST)
 			: ((frontDir.z > 0.f) ? UNIT_FACING_SOUTH : UNIT_FACING_NORTH);
 
-	// A site behind the base (within 90 deg of straight back), min..max from it, the builder can reach.
-	// FindBuildSite adds the rest: block_map spacing (fusion and singu: their blast radius, against our, allies'
-	// and reserved buildings), buildable and safe, nearest to where it starts searching
+	// A site behind the base (within 90 deg of straight back), min..max from it, out of allies' zones (as the
+	// mex-spot placement), the builder can reach. FindBuildSite adds the rest: block_map spacing (fusion and
+	// singu: their blast radius, against our, allies' and reserved buildings), buildable and safe, nearest first
 	const float sqMin = SQUARE(info.minDist);
 	const float sqMax = SQUARE(info.maxDist);
 	auto isRear = [terrainMgr, unit, &basePos, &frontDir, sqMin, sqMax](const AIFloat3& p) {
 		const AIFloat3 d = p - basePos;
 		const float sqDist = d.SqLength2D();
-		return (sqDist >= sqMin) && (sqDist <= sqMax) && (d.dot2D(frontDir) <= 0.f)
+		return (sqDist >= sqMin) && (sqDist <= sqMax) && (d.dot2D(frontDir) <= 0.f) && !terrainMgr->IsZoneAlly(p)
 			&& ((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance()));
 	};
 
@@ -1364,14 +1364,17 @@ AIFloat3 CEconomyManager::FindRearPos(CCircuitDef* cdef, SRearInfo& info, CCircu
 			}
 		}
 		std::sort(nodes.begin(), nodes.end(), [](const SNode& a, const SNode& b) { return a.back > b.back; });
-		const size_t MAX_NODES = 8;  // bounded: each is a FindBuildSite over the link range
+		const size_t MAX_NODES = 8;  // bounded: each is a FindBuildSite over 1.5 x the link range
 		for (size_t i = 0; i < std::min(nodes.size(), MAX_NODES); ++i) {
 			const SNode& node = nodes[i];
 			const float sqLink = SQUARE(node.link);
 			CTerrainManager::TerrainPredicate isLinked = [&isRear, &node, sqLink](const AIFloat3& p) {
 				return (p.SqDistance2D(node.pos) < sqLink) && isRear(p);
 			};
-			const AIFloat3 pos = terrainMgr->FindBuildSite(cdef, node.pos, node.link, info.facing, isLinked);
+			// Search from half the link range behind the node: nearest first then means behind it, not beside the base
+			AIFloat3 from = node.pos - frontDir * (node.link * 0.5f);
+			CTerrainManager::CorrectPosition(from);
+			const AIFloat3 pos = terrainMgr->FindBuildSite(cdef, from, node.link * 1.5f, info.facing, isLinked);
 			if (utils::is_valid(pos)) {
 				return pos;
 			}
