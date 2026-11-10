@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Scout share floor** (`quota.scout_share`, 0..1, default 0 = off; shipped 0.25). This share of our
+  scout-attribute units of a movement type (scouting or not, player-controlled ones left out), rounded down, may
+  scout even when `scout` + bonus is lower. `scout_max` caps it too: scouting raiders don't fill the raider floor, so
+  an uncapped high share would keep factories building raiders that all go scouting (share 1 with `scout_max` 0 is
+  read as 0.9). Like the rest of the scout quota it is checked when a unit gets a new task, so it never pulls a raider
+  off a raid. With 0.25: 4 Glaives -> at least 1 scouting, 8 -> 2.
+
 - **Fractional preventive defences** (`porcupine` block in `build_chain.json`). `prevent` (towers a cluster gets
   outside porc mode) can be a fraction: count = its whole part, plus 1 with the odds of its fraction, so 0.5 = a 50%
   chance of 1 tower and 1.5 = 1 tower and a 50% chance of a 2nd. Before, it was read as a whole number and 0.5 meant 0.
@@ -439,6 +446,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   When waiting for a builder, its own build range is used instead of the nano tower's.
 
 ### Fixed
+
+- **Scout slots are per movement type and only for raiders that scout.** The scout quota (`quota.scout` + mex bonus)
+  is worked out per movement type, but a raider with the scout attribute compared it with every scout task, so Ticks
+  (`mine` role), Fleas, Darts, Swifts, Blastwings and scouts of other movement types used up its slots. It now counts
+  only units of its own movement type that scout through the attribute. A `QUOTA scout|raider bonus` log line shows
+  each bonus (reachable enemy mexes, enemy players, `*_map_size` multiplier / all players, `*_per_mex`) when it changes.
 
 - **Defence cost refunds go to the right defence point.** `CDefenceMatrix::GetDefPoint` never kept the nearest
   distance it found (`tmp = dist` instead of `dist = tmp`), so in a cluster with several defence points a destroyed or
