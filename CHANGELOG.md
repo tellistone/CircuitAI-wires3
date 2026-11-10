@@ -7,6 +7,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Anti-heavy cloak routes** (per-unit attribute `cloak_route`, default off). Cloaked anti-heavies (Ultimatum,
+  Widow) used to route on the decloak layer with no `antiheavy.path_threat` cap and an unchecked stand-off spot,
+  so they walked through enemy weapon range and died once they decloaked. Without the attribute they now route,
+  pick stand-off spots and flee on the normal threat map like Lance; with it, the old behaviour. Mines (Skuttle)
+  always keep cloak routes. Under water without sonar stealth cloak doesn't count (one `IsCloakRoute` check, also
+  used by artillery and scouts).
+  - Once a heavy is seen, anti-heavies also leave support tasks (Phantom, Lance), and leave a fighting group when a
+    heavy they can shoot is within their weapon range; a heavy already in weapon range (x1.2 for the current target)
+    is attacked from where the squad stands, whatever escorts it.
+  - Squad units keep their own `fire_state` (default fire at will); cloakers are no longer held to return fire.
+
 - **Scout share floor** (`quota.scout_share`, 0..1, default 0 = off; shipped 0.25). This share of our
   scout-attribute units of a movement type (scouting or not, player-controlled ones left out), rounded down, may
   scout even when `scout` + bonus is lower. `scout_max` caps it too: scouting raiders don't fill the raider floor, so
