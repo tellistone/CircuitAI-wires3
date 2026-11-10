@@ -382,6 +382,25 @@ void CEconomyManager::ReadConfig()
 		geoMorphFrame = morph.get((unsigned)1, 0).asInt() * FRAMES_PER_SEC;
 	}
 
+	// Energy built behind the base, away from the enemy, instead of at the nearest mex spot
+	const Json::Value& rear = energy["rear"];
+	for (const std::string& name : rear.getMemberNames()) {
+		CCircuitDef* cdef = circuit->GetCircuitDef(name.c_str());
+		if (cdef == nullptr) {
+			circuit->LOG("CONFIG %s: has unknown UnitDef '%s'", cfgName.c_str(), name.c_str());
+			continue;
+		}
+		const Json::Value& r = rear[name];
+		SRearInfo info;
+		info.minDist = std::max(r.get("min", 0.f).asFloat(), 0.f);
+		info.maxDist = std::max(r.get("max", 1200.f).asFloat(), info.minDist + SQUARE_SIZE * 16);
+		info.isLink = r.get("link", true).asBool();
+		info.pos = -RgtVector;
+		info.facing = UNIT_COMMAND_BUILD_NO_FACING;
+		info.nextFrame = 0;
+		rearInfos[cdef] = info;
+	}
+
 	std::vector<std::pair<std::string, int>> engies;
 	std::string type = circuit->GetTerrainManager()->IsWaterMap() ? "water" : "land";
 	const Json::Value& surf = energy[type];
@@ -1198,11 +1217,19 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	bool isLastHope = isEnergyStalling;
 	for (const auto& engy : energyDefs.GetInfos()) {  // sorted by high-tech first
 		// Geothermal is handled above; skipping it here means its limit or a missing vent never blocks other energy
-		if (!engy.cdef->IsAvailable(frame) || IsGeoDef(engy.cdef) || !terrainMgr->CanBeBuiltAtSafe(engy.cdef, position)) {
+		// Rear energy is built behind the base, so the builder's own spot doesn't matter: it needs a free rear spot
+		const bool isRear = IsRearDef(engy.cdef);
+		if (!engy.cdef->IsAvailable(frame) || IsGeoDef(engy.cdef)
+			|| (!isRear && !terrainMgr->CanBeBuiltAtSafe(engy.cdef, position)))
+		{
 			continue;
 		}
 
 		if (engy.cdef->GetCount() < engy.data.limit) {
+			// No rear spot now: skip to cheaper energy instead of stopping all energy (or building it at the front)
+			if (isRear && !utils::is_valid(GetRearPos(engy.cdef, unit))) {
+				continue;
+			}
 			isLastHope = false;
 			if (canQueue(engy.cdef)) {
 				bestDef = engy.cdef;
@@ -1216,7 +1243,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		} else if (!isEnergyStalling) {
 			bestDef = nullptr;
 			break;
-		} else if (hopeDef == nullptr) {
+		} else if ((hopeDef == nullptr) && (!isRear || utils::is_valid(GetRearPos(engy.cdef, unit)))) {
 			hopeDef = engy.cdef;
 			isLastHope = isLastHope && canQueue(hopeDef);
 		}
@@ -1232,7 +1259,9 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// Find place to build
 	AIFloat3 buildPos = -RgtVector;
 	CMetalManager* metalMgr = circuit->GetMetalManager();
-	if (!bestDef->IsRoleSupport()) {
+	if (IsRearDef(bestDef)) {
+		buildPos = GetRearPos(bestDef, unit);  // checked in the loop, so valid
+	} else if (!bestDef->IsRoleSupport()) {
 		const CMetalData::Metals& spots = metalMgr->GetSpots();
 		CMetalData::PointPredicate predicate = [&spots, terrainMgr](int index) {
 			return !terrainMgr->IsZoneAlly(spots[index].position);
@@ -1261,10 +1290,125 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	if (utils::is_valid(buildPos) && terrainMgr->CanBeBuiltAtSafe(bestDef, buildPos) &&
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
-		return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 16.0f, true);
+		auto it = rearInfos.find(bestDef);
+		if (it == rearInfos.end()) {
+			return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 16.0f, true);
+		}
+		// Rear: build exactly on the open site found, reserved now (like mex and geo) so the next search skips it
+		IBuilderTask* task = builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
+		task->SetFacing(it->second.facing);  // before SetBuildPos: the blocker uses it
+		task->SetBuildPos(buildPos);
+		it->second.nextFrame = 0;
+		return task;
 	}
 
 	return nullptr;
+}
+
+AIFloat3 CEconomyManager::GetRearPos(CCircuitDef* cdef, CCircuitUnit* unit)
+{
+	SRearInfo& info = rearInfos.find(cdef)->second;
+	const int frame = circuit->GetLastFrame();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	// Cached: searched again every 10 s and right after a job takes the site. Unsafe meanwhile (enemies behind
+	// the base): cheaper energy for now, no search on every call while raiders move about
+	if (frame >= info.nextFrame) {
+		info.pos = FindRearPos(cdef, info, unit);
+		info.nextFrame = frame + FRAMES_PER_SEC * 10;
+	}
+	if (!utils::is_valid(info.pos) || !terrainMgr->CanBeBuiltAtSafe(cdef, info.pos)
+		|| ((unit != nullptr) && !terrainMgr->CanReachAtSafe(unit, info.pos, unit->GetCircuitDef()->GetBuildDistance())))
+	{
+		return -RgtVector;
+	}
+	return info.pos;
+}
+
+AIFloat3 CEconomyManager::FindRearPos(CCircuitDef* cdef, SRearInfo& info, CCircuitUnit* unit)
+{
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CSetupManager* setupMgr = circuit->GetSetupManager();
+	const AIFloat3& basePos = setupMgr->GetBasePos();
+	if (!utils::is_valid(basePos)) {
+		return -RgtVector;
+	}
+	// Front = start->lane: both fixed, so the rear doesn't swing as enemies are seen, nor flip when the base
+	// moves to a surviving forward factory (the lane is mex_front's front too). No lane yet: towards the seen
+	// enemies, else the map centre
+	const AIFloat3& startPos = utils::is_valid(setupMgr->GetStartPos()) ? setupMgr->GetStartPos() : basePos;
+	AIFloat3 front = setupMgr->GetLanePos() - startPos;
+	if (!utils::is_valid(setupMgr->GetLanePos()) || (front.SqLength2D() < SQUARE(SQUARE_SIZE * 8))) {
+		front = circuit->GetEnemyManager()->GetEnemyPos() - startPos;
+		if (front.SqLength2D() < SQUARE(SQUARE_SIZE * 8)) {
+			front = CTerrainManager::GetTerrainCenter() - startPos;
+		}
+	}
+	front.y = 0.f;
+	const float frontLen = front.Length2D();
+	const AIFloat3 frontDir = (frontLen > 1.f) ? front / frontLen : ZeroVector;
+	// Face the front, as IBuilderTask::FindBuildSite faces the map centre: build chain "front" offsets
+	// (anti-air on fusion and singu) then point at the enemy
+	info.facing = (std::fabs(frontDir.x) > std::fabs(frontDir.z))
+			? ((frontDir.x > 0.f) ? UNIT_FACING_EAST : UNIT_FACING_WEST)
+			: ((frontDir.z > 0.f) ? UNIT_FACING_SOUTH : UNIT_FACING_NORTH);
+
+	// A site behind the base (within 90 deg of straight back), min..max from it, out of allies' zones (as the
+	// mex-spot placement), the builder can reach. FindBuildSite adds the rest: block_map spacing (fusion and
+	// singu: their blast radius, against our, allies' and reserved buildings), buildable and safe, nearest first
+	const float sqMin = SQUARE(info.minDist);
+	const float sqMax = SQUARE(info.maxDist);
+	auto isRear = [terrainMgr, unit, &basePos, &frontDir, sqMin, sqMax](const AIFloat3& p) {
+		const AIFloat3 d = p - basePos;
+		const float sqDist = d.SqLength2D();
+		return (sqDist >= sqMin) && (sqDist <= sqMax) && (d.dot2D(frontDir) <= 0.f) && !terrainMgr->IsZoneAlly(p)
+			&& ((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance()));
+	};
+
+	if (info.isLink) {
+		// Grid buildings (ours and allies', the grid is shared) a site behind the base could link to,
+		// rear-most first: the site nearest one of them, within link range, so the energy overdrives mexes
+		CEnergyGrid* grid = GetEnergyGrid();
+		const float ourRange = grid->GetPylonRange(cdef->GetId());
+		struct SNode { AIFloat3 pos; float link; float back; };
+		std::vector<SNode> nodes;
+		const int frame = circuit->GetLastFrame();
+		circuit->UpdateFriendlyUnits();
+		for (const auto& kv : circuit->GetFriendlyUnits()) {
+			CCircuitDef* udef = kv.second->GetCircuitDef();
+			if ((udef == nullptr) || !udef->IsPylon()) {
+				continue;
+			}
+			const AIFloat3& pos = kv.second->GetPos(frame);
+			const float link = ourRange + grid->GetPylonRange(udef->GetId());
+			const float back = -(pos - basePos).dot2D(frontDir);
+			const float dist = pos.distance2D(basePos);
+			if ((back > -link) && (dist > info.minDist - link) && (dist < info.maxDist + link)) {
+				nodes.push_back({pos, link, back});
+			}
+		}
+		std::sort(nodes.begin(), nodes.end(), [](const SNode& a, const SNode& b) { return a.back > b.back; });
+		const size_t MAX_NODES = 8;  // bounded: each is a FindBuildSite over 1.5 x the link range
+		for (size_t i = 0; i < std::min(nodes.size(), MAX_NODES); ++i) {
+			const SNode& node = nodes[i];
+			const float sqLink = SQUARE(node.link);
+			CTerrainManager::TerrainPredicate isLinked = [&isRear, &node, sqLink](const AIFloat3& p) {
+				return (p.SqDistance2D(node.pos) < sqLink) && isRear(p);
+			};
+			// Search from half the link range behind the node: nearest first then means behind it, not beside the base
+			AIFloat3 from = node.pos - frontDir * (node.link * 0.5f);
+			CTerrainManager::CorrectPosition(from);
+			const AIFloat3 pos = terrainMgr->FindBuildSite(cdef, from, node.link * 1.5f, info.facing, isLinked);
+			if (utils::is_valid(pos)) {
+				return pos;
+			}
+		}
+	}
+
+	// No link (or none possible): the site nearest the point straight back at max distance
+	AIFloat3 ideal = basePos - frontDir * info.maxDist;
+	CTerrainManager::CorrectPosition(ideal);
+	CTerrainManager::TerrainPredicate predicate = isRear;
+	return terrainMgr->FindBuildSite(cdef, ideal, info.maxDist, info.facing, predicate);
 }
 
 void CEconomyManager::UpdateGeoSpots()

@@ -162,6 +162,9 @@ public:
 	// Nearest free geothermal vent for cdef (a geo def) that is safe and,
 	// with a unit, reachable by it; -RgtVector if none
 	springai::AIFloat3 FindGeoSpot(CCircuitDef* cdef, const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	bool IsRearDef(CCircuitDef* cdef) const { return rearInfos.find(cdef) != rearInfos.end(); }
+	// Cached rear spot of a rear def (economy.energy.rear), if safe and, with a unit, reachable by it; -RgtVector if none
+	springai::AIFloat3 GetRearPos(CCircuitDef* cdef, CCircuitUnit* unit);
 	// Known geothermal vents (refreshed at most once a minute; vents are added as they are seen, never removed)
 	const std::vector<springai::AIFloat3>& GetGeoSpots();
 
@@ -328,6 +331,19 @@ private:
 	std::set<CCircuitUnit*> geoMorphees;  // finished geothermals that can morph
 	CCircuitUnit* geoMorphing;  // geothermal being morphed (one at a time)
 	int geoMorphStart;
+	struct SRearInfo {
+		float minDist;  // min distance from the base position
+		float maxDist;  // max distance from the base position
+		bool isLink;  // prefer spots whose pylon range touches our (or an ally's) grid
+		springai::AIFloat3 pos;  // cached site, -RgtVector = none
+		int facing;  // towards the front, for pos
+		int nextFrame;  // when to search again
+	};
+	std::map<CCircuitDef*, SRearInfo> rearInfos;  // economy.energy.rear: energy built behind the base
+	// Open site behind the base (away from start->lane), min..max from the base, safe and, with a unit, reachable
+	// by it: linked to the grid if possible, else nearest straight back at max distance; -RgtVector if none.
+	// Sets info.facing
+	springai::AIFloat3 FindRearPos(CCircuitDef* cdef, SRearInfo& info, CCircuitUnit* unit);
 };
 
 } // namespace circuit
