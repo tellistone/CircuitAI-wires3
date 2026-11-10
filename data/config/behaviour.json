@@ -45,6 +45,11 @@
 	"enemy_half_life": 180,  // seconds: the known enemy army's metal value (attack_threat_floor and base_gather here, economy.ms_pull_army) counts an enemy in radar or LOS in full, and one out of both at half for every this many seconds since it was last seen; enemies seen dying or 20 min unseen don't count; 0 = no fading
 
 	"raid_flee_share": 0.33,
+	// Raid view: raid and scout tasks (targets, escape, routes, raid and scout spots) see each enemy's ground and water threat x its type's raid_thr_mod, on top of thr_mod, and count it in group_count_power as thr_mod x raid_thr_mod (at most 1); air threat is the same.
+	// A unit's raid_thr_mod: its own "raid_thr_mod" in behaviour below, else this table's value for its main role (the first in its "role" list), else 1.0; 0.1..4. Raiders swarm and dodge slow skirmisher and assault shots, so these count for less to them.
+	// Allied AIs share one threat map: the AI that built it decides the multipliers for all. {} and no per-unit values = off (the raid view is then the plain view, bit for bit)
+	"raid_thr_role": {"skirmish": 0.25, "assault": 0.34},
+	"raid_attack_factor": true,  // our side of raid_thr_mod: an attack group judges an enemy raider or scout (any role in its list) outside the base defence radius with its strength x its units' raid_thr_mod (power-weighted, at most 1), so a skirmisher group needs about 4x the strength to go after raiders in the field; inside the radius, and on the route approach and escape, full strength; false = off
 	// Raid rally: when a recently seen pack of enemy raiders (mobile, armed enemies of the raider role within 800 elmos of each other, threat summed) has more threat than match x our strongest raid group's raw strength,
 	// that group (the host) keeps raiding while every raid group that moves like it (any ground raider within attack_merge.speed_ratio, no worse a mover) and is within 30 s of travel chases the nearest bigger such group and merges into it.
 	// Raid groups may then hold mixed raider types and grow up to (1 + margin) x match x the pack. A joiner with no safe route raids normally; it never waits. Missing block or match 0 = off
@@ -358,7 +363,8 @@
 		"retreat": 0.25,  // assaults need to assault
 		"since": 240,
 		"pwr_mod": 0.6,
-		"thr_mod": 0.55
+		"thr_mod": 0.55,
+		"raid_thr_mod": 1.0  // always hits (lightning): not on Zero-K's raider swarm list, so no raid view discount
 	},
 	"cloakarty": {
 		// threat 2.43 at full health (raw, before pwr_mod/thr_mod)
@@ -448,7 +454,8 @@
 		"attribute": ["no_strafe", "prio_repair"],
 		"retreat": 0.65,
 		"pwr_mod": 1.00,
-		"thr_mod": 1.00
+		"thr_mod": 1.00,
+		"raid_thr_mod": 1.0  // a gunship: ground raiders can't fight back or swarm it, so no raid view discount
 	},
 	"gunshipassault": {
 		// threat 26.54 at full health (raw, before pwr_mod/thr_mod)
@@ -838,7 +845,8 @@
 		"attribute": ["prio_repair"],
 		"pwr_mod": 0.6,
 		"thr_mod": 0.6,
-		"retreat": 0.4
+		"retreat": 0.4,
+		"raid_thr_mod": 1.0  // always hits (beam, slows): not on Zero-K's raider swarm list, so no raid view discount
 	},
 	"jumpassault": {
 		// threat 36.91 at full health (raw, before pwr_mod/thr_mod)
@@ -846,7 +854,8 @@
 		"attribute": ["melee", "siege", "ret_fight", "prio_repair"],
 		"retreat": 0.4,
 		"pwr_mod": 0.55,
-		"thr_mod": 0.55
+		"thr_mod": 0.55,
+		"raid_thr_mod": 1.0  // always hits (beam): not on Zero-K's raider swarm list, so no raid view discount
 	},
 	"jumpsumo": {
 		// threat 44.84 at full health (raw, before pwr_mod/thr_mod)
@@ -917,7 +926,8 @@
 		"limit": 12,
 		"reload": 4.0,
 		"pwr_mod": 0.9,
-		"thr_mod": 0.7
+		"thr_mod": 0.7,
+		"raid_thr_mod": 1.0  // homing missiles: not on Zero-K's raider swarm list, so no raid view discount
 	},
 	"hoverassault": {
 		// threat 12.22 at full health (raw, before pwr_mod/thr_mod)
@@ -1150,7 +1160,8 @@
 	},
 	"shipassault": {
 		// threat 45.18 at full health (raw, before pwr_mod/thr_mod)
-		"role": ["assault"]
+		"role": ["assault"],
+		"raid_thr_mod": 1.0  // not on Zero-K's raider swarm list, so no raid view discount
 	},
 	"shiparty": {
 		// threat 25.28 at full health (raw, before pwr_mod/thr_mod)

@@ -7,6 +7,36 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Raid view of the threat map** (per-unit `raid_thr_mod` and `quota.raid_thr_role`, 0.1..4, default 1 = off;
+  shipped `{"skirmish": 0.25, "assault": 0.34}`). Raiders swarm and dodge slow skirmisher and assault shots, but raid
+  and scout tasks judged those units at full threat, as if they were standing still. Raid and scout tasks now read
+  their own surface and amphibious threat layers, where each enemy's threat (thr_mod included)
+  is x its type's `raid_thr_mod`, and it counts in `group_count_power` as thr_mod x raid_thr_mod (at most 1). A unit's
+  value: its own `raid_thr_mod`, else `quota.raid_thr_role` for its main role (the first in its `role` list), else 1.
+  Air threat is the same on both views.
+  - One choice of view for every read: target picks, escape, firing spots, path caps and routes, raid and scout
+    spots, contested clusters and the raider/scout mex bonus all follow the task (`IUnitTask::IsRaidView`), so a raid
+    group never picks on one map and routes on the other. Two reads stay plain on purpose: the shared
+    `SetThreatType` layer (mex and build checks read it) and the builders' wall in contested clusters. The hit
+    retreat check of a raider follows the raid view.
+  - Only types with a multiplier are drawn a second time, as the difference they make, and one pass after drawing
+    builds the raid layers. With every multiplier at 1 the raid layers equal the plain ones bit for bit. Memory: two
+    more layers per buffer (four with `group_count_power`).
+  - Shipped per-unit `raid_thr_mod: 1.0` for the units Zero-K's own tactical AI doesn't let raiders swarm: Knight,
+    Jack, Moderator, Scalpel (weapons that always hit), Nimbus (a gunship) and Siren.
+  - Allied AIs share one threat map: the AI that built it decides the multipliers for all (as with `thr_mod`).
+
+- **Attack groups vs raiders** (`quota.raid_attack_factor`, default and shipped `true`). The same value on our side:
+  an attack group judges an enemy raider or scout (any role in its list) outside the base defence radius with its
+  pick and keep strength x its units' `raid_thr_mod` (power-weighted, at most 1). A skirmisher group needs about 4x
+  the strength to go after raiders in the field. Inside the base defence radius, and on the route approach and the
+  escape, it judges at full strength, so a raider target is never picked more loosely than it is kept.
+
+- **Raid tuning logs**. Once a minute: `THREAT raid view` (how many enemies have a multiplier, the cell where the
+  raid view differs most from the plain one, and the threat map update time) and `RAID` (raid group escapes, and the
+  damage our raid and scout units took by attacker type, next to that type's `raid_thr_mod`). With `DEBUG_VIS`, a
+  SURFACE RAID window joins the threat map windows.
+
 - **`economy.chat` switch for the test chat lines** (default `false`). The threat floor's `Defending` / `Attacking` line
   and the `ms_pull` line (`economy.ms_pull_chat`) only post with `"chat": true`. The resign line `I am defeated.` and
   the start-up line are unchanged.

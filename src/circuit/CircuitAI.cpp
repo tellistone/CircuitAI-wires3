@@ -263,7 +263,8 @@ int CCircuitAI::HandleGameEvent(int topic, const void* data)
 			CEnemyInfo* attacker = GetEnemyInfo(evt->attacker);
 			CCircuitUnit* unit = GetTeamUnit(evt->unit);
 			ret = (unit != nullptr)
-					? this->UnitDamaged(unit, attacker, evt->weaponDefId, AIFloat3(evt->dir_posF3))
+					? this->UnitDamaged(unit, attacker, evt->weaponDefId, AIFloat3(evt->dir_posF3),
+							evt->paralyzer ? 0.f : evt->damage)
 					: ERROR_UNIT_DAMAGED;
 			break;
 		}
@@ -994,7 +995,7 @@ int CCircuitAI::UnitMoveFailed(CCircuitUnit* unit)
 	return 0;  // signaling: OK
 }
 
-int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, AIFloat3 dir)
+int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, AIFloat3 dir, float damage)
 {
 	// FIXME: Doesn't work well with multi-shots (duck)
 //	if (lastFrame <= unit->GetDamagedFrame() + FRAMES_PER_SEC / 5) {
@@ -1004,6 +1005,11 @@ int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weapon
 
 	if ((attacker == nullptr) && (dir != ZeroVector) && IsValidWeaponDefId(weaponId)) {
 		CreateFakeEnemy(weaponId, unit->GetPos(lastFrame), dir);  // currently only for threatmap
+	}
+
+	// Before the modules: the hit may send the unit to another task
+	if (militaryManager != nullptr) {
+		militaryManager->AddRaidDamage(unit, attacker, damage);  // for tuning raid_thr_mod (RAID log)
 	}
 
 	for (auto& module : modules) {

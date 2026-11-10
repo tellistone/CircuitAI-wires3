@@ -124,7 +124,8 @@ private:
 	int UnitFinished(CCircuitUnit* unit);
 	int UnitIdle(CCircuitUnit* unit);
 	int UnitMoveFailed(CCircuitUnit* unit);
-	int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, springai::AIFloat3 dir);
+	// damage: health lost (0 for paralysis damage)
+	int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, springai::AIFloat3 dir, float damage);
 	int UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker);
 	int UnitGiven(ICoreUnit::Id unitId, int oldTeamId, int newTeamId);
 	int UnitCaptured(ICoreUnit::Id unitId, int oldTeamId, int newTeamId);

@@ -8,6 +8,7 @@
 #include "map/ThreatMap.h"
 #include "map/MapManager.h"
 #include "setup/SetupManager.h"
+#include "task/UnitTask.h"
 #include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
@@ -22,6 +23,8 @@
 
 //#undef NDEBUG
 #include <cassert>
+#include <chrono>
+#include <cmath>
 
 namespace circuit {
 
@@ -37,8 +40,8 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 		, countLogFrame(0)
 		, pThreatData(&threatData0)
 		, drawAirSquad(nullptr)
-		, drawSurfSquad(nullptr)
-		, drawAmphSquad(nullptr)
+		, drawPlain({nullptr, nullptr, nullptr, nullptr})
+		, drawRaid({nullptr, nullptr, nullptr, nullptr})
 		, isUpdating(false)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -70,16 +73,24 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 		data->amphThreat.resize(mapSize, THREAT_BASE);
 		data->cloakThreat.resize(mapSize, THREAT_BASE);
 		data->shield.resize(mapSize, 0.f);
+		// Raid view: always its own layers (the multipliers come from behaviour.json, read after this). With every
+		// multiplier at 1 they come out equal to surf and amph (FinishLayers)
+		data->raidSurf.resize(mapSize, THREAT_BASE);
+		data->raidAmph.resize(mapSize, THREAT_BASE);
 		if (isCounting) {  // else no squad layers of their own (SetReadPointers)
 			data->airSquad.resize(mapSize, THREAT_BASE);
 			data->surfSquad.resize(mapSize, THREAT_BASE);
 			data->amphSquad.resize(mapSize, THREAT_BASE);
+			data->raidSurfSquad.resize(mapSize, THREAT_BASE);
+			data->raidAmphSquad.resize(mapSize, THREAT_BASE);
 		}
 	}
 	SetReadPointers(threatData0);
 	drawAirThreat = threatData1.airThreat.data();
-	drawSurfThreat = threatData1.surfThreat.data();
-	drawAmphThreat = threatData1.amphThreat.data();
+	drawPlain.surf = threatData1.surfThreat.data();
+	drawPlain.amph = threatData1.amphThreat.data();
+	drawRaid.surf = threatData1.raidSurf.data();
+	drawRaid.amph = threatData1.raidAmph.data();
 	drawCloakThreat = threatData1.cloakThreat.data();
 	drawShieldArray = threatData1.shield.data();
 
@@ -207,10 +218,16 @@ float CThreatMap::GetAllThreatAt(const AIFloat3& position) const
 	return /*air + */land/* + water*/;
 }
 
+bool CThreatMap::IsRaidView(const CCircuitUnit* unit)
+{
+	const IUnitTask* task = unit->GetTask();
+	return (task != nullptr) && task->IsRaidView();
+}
+
 void CThreatMap::SetThreatType(CCircuitUnit* unit)
 {
 	assert(unit != nullptr);
-	threatArray = GetLayer(unit, false);
+	threatArray = GetLayer(unit, false, false);  // plain view: MetalManager, CanReachAtSafe etc read it unset
 }
 
 float CThreatMap::GetThreatAt(const AIFloat3& position) const
@@ -221,6 +238,11 @@ float CThreatMap::GetThreatAt(const AIFloat3& position) const
 float CThreatMap::GetThreatAt(CCircuitUnit* unit, const AIFloat3& position) const
 {
 	return GetLayer(unit, false)[PosToIndex(position)] - THREAT_BASE;
+}
+
+float CThreatMap::GetPlainThreatAt(CCircuitUnit* unit, const AIFloat3& position) const
+{
+	return GetLayer(unit, false, false)[PosToIndex(position)] - THREAT_BASE;
 }
 
 float CThreatMap::GetSquadThreatAt(CCircuitUnit* unit, const AIFloat3& position) const
@@ -241,18 +263,18 @@ float CThreatMap::GetSquadThreatExcl(CCircuitUnit* unit, const AIFloat3& positio
 	return isCounting ? rest * (GetLayer(unit, true)[index] - THREAT_BASE) / threat : rest;
 }
 
-float* CThreatMap::GetLayer(CCircuitUnit* unit, bool isSquad) const
+float* CThreatMap::GetLayer(CCircuitUnit* unit, bool isSquad, bool isRaidView) const
 {
 	assert(unit != nullptr);
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	if (cdef->IsAbleToFly()) {
-		return isSquad ? airSquad : airThreat;
+		return GetAirLayer(isSquad);
 	}
 //	if (unit->GetPos(circuit->GetLastFrame()).y < -SQUARE_SIZE * 5) {
 	if (cdef->IsAmphibious()) {
-		return isSquad ? amphSquad : amphThreat;
+		return GetAmphLayer(isRaidView, isSquad);
 	}
-	return isSquad ? surfSquad : surfThreat;
+	return GetSurfLayer(isRaidView, isSquad);
 }
 
 float CThreatMap::GetUnitThreat(CCircuitUnit* unit) const
@@ -298,7 +320,16 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 		AddEnemyAir(e, vsl, count);
 	}
 	if (cdef->HasAntiLand() || cdef->HasAntiWater()) {
-		cdef->IsAlwaysHit() ? AddEnemyAmphConst(e, vsl, count) : AddEnemyAmphGradient(e, vsl, count);
+		auto addAmph = cdef->IsAlwaysHit() ? &CThreatMap::AddEnemyAmphConst : &CThreatMap::AddEnemyAmphGradient;
+		(this->*addAmph)(e, vsl, e.threat, count, drawPlain);
+		// Raid view: only a type with a raid multiplier is drawn again, as the difference it makes
+		// (threat x (raid_thr_mod - 1), count weight raid - plain); FinishLayers adds the plain layers to it
+		const float raidMod = cdef->GetRaidThrMod();
+		if ((raidMod != 1.f) && (e.threat > 0.f)) {
+			const float raidCount = isCounting ? e.GetRaidCountWeight() - count : 0.f;
+			(this->*addAmph)(e, vsl, e.threat * (raidMod - 1.f), raidCount, drawRaid);
+			++raidModCount;
+		}
 	}
 	AddDecloaker(e);
 	// Shields: AddShields, once all enemies are known
@@ -306,9 +337,10 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 
 void CThreatMap::AddEnemyUnitAll(const SEnemyData& e)
 {
-	// Unknown type (radar blip): might be a constructor or eco unit, so it adds no unit count
+	// Unknown type (radar blip): might be a constructor or eco unit, so it adds no unit count. No raid multiplier
+	// either: the raid view gets it as the plain view does
 	AddEnemyAir(e);
-	AddEnemyAmphGradient(e);
+	AddEnemyAmphGradient(e, 0, e.threat, 0.f, drawPlain);
 	AddDecloaker(e);
 }
 
@@ -350,12 +382,17 @@ void CThreatMap::AddEnemyAir(const SEnemyData& e, const int slack, const float c
 	}
 }
 
-void CThreatMap::AddEnemyAmphConst(const SEnemyData& e, const int slack, const float count)
+void CThreatMap::AddEnemyAmphConst(const SEnemyData& e, const int slack, const float threat, const float count,
+		const SDrawLayers& layers)
 {
 	int posx, posz;
 	PosToXZ(e.pos, posx, posz);
 
-	const float threat = e.threat/* - THREAT_DECAY*/;
+	float* drawSurf = layers.surf;
+	float* drawAmph = layers.amph;
+	float* drawSurfCount = layers.surfSquad;
+	float* drawAmphCount = layers.amphSquad;
+	const bool isCount = (count != 0.f);  // squad layers only while isCounting: count is 0 otherwise
 	const int rangeLand = e.GetRange(CCircuitDef::ThreatType::LAND) + slack;
 	const int rangeLandSq = SQUARE(rangeLand);
 	const int rangeWater = e.GetRange(CCircuitDef::ThreatType::WATER) + slack;
@@ -378,28 +415,33 @@ void CThreatMap::AddEnemyAmphConst(const SEnemyData& e, const int slack, const f
 			bool isWaterThreat = (sum <= rangeWaterSq) && sector[index].isWater;
 			if (isWaterThreat || ((sum <= rangeLandSq) && (sector[index].position.y >= -SQUARE_SIZE * 5)))
 			{
-				drawAmphThreat[index] += threat;
-				if (count > 0.f) {
-					drawAmphSquad[index] += count;
+				drawAmph[index] += threat;
+				if (isCount) {
+					drawAmphCount[index] += count;
 				}
 			}
 			if (isWaterThreat || (sum <= rangeLandSq))
 			{
-				drawSurfThreat[index] += threat;
-				if (count > 0.f) {
-					drawSurfSquad[index] += count;
+				drawSurf[index] += threat;
+				if (isCount) {
+					drawSurfCount[index] += count;
 				}
 			}
 		}
 	}
 }
 
-void CThreatMap::AddEnemyAmphGradient(const SEnemyData& e, const int slack, const float count)
+void CThreatMap::AddEnemyAmphGradient(const SEnemyData& e, const int slack, const float threat, const float count,
+		const SDrawLayers& layers)
 {
 	int posx, posz;
 	PosToXZ(e.pos, posx, posz);
 
-	const float threat = e.threat/* - THREAT_DECAY*/;
+	float* drawSurf = layers.surf;
+	float* drawAmph = layers.amph;
+	float* drawSurfCount = layers.surfSquad;
+	float* drawAmphCount = layers.amphSquad;
+	const bool isCount = (count != 0.f);  // squad layers only while isCounting: count is 0 otherwise
 	const int rangeLand = e.GetRange(CCircuitDef::ThreatType::LAND) + slack;
 	const int rangeLandSq = SQUARE(rangeLand);
 	const int rangeWater = e.GetRange(CCircuitDef::ThreatType::WATER) + slack;
@@ -427,16 +469,16 @@ void CThreatMap::AddEnemyAmphGradient(const SEnemyData& e, const int slack, cons
 			bool isWaterThreat = (sum <= rangeWaterSq) && sector[index].isWater;
 			if (isWaterThreat || ((sum <= rangeLandSq) && (sector[index].position.y >= -SQUARE_SIZE * 5)))
 			{
-				drawAmphThreat[index] += heat;
-				if (count > 0.f) {
-					drawAmphSquad[index] += count;
+				drawAmph[index] += heat;
+				if (isCount) {
+					drawAmphCount[index] += count;
 				}
 			}
 			if (isWaterThreat || (sum <= rangeLandSq))
 			{
-				drawSurfThreat[index] += heat;
-				if (count > 0.f) {
-					drawSurfSquad[index] += count;
+				drawSurf[index] += heat;
+				if (isCount) {
+					drawSurfCount[index] += count;
 				}
 			}
 		}
@@ -581,10 +623,15 @@ void CThreatMap::Prepare(SThreatData& threatData)
 	std::fill(threatData.amphThreat.begin(), threatData.amphThreat.end(), THREAT_BASE);
 	std::fill(threatData.cloakThreat.begin(), threatData.cloakThreat.end(), THREAT_BASE);
 	std::fill(threatData.shield.begin(), threatData.shield.end(), 0.f);
+	// Raid layers hold differences while drawing (FinishLayers): 0, not THREAT_BASE
+	std::fill(threatData.raidSurf.begin(), threatData.raidSurf.end(), 0.f);
+	std::fill(threatData.raidAmph.begin(), threatData.raidAmph.end(), 0.f);
 
 	drawAirThreat = threatData.airThreat.data();
-	drawSurfThreat = threatData.surfThreat.data();
-	drawAmphThreat = threatData.amphThreat.data();
+	drawPlain.surf = threatData.surfThreat.data();
+	drawPlain.amph = threatData.amphThreat.data();
+	drawRaid.surf = threatData.raidSurf.data();
+	drawRaid.amph = threatData.raidAmph.data();
 	drawCloakThreat = threatData.cloakThreat.data();
 	drawShieldArray = threatData.shield.data();
 
@@ -592,36 +639,68 @@ void CThreatMap::Prepare(SThreatData& threatData)
 		std::fill(threatData.airSquad.begin(), threatData.airSquad.end(), 0.f);
 		std::fill(threatData.surfSquad.begin(), threatData.surfSquad.end(), 0.f);
 		std::fill(threatData.amphSquad.begin(), threatData.amphSquad.end(), 0.f);
+		std::fill(threatData.raidSurfSquad.begin(), threatData.raidSurfSquad.end(), 0.f);
+		std::fill(threatData.raidAmphSquad.begin(), threatData.raidAmphSquad.end(), 0.f);
 		drawAirSquad = threatData.airSquad.data();
-		drawSurfSquad = threatData.surfSquad.data();
-		drawAmphSquad = threatData.amphSquad.data();
+		drawPlain.surfSquad = threatData.surfSquad.data();
+		drawPlain.amphSquad = threatData.amphSquad.data();
+		drawRaid.surfSquad = threatData.raidSurfSquad.data();
+		drawRaid.amphSquad = threatData.raidAmphSquad.data();
 	}
 }
 
-void CThreatMap::ApplyCountPower(SThreatData& threatData)
+void CThreatMap::FinishLayers(SThreatData& threatData)
 {
+	// Squad layers held the enemy unit count: squad threat = threat x CountMod(count).
+	// Raid layers held the difference the enemies with a raid multiplier make, their squad layers the difference in
+	// the count: raid = plain + difference (at least THREAT_BASE: float drift), raid squad = raid x CountMod(count +
+	// count difference). Every multiplier at 1: the differences are all 0, and the raid layers equal the plain ones
+	// bit for bit (x + 0.f is x, and the squad formula is the same expression)
 	float maxCnt = 0.f;
-	auto apply = [this, &maxCnt](const FloatVec& threat, FloatVec& squad) {
+	auto countOnly = [this, &maxCnt](const FloatVec& threat, FloatVec& squad) {
 		for (size_t i = 0; i < squad.size(); ++i) {
-			maxCnt = std::max(maxCnt, squad[i]);
-			squad[i] = THREAT_BASE + (threat[i] - THREAT_BASE) * GetCountMod(squad[i]);
+			const float count = squad[i];
+			maxCnt = std::max(maxCnt, count);
+			squad[i] = THREAT_BASE + (threat[i] - THREAT_BASE) * GetCountMod(count);
 		}
 	};
-	apply(threatData.airThreat, threatData.airSquad);
-	apply(threatData.surfThreat, threatData.surfSquad);
-	apply(threatData.amphThreat, threatData.amphSquad);
-	maxCount = maxCnt;
+	auto withRaid = [this, &maxCnt](const FloatVec& threat, FloatVec& squad, FloatVec& raid, FloatVec& raidSquad) {
+		for (size_t i = 0; i < raid.size(); ++i) {
+			const float count = squad[i];  // read before it turns into squad threat
+			maxCnt = std::max(maxCnt, count);
+			squad[i] = THREAT_BASE + (threat[i] - THREAT_BASE) * GetCountMod(count);
+			raid[i] = std::max(threat[i] + raid[i], THREAT_BASE);
+			raidSquad[i] = THREAT_BASE + (raid[i] - THREAT_BASE) * GetCountMod(std::max(count + raidSquad[i], 0.f));
+		}
+	};
+	auto raidOnly = [](const FloatVec& threat, FloatVec& raid) {
+		for (size_t i = 0; i < raid.size(); ++i) {
+			raid[i] = std::max(threat[i] + raid[i], THREAT_BASE);
+		}
+	};
+	if (isCounting) {
+		countOnly(threatData.airThreat, threatData.airSquad);
+		withRaid(threatData.surfThreat, threatData.surfSquad, threatData.raidSurf, threatData.raidSurfSquad);
+		withRaid(threatData.amphThreat, threatData.amphSquad, threatData.raidAmph, threatData.raidAmphSquad);
+		maxCount = maxCnt;
+	} else {
+		raidOnly(threatData.surfThreat, threatData.raidSurf);
+		raidOnly(threatData.amphThreat, threatData.raidAmph);
+	}
 }
 
 void CThreatMap::Update()
 {
+	const auto startTime = std::chrono::steady_clock::now();
 	Prepare(*GetNextThreatData());
+	raidModCount = 0;
 
 	CEnemyManager* enemyMgr = manager->GetCircuit()->GetEnemyManager();
 
 	for (const SEnemyData& e : enemyMgr->GetHostileDatas()) {
 		AddEnemyUnit(e);
 	}
+	hostileCount = enemyMgr->GetHostileDatas().size();
 
 	for (const SEnemyData& e : enemyMgr->GetPeaceDatas()) {
 		AddDecloaker(e);
@@ -629,9 +708,12 @@ void CThreatMap::Update()
 
 	AddShields(enemyMgr->GetHostileDatas(), enemyMgr->GetPeaceDatas());
 
-	if (isCounting) {
-		ApplyCountPower(*GetNextThreatData());
-	}
+	FinishLayers(*GetNextThreatData());
+
+	const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - startTime).count();
+	updateMsSum += ms;
+	updateMsMax = std::max(updateMsMax, ms);
+	++updateNum;
 }
 
 void CThreatMap::Apply()
@@ -639,17 +721,50 @@ void CThreatMap::Apply()
 	SwapBuffers();
 	isUpdating = false;
 
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	if (isCounting && (frame >= countLogFrame + FRAMES_PER_SEC * 60)) {  // for tuning group_count_power
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	if (frame >= countLogFrame + FRAMES_PER_SEC * 60) {
 		countLogFrame = frame;
-		circuit->LOG("THREAT count: up to %.1f enemies can fire at one cell: squad threat up to x%.2f",
-				maxCount, GetCountMod(maxCount));
+		LogStats();
 	}
 
 #ifdef DEBUG_VIS
 	UpdateVis();
 #endif
+}
+
+void CThreatMap::LogStats()
+{
+	// For tuning quota.group_count_power and raid_thr_mod, once a minute
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (isCounting) {
+		circuit->LOG("THREAT count: up to %.1f enemies can fire at one cell: squad threat up to x%.2f",
+				maxCount, GetCountMod(maxCount));
+	}
+	// The cell where the raid view differs most from the plain one (the read layers: the update just applied)
+	int gapIdx = -1;
+	float maxGap = 0.f;
+	for (int i = 0; i < mapSize; ++i) {
+		const float gap = std::fabs(raidSurf[i] - surfThreat[i]);
+		if (gap > maxGap) {
+			maxGap = gap;
+			gapIdx = i;
+		}
+	}
+	const float avgMs = (updateNum > 0) ? updateMsSum / updateNum : 0.f;
+	if (gapIdx >= 0) {
+		const AIFloat3 gapPos = XZToPos(gapIdx % width, gapIdx / width);
+		circuit->LOG("THREAT raid view: %i of %i enemies have a raid multiplier; biggest gap at (%.0f, %.0f):"
+				" surface %.2f, raid %.2f | update %.2f ms avg, %.2f ms max (%i updates)",
+				raidModCount, hostileCount, gapPos.x, gapPos.z, surfThreat[gapIdx] - THREAT_BASE,
+				raidSurf[gapIdx] - THREAT_BASE, avgMs, updateMsMax, updateNum);
+	} else {
+		circuit->LOG("THREAT raid view: %i of %i enemies have a raid multiplier; same as surface"
+				" | update %.2f ms avg, %.2f ms max (%i updates)",
+				raidModCount, hostileCount, avgMs, updateMsMax, updateNum);
+	}
+	updateMsSum = 0.f;
+	updateMsMax = 0.f;
+	updateNum = 0;
 }
 
 void CThreatMap::SwapBuffers()
@@ -670,6 +785,10 @@ void CThreatMap::SetReadPointers(SThreatData& threatData)
 	airSquad = isCounting ? threatData.airSquad.data() : airThreat;
 	surfSquad = isCounting ? threatData.surfSquad.data() : surfThreat;
 	amphSquad = isCounting ? threatData.amphSquad.data() : amphThreat;
+	raidSurf = threatData.raidSurf.data();
+	raidAmph = threatData.raidAmph.data();
+	raidSurfSquad = isCounting ? threatData.raidSurfSquad.data() : raidSurf;
+	raidAmphSquad = isCounting ? threatData.raidAmphSquad.data() : raidAmph;
 	threatArray = surfThreat;
 }
 
@@ -722,6 +841,12 @@ void CThreatMap::UpdateVis()
 		dbgMap[i] = std::min<float>((surfSquad[i] - THREAT_BASE) / 40.0f, 1.0f);
 	}
 	circuit->GetDebugDrawer()->DrawMap(sdlWindowId, dbgMap);
+
+	std::tie(sdlWindowId, dbgMap) = sdlWindows[5];
+	for (int i = 0; i < mapSize; ++i) {
+		dbgMap[i] = std::min<float>((raidSurf[i] - THREAT_BASE) / 40.0f, 1.0f);
+	}
+	circuit->GetDebugDrawer()->DrawMap(sdlWindowId, dbgMap);
 }
 
 void CThreatMap::ToggleSDLVis()
@@ -754,6 +879,11 @@ void CThreatMap::ToggleSDLVis()
 
 		win.second = new float [mapSize];
 		label = utils::int_to_string(circuit->GetSkirmishAIId(), "Circuit AI [%i] :: SURFACE SQUAD Threat Map");
+		win.first = circuit->GetDebugDrawer()->AddSDLWindow(width, height, label.c_str());
+		sdlWindows.push_back(win);
+
+		win.second = new float [mapSize];
+		label = utils::int_to_string(circuit->GetSkirmishAIId(), "Circuit AI [%i] :: SURFACE RAID Threat Map");
 		win.first = circuit->GetDebugDrawer()->AddSDLWindow(width, height, label.c_str());
 		sdlWindows.push_back(win);
 

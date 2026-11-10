@@ -68,8 +68,14 @@ struct SEnemyData {
 	// type's CCircuitDef::GetCountWeight while it can fight; 0 when it can't (being built, paralysed, disarmed), has
 	// no threat, or is of unknown type (a radar blip, which might be a constructor or eco unit)
 	float GetCountWeight() const {
-		return ((cdef == nullptr) || (threat <= 0.f) || isBeingBuilt || isParalyzed || isDisarmed)
-				? 0.f : cdef->GetCountWeight();
+		return IsCounted() ? cdef->GetCountWeight() : 0.f;
+	}
+	// The same on the raid view (CThreatMap raid layers): its type's CCircuitDef::GetRaidCountWeight
+	float GetRaidCountWeight() const {
+		return IsCounted() ? cdef->GetRaidCountWeight() : 0.f;
+	}
+	bool IsCounted() const {
+		return (cdef != nullptr) && (threat > 0.f) && !isBeingBuilt && !isParalyzed && !isDisarmed;
 	}
 
 	ICoreUnit::Id id;  // FIXME: duplicate
@@ -138,6 +144,7 @@ public:
 	void SetThreat(float t) { data.threat = t; }
 	float GetThreat() const { return data.threat; }
 	float GetCountWeight() const { return data.GetCountWeight(); }
+	float GetRaidCountWeight() const { return data.GetRaidCountWeight(); }
 
 	void SetRange(CCircuitDef::ThreatType t, int r) { data.SetRange(t, r); }
 	int GetRange(CCircuitDef::ThreatType t) const { return data.GetRange(t); }

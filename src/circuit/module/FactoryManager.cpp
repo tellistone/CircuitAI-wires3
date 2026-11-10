@@ -272,6 +272,40 @@ void CFactoryManager::ReadConfig()
 		}
 	}
 
+	// raid_thr_mod (CCircuitDef::GetRaidThrMod): a number in 0.1..4, clamped; false (logged) if it isn't a number
+	auto readRaidMod = [&](const Json::Value& value, const std::string& what, float& outMod) {
+		if (!value.isNumeric()) {
+			circuit->LOG("CONFIG %s: %s must be a number %g..%g, ignored", cfgName.c_str(), what.c_str(),
+					CCircuitDef::MIN_RAID_THR_MOD, CCircuitDef::MAX_RAID_THR_MOD);
+			return false;
+		}
+		const float mod = value.asFloat();
+		outMod = utils::clamp(mod, CCircuitDef::MIN_RAID_THR_MOD, CCircuitDef::MAX_RAID_THR_MOD);
+		if (outMod != mod) {
+			circuit->LOG("CONFIG %s: %s %g is out of range %g..%g, using %g", cfgName.c_str(), what.c_str(), mod,
+					CCircuitDef::MIN_RAID_THR_MOD, CCircuitDef::MAX_RAID_THR_MOD, outMod);
+		}
+		return true;
+	};
+	// quota.raid_thr_role: raid_thr_mod by main role, for units listed below without one of their own
+	std::map<CCircuitDef::RoleT, float> raidRoleMods;
+	const Json::Value& raidRoles = root["quota"]["raid_thr_role"];
+	if (raidRoles.isObject()) {
+		for (const std::string& roleName : raidRoles.getMemberNames()) {
+			auto it = roleNames.find(roleName);
+			if (it == roleNames.end()) {
+				circuit->LOG("CONFIG %s: quota.raid_thr_role has unknown role '%s'", cfgName.c_str(), roleName.c_str());
+				continue;
+			}
+			float mod;
+			if (readRaidMod(raidRoles[roleName], "quota.raid_thr_role." + roleName, mod)) {
+				raidRoleMods[it->second.type] = mod;
+			}
+		}
+	} else if (!raidRoles.isNull()) {
+		circuit->LOG("CONFIG %s: quota.raid_thr_role must be an object of role: multiplier, ignored", cfgName.c_str());
+	}
+
 	const Json::Value& behaviours = root["behaviour"];
 	for (const std::string& defName : behaviours.getMemberNames()) {
 		CCircuitDef* cdef = circuit->GetCircuitDef(defName.c_str());
@@ -294,9 +328,10 @@ void CFactoryManager::ReadConfig()
 			circuit->LOG("CONFIG %s: %s has unknown main role '%s'", cfgName.c_str(), defName.c_str(), mainName.c_str());
 			continue;
 		}
-		cdef->SetMainRole(it->second.type);
-		cdef->AddRole(it->second.type, circuit->GetBindedRole(it->second.type));
-		roleDefs[it->second.type].insert(cdef->GetId());
+		const CCircuitDef::RoleT mainRole = it->second.type;
+		cdef->SetMainRole(mainRole);
+		cdef->AddRole(mainRole, circuit->GetBindedRole(mainRole));
+		roleDefs[mainRole].insert(cdef->GetId());
 
 		// Auto-assigned "air" enemy role is dropped for units listed in config:
 		// only units whose config roles include "air" count as enemy air (so scouts
@@ -401,6 +436,14 @@ void CFactoryManager::ReadConfig()
 		if (!thrMod.isNull()) {
 			cdef->ModThreat(thrMod.asFloat());
 		}
+		// Its own raid_thr_mod, else its main role's in quota.raid_thr_role, else 1. On top of thr_mod
+		const Json::Value& raidMod = behaviour["raid_thr_mod"];
+		float raidThrMod = 1.f;
+		if (raidMod.isNull() || !readRaidMod(raidMod, defName + " raid_thr_mod", raidThrMod)) {
+			auto itr = raidRoleMods.find(mainRole);
+			raidThrMod = (itr != raidRoleMods.end()) ? itr->second : 1.f;
+		}
+		cdef->SetRaidThrMod(raidThrMod);
 
 		const Json::Value& distMod = behaviour["target_dist_mod"];
 		if (!distMod.isNull()) {

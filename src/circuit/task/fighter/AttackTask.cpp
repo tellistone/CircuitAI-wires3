@@ -463,6 +463,27 @@ float CAttackTask::GetKeepStrength(const AIFloat3& targetPos, float strength) co
 	return IsInBaseRadius(targetPos) ? strength : strength * GetMilitaryMgr()->GetAttackKeepThreat();
 }
 
+float CAttackTask::GetRaidFactor() const
+{
+	if (!GetMilitaryMgr()->IsRaidAttackFactor()) {
+		return 1.f;
+	}
+	float sum = 0.f;
+	float modSum = 0.f;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		sum += s.power;
+		modSum += s.power * s.unit->GetCircuitDef()->GetRaidThrMod();
+	}
+	return (sum > 0.f) ? std::min(modSum / sum, 1.f) : 1.f;
+}
+
+bool CAttackTask::IsRaidFactorTarget(const CCircuitDef* edef)
+{
+	// Main role or bound to one (cloaked_raider), or a later entry of its role list (Halberd: assault, raider)
+	return (edef != nullptr) && (edef->IsRoleRaider() || edef->IsRoleScout()
+			|| edef->IsEnemyRoleAny(CCircuitDef::RoleMask::RAIDER | CCircuitDef::RoleMask::SCOUT));
+}
+
 float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, float strength, float refSqDist) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -1161,8 +1182,14 @@ void CAttackTask::FindTarget()
 	const float keepPower = maxPower * militaryMgr->GetAttackKeepThreat();
 	const ICoreUnit::Id prevTargetId = (target != nullptr) ? target->GetId() : fleeTargetId;
 	fleeTargetId = -1;
+	// quota.raid_attack_factor: an enemy raider or scout outside the base defence radius is judged with our
+	// strength x our units' raid_thr_mod (skirmishers: about 4x the strength to take on raiders in the field).
+	// Inside the radius, raiding our base, at full strength
+	const float raidFactor = GetRaidFactor();
 	auto powerFor = [&](const CEnemyInfo* e) {
-		return ((e->GetId() == prevTargetId) && !IsInBaseRadius(e->GetPos())) ? keepPower : maxPower;
+		const bool isBase = IsInBaseRadius(e->GetPos());
+		const float power = ((e->GetId() == prevTargetId) && !isBase) ? keepPower : maxPower;
+		return (isBase || !IsRaidFactorTarget(e->GetCircuitDef())) ? power : power * raidFactor;
 	};
 
 	// Near-base scale reference: the enemy we already went for keeps the anchor from when it was first picked
