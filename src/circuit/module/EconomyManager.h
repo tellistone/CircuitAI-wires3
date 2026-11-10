@@ -75,6 +75,8 @@ public:
 	float GetAvgEnergyIncome() const { return energyIncome; }
 	float GetEcoFactor() const { return ecoFactor; }
 	float GetPullMtoS() const { return pullMtoS; }
+	// economy.chat: public chat lines for testing (ms_pull_chat, the threat floor's Defending / Attacking)
+	bool IsChat() const { return isChat; }
 	float GetPullMtoSArmyMult() const { return mspArmyMult; }
 	float GetPullMtoSArmyRatio() const { return mspArmyRatio; }  // enemy/ours; < 0 = army factor off (before since, no enemy army)
 	// ms_pull while metal stalls (IsMetalStall): a factory waits while the factories' pull, its own build power
@@ -283,6 +285,7 @@ private:
 	float mspArmyMult;
 	int mspLogFrame;  // next periodic MS_PULL log line
 	float mspArmyRatio;  // last army ratio read, < 0 = off
+	bool isChat;  // economy.chat
 	float mspChatChange;  // ms_pull_chat: relative change that posts an ms_pull chat line, 0 = off
 	float mspChatPull;  // ms_pull at the last chat line
 	int mspChatFrame;  // no ms_pull chat line before this frame

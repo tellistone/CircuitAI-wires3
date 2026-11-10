@@ -7,6 +7,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **`economy.chat` switch for the test chat lines** (default `false`). The threat floor's `Defending` / `Attacking` line
+  and the `ms_pull` line (`economy.ms_pull_chat`) only post with `"chat": true`. The resign line `I am defeated.` and
+  the start-up line are unchanged.
+
 - **Anti-heavy cloak routes** (per-unit attribute `cloak_route`, default off). Cloaked anti-heavies (Ultimatum,
   Widow) used to route on the decloak layer with no `antiheavy.path_threat` cap and an unchecked stand-off spot,
   so they walked through enemy weapon range and died once they decloaked. Without the attribute they now route,

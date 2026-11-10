@@ -64,6 +64,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, mspArmyMult(1.f)
 		, mspLogFrame(0)
 		, mspArmyRatio(-1.f)
+		, isChat(false)
 		, mspChatChange(0.f)
 		, mspChatPull(-1.f)
 		, mspChatFrame(0)
@@ -501,7 +502,8 @@ void CEconomyManager::Init()
 		const bool isArmy = army.isObject();
 		mspArmyCurve = readCurve(isArmy ? army["curve"] : Json::Value(), "economy.ms_pull_army.curve", {{0.5f, 1.3f}, {2.f, 0.7f}});
 		mspArmyFrame = std::max(isArmy ? army.get("since", 300.f).asFloat() : 300.f, 0.f) * FRAMES_PER_SEC;
-		mspChatChange = std::max(econ.get("ms_pull_chat", 0.25f).asFloat(), 0.f);
+		isChat = econ.get("chat", false).asBool();
+		mspChatChange = isChat ? std::max(econ.get("ms_pull_chat", 0.25f).asFloat(), 0.f) : 0.f;
 	}
 
 	CSetupManager::StartFunc subinit = [this](const AIFloat3& pos) {
