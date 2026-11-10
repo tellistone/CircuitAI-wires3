@@ -79,7 +79,7 @@ private:
 		FloatVec surfThreat;  // surface (water and land)
 		FloatVec amphThreat;  // under water and surface on land
 		FloatVec cloakThreat;  // decloakers
-		FloatVec shield;  // total shield power that covers tile
+		FloatVec shield;  // shield power per armed enemy in the cell: each shield's share (AddShields)
 		// Squad layers of air, surf and amph (GetSquadThreatAt); while drawing, the enemy unit count.
 		// Empty when group_count_power is 0
 		FloatVec airSquad;
@@ -102,7 +102,9 @@ private:
 	void AddEnemyAmphConst(const SEnemyData& e, const int slack = 0, const float count = 0.f);  // Enemy AntiAmph
 	void AddEnemyAmphGradient(const SEnemyData& e, const int slack = 0, const float count = 0.f);  // Enemy AntiAmph
 	void AddDecloaker(const SEnemyData& e);
-	void AddShield(const SEnemyData& e);
+	// Shields of hostile and peace enemies (Aspis is unarmed), each charge shared by the armed enemies inside it
+	void AddShields(const std::vector<SEnemyData>& hostiles, const std::vector<SEnemyData>& peaces);
+	void AddShield(const SEnemyData& e, const std::vector<int>& armedCells);
 
 	int GetCloakRange(const CCircuitDef* edef) const;
 	int GetShieldRange(const CCircuitDef* edef) const;
