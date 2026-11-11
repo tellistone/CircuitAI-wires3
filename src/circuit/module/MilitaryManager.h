@@ -267,11 +267,11 @@ public:
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
 	// quota.raid_attack_factor (default true): attack groups judge enemy raiders and scouts outside the base
-	// defence radius with their strength x their units' raid_thr_mod (CAttackTask::GetRaidFactor)
+	// defence radius and their fire range with their strength x their units' raid_thr_mod (CAttackTask::GetRaidFactor)
 	bool IsRaidAttackFactor() const { return isRaidAttackFactor; }
-	// For tuning raid_thr_mod (the RAID log, once a minute): damage taken by units of raid and scout tasks
-	// (CThreatMap::IsRaidView), by attacker type, and escapes of raid groups
-	void AddRaidDamage(CCircuitUnit* unit, CEnemyInfo* attacker, float damage);
+	// For tuning raid_thr_mod (the RAID log, once a minute): damage taken by ground units of raid and scout tasks
+	// (CThreatMap::IsRaidView), by attacker type (-1: unknown), and escapes of raid groups
+	void AddRaidDamage(CCircuitUnit* unit, CCircuitDef::Id attackerDefId, float damage);
 	void AddRaidEscape() { ++raidEscapes; }
 	// quota.group_count_aoe: an armed type whose fire's area of effect (CCircuitDef::GetFireAoe, radius) is at least
 	// this. A squad mostly of these doesn't count the enemies (IFighterTask::IsSquadThreat): one shot hits several of

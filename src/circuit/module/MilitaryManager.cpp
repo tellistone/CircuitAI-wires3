@@ -2106,12 +2106,9 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 				: data->GetRange(CCircuitDef::ThreatType::LAND);
 		const float range = rangeSq * threatMap->GetSquareSize() * cfg.rangeMult;
 		if ((threat > 0.f) && (range > 0.f) && !enemy->IsBeingBuilt()) {
-			if (isRaidView) {
-				defences.push_back({enemy->GetPos(), SQUARE(range), range, threat * edef->GetRaidThrMod(),
-						data->GetRaidCountWeight()});
-			} else {
-				defences.push_back({enemy->GetPos(), SQUARE(range), range, threat, data->GetCountWeight()});
-			}
+			const float raidMod = isRaidView ? edef->GetRaidThrMod() : 1.f;  // x 1.f: the plain value exactly
+			defences.push_back({enemy->GetPos(), SQUARE(range), range, threat * raidMod,
+					isRaidView ? data->GetRaidCountWeight() : data->GetCountWeight()});
 		}
 	}
 	for (const CEnemyManager::SEnemyGroup& group : circuit->GetEnemyManager()->GetEnemyGroups()) {
@@ -2401,13 +2398,13 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 	}
 }
 
-void CMilitaryManager::AddRaidDamage(CCircuitUnit* unit, CEnemyInfo* attacker, float damage)
+void CMilitaryManager::AddRaidDamage(CCircuitUnit* unit, CCircuitDef::Id attackerDefId, float damage)
 {
-	if ((damage <= 0.f) || !CThreatMap::IsRaidView(unit)) {
+	// Ground units only: raid and scout tasks in the air read the air layer, which has no raid view
+	if ((damage <= 0.f) || unit->GetCircuitDef()->IsAbleToFly() || !CThreatMap::IsRaidView(unit)) {
 		return;
 	}
-	const CCircuitDef* edef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
-	raidDamage[(edef != nullptr) ? edef->GetId() : -1] += damage;
+	raidDamage[attackerDefId] += damage;
 }
 
 void CMilitaryManager::LogRaidStats()

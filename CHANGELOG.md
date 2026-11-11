@@ -29,12 +29,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Attack groups vs raiders** (`quota.raid_attack_factor`, default and shipped `true`). The same value on our side:
   an attack group judges an enemy raider or scout (any role in its list) outside the base defence radius with its
   pick and keep strength x its units' `raid_thr_mod` (power-weighted, at most 1). A skirmisher group needs about 4x
-  the strength to go after raiders in the field. Inside the base defence radius, and on the route approach and the
-  escape, it judges at full strength, so a raider target is never picked more loosely than it is kept.
+  the strength to go after raiders in the field. Inside the base defence radius, within its own fire range + 64 elmos
+  (raiders already fighting it), and on the route approach and the escape, it judges at full strength, so a raider
+  target is never picked more loosely than it is kept, and a group never ignores raiders shooting it. The current
+  target keeps the base and fire range exemptions out to 1.25x, so a raider stepping back and forth across either line
+  doesn't flip the pick.
 
 - **Raid tuning logs**. Once a minute: `THREAT raid view` (how many enemies have a multiplier, the cell where the
   raid view differs most from the plain one, and the threat map update time) and `RAID` (raid group escapes, and the
-  damage our raid and scout units took by attacker type, next to that type's `raid_thr_mod`). With `DEBUG_VIS`, a
+  damage our ground raid and scout units took by attacker type, next to that type's `raid_thr_mod`; an attacker we
+  can't see is named by its weapon when only one type has it). With `DEBUG_VIS`, a
   SURFACE RAID window joins the threat map windows.
 
 - **`economy.chat` switch for the test chat lines** (default `false`). The threat floor's `Defending` / `Attacking` line

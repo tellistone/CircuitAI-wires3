@@ -1007,9 +1007,13 @@ int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weapon
 		CreateFakeEnemy(weaponId, unit->GetPos(lastFrame), dir);  // currently only for threatmap
 	}
 
-	// Before the modules: the hit may send the unit to another task
+	// Before the modules: the hit may send the unit to another task. For tuning raid_thr_mod (RAID log): an attacker
+	// whose type we don't know (out of sight, a radar blip) is named by its weapon
 	if (militaryManager != nullptr) {
-		militaryManager->AddRaidDamage(unit, attacker, damage);  // for tuning raid_thr_mod (RAID log)
+		const CCircuitDef* edef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
+		const CCircuitDef::Id attackerDefId = (edef != nullptr) ? edef->GetId()
+				: (IsValidWeaponDefId(weaponId) ? GetWeaponOwnerId(weaponId) : -1);
+		militaryManager->AddRaidDamage(unit, attackerDefId, damage);
 	}
 
 	for (auto& module : modules) {
@@ -1381,6 +1385,15 @@ void CCircuitAI::UnregisterEnemyInfo(CEnemyInfo* enemy)
 	allyTeam->UnregisterEnemyUnit(enemy->GetData(), this);
 	enemyInfos.erase(enemy->GetId());
 	delete enemy;
+}
+
+CCircuitDef::Id CCircuitAI::GetWeaponOwnerId(CWeaponDef::Id weaponDefId) const
+{
+	const SWeaponToUnitDef& wuDef = weaponToUnitDefs[weaponDefId];
+	if (wuDef.mobileIds.size() == 1) {
+		return *wuDef.mobileIds.begin();
+	}
+	return (wuDef.ids.size() == 1) ? *wuDef.ids.begin() : -1;
 }
 
 void CCircuitAI::CreateFakeEnemy(int weaponId, const AIFloat3& startPos, const AIFloat3& dir)

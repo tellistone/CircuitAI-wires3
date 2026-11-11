@@ -46,6 +46,9 @@ static constexpr size_t MAX_TARGET_GOALS = 16;
 // For this long after an escape, targets are picked (and their approach checked) at CAUTIOUS_POWER x our strength
 static constexpr int CAUTIOUS_FRAMES = FRAMES_PER_SEC * 4;
 static constexpr float CAUTIOUS_POWER = 0.75f;
+// quota.raid_attack_factor: the current target keeps its exemptions from the factor (base radius, our fire range)
+// out to this x the radius / range, so a raider stepping back and forth across the line doesn't flip the pick
+static constexpr float RAID_FREE_KEEP = 1.25f;
 // Stickiness: another target must be at least this much nearer (by distance) to replace the current one
 static constexpr float STICKY_DIST = 0.8f;
 // A target or front route is kept for this long, instead of planned again at every decision, while nothing changed
@@ -536,12 +539,12 @@ void CAttackTask::ClearScaleAnchor()
 	anchorTargetId = -1;
 }
 
-bool CAttackTask::IsInBaseRadius(const AIFloat3& pos) const
+bool CAttackTask::IsInBaseRadius(const AIFloat3& pos, float scale) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const float baseRange = GetMilitaryMgr()->GetBaseDefRange();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	return (baseRange > 0.f) && (pos.SqDistance2D(basePos) < SQUARE(baseRange));
+	return (baseRange > 0.f) && (pos.SqDistance2D(basePos) < SQUARE(baseRange * scale));
 }
 
 /*
@@ -1182,14 +1185,26 @@ void CAttackTask::FindTarget()
 	const float keepPower = maxPower * militaryMgr->GetAttackKeepThreat();
 	const ICoreUnit::Id prevTargetId = (target != nullptr) ? target->GetId() : fleeTargetId;
 	fleeTargetId = -1;
-	// quota.raid_attack_factor: an enemy raider or scout outside the base defence radius is judged with our
-	// strength x our units' raid_thr_mod (skirmishers: about 4x the strength to take on raiders in the field).
-	// Inside the radius, raiding our base, at full strength
+	// quota.raid_attack_factor: an enemy raider or scout is judged with our strength x our units' raid_thr_mod
+	// (skirmishers: about 4x the strength to go after raiders in the field). At full strength inside the base
+	// defence radius (raiding our base) and within our fire range + 64 elmos (already fighting us: skipped, the
+	// group would walk off on Move orders, which Zero-K's skirmish micro ignores, and the escape judges at full
+	// strength, so it would neither fight nor flee). The current target keeps both out to RAID_FREE_KEEP x
 	const float raidFactor = GetRaidFactor();
+	const float sqOwnGroundFree = SQUARE(groundRange + DEFAULT_SLACK);  // fire range + 64 elmos
+	const float sqFireFreeKeep = SQUARE((groundRange + DEFAULT_SLACK) * RAID_FREE_KEEP);
 	auto powerFor = [&](const CEnemyInfo* e) {
-		const bool isBase = IsInBaseRadius(e->GetPos());
-		const float power = ((e->GetId() == prevTargetId) && !isBase) ? keepPower : maxPower;
-		return (isBase || !IsRaidFactorTarget(e->GetCircuitDef())) ? power : power * raidFactor;
+		const AIFloat3& ePos = e->GetPos();
+		const bool isPrev = (e->GetId() == prevTargetId);
+		const bool isBase = IsInBaseRadius(ePos);
+		const float power = (isPrev && !isBase) ? keepPower : maxPower;
+		if ((raidFactor >= 1.f) || !IsRaidFactorTarget(e->GetCircuitDef())) {
+			return power;
+		}
+		const bool isFree = isPrev
+				? (IsInBaseRadius(ePos, RAID_FREE_KEEP) || (ePos.SqDistance2D(pos) < sqFireFreeKeep))
+				: (isBase || (ePos.SqDistance2D(pos) < sqOwnGroundFree));
+		return isFree ? power : power * raidFactor;
 	};
 
 	// Near-base scale reference: the enemy we already went for keeps the anchor from when it was first picked
@@ -1274,7 +1289,6 @@ void CAttackTask::FindTarget()
 	UpdatePastFloor();
 	isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
 			|| militaryMgr->IsAttackThreatFloor();
-	const float sqOwnGroundFree = SQUARE(groundRange + DEFAULT_SLACK);  // fire range + 64 elmos
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;

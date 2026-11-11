@@ -246,6 +246,8 @@ public:
 		return /*IsValidWeaponDefId(weaponDefId) ? */&weaponDefs[weaponDefId]/* : nullptr*/;
 	}
 	void BindUnitToWeaponDefs(CCircuitDef::Id unitDefId, const std::set<CWeaponDef::Id>& weaponDefs, bool isMobile);
+	// The one unit type that has this weapon (one mobile type, else the only type), -1 if none or several
+	CCircuitDef::Id GetWeaponOwnerId(CWeaponDef::Id weaponDefId) const;
 private:
 	void InitWeaponDefs();
 	WeaponDefs weaponDefs;  // owner
