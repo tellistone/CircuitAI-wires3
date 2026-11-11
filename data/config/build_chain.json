@@ -53,26 +53,33 @@
 	"default": "turretmissile"
 },
 
-// Escalation mode: superweapons and singus instead of army (enemy also lists heavy porc). On while all of these hold (checked every <interval> s):
+// Escalation mode: superweapons and singus instead of army. Checked every <interval> s. Turns on when all hold:
 //   - the allied team's mobile army (finished, no constructors or commanders; ours included) is at least
-//     <army_ratio> x the known enemy mobile army (quota.enemy_half_life fading, as economy.ms_pull_army)
+//     <army_ratio>[0] x the known enemy mobile army (quota.enemy_half_life fading, as economy.ms_pull_army)
 //   - an enemy unit of <enemy> is known (seen and not seen dying)
 //   - <terraform>: a terraunit (economy.terra) has been seen this game, ours, an ally's or an enemy's
-// Off as soon as one fails. While on: factories build constructors only (no army); builders go at NOW to an allied
-// (ours included) <super> or <singu> being built; with none of a kind being built, and no job of ours for one, we
-// start one at NOW after a random <delay> s: a <super> by weight among those under their behaviour.json limit/since
-// and with a grid in reach (as porcupine.superweapon), the singu at its economy.energy.rear site
+// It stays on for at least <min_on> s, then while the army stays at <army_ratio>[1] x and the other two hold.
+// While on: factories build constructors only (no army); builders go at NOW to an allied (ours included) <super> or
+// <singu> being built, up to <builder_share> of our build power, commanders only with <comm>; with none of a kind
+// under way (and no allied CircuitAI holding a job for one), we start one at NOW after a random <delay> s: a <super>
+// by weight among those under their behaviour.json limit/since, with a grid in reach (as porcupine.superweapon), and
+// buildable within <max_build_sec> s at the lower of income and that build power; the singu at its
+// economy.energy.rear site. <front> supers are built on our frontline cluster, the rest as porcupine.superweapon
 "escalation": {
 	"enable": true,
 	"interval": 2,
-	"army_ratio": 2.0,
+	"army_ratio": [2.0, 1.4],  // [<on>, <off>]
+	"min_on": 60,
+	"max_build_sec": 420,
+	"builder_share": 0.7,
+	"comm": false,
 	"terraform": true,
 	"enemy": ["staticheavyarty", "staticarty", "turretheavy", "turretantiheavy", "raveparty", "staticnuke", "zenith", "mahlazer"],
 	"super": {
 		"unit":   ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty"],
 		"weight": [ 0.20,        0.20,        0.20,     0.20,       0.20]
 	},
-	// Supers built on our frontline cluster (finished, not enemy-held, nearest the lane) instead of the territory middle
+	// Built on our frontline cluster (finished, not enemy-held, nearest the lane)
 	"front": ["staticheavyarty"],
 	"singu": "energysingu",
 	"delay": [1, 20]  // [<min>, <max>] seconds

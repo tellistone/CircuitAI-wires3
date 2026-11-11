@@ -1064,7 +1064,17 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& esc = root["escalation"];
 	escalation.isEnabled = esc.get("enable", false).asBool();
-	escalation.armyRatio = esc.get("army_ratio", 2.f).asFloat();
+	const Json::Value& escRatio = esc["army_ratio"];  // [<on>, <off>], or one number for both
+	if (escRatio.isArray()) {
+		escalation.armyOn = escRatio.get((unsigned)0, 2.f).asFloat();
+		escalation.armyOff = std::min(escRatio.get((unsigned)1, 1.4f).asFloat(), escalation.armyOn);
+	} else if (escRatio.isNumeric()) {
+		escalation.armyOn = escalation.armyOff = escRatio.asFloat();
+	}
+	escalation.minOnFrames = std::max(esc.get("min_on", 60.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	escalation.maxBuildSec = esc.get("max_build_sec", 420.f).asFloat();
+	escalation.builderShare = utils::clamp(esc.get("builder_share", 0.7f).asFloat(), 0.f, 1.f);
+	escalation.isComm = esc.get("comm", false).asBool();
 	escalation.isNeedTerra = esc.get("terraform", true).asBool();
 	for (const Json::Value& name : esc["enemy"]) {
 		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
@@ -3044,12 +3054,17 @@ bool CMilitaryManager::IsEscalationSuper(const CCircuitDef* cdef) const
 CCircuitDef* CMilitaryManager::DiceEscalationSuper() const
 {
 	const int frame = circuit->GetLastFrame();
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	// Metal per second it can be built at: income (the lower of metal and energy, ZK builds take both), or the build
+	// power escalation may use, whichever is less. Allies assisting only make it quicker
+	const float rate = std::min(std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome()),
+			circuit->GetBuilderManager()->GetBuildPower() * escalation.builderShare);
 	std::vector<const SSuperInfo*> candidates;
 	float magnitude = 0.f;
 	for (const SSuperInfo& info : escalation.supers) {
-		CEconomyManager* economyMgr = circuit->GetEconomyManager();
-		if (info.cdef->IsAvailable(frame) && (!economyMgr->IsGridConsumer(info.cdef)
-			|| economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef))))
+		if (info.cdef->IsAvailable(frame) && (info.cdef->GetCostM() <= rate * escalation.maxBuildSec)
+			&& (!economyMgr->IsGridConsumer(info.cdef)
+				|| economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef))))
 		{
 			candidates.push_back(&info);
 			magnitude += info.weight;
@@ -3134,16 +3149,25 @@ void CMilitaryManager::UpdateEscalation()
 		allyArmy += cdef->GetCostM();
 	}
 	const float enemyArmy = circuit->GetEnemyManager()->GetMobileCostNoCommFaded(frame, enemyHalfLife);
-	const bool isArmy = (allyArmy > 0.f) && (allyArmy >= escalation.armyRatio * enemyArmy);
+	// Hysteresis: on at armyOn x, off below armyOff x. Escalation stops our reinforcements, so the ratio falls while
+	// it is on; one threshold would switch it on and off every few seconds
+	const float ratio = escalation.isOn ? escalation.armyOff : escalation.armyOn;
+	const bool isArmy = (allyArmy > 0.f) && (allyArmy >= ratio * enemyArmy);
 	const bool isTerra = !escalation.isNeedTerra || escalation.isTerraSeen;
 
-	const bool isOn = isArmy && isTerra && isEnemyTech;
+	bool isOn = isArmy && isTerra && isEnemyTech;
+	if (!isOn && escalation.isOn && (frame < escalation.onFrame + escalation.minOnFrames)) {
+		isOn = true;  // min_on: not off this soon after it turned on
+	}
 	if (isOn != escalation.isOn) {
 		circuit->LOG("ESCALATION %s: allied army %.0f m vs enemy %.0f m (need x%.1f), terraform %s, enemy tech %s",
-				isOn ? "ON" : "OFF", allyArmy, enemyArmy, escalation.armyRatio,
+				isOn ? "ON" : "OFF", allyArmy, enemyArmy, ratio,
 				escalation.isTerraSeen ? "seen" : "not seen",
 				(techDef != nullptr) ? techDef->GetDef()->GetName() : "none");
 		escalation.isOn = isOn;
+		if (isOn) {
+			escalation.onFrame = frame;
+		}
 	}
 	circuit->GetBuilderManager()->UpdateEscalation(isOn);
 }

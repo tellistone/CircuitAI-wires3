@@ -14,6 +14,7 @@
 #include "terrain/TerrainData.h"
 #include "unit/CircuitUnit.h"
 
+#include <array>
 #include <map>
 #include <set>
 #include <vector>
@@ -143,10 +144,17 @@ public:
 private:
 	void PromoteEscalation(IBuilderTask* task);
 	void AssistEscalationFrame(CAllyUnit* frame);
+	IBuilderTask* StartEscalation(int kind);
+	// Our build power on escalation jobs is at escalation.builder_share of all of it (with unit's added)
+	bool IsEscalationFull(CCircuitUnit* unit) const;
+	static constexpr int ESC_CLAIM_FRAMES = FRAMES_PER_SEC * 30;  // ally-team claim, refreshed every update
 	std::set<IBuilderTask*> escalationTasks;  // raised to NOW by escalation mode
-	int escSuperFrame = -1;  // when we start our own superweapon; -1 = no timer
-	int escSinguFrame = -1;
-	bool isEscSuperLogged = false;  // "nothing to start" logged since the timer ran out
+	// Per kind (0 superweapon, 1 singu): when we start our own (-1 = no timer); kept through a short off spell
+	struct SEscProject {
+		int startFrame = -1;
+		bool isLogged = false;  // "nothing to start" logged since the timer ran out
+	};
+	std::array<SEscProject, 2> escProjects;
 public:
 private:
 	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);

@@ -12,6 +12,7 @@
 #include "util/math/QuadField.h"
 
 #include <memory>
+#include <array>
 #include <map>
 #include <unordered_set>
 
@@ -107,6 +108,24 @@ public:
 	const std::shared_ptr<CPathFinder>&    GetPathfinder()    { return pathfinder; }
 	const std::shared_ptr<CFactoryData>&   GetFactoryData()   { return factoryData; }
 
+	// Escalation (CBuilderManager::UpdateEscalation): an allied AI holds a job of this kind (0 superweapon, 1 singu),
+	// placed or not, so the others don't start one too before its frame shows. Its owner refreshes the claim
+	bool IsEscalationClaimed(int kind, int frame, int aiId) const {
+		const SEscClaim& c = escClaims[kind];
+		return (c.aiId >= 0) && (c.aiId != aiId) && (frame < c.untilFrame);
+	}
+	void ClaimEscalation(int kind, int frame, int untilFrame, int aiId) {
+		SEscClaim& c = escClaims[kind];
+		if ((c.aiId == aiId) || (c.aiId < 0) || (frame >= c.untilFrame)) {
+			c = {untilFrame, aiId};  // ours, free, or the other one's lapsed
+		}
+	}
+	void ReleaseEscalation(int kind, int aiId) {
+		if (escClaims[kind].aiId == aiId) {
+			escClaims[kind] = {};
+		}
+	}
+
 	void OccupyCluster(int clusterId, int teamId);
 	SClusterTeam GetClusterTeam(int clusterId);
 	// FIXME: DEBUG
@@ -126,6 +145,12 @@ private:
 	int lastUpdate;
 	AllyUnits friendlyUnits;  // owner
 	CQuadField quadField;
+
+	struct SEscClaim {
+		int untilFrame = -1;
+		int aiId = -1;
+	};
+	std::array<SEscClaim, 2> escClaims;
 
 	std::map<int, SClusterTeam> occupants;  // Cluster owner on start. clusterId: SClusterTeam
 	// FIXME: DEBUG

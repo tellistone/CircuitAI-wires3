@@ -1373,7 +1373,8 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
 		for (const IBuilderTask* candidate : tasks) {
 			const bool isNow = (candidate->GetPriority() == IBuilderTask::Priority::NOW);
-			if ((isNow && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
+			if ((isNow && !circuit->GetMilitaryManager()->IsEscalationComm() && IsEscalationTask(candidate))  // hiding
+				|| (isNow && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
 				|| !candidate->CanAssignTo(unit)
 				|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr))
 				|| (isStalling && IsStallSpend(economyMgr, candidate, unit)))
@@ -1494,11 +1495,19 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	const bool isEnergyStalling = economyMgr->IsEnergyStalling();
 	// Never send the commander into a flee zone, measured at the line the flee stops at; nullptr = flee off
 	const SCommState* commState = GetCommState(unit);
+	// Escalation jobs: up to escalation.builder_share of our build power (the rest keeps the economy going), no
+	// commander unless escalation.comm. One already on such a job (hidden from its power now) may stay
+	const bool isEscalationOff = (escalationTasks.empty() || (unit->GetTask()->GetType() == IUnitTask::Type::BUILDER
+			&& IsEscalationTask(static_cast<IBuilderTask*>(unit->GetTask())))) ? false
+			: ((cdef->IsRoleComm() && !circuit->GetMilitaryManager()->IsEscalationComm()) || IsEscalationFull(unit));
 	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
 		for (const IBuilderTask* candidate : tasks) {
 			const bool isNow = (candidate->GetPriority() == IBuilderTask::Priority::NOW);
-			// Escalation jobs take any number of builders, stall or not: the factories are idle for them
+			// Escalation jobs are free of the stall rule and the priority repair cap: the factories are idle for them
 			const bool isEscalation = isNow && IsEscalationTask(candidate);
+			if (isEscalation && isEscalationOff) {
+				continue;
+			}
 			if ((isNow && !isEscalation && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
 				|| !candidate->CanAssignTo(unit)
 				|| (isNotReady && !isNow
@@ -1532,9 +1541,12 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 			}
 
 			if (isNow) {
-				// Disregard safety (unless configured for priority repair)
+				// Disregard safety (unless configured for priority repair). Escalation jobs keep it, armed or not:
+				// a superweapon frame doesn't defend its builders
 				if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
-					|| IsUnsafePrioRepair(candidate, unit, buildPos))
+					|| IsUnsafePrioRepair(candidate, unit, buildPos)
+					|| (isEscalation && (threatMap->GetThreatAt(buildPos) > maxThreat)
+						&& (inflMap->GetInfluenceAt(buildPos) < -INFL_EPS)))
 				{
 					continue;
 				}
@@ -1671,91 +1683,115 @@ void CBuilderManager::AssistEscalationFrame(CAllyUnit* frame)
 	PromoteEscalation(task);
 }
 
+bool CBuilderManager::IsEscalationFull(CCircuitUnit* unit) const
+{
+	float power = 0.f;
+	for (const IBuilderTask* task : escalationTasks) {
+		power += task->GetBuildPower();
+	}
+	// The first builder always may: a job nobody takes would only wait out its timeout
+	return (power > 0.f) && (power + unit->GetBuildSpeed() > buildPower * circuit->GetMilitaryManager()->GetEscalationBuilderShare());
+}
+
+IBuilderTask* CBuilderManager::StartEscalation(int kind)
+{
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	if (kind == 0) {
+		CCircuitDef* superDef = militaryMgr->DiceEscalationSuper();
+		return (superDef == nullptr) ? nullptr
+				: EnqueueTask(IBuilderTask::Priority::NOW, superDef, militaryMgr->GetEscalationSuperPos(superDef),
+							  IBuilderTask::BuildType::BIG_GUN);
+	}
+	CCircuitDef* singuDef = militaryMgr->GetEscalationSingu();
+	return ((singuDef == nullptr) || !singuDef->IsAvailable(circuit->GetLastFrame())) ? nullptr
+			: circuit->GetEconomyManager()->EnqueueEscalationEnergy(singuDef);
+}
+
 void CBuilderManager::UpdateEscalation(bool isOn)
 {
+	CAllyTeam* allyTeam = circuit->GetAllyTeam();
+	const int aiId = circuit->GetSkirmishAIId();
 	if (!isOn) {
 		for (IBuilderTask* task : escalationTasks) {
 			task->ChangePriority(IBuilderTask::Priority::NORMAL);
 		}
 		escalationTasks.clear();
-		escSuperFrame = escSinguFrame = -1;
-		isEscSuperLogged = false;
-		return;
+		for (int kind = 0; kind < (int)escProjects.size(); ++kind) {
+			allyTeam->ReleaseEscalation(kind, aiId);
+		}
+		return;  // start timers kept: back on soon, a timer that ran out starts at once
 	}
 
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	CCircuitDef* singuDef = militaryMgr->GetEscalationSingu();
 	const int frame = circuit->GetLastFrame();
-	auto isSingu = [singuDef](const CCircuitDef* cdef) {
-		return (singuDef != nullptr) && (cdef != nullptr) && (cdef->GetId() == singuDef->GetId());
+	// Kind of an escalation def: 0 superweapon, 1 singu, -1 neither
+	auto getKind = [militaryMgr, singuDef](const CCircuitDef* cdef) {
+		if (cdef == nullptr) {
+			return -1;
+		}
+		if (militaryMgr->IsEscalationSuper(cdef)) {
+			return 0;
+		}
+		return ((singuDef != nullptr) && (cdef->GetId() == singuDef->GetId())) ? 1 : -1;
 	};
 
-	// Allied (ours included) superweapons and singus being built
-	bool isSuperBuilt = false;
-	bool isSinguBuilt = false;
+	// Allied (ours included) frames being built: raise our job on it, or assist it
+	std::array<bool, 2> isBuilt = {false, false};
 	circuit->UpdateFriendlyUnits();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* au = kv.second;
-		const CCircuitDef* cdef = au->GetCircuitDef();
-		if (cdef == nullptr) {
+		const int kind = getKind(au->GetCircuitDef());
+		if ((kind < 0) || !au->GetUnit()->IsBeingBuilt()) {
 			continue;
 		}
-		const bool isSuper = militaryMgr->IsEscalationSuper(cdef);
-		if ((!isSuper && !isSingu(cdef)) || !au->GetUnit()->IsBeingBuilt()) {
-			continue;
-		}
-		(isSuper ? isSuperBuilt : isSinguBuilt) = true;
+		isBuilt[kind] = true;
 		AssistEscalationFrame(au);
 	}
 
-	// Our jobs for one not placed yet (a placed one is a frame above)
-	bool isSuperJob = false;
-	for (IBuilderTask* task : GetTasks(IBuilderTask::BuildType::BIG_GUN)) {
-		if ((task->GetBuildDef() != nullptr) && militaryMgr->IsEscalationSuper(task->GetBuildDef())) {
-			PromoteEscalation(task);
-			isSuperJob = true;
-		}
-	}
-	bool isSinguJob = false;
-	for (IBuilderTask* task : GetTasks(IBuilderTask::BuildType::ENERGY)) {
-		if (isSingu(task->GetBuildDef())) {
-			PromoteEscalation(task);
-			isSinguJob = true;
+	// Our own jobs of either kind, placed or not (the normal paths can queue them too)
+	std::array<bool, 2> isOwnJob = {false, false};
+	for (IBuilderTask::BuildType type : {IBuilderTask::BuildType::BIG_GUN, IBuilderTask::BuildType::ENERGY}) {
+		for (IBuilderTask* task : GetTasks(type)) {
+			const int kind = getKind(task->GetBuildDef());
+			if (kind >= 0) {
+				PromoteEscalation(task);
+				isOwnJob[kind] = true;
+			}
 		}
 	}
 
-	// None of a kind under way: start our own after a random wait (allied AIs roll their own, so mostly one starts
-	// and the others assist it)
-	if (isSuperBuilt || isSuperJob) {
-		escSuperFrame = -1;
-		isEscSuperLogged = false;
-	} else if (escSuperFrame < 0) {
-		escSuperFrame = frame + militaryMgr->RollEscalationDelay();
-	} else if (frame >= escSuperFrame) {
-		CCircuitDef* superDef = militaryMgr->DiceEscalationSuper();
-		if (superDef != nullptr) {
-			IBuilderTask* task = EnqueueTask(IBuilderTask::Priority::NOW, superDef, militaryMgr->GetEscalationSuperPos(superDef),
-											 IBuilderTask::BuildType::BIG_GUN);
-			PromoteEscalation(task);
-			circuit->LOG("ESCALATION: start %s", superDef->GetDef()->GetName());
-			escSuperFrame = -1;
-			isEscSuperLogged = false;
-		} else if (!isEscSuperLogged) {
-			circuit->LOG("ESCALATION: no superweapon to start (limits, or no grid with enough energy)");
-			isEscSuperLogged = true;
+	for (int kind = 0; kind < (int)escProjects.size(); ++kind) {
+		SEscProject& project = escProjects[kind];
+		// The claim tells allied AIs we hold a job before its frame shows (a builder may walk a minute to the site)
+		if (isOwnJob[kind]) {
+			allyTeam->ClaimEscalation(kind, frame, frame + ESC_CLAIM_FRAMES, aiId);
+		} else {
+			allyTeam->ReleaseEscalation(kind, aiId);
 		}
-	}
-
-	if (isSinguBuilt || isSinguJob || (singuDef == nullptr)) {
-		escSinguFrame = -1;
-	} else if (escSinguFrame < 0) {
-		escSinguFrame = frame + militaryMgr->RollEscalationDelay();
-	} else if ((frame >= escSinguFrame) && singuDef->IsAvailable(frame)) {
-		IBuilderTask* task = circuit->GetEconomyManager()->EnqueueEscalationEnergy(singuDef);
+		if (isBuilt[kind] || isOwnJob[kind] || allyTeam->IsEscalationClaimed(kind, frame, aiId)) {
+			project.startFrame = -1;
+			project.isLogged = false;
+			continue;
+		}
+		// None under way: start our own after a random wait
+		if (project.startFrame < 0) {
+			project.startFrame = frame + militaryMgr->RollEscalationDelay();
+			continue;
+		}
+		if (frame < project.startFrame) {
+			continue;
+		}
+		IBuilderTask* task = StartEscalation(kind);
 		if (task != nullptr) {
 			PromoteEscalation(task);
-			circuit->LOG("ESCALATION: start %s", singuDef->GetDef()->GetName());
-			escSinguFrame = -1;
+			allyTeam->ClaimEscalation(kind, frame, frame + ESC_CLAIM_FRAMES, aiId);
+			circuit->LOG("ESCALATION: start %s", task->GetBuildDef()->GetDef()->GetName());
+			project.startFrame = -1;
+			project.isLogged = false;
+		} else if (!project.isLogged) {
+			circuit->LOG("ESCALATION: no %s to start (limits, income, or no site or grid)", (kind == 0) ? "superweapon" : "singu");
+			project.isLogged = true;
 		}
 	}
 }
