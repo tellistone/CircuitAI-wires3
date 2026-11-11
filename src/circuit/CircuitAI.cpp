@@ -262,9 +262,12 @@ int CCircuitAI::HandleGameEvent(int topic, const void* data)
 			struct SUnitDamagedEvent* evt = (struct SUnitDamagedEvent*)data;
 			CEnemyInfo* attacker = GetEnemyInfo(evt->attacker);
 			CCircuitUnit* unit = GetTeamUnit(evt->unit);
+			// The engine names the attacker only while it is in our LOS or radar, and our own and allied units always
+			// are: a named attacker that is no enemy we know is friendly fire
+			const bool isFriendlyFire = (attacker == nullptr) && (evt->attacker >= 0);
 			ret = (unit != nullptr)
 					? this->UnitDamaged(unit, attacker, evt->weaponDefId, AIFloat3(evt->dir_posF3),
-							evt->paralyzer ? 0.f : evt->damage)
+							evt->paralyzer ? 0.f : evt->damage, isFriendlyFire)
 					: ERROR_UNIT_DAMAGED;
 			break;
 		}
@@ -995,7 +998,8 @@ int CCircuitAI::UnitMoveFailed(CCircuitUnit* unit)
 	return 0;  // signaling: OK
 }
 
-int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, AIFloat3 dir, float damage)
+int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, AIFloat3 dir, float damage,
+		bool isFriendlyFire)
 {
 	// FIXME: Doesn't work well with multi-shots (duck)
 //	if (lastFrame <= unit->GetDamagedFrame() + FRAMES_PER_SEC / 5) {
@@ -1007,9 +1011,9 @@ int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weapon
 		CreateFakeEnemy(weaponId, unit->GetPos(lastFrame), dir);  // currently only for threatmap
 	}
 
-	// Before the modules: the hit may send the unit to another task. For tuning raid_thr_mod (RAID log): an attacker
-	// whose type we don't know (out of sight, a radar blip) is named by its weapon
-	if (militaryManager != nullptr) {
+	// Before the modules: the hit may send the unit to another task. For tuning raid_thr_mod (RAID log): enemy fire
+	// only; an attacker whose type we don't know (out of sight, a radar blip) is named by its weapon
+	if ((militaryManager != nullptr) && !isFriendlyFire) {
 		const CCircuitDef* edef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
 		const CCircuitDef::Id attackerDefId = (edef != nullptr) ? edef->GetId()
 				: (IsValidWeaponDefId(weaponId) ? GetWeaponOwnerId(weaponId) : -1);
