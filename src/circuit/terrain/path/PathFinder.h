@@ -74,8 +74,11 @@ public:
 	//               Always uses the normal (not cloak) threat array so the result is on the GetThreatAt scale.
 	// isSquadThreat: on the squad threat layers (CThreatMap::GetSquadThreatAt) whatever the unit's task; the other
 	//                queries use them when the unit's task judges with them (IFighterTask::IsSquadThreat)
+	// isRaidView: on the raid view (CThreatMap raid layers) whatever the unit's task; the other queries use it when
+	//             the unit's task does (CThreatMap::IsRaidView)
 	std::shared_ptr<IPathQuery> CreateCostMapQuery(CCircuitUnit* unit, CThreatMap* threatMap, int frame,
-			const springai::AIFloat3& startPos, bool isBottleneck = false, bool isSquadThreat = false);
+			const springai::AIFloat3& startPos, bool isBottleneck = false, bool isSquadThreat = false,
+			bool isRaidView = false);
 	std::shared_ptr<IPathQuery> CreateLineMapQuery(CCircuitUnit* unit, CThreatMap* threatMap, int frame);
 
 	void RunQuery(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);
@@ -102,8 +105,9 @@ private:
 	}
 
 	int MakeQueryId() { return queryId++; }
+	// isSquadThreat, isRaidView: the threat layers (CThreatMap::GetSurfLayer etc), else the unit's task's
 	void FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, int frame, bool isSquadThreat,
-			bool allowCloak = true);
+			bool isRaidView, bool allowCloak = true);
 
 	// Wraps a completion so it runs inside the engine event of the AI whose unit asked (shared pathfinder)
 	PathCallback DeliverToOwner(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete);

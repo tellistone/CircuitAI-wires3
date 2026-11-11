@@ -313,6 +313,16 @@ public:
 	// Attack target choice: this enemy type's distance counts as this many times its real distance
 	void SetTargetDistMod(float value) { targetDistMod = value; }
 	float GetTargetDistMod() const { return targetDistMod; }
+	// How good this type is against raiders, 0.1..4: behaviour.json per unit "raid_thr_mod", else quota.raid_thr_role
+	// for its main role (the first in its role list), else 1. As an enemy: its threat on the raid view (CThreatMap
+	// raid layers, read by raid and scout tasks) is its threat (thr_mod included) x this. As ours: an attack group
+	// judges enemy raiders and scouts with its strength x its units' power-weighted value (CAttackTask::GetRaidFactor)
+	static constexpr float MIN_RAID_THR_MOD = 0.1f;
+	static constexpr float MAX_RAID_THR_MOD = 4.f;
+	void SetRaidThrMod(float value) { raidThrMod = value; }
+	float GetRaidThrMod() const { return raidThrMod; }
+	// GetCountWeight on the raid view: thr_mod x raid_thr_mod, at most 1
+	float GetRaidCountWeight() const { return std::min(std::max(thrMod * raidThrMod, 0.f), 1.f); }
 	// behaviour.json per unit "formation_row": its rank in a squad's line formation (0 = front row); -1 = unset (its
 	// main role's place in formation.row_order)
 	void SetFormationRow(int value) { formationRow = value; }
@@ -428,6 +438,7 @@ private:
 	bool isReloadScootMarginSet = false;
 	float captureHide = 0.f;
 	float targetDistMod = 1.f;
+	float raidThrMod = 1.f;  // GetRaidThrMod
 	int formationRow = -1;
 
 	float radius;

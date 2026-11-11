@@ -73,6 +73,7 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, roamPathFrame(-FRAMES_PER_SEC * 60)
 		, roamGoal(-RgtVector)
 {
+	isRaidView = true;  // CThreatMap raid layers
 	isNewcomerOn = true;  // newcomers never make the group stop for them (ISquadTask::IsNewcomer)
 	CCircuitAI* circuit = manager->GetCircuit();
 	float x = rand() % circuit->GetTerrainManager()->GetTerrainWidth();
@@ -943,6 +944,9 @@ bool CRaidTask::Flee(int frame)
 	isFightPending = false;  // the escape replaces any pending roam order
 	nearFightPos = -RgtVector;  // and any Fight order beside a chased group
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
+	if (!wasFleeing) {
+		GetMilitaryMgr()->AddRaidEscape();  // for tuning raid_thr_mod (RAID log)
+	}
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
 		return true;  // escape path is fresh

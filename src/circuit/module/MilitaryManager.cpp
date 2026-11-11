@@ -534,6 +534,11 @@ void CMilitaryManager::ReadConfig()
 	const float noMax = std::numeric_limits<float>::max();
 	attackFleeShare = readAttackNum("attack_flee_share", 0.5f, 0.f, 1.f);
 	attackKeepThreat = readAttackNum("attack_keep_threat", 1.34f, 1.f, noMax);  // below 1 = off
+	const Json::Value& qraidFactor = quotas.get("raid_attack_factor", true);
+	if (!qraidFactor.isBool()) {
+		circuit->LOG("CONFIG %s: quota.raid_attack_factor must be true or false, using true", cfgName.c_str());
+	}
+	isRaidAttackFactor = qraidFactor.isBool() ? qraidFactor.asBool() : true;
 	{
 		// quota.group_count_power is read by the threat map (CThreatMap::GetCountPower), clamped. Allied AIs share
 		// that map: the ally that built it first decides the value for all
@@ -1118,6 +1123,7 @@ void CMilitaryManager::Init()
 		if (isResponseGates) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResponseGates, this), FRAMES_PER_SEC * 2, offset + 3);
 		}
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogRaidStats, this), FRAMES_PER_SEC * 60, offset + 2);
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
 								FRAMES_PER_SEC * 60,
@@ -2079,6 +2085,9 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 	// time the picker arrives, and the route/own-spot checks of its task handle them on the way.
 	const bool isAir = cdef->IsAbleToFly();
 	const bool isAmph = !isAir && cdef->IsAmphibious();
+	// The raid view, as its task's reads and routes (CThreatMap::IsRaidView; air has none): raid_thr_mod and the
+	// raid count weight
+	const bool isRaidView = !isAir && CThreatMap::IsRaidView(unit);
 	struct SDefence { AIFloat3 pos; float sqRange; float range; float threat; float count; };
 	std::vector<SDefence> defences;
 	// Points that mark where the enemy is: known enemy buildings and enemy groups
@@ -2097,7 +2106,9 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 				: data->GetRange(CCircuitDef::ThreatType::LAND);
 		const float range = rangeSq * threatMap->GetSquareSize() * cfg.rangeMult;
 		if ((threat > 0.f) && (range > 0.f) && !enemy->IsBeingBuilt()) {
-			defences.push_back({enemy->GetPos(), SQUARE(range), range, threat, data->GetCountWeight()});
+			const float raidMod = isRaidView ? edef->GetRaidThrMod() : 1.f;  // x 1.f: the plain value exactly
+			defences.push_back({enemy->GetPos(), SQUARE(range), range, threat * raidMod,
+					isRaidView ? data->GetRaidCountWeight() : data->GetCountWeight()});
 		}
 	}
 	for (const CEnemyManager::SEnemyGroup& group : circuit->GetEnemyManager()->GetEnemyGroups()) {
@@ -2343,9 +2354,10 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 		}
 		CTerrainManager::CorrectPosition(startPos);
 
-		// A group of this type judges on squad threat unless it is area damage (IFighterTask::IsSquadThreat)
+		// A group of this type judges on squad threat unless it is area damage (IFighterTask::IsSquadThreat), and
+		// raid and scout tasks on the raid view (CThreatMap::IsRaidView), whatever task the stand-in is on now
 		std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, threatMap, frame, startPos, true,
-				isRaider && !IsAreaDamage(cdef));
+				isRaider && !IsAreaDamage(cdef), true);
 		// The quota is a member: it outlives the query (a pointer, so that is plain to see)
 		std::map<int, unsigned int>* bonus = &mexBonus;
 		pathfinder->RunQuery(query, [this, bonus, fightType, perMex, mobileId, safeThreat, enemyPlayers, mapMult, mapCurve, mapSize, players, isRaider](const IPathQuery* query) {
@@ -2386,6 +2398,51 @@ void CMilitaryManager::UpdateMexBonus(SUnitQuota& quota, bool isRaider)
 	}
 }
 
+void CMilitaryManager::AddRaidDamage(CCircuitUnit* unit, CCircuitDef::Id attackerDefId, float damage)
+{
+	// Ground units only: raid and scout tasks in the air read the air layer, which has no raid view
+	if ((damage <= 0.f) || unit->GetCircuitDef()->IsAbleToFly() || !CThreatMap::IsRaidView(unit)) {
+		return;
+	}
+	raidDamage[attackerDefId] += damage;
+}
+
+void CMilitaryManager::LogRaidStats()
+{
+	// For tuning raid_thr_mod: who hurts our raiders and scouts, next to the multiplier their type has on the raid
+	// view, and how often raid groups run (the multipliers put more fights near the engage/escape line)
+	if (raidDamage.empty() && (raidEscapes == 0)) {
+		return;
+	}
+	std::vector<std::pair<float, CCircuitDef::Id>> byDamage;
+	float total = 0.f;
+	for (const auto& kv : raidDamage) {
+		byDamage.push_back({kv.second, kv.first});
+		total += kv.second;
+	}
+	std::sort(byDamage.begin(), byDamage.end(), std::greater<std::pair<float, CCircuitDef::Id>>());
+	std::string list;
+	constexpr size_t MAX_TYPES = 8;
+	for (size_t i = 0; (i < byDamage.size()) && (i < MAX_TYPES); ++i) {
+		const CCircuitDef* edef = (byDamage[i].second >= 0) ? circuit->GetCircuitDef(byDamage[i].second) : nullptr;
+		char entry[128];
+		if (edef != nullptr) {
+			snprintf(entry, sizeof(entry), "%s%s %.0f (x%.2f)", list.empty() ? "" : ", ", edef->GetDef()->GetName(),
+					byDamage[i].first, edef->GetRaidThrMod());
+		} else {
+			snprintf(entry, sizeof(entry), "%sunknown %.0f", list.empty() ? "" : ", ", byDamage[i].first);
+		}
+		list += entry;
+	}
+	if (byDamage.size() > MAX_TYPES) {
+		list += utils::int_to_string(byDamage.size() - MAX_TYPES, ", %i more types");
+	}
+	circuit->LOG("RAID last 60 s: %i raid group escapes, %i raid groups now; damage to raid and scout units %.0f: %s",
+			raidEscapes, (int)GetTasks(IFighterTask::FightType::RAID).size(), total, list.empty() ? "none" : list.c_str());
+	raidDamage.clear();
+	raidEscapes = 0;
+}
+
 float CMilitaryManager::GetBaseThrBonus(float sqDistToBase) const
 {
 	const float baseRange = GetBaseDefRange();
@@ -2419,10 +2476,11 @@ void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,
 	for (int index : metalMgr->GetContestedClusters(circuit->GetLastFrame(), contested.maxAge)) {
 		const AIFloat3& cPos = clusters[index].position;
 		// Live threat on this unit's layer: the mark is from the builders' walk, maybe seconds ago. Still contested:
-		// above the builders' wall (plain threat, as CMetalManager judges it). Takeable: below the group's allowance,
-		// on the threat the group judges with
-		const float threat = threatMap->GetThreatAt(unit, cPos);
-		const float taskThreat = IFighterTask::IsSquadThreat(unit) ? threatMap->GetSquadThreatAt(unit, cPos) : threat;
+		// above the builders' wall (plain threat, as CMetalManager judges it, also for a raid group on the raid view).
+		// Takeable: below the group's allowance, on the threat the group judges with
+		const float threat = threatMap->GetPlainThreatAt(unit, cPos);
+		const float taskThreat = IFighterTask::IsSquadThreat(unit) ? threatMap->GetSquadThreatAt(unit, cPos)
+				: threatMap->GetThreatAt(unit, cPos);
 		if ((threat <= metalMgr->GetWallThreat()) || (taskThreat >= allowedAt(cPos))
 			|| !terrainMgr->CanMobileReachAt(unit->GetArea(), cPos, reach))
 		{

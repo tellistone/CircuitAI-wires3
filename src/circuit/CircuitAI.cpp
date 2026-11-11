@@ -261,13 +261,13 @@ int CCircuitAI::HandleGameEvent(int topic, const void* data)
 			SCOPED_TIME(this, "EVENT_UNIT_DAMAGED");
 			struct SUnitDamagedEvent* evt = (struct SUnitDamagedEvent*)data;
 			CEnemyInfo* attacker = GetEnemyInfo(evt->attacker);
-			// The engine only reports an attacker id when it is in LOS or radar of our ally team,
-			// and visible enemies always have a CEnemyInfo. So an id with no CEnemyInfo is our own
-			// or an allied unit: friendly fire.
-			const bool isFriendlyFire = (evt->attacker >= 0) && (attacker == nullptr);
 			CCircuitUnit* unit = GetTeamUnit(evt->unit);
+			// The engine names the attacker only while it is in our LOS or radar, and our own and allied units always
+			// are: a named attacker that is no enemy we know is friendly fire
+			const bool isFriendlyFire = (attacker == nullptr) && (evt->attacker >= 0);
 			ret = (unit != nullptr)
-					? this->UnitDamaged(unit, attacker, evt->weaponDefId, AIFloat3(evt->dir_posF3), isFriendlyFire)
+					? this->UnitDamaged(unit, attacker, evt->weaponDefId, AIFloat3(evt->dir_posF3),
+							evt->paralyzer ? 0.f : evt->damage, isFriendlyFire)
 					: ERROR_UNIT_DAMAGED;
 			break;
 		}
@@ -998,7 +998,8 @@ int CCircuitAI::UnitMoveFailed(CCircuitUnit* unit)
 	return 0;  // signaling: OK
 }
 
-int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, AIFloat3 dir, bool isFriendlyFire)
+int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, AIFloat3 dir, float damage,
+		bool isFriendlyFire)
 {
 	// FIXME: Doesn't work well with multi-shots (duck)
 //	if (lastFrame <= unit->GetDamagedFrame() + FRAMES_PER_SEC / 5) {
@@ -1010,6 +1011,15 @@ int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weapon
 	// becomes a threat that groups and builders avoid.
 	if ((attacker == nullptr) && !isFriendlyFire && (dir != ZeroVector) && IsValidWeaponDefId(weaponId)) {
 		CreateFakeEnemy(weaponId, unit->GetPos(lastFrame), dir);  // currently only for threatmap
+	}
+
+	// Before the modules: the hit may send the unit to another task. For tuning raid_thr_mod (RAID log): enemy fire
+	// only; an attacker whose type we don't know (out of sight, a radar blip) is named by its weapon
+	if ((militaryManager != nullptr) && !isFriendlyFire) {
+		const CCircuitDef* edef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
+		const CCircuitDef::Id attackerDefId = (edef != nullptr) ? edef->GetId()
+				: (IsValidWeaponDefId(weaponId) ? GetWeaponOwnerId(weaponId) : -1);
+		militaryManager->AddRaidDamage(unit, attackerDefId, damage);
 	}
 
 	for (auto& module : modules) {
@@ -1381,6 +1391,15 @@ void CCircuitAI::UnregisterEnemyInfo(CEnemyInfo* enemy)
 	allyTeam->UnregisterEnemyUnit(enemy->GetData(), this);
 	enemyInfos.erase(enemy->GetId());
 	delete enemy;
+}
+
+CCircuitDef::Id CCircuitAI::GetWeaponOwnerId(CWeaponDef::Id weaponDefId) const
+{
+	const SWeaponToUnitDef& wuDef = weaponToUnitDefs[weaponDefId];
+	if (wuDef.mobileIds.size() == 1) {
+		return *wuDef.mobileIds.begin();
+	}
+	return (wuDef.ids.size() == 1) ? *wuDef.ids.begin() : -1;
 }
 
 void CCircuitAI::CreateFakeEnemy(int weaponId, const AIFloat3& startPos, const AIFloat3& dir)

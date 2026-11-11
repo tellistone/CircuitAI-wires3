@@ -79,6 +79,10 @@ public:
 	void Dead() { isDead = true; }
 	bool IsDead() const { return isDead; }
 
+	// Judges threat on the raid view (CThreatMap raid layers: each enemy type's threat x its raid_thr_mod), for
+	// every read made through its units: points, squad threat and routes. Set by raid and scout tasks
+	bool IsRaidView() const { return isRaidView; }
+
 protected:
 	bool IsQueryReady(CCircuitUnit* unit) const;
 	bool IsQueryAlive(const IPathQuery* query) const;
@@ -102,6 +106,7 @@ protected:
 
 	unsigned int updCount;
 	bool isDead;
+	bool isRaidView = false;  // IsRaidView
 
 #ifdef DEBUG_VIS
 public:
