@@ -13,16 +13,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - Each ally team learns the map's shape, shared by allied AIs and built on the area worker. It finds the chokes
     between regions the enemy's walkers can cross, the pockets of clusters behind them, and the current and forward
     lines. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
-  - Choke defence (A): a qualified pocket's towers go to its entrances, from a pool of what its clusters would spend
-    anyway. AA stays on each cluster, and a leaky pocket keeps each cluster's first tower too. Modes switch only on
-    hard events, at least 3 minutes apart. Narrow chokes keep a lane free of buildings.
+  - Choke defence (A): each cluster of a qualified pocket keeps its AA and its first tower, and the rest goes to the
+    pocket's entrances, from a budget of what its held clusters would spend anyway. Modes switch at most every 3
+    minutes. Narrow chokes keep a lane free of buildings.
   - Scored spots (F): towers, base towers and hold spots go to the best spot by covered traffic, height, threat and
     builder distance. Spots freeze once queued. The porc sweep visits points by uncovered traffic × income.
-  - Radar planner (B): radar where it covers the most weighted ground for its cost, up to `choke.radar.coverage`.
+  - Radar planner (B): radar where it covers the most weighted ground for its cost, while each new radar adds at
+    least `choke.radar.min_gain` of it.
   - Holding the line (C), forward objectives (D) and enemy-held choke rankings (E).
   - Expansion bonus for clusters behind a defended cut.
   - `choke_overlay` chat command: draws chokes, pockets, lines, rankings, traffic, spots, radar and regions with map
-    figures, and in games with no human opponents tunes keys live and saves map fixtures.
+    figures, and announces each threat-graph rebuild with the enemy types behind it. In games with no human
+    opponents it tunes keys live and saves map fixtures.
 
 - **Raid view of the threat map** (per-unit `raid_thr_mod` and `quota.raid_thr_role`, 0.1..4, default 1 = off;
   shipped `{"skirmish": 0.25, "assault": 0.34}`). Raiders swarm and dodge slow skirmisher and assault shots, but raid
