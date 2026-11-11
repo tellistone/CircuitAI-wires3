@@ -13,6 +13,7 @@
 #include "AIFloat3.h"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <vector>
 
@@ -20,6 +21,8 @@ namespace circuit {
 
 class CCircuitAI;
 class CCircuitDef;
+class CCircuitUnit;
+class IBuilderTask;
 
 /*
  * choke.radar.enable: the radar planner (B), on CChokeMap's traffic grid, run by the ally team's authority AI only.
@@ -36,6 +39,9 @@ class CCircuitDef;
  *   for each radar lost near it, halving every 5 minutes; a planned radar that no builder starts within 90 s, or
  *   that dies unfinished, counts as lost. At most one planned radar waits for a builder, and spending is capped at
  *   choke.radar.share of income.
+ * - An idle constructor outside coverage gets the best candidate within 1000 elmos of it as a NOW job, if that adds
+ *   min_gain and has no threat on it (MakeIdleRadar, on any AI of the team: the authority's planner picks the spot).
+ * A planned radar's view counts as covered until it is built or given up, so no second one goes there.
  * Candidates are tried best upper bound first (the weight in the square around them), at most 16 new viewsheds a
  * call; viewsheds are cached while their cell stays a candidate
  */
@@ -45,6 +51,11 @@ public:
 	virtual ~CSensorPlanner();
 
 	void Update();  // every 15 s
+	// An idle constructor of ours: a radar nearby if it stands outside the team's coverage, queued NOW for it
+	IBuilderTask* MakeIdleRadar(CCircuitUnit* unit);
+	// The authority's: the best candidate within reach of pos that isOk passes, when pos is outside coverage and the
+	// candidate adds min_gain; its view counts as covered from now on. -RgtVector if none
+	springai::AIFloat3 TakeIdleSpot(const springai::AIFloat3& pos, const std::function<bool(const springai::AIFloat3&)>& isOk);
 
 	float GetCoveredShare() const { return (totalWeight > 0.f) ? coveredWeight / totalWeight : 1.f; }
 	const std::vector<uint8_t>& GetCovered() const { return isCovered; }  // per traffic cell (choke_overlay)
@@ -59,6 +70,7 @@ private:
 		springai::AIFloat3 pos;
 		int frame;
 	};
+	void AddPending(const springai::AIFloat3& pos);
 	void UpdateWeights();
 	void UpdateRadars();
 	void UpdateCandidates();
@@ -74,6 +86,7 @@ private:
 	float coveredWeight;
 	std::map<ICoreUnit::Id, SRadar> radars;  // known static radars
 	std::vector<SDeath> deaths;
+	std::vector<SDeath> pending;  // planned radars not built yet, by the frame they were planned
 	std::vector<springai::AIFloat3> candidates;
 	std::map<int, std::vector<int>> viewsheds;  // candidate's cell -> cells it sees
 	springai::AIFloat3 plannedPos;  // the last planned radar's, until its task is gone

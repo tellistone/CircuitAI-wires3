@@ -181,6 +181,11 @@ each radar lost nearby, halving every 5 minutes. A planned radar that no builder
 before it is finished, counts as lost. At most one planned radar waits for a builder at a time, and spending is
 capped at `choke.radar.share` of income.
 
+An idle constructor that stands outside coverage builds a radar first, as a NOW job: the best candidate within 1000
+elmos of it that it can reach, with no threat on it, if that adds `choke.radar.min_gain`. This works for every AI of
+the team, and doesn't wait for the budget or the 15 s plan. A planned radar's view counts as covered until it is
+built or given up, so two constructors never go for the same ground.
+
 ### Holding the line (C), objectives (D) and rankings (E)
 
 - **Frontline.** The current line's chokes, ranked by our income behind each one × its traffic. Each of our points
@@ -217,7 +222,8 @@ Lines in the AI's infolog, for tuning:
 - `CHOKE spot`: each spot search, and each failed spot.
 - `CHOKE artillery near choke`: towers called off.
 - `CHOKE hold` and `CHOKE objective`: slots and objectives starting, moving and ending.
-- `RADAR planned`: each planned radar, with coverage before and the share it adds.
+- `RADAR planned`: each planned radar, with coverage before and the share it adds. `RADAR for idle`: one for an idle
+  constructor.
 
 ## Known limits
 

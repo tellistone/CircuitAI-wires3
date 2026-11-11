@@ -9,11 +9,13 @@
 #include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
+#include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "unit/ally/AllyUnit.h"
 #include "unit/CircuitDef.h"
+#include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 #include "util/Point.h"
 #include "util/Utils.h"
@@ -38,6 +40,7 @@ using namespace springai;
 #define TARGET_LIFT		20.f  // sight rays end this high above a cell's ground
 #define FRESH_VIEWS		16  // most viewsheds made per Update
 #define PLAN_TIMEOUT	(FRAMES_PER_SEC * 90)  // a planned radar no builder starts by then is given up
+#define IDLE_REACH		1000.f  // elmos: an idle constructor's radar goes this close to it
 
 CSensorPlanner::CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef)
 		: circuit(circuit)
@@ -170,10 +173,76 @@ void CSensorPlanner::Update()
 	builderMgr->EnqueueTask(IBuilderTask::Priority::NORMAL, radarDef, bestPos, IBuilderTask::BuildType::RADAR, cost,
 			SQUARE_SIZE * 8.f, true, PLAN_TIMEOUT);
 	plannedPos = bestPos;
+	AddPending(bestPos);
 	budget -= cost;
 	circuit->LOG("RADAR planned at (%.0f, %.0f): covered %.0f%% +%.0f%%, %i of %i candidates seen, %.2f ms",
 			bestPos.x, bestPos.z, GetCoveredShare() * 100.f, bestGain / totalWeight * 100.f, viewCount,
 			(int)candidates.size(), ms);
+}
+
+IBuilderTask* CSensorPlanner::MakeIdleRadar(CCircuitUnit* unit)
+{
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	const int frame = circuit->GetLastFrame();
+	if (!chokeMap->GetConfig().isRadar || !chokeMap->IsReady() || (radarDef == nullptr)
+		|| !radarDef->IsAvailable(frame) || !unit->GetCircuitDef()->CanBuild(radarDef))
+	{
+		return nullptr;
+	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
+	auto isOk = [&](const AIFloat3& spot) {
+		return terrainMgr->CanReachAt(unit, spot, buildDist) && (threatMap->GetThreatAt(spot) <= THREAT_MIN);
+	};
+	CSensorPlanner* planner = chokeMap->GetAuthority()->GetMilitaryManager()->GetSensorPlanner();
+	const AIFloat3 spot = planner->TakeIdleSpot(unit->GetPos(frame), isOk);
+	if (!utils::is_valid(spot)) {
+		return nullptr;
+	}
+	circuit->LOG("RADAR for idle %s at (%.0f, %.0f)", unit->GetCircuitDef()->GetDef()->GetName(), spot.x, spot.z);
+	return circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NOW, radarDef, spot,
+			IBuilderTask::BuildType::RADAR, radarDef->GetCostM(), SQUARE_SIZE * 8.f, true, PLAN_TIMEOUT);
+}
+
+AIFloat3 CSensorPlanner::TakeIdleSpot(const AIFloat3& pos, const std::function<bool(const AIFloat3&)>& isOk)
+{
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
+	if (weights.empty() || (isCovered.size() != weights.size()) || isCovered[traffic.IndexAt(pos.x, pos.z)]) {
+		return -RgtVector;  // no plan yet, or it stands in our radar
+	}
+	AIFloat3 bestPos = -RgtVector;
+	float bestScore = 0.f;
+	float bestGain = 0.f;
+	for (const AIFloat3& c : candidates) {
+		if ((c.SqDistance2D(pos) > SQUARE(IDLE_REACH)) || !isOk(c)) {
+			continue;
+		}
+		float gain = 0.f;
+		for (int cell : GetViewshed(c)) {
+			gain += isCovered[cell] ? 0.f : weights[cell];
+		}
+		const float score = gain / (1.f + GetRisk(c));
+		if (score > bestScore) {
+			bestScore = score;
+			bestGain = gain;
+			bestPos = c;
+		}
+	}
+	if (!utils::is_valid(bestPos) || (bestGain < circuit->GetChokeMap()->GetConfig().radarGain * totalWeight)) {
+		return -RgtVector;
+	}
+	AddPending(bestPos);
+	return bestPos;
+}
+
+void CSensorPlanner::AddPending(const AIFloat3& pos)
+{
+	pending.push_back({pos, circuit->GetLastFrame()});
+	for (int cell : GetViewshed(pos)) {
+		coveredWeight += isCovered[cell] ? 0.f : weights[cell];
+		isCovered[cell] = 1;
+	}
 }
 
 void CSensorPlanner::UpdateWeights()
@@ -272,6 +341,18 @@ void CSensorPlanner::UpdateRadars()
 	isCovered.assign(traffic.GetWidth() * traffic.GetHeight(), 0);
 	for (const auto& kv : radars) {
 		for (int cell : kv.second.cells) {
+			isCovered[cell] = 1;
+		}
+	}
+	// Planned ones count until built (their own view counts then) or given up
+	pending.erase(std::remove_if(pending.begin(), pending.end(), [this, frame](const SDeath& p) {
+		return (frame - p.frame > PLAN_TIMEOUT) || std::any_of(radars.begin(), radars.end(),
+				[&p](const std::pair<const ICoreUnit::Id, SRadar>& kv) {
+			return kv.second.pos.SqDistance2D(p.pos) < SQUARE(SQUARE_SIZE * 16);
+		});
+	}), pending.end());
+	for (const SDeath& p : pending) {
+		for (int cell : GetViewshed(p.pos)) {
 			isCovered[cell] = 1;
 		}
 	}

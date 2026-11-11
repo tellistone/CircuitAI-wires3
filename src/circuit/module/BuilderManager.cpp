@@ -8,6 +8,7 @@
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
+#include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -1566,8 +1567,16 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 		if (!IsCommJobSafe(commState, pos)) {
 			return nullptr;  // a builder with the flee on makes no job where it stands inside a flee zone
 		}
-		// Stalling: no new building from an idle constructor, only reclaim anywhere on the map
-		task = isStalling ? economyMgr->UpdateReclaimTasks(pos, unit, false) : CreateBuilderTask(pos, unit);
+		// Stalling: no new building from an idle constructor, only reclaim anywhere on the map. Else, standing
+		// outside our radar (choke.radar.enable): a radar nearby first
+		if (isStalling) {
+			task = economyMgr->UpdateReclaimTasks(pos, unit, false);
+		} else {
+			task = circuit->GetMilitaryManager()->GetSensorPlanner()->MakeIdleRadar(unit);
+			if (task == nullptr) {
+				task = CreateBuilderTask(pos, unit);
+			}
+		}
 	}
 
 	return const_cast<IBuilderTask*>(task);
