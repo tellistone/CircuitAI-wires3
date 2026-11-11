@@ -1075,6 +1075,8 @@ void CMilitaryManager::ReadConfig()
 	escalation.maxBuildSec = esc.get("max_build_sec", 420.f).asFloat();
 	escalation.builderShare = utils::clamp(esc.get("builder_share", 0.7f).asFloat(), 0.f, 1.f);
 	escalation.isComm = esc.get("comm", false).asBool();
+	escalation.singuShare = utils::clamp(esc.get("singu_share", 0.34f).asFloat(), 0.f, 1.f);
+	escalation.staleFrames = std::max(esc.get("stale", 60.f).asFloat(), 1.f) * FRAMES_PER_SEC;
 	escalation.isNeedTerra = esc.get("terraform", true).asBool();
 	for (const Json::Value& name : esc["enemy"]) {
 		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
@@ -3051,7 +3053,7 @@ bool CMilitaryManager::IsEscalationSuper(const CCircuitDef* cdef) const
 	return false;
 }
 
-CCircuitDef* CMilitaryManager::DiceEscalationSuper() const
+CCircuitDef* CMilitaryManager::DiceEscalationSuper(bool isFrontOk) const
 {
 	const int frame = circuit->GetLastFrame();
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
@@ -3066,7 +3068,7 @@ CCircuitDef* CMilitaryManager::DiceEscalationSuper() const
 	float slowMagnitude = 0.f;
 	for (const SSuperInfo& info : escalation.supers) {
 		if (!info.cdef->IsAvailable(frame) || (economyMgr->IsGridConsumer(info.cdef)
-			&& !economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef))))
+			&& !economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef, isFrontOk))))
 		{
 			continue;
 		}
@@ -3098,9 +3100,9 @@ CCircuitDef* CMilitaryManager::DiceEscalationSuper() const
 	return candidates.back()->cdef;
 }
 
-AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef) const
+AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef, bool isFrontOk) const
 {
-	if (escalation.frontDefs.find(superDef->GetId()) == escalation.frontDefs.end()) {
+	if (!isFrontOk || !IsEscalationFront(superDef)) {
 		return GetBigGunPos(superDef);
 	}
 	CInfluenceMap* inflMap = circuit->GetInflMap();
@@ -3111,6 +3113,11 @@ AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef) const
 	};
 	const int index = metalMgr->FindNearestCluster(circuit->GetSetupManager()->GetLanePos(), predicate);
 	return (index >= 0) ? clusters[index].position : GetBigGunPos(superDef);
+}
+
+bool CMilitaryManager::IsEscalationFront(const CCircuitDef* cdef) const
+{
+	return escalation.frontDefs.find(cdef->GetId()) != escalation.frontDefs.end();
 }
 
 int CMilitaryManager::RollEscalationDelay() const
@@ -3134,7 +3141,7 @@ void CMilitaryManager::UpdateEscalation()
 			continue;
 		}
 		if (edef->GetId() == terraId) {
-			escalation.isTerraSeen = true;
+			circuit->GetAllyTeam()->SetTerraSeen();
 		}
 		if (!isEnemyTech && (escalation.enemyDefs.find(edef->GetId()) != escalation.enemyDefs.end())) {
 			isEnemyTech = true;
@@ -3152,7 +3159,7 @@ void CMilitaryManager::UpdateEscalation()
 			continue;
 		}
 		if (cdef->GetId() == terraId) {
-			escalation.isTerraSeen = true;
+			circuit->GetAllyTeam()->SetTerraSeen();
 			continue;
 		}
 		if (!cdef->IsMobile() || cdef->IsBuilder() || cdef->IsRoleComm() || au->GetUnit()->IsBeingBuilt()) {
@@ -3165,7 +3172,7 @@ void CMilitaryManager::UpdateEscalation()
 	// it is on; one threshold would switch it on and off every few seconds
 	const float ratio = escalation.isOn ? escalation.armyOff : escalation.armyOn;
 	const bool isArmy = (allyArmy > 0.f) && (allyArmy >= ratio * enemyArmy);
-	const bool isTerra = !escalation.isNeedTerra || escalation.isTerraSeen;
+	const bool isTerra = !escalation.isNeedTerra || circuit->GetAllyTeam()->IsTerraSeen();
 
 	bool isOn = isArmy && isTerra && isEnemyTech;
 	if (!isOn && escalation.isOn && isArmy && (frame < escalation.onFrame + escalation.minOnFrames)) {
@@ -3174,7 +3181,7 @@ void CMilitaryManager::UpdateEscalation()
 	if (isOn != escalation.isOn) {
 		circuit->LOG("ESCALATION %s: allied army %.0f m vs enemy %.0f m (need x%.1f), terraform %s, enemy tech %s",
 				isOn ? "ON" : "OFF", allyArmy, enemyArmy, ratio,
-				escalation.isTerraSeen ? "seen" : "not seen",
+				circuit->GetAllyTeam()->IsTerraSeen() ? "seen" : "not seen",
 				(techDef != nullptr) ? techDef->GetDef()->GetName() : "none");
 		escalation.isOn = isOn;
 		if (isOn) {

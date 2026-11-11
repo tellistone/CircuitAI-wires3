@@ -63,7 +63,8 @@
 //   - factories build constructors only (no army) while there is superweapon work: a frame or job, ours or an
 //     ally's, or a start due with something to pick (singus alone don't pause them)
 //   - builders go at NOW to an allied (ours included) <super> or <singu> being built, up to <builder_share> of our
-//     build power, commanders only with <comm>
+//     build power (singus at most <singu_share> of that), commanders only with <comm>. A job of ours not placed yet
+//     that no builder takes for <stale> s is dropped; a dropped <front> super's next one is placed as the rest
 //   - with none of a kind under way (and no allied CircuitAI holding a job for one), we start one at NOW after a
 //     random <delay> s: a <super> by weight among those under their behaviour.json limit/since and with a grid in
 //     reach (as porcupine.superweapon), the ones buildable within <max_build_sec> s at the lower of income and that
@@ -77,6 +78,8 @@
 	"min_on": 60,
 	"max_build_sec": 420,
 	"builder_share": 0.7,
+	"singu_share": 0.34,
+	"stale": 60,
 	"comm": false,
 	"terraform": true,
 	"enemy": ["staticheavyarty", "staticarty", "turretheavy", "turretantiheavy", "raveparty", "staticnuke", "zenith", "mahlazer"],

@@ -242,11 +242,15 @@ public:
 	CCircuitDef* GetEscalationSingu() const { return escalation.singuDef; }
 	// Weighted pick among escalation.super that are available and can be powered, the affordable ones (cost over the
 	// lower of income and our escalation build power within max_build_sec) first; nullptr = none now
-	CCircuitDef* DiceEscalationSuper() const;
+	CCircuitDef* DiceEscalationSuper(bool isFrontOk = true) const;
 	int RollEscalationDelay() const;  // frames, random within escalation.delay
 	// Where escalation builds superDef: escalation.front ones on our frontline cluster (finished, not enemy-held, the
 	// nearest to the lane), the rest (or with no such cluster) at GetBigGunPos
-	springai::AIFloat3 GetEscalationSuperPos(CCircuitDef* superDef) const;
+	// isFrontOk false: the last front job of escalation went stale, place this one as the rest
+	springai::AIFloat3 GetEscalationSuperPos(CCircuitDef* superDef, bool isFrontOk = true) const;
+	bool IsEscalationFront(const CCircuitDef* cdef) const;
+	int GetEscalationStaleFrames() const { return escalation.staleFrames; }
+	float GetEscalationSinguShare() const { return escalation.singuShare; }
 	// economy.ms_pull_army and quota.attack_threat_floor: metal value of the known enemy army
 	// (EnemyManager::GetMobileCostNoCommFaded, faded as quota.enemy_half_life) per enemy team over our army's (no
 	// constructors or commanders on either side); negative while no enemy army is known. Writes both values out
@@ -691,9 +695,10 @@ private:
 		int onFrame = -1;  // when it last turned on
 		float maxBuildSec = 420.f;  // affordability of a superweapon
 		float builderShare = 0.7f;
+		float singuShare = 0.34f;  // most of builderShare on singus
+		int staleFrames = FRAMES_PER_SEC * 60;  // an unplaced job with no builders this long is dropped
 		bool isComm = false;
 		bool isNeedTerra = true;  // a terraunit must have been seen
-		bool isTerraSeen = false;  // latched: terraform stays on the map
 		std::set<CCircuitDef::Id> enemyDefs;  // enemy big guns, superweapons and singus
 		std::set<CCircuitDef::Id> frontDefs;  // supers built on the frontline cluster
 		std::vector<SSuperInfo> supers;  // what we start; also what we assist

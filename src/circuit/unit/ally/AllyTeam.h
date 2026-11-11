@@ -10,6 +10,7 @@
 
 #include "unit/enemy/EnemyManager.h"
 #include "util/math/QuadField.h"
+#include "util/Defines.h"
 
 #include <memory>
 #include <array>
@@ -126,6 +127,10 @@ public:
 		}
 	}
 
+	// Escalation: a terraunit has been seen this game by any of our CircuitAIs (terraform stays on the map)
+	bool IsTerraSeen() const { return isTerraSeen; }
+	void SetTerraSeen() { isTerraSeen = true; }
+
 	void OccupyCluster(int clusterId, int teamId);
 	SClusterTeam GetClusterTeam(int clusterId);
 	// FIXME: DEBUG
@@ -150,7 +155,8 @@ private:
 		int untilFrame = -1;
 		int aiId = -1;
 	};
-	std::array<SEscClaim, 2> escClaims;
+	std::array<SEscClaim, ESC_KINDS> escClaims;
+	bool isTerraSeen = false;
 
 	std::map<int, SClusterTeam> occupants;  // Cluster owner on start. clusterId: SClusterTeam
 	// FIXME: DEBUG
