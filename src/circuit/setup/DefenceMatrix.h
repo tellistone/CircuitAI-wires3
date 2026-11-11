@@ -41,13 +41,12 @@ public:
 		int chokeId = -1;  // choke.enable: a choke point, at its anchor behind that choke (CChokeDefence)
 		std::map<int, SSpot> spots = {};  // by slot
 	};
-	// choke.enable: how a pocket (CChokeMap::SPocket) is defended
-	enum class DefenceMode: char {CLUSTER, CHOKES, MIXED};
+	// choke.enable: how a pocket (CChokeMap::SPocket) is defended (CChokeDefence)
+	enum class DefenceMode: char {CLUSTER, CHOKES};
 	struct SPocketState {
 		DefenceMode mode;
 		int commitFrame;  // when it was last decided
-		int signature;  // the hard events' inputs it was decided on (CChokeDefence)
-		bool isAffordable;  // the pool once bought a main tower per entrance: only the first time counts
+		bool isAffordable;  // its budget once covered its entrances: only the first time counts
 	};
 	using DefPoints = std::vector<SDefPoint>;
 	struct SClusterInfo {
@@ -63,8 +62,6 @@ private:
 	void Init(CCircuitAI* circuit);
 	// porcupine.geo: each vent that no mex point covers becomes a point of its nearest cluster
 	void AddGeoPoints(CCircuitAI* circuit, float coverRange);
-	// choke.enable: spots in different regions never share a point (CChokeMap)
-	bool IsRegionSplit(CCircuitAI* circuit) const;
 
 public:
 	std::vector<SDefPoint>& GetDefPoints(int index) { return clusterInfos[index].defPoints; }

@@ -994,7 +994,7 @@ CMetalManager::ClusterScore CEconomyManager::GetMexFrontScore(float bias) const
 
 std::vector<float> CEconomyManager::GetExpandMods() const
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	if (!chokeMap->GetConfig().isExpand || !chokeMap->IsReady()) {
 		return {};
 	}

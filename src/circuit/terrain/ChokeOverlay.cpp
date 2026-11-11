@@ -76,7 +76,7 @@ CChokeOverlay::CChokeOverlay(CChokeMap* chokeMap)
 		, drawnFrame(-1)
 		, commandFrame(-1)
 {
-	isLabels = !IsHumanAlly();
+	isLabels = !IsHumanIn(true);
 }
 
 CChokeOverlay::~CChokeOverlay()
@@ -105,7 +105,7 @@ bool CChokeOverlay::OnChat(CCircuitAI* ai, int playerId, const char* message)
 	COOAICallback* clb = ai->GetCallback();
 	const int team = clb->Game_GetPlayerTeam(playerId);
 	const bool isOurs = (team >= 0) && (clb->Game_GetTeamAllyTeam(team) == ai->GetAllyTeamId());
-	if (!isOurs && ((team >= 0) || IsHumanOpponent())) {
+	if (!isOurs && ((team >= 0) || IsHumanIn(false))) {
 		return true;
 	}
 
@@ -152,6 +152,25 @@ void CChokeOverlay::Update()
 	}
 }
 
+void CChokeOverlay::OnGraphBuilt()
+{
+	if (isOn) {
+		Say("threat graph rebuilt: " + DescribeGraph());
+	}
+}
+
+/*
+ * Its size and the enemy types it was built from: a leak type promoted to gating (choke.gate_share, spiders say)
+ * opens most of the walls the old graph had, so its chokes move a long way
+ */
+std::string CChokeOverlay::DescribeGraph() const
+{
+	const CRegionGraph& graph = chokeMap->GetGraph();
+	return utils::int_to_string(graph.GetRegions().size(), "%i regions, ")
+			+ utils::int_to_string(graph.GetChokes().size(), "%i chokes; enemy types: ") + chokeMap->DescribeTypeSet()
+			+ "; '" COMMAND " <class>' shows one class's own graph";
+}
+
 void CChokeOverlay::Toggle()
 {
 	isOn = !isOn;
@@ -162,10 +181,9 @@ void CChokeOverlay::Toggle()
 	}
 	chokeMap->Request();  // builds it if no feature asked for it
 	Draw();
-	Say(std::string("on, layer ") + LAYER_NAMES[static_cast<int>(layer)]
-			+ (chokeMap->IsReady() ? "" : " (building)")
-			+ ", openness " + utils::float_to_string(chokeMap->GetOpenness(), "%.2f")
-			+ " " + CChokeMap::GetBandName(chokeMap->GetOpennessBand()));
+	Say(std::string("on, layer ") + LAYER_NAMES[static_cast<int>(layer)] + ", openness "
+			+ utils::float_to_string(chokeMap->GetOpenness(), "%.2f ") + CChokeMap::GetBandName(chokeMap->GetOpennessBand())
+			+ (chokeMap->IsReady() ? "; " + DescribeGraph() : " (building)"));
 }
 
 void CChokeOverlay::NextLayer()
@@ -211,15 +229,15 @@ void CChokeOverlay::ShowType(const std::string& name)
  */
 void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 {
-	if (IsHumanOpponent()) {
+	if (IsHumanIn(false)) {
 		Say("set is off in games with human opponents");
 		return;
 	}
 	CChokeMap::SConfig& c = chokeMap->GetConfig();
 	const std::map<std::string, float*> floats = {
 		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"defensible", &c.defensible},
-		{"near", &c.nearRanges}, {"exposure", &c.exposure}, {"lane", &c.lane}, {"gate_share", &c.gateShare},
-		{"traffic.spread", &c.spread}, {"radar.coverage", &c.radarCoverage}, {"radar.share", &c.radarShare},
+		{"near", &c.nearRanges}, {"lane", &c.lane}, {"gate_share", &c.gateShare}, {"traffic.spread", &c.spread},
+		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare},
 		{"objective.gain", &c.objGain}, {"objective.power", &c.objPower},
 	};
 	const std::map<std::string, bool*> flags = {
@@ -270,7 +288,7 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
  */
 void CChokeOverlay::Save()
 {
-	if (IsHumanOpponent()) {
+	if (IsHumanIn(false)) {
 		Say("save is off in games with human opponents");
 		return;
 	}
@@ -288,30 +306,18 @@ void CChokeOverlay::Save()
 	Say((isLocated && file.good()) ? std::string("saved ") + absPath : "can't write " + relPath);
 }
 
-bool CChokeOverlay::IsHumanOpponent() const
+bool CChokeOverlay::IsHumanIn(bool isAlly) const
 {
 	CSetupData& setupData = circuit->GetGameAttribute()->GetSetupData();
 	COOAICallback* clb = circuit->GetCallback();
 	for (int i = 0; i < setupData.GetAllyTeamCount(); ++i) {
-		if (i == circuit->GetAllyTeamId()) {
+		if ((i == circuit->GetAllyTeamId()) != isAlly) {
 			continue;
 		}
 		for (int team : setupData.GetAllyTeam(i)->GetTeamIds()) {
 			if (!clb->Team_HasAIController(team)) {
 				return true;
 			}
-		}
-	}
-	return false;
-}
-
-bool CChokeOverlay::IsHumanAlly() const
-{
-	CSetupData& setupData = circuit->GetGameAttribute()->GetSetupData();
-	COOAICallback* clb = circuit->GetCallback();
-	for (int team : setupData.GetAllyTeam(circuit->GetAllyTeamId())->GetTeamIds()) {
-		if (!clb->Team_HasAIController(team)) {
-			return true;
 		}
 	}
 	return false;
@@ -404,8 +410,8 @@ void CChokeOverlay::DrawLanes()
 }
 
 /*
- * Each pocket's entrances by its mode (green at chokes, yellow mixed, white on cluster, grey undecided), its points
- * linked to them; points red when open, orange leaky, green gated, grey unreached; choke points' anchors magenta
+ * Each pocket's entrances by its mode (green at chokes, white on cluster, grey undecided), its points linked to them;
+ * points red when open, green gated, grey unreached; choke points' anchors magenta
  */
 void CChokeOverlay::DrawPockets()
 {
@@ -415,8 +421,7 @@ void CChokeOverlay::DrawPockets()
 	for (const CChokeMap::SPocket& pocket : chokeMap->GetPockets()) {
 		const CDefenceMatrix::SPocketState* state = defence->GetPocketState(pocket.chokeIds);
 		const Colour colour = (state == nullptr) ? Colour::GREY
-				: (state->mode == CDefenceMatrix::DefenceMode::CHOKES) ? Colour::GREEN
-				: (state->mode == CDefenceMatrix::DefenceMode::MIXED) ? Colour::YELLOW : Colour::WHITE;
+				: (state->mode == CDefenceMatrix::DefenceMode::CHOKES) ? Colour::GREEN : Colour::WHITE;
 		for (int c : pocket.chokes) {
 			const AIFloat3 centre = chokeMap->GetCellPos(graph.GetChokes()[c].centre);
 			AddCross(centre, colour, 96.f);
@@ -426,14 +431,12 @@ void CChokeOverlay::DrawPockets()
 		}
 		const AIFloat3 first = chokeMap->GetCellPos(graph.GetChokes()[pocket.chokes.front()].centre);
 		AddLabel(first, std::string("pocket ") + ((state != nullptr) ? CChokeDefence::GetModeName(state->mode) : "undecided")
-				+ (pocket.isQualified ? "" : ", not qualified") + (pocket.isLeaky ? ", leaky" : ""));
+				+ (pocket.isQualified ? "" : ", not qualified"));
 	}
 	for (const CChokeMap::SPointInfo& pi : infos) {
-		const Colour colour = pi.isOpen ? Colour::RED : (pi.pocket < 0) ? Colour::GREY
-				: pi.isLeaky ? Colour::ORANGE : Colour::GREEN;
-		AddCross(pi.pos, colour);
+		AddCross(pi.pos, pi.isOpen ? Colour::RED : (pi.pocket < 0) ? Colour::GREY : Colour::GREEN);
 		AddLabel(pi.pos, pi.isOpen ? std::string("open") : (pi.pocket < 0) ? std::string("unreached")
-				: utils::int_to_string(pi.entrances, "gated %i") + (pi.isLeaky ? ", leaky" : ""));
+				: utils::int_to_string(pi.entrances, "gated %i"));
 	}
 	for (const auto& kv : defence->GetChokePoints()) {
 		AddCross(kv.second.position, Colour::MAGENTA);
@@ -512,12 +515,16 @@ void CChokeOverlay::DrawRanks()
 void CChokeOverlay::DrawTraffic()
 {
 	const CTrafficField& traffic = chokeMap->GetTraffic();
-	const float maxValue = traffic.GetMax();
+	const int cellCount = traffic.GetWidth() * traffic.GetHeight();
+	float maxValue = 0.f;
+	for (int cell = 0; cell < cellCount; ++cell) {
+		maxValue = std::max(maxValue, traffic.GetAt(cell));
+	}
 	if (maxValue <= 0.f) {
 		return;
 	}
 	std::vector<std::pair<float, int>> cells;
-	for (int cell = 0; cell < traffic.GetWidth() * traffic.GetHeight(); ++cell) {
+	for (int cell = 0; cell < cellCount; ++cell) {
 		const float value = traffic.GetAt(cell) / maxValue;
 		if (value >= 0.2f) {
 			cells.push_back({value, cell});

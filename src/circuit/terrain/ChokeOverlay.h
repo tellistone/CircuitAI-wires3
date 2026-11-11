@@ -38,6 +38,8 @@ public:
 	bool OnChat(CCircuitAI* ai, int playerId, const char* message);
 	// Redraws when the choke map changed, and every 10 s for the layers other modules feed (CChokeMap::Update)
 	void Update();
+	// A new threat graph: says what it was built from, so a choke that moved has its reason (CChokeMap::ApplyJob)
+	void OnGraphBuilt();
 	bool IsOn() const { return isOn; }
 
 private:
@@ -46,9 +48,9 @@ private:
 	void ShowType(const std::string& name);
 	void SetValue(const std::string& key, const std::string& value);
 	void Save();
-	bool IsHumanOpponent() const;
-	bool IsHumanAlly() const;
+	bool IsHumanIn(bool isAlly) const;  // a human player on our ally team, or on any other
 	void Say(const std::string& text) const;  // to the log, and to the sender's allies when it answers a command
+	std::string DescribeGraph() const;
 
 	void Draw();
 	void Clear();

@@ -38,22 +38,20 @@ using namespace springai;
 #define SWITCH_SHARE	1.3f  // a slot or objective moves only to one this much better
 #define SAMPLE_COUNT	8  // LOS samples on a choke's line
 #define HOLD_RETRY		(FRAMES_PER_SEC * 30)  // a slot with no hold spot is scored again after this
+#define HOLD_END		(FRAMES_PER_SEC * 30)  // a hold ends once its choke is this long not short
+#define HOLD_LEASE		(FRAMES_PER_SEC * 60)  // a claim lapses when its group hasn't asked for its spot this long
 
 namespace {
-
-float LineDist(const CRegionGraph& graph, const CRegionGraph::SChoke& choke, const AIFloat3& pos)
-{
-	const SCellMask& mask = graph.GetMask();
-	float bestSq = std::numeric_limits<float>::max();
-	for (int cell : choke.line) {
-		bestSq = std::min(bestSq, SQUARE(mask.CentreX(cell) - pos.x) + SQUARE(mask.CentreZ(cell) - pos.z));
-	}
-	return std::sqrt(bestSq);
-}
 
 bool Contains(const std::vector<int>& list, int value)
 {
 	return std::find(list.begin(), list.end(), value) != list.end();
+}
+
+// A choke's defence as far as we know it: what we saw, more for the share of its line we haven't seen lately
+float ExpectedDefence(const CFrontline::SRank& rank)
+{
+	return rank.defence / std::max(rank.confidence, 0.25f);
 }
 
 }  // namespace
@@ -70,20 +68,31 @@ CFrontline::~CFrontline()
 
 void CFrontline::Update()
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CChokeMap::SConfig& config = chokeMap->GetConfig();
 	if (!chokeMap->IsReady() || !(config.isHold || config.isObjective || chokeMap->GetOverlay()->IsOn())) {
 		holds.clear();
 		objective = SObjective();
 		return;
 	}
-	UpdateRanks();
-	UpdateFront();
+	// Armed enemies, once for every choke
+	const int frame = circuit->GetLastFrame();
+	std::vector<SArmed> armed;
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+		const CEnemyUnit* enemy = kv.second;
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		if (!enemy->IsDead() && !enemy->IsFake() && (edef != nullptr) && edef->IsAttacker()
+			&& (!edef->IsMobile() || enemy->IsRecentlySeen(frame, RECENT_FRAMES)))  // towers count until seen dead
+		{
+			armed.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(), enemy->GetThreat(), enemy->GetCost()});
+		}
+	}
+	UpdateRanks(armed);
+	UpdateFront(armed);
 	UpdateHolds();
 	Fortify();
 	UpdateObjective();
 
-	const int frame = circuit->GetLastFrame();
 	for (auto it = holdBans.begin(); it != holdBans.end();) {
 		it = (frame >= it->second) ? holdBans.erase(it) : std::next(it);
 	}
@@ -95,52 +104,25 @@ void CFrontline::Update()
  * Unarmed enemy units share their cost equally between the entrances of their region from our side, counted at
  * those within 2 x choke.near ranges of them
  */
-void CFrontline::UpdateRanks()
+void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
 	const float mainRange = chokeMap->GetMainRange();
 	const int frame = circuit->GetLastFrame();
-	const CEnemyManager::EnemyUnits& enemies = circuit->GetEnemyManager()->GetEnemyUnits();
-
-	// Chokes away from our territory, per region (-1: out of reach)
-	std::vector<int> hops(graph.GetRegions().size(), -1);
-	std::vector<int> queue;
-	for (int region = 0; region < (int)hops.size(); ++region) {
-		if (chokeMap->IsOurTerritory(region)) {
-			hops[region] = 0;
-			queue.push_back(region);
-		}
-	}
-	if (queue.empty()) {
-		for (int region = 0; region < (int)hops.size(); ++region) {
-			if (chokeMap->IsOurSide(region)) {
-				hops[region] = 0;
-				queue.push_back(region);
-			}
-		}
-	}
-	for (size_t i = 0; i < queue.size(); ++i) {
-		for (int c : graph.GetRegions()[queue[i]].chokes) {
-			const int next = graph.OtherSide(chokes[c], queue[i]);
-			if (hops[next] < 0) {
-				hops[next] = hops[queue[i]] + 1;
-				queue.push_back(next);
-			}
-		}
-	}
+	const std::vector<int> hops = graph.HopsFrom(chokeMap->GetOurRegions());  // chokes away from our territory
 
 	std::vector<float> values(chokes.size(), 0.f);
 	const float valueReach = 2.f * chokeMap->GetConfig().nearRanges * mainRange;
-	for (const auto& kv : enemies) {
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
 		CCircuitDef* edef = enemy->GetCircuitDef();
 		if (enemy->IsDead() || enemy->IsFake() || (edef == nullptr) || edef->IsAttacker()) {
 			continue;
 		}
 		const int region = chokeMap->GetRegionAt(enemy->GetPos());
-		if ((region < 0) || (region >= (int)hops.size())) {
+		if (region < 0) {
 			continue;
 		}
 		const std::vector<int>& entrances = chokeMap->GetEntrancesFromUs(region);
@@ -162,23 +144,16 @@ void CFrontline::UpdateRanks()
 		const AIFloat3 centre = chokeMap->GetCellPos(choke.centre);
 		SRank rank = {choke.id, 0.f, 0.f, 0.f, values[c]};
 		bool isCovered = false;  // by enemy towers
-		for (const auto& kv : enemies) {
-			const CEnemyUnit* enemy = kv.second;
-			CCircuitDef* edef = enemy->GetCircuitDef();
-			if (enemy->IsDead() || enemy->IsFake() || (edef == nullptr) || !edef->IsAttacker()
-				|| (edef->IsMobile() && !enemy->IsRecentlySeen(frame, RECENT_FRAMES)))  // towers count until seen dead
-			{
-				continue;
-			}
-			const float reach = edef->IsMobile() ? mainRange : edef->GetMaxRange() + mainRange;
-			if (centre.distance2D(enemy->GetPos()) > reach + choke.width * 0.5f + 64.f) {
+		for (const SArmed& e : armed) {
+			const float reach = e.isMobile ? mainRange : e.range + mainRange;
+			if (centre.distance2D(e.pos) > reach + choke.width * 0.5f + 64.f) {
 				continue;  // can't be in reach of any of its line
 			}
-			const float dist = LineDist(graph, choke, enemy->GetPos());
+			const float dist = graph.GetLineDist(choke, e.pos.x, e.pos.z);
 			if (dist <= reach) {
-				rank.defence += enemy->GetThreat();
-				rank.defenceCost += enemy->GetCost();
-				isCovered |= !edef->IsMobile() && (dist <= edef->GetMaxRange());
+				rank.defence += e.threat;
+				rank.defenceCost += e.cost;
+				isCovered |= !e.isMobile && (dist <= e.range);
 			}
 		}
 		auto farness = [&hops](int region) {  // out of reach is farthest
@@ -208,16 +183,19 @@ void CFrontline::UpdateRanks()
 	std::stable_sort(ranks.begin(), ranks.end(), [](const SRank& x, const SRank& y) {
 		return x.defence < y.defence;
 	});
+	for (auto it = sampleSeen.begin(); it != sampleSeen.end();) {  // chokes a rebuild took away
+		it = (graph.FindChoke(it->first) < 0) ? sampleSeen.erase(it) : std::next(it);
+	}
 }
 
 /*
  * C: each of our points behind the current line counts at its nearest line choke. Our towers count when their range
  * reaches the line, enemy mobiles within choke.near ranges of its centre
  */
-void CFrontline::UpdateFront()
+void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 {
 	front.clear();
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
 	const std::vector<int>& line = chokeMap->GetCurrentLine();
@@ -228,9 +206,7 @@ void CFrontline::UpdateFront()
 	const std::vector<bool> behind = ReachableFromUs(line);
 	std::vector<float> income(line.size(), 0.f);
 	for (const CChokeMap::SPointInfo& pi : chokeMap->GetPointInfos()) {
-		if ((pi.region < 0) || !behind[pi.region]
-			|| !(metalMgr->IsClusterQueued(pi.cluster) || metalMgr->IsClusterFinished(pi.cluster)))
-		{
+		if ((pi.region < 0) || !behind[pi.region] || !metalMgr->IsClusterHeld(pi.cluster)) {
 			continue;
 		}
 		size_t nearest = 0;
@@ -246,6 +222,13 @@ void CFrontline::UpdateFront()
 	}
 
 	const int frame = circuit->GetLastFrame();
+	std::vector<SArmed> towers;  // ours and allies'
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if (!cdef->IsMobile() && cdef->IsAttacker()) {
+			towers.push_back({kv.second->GetPos(frame), false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f});
+		}
+	}
 	const float nearRange = chokeMap->GetConfig().nearRanges * chokeMap->GetMainRange();
 	for (size_t i = 0; i < line.size(); ++i) {
 		const CRegionGraph::SChoke& choke = chokes[line[i]];
@@ -253,24 +236,17 @@ void CFrontline::UpdateFront()
 		const int inner = behind[choke.regionA] ? choke.regionA : behind[choke.regionB] ? choke.regionB : -1;
 		SFront f = {choke.id, (inner >= 0) ? graph.GetRegions()[inner].id : -1,
 				income[i] * chokeMap->GetChokeTraffic(line[i]), 0.f, 0.f, 0.f};
-		for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
-			const CEnemyUnit* enemy = kv.second;
-			CCircuitDef* edef = enemy->GetCircuitDef();
-			if (!enemy->IsDead() && !enemy->IsFake() && (edef != nullptr) && edef->IsMobile() && edef->IsAttacker()
-				&& enemy->IsRecentlySeen(frame, RECENT_FRAMES)
-				&& (centre.SqDistance2D(enemy->GetPos()) <= SQUARE(nearRange)))
-			{
-				f.wanted += enemy->GetThreat() * WANT_MARGIN;
-				f.wantedCost += enemy->GetCost() * WANT_MARGIN;
+		for (const SArmed& e : armed) {
+			if (e.isMobile && (centre.SqDistance2D(e.pos) <= SQUARE(nearRange))) {
+				f.wanted += e.threat * WANT_MARGIN;
+				f.wantedCost += e.cost * WANT_MARGIN;
 			}
 		}
-		for (const auto& kv : circuit->GetFriendlyUnits()) {
-			CAllyUnit* unit = kv.second;
-			CCircuitDef* cdef = unit->GetCircuitDef();
-			if (!cdef->IsMobile() && cdef->IsAttacker()
-				&& (LineDist(graph, choke, unit->GetPos(frame)) <= cdef->GetMaxRange()))
+		for (const SArmed& t : towers) {
+			if ((centre.distance2D(t.pos) <= t.range + choke.width * 0.5f + 64.f)
+				&& (graph.GetLineDist(choke, t.pos.x, t.pos.z) <= t.range))
 			{
-				f.towers += cdef->GetThreat();
+				f.towers += t.threat;
 			}
 		}
 		front.push_back(f);
@@ -282,11 +258,13 @@ void CFrontline::UpdateFront()
 
 /*
  * C: a slot is at the top-ranked choke whose towers are short of what it wants, and moves to another only when that
- * one ranks 1.3x higher. Its group keeps the claim when it moves; it ends when no choke is short
+ * one ranks 1.3x higher (or its own choke is no longer short). It ends once its choke is 30 s not short and none
+ * other is. Its group keeps the claim when it moves
  */
 void CFrontline::UpdateHolds()
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	const int frame = circuit->GetLastFrame();
 	int slotCount = 0;
 	if (chokeMap->GetConfig().isHold) {
 		switch (chokeMap->GetOpennessBand()) {
@@ -296,20 +274,19 @@ void CFrontline::UpdateHolds()
 		}
 	}
 	holds.resize(slotCount);
-	auto findFront = [this](int chokeId) -> const SFront* {
-		auto it = std::find_if(front.begin(), front.end(), [chokeId](const SFront& f) { return f.chokeId == chokeId; });
-		return (it != front.end()) ? &*it : nullptr;
-	};
 	auto isShort = [](const SFront& f) { return f.wanted > f.towers; };
 	auto isTaken = [this](int chokeId) {
 		return std::any_of(holds.begin(), holds.end(), [chokeId](const SHold& h) { return h.chokeId == chokeId; });
 	};
 	for (SHold& hold : holds) {
-		const SFront* current = findFront(hold.chokeId);
-		if ((hold.chokeId >= 0) && ((current == nullptr) || !isShort(*current))) {
-			circuit->LOG("CHOKE hold at choke %i ends", hold.chokeId);
-			hold = SHold();
-			current = nullptr;
+		if ((hold.task != nullptr) && (frame >= hold.askFrame + HOLD_LEASE)) {
+			hold.task = nullptr;  // its group went elsewhere
+			hold.spot = -RgtVector;
+		}
+		const SFront* current = FindFront(hold.chokeId);
+		const bool isCurrentShort = (current != nullptr) && isShort(*current);
+		if (isCurrentShort) {
+			hold.shortFrame = frame;
 		}
 		const SFront* best = nullptr;
 		for (const SFront& f : front) {  // highest rank first
@@ -318,15 +295,21 @@ void CFrontline::UpdateHolds()
 				break;
 			}
 		}
+		if ((hold.chokeId >= 0) && (best == nullptr) && ((current == nullptr) || (frame >= hold.shortFrame + HOLD_END))) {
+			circuit->LOG("CHOKE hold at choke %i ends", hold.chokeId);
+			hold = SHold();
+			continue;
+		}
 		if ((best == nullptr) || (best == current)) {
 			continue;
 		}
-		if ((current == nullptr) || (best->rank >= SWITCH_SHARE * current->rank)) {
+		if (!isCurrentShort || (best->rank >= SWITCH_SHARE * current->rank)) {
 			circuit->LOG("CHOKE hold at choke %i (rank %.1f, wants %.0f, towers %.0f)", best->chokeId, best->rank,
 					best->wanted, best->towers);
 			hold.chokeId = best->chokeId;
 			hold.spot = -RgtVector;  // scored again for its group
 			hold.retryFrame = 0;
+			hold.shortFrame = frame;
 		}
 	}
 }
@@ -337,7 +320,7 @@ void CFrontline::UpdateHolds()
  */
 void CFrontline::Fortify()
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	if (!chokeMap->GetConfig().isHold || !chokeMap->GetConfig().isChoke) {
 		return;
 	}
@@ -350,7 +333,7 @@ void CFrontline::Fortify()
 		const int choke = graph.FindChoke(f.chokeId);
 		for (const CChokeMap::SPointInfo& pi : chokeMap->GetPointInfos()) {
 			if ((pi.pocket >= 0) && Contains(chokeMap->GetPockets()[pi.pocket].chokes, choke)
-				&& (metalMgr->IsClusterQueued(pi.cluster) || metalMgr->IsClusterFinished(pi.cluster)))
+				&& metalMgr->IsClusterHeld(pi.cluster))
 			{
 				circuit->GetMilitaryManager()->MakeDefence(pi.cluster, pi.pos);
 				return;
@@ -361,11 +344,11 @@ void CFrontline::Fortify()
 
 /*
  * D: commits until taken (none of its chokes is enemy-held), 4 minutes pass, or our attack power falls below its
- * defence; switches only to an objective scoring 1.3x higher, within the same 4 minutes
+ * defence as it is now; switches only to an objective scoring 1.3x higher, within the same 4 minutes
  */
 void CFrontline::UpdateObjective()
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	if (!chokeMap->GetConfig().isObjective) {
 		objective = SObjective();
 		return;
@@ -375,10 +358,15 @@ void CFrontline::UpdateObjective()
 	SObjective next = MakeObjective(armyPower);
 	next.startFrame = frame;
 	if (!objective.chokeIds.empty()) {
+		float defence = 0.f;
+		for (int id : objective.chokeIds) {
+			const SRank* rank = FindRank(id);
+			defence += (rank != nullptr) ? ExpectedDefence(*rank) : 0.f;
+		}
 		const bool isTaken = std::none_of(objective.chokeIds.begin(), objective.chokeIds.end(), [this](int id) {
 			return FindRank(id) != nullptr;
 		});
-		const bool isFailed = (armyPower < objective.defence) || (frame >= objective.startFrame + COMMIT_FRAMES);
+		const bool isFailed = (armyPower < defence) || (frame >= objective.startFrame + COMMIT_FRAMES);
 		if (isTaken || isFailed) {
 			circuit->LOG("CHOKE objective %s", isTaken ? "taken" : "failed");
 			if (!isTaken) {
@@ -408,7 +396,7 @@ CFrontline::SObjective CFrontline::MakeObjective(float& outArmyPower) const
 	for (const IFighterTask* task : circuit->GetMilitaryManager()->GetTasks(IFighterTask::FightType::ATTACK)) {
 		outArmyPower += task->GetAttackPower();
 	}
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CChokeMap::SConfig& config = chokeMap->GetConfig();
 	const std::vector<int>& forward = chokeMap->GetForwardLine();
 	const std::vector<int>& current = chokeMap->GetCurrentLine();
@@ -424,10 +412,7 @@ CFrontline::SObjective CFrontline::MakeObjective(float& outArmyPower) const
 		return obj;
 	}
 
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const std::vector<CCircuitDef*>& defenders = militaryMgr->GetLandDefenders();
-	CCircuitDef* mainDef = defenders.empty() ? militaryMgr->GetDefaultPorc() : defenders.front();
-	const float mainCost = mainDef->GetCostM();
+	const float mainCost = chokeMap->GetMainDef()->GetCostM();
 	CDefenceMatrix* defence = circuit->GetAllyTeam()->GetDefenceMatrix().get();
 	const std::vector<CRegionGraph::SChoke>& chokes = chokeMap->GetGraph().GetChokes();
 
@@ -439,8 +424,8 @@ CFrontline::SObjective CFrontline::MakeObjective(float& outArmyPower) const
 		}
 		const CDefenceMatrix::SDefPoint* point = defence->GetChokePoint(chokes[c].id);
 		gain += ((point != nullptr) && (point->cost > 0.f)) ? point->cost : mainCost;
-		auto it = std::find_if(front.begin(), front.end(), [&chokes, c](const SFront& f) { return f.chokeId == chokes[c].id; });
-		gain += (it != front.end()) ? it->wantedCost : 0.f;
+		const SFront* f = FindFront(chokes[c].id);
+		gain += (f != nullptr) ? f->wantedCost : 0.f;
 	}
 	std::vector<bool> brought(behindForward.size());
 	for (size_t r = 0; r < brought.size(); ++r) {
@@ -457,7 +442,7 @@ CFrontline::SObjective CFrontline::MakeObjective(float& outArmyPower) const
 		}
 		obj.chokeIds.push_back(chokes[c].id);
 		obj.positions.push_back(chokeMap->GetCellPos(chokes[c].centre));
-		obj.defence += rank->defence;
+		obj.defence += ExpectedDefence(*rank);
 		cost += rank->defenceCost + mainCost * (1.f + chokes[c].width / chokeMap->GetMainRange());
 	}
 	if (obj.chokeIds.empty() || (gain < config.objGain * cost) || (outArmyPower < config.objPower * obj.defence)) {
@@ -469,7 +454,7 @@ CFrontline::SObjective CFrontline::MakeObjective(float& outArmyPower) const
 
 AIFloat3 CFrontline::GetHoldSpot(CCircuitUnit* leader)
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	IUnitTask* unitTask = leader->GetTask();
 	if (!chokeMap->GetConfig().isHold || !chokeMap->IsReady() || (unitTask == nullptr)
 		|| (unitTask->GetType() != IUnitTask::Type::FIGHTER)
@@ -485,8 +470,11 @@ AIFloat3 CFrontline::GetHoldSpot(CCircuitUnit* leader)
 	}
 	auto it = std::find_if(holds.begin(), holds.end(), [task](const SHold& h) { return h.task == task; });
 	if (it == holds.end()) {
-		it = std::find_if(holds.begin(), holds.end(), [frame](const SHold& h) {
-			return (h.chokeId >= 0) && (h.task == nullptr) && (frame >= h.retryFrame);
+		// A free slot whose shortfall this group can make up
+		it = std::find_if(holds.begin(), holds.end(), [this, task, frame](const SHold& h) {
+			const SFront* f = FindFront(h.chokeId);
+			return (f != nullptr) && (h.task == nullptr) && (frame >= h.retryFrame)
+					&& (task->GetAttackPower() >= f->wanted - f->towers);
 		});
 		if (it == holds.end()) {
 			return -RgtVector;
@@ -506,16 +494,17 @@ AIFloat3 CFrontline::GetHoldSpot(CCircuitUnit* leader)
 				(const void*)task);
 	}
 	hold.task = task;  // claimed once it has a spot
+	hold.askFrame = frame;
 	return hold.spot;
 }
 
 AIFloat3 CFrontline::FindHoldSpot(int chokeId, CCircuitUnit* leader) const
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	const int choke = graph.FindChoke(chokeId);
-	auto f = std::find_if(front.begin(), front.end(), [chokeId](const SFront& f) { return f.chokeId == chokeId; });
-	const int inner = (f != front.end()) ? graph.FindRegion(f->innerRegionId) : -1;
+	const SFront* f = FindFront(chokeId);
+	const int inner = (f != nullptr) ? graph.FindRegion(f->innerRegionId) : -1;
 	if ((choke < 0) || (inner < 0)) {
 		return -RgtVector;
 	}
@@ -524,10 +513,7 @@ AIFloat3 CFrontline::FindHoldSpot(int chokeId, CCircuitUnit* leader) const
 	goal.choke = choke;
 	goal.innerRegion = inner;
 	goal.area = leader->GetArea();
-	CCircuitDef* cdef = leader->GetCircuitDef();
-	const AIFloat3 centre = chokeMap->GetCellPos(graph.GetChokes()[choke].centre);
-	const float radius = (chokeMap->GetConfig().setback[1] + 0.3f) * cdef->GetMaxRange();
-	return circuit->GetMilitaryManager()->GetSpotScorer()->FindSpot(cdef, centre, radius, goal);
+	return circuit->GetMilitaryManager()->GetSpotScorer()->FindSpot(leader->GetCircuitDef(), goal);
 }
 
 void CFrontline::ReleaseHold(const IFighterTask* task, int banFrames)
@@ -547,32 +533,19 @@ void CFrontline::ReleaseHold(const IFighterTask* task, int banFrames)
 
 std::vector<bool> CFrontline::ReachableFromUs(const std::vector<int>& blocked) const
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CRegionGraph& graph = chokeMap->GetGraph();
-	std::vector<int> ours;
-	for (int region = 0; region < (int)graph.GetRegions().size(); ++region) {
-		if (chokeMap->IsOurTerritory(region)) {
-			ours.push_back(region);
-		}
-	}
-	if (ours.empty()) {
-		for (int region = 0; region < (int)graph.GetRegions().size(); ++region) {
-			if (chokeMap->IsOurSide(region)) {
-				ours.push_back(region);
-			}
-		}
-	}
 	std::vector<bool> isBlocked(graph.GetChokes().size(), false);
 	for (int c : blocked) {
 		isBlocked[c] = true;
 	}
-	return graph.ReachableFrom(ours, isBlocked);
+	return graph.ReachableFrom(chokeMap->GetOurRegions(), isBlocked);
 }
 
 float CFrontline::GetIncomeIn(const std::vector<bool>& regions) const
 {
 	float income = 0.f;
-	for (const CChokeMap::SPointInfo& pi : circuit->GetAllyTeam()->GetChokeMap()->GetPointInfos()) {
+	for (const CChokeMap::SPointInfo& pi : circuit->GetChokeMap()->GetPointInfos()) {
 		if ((pi.region >= 0) && regions[pi.region]) {
 			income += pi.income;
 		}
@@ -584,6 +557,12 @@ const CFrontline::SRank* CFrontline::FindRank(int chokeId) const
 {
 	auto it = std::find_if(ranks.begin(), ranks.end(), [chokeId](const SRank& r) { return r.chokeId == chokeId; });
 	return (it != ranks.end()) ? &*it : nullptr;
+}
+
+const CFrontline::SFront* CFrontline::FindFront(int chokeId) const
+{
+	auto it = std::find_if(front.begin(), front.end(), [chokeId](const SFront& f) { return f.chokeId == chokeId; });
+	return (it != front.end()) ? &*it : nullptr;
 }
 
 } // namespace circuit

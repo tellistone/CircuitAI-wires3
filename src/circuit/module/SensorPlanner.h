@@ -22,18 +22,21 @@ class CCircuitAI;
 class CCircuitDef;
 
 /*
- * choke.radar.enable: the radar planner (B), on CChokeMap's traffic grid.
+ * choke.radar.enable: the radar planner (B), on CChokeMap's traffic grid, run by the ally team's authority AI only.
  * - Weight: each cell any enemy movement type reaches weighs a floor plus its traffic, each scaled to add up to our
  *   mex income, plus the income of our clusters' mexes in it. So radar goes to the approaches and our clusters
- *   first, then spreads over the rest. The target is choke.radar.coverage of the total weight.
- * - Coverage: the union of the viewsheds of known static radars, ours and allies'. Mobile radar is ignored, so
- *   coverage doesn't flicker as scouts fly past.
- * - Candidates: the highest buildable cell of each 512-elmo block on our side of the map or in our territory.
- * - Every 15 s while under target: the candidate with the most uncovered weight in its viewshed for its cost x
- *   (1 + risk) is queued. Risk is the threat there in main towers, plus 1 for each radar lost near it, halving every
- *   5 minutes. At most one planned radar waits for a builder, and spending is capped at choke.radar.share of income.
- * Candidates are tried best upper bound first (the weight in the square around them) and viewsheds are cached until
- * the terrain changes
+ *   first, then spreads over the rest.
+ * - Coverage: the union of the viewsheds of known static radars, ours and allies', nanoframes too. Mobile radar is
+ *   ignored, so coverage doesn't flicker as scouts fly past.
+ * - Candidates: the highest buildable cell of each 512-elmo block on our half of the map (not in enemy territory),
+ *   or in our territory.
+ * - Every 15 s: the candidate with the most uncovered weight in its viewshed for its cost x (1 + risk) is queued,
+ *   if it adds at least choke.radar.min_gain of the total weight. Risk is the threat there in main towers, plus 1
+ *   for each radar lost near it, halving every 5 minutes; a planned radar that no builder starts within 90 s, or
+ *   that dies unfinished, counts as lost. At most one planned radar waits for a builder, and spending is capped at
+ *   choke.radar.share of income.
+ * Candidates are tried best upper bound first (the weight in the square around them), at most 16 new viewsheds a
+ * call; viewsheds are cached while their cell stays a candidate
  */
 class CSensorPlanner {
 public:
@@ -61,7 +64,6 @@ private:
 	const std::vector<int>& GetViewshed(const springai::AIFloat3& pos);  // a candidate's, cached
 	std::vector<int> MakeViewshed(const springai::AIFloat3& pos, float range, float emit) const;
 	float GetRisk(const springai::AIFloat3& pos) const;
-	float GetHeight(float x, float z) const;
 
 	CCircuitAI* circuit;
 	CCircuitDef* radarDef;
@@ -73,7 +75,7 @@ private:
 	std::vector<SDeath> deaths;
 	std::vector<springai::AIFloat3> candidates;
 	std::map<int, std::vector<int>> viewsheds;  // candidate's cell -> cells it sees
-	int heightVersion;  // CTerrainData's when viewsheds were made
+	springai::AIFloat3 plannedPos;  // the last planned radar's, until its task is gone
 	float budget;  // metal planned radars may still spend
 	int lastFrame;
 };

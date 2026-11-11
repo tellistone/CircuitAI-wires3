@@ -37,7 +37,6 @@ public:
 	struct SRegion {
 		int id;
 		int area;  // cells
-		float maxAltitude;  // elmos to the nearest wall from its highest cell
 		int centre;  // its highest cell
 		std::vector<int> chokes;  // indices of its chokes
 	};
@@ -73,7 +72,6 @@ public:
 	const SCellMask& GetMask() const { return mask; }
 	int GetRegionAt(int cell) const { return regionOf[cell]; }  // index or NO_REGION (a wall)
 	int GetRegionAt(float x, float z) const { return regionOf[mask.IndexAt(x, z)]; }
-	float GetAltitude(int cell) const;  // elmos to the nearest wall
 	const std::vector<SRegion>& GetRegions() const { return regions; }
 	const std::vector<SChoke>& GetChokes() const { return chokes; }
 	int FindRegion(int id) const;  // index, or -1
@@ -81,6 +79,7 @@ public:
 	int OtherSide(const SChoke& choke, int region) const {
 		return (choke.regionA == region) ? choke.regionB : choke.regionA;
 	}
+	float GetLineDist(const SChoke& choke, float x, float z) const;  // elmos from (x, z) to its line's nearest cell
 
 	/*
 	 * Max-flow from source regions to target regions, one unit of capacity per choke as given (by choke index), and
@@ -89,14 +88,16 @@ public:
 	 */
 	SCut CutFrom(const std::vector<int>& sources, const std::vector<int>& targets, const std::vector<float>& capacity,
 			float maxFlow) const;
-	// Regions reachable from the sources without crossing the blocked chokes (by region index)
+	// Per region, the fewest chokes to cross from a source region, not crossing blocked chokes (by choke index, empty:
+	// none); -1 out of reach
+	std::vector<int> HopsFrom(const std::vector<int>& sources, const std::vector<bool>& isChokeBlocked = {}) const;
 	std::vector<bool> ReachableFrom(const std::vector<int>& sources, const std::vector<bool>& isChokeBlocked) const;
 
 private:
 	void ComputeAltitude();
+	float GetAltitude(int cell) const;  // elmos to the nearest wall
 
 	SCellMask mask;
-	SParams params;
 	std::vector<int> altitude;  // chamfer units: 3 per cell, 0 on walls
 	std::vector<int> regionOf;  // region index per cell, NO_REGION on walls
 	std::vector<SRegion> regions;

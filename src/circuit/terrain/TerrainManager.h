@@ -184,6 +184,8 @@ public:
 	bool CanBeBuiltAt(CCircuitDef* cdef, const springai::AIFloat3& position, const float range);  // NOTE: returns false if the area was too small to be recorded
 	bool CanBeBuiltAt(CCircuitDef* cdef, const springai::AIFloat3& position);
 	bool CanBeBuiltAtSafe(CCircuitDef* cdef, const springai::AIFloat3& position);
+	// CanBeBuiltAt, and the engine finds room for the footprint there (facing south)
+	bool CanBuildAt(CCircuitDef* cdef, const springai::AIFloat3& position);
 	bool CanReachAt(CCircuitUnit* unit, const springai::AIFloat3& destination, const float range);
 	bool CanReachAtSafe(CCircuitUnit* unit, const springai::AIFloat3& destination, const float range);
 	bool CanMobileReachAt(STerrainMapArea* area, const springai::AIFloat3& destination, const float range);
@@ -198,6 +200,7 @@ public:
 	bool IsStuckInWater(CCircuitDef* cdef, const springai::AIFloat3& position) const;
 
 	SAreaData* GetAreaData() const { return areaData; }
+	float GetHeightAt(float x, float z) const;  // the heightmap square under (x, z), clamped to the map
 	void UpdateAreaUsers(int interval);
 	void OnAreaUsersUpdated() { terrainData->OnAreaUsersUpdated(); }
 private:

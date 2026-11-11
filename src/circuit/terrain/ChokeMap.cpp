@@ -42,8 +42,6 @@ using namespace springai;
 #define TRAFFIC_COOLDOWN	(FRAMES_PER_SEC * 60)
 #define SOURCE_COOLDOWN		(FRAMES_PER_SEC * 120)
 #define SETTLE_FRAMES		(FRAMES_PER_SEC * 20)
-#define ARTY_FRAMES			(FRAMES_PER_SEC * 300)
-#define OPENING_FRAMES		(FRAMES_PER_SEC * 300)
 #define BLEND_COOLDOWN		(FRAMES_PER_SEC * 30)
 #define GRAPH_CELL			32  // elmos: the graph's cells, two slope map pixels
 #define TRAFFIC_CELL		64  // elmos: the traffic field's cells
@@ -67,21 +65,19 @@ struct CChokeMap::SBuildJob {
 	std::vector<SClassParams> classes;
 	std::vector<bool> isGating;  // per class
 	std::vector<SCellMask> masks;  // the current ones: compared with, or used as they are
-	SCellMask prevThreatMask;
+	SCellMask prevGraphMask;
 	CRegionGraph::SParams graphParams;
-	std::vector<int> trafficClasses;
-	std::vector<bool> isNaval;  // per class: no traffic layer
+	std::vector<int> trafficClasses;  // never naval: ships get no layer
 	std::vector<MoveKey> keys;  // per class
 	std::vector<std::vector<int>> sourceCells;  // per source group, traffic cells
 	std::vector<CTrafficField::SDestination> destinations;
 	CTrafficField::SParams trafficParams;
 	// Outputs
-	std::vector<bool> isClassChanged;
 	bool isMasksChanged = false;
 	bool isGraphBuilt = false;
-	SCellMask threatMask;
 	CRegionGraph graph;
 	std::vector<CTrafficField::SType> trafficTypes;
+	std::vector<int> doneClasses;  // trafficClasses that got their layer
 	float maskMs = 0.f, graphMs = 0.f, trafficMs = 0.f;
 };
 
@@ -94,8 +90,8 @@ CChokeMap::CChokeMap(CCircuitAI* circuit)
 		, isSourceDirty(false)
 		, isOpennessDirty(true)
 		, jobSerial(0)
-		, graphSerial(0)
 		, version(0)
+		, analysisHash(0)
 		, mainRange(1.f)
 		, laneVersion(0)
 		, heightVersion(-1)
@@ -106,12 +102,9 @@ CChokeMap::CChokeMap(CCircuitAI* circuit)
 		, nextAnalysisFrame(0)
 		, isTrafficDirty(false)
 		, isOpening(true)
-		, openingEnd(OPENING_FRAMES)
 		, enemyAllyCount(1)
-		, isAirSeen(false)
 		, blendFrame(0)
 		, isStartKnown(false)
-		, distSerial(-1)
 		, openness(0.5f)
 		, opennessBand(Openness::SEMI_OPEN)
 		, isOpennessSet(false)
@@ -135,7 +128,6 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.defensible = choke.get("defensible", config.defensible).asFloat();
 	config.entrances = choke.get("entrances", config.entrances).asInt();
 	config.nearRanges = choke.get("near", config.nearRanges).asFloat();
-	config.exposure = choke.get("exposure", config.exposure).asFloat();
 	const Json::Value& setback = choke["setback"];
 	config.setback[0] = setback.get((unsigned)0, config.setback[0]).asFloat();
 	config.setback[1] = setback.get((unsigned)1, config.setback[1]).asFloat();
@@ -150,7 +142,7 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.isSpot = choke["spot"].get("enable", false).asBool();
 	const Json::Value& radar = choke["radar"];
 	config.isRadar = radar.get("enable", false).asBool();
-	config.radarCoverage = radar.get("coverage", config.radarCoverage).asFloat();
+	config.radarGain = radar.get("min_gain", config.radarGain).asFloat();
 	config.radarShare = radar.get("share", config.radarShare).asFloat();
 	const Json::Value& objective = choke["objective"];
 	config.isObjective = objective.get("enable", false).asBool();
@@ -162,12 +154,7 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 
 void CChokeMap::Init()
 {
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const std::vector<CCircuitDef*>& defenders = circuit->GetTerrainManager()->IsWaterMap()
-			? militaryMgr->GetWaterDefenders() : militaryMgr->GetLandDefenders();
-	CCircuitDef* mainDef = defenders.empty() ? militaryMgr->GetDefaultPorc() : defenders.front();
-	mainRange = std::max(mainDef->GetMaxRange(), (float)GRAPH_CELL);
-
+	mainRange = std::max(GetMainDef()->GetMaxRange(), (float)GRAPH_CELL);
 	InitMoveClasses();
 	InitTypeSet();
 	InitSources();
@@ -181,23 +168,13 @@ void CChokeMap::Init()
 	if (!config.IsAnyOn()) {
 		return;  // nothing reads it: built when the overlay first asks
 	}
-	// Ready on the first frame: the defence points split by region at their init, right after this one
+	// Masks and graph on the first frame: the defence points split by region at their init, right after this one.
+	// The traffic layers follow on the worker
 	isRequested = true;
+	QueueAllTraffic();
 	std::shared_ptr<SBuildJob> job = MakeJob(true, true, {});
 	RunJob(*job);
 	ApplyJob(*job);
-	std::vector<int> all;
-	for (size_t c = 0; c < moveClasses.size(); ++c) {
-		if (typeStates[c].isInSet) {
-			all.push_back(c);
-		}
-	}
-	job = MakeJob(false, false, all);
-	RunJob(*job);
-	ApplyJob(*job);
-#ifdef DEBUG
-	CompareFixture();
-#endif
 }
 
 void CChokeMap::SetAuthority(CCircuitAI* authority)
@@ -209,9 +186,7 @@ void CChokeMap::SetAuthority(CCircuitAI* authority)
 	// A job in flight finishes on the leaving AI's scheduler, which drops its result: start over on the next update
 	isBuilding = false;
 	++jobSerial;
-	isGraphDirty = true;
-	isTrafficDirty = true;
-	trafficFrame = -TRAFFIC_COOLDOWN;
+	isGraphDirty = true;  // traffic classes stay pending until their layers are in
 	if (updateTask != nullptr) {
 		circuit->GetScheduler()->RunTaskEvery(updateTask, CHOKE_UPDATE_RATE, circuit->GetSkirmishAIId() % CHOKE_UPDATE_RATE);
 	}
@@ -225,9 +200,8 @@ void CChokeMap::Request()
 	}
 	isRequested = true;
 	isGraphDirty = true;
-	isTrafficDirty = true;  // the opening type set's layers, once the graph is in
-	trafficFrame = -TRAFFIC_COOLDOWN;
 	heightVersion = -1;  // masks too
+	QueueAllTraffic();  // the type set's layers, once the graph is in
 	ScheduleBuilds();
 }
 
@@ -236,9 +210,17 @@ void CChokeMap::Rebuild()
 	traffic.Init(traffic.GetWidth(), traffic.GetHeight(), TRAFFIC_CELL, {config.spread, mainRange * 0.5f});
 	isRequested = true;  // a key set before anything asked for the analysis builds it now
 	isGraphDirty = true;
-	isTrafficDirty = true;
-	trafficFrame = -TRAFFIC_COOLDOWN;
+	QueueAllTraffic();
 	ScheduleBuilds();
+}
+
+void CChokeMap::Reanalyze()
+{
+	if (isReady) {
+		nextAnalysisFrame = circuit->GetLastFrame() + ANALYSIS_RATE;
+		UpdateTerritory();
+		Analyze();
+	}
 }
 
 void CChokeMap::Update()
@@ -254,8 +236,7 @@ void CChokeMap::Update()
 			if (isReady) {
 				MakeDestinations();  // now with our base, and only on our side
 			}
-			isTrafficDirty = true;  // the guessed sources too
-			trafficFrame = -TRAFFIC_COOLDOWN;
+			QueueAllTraffic();  // the guessed sources too
 			isOpennessDirty = true;
 			nextAnalysisFrame = frame;
 		}
@@ -266,26 +247,19 @@ void CChokeMap::Update()
 		const STypeChange change = UpdateTypeSet();
 		isGraphDirty |= change.isGating;
 		for (int c : change.joined) {
-			if (std::find(pendingTraffic.begin(), pendingTraffic.end(), c) == pendingTraffic.end()) {
-				pendingTraffic.push_back(c);
-			}
+			QueueTraffic(c);
 		}
 		for (int c : change.left) {
 			traffic.RemoveType(moveClasses[c].key);
+			pendingTraffic.erase(std::remove(pendingTraffic.begin(), pendingTraffic.end(), c), pendingTraffic.end());
 		}
 		if (!change.left.empty()) {
 			Reblend();
 		}
-		if (change.isLeak || change.isGating) {
-			isOpennessDirty = true;
-			nextAnalysisFrame = frame;  // leaks now; the graph after its rebuild
-		}
 	}
 	ScheduleBuilds();
-	if (isReady && (frame >= nextAnalysisFrame)) {
-		nextAnalysisFrame = frame + ANALYSIS_RATE;
-		UpdateTerritory();
-		Analyze();
+	if (frame >= nextAnalysisFrame) {
+		Reanalyze();
 	}
 	// Re-blend at most every 30 s, and only when a share moved by more than 0.1
 	if (isReady && (frame >= blendFrame + BLEND_COOLDOWN)) {
@@ -387,14 +361,13 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 		const STerrainMapMobileType* mt = terrainMgr->GetMobileTypeById(mc.mobileId);
 		job->classes.push_back({mc.mobileId, mt->maxSlope, mt->minElevation, mt->maxElevation, mt->canHover,
 				mt->canFloat, mc.jumpRange});
-		job->isNaval.push_back(mc.role == MoveRole::NAVAL);
 		job->keys.push_back(mc.key);
 	}
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		job->isGating.push_back(IsGating(c));
 	}
 	job->masks = classMasks;
-	job->prevThreatMask = threatMask;
+	job->prevGraphMask = graph.GetMask();
 	job->graphParams = GetGraphParams();
 	job->trafficClasses = trafficClasses;
 	job->sourceCells = GetSourceCells();
@@ -410,7 +383,6 @@ void CChokeMap::RunJob(SBuildJob& job)
 		return std::chrono::duration<float, std::milli>(clock::now() - t0).count();
 	};
 	const size_t classCount = job.classes.size();
-	job.isClassChanged.assign(classCount, false);
 
 	/*
 	 * Masks: a 32 elmo cell passes for a class when at least 2 of its 4 slope pixels pass the same slope and depth
@@ -466,10 +438,7 @@ void CChokeMap::RunJob(SBuildJob& job)
 			if (cp.jumpRange > 0.f) {
 				mask = mask.OpenThinWalls(cp.jumpRange);  // walls a jump crosses
 			}
-			if ((ci >= job.masks.size()) || (job.masks[ci] != mask)) {
-				job.isClassChanged[ci] = true;
-				job.isMasksChanged = true;
-			}
+			job.isMasksChanged |= (ci >= job.masks.size()) || (job.masks[ci] != mask);
 			if (ci < job.masks.size()) {
 				job.masks[ci] = std::move(mask);
 			} else {
@@ -489,60 +458,49 @@ void CChokeMap::RunJob(SBuildJob& job)
 	if (job.isGraph || job.isMasksChanged) {
 		const clock::time_point t0 = clock::now();
 		const SCellMask& any = job.masks.front();
-		job.threatMask.Resize(any.width, any.height, any.cellSize);
+		SCellMask threatMask;
+		threatMask.Resize(any.width, any.height, any.cellSize);
 		for (size_t ci = 0; ci < classCount; ++ci) {
 			if (job.isGating[ci]) {
-				job.threatMask.Unite(job.masks[ci]);
+				threatMask.Unite(job.masks[ci]);
 			}
 		}
-		if (job.isGraph || (job.threatMask != job.prevThreatMask)) {
-			job.graph.Build(job.threatMask, job.graphParams);
+		if (job.isGraph || (threatMask != job.prevGraphMask)) {
+			job.graph.Build(threatMask, job.graphParams);
 			job.isGraphBuilt = true;
 		}
 		job.graphMs = ms(t0);
 	}
 
 	/*
-	 * Traffic layers. Classes whose masks are the same at 64 elmos share one set of floods
+	 * Traffic: the first class's layer, and a copy of it for each other class whose mask is the same at 64 elmos.
+	 * The rest wait for the next job, so other work on the worker never waits long
 	 */
 	if (!job.trafficClasses.empty() && !job.destinations.empty()) {
 		const clock::time_point t0 = clock::now();
-		std::vector<std::pair<SCellMask, int>> done;  // coarse mask -> index in trafficTypes
+		SCellMask built;  // the coarse mask flooded
 		for (int ci : job.trafficClasses) {
-			if (job.isNaval[ci]) {
-				continue;
-			}
 			SCellMask coarse = job.masks[ci].Downsample(TRAFFIC_CELL / GRAPH_CELL, 2);
-			auto it = std::find_if(done.begin(), done.end(), [&coarse](const std::pair<SCellMask, int>& d) {
-				return d.first == coarse;
-			});
-			if (it != done.end()) {
-				CTrafficField::SType copy = job.trafficTypes[it->second];
+			if (job.trafficTypes.empty()) {
+				// A source on a wall for this class (a factory on a slope): its nearest passable cell within 4 cells
+				std::vector<CTrafficField::Cells> sources = job.sourceCells;
+				for (CTrafficField::Cells& cells : sources) {
+					for (int& cell : cells) {
+						const int nearest = coarse.NearestPassable(cell, 4);
+						cell = (nearest >= 0) ? nearest : cell;
+					}
+				}
+				job.trafficTypes.push_back(CTrafficField::BuildType(job.keys[ci], coarse, sources, job.destinations,
+						job.trafficParams));
+				built = std::move(coarse);
+			} else if (coarse == built) {
+				CTrafficField::SType copy = job.trafficTypes.front();
 				copy.key = job.keys[ci];
 				job.trafficTypes.push_back(std::move(copy));
+			} else {
 				continue;
 			}
-			// A source on a wall for this class (a factory on a slope): its nearest passable cell within 4 cells
-			std::vector<CTrafficField::Cells> sources = job.sourceCells;
-			for (CTrafficField::Cells& cells : sources) {
-				for (int& cell : cells) {
-					int best = -1, bestSq = std::numeric_limits<int>::max();
-					const int x = cell % coarse.width, z = cell / coarse.width;
-					for (int dz = -4; dz <= 4; ++dz) {
-						for (int dx = -4; dx <= 4; ++dx) {
-							const int sq = dx * dx + dz * dz;
-							if (coarse.IsPassable(x + dx, z + dz) && (sq < bestSq)) {
-								bestSq = sq;
-								best = (z + dz) * coarse.width + x + dx;
-							}
-						}
-					}
-					cell = (best >= 0) ? best : cell;
-				}
-			}
-			job.trafficTypes.push_back(CTrafficField::BuildType(job.keys[ci], coarse, sources, job.destinations,
-					job.trafficParams));
-			done.push_back({std::move(coarse), (int)job.trafficTypes.size() - 1});
+			job.doneClasses.push_back(ci);
 		}
 		job.trafficMs = ms(t0);
 	}
@@ -573,9 +531,7 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 			for (const SCellMask& m : classMasks) {
 				reachMask.Unite(m);
 			}
-			if (isReady) {
-				isTrafficDirty = true;
-			}
+			isTrafficDirty |= isReady;
 			isOpennessDirty = true;
 		}
 		circuit->LOG("CHOKE masks: %.1f ms%s", job.maskMs, job.isMasksChanged ? ", changed" : "");
@@ -585,23 +541,24 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 			job.graph.CarryIdsFrom(graph, frame);
 		}
 		graph = std::move(job.graph);
-		++graphSerial;
-		threatMask = std::move(job.threatMask);
+		pointChokeDist.clear();  // made again for the new chokes
 		isOpennessDirty = true;
 		UpdateSides();
 		MakeLanes();
+		UpdateChokeTraffic();
 		if (destinations.empty()) {
 			MakeDestinations();
 		}
 		nextAnalysisFrame = frame;
 		circuit->LOG("CHOKE graph: %i regions, %i chokes, %.1f ms on %ix%i cells", (int)graph.GetRegions().size(),
 				(int)graph.GetChokes().size(), job.graphMs, graph.GetMask().width, graph.GetMask().height);
+		overlay->OnGraphBuilt();
 	}
 	if (!job.trafficTypes.empty()) {
 		for (CTrafficField::SType& t : job.trafficTypes) {
 			traffic.SetType(std::move(t));
 		}
-		for (int c : job.trafficClasses) {
+		for (int c : job.doneClasses) {
 			pendingTraffic.erase(std::remove(pendingTraffic.begin(), pendingTraffic.end(), c), pendingTraffic.end());
 		}
 		Reblend();
@@ -609,11 +566,10 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 	}
 	isReady = !graph.IsEmpty();
 	++version;
-	if (isReady && (frame >= nextAnalysisFrame)) {
-		nextAnalysisFrame = frame + ANALYSIS_RATE;
-		UpdateTerritory();
-		Analyze();
+	if (frame >= nextAnalysisFrame) {
+		Reanalyze();
 	}
+	ScheduleBuilds();  // the next pending layer
 }
 
 void CChokeMap::ScheduleBuilds()
@@ -625,27 +581,38 @@ void CChokeMap::ScheduleBuilds()
 	const int terrainVersion = circuit->GetGameAttribute()->GetTerrainData().GetHeightVersion();
 	const bool isMasks = (terrainVersion != heightVersion) && (frame >= maskFrame + MASK_COOLDOWN);
 	const bool isGraph = isGraphDirty || graph.IsEmpty();
-	std::vector<int> trafficClasses;
-	const bool isFullTraffic = isReady && !destinations.empty()
-			&& ((isTrafficDirty && (frame >= trafficFrame + TRAFFIC_COOLDOWN))
-				|| (isSourceDirty && (frame >= sourceFrame + SOURCE_COOLDOWN)));
-	if (isFullTraffic) {
-		for (size_t c = 0; c < moveClasses.size(); ++c) {
-			if (typeStates[c].isInSet) {
-				trafficClasses.push_back(c);
-			}
-		}
-		isTrafficDirty = false;
-		isSourceDirty = false;
+	const bool isTraffic = isReady && !destinations.empty();
+	if (isTraffic && ((isTrafficDirty && (frame >= trafficFrame + TRAFFIC_COOLDOWN))
+		|| (isSourceDirty && (frame >= sourceFrame + SOURCE_COOLDOWN))))
+	{
+		QueueAllTraffic();
+		isTrafficDirty = isSourceDirty = false;
 		trafficFrame = sourceFrame = frame;
-	} else if (isReady && !destinations.empty()) {
-		trafficClasses = pendingTraffic;
 	}
+	const std::vector<int> trafficClasses = isTraffic ? pendingTraffic : std::vector<int>();
 	if (!isMasks && !isGraph && trafficClasses.empty()) {
 		return;
 	}
 	isGraphDirty = false;  // the job takes it: a change from now on (gating, a key set) dirties it again
 	StartJob(MakeJob(isMasks, isGraph, trafficClasses));
+}
+
+void CChokeMap::QueueTraffic(int classIdx)
+{
+	if ((moveClasses[classIdx].role != MoveRole::NAVAL)
+		&& (std::find(pendingTraffic.begin(), pendingTraffic.end(), classIdx) == pendingTraffic.end()))
+	{
+		pendingTraffic.push_back(classIdx);
+	}
+}
+
+void CChokeMap::QueueAllTraffic()
+{
+	for (size_t c = 0; c < moveClasses.size(); ++c) {
+		if (typeStates[c].isInSet) {
+			QueueTraffic(c);
+		}
+	}
 }
 
 /*
@@ -656,7 +623,6 @@ void CChokeMap::MakeLanes()
 {
 	std::vector<SLane> newLanes;
 	const SCellMask& mask = graph.GetMask();
-	laneCells.assign(mask.Size(), 0);
 	if (config.isChoke) {
 		for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
 			if (choke.width >= 3.f * config.lane) {
@@ -691,20 +657,6 @@ void CChokeMap::MakeLanes()
 			newLanes.push_back(lane);
 		}
 	}
-	for (const SLane& lane : newLanes) {
-		const float reach = lane.halfLength + lane.halfWidth;
-		const int x0 = std::max(int(lane.centre.x - reach) / GRAPH_CELL, 0);
-		const int x1 = std::min(int(lane.centre.x + reach) / GRAPH_CELL, mask.width - 1);
-		const int z0 = std::max(int(lane.centre.z - reach) / GRAPH_CELL, 0);
-		const int z1 = std::min(int(lane.centre.z + reach) / GRAPH_CELL, mask.height - 1);
-		for (int z = z0; z <= z1; ++z) {
-			for (int x = x0; x <= x1; ++x) {
-				if (lane.Contains((x + 0.5f) * GRAPH_CELL, (z + 0.5f) * GRAPH_CELL)) {
-					laneCells[z * mask.width + x] = 1;
-				}
-			}
-		}
-	}
 	auto isSame = [](const SLane& a, const SLane& b) {
 		return (a.chokeId == b.chokeId) && (a.centre.SqDistance2D(b.centre) < 1.f) && (a.dir.SqDistance2D(b.dir) < 1e-4f)
 				&& (a.halfLength == b.halfLength) && (a.halfWidth == b.halfWidth);
@@ -727,9 +679,8 @@ CRegionGraph::SParams CChokeMap::GetGraphParams() const
 AIFloat3 CChokeMap::GetCellPos(int cell) const
 {
 	const SCellMask& mask = graph.GetMask();
-	AIFloat3 pos(mask.CentreX(cell), 0.f, mask.CentreZ(cell));
-	pos.y = circuit->GetMap()->GetElevationAt(pos.x, pos.z);
-	return pos;
+	return AIFloat3(mask.CentreX(cell), circuit->GetTerrainManager()->GetHeightAt(mask.CentreX(cell), mask.CentreZ(cell)),
+			mask.CentreZ(cell));
 }
 
 int CChokeMap::GetRegionAt(const AIFloat3& pos) const
@@ -737,51 +688,32 @@ int CChokeMap::GetRegionAt(const AIFloat3& pos) const
 	if (graph.IsEmpty()) {
 		return CRegionGraph::NO_REGION;
 	}
-	const SCellMask& mask = graph.GetMask();
-	const int cell = mask.IndexAt(pos.x, pos.z);
-	if (graph.GetRegionAt(cell) != CRegionGraph::NO_REGION) {
-		return graph.GetRegionAt(cell);
-	}
 	// A spot on a wall cell (a mex on a ledge): the nearest passable cell's region within 2 cells
-	const int x = cell % mask.width, z = cell / mask.width;
-	int best = CRegionGraph::NO_REGION, bestSq = std::numeric_limits<int>::max();
-	for (int dz = -2; dz <= 2; ++dz) {
-		for (int dx = -2; dx <= 2; ++dx) {
-			if (mask.IsIn(x + dx, z + dz) && (dx * dx + dz * dz < bestSq)) {
-				const int r = graph.GetRegionAt((z + dz) * mask.width + x + dx);
-				if (r != CRegionGraph::NO_REGION) {
-					best = r;
-					bestSq = dx * dx + dz * dz;
-				}
-			}
-		}
-	}
-	return best;
+	const SCellMask& mask = graph.GetMask();
+	const int cell = mask.NearestPassable(mask.IndexAt(pos.x, pos.z), 2);
+	return (cell >= 0) ? graph.GetRegionAt(cell) : CRegionGraph::NO_REGION;
 }
 
-float CChokeMap::GetChokeTraffic(int choke) const
+void CChokeMap::UpdateChokeTraffic()
 {
 	const SCellMask& mask = graph.GetMask();
-	std::set<int> cells;  // each traffic cell once: four graph cells share one
-	for (int c : graph.GetChokes()[choke].line) {
-		cells.insert(traffic.IndexAt(mask.CentreX(c), mask.CentreZ(c)));
+	chokeTraffic.clear();
+	for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
+		std::set<int> cells;  // each traffic cell once: four graph cells share one
+		for (int c : choke.line) {
+			cells.insert(traffic.IndexAt(mask.CentreX(c), mask.CentreZ(c)));
+		}
+		float sum = 0.f;
+		for (int t : cells) {
+			sum += traffic.GetAt(t);
+		}
+		chokeTraffic.push_back(sum);
 	}
-	float sum = 0.f;
-	for (int t : cells) {
-		sum += traffic.GetAt(t);
-	}
-	return sum;
 }
 
 bool CChokeMap::IsChokeSettled(int choke, int frame) const
 {
 	return frame >= graph.GetChokes()[choke].bornFrame + SETTLE_FRAMES;
-}
-
-bool CChokeMap::IsArtilleryNear(int choke, int frame) const
-{
-	auto it = artySeen.find(graph.GetChokes()[choke].id);
-	return (it != artySeen.end()) && (frame < it->second + ARTY_FRAMES);
 }
 
 int CChokeMap::FindMoveClass(const std::string& name) const
@@ -808,17 +740,24 @@ bool CChokeMap::IsGating(int classIdx) const
 
 const CChokeMap::SPointInfo* CChokeMap::GetPointInfo(int cluster, int index) const
 {
-	for (const SPointInfo& pi : pointInfos) {
-		if ((pi.cluster == cluster) && (pi.index == index)) {
-			return &pi;
-		}
+	if ((cluster < 0) || (cluster >= (int)firstPointOf.size())) {
+		return nullptr;
 	}
-	return nullptr;
+	const size_t i = firstPointOf[cluster] + index;
+	return ((i < pointInfos.size()) && (pointInfos[i].cluster == cluster)) ? &pointInfos[i] : nullptr;
 }
 
 bool CChokeMap::IsOnLane(const AIFloat3& pos) const
 {
-	return !laneCells.empty() && (laneCells[graph.GetMask().IndexAt(pos.x, pos.z)] != 0);
+	return std::any_of(lanes.begin(), lanes.end(), [&pos](const SLane& lane) { return lane.Contains(pos.x, pos.z); });
+}
+
+CCircuitDef* CChokeMap::GetMainDef() const
+{
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const std::vector<CCircuitDef*>& defenders = circuit->GetTerrainManager()->IsWaterMap()
+			? militaryMgr->GetWaterDefenders() : militaryMgr->GetLandDefenders();
+	return defenders.empty() ? militaryMgr->GetDefaultPorc() : defenders.front();
 }
 
 const char* CChokeMap::GetBandName(Openness band)

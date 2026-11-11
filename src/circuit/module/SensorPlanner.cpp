@@ -9,28 +9,22 @@
 #include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
-#include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "terrain/ChokeMap.h"
-#include "terrain/TerrainData.h"
 #include "terrain/TerrainManager.h"
-#include "unit/ally/AllyTeam.h"
 #include "unit/ally/AllyUnit.h"
 #include "unit/CircuitDef.h"
 #include "CircuitAI.h"
-#include "util/GameAttribute.h"
 #include "util/Point.h"
 #include "util/Utils.h"
 
-#include "spring/SpringMap.h"
-
 #include "Log.h"
-#include "Unit.h"
 #include "UnitDef.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <set>
 
 namespace circuit {
 
@@ -42,13 +36,15 @@ using namespace springai;
 #define DEATH_HALF		(FRAMES_PER_SEC * 300)  // a lost radar's penalty halves every 5 minutes
 #define DEATH_NEAR		512.f  // elmos: a loss counts against candidates this close
 #define TARGET_LIFT		20.f  // sight rays end this high above a cell's ground
+#define FRESH_VIEWS		16  // most viewsheds made per Update
+#define PLAN_TIMEOUT	(FRAMES_PER_SEC * 90)  // a planned radar no builder starts by then is given up
 
 CSensorPlanner::CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef)
 		: circuit(circuit)
 		, radarDef(radarDef)
 		, totalWeight(0.f)
 		, coveredWeight(0.f)
-		, heightVersion(-1)
+		, plannedPos(-RgtVector)
 		, budget(0.f)
 		, lastFrame(-1)
 {
@@ -60,20 +56,14 @@ CSensorPlanner::~CSensorPlanner()
 
 void CSensorPlanner::Update()
 {
-	CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	CChokeMap* chokeMap = circuit->GetChokeMap();
 	if (!chokeMap->GetConfig().isRadar || !chokeMap->IsReady() || chokeMap->GetTraffic().IsEmpty()
-		|| (radarDef == nullptr))
+		|| (radarDef == nullptr) || (chokeMap->GetAuthority() != circuit))  // one planner for the ally team
 	{
 		return;
 	}
 	const auto t0 = std::chrono::steady_clock::now();
 	const int frame = circuit->GetLastFrame();
-	const int terrainVersion = circuit->GetGameAttribute()->GetTerrainData().GetHeightVersion();
-	if (terrainVersion != heightVersion) {
-		heightVersion = terrainVersion;
-		viewsheds.clear();
-		radars.clear();  // re-made below
-	}
 	const float cost = radarDef->GetCostM();
 	const float dt = (lastFrame >= 0) ? float(frame - lastFrame) / FRAMES_PER_SEC : PLAN_SEC;
 	lastFrame = frame;
@@ -82,16 +72,25 @@ void CSensorPlanner::Update()
 
 	UpdateWeights();
 	UpdateRadars();
-	if (!radarDef->IsAvailable(frame) || (coveredWeight >= chokeMap->GetConfig().radarCoverage * totalWeight)
-		|| (budget < cost))
-	{
-		return;
-	}
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	bool isWaiting = false;
+	bool isPlannedQueued = false;
 	for (const IBuilderTask* task : builderMgr->GetTasks(IBuilderTask::BuildType::RADAR)) {
-		if (task->GetTarget() == nullptr) {
-			return;  // one waits already
+		isWaiting |= (task->GetTarget() == nullptr);
+		isPlannedQueued |= (task->GetTaskPos().SqDistance2D(plannedPos) < SQUARE(SQUARE_SIZE));
+	}
+	// The last planned radar's task is gone and no radar stands there: killed as it was built, or never started
+	if (utils::is_valid(plannedPos) && !isPlannedQueued) {
+		const bool isBuilt = std::any_of(radars.begin(), radars.end(), [this](const std::pair<const ICoreUnit::Id, SRadar>& kv) {
+			return kv.second.pos.SqDistance2D(plannedPos) < SQUARE(SQUARE_SIZE * 16);
+		});
+		if (!isBuilt) {
+			deaths.push_back({plannedPos, frame});
 		}
+		plannedPos = -RgtVector;
+	}
+	if (!radarDef->IsAvailable(frame) || (budget < cost) || isWaiting) {
+		return;  // at most one planned radar waits for a builder
 	}
 
 	// Summed-area table of the uncovered weight: a candidate gains at most what its viewshed's square holds
@@ -126,9 +125,14 @@ void CSensorPlanner::Update()
 		float divisor;  // cost x (1 + risk)
 	};
 	std::vector<SScored> scored;
+	std::set<int> candidateCells;
 	for (const AIFloat3& pos : candidates) {
 		const float divisor = cost * (1.f + GetRisk(pos));
 		scored.push_back({pos, boundAt(pos) / divisor, divisor});
+		candidateCells.insert(traffic.IndexAt(pos.x, pos.z));
+	}
+	for (auto it = viewsheds.begin(); it != viewsheds.end();) {  // only today's candidates stay cached
+		it = (candidateCells.count(it->first) == 0) ? viewsheds.erase(it) : std::next(it);
 	}
 	std::stable_sort(scored.begin(), scored.end(), [](const SScored& a, const SScored& b) {  // ties: block order
 		return a.bound > b.bound;
@@ -137,9 +141,16 @@ void CSensorPlanner::Update()
 	float bestScore = 0.f;
 	float bestGain = 0.f;
 	int viewCount = 0;
+	int freshCount = 0;
 	for (const SScored& s : scored) {
 		if (s.bound <= bestScore) {
 			break;
+		}
+		if (viewsheds.count(traffic.IndexAt(s.pos.x, s.pos.z)) == 0) {
+			if (freshCount >= FRESH_VIEWS) {
+				break;  // the best so far; the rest are made on later calls
+			}
+			++freshCount;
 		}
 		float gain = 0.f;
 		for (int cell : GetViewshed(s.pos)) {
@@ -153,11 +164,12 @@ void CSensorPlanner::Update()
 		}
 	}
 	const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
-	if (!utils::is_valid(bestPos)) {
-		return;
+	if (!utils::is_valid(bestPos) || (bestGain < chokeMap->GetConfig().radarGain * totalWeight)) {
+		return;  // no radar adds enough
 	}
 	builderMgr->EnqueueTask(IBuilderTask::Priority::NORMAL, radarDef, bestPos, IBuilderTask::BuildType::RADAR, cost,
-			SQUARE_SIZE * 8.f, true);
+			SQUARE_SIZE * 8.f, true, PLAN_TIMEOUT);
+	plannedPos = bestPos;
 	budget -= cost;
 	circuit->LOG("RADAR planned at (%.0f, %.0f): covered %.0f%% +%.0f%%, %i of %i candidates seen, %.2f ms",
 			bestPos.x, bestPos.z, GetCoveredShare() * 100.f, bestGain / totalWeight * 100.f, viewCount,
@@ -166,7 +178,7 @@ void CSensorPlanner::Update()
 
 void CSensorPlanner::UpdateWeights()
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CTrafficField& traffic = chokeMap->GetTraffic();
 	const SCellMask& reach = chokeMap->GetReachMask();
 	CMetalManager* metalMgr = circuit->GetMetalManager();
@@ -180,7 +192,7 @@ void CSensorPlanner::UpdateWeights()
 	float mapIncome = 0.f;
 	for (unsigned i = 0; i < spots.size(); ++i) {
 		const int cluster = metalMgr->GetCluster(i);
-		const bool isOurs = (cluster >= 0) && (metalMgr->IsClusterQueued(cluster) || metalMgr->IsClusterFinished(cluster));
+		const bool isOurs = (cluster >= 0) && metalMgr->IsClusterHeld(cluster);
 		ourIncome += isOurs ? spots[i].income : 0.f;
 		mapIncome += spots[i].income;
 	}
@@ -207,7 +219,7 @@ void CSensorPlanner::UpdateWeights()
 	}
 	for (unsigned i = 0; i < spots.size(); ++i) {
 		const int cluster = metalMgr->GetCluster(i);
-		if ((cluster >= 0) && (metalMgr->IsClusterQueued(cluster) || metalMgr->IsClusterFinished(cluster))) {
+		if ((cluster >= 0) && metalMgr->IsClusterHeld(cluster)) {
 			weights[traffic.IndexAt(spots[i].position.x, spots[i].position.z)] += spots[i].income;
 		}
 	}
@@ -219,15 +231,18 @@ void CSensorPlanner::UpdateWeights()
 
 void CSensorPlanner::UpdateRadars()
 {
-	const CTrafficField& traffic = circuit->GetAllyTeam()->GetChokeMap()->GetTraffic();
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
 	const int frame = circuit->GetLastFrame();
 	std::map<ICoreUnit::Id, SRadar> seen;
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* unit = kv.second;
 		CCircuitDef* cdef = unit->GetCircuitDef();
-		const float range = cdef->GetDef()->GetRadarRadius();
-		if (cdef->IsMobile() || (range <= 0.f) || unit->GetUnit()->IsBeingBuilt()) {
+		if (cdef->IsMobile()) {
 			continue;
+		}
+		const float range = cdef->GetDef()->GetRadarRadius();
+		if (range <= 0.f) {
+			continue;  // a nanoframe counts: no second radar is planned over it
 		}
 		auto it = radars.find(kv.first);
 		if (it != radars.end()) {
@@ -262,24 +277,26 @@ void CSensorPlanner::UpdateRadars()
 
 void CSensorPlanner::UpdateCandidates()
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CTrafficField& traffic = chokeMap->GetTraffic();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CMap* map = circuit->GetMap();
 	const int size = traffic.GetCellSize();
 	const int perBlock = BLOCK_SIZE / size;
 	candidates.clear();
 	for (int bz = 0; bz < traffic.GetHeight(); bz += perBlock) {
 		for (int bx = 0; bx < traffic.GetWidth(); bx += perBlock) {
-			// The block's cells on our side or in our territory, highest first
+			// The block's cells on our half of the map (not enemy territory) or in our territory, highest first
 			std::vector<std::pair<float, AIFloat3>> cells;
 			for (int z = bz; z < std::min(bz + perBlock, traffic.GetHeight()); ++z) {
 				for (int x = bx; x < std::min(bx + perBlock, traffic.GetWidth()); ++x) {
 					AIFloat3 pos((x + 0.5f) * size, 0.f, (z + 0.5f) * size);
 					const int region = chokeMap->GetRegionAt(pos);
-					if ((region >= 0) && (chokeMap->IsOurSide(region) || chokeMap->IsOurTerritory(region))) {
-						pos.y = map->GetElevationAt(pos.x, pos.z);
-						cells.push_back({GetHeight(pos.x, pos.z), pos});
+					const bool isOk = chokeMap->IsOurHalf(pos)
+							? ((region < 0) || !chokeMap->IsEnemyTerritory(region))
+							: ((region >= 0) && chokeMap->IsOurTerritory(region));
+					if (isOk) {
+						pos.y = terrainMgr->GetHeightAt(pos.x, pos.z);
+						cells.push_back({pos.y, pos});
 					}
 				}
 			}
@@ -287,9 +304,8 @@ void CSensorPlanner::UpdateCandidates()
 				return a.first > b.first;
 			});
 			for (unsigned i = 0; i < std::min<unsigned>(cells.size(), BUILD_TRIES); ++i) {
-				const AIFloat3& pos = cells[i].second;
-				if (terrainMgr->CanBeBuiltAt(radarDef, pos) && map->IsPossibleToBuildAt(radarDef->GetDef(), pos, UNIT_FACING_SOUTH)) {
-					candidates.push_back(pos);
+				if (terrainMgr->CanBuildAt(radarDef, cells[i].second)) {
+					candidates.push_back(cells[i].second);
 					break;
 				}
 			}
@@ -299,7 +315,7 @@ void CSensorPlanner::UpdateCandidates()
 
 const std::vector<int>& CSensorPlanner::GetViewshed(const AIFloat3& pos)
 {
-	const CTrafficField& traffic = circuit->GetAllyTeam()->GetChokeMap()->GetTraffic();
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
 	const int cell = traffic.IndexAt(pos.x, pos.z);
 	auto it = viewsheds.find(cell);
 	if (it == viewsheds.end()) {
@@ -315,12 +331,13 @@ const std::vector<int>& CSensorPlanner::GetViewshed(const AIFloat3& pos)
  */
 std::vector<int> CSensorPlanner::MakeViewshed(const AIFloat3& pos, float range, float emit) const
 {
-	const CTrafficField& traffic = circuit->GetAllyTeam()->GetChokeMap()->GetTraffic();
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
 	const int width = traffic.GetWidth();
 	const int height = traffic.GetHeight();
 	const float size = traffic.GetCellSize();
 	const int r = int(range / size) + 1;
-	const float eye = GetHeight(pos.x, pos.z) + emit;
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float eye = terrainMgr->GetHeightAt(pos.x, pos.z) + emit;
 	std::vector<uint8_t> isSeen(width * height, 0);
 	std::vector<int> cells;
 	auto mark = [&](float x, float z) {
@@ -343,7 +360,7 @@ std::vector<int> CSensorPlanner::MakeViewshed(const AIFloat3& pos, float range, 
 			}
 			const float x = pos.x + dx * size * i / steps;
 			const float z = pos.z + dz * size * i / steps;
-			const float ground = GetHeight(x, z);
+			const float ground = terrainMgr->GetHeightAt(x, z);
 			if ((ground + TARGET_LIFT - eye) / dist >= maxSlope) {
 				mark(x, z);
 			}
@@ -363,10 +380,7 @@ std::vector<int> CSensorPlanner::MakeViewshed(const AIFloat3& pos, float range, 
 
 float CSensorPlanner::GetRisk(const AIFloat3& pos) const
 {
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const std::vector<CCircuitDef*>& defenders = militaryMgr->GetLandDefenders();
-	CCircuitDef* mainDef = defenders.empty() ? militaryMgr->GetDefaultPorc() : defenders.front();
-	float risk = circuit->GetThreatMap()->GetAllThreatAt(pos) / std::max(mainDef->GetThreat(), 1.f);
+	float risk = circuit->GetThreatMap()->GetAllThreatAt(pos) / std::max(circuit->GetChokeMap()->GetMainDef()->GetThreat(), 1.f);
 	const int frame = circuit->GetLastFrame();
 	for (const SDeath& d : deaths) {
 		if (d.pos.SqDistance2D(pos) < SQUARE(DEATH_NEAR)) {
@@ -374,16 +388,6 @@ float CSensorPlanner::GetRisk(const AIFloat3& pos) const
 		}
 	}
 	return risk;
-}
-
-float CSensorPlanner::GetHeight(float x, float z) const
-{
-	const FloatVec& heightMap = circuit->GetTerrainManager()->GetAreaData()->heightMap;
-	const int width = circuit->GetMap()->GetWidth();
-	const int height = circuit->GetMap()->GetHeight();
-	const int hx = utils::clamp(int(x) / SQUARE_SIZE, 0, width - 1);
-	const int hz = utils::clamp(int(z) / SQUARE_SIZE, 0, height - 1);
-	return heightMap[hz * width + hx];
 }
 
 } // namespace circuit

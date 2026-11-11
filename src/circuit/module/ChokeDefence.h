@@ -20,22 +20,23 @@ class CCircuitDef;
 
 /*
  * choke.enable: choke defence (A). A pocket (CChokeMap::SPocket) defends at its 1 to choke.entrances chokes when
- * they are fewer than its defence points, each defensible and near, none with enemy territory outside, and the
- * pocket's pool buys a main tower per entrance. The pool is what its points would spend today less what each keeps
- * on its cluster, so the chokes only win by concentrating the same metal. Modes:
+ * they are fewer than its defence points, each defensible and near, none with enemy territory outside, and its
+ * budget buys enough main towers to cover each entrance's width. Each point keeps its AA and its first tower on its
+ * cluster, against raiders and anything the cut doesn't stop; the rest of what the pocket's held points would spend
+ * today goes to the entrances, less what they spent on their clusters beyond that. Modes:
  * - CLUSTER: as without choke.enable;
- * - CHOKES: the towers go to the entrances, the AA stays on the cluster;
- * - MIXED (a leaky pocket): the cluster also keeps its first tower.
- * A pocket's mode is decided when its first tower is ordered, and switches only on a hard event, 3 minutes apart
+ * - CHOKES: the first tower and the AA on the cluster, the rest at the entrances.
+ * A pocket's mode is decided when its first tower is ordered, and switches at most every 3 minutes
  */
 class CChokeDefence {
 public:
 	using Mode = CDefenceMatrix::DefenceMode;
+	using Towers = std::vector<CDefenceMatrix::STower>;
 	// Where MakeDefence's towers for a point go
 	struct SPlan {
 		Mode mode = Mode::CLUSTER;
-		std::vector<CDefenceMatrix::STower> clusterList;  // at the point, capped by maxCost as without choke.enable
-		std::vector<CDefenceMatrix::STower> chokeList;  // at chokePoint, walked again while chokeCap has room
+		Towers clusterList;  // at the point, capped by maxCost as without choke.enable
+		Towers chokeList;  // at chokePoint, walked again while chokeCap has room
 		CDefenceMatrix::SDefPoint* chokePoint = nullptr;
 		int choke = -1;  // its index in the threat graph
 		int innerRegion = -1;  // its region on the pocket's side
@@ -45,12 +46,13 @@ public:
 	CChokeDefence(CCircuitAI* circuit);
 	virtual ~CChokeDefence();
 
-	// picked: the towers MakeDefence picks for the point today, in order; maxCost: the point's cap today
-	SPlan Plan(int cluster, const CDefenceMatrix::SDefPoint* point, const std::vector<CDefenceMatrix::STower>& picked,
-			float maxCost);
-	// Every 2 s: lanes into our blocking map, and unstarted towers cancelled at chokes enemy artillery covers
+	// picked: the towers MakeDefence picks for the point today, in order; maxCost: the point's cap today.
+	// isSighting: an enemy is at the cluster already, so the cluster gets them all
+	SPlan Plan(int cluster, const CDefenceMatrix::SDefPoint* point, const Towers& picked, float maxCost,
+			bool isSighting);
+	// Every 2 s: lanes into our blocking map, and unstarted towers called off at chokes enemy artillery covers
 	void Update();
-	// Towers at one of the pocket's entrances, queued or built
+	// Towers queued or built at every entrance of the pocket
 	bool IsPocketDefended(const CChokeMap::SPocket& pocket) const;
 	// One of the cluster's points sits in a pocket defended at its entrances
 	bool IsDefendedAtChokes(int cluster) const;
@@ -60,8 +62,6 @@ public:
 private:
 	Mode Commit(const CChokeMap::SPocket& pocket, int pointCount, bool isAffordable);
 	CDefenceMatrix::SDefPoint* GetChokePoint(int choke, int innerRegion, CCircuitDef* mainDef);
-	// Simple placement: the buildable traffic cell with the most traffic choke.setback x range behind the line
-	springai::AIFloat3 FindAnchor(int choke, int innerRegion, CCircuitDef* mainDef) const;
 	void UpdateLanes();  // CChokeMap's lanes into our blocking map
 
 	CCircuitAI* circuit;

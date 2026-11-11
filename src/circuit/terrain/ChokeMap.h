@@ -39,10 +39,12 @@ class CChokeOverlay;
  * the enemy is likely to walk, and how open the map is. Shared by allied AIs, built on the area worker.
  *
  * - The threat graph (CRegionGraph) is built from the cells any gating enemy movement type can cross. A cut in it
- *   cuts every gating type. Leak types (amphibious, spiders, jumpers) only make the clusters they reach leaky.
+ *   cuts every gating type. Leak types (amphibious, spiders, jumpers) are ignored by it until their share of the
+ *   enemy's army promotes them to gating (choke.gate_share); before that the tower each cluster keeps answers them.
  * - The traffic field (CTrafficField) has one layer per enemy movement type, blended by the enemy's army mix.
- * - Map sides (start boxes, enemy factories) drive gating, pockets and openness. Territory (buildings per region,
- *   20 s to join, 60 s to leave) drives the current and forward lines.
+ * - Map sides (start boxes, enemy factories) drive gating, pockets and openness. Territory (buildings per region:
+ *   ours 20 s to join and 60 s to leave, the enemy's towers, factories and big buildings only, 120 s to leave)
+ *   drives pocket qualification and the current and forward lines.
  * - Defence points (CDefenceMatrix) get a pocket: the 1 to choke.entrances chokes the enemy must pass to walk in.
  *
  * Built only when a feature that reads it is on in config, or when the overlay asks. Everything here is analysis:
@@ -82,13 +84,12 @@ public:
 		float defensible = 2.f;  // choke.defensible: main-tower ranges
 		int entrances = 3;  // choke.entrances
 		float nearRanges = 2.5f;  // choke.near: main-tower ranges (not "near": a macro on Windows)
-		float exposure = 600.f;  // choke.exposure: elmos
 		float setback[2] = {0.6f, 0.8f};  // choke.setback: weapon ranges
 		float lane = 96.f;  // choke.lane: elmos
 		float gateShare = 0.25f;  // choke.gate_share
 		float spread = 0.15f;  // choke.traffic.spread
 		float bands[3] = {0.35f, 0.65f, 0.05f};  // choke.openness.bands
-		float radarCoverage = 0.75f;  // choke.radar.coverage
+		float radarGain = 0.02f;  // choke.radar.min_gain
 		float radarShare = 0.05f;  // choke.radar.share
 		float objGain = 1.5f;  // choke.objective.gain
 		float objPower = 1.3f;  // choke.objective.power
@@ -106,20 +107,15 @@ public:
 		int entrances;  // max-flow from the enemy side, capped at choke.entrances + 1
 		bool isOpen;  // more entrances than choke.entrances, or on the enemy side
 		int pocket;  // index in GetPockets(), -1 when open or nothing can walk in
-		bool isExposed;  // ground outside its pocket's cut within choke.exposure of its mexes
-		bool isLeaky;  // exposed, or reached by enemy aircraft or a leak type without passing the cut
 		std::vector<float> chokeDist;  // per choke of its pocket: walking elmos from the point, -1 out of reach
 	};
 	// Clusters whose defence points share a cut
 	struct SPocket {
 		std::vector<int> chokes;  // indices of its cut, ascending
 		std::vector<int> chokeIds;  // their ids: the pocket's key across rebuilds
-		std::vector<int> outer;  // per choke: its region on the enemy's side
 		std::vector<int> points;  // indices in GetPointInfos()
 		std::vector<bool> isInner;  // per region: behind the cut
 		bool isQualified;  // every entrance defensible, within choke.near, outer side not enemy territory
-		bool isOuterEnemy;  // an entrance's outer side is enemy territory
-		bool isLeaky;  // one of its points is
 		bool isHeld;  // one of its clusters is ours (queued or finished)
 	};
 	// A gap kept free of buildings through a narrow choke: a rectangle along the path through it
@@ -151,18 +147,20 @@ public:
 	void Request();
 	// Rebuilds the graph and the traffic on the worker (choke_overlay set)
 	void Rebuild();
-	// Territory, pockets, leaks, lines and openness now (CDefenceMatrix::Init, once its points exist)
+	// Territory, pockets, lines and openness now (CDefenceMatrix::Init, once its points exist)
 	void Reanalyze();
-	int GetVersion() const { return version; }  // bumped whenever anything below changes
+	int GetVersion() const { return version; }  // bumped whenever what the overlay draws changes
 
-	float GetMainRange() const { return mainRange; }  // the main tower's range: the unit of size of the tuning keys
+	// The main tower (the first land defender, water on water maps), and its range: the unit of the tuning keys
+	CCircuitDef* GetMainDef() const;
+	float GetMainRange() const { return mainRange; }
 	CRegionGraph::SParams GetGraphParams() const;  // from the tuning keys
 	const CRegionGraph& GetGraph() const { return graph; }
 	const CTrafficField& GetTraffic() const { return traffic; }
 	const SCellMask& GetReachMask() const { return reachMask; }  // cells any movement type in the game can cross
 	springai::AIFloat3 GetCellPos(int cell) const;  // centre of a graph cell, on the ground
 	int GetRegionAt(const springai::AIFloat3& pos) const;  // nearest passable cell's region within 2 cells
-	float GetChokeTraffic(int choke) const;  // the field summed over the choke's line
+	float GetChokeTraffic(int choke) const { return chokeTraffic[choke]; }  // the field summed over its line
 	// Nothing acts on a choke until it is 20 s old (found after a rebuild)
 	bool IsChokeSettled(int choke, int frame) const;
 	// Enemy artillery seen in range of the choke within the last 5 minutes: no new towers there
@@ -172,18 +170,18 @@ public:
 	const SCellMask& GetClassMask(int classIdx) const { return classMasks[classIdx]; }
 	int FindMoveClass(const std::string& name) const;  // by unit def or class name, -1 if none
 	bool IsGating(int classIdx) const;
-	bool IsInSet(int classIdx) const { return typeStates[classIdx].isInSet; }
-	float GetShare(int classIdx) const { return typeStates[classIdx].share; }
-	bool IsEnemyAirSeen() const { return isAirSeen; }
-	bool IsEnemyShipSeen() const { return !shipCells.empty(); }
+	std::string DescribeTypeSet() const;  // each type in the set: its name, role and share
 
 	bool IsEnemySide(int region) const { return isEnemySide[region]; }
 	bool IsOurSide(int region) const { return isOurSide[region]; }
 	bool IsEnemyTerritory(int region) const { return isEnemyTerritory[region]; }
 	bool IsOurTerritory(int region) const { return isOurTerritory[region]; }
+	std::vector<int> GetOurRegions() const;  // our territory, or our side before we hold any
+	// Nearer our start box than any enemy source (true until both are known): the half of the map we defend
+	bool IsOurHalf(const springai::AIFloat3& pos) const;
 
 	const std::vector<SPointInfo>& GetPointInfos() const { return pointInfos; }
-	const SPointInfo* GetPointInfo(int cluster, int index) const;
+	const SPointInfo* GetPointInfo(int cluster, int index) const;  // nullptr before the analysis
 	const std::vector<SPocket>& GetPockets() const { return pockets; }
 	// Chokes of the cut nearest our territory against enemy territory (C), and against the enemy side (D)
 	const std::vector<int>& GetCurrentLine() const { return currentLine; }
@@ -210,8 +208,9 @@ private:
 
 	/*
 	 * Building (ChokeMap.cpp). One job at a time on the area worker: masks from the height and slope maps (when
-	 * the terrain changed), the threat graph (when masks or gating types changed), traffic layers (for the classes
-	 * asked). Inputs are copied in, results swapped in on the main thread
+	 * the terrain changed), the threat graph (when masks or gating types changed), and one pending class's traffic
+	 * layer (with the others whose mask is the same at 64 elmos). Inputs are copied in, results swapped in on the
+	 * main thread, and the next job starts right away
 	 */
 	struct SBuildJob;
 	void InitMoveClasses();
@@ -220,7 +219,10 @@ private:
 	void ApplyJob(SBuildJob& job);
 	void StartJob(const std::shared_ptr<SBuildJob>& job);
 	void ScheduleBuilds();
+	void QueueTraffic(int classIdx);
+	void QueueAllTraffic();  // every class in the set
 	void MakeLanes();
+	void UpdateChokeTraffic();
 
 	/*
 	 * Enemy types and traffic sources (ChokeTypes.cpp)
@@ -235,20 +237,15 @@ private:
 		float share = 0.f;  // of the set's army cost, with a prior so shares start equal
 		float blendShare = -1.f;  // share in the last traffic blend, -1: not in it
 	};
-	struct SFactory {
-		std::vector<int> classes;  // that it builds
-		int team;
-	};
 	// One enemy ally team's traffic source: its start box until one of its factories is seen, then its factories
 	struct SSourceGroup {
-		std::vector<SRect> boxes;  // its start box, or the 3 mirrors of our start (a square each) with no boxes
+		std::vector<SRect> boxes;  // its start box, or the mirrors of our start (a square each) with no boxes
 		int allyTeam = -1;  // learnt from its first factory
 		std::vector<springai::AIFloat3> factoryPos;  // only adds: a dead factory's ground stays a source
 		bool isGuess = false;  // a mirror of our start
 	};
 	struct STypeChange {
 		bool isGating = false;  // the gating set (the graph's mask) changed
-		bool isLeak = false;  // the set changed, the gating set didn't
 		std::vector<int> joined;  // classes that need traffic floods
 		std::vector<int> left;
 	};
@@ -264,19 +261,27 @@ private:
 	std::vector<CTrafficField::Cells> GetSourceCells() const;
 
 	/*
-	 * Graph queries (ChokePockets.cpp): sides, territory, pockets, leaks, lines, openness
+	 * Graph queries (ChokePockets.cpp): sides, territory, pockets, lines, openness
 	 */
+	// Cuts from one set of source regions to each region, found on first ask (main thread only)
+	struct SCutCache {
+		std::vector<int> sources;
+		std::vector<float> capacity;  // per choke
+		float maxFlow = 0.f;
+		std::vector<CRegionGraph::SCut> cuts;  // per region
+		std::vector<bool> isKnown;
+		void Reset(std::vector<int>&& from, std::vector<float>&& cap, float limit, size_t regionCount);
+		const CRegionGraph::SCut& Get(const CRegionGraph& graph, int region);  // an empty cut out of range
+	};
 	void UpdateSides();
 	void UpdateTerritory();
 	void Analyze();
 	void AnalyzePoints();
-	void UpdateLeaks();
 	void UpdateLines();
 	void UpdateOpenness();
 	void MakeDestinations();
 	std::vector<float> ChokeCapacity(float defensibleCap, float wideCap) const;
 	std::vector<int> RegionsWhere(const std::vector<bool>& flags) const;
-	void CompareFixture() const;
 
 	CCircuitAI* circuit;  // authority
 	SConfig config;
@@ -286,20 +291,18 @@ private:
 	bool isBuilding;  // a job is on the worker
 	bool isGraphDirty;  // gating types changed, or choke_overlay set
 	bool isSourceDirty;  // enemy sources changed since the last traffic build
-	bool isOpennessDirty;  // sides or the type set changed
+	bool isOpennessDirty;  // sides or masks changed
 	int jobSerial;  // drops a job's result after SetAuthority or a newer job
-	int graphSerial;  // bumped on every graph build
 	int version;
+	std::size_t analysisHash;  // of what the overlay draws from Analyze
 	float mainRange;
 
 	// Terrain
 	std::vector<SMoveClass> moveClasses;
 	std::vector<SCellMask> classMasks;  // per class, 32 elmo cells
-	SCellMask threatMask;  // union of the gating classes
 	SCellMask reachMask;  // union of every class
-	CRegionGraph graph;
+	CRegionGraph graph;  // built on the union of the gating classes
 	std::vector<SLane> lanes;
-	std::vector<uint8_t> laneCells;  // per graph cell: under a lane
 	int laneVersion;
 	int heightVersion;  // CTerrainData's when the masks were built
 	int maskFrame;  // last mask build
@@ -309,17 +312,15 @@ private:
 	int nextAnalysisFrame;
 	bool isTrafficDirty;  // masks changed since the last traffic build
 	std::vector<int> pendingTraffic;  // classes waiting for floods
+	std::vector<float> chokeTraffic;  // per choke
 
 	// Enemy types and sources
 	std::vector<STypeState> typeStates;  // per class
 	bool isOpening;
-	int openingEnd;  // frame
-	std::map<ICoreUnit::Id, SFactory> factories;  // known live enemy factories
+	std::map<ICoreUnit::Id, std::vector<int>> factories;  // known live enemy factories: the classes each builds
 	std::set<int> factoryTeams;  // enemy teams with a factory seen
 	std::vector<SSourceGroup> sourceGroups;
 	int enemyAllyCount;
-	bool isAirSeen;
-	std::vector<int> shipCells;  // graph cells where enemy ships were seen, ascending
 	std::map<int, int> artySeen;  // choke id -> last frame enemy artillery was in range
 	int blendFrame;
 
@@ -336,16 +337,12 @@ private:
 
 	// Pockets and lines
 	std::vector<SPointInfo> pointInfos;
+	std::vector<int> firstPointOf;  // per cluster: index of its first point info
 	std::vector<SPocket> pockets;
 	std::vector<std::vector<float>> pointChokeDist;  // per point info, per choke: walking elmos, -1 out of reach
-	int distSerial;  // graphSerial of pointChokeDist
-	std::vector<bool> isLeakCell;  // per graph cell: a leak type or aircraft reaches it without passing a cut
+	SCutCache sideCuts;  // from the enemy side, up to choke.entrances (AnalyzePoints)
+	mutable SCutCache entranceCuts;  // from our regions (GetEntrancesFromUs)
 	std::vector<int> currentLine, forwardLine;
-	// GetEntrancesFromUs, per region on first ask after each UpdateLines (main thread only)
-	std::vector<int> entranceSources;
-	std::vector<float> entranceCapacity;
-	mutable std::vector<std::vector<int>> entrancesFromUs;
-	mutable std::vector<bool> isEntranceKnown;
 	float openness;
 	Openness opennessBand;
 	bool isOpennessSet;

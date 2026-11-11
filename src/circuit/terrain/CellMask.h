@@ -8,6 +8,7 @@
 #ifndef SRC_CIRCUIT_TERRAIN_CELLMASK_H_
 #define SRC_CIRCUIT_TERRAIN_CELLMASK_H_
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -55,12 +56,32 @@ struct SCellMask {
 			cells[i] |= o.cells[i];
 		}
 	}
+	// The passable cell nearest index within reach cells (straight-line distance, ties in cell order), -1 if none
+	int NearestPassable(int index, int reach) const;
 	// A coarser grid, factor x factor cells into one: a coarse cell passes when at least `need` of its cells pass
 	SCellMask Downsample(int factor, int need) const;
 	// What a jump of `span` elmos crosses: every run of wall cells along a row or a column with passable cells at
 	// both ends at most `span` apart passes. Thicker walls, and walls at the map edge, stay
 	SCellMask OpenThinWalls(float span) const;
 };
+
+/*
+ * Calls f(x, z) for every cell of a width x height grid of size-elmo cells under the rectangle from (x0, z0) to
+ * (x1, z1) in elmos, clamped to the grid
+ */
+template <typename F>
+inline void ForEachCellIn(int width, int height, int size, float x0, float z0, float x1, float z1, F&& f)
+{
+	const int cx0 = std::max(int(x0) / size, 0);
+	const int cz0 = std::max(int(z0) / size, 0);
+	const int cx1 = std::min(int(x1) / size, width - 1);
+	const int cz1 = std::min(int(z1) / size, height - 1);
+	for (int z = cz0; z <= cz1; ++z) {
+		for (int x = cx0; x <= cx1; ++x) {
+			f(x, z);
+		}
+	}
+}
 
 /*
  * Walks the passable neighbours of a passable cell: 4 straight ones (cost 2), and the 4 diagonal ones whose two

@@ -79,6 +79,7 @@ public:
 	bool IsClusterQueued(int index) const {
 		return clusterInfos[index].queuedCount >= GetClusters()[index].idxSpots.size();
 	}
+	bool IsClusterHeld(int index) const { return IsClusterQueued(index) || IsClusterFinished(index); }  // ours
 	bool IsMexInFinished(int index) const;
 	// Some spot of the cluster is queued or built by the ally team (counts as of the last MarkAllyMexes)
 	bool IsClusterStarted(int index) const {

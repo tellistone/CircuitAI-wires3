@@ -8,6 +8,7 @@
 #include "terrain/RegionGraph.h"
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <functional>
 #include <limits>
@@ -71,10 +72,9 @@ CRegionGraph::CRegionGraph()
 {
 }
 
-void CRegionGraph::Build(const SCellMask& m, const SParams& p)
+void CRegionGraph::Build(const SCellMask& m, const SParams& params)
 {
 	mask = m;
-	params = p;
 	regions.clear();
 	chokes.clear();
 	const int n = mask.Size();
@@ -219,18 +219,16 @@ void CRegionGraph::Build(const SCellMask& m, const SParams& p)
 			if ((regionSet.Find(r) != r) || (regionSet.Area(r) >= params.minArea)) {
 				continue;  // merged into another one on this pass
 			}
-			int widest = -1;  // index in wideFirst: its first touching meeting is its widest choke
-			int other = -1;
+			int other = -1;  // across its first touching meeting in wideFirst: its widest choke
 			for (int mi : wideFirst) {
 				const int ra = regionSet.Find(meetings[mi].a);
 				const int rb = regionSet.Find(meetings[mi].b);
 				if ((ra != rb) && ((ra == r) || (rb == r))) {
-					widest = mi;
 					other = (ra == r) ? rb : ra;
 					break;
 				}
 			}
-			if (widest >= 0) {
+			if (other >= 0) {
 				regionSet.Unite(r, other);
 				isChanged = true;
 			}
@@ -249,7 +247,7 @@ void CRegionGraph::Build(const SCellMask& m, const SParams& p)
 		const int root = regionSet.Find(label[i]);
 		if (indexOfRoot[root] == NO_REGION) {
 			indexOfRoot[root] = regions.size();
-			regions.push_back({-1, 0, 0.f, i, {}});
+			regions.push_back({-1, 0, i, {}});
 		}
 		const int r = indexOfRoot[root];
 		regionOf[i] = r;
@@ -258,9 +256,6 @@ void CRegionGraph::Build(const SCellMask& m, const SParams& p)
 		if (altitude[i] > altitude[region.centre]) {
 			region.centre = i;
 		}
-	}
-	for (SRegion& region : regions) {
-		region.maxAltitude = GetAltitude(region.centre);
 	}
 
 	/*
@@ -373,6 +368,17 @@ float CRegionGraph::GetAltitude(int cell) const
 {
 	// Chamfer units are thirds of a cell, from cell centre to wall centre: half a cell less to the wall's edge
 	return (altitude[cell] > 0) ? (altitude[cell] / 3.f - 0.5f) * mask.cellSize : 0.f;
+}
+
+float CRegionGraph::GetLineDist(const SChoke& choke, float x, float z) const
+{
+	float bestSq = std::numeric_limits<float>::max();
+	for (int cell : choke.line) {
+		const float dx = mask.CentreX(cell) - x;
+		const float dz = mask.CentreZ(cell) - z;
+		bestSq = std::min(bestSq, dx * dx + dz * dz);
+	}
+	return std::sqrt(bestSq);
 }
 
 int CRegionGraph::FindRegion(int id) const
@@ -628,13 +634,13 @@ CRegionGraph::SCut CRegionGraph::CutFrom(const std::vector<int>& sources, const 
 	return result;
 }
 
-std::vector<bool> CRegionGraph::ReachableFrom(const std::vector<int>& sources, const std::vector<bool>& isChokeBlocked) const
+std::vector<int> CRegionGraph::HopsFrom(const std::vector<int>& sources, const std::vector<bool>& isChokeBlocked) const
 {
-	std::vector<bool> isReached(regions.size(), false);
+	std::vector<int> hops(regions.size(), -1);
 	std::deque<int> queue;
 	for (int s : sources) {
-		if (!isReached[s]) {
-			isReached[s] = true;
+		if (hops[s] < 0) {
+			hops[s] = 0;
 			queue.push_back(s);
 		}
 	}
@@ -642,15 +648,22 @@ std::vector<bool> CRegionGraph::ReachableFrom(const std::vector<int>& sources, c
 		const int r = queue.front();
 		queue.pop_front();
 		for (int c : regions[r].chokes) {
-			if (isChokeBlocked[c]) {
-				continue;
-			}
 			const int next = OtherSide(chokes[c], r);
-			if (!isReached[next]) {
-				isReached[next] = true;
+			if ((hops[next] < 0) && (isChokeBlocked.empty() || !isChokeBlocked[c])) {
+				hops[next] = hops[r] + 1;
 				queue.push_back(next);
 			}
 		}
+	}
+	return hops;
+}
+
+std::vector<bool> CRegionGraph::ReachableFrom(const std::vector<int>& sources, const std::vector<bool>& isChokeBlocked) const
+{
+	const std::vector<int> hops = HopsFrom(sources, isChokeBlocked);
+	std::vector<bool> isReached(hops.size());
+	for (size_t r = 0; r < hops.size(); ++r) {
+		isReached[r] = (hops[r] >= 0);
 	}
 	return isReached;
 }

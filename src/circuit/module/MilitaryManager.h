@@ -483,11 +483,13 @@ private:
 
 	CDefenceMatrix* defence;
 	unsigned int defenceIdx;
-	// MakeDefence: queues towers at point in order while its total stays under cap; porc towers in a chain.
-	// isPooled: a choke point's share of its pocket, the list walked again while the cap has room (CChokeDefence).
+	// MakeDefence: queues towers at point in order while its total stays under cap; porc towers in a chain. A choke
+	// point's list (its share of its pocket, CChokeDefence) is walked again while the cap has room.
 	// goal: where choke.spot.enable scores the attackers' spots, nullptr: today's shake around the point
 	void QueueTowers(CDefenceMatrix::SDefPoint* point, const std::vector<CDefenceMatrix::STower>& towers, float cap,
-			bool isPorc, bool isPooled, const CSpotScorer::SGoal* goal);
+			bool isPorc, const CSpotScorer::SGoal* goal);
+	springai::AIFloat3 GetBackPos(const springai::AIFloat3& pos) const;  // 16 squares towards our base
+	bool IsSpotTaken(const springai::AIFloat3& pos) const;  // a tower of ours stands there, or is queued there
 	// The key's frozen spot, else a new one scored and frozen; -RgtVector if none (or 2 failures there)
 	springai::AIFloat3 GetTowerSpot(CDefenceMatrix::SDefPoint* point, int key, CCircuitDef* defDef,
 			const CSpotScorer::SGoal& goal);

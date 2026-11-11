@@ -9,6 +9,24 @@
 
 namespace circuit {
 
+int SCellMask::NearestPassable(int index, int reach) const
+{
+	const int x = index % width;
+	const int z = index / width;
+	int best = -1;
+	int bestSq = std::numeric_limits<int>::max();
+	for (int dz = -reach; dz <= reach; ++dz) {
+		for (int dx = -reach; dx <= reach; ++dx) {
+			const int sq = dx * dx + dz * dz;
+			if ((sq < bestSq) && IsPassable(x + dx, z + dz)) {
+				best = (z + dz) * width + x + dx;
+				bestSq = sq;
+			}
+		}
+	}
+	return best;
+}
+
 SCellMask SCellMask::Downsample(int factor, int need) const
 {
 	SCellMask out;

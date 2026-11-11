@@ -151,7 +151,7 @@
 // a feature below (or quota.hold_choke) is on, or when the choke_overlay chat command asks, and every feature is off
 // by default. Sizes are in main-tower ranges (the first porcupine land defender) unless noted
 "choke": {
-	"enable": false,  // choke defence: a pocket's towers go to its entrances; defence points split by region; lanes kept free of buildings
+	"enable": false,  // choke defence: a pocket's towers beyond each cluster's first go to its entrances; defence points split by region; lanes kept free of buildings
 	"region": {
 		"min_area": 0.5,  // smallest region, in main-tower ranges squared
 		"merge": 0.7  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
@@ -159,7 +159,6 @@
 	"defensible": 2.0,  // widest choke towers try to close
 	"entrances": 3,  // most entrances before a cluster counts as open
 	"near": 2.5,  // furthest useful entrance from a defence point
-	"exposure": 600.0,  // elmos: a cluster with ground outside its cut this close to its mexes is leaky (keeps a tower of its own)
 	"setback": [0.6, 0.8],  // ideal tower distance behind a choke's line, in the tower's weapon ranges
 	"lane": 96.0,  // elmos: corridor kept free of buildings (but mexes) through chokes under 3x this wide
 	"gate_share": 0.25,  // a leak type (amphibious, spiders, jumpers) starts gating once its cost reaches this share of the enemy army seen + 300 metal
@@ -168,7 +167,7 @@
 	"spot": {"enable": false},  // scored spots for every tower, base towers and hold spots; the porc sweep by need
 	"radar": {
 		"enable": false,  // the radar planner, which takes over MakeDefence's radar
-		"coverage": 0.75,  // share of the map's weight to keep under radar
+		"min_gain": 0.02,  // a planned radar must add at least this share of the map's weight to the coverage
 		"share": 0.05  // most of the metal income spent on planned radar
 	},
 	"objective": {

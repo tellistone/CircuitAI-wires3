@@ -9,9 +9,7 @@
 #include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
 #include "terrain/ChokeMap.h"
-#include "terrain/TerrainData.h"
 #include "terrain/TerrainManager.h"
-#include "unit/ally/AllyTeam.h"
 #include "unit/ally/AllyUnit.h"
 #include "unit/CircuitDef.h"
 #include "unit/CircuitUnit.h"
@@ -19,8 +17,6 @@
 #include "util/Defines.h"
 #include "util/Point.h"
 #include "util/Utils.h"
-
-#include "spring/SpringMap.h"
 
 #include "Log.h"
 #include "UnitDef.h"
@@ -49,11 +45,11 @@ CSpotScorer::~CSpotScorer()
 {
 }
 
-AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const AIFloat3& pos, float radius, const SGoal& goal)
+AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius)
 {
 	const auto t0 = std::chrono::steady_clock::now();
 	lastCandidates.clear();
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	if (!chokeMap->IsReady()) {
 		return -RgtVector;
 	}
@@ -64,8 +60,14 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const AIFloat3& pos, float radi
 	const float range = std::max(def->GetMaxRange(), (float)traffic.GetCellSize());
 	const float emit = def->GetDef()->GetLosHeight();
 	const bool isHighArc = (def->GetDef()->GetHighTrajectoryType() == 1);
+	const CRegionGraph::SChoke* choke = isChokeGoal ? &graph.GetChokes()[goal.choke] : nullptr;
+	AIFloat3 pos = goal.asset;
+	if (isChokeGoal) {
+		pos = chokeMap->GetCellPos(choke->centre);
+		radius = (chokeMap->GetConfig().setback[1] + 0.3f) * range;
+	}
 
-	std::vector<STarget> targets = MakeTargets(def, pos, radius, goal);
+	const std::vector<STarget> targets = MakeTargets(def, pos, radius, goal, GetTowers());
 	if (targets.empty()) {
 		return -RgtVector;
 	}
@@ -75,76 +77,16 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const AIFloat3& pos, float radi
 	}
 	meanHeight /= targets.size();
 
-	// Coarse candidates: traffic cell centres within radius, on our side of the choke, off lanes and failed sites
-	const int outerRegion = isChokeGoal ? graph.OtherSide(graph.GetChokes()[goal.choke], goal.innerRegion) : -1;
-	struct SCoarse {
-		AIFloat3 pos;
-		float bound;
-	};
-	std::vector<SCoarse> coarse;
-	const int cellSize = traffic.GetCellSize();
-	const int x0 = std::max(int(pos.x - radius) / cellSize, 0);
-	const int x1 = std::min(int(pos.x + radius) / cellSize, traffic.GetWidth() - 1);
-	const int z0 = std::max(int(pos.z - radius) / cellSize, 0);
-	const int z1 = std::min(int(pos.z + radius) / cellSize, traffic.GetHeight() - 1);
-	for (int z = z0; z <= z1; ++z) {
-		for (int x = x0; x <= x1; ++x) {
-			const AIFloat3 c((x + 0.5f) * cellSize, 0.f, (z + 0.5f) * cellSize);
-			if ((c.SqDistance2D(pos) > SQUARE(radius)) || IsMasked(c)) {
-				continue;
-			}
-			if (isChokeGoal && (graph.GetRegionAt(c.x, c.z) == outerRegion)) {
-				continue;
-			}
-			if ((goal.type != GoalType::HOLD) && chokeMap->IsOnLane(c)) {
-				continue;
-			}
-			// No score beats the weight of the targets in range times the best multiplier (height's 1.5)
-			float bound = 0.f;
-			for (const STarget& t : targets) {
-				if (c.SqDistance2D(t.pos) <= SQUARE(range)) {
-					bound += t.weight;
-				}
-			}
-			coarse.push_back({c, 1.5f * bound});
-		}
-	}
-	std::stable_sort(coarse.begin(), coarse.end(), [](const SCoarse& a, const SCoarse& b) {
-		return a.bound > b.bound;
-	});
-
+	// The terms without a line of sight: setback, threat and the builder's distance
 	const std::set<CCircuitUnit*>& workers = circuit->GetBuilderManager()->GetWorkers();
 	const int frame = circuit->GetLastFrame();
 	const float quarterDiag = CTerrainManager::GetTerrainDiagonal() * 0.25f;
 	const float ownThreat = std::max(def->GetThreat(), 1.f);
-	AIFloat3 assetGround = goal.asset;
-	assetGround.y = GetHeight(goal.asset.x, goal.asset.z);
-	auto scoreAt = [&](AIFloat3 c) {
-		c.y = GetHeight(c.x, c.z);
-		if (goal.type == GoalType::HOLD) {
-			if ((goal.area != nullptr) && !terrainMgr->CanMoveToPos(goal.area, c)) {
-				return -1.f;
-			}
-		} else if (!IsBuildable(def, c)) {
-			return -1.f;
-		}
-		if (goal.type == GoalType::POSITION) {
-			// The asset itself must stay in reach and in sight
-			if ((c.SqDistance2D(goal.asset) > SQUARE(0.8f * range)) || (!isHighArc && !IsClearLine(c, emit, assetGround))) {
-				return -1.f;
-			}
-		}
-		float cover = 0.f;
-		for (const STarget& t : targets) {
-			if ((c.SqDistance2D(t.pos) <= SQUARE(range)) && (isHighArc || IsClearLine(c, emit, t.pos))) {
-				cover += t.weight;
-			}
-		}
-		const float height = utils::clamp((c.y - meanHeight) / HEIGHT_CAP, 0.f, 1.f);
+	const CChokeMap::SConfig& cfg = chokeMap->GetConfig();
+	auto factorAt = [&](const AIFloat3& c) {
 		float setback = 1.f;
 		if (isChokeGoal) {
-			const CChokeMap::SConfig& cfg = chokeMap->GetConfig();
-			const float d = GetLineDist(goal.choke, c);
+			const float d = graph.GetLineDist(*choke, c.x, c.z);
 			const float lo = cfg.setback[0] * range;
 			const float hi = cfg.setback[1] * range;
 			if (d < lo) {
@@ -153,17 +95,75 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const AIFloat3& pos, float radi
 				setback = std::max(1.f - (d - hi) / (0.5f * range), 0.1f);
 			}
 		}
-		const float threat = circuit->GetThreatMap()->GetAllThreatAt(c);
 		float builderDist = 0.f;
-		if (!workers.empty()) {
+		if ((goal.type != GoalType::HOLD) && !workers.empty()) {
 			float minSq = std::numeric_limits<float>::max();
 			for (CCircuitUnit* w : workers) {
 				minSq = std::min(minSq, w->GetPos(frame).SqDistance2D(c));
 			}
 			builderDist = std::sqrt(minSq);
 		}
-		return cover * (1.f + 0.5f * height) * setback / (1.f + threat / ownThreat) / (1.f + builderDist / quarterDiag);
+		return setback / (1.f + circuit->GetThreatMap()->GetAllThreatAt(c) / ownThreat) / (1.f + builderDist / quarterDiag);
 	};
+	// On the goal's side: a choke's inner region, the asset's region, or a wall cell no enemy walks
+	const int homeRegion = isChokeGoal ? goal.innerRegion : chokeMap->GetRegionAt(goal.asset);
+	auto isCandidate = [&](const AIFloat3& c) {
+		const int region = graph.GetRegionAt(c.x, c.z);
+		return (c.SqDistance2D(pos) <= SQUARE(radius)) && !IsMasked(c)
+				&& ((homeRegion < 0) || (region == homeRegion) || (region == CRegionGraph::NO_REGION))
+				&& ((goal.type == GoalType::HOLD) || !chokeMap->IsOnLane(c));
+	};
+	AIFloat3 assetGround = goal.asset;
+	assetGround.y = terrainMgr->GetHeightAt(goal.asset.x, goal.asset.z);
+	auto scoreAt = [&](AIFloat3 c, float factor) {
+		c.y = terrainMgr->GetHeightAt(c.x, c.z);
+		if (goal.type == GoalType::HOLD) {
+			if ((goal.area != nullptr) && !terrainMgr->CanMoveToPos(goal.area, c)) {
+				return -1.f;
+			}
+		} else if (!terrainMgr->CanBuildAt(def, c)) {
+			return -1.f;
+		}
+		// A position's asset itself must stay in reach and in sight
+		if ((goal.type == GoalType::POSITION) && ((c.SqDistance2D(goal.asset) > SQUARE(0.8f * range))
+			|| (!isHighArc && !IsClearLine(c, emit, assetGround))))
+		{
+			return -1.f;
+		}
+		float cover = 0.f;
+		for (const STarget& t : targets) {
+			if ((c.SqDistance2D(t.pos) <= SQUARE(range)) && (isHighArc || IsClearLine(c, emit, t.pos))) {
+				cover += t.weight;
+			}
+		}
+		const float height = utils::clamp((c.y - meanHeight) / HEIGHT_CAP, 0.f, 1.f);
+		return cover * (1.f + 0.5f * height) * factor;
+	};
+
+	// Coarse candidates: traffic cell centres. No score beats the targets in range x factor x height's best 1.5
+	struct SCoarse {
+		AIFloat3 pos;
+		float factor;
+		float bound;
+	};
+	std::vector<SCoarse> coarse;
+	const int cellSize = traffic.GetCellSize();
+	ForEachCellIn(traffic.GetWidth(), traffic.GetHeight(), cellSize, pos.x - radius, pos.z - radius,
+			pos.x + radius, pos.z + radius, [&](int x, int z) {
+		const AIFloat3 c((x + 0.5f) * cellSize, 0.f, (z + 0.5f) * cellSize);
+		if (!isCandidate(c)) {
+			return;
+		}
+		float inRange = 0.f;
+		for (const STarget& t : targets) {
+			inRange += (c.SqDistance2D(t.pos) <= SQUARE(range)) ? t.weight : 0.f;
+		}
+		const float factor = (inRange > 0.f) ? factorAt(c) : 0.f;
+		coarse.push_back({c, factor, 1.5f * inRange * factor});
+	});
+	std::stable_sort(coarse.begin(), coarse.end(), [](const SCoarse& a, const SCoarse& b) {
+		return a.bound > b.bound;
+	});
 
 	float bestScore = -1.f;
 	AIFloat3 bestPos = -RgtVector;
@@ -174,7 +174,7 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const AIFloat3& pos, float radi
 			break;  // sorted by bound: nothing further can win
 		}
 		++tested;
-		const float score = scoreAt(cand.pos);
+		const float score = scoreAt(cand.pos, cand.factor);
 		if (score < 0.f) {
 			continue;
 		}
@@ -193,13 +193,11 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const AIFloat3& pos, float radi
 	for (size_t i = 0; i < refineCount; ++i) {
 		for (const AIFloat3& offset : {AIFloat3(-q, 0, -q), AIFloat3(q, 0, -q), AIFloat3(-q, 0, q), AIFloat3(q, 0, q)}) {
 			const AIFloat3 c = scored[i].pos + offset;
-			if ((c.SqDistance2D(pos) > SQUARE(radius)) || IsMasked(c)
-				|| ((goal.type != GoalType::HOLD) && chokeMap->IsOnLane(c)))
-			{
+			if (!isCandidate(c)) {
 				continue;
 			}
 			++tested;
-			const float score = scoreAt(c);
+			const float score = scoreAt(c, factorAt(c));
 			if (score > bestScore) {
 				bestScore = score;
 				bestPos = c;
@@ -207,7 +205,7 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const AIFloat3& pos, float radi
 		}
 	}
 	if (utils::is_valid(bestPos)) {
-		bestPos.y = GetHeight(bestPos.x, bestPos.z);
+		bestPos.y = terrainMgr->GetHeightAt(bestPos.x, bestPos.z);
 	}
 	scored.resize(std::min<size_t>(scored.size(), MAX_CANDIDATES_SHOWN));
 	lastCandidates = std::move(scored);
@@ -220,24 +218,27 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const AIFloat3& pos, float radi
 
 void CSpotScorer::MaskFailed(const AIFloat3& pos)
 {
-	const CTrafficField& traffic = circuit->GetAllyTeam()->GetChokeMap()->GetTraffic();
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
 	if (!traffic.IsEmpty()) {
 		failedCells[traffic.IndexAt(pos.x, pos.z)] = circuit->GetLastFrame() + MASK_FRAMES;
 	}
 }
 
-float CSpotScorer::GetUncovered(CCircuitDef* def, const AIFloat3& pos, float radius)
+std::vector<float> CSpotScorer::GetUncovered(CCircuitDef* def, const std::vector<AIFloat3>& positions, float radius)
 {
-	if (!circuit->GetAllyTeam()->GetChokeMap()->IsReady()) {
-		return 0.f;
+	std::vector<float> sums(positions.size(), 0.f);
+	if (!circuit->GetChokeMap()->IsReady()) {
+		return sums;
 	}
+	const std::vector<STower> towers = GetTowers();
 	SGoal goal;
-	goal.asset = pos;
-	float sum = 0.f;
-	for (const STarget& t : MakeTargets(def, pos, radius, goal)) {
-		sum += t.weight;
+	for (size_t i = 0; i < positions.size(); ++i) {
+		goal.asset = positions[i];
+		for (const STarget& t : MakeTargets(def, positions[i], radius, goal, towers)) {
+			sums[i] += t.weight;
+		}
 	}
-	return sum;
+	return sums;
 }
 
 /*
@@ -247,45 +248,42 @@ float CSpotScorer::GetUncovered(CCircuitDef* def, const AIFloat3& pos, float rad
  *   (the mean target weight, or 1 with no traffic), so a spot near it is picked on height and sight alone
  */
 std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, const AIFloat3& pos, float radius,
-		const SGoal& goal)
+		const SGoal& goal, const std::vector<STower>& towers) const
 {
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	const CTrafficField& traffic = chokeMap->GetTraffic();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const float range = std::max(def->GetMaxRange(), (float)traffic.GetCellSize());
 	const float reach = radius + range;
 	const int cellSize = traffic.GetCellSize();
-	const int x0 = std::max(int(pos.x - reach) / cellSize, 0);
-	const int x1 = std::min(int(pos.x + reach) / cellSize, traffic.GetWidth() - 1);
-	const int z0 = std::max(int(pos.z - reach) / cellSize, 0);
-	const int z1 = std::min(int(pos.z + reach) / cellSize, traffic.GetHeight() - 1);
+	const bool isChokeGoal = (goal.type != GoalType::POSITION);
+	const CRegionGraph::SChoke* choke = isChokeGoal ? &graph.GetChokes()[goal.choke] : nullptr;
+	const int outerRegion = isChokeGoal ? graph.OtherSide(*choke, goal.innerRegion) : -1;
+	const int assetCell = traffic.IndexAt(goal.asset.x, goal.asset.z);
 
 	std::vector<STarget> targets;
-	const bool isChokeGoal = (goal.type != GoalType::POSITION);
-	const int outerRegion = isChokeGoal ? graph.OtherSide(graph.GetChokes()[goal.choke], goal.innerRegion) : -1;
-	const int assetCell = traffic.IndexAt(goal.asset.x, goal.asset.z);
-	for (int z = z0; z <= z1; ++z) {
-		for (int x = x0; x <= x1; ++x) {
-			AIFloat3 c((x + 0.5f) * cellSize, 0.f, (z + 0.5f) * cellSize);
-			if (c.SqDistance2D(pos) > SQUARE(reach)) {
-				continue;
-			}
-			const int cell = z * traffic.GetWidth() + x;
-			float weight = 0.f;
-			if (isChokeGoal) {
-				const float d = GetLineDist(goal.choke, c);
-				if ((d <= cellSize) || ((d <= range) && (graph.GetRegionAt(c.x, c.z) == outerRegion))) {
-					weight = traffic.GetAt(cell);
-				}
-			} else {
-				weight = traffic.GetApproachWeight(cell, assetCell, c.distance2D(goal.asset));
-			}
-			if (weight > 0.f) {
-				c.y = GetHeight(c.x, c.z);
-				targets.push_back({c, weight});
-			}
+	ForEachCellIn(traffic.GetWidth(), traffic.GetHeight(), cellSize, pos.x - reach, pos.z - reach,
+			pos.x + reach, pos.z + reach, [&](int x, int z) {
+		AIFloat3 c((x + 0.5f) * cellSize, 0.f, (z + 0.5f) * cellSize);
+		if (c.SqDistance2D(pos) > SQUARE(reach)) {
+			return;
 		}
-	}
+		const int cell = z * traffic.GetWidth() + x;
+		float weight = 0.f;
+		if (isChokeGoal) {
+			const float d = graph.GetLineDist(*choke, c.x, c.z);
+			if ((d <= cellSize) || ((d <= range) && (graph.GetRegionAt(c.x, c.z) == outerRegion))) {
+				weight = traffic.GetAt(cell);
+			}
+		} else {
+			weight = traffic.GetApproachWeight(cell, assetCell, c.distance2D(goal.asset));
+		}
+		if (weight > 0.f) {
+			c.y = terrainMgr->GetHeightAt(c.x, c.z);
+			targets.push_back({c, weight});
+		}
+	});
 	auto keepBest = [&targets](size_t count) {
 		std::stable_sort(targets.begin(), targets.end(), [](const STarget& a, const STarget& b) {
 			return a.weight > b.weight;
@@ -295,7 +293,15 @@ std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, con
 		}
 	};
 	keepBest(MAX_TARGETS * 4);  // the line-of-fire tests below only for those that may make the best 32
-	HalveCovered(targets, GetTowers(pos, reach));
+	for (STarget& t : targets) {
+		for (const STower& tower : towers) {
+			if ((tower.pos.SqDistance2D(t.pos) <= SQUARE(tower.range))
+				&& (tower.isHighArc || IsClearLine(tower.pos, tower.emit, t.pos)))
+			{
+				t.weight *= 0.5f;
+			}
+		}
+	}
 	keepBest(MAX_TARGETS);
 	if (!isChokeGoal) {
 		float floor = 1.f;
@@ -307,24 +313,22 @@ std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, con
 			floor /= targets.size();
 		}
 		AIFloat3 asset = goal.asset;
-		asset.y = GetHeight(asset.x, asset.z);
+		asset.y = terrainMgr->GetHeightAt(asset.x, asset.z);
 		targets.push_back({asset, floor});
 	}
 	return targets;
 }
 
 /*
- * Every tower of our ally team in reach (human allies' too), and our queued tower tasks not yet started (a started
- * one has its nanoframe in the list already), so each counts once from queue to death
+ * Every tower of our ally team (human allies' too), and our queued tower tasks not yet started, chained ones too (a
+ * started one has its nanoframe in the list already), so each counts once from queue to death
  */
-std::vector<CSpotScorer::STower> CSpotScorer::GetTowers(const AIFloat3& pos, float radius) const
+std::vector<CSpotScorer::STower> CSpotScorer::GetTowers() const
 {
 	std::vector<STower> towers;
 	const int frame = circuit->GetLastFrame();
-	auto add = [&towers, &pos, radius](CCircuitDef* cdef, const AIFloat3& p) {
-		if ((cdef != nullptr) && !cdef->IsMobile() && cdef->IsAttacker()
-			&& (p.SqDistance2D(pos) <= SQUARE(radius + cdef->GetMaxRange())))
-		{
+	auto add = [&towers](CCircuitDef* cdef, const AIFloat3& p) {
+		if ((cdef != nullptr) && !cdef->IsMobile() && cdef->IsAttacker()) {
 			towers.push_back({p, cdef->GetMaxRange(), cdef->GetDef()->GetLosHeight(),
 					cdef->GetDef()->GetHighTrajectoryType() == 1});
 		}
@@ -332,44 +336,14 @@ std::vector<CSpotScorer::STower> CSpotScorer::GetTowers(const AIFloat3& pos, flo
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		add(kv.second->GetCircuitDef(), kv.second->GetPos(frame));
 	}
-	for (const IBuilderTask* task : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
-		if (task->GetTarget() == nullptr) {
-			add(task->GetBuildDef(), task->GetPosition());
-		}
-	}
-	return towers;
-}
-
-void CSpotScorer::HalveCovered(std::vector<STarget>& targets, const std::vector<STower>& towers) const
-{
-	for (STarget& t : targets) {
-		for (const STower& tower : towers) {
-			if ((tower.pos.SqDistance2D(t.pos) <= SQUARE(tower.range))
-				&& (tower.isHighArc || IsClearLine(tower.pos, tower.emit, t.pos)))
-			{
-				t.weight *= 0.5f;
+	for (IBuilderTask* task : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
+		for (IBuilderTask* t = task; t != nullptr; t = t->GetNextTask()) {  // a porc chain's waiting towers too
+			if (t->GetTarget() == nullptr) {
+				add(t->GetBuildDef(), t->GetPosition());
 			}
 		}
 	}
-}
-
-float CSpotScorer::GetLineDist(int choke, const AIFloat3& pos) const
-{
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
-	const SCellMask& mask = chokeMap->GetGraph().GetMask();
-	float bestSq = std::numeric_limits<float>::max();
-	for (int cell : chokeMap->GetGraph().GetChokes()[choke].line) {
-		const float dx = mask.CentreX(cell) - pos.x;
-		const float dz = mask.CentreZ(cell) - pos.z;
-		bestSq = std::min(bestSq, dx * dx + dz * dz);
-	}
-	return std::sqrt(bestSq);
-}
-
-bool CSpotScorer::IsBuildable(CCircuitDef* def, const AIFloat3& pos) const
-{
-	return circuit->GetTerrainManager()->CanBeBuiltAt(def, pos)
-			&& circuit->GetMap()->IsPossibleToBuildAt(def->GetDef(), pos, UNIT_FACING_SOUTH);
+	return towers;
 }
 
 /*
@@ -378,33 +352,24 @@ bool CSpotScorer::IsBuildable(CCircuitDef* def, const AIFloat3& pos) const
  */
 bool CSpotScorer::IsClearLine(const AIFloat3& from, float emit, const AIFloat3& to) const
 {
-	const float y0 = GetHeight(from.x, from.z) + emit;
-	const float y1 = GetHeight(to.x, to.z) + TARGET_LIFT;
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float y0 = terrainMgr->GetHeightAt(from.x, from.z) + emit;
+	const float y1 = terrainMgr->GetHeightAt(to.x, to.z) + TARGET_LIFT;
 	const int steps = int(from.distance2D(to) / (SQUARE_SIZE * 2));
 	for (int i = 1; i < steps; ++i) {
 		const float f = float(i) / steps;
 		const float x = from.x + (to.x - from.x) * f;
 		const float z = from.z + (to.z - from.z) * f;
-		if (GetHeight(x, z) > y0 + (y1 - y0) * f) {
+		if (terrainMgr->GetHeightAt(x, z) > y0 + (y1 - y0) * f) {
 			return false;
 		}
 	}
 	return true;
 }
 
-float CSpotScorer::GetHeight(float x, float z) const
-{
-	const FloatVec& heightMap = circuit->GetTerrainManager()->GetAreaData()->heightMap;
-	const int width = circuit->GetMap()->GetWidth();
-	const int height = circuit->GetMap()->GetHeight();
-	const int hx = utils::clamp(int(x) / SQUARE_SIZE, 0, width - 1);
-	const int hz = utils::clamp(int(z) / SQUARE_SIZE, 0, height - 1);
-	return heightMap[hz * width + hx];
-}
-
 bool CSpotScorer::IsMasked(const AIFloat3& pos) const
 {
-	const CTrafficField& traffic = circuit->GetAllyTeam()->GetChokeMap()->GetTraffic();
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
 	auto it = failedCells.find(traffic.IndexAt(pos.x, pos.z));
 	return (it != failedCells.end()) && (circuit->GetLastFrame() < it->second);
 }

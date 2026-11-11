@@ -25,6 +25,7 @@ namespace circuit {
  * - density: corridor cells are grouped by De, one group per cell length, and each cell's weight is divided by its
  *   group's total, so every cross-section carries the destination's whole value: traffic piles up where corridors
  *   narrow and thins out where they're wide. Cells within skipRadius of the destination are left out.
+ * Each source and each destination is flooded once per type.
  * Sources share a destination's value equally. Each type's field is kept apart, and Blend weights them by the
  * enemy's army mix. No engine types: built on the area worker and tested on its own
  */
@@ -59,16 +60,12 @@ public:
 	int GetHeight() const { return height; }
 	int GetCellSize() const { return cellSize; }
 	int IndexAt(float x, float z) const;
-	const std::vector<SType>& GetTypes() const { return types; }
 	void SetType(SType&& type);  // replaces the type with the same key, or adds it
-	void RemoveType(int key);
+	void RemoveType(int key);  // Blend again after it
 	// Blended field: each type's field x its share (key, share)
 	void Blend(const std::vector<std::pair<int, float>>& shares);
-	const std::vector<std::pair<int, float>>& GetShares() const { return shares; }
 
 	float GetAt(int cell) const { return blended.empty() ? 0.f : blended[cell]; }
-	float GetAt(float x, float z) const { return blended.empty() ? 0.f : blended[IndexAt(x, z)]; }
-	float GetMax() const { return maxValue; }
 	/*
 	 * A position's own approach, for any asset (even one away from the fixed destinations): the weight, 0..1, of
 	 * cell x being on a near-shortest route from the enemy to the asset, from the De floods: detour = De(x) +
@@ -80,9 +77,8 @@ private:
 	SParams params;
 	int width, height, cellSize;
 	std::vector<SType> types;
-	std::vector<std::pair<int, float>> shares;
+	std::vector<std::pair<int, float>> blendShares;  // (index in types, share) of the last Blend
 	std::vector<float> blended;
-	float maxValue;
 };
 
 } // namespace circuit

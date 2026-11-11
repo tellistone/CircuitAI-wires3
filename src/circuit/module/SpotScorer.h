@@ -26,8 +26,10 @@ struct STerrainMapArea;
  *           / (1 + distance to our nearest builder / a quarter of the map's diagonal)
  * cover is the traffic of the targets in range with a clear line (halved for each of our towers already covering
  * one), height is the height above the targets (up to 150 elmos), setback (choke goals) the closeness to
- * choke.setback x range behind the line. Candidates are tried best upper bound first (traffic in range, from the
- * field's summed-area table) and the search stops when no bound can beat the best score
+ * choke.setback x range behind the line. Hold spots skip the builder term. Candidates stay on the goal's side: a
+ * choke's inner region, or the asset's region, or a wall cell no enemy walks. They are tried best upper bound first
+ * (the traffic in range times the terms that need no line of sight) and the search stops when no bound can beat the
+ * best score
  */
 class CSpotScorer {
 public:
@@ -47,12 +49,14 @@ public:
 	CSpotScorer(CCircuitAI* circuit);
 	virtual ~CSpotScorer();
 
-	// The best spot for def within radius of pos, -RgtVector if none passes
-	springai::AIFloat3 FindSpot(CCircuitDef* def, const springai::AIFloat3& pos, float radius, const SGoal& goal);
+	// The best spot for def, -RgtVector if none passes: CHOKE, HOLD within choke.setback[1] + 0.3 ranges of the
+	// choke's centre, POSITION within radius of the asset
+	springai::AIFloat3 FindSpot(CCircuitDef* def, const SGoal& goal, float radius = 0.f);
 	// A build failed there: every search skips the spot's traffic cell for 5 minutes
 	void MaskFailed(const springai::AIFloat3& pos);
-	// Weight of the approach to pos within def's reach that our towers don't cover yet (the porc sweep's order)
-	float GetUncovered(CCircuitDef* def, const springai::AIFloat3& pos, float radius);
+	// Per position, the weight of its approach within radius + def's range that our towers don't cover yet (the porc
+	// sweep's order)
+	std::vector<float> GetUncovered(CCircuitDef* def, const std::vector<springai::AIFloat3>& positions, float radius);
 
 	const std::vector<SCandidate>& GetLastCandidates() const { return lastCandidates; }  // choke_overlay
 
@@ -67,13 +71,10 @@ private:
 		float emit;
 		bool isHighArc;
 	};
-	std::vector<STarget> MakeTargets(CCircuitDef* def, const springai::AIFloat3& pos, float radius, const SGoal& goal);
-	std::vector<STower> GetTowers(const springai::AIFloat3& pos, float radius) const;  // ours and allies', queued too
-	void HalveCovered(std::vector<STarget>& targets, const std::vector<STower>& towers) const;
-	float GetLineDist(int choke, const springai::AIFloat3& pos) const;  // to the choke's line
-	bool IsBuildable(CCircuitDef* def, const springai::AIFloat3& pos) const;
+	std::vector<STarget> MakeTargets(CCircuitDef* def, const springai::AIFloat3& pos, float radius, const SGoal& goal,
+			const std::vector<STower>& towers) const;
+	std::vector<STower> GetTowers() const;  // ours and allies', queued too
 	bool IsClearLine(const springai::AIFloat3& from, float emit, const springai::AIFloat3& to) const;
-	float GetHeight(float x, float z) const;
 	bool IsMasked(const springai::AIFloat3& pos) const;
 
 	CCircuitAI* circuit;

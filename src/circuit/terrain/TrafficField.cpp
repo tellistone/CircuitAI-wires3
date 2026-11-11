@@ -15,55 +15,63 @@ namespace circuit {
 CTrafficField::SType CTrafficField::BuildType(int key, const SCellMask& mask, const std::vector<Cells>& sources,
 		const std::vector<SDestination>& destinations, const SParams& params)
 {
-	constexpr int UNREACHED = CDistanceFlood::UNREACHED;
 	const int n = mask.Size();
+	const size_t sourceCount = sources.size();
 	SType type;
 	type.key = key;
 	type.field.assign(n, 0.f);
-	type.sourceDist.resize(sources.size());
-	if (sources.empty()) {
-		return type;
-	}
-	const int skip = CDistanceFlood::FromElmos(mask, params.skipRadius);
-	const float sourceShare = 1.f / sources.size();
-	std::vector<int> de, dg, reached, corridor;
-	std::vector<float> weight(n, 0.f);
-	std::vector<double> levelSum;
-	for (size_t k = 0; k < sources.size(); ++k) {
-		CDistanceFlood::Run(mask, sources[k], UNREACHED / 2, de);
-		std::vector<uint16_t>& dist = type.sourceDist[k];
-		dist.resize(n);
+	type.sourceDist.resize(sourceCount);
+	std::vector<int> dist;
+	for (size_t k = 0; k < sourceCount; ++k) {
+		CDistanceFlood::Run(mask, sources[k], CDistanceFlood::UNREACHED / 2, dist);
+		type.sourceDist[k].resize(n);
 		for (int i = 0; i < n; ++i) {
-			dist[i] = (de[i] < NO_DIST) ? de[i] : NO_DIST;
+			type.sourceDist[k][i] = (dist[i] < NO_DIST) ? dist[i] : NO_DIST;
 		}
+	}
 
-		for (const SDestination& dest : destinations) {
-			int deG = UNREACHED;
+	const int skip = CDistanceFlood::FromElmos(mask, params.skipRadius);
+	std::vector<int> deG(sourceCount), maxDetour(sourceCount), reached, corridor;
+	std::vector<float> tau(sourceCount), weight(n, 0.f);
+	std::vector<double> levelSum;
+	for (const SDestination& dest : destinations) {
+		// A corridor cell has De + Dg <= De(g) + 3 tau: the destination's flood stops at the largest such bound
+		int bound = -1;
+		for (size_t k = 0; k < sourceCount; ++k) {
+			deG[k] = NO_DIST;
 			for (int c : dest.cells) {
-				deG = std::min(deG, de[c]);
+				deG[k] = std::min<int>(deG[k], type.sourceDist[k][c]);
 			}
-			if ((deG == UNREACHED) || (deG == 0)) {
-				continue;  // this source can't walk there, or stands on it
+			tau[k] = std::max(params.spread * deG[k], 1.f);
+			maxDetour[k] = int(3.f * tau[k]);
+			if ((deG[k] != NO_DIST) && (deG[k] != 0)) {  // else this source can't walk there, or stands on it
+				bound = std::max(bound, deG[k] + maxDetour[k]);
 			}
-			const float tau = std::max(params.spread * deG, 1.f);
-			const int maxDetour = int(3.f * tau);
-			// A corridor cell has De + Dg <= De(g) + 3 tau, so the destination's flood can stop there
-			CDistanceFlood::Run(mask, dest.cells, deG + maxDetour, dg, &reached);
-			levelSum.assign((deG + maxDetour) / 2 + 1, 0.0);
+		}
+		if (bound < 0) {
+			continue;
+		}
+		CDistanceFlood::Run(mask, dest.cells, bound, dist, &reached);
+		const double value = dest.value / sourceCount;  // sources share it equally
+		for (size_t k = 0; k < sourceCount; ++k) {
+			if ((deG[k] == NO_DIST) || (deG[k] == 0)) {
+				continue;
+			}
+			const std::vector<uint16_t>& de = type.sourceDist[k];
+			levelSum.assign((deG[k] + maxDetour[k]) / 2 + 1, 0.0);
 			corridor.clear();
 			for (int i : reached) {
-				if ((de[i] == UNREACHED) || (dg[i] < skip)) {
+				if ((de[i] == NO_DIST) || (dist[i] < skip)) {
 					continue;
 				}
-				const int detour = de[i] + dg[i] - deG;  // >= 0: chamfer distance is a metric
-				if (detour > maxDetour) {
+				const int detour = de[i] + dist[i] - deG[k];  // >= 0: chamfer distance is a metric
+				if (detour > maxDetour[k]) {
 					continue;
 				}
-				weight[i] = std::exp(-detour / tau);
+				weight[i] = std::exp(-detour / tau[k]);
 				levelSum[de[i] / 2] += weight[i];
 				corridor.push_back(i);
 			}
-			const double value = dest.value * sourceShare;
 			for (int i : corridor) {
 				type.field[i] += value * weight[i] / levelSum[de[i] / 2];
 			}
@@ -76,7 +84,6 @@ CTrafficField::CTrafficField()
 		: width(0)
 		, height(0)
 		, cellSize(1)
-		, maxValue(0.f)
 {
 }
 
@@ -87,9 +94,8 @@ void CTrafficField::Init(int w, int h, int size, const SParams& p)
 	cellSize = size;
 	params = p;
 	types.clear();
-	shares.clear();
+	blendShares.clear();
 	blended.clear();
-	maxValue = 0.f;
 }
 
 int CTrafficField::IndexAt(float x, float z) const
@@ -114,25 +120,23 @@ void CTrafficField::RemoveType(int key)
 {
 	types.erase(std::remove_if(types.begin(), types.end(), [key](const SType& t) { return t.key == key; }),
 			types.end());
+	blendShares.clear();  // its indices moved
 }
 
-void CTrafficField::Blend(const std::vector<std::pair<int, float>>& newShares)
+void CTrafficField::Blend(const std::vector<std::pair<int, float>>& shares)
 {
-	shares = newShares;
 	const int n = width * height;
+	blendShares.clear();
 	blended.assign(n, 0.f);
 	for (const std::pair<int, float>& ks : shares) {
-		for (const SType& t : types) {
-			if ((t.key == ks.first) && ((int)t.field.size() == n)) {
+		for (size_t t = 0; t < types.size(); ++t) {
+			if ((types[t].key == ks.first) && ((int)types[t].field.size() == n)) {
+				blendShares.push_back({(int)t, ks.second});
 				for (int i = 0; i < n; ++i) {
-					blended[i] += ks.second * t.field[i];
+					blended[i] += ks.second * types[t].field[i];
 				}
 			}
 		}
-	}
-	maxValue = 0.f;
-	for (float v : blended) {
-		maxValue = std::max(maxValue, v);
 	}
 }
 
@@ -140,23 +144,18 @@ float CTrafficField::GetApproachWeight(int cell, int assetCell, float distToAsse
 {
 	const float straight = distToAsset * 2.f / cellSize;  // chamfer units: 2 per cell length
 	float weight = 0.f;
-	for (const std::pair<int, float>& ks : shares) {
-		for (const SType& t : types) {
-			if ((t.key != ks.first) || t.sourceDist.empty()) {
+	for (const std::pair<int, float>& ts : blendShares) {
+		const SType& t = types[ts.first];
+		for (const std::vector<uint16_t>& de : t.sourceDist) {
+			const uint16_t deAsset = de[assetCell];
+			const uint16_t deCell = de[cell];
+			if ((deAsset == NO_DIST) || (deCell == NO_DIST) || (deAsset == 0)) {
 				continue;
 			}
-			const float perSource = ks.second / t.sourceDist.size();
-			for (const std::vector<uint16_t>& de : t.sourceDist) {
-				const uint16_t deAsset = de[assetCell];
-				const uint16_t deCell = de[cell];
-				if ((deAsset == NO_DIST) || (deCell == NO_DIST) || (deAsset == 0)) {
-					continue;
-				}
-				const float tau = std::max(params.spread * deAsset, 1.f);
-				const float detour = std::max(deCell + straight - deAsset, 0.f);
-				if (detour < 3.f * tau) {
-					weight += perSource * std::exp(-detour / tau);
-				}
+			const float tau = std::max(params.spread * deAsset, 1.f);
+			const float detour = std::max(deCell + straight - deAsset, 0.f);
+			if (detour < 3.f * tau) {
+				weight += ts.second / t.sourceDist.size() * std::exp(-detour / tau);
 			}
 		}
 	}

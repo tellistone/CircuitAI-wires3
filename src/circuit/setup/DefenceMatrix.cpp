@@ -70,8 +70,9 @@ void CDefenceMatrix::Init(CCircuitAI* circuit)
 	float maxDistance = rangeDef->GetMaxRange() * 0.75f * 2;
 	CHierarchCluster clust;
 	CEncloseCircle enclose;
-	CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
-	const bool isRegionSplit = IsRegionSplit(circuit);
+	// choke.enable: spots in different regions never share a point
+	CChokeMap* chokeMap = circuit->GetChokeMap();
+	const bool isRegionSplit = chokeMap->GetConfig().isChoke && chokeMap->IsReady();
 
 	for (unsigned k = 0; k < clusters.size(); ++k) {
 		const CMetalData::MetalIndices& idxSpots = clusters[k].idxSpots;
@@ -112,12 +113,6 @@ void CDefenceMatrix::Init(CCircuitAI* circuit)
 		AddGeoPoints(circuit, maxDistance * 0.5f);
 	}
 	chokeMap->Reanalyze();  // pockets need the points
-}
-
-bool CDefenceMatrix::IsRegionSplit(CCircuitAI* circuit) const
-{
-	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
-	return chokeMap->GetConfig().isChoke && chokeMap->IsReady();
 }
 
 void CDefenceMatrix::AddGeoPoints(CCircuitAI* circuit, float coverRange)

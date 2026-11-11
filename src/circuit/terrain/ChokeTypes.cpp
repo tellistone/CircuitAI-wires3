@@ -27,13 +27,14 @@
 #include "UnitDef.h"
 
 #include <algorithm>
-#include <sstream>
 
 namespace circuit {
 
 using namespace springai;
 
+#define OPENING_FRAMES	(FRAMES_PER_SEC * 300)  // the opening default holds at most this long
 #define LEAVE_FRAMES	(FRAMES_PER_SEC * 300)  // a type leaves 5 minutes after it, or a factory for it, was last seen
+#define ARTY_FRAMES		(FRAMES_PER_SEC * 300)  // artillery seen near a choke blocks new towers there this long
 #define COST_HALF_LIFE	(FRAMES_PER_SEC * 180.f)  // an unseen enemy's cost fades by half every 3 minutes
 #define SHARE_PRIOR		300.f  // metal: shares start equal, and early sightings don't swing them
 #define GUESS_HALF		(SQUARE_SIZE * 32.f)  // half the side of a guessed box around a start position
@@ -78,8 +79,9 @@ void CChokeMap::InitTypeSet()
 
 /*
  * Map sides and traffic sources from the start boxes: ours, and a source group for every other box. A box covering
- * over half the map counts as none. With no other boxes, one guessed group: squares at the 3 mirrors of our start
- * (point, left to right, top to bottom). Called again until our start is known, while no enemy factory is
+ * over half the map counts as none. With no other boxes, one guessed group: squares at the mirrors of our start
+ * (point, left to right, top to bottom) a quarter of the map's diagonal or more from it. Called again until our start
+ * is known, while no enemy factory is
  */
 void CChokeMap::InitSources()
 {
@@ -96,6 +98,9 @@ void CChokeMap::InitSources()
 	auto square = [](const AIFloat3& p) {
 		return SRect{p.x - GUESS_HALF, p.z - GUESS_HALF, p.x + GUESS_HALF, p.z + GUESS_HALF};
 	};
+	auto isBox = [](const CAllyTeam::SBox& a, const CAllyTeam::SBox& b) {
+		return (a.left == b.left) && (a.right == b.right) && (a.top == b.top) && (a.bottom == b.bottom);
+	};
 	const AIFloat3& start = circuit->GetSetupManager()->GetBasePos();
 	isStartKnown = utils::is_valid(start);
 
@@ -110,22 +115,27 @@ void CChokeMap::InitSources()
 
 	sourceGroups.clear();
 	for (const auto& kv : circuit->GetGameAttribute()->GetSetupData().GetBoxes()) {
-		const CAllyTeam::SBox& box = kv.second;
-		const bool isOurs = (box.left == ourBox.left) && (box.right == ourBox.right) && (box.top == ourBox.top)
-				&& (box.bottom == ourBox.bottom);
-		if (!isOurs && isValid(toRect(box))) {
+		if (!isBox(kv.second, ourBox) && isValid(toRect(kv.second))) {
 			SSourceGroup group;
-			group.boxes.push_back(toRect(box));
+			group.boxes.push_back(toRect(kv.second));
 			sourceGroups.push_back(group);
 		}
 	}
 	if (sourceGroups.empty() && isStartKnown) {
+		// A mirror near our own start (ours is near the middle of an edge) isn't where an enemy starts
 		SSourceGroup group;
 		group.isGuess = true;
-		group.boxes.push_back(square(AIFloat3(mapW - start.x, 0.f, mapH - start.z)));
-		group.boxes.push_back(square(AIFloat3(mapW - start.x, 0.f, start.z)));
-		group.boxes.push_back(square(AIFloat3(start.x, 0.f, mapH - start.z)));
-		sourceGroups.push_back(group);
+		const float minSq = SQUARE(0.25f) * (mapW * mapW + mapH * mapH);
+		for (const AIFloat3& mirror : {AIFloat3(mapW - start.x, 0.f, mapH - start.z), AIFloat3(mapW - start.x, 0.f, start.z),
+			AIFloat3(start.x, 0.f, mapH - start.z)})
+		{
+			if (mirror.SqDistance2D(start) >= minSq) {
+				group.boxes.push_back(square(mirror));
+			}
+		}
+		if (!group.boxes.empty()) {
+			sourceGroups.push_back(group);
+		}
 	}
 
 	// Enemy ally teams in the start script: when each has a factory located, boxes with none are unused
@@ -140,8 +150,8 @@ void CChokeMap::InitSources()
 }
 
 /*
- * Every 5 s: enemy factories (and the types they build), sightings of each type, its faded army cost, enemy aircraft,
- * ships and artillery near chokes
+ * Every 5 s: enemy factories (and the types they build), sightings of each type, its faded army cost, and artillery
+ * near chokes
  */
 void CChokeMap::ScanEnemies()
 {
@@ -152,17 +162,18 @@ void CChokeMap::ScanEnemies()
 	// Factories seen dead, or forgotten because their spot was seen empty. A live one keeps its types fresh
 	for (auto it = factories.begin(); it != factories.end();) {
 		auto ie = enemies.find(it->first);
-		if ((ie == enemies.end()) || ie->second->IsDead()) {
-			for (int c : it->second.classes) {
+		const bool isGone = (ie == enemies.end()) || ie->second->IsDead();
+		for (int c : it->second) {
+			if (isGone) {
 				typeStates[c].factories.erase(it->first);
-			}
-			it = factories.erase(it);
-		} else {
-			for (int c : it->second.classes) {
+			} else {
 				typeStates[c].lastSeen = frame;
 			}
-			++it;
 		}
+		it = isGone ? factories.erase(it) : std::next(it);
+	}
+	for (auto it = artySeen.begin(); it != artySeen.end();) {
+		it = (frame >= it->second + ARTY_FRAMES) ? artySeen.erase(it) : std::next(it);
 	}
 
 	for (STypeState& ts : typeStates) {
@@ -176,48 +187,29 @@ void CChokeMap::ScanEnemies()
 		if ((cdef == nullptr) || e->IsDead()) {
 			continue;  // type unknown: never seen in LOS
 		}
-		if (cdef->IsMobile()) {
-			const int c = ClassOf(cdef);
-			if (c >= 0) {
-				typeStates[c].cost += e->GetCost() * enemyMgr->GetArmyCostWeight(e, frame, COST_HALF_LIFE);
-				if (e->IsInLOS()) {
-					if (moveClasses[c].role != MoveRole::NAVAL) {
-						typeStates[c].lastSeen = frame;
-					} else {
-						const int cell = mask.IndexAt(e->GetPos().x, e->GetPos().z);
-						auto is = std::lower_bound(shipCells.begin(), shipCells.end(), cell);
-						if ((is == shipCells.end()) || (*is != cell)) {
-							shipCells.insert(is, cell);
-							nextAnalysisFrame = frame;  // exposure
-						}
-					}
-				}
-			} else if (!isAirSeen && cdef->IsAbleToFly() && e->IsInLOS()
-				&& (cdef->IsAttacker() || (cdef->GetDef()->GetTransportCapacity() > 0)))  // no scouts
-			{
-				isAirSeen = true;
-				nextAnalysisFrame = frame;
-				circuit->LOG("CHOKE enemy aircraft seen (%s): every cluster is leaky", cdef->GetDef()->GetName());
+		const int c = ClassOf(cdef);
+		if (c >= 0) {
+			typeStates[c].cost += e->GetCost() * enemyMgr->GetArmyCostWeight(e, frame, COST_HALF_LIFE);
+			if (e->IsInLOS() && (moveClasses[c].role != MoveRole::NAVAL)) {
+				typeStates[c].lastSeen = frame;
 			}
-		} else if (e->IsInLOS() && (factories.find(kv.first) == factories.end())
+		} else if (!cdef->IsMobile() && e->IsInLOS() && (factories.find(kv.first) == factories.end())
 			&& std::any_of(cdef->GetBuildOptions().begin(), cdef->GetBuildOptions().end(), [this](CCircuitDef::Id id) {
 				const CCircuitDef* option = circuit->GetCircuitDef(id);
 				return (option != nullptr) && option->IsMobile();
 			}))
 		{
 			// A factory (air ones too: a base is a base)
-			SFactory factory;
+			std::vector<int>& classes = factories[kv.first];
 			for (CCircuitDef::Id id : cdef->GetBuildOptions()) {
-				const int c = ClassOf(circuit->GetCircuitDef(id));
-				if ((c >= 0) && (std::find(factory.classes.begin(), factory.classes.end(), c) == factory.classes.end())) {
-					factory.classes.push_back(c);
-					typeStates[c].factories.insert(kv.first);
-					typeStates[c].lastSeen = frame;
+				const int option = ClassOf(circuit->GetCircuitDef(id));
+				if ((option >= 0) && (std::find(classes.begin(), classes.end(), option) == classes.end())) {
+					classes.push_back(option);
+					typeStates[option].factories.insert(kv.first);
+					typeStates[option].lastSeen = frame;
 				}
 			}
-			factory.team = e->GetUnit()->GetTeam();
-			factories[kv.first] = factory;
-			factoryTeams.insert(factory.team);
+			factoryTeams.insert(e->GetUnit()->GetTeam());
 			AddFactory(e->GetPos(), e->GetUnit()->GetAllyTeam());
 		}
 		// Artillery in range of a choke's defences: no new towers there for a while
@@ -231,6 +223,12 @@ void CChokeMap::ScanEnemies()
 			}
 		}
 	}
+}
+
+bool CChokeMap::IsArtilleryNear(int choke, int frame) const
+{
+	auto it = artySeen.find(graph.GetChokes()[choke].id);
+	return (it != artySeen.end()) && (frame < it->second + ARTY_FRAMES);
 }
 
 /*
@@ -250,10 +248,14 @@ void CChokeMap::AddFactory(const AIFloat3& pos, int allyTeam)
 		it = std::find_if(sourceGroups.begin(), sourceGroups.end(), isBoxOf);
 	}
 	if (it == sourceGroups.end()) {
-		// The mirror guess goes with the first real factory
+		// The mirror guess goes with the first real factory, and so do the destinations it placed
+		const size_t count = sourceGroups.size();
 		sourceGroups.erase(std::remove_if(sourceGroups.begin(), sourceGroups.end(), [](const SSourceGroup& g) {
 			return g.isGuess;
 		}), sourceGroups.end());
+		if ((sourceGroups.size() != count) && isReady) {
+			destinations.clear();  // made again below, once the sides are
+		}
 		sourceGroups.push_back(SSourceGroup());
 		it = sourceGroups.end() - 1;
 	}
@@ -272,6 +274,9 @@ void CChokeMap::AddFactory(const AIFloat3& pos, int allyTeam)
 	isSourceDirty = true;
 	isOpennessDirty = true;
 	UpdateSides();
+	if (destinations.empty() && isReady) {
+		MakeDestinations();
+	}
 	nextAnalysisFrame = circuit->GetLastFrame();
 }
 
@@ -303,7 +308,7 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 			return ts.lastSeen >= 0;
 		});
 		const bool isScouted = (int)factoryTeams.size() >= circuit->GetCallback()->GetEnemyTeamSize();
-		if (isAnySeen && (isScouted || (frame >= openingEnd))) {
+		if (isAnySeen && (isScouted || (frame >= OPENING_FRAMES))) {
 			isOpening = false;
 			for (STypeState& ts : typeStates) {
 				if (ts.isDefault) {
@@ -340,19 +345,23 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 		}
 		change.isGating |= (IsGating(c) != wasGating[c]);
 	}
-	change.isLeak = !change.isGating && (!change.joined.empty() || !change.left.empty());
-	if (change.isGating || change.isLeak) {
-		std::ostringstream text;
-		text << "CHOKE type set:";
-		for (size_t c = 0; c < n; ++c) {
-			if (typeStates[c].isInSet) {
-				text << " " << moveClasses[c].name << (IsGating(c) ? "(gating " : "(leak ")
-						<< utils::float_to_string(typeStates[c].share, "%.2f") << ")";
-			}
-		}
-		circuit->LOG("%s", text.str().c_str());
+	if (change.isGating || !change.joined.empty() || !change.left.empty()) {
+		circuit->LOG("CHOKE type set: %s", DescribeTypeSet().c_str());
 	}
 	return change;
+}
+
+std::string CChokeMap::DescribeTypeSet() const
+{
+	std::string text;
+	for (size_t c = 0; c < moveClasses.size(); ++c) {
+		const STypeState& ts = typeStates[c];
+		if (ts.isInSet) {
+			text += (text.empty() ? "" : " ") + moveClasses[c].name + (ts.isPromoted ? "(promoted to gating "
+					: IsGating(c) ? "(gating " : "(leak ") + utils::float_to_string(ts.share, "%.2f)");
+		}
+	}
+	return text;
 }
 
 /*
@@ -385,17 +394,18 @@ void CChokeMap::Reblend()
 		}
 	}
 	traffic.Blend(shares);
+	UpdateChokeTraffic();
 	blendFrame = circuit->GetLastFrame();
 	++version;
 }
 
 /*
- * Per source group, its traffic cells: its factories once one is seen, else every cell of its boxes
+ * Per source group, its traffic cells: its factories once one is seen, else every cell under its boxes
  */
 std::vector<CTrafficField::Cells> CChokeMap::GetSourceCells() const
 {
 	std::vector<CTrafficField::Cells> sources;
-	const float step = traffic.GetCellSize();
+	const int width = traffic.GetWidth();
 	for (const SSourceGroup& g : sourceGroups) {
 		CTrafficField::Cells cells;
 		if (!g.factoryPos.empty()) {
@@ -404,11 +414,9 @@ std::vector<CTrafficField::Cells> CChokeMap::GetSourceCells() const
 			}
 		} else {
 			for (const SRect& r : g.boxes) {
-				for (float z = r.z0 + step * 0.5f; z < r.z1; z += step) {
-					for (float x = r.x0 + step * 0.5f; x < r.x1; x += step) {
-						cells.push_back(traffic.IndexAt(x, z));
-					}
-				}
+				ForEachCellIn(width, traffic.GetHeight(), traffic.GetCellSize(), r.x0, r.z0, r.x1, r.z1, [&](int x, int z) {
+					cells.push_back(z * width + x);
+				});
 			}
 		}
 		std::sort(cells.begin(), cells.end());

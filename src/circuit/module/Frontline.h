@@ -26,13 +26,15 @@ class IFighterTask;
  *   share of it we saw in the last 3 minutes, and the unarmed enemy value directly behind it.
  * - C, quota.hold_choke: the current line's chokes ranked by our income behind each one x its traffic. The idle army
  *   holds at the top-ranked one whose towers are short of the enemy army near it (x 1.2): 1 slot, 2 on chokepointed
- *   maps, none on open maps. A slot moves only to a choke ranked 1.3x higher. With choke.enable, the top-ranked
- *   short choke's pocket is fortified (MakeDefence) too.
+ *   maps, none on open maps. A group claims a slot only if its power makes up the shortfall, and loses the claim
+ *   when it hasn't asked for its spot in a minute. A slot moves only to a choke ranked 1.3x higher, and ends once
+ *   its choke is 30 s not short. With choke.enable, the top-ranked short choke's pocket is fortified (MakeDefence).
  * - D, choke.objective.enable: when the forward line is shorter than the current line (or as long, with more
  *   income behind it), its chokes become an objective if the gain (the retired chokes' towers and wanted power, plus
  *   3 minutes of the income it brings behind the line) is choke.objective.gain x the cost (their defence plus what
- *   holding them takes), and our attack power is choke.objective.power x their defence. Idle attack groups head
- *   there. It ends once taken, after 4 minutes, or when our power falls below their defence (retried after
+ *   holding them takes), and our attack power is choke.objective.power x their defence. Their defence is what we
+ *   saw over the share of their line we saw lately (at least a quarter). Idle attack groups head there. It ends
+ *   once taken, after 4 minutes, or when our power falls below their defence now (retried after
  *   choke.objective.retry)
  */
 class CFrontline {
@@ -57,6 +59,8 @@ public:
 		springai::AIFloat3 spot = -RgtVector;
 		const IFighterTask* task = nullptr;  // the attack group holding it
 		int retryFrame = 0;  // no hold spot was found: no new claim before
+		int shortFrame = 0;  // its choke was last short then
+		int askFrame = 0;  // its group last asked for the spot then
 	};
 
 	CFrontline(CCircuitAI* circuit);
@@ -86,8 +90,15 @@ private:
 		float defence = 0.f;  // threat
 		int startFrame = -1;
 	};
-	void UpdateRanks();
-	void UpdateFront();
+	struct SArmed {
+		springai::AIFloat3 pos;
+		bool isMobile;
+		float range;
+		float threat;
+		float cost;
+	};
+	void UpdateRanks(const std::vector<SArmed>& armed);
+	void UpdateFront(const std::vector<SArmed>& armed);
 	void UpdateHolds();
 	void Fortify();
 	void UpdateObjective();
@@ -97,6 +108,7 @@ private:
 	std::vector<bool> ReachableFromUs(const std::vector<int>& blocked) const;
 	float GetIncomeIn(const std::vector<bool>& regions) const;  // of every defence point in them
 	const SRank* FindRank(int chokeId) const;
+	const SFront* FindFront(int chokeId) const;
 
 	CCircuitAI* circuit;
 	std::vector<SRank> ranks;
