@@ -31,17 +31,18 @@ class IBuilderTask;
  *   mex income, plus the income of our clusters' mexes in it. Enemy ground (the enemy's half of the map, and enemy
  *   territory on ours) weighs choke.radar.enemy x our mex income more, spread over its cells.
  * - Coverage: the union of the viewsheds of known static radars, ours and allies', nanoframes too; a radar a builder
- *   was sent to build counts until it stands, or for 90 s. Mobile radar is ignored, so coverage doesn't flicker.
+ *   was sent to build counts until a radar stands within 500 elmos of it, or for 90 s. Mobile radar is ignored, so
+ *   coverage doesn't flicker. Sight rays start half the model's height plus its sight emit height up.
  * - Candidates: the highest buildable cell of each 512-elmo block on our half of the map (not in enemy territory),
  *   or in our territory.
  * - A builder between jobs, with a factory up and no NOW job waiting, builds a radar first (a NOW job, stalls or not)
  *   when its AI's budget holds one: choke.radar.share of its income, at most two radars' worth, starting with one.
  *   Out of coverage, it builds it within 600 elmos (a candidate, or the highest buildable cell there); inside, at a
- *   candidate within a 30 s walk. The spot adds the most coverage over the next 5 minutes for 1 + risk: the
- *   uncovered weight in its viewshed x the share of those minutes it is up, once this builder has walked there and
- *   built it. It must add choke.radar.min_gain of the total weight, be reachable and free of threat, and stand
- *   500 elmos from other radars (closer, ISensorTask drops the job). Risk is the threat there in main towers, plus 1
- *   for each radar lost near it, halving every 5 minutes.
+ *   candidate within a 30 s walk. Of the spots that add choke.radar.min_gain of the total weight, the one with the
+ *   most coverage over the next 5 minutes for 1 + risk: the uncovered weight in its viewshed x the share of those
+ *   minutes left once this builder has walked there. It must be reachable and free of threat, and stand 500 elmos
+ *   from other radars (closer, ISensorTask drops the job). Risk is 1 for each radar lost near it, halving every
+ *   5 minutes. A job its builder leaves is dropped after 3 s.
  * Viewsheds are cached while their cell is a candidate or a pending radar's
  */
 class CSensorPlanner {
@@ -75,9 +76,9 @@ private:
 	springai::AIFloat3 FindHighest(float x0, float z0, float x1, float z1,
 			const std::function<bool(const springai::AIFloat3&)>& isIn) const;
 	const std::vector<int>& GetViewshed(const springai::AIFloat3& pos);  // cached
-	std::vector<int> MakeViewshed(const springai::AIFloat3& pos, float range, float emit) const;
+	std::vector<int> MakeViewshed(const springai::AIFloat3& pos, CCircuitDef* cdef) const;  // of cdef's radar
 	float GetGain(const springai::AIFloat3& pos);  // the uncovered weight it sees
-	float GetRisk(const springai::AIFloat3& pos) const;
+	float GetRisk(const springai::AIFloat3& pos) const;  // radars lost near it
 
 	CCircuitAI* circuit;
 	CCircuitDef* radarDef;

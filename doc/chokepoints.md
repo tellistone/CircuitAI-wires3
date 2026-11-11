@@ -185,13 +185,13 @@ most. Where:
 - Out of coverage, within 600 elmos: the best of the candidates there and the highest buildable cell there.
 - Inside coverage, at a candidate within a 30 s walk, which pushes the edge out.
 
-The best spot adds the most coverage over the next 5 minutes for 1 + risk: the uncovered weight it sees × the share
-of those minutes it is up, once this builder has walked there and built it. It must add at least
-`choke.radar.min_gain` of the total weight, be reachable, have no threat on it, and stand 500 elmos from other
-radars (closer, the job cancels itself). Risk is the threat there in main towers, plus 1 for each radar lost
-nearby, halving every 5 minutes. A radar a builder was sent to build counts as coverage until it stands, or for
-90 s, so two builders never go for the same ground. A radar job its builder leaves is dropped after 10 s, so no
-other builder crosses the map for it.
+Of the spots that add at least `choke.radar.min_gain` of the total weight, it takes the one with the most coverage
+over the next 5 minutes for 1 + risk: the uncovered weight it sees × the share of those minutes left once this
+builder has walked there. The spot must be reachable, have no threat on it (to the builder, or to a building there),
+and stand 500 elmos from other radars (closer, the job cancels itself). Risk is 1 for each radar lost nearby,
+halving every 5 minutes. A radar a builder was sent to build counts as coverage until a radar stands within
+500 elmos of it, or for 90 s, so two builders never go for the same ground. A radar job its builder leaves is
+dropped after 3 s, so no other builder crosses the map for it.
 
 Why not a queued job: a radar queued for any builder lost the pick to nearer work every time, waited out the stall
 rule, and was given up. Picking the spot for the builder at hand gets it built at once.
@@ -237,7 +237,8 @@ Lines in the AI's infolog, for tuning:
 ## Known limits
 
 - Traffic sources are the enemy's factory positions, not whole factory regions.
-- Sight and fire lines start at the def's sight emit height for both towers and radar.
+- Towers' sight and fire lines start at the def's sight emit height. Radar's start at half the model's height
+  plus it, as the engine emits from the unit's middle; the AI can't read `radarEmitHeight`.
 - Fortifying the frontline (C) only calls `MakeDefence` for pockets whose entrances are frontline chokes. A frontline
   choke with no pocket of ours behind it gets no towers of its own.
 - New tower spending behind a line that moves forward doesn't pause.
