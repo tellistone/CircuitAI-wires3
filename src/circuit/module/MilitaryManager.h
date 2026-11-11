@@ -225,6 +225,8 @@ public:
 	bool IsRoleAllowed(const CCircuitDef* cdef) const;
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
 	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
+	// Not a grid consumer, or a grid with enough energy is in pylon reach of GetBigGunPos
+	bool IsBigGunPowerable(CCircuitDef* cdef) const;
 	void DiceBigGun();
 	// economy.ms_pull_army and quota.attack_threat_floor: metal value of the known enemy army
 	// (EnemyManager::GetMobileCostNoCommFaded, faded as quota.enemy_half_life) per enemy team over our army's (no

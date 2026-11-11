@@ -39,6 +39,24 @@ public:
 	IGridLink* GetLinkToBuild(CCircuitDef*& outDef, springai::AIFloat3& outPos);
 
 	float GetPylonRange(CCircuitDef::Id defId);
+	// Grid energy a structure needs to work (Zero-K customParams.neededlink), 0 = none
+	float GetNeededLink(CCircuitDef::Id defId) const;
+
+	struct SGridNode {
+		ICoreUnit::Id id;
+		springai::AIFloat3 pos;
+		float range;  // link range: two buildings link when closer than the sum of theirs
+		int grid;  // its grid: the game's lowest gridNumber in it (off ones joined by overlap), < 0 = off ones only
+		float capacity;  // that grid's energy capacity: OD_gridMaximum + its off ones' energy, 0 = none
+	};
+	// Out of the game's grid for now, as unit_mex_overdrive's status check has it: paralysed, disarmed, morphing,
+	// or not active (a solar closes for 4 s when hit; nanoframes aren't active). Consumers count as active.
+	// The game leaves such a unit's gridNumber stale
+	static bool IsOffGrid(springai::Unit* u, bool isConsumer);
+	// Finished grid buildings of our ally team (ours and allies'), grouped as the game does. Ones it took off the grid
+	// for now (a closed solar, a stunned or morphing building) still count: each joins the grids it overlaps, which it
+	// links again when back on, and adds its energy to their capacity. Cached for 1 s
+	const std::vector<SGridNode>& GetGridNodes();
 
 	void SetAuthority(CCircuitAI* authority) { circuit = authority; }
 
@@ -52,6 +70,11 @@ private:
 	std::deque<std::pair<ICoreUnit::Id, std::vector<CEnergyNode*>>> markedPylons;  // sorted by insertion
 	std::unordered_map<CCircuitDef::Id, float> pylonRanges;
 	std::map<float, CCircuitDef::Id> rangePylons;
+	std::unordered_map<CCircuitDef::Id, float> neededLinks;
+	std::unordered_map<CCircuitDef::Id, float> energyIncomes;  // customParams.income_energy; wind: < 0
+
+	std::vector<SGridNode> gridNodes;
+	int gridNodesFrame;
 
 	std::vector<bool> linkedClusters;
 	std::set<int> linkPylons, unlinkPylons;
