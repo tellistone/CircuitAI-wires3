@@ -606,12 +606,7 @@ int CEconomyManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 
 int CEconomyManager::UnitFinished(CCircuitUnit* unit)
 {
-	if ((gridLinkMaxPylons > 0) && (energyGrid != nullptr)
-		&& (energyGrid->GetNeededLink(unit->GetCircuitDef()->GetId()) > 0.f))
-	{
-		// First read after one slow update of the overdrive gadget: it marks every new consumer unpowered at first
-		gridLinks[unit->GetId()] = {0, circuit->GetLastFrame() + FRAMES_PER_SEC * 2, 0, 0, -RgtVector};
-	}
+	WatchGridLink(unit);
 
 	auto search = finishedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != finishedHandler.end()) {
@@ -632,15 +627,20 @@ int CEconomyManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	return 0; //signaling: OK
 }
 
+int CEconomyManager::UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId)
+{
+	// An ally that drops shares its units: a finished Big Bertha it gave us is ours to power
+	if (!unit->GetUnit()->IsBeingBuilt()) {
+		WatchGridLink(unit);
+	}
+	return 0; //signaling: OK
+}
+
 int CEconomyManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	auto itLink = gridLinks.find(unit->GetId());
 	if (itLink != gridLinks.end()) {
-		// Its pylon is no use now, unless already started
-		IBuilderTask* task = FindGridPylonTask(itLink->second.pylonPos);
-		if ((task != nullptr) && (task->GetTarget() == nullptr)) {
-			circuit->GetBuilderManager()->AbortTask(task);
-		}
+		AbortGridPylon(itLink->second);
 		gridLinks.erase(itLink);
 	}
 
@@ -1882,6 +1882,22 @@ bool CEconomyManager::IsGridReachable(CCircuitDef* cdef, const AIFloat3& pos)
 	return false;
 }
 
+void CEconomyManager::WatchGridLink(CCircuitUnit* unit)
+{
+	if ((gridLinkMaxPylons > 0) && IsGridConsumer(unit->GetCircuitDef())) {
+		// First read after one slow update of the overdrive gadget: it marks every new consumer unpowered at first
+		gridLinks[unit->GetId()] = {0, circuit->GetLastFrame() + FRAMES_PER_SEC * 2, 0, 0, -RgtVector, 0};
+	}
+}
+
+void CEconomyManager::AbortGridPylon(const SGridLink& info)
+{
+	IBuilderTask* task = FindGridPylonTask(info.pylonPos);
+	if ((task != nullptr) && (task->GetTarget() == nullptr)) {
+		circuit->GetBuilderManager()->AbortTask(task);
+	}
+}
+
 void CEconomyManager::UpdateGridLinks()
 {
 	if (gridLinks.empty()) {
@@ -1891,7 +1907,8 @@ void CEconomyManager::UpdateGridLinks()
 	const int frame = circuit->GetLastFrame();
 	for (auto it = gridLinks.begin(); it != gridLinks.end();) {
 		CCircuitUnit* unit = circuit->GetTeamUnit(it->first);
-		if (unit == nullptr) {  // given away: UnitDestroyed may not have run
+		if (unit == nullptr) {  // captured or given away: UnitDestroyed didn't run
+			AbortGridPylon(it->second);
 			it = gridLinks.erase(it);
 			continue;
 		}
@@ -1937,15 +1954,27 @@ bool CEconomyManager::LinkToGrid(CCircuitUnit* unit, SGridLink& info)
 	if ((pylonLink <= 0.f) || (info.pylons >= gridLinkMaxPylons) || !pylonDef->IsAvailable(frame)) {
 		return false;
 	}
-	const int ourGrid = (int)unit->GetUnit()->GetRulesParamFloat("gridNumber", 0.f);
-	if (ourGrid <= 0) {
-		return false;
+	// Its grid as the snapshot has it: a live read could be newer than the snapshot after the game renumbers grids.
+	// Not in it (just paralysed, or the snapshot predates it): look again on the next read
+	const std::vector<CEnergyGrid::SGridNode>& nodes = energyGrid->GetGridNodes();
+	auto itSelf = std::find_if(nodes.begin(), nodes.end(), [unit](const CEnergyGrid::SGridNode& n) {
+		return n.id == unit->GetId();
+	});
+	if (itSelf == nodes.end()) {
+		return true;
+	}
+	const int ourGrid = itSelf->grid;
+	// Another consumer in the same grid already has a pylon queued (Big Berthas stand together): that one grows
+	// the grid for both, so wait for it instead of laying a second line beside it
+	for (const auto& kv : gridLinks) {
+		if ((kv.first != unit->GetId()) && utils::is_valid(kv.second.pylonPos) && (kv.second.grid == ourGrid)) {
+			return true;
+		}
 	}
 	const float need = energyGrid->GetNeededLink(unit->GetCircuitDef()->GetId()) * gridLinkMargin;
 
 	// Closest pair: a building in its own grid (itself, our earlier pylons, a mex it touches) and one of another grid
 	// with enough energy. Never towards its own grid: pylons can't help a grid that is short of energy
-	const std::vector<CEnergyGrid::SGridNode>& nodes = energyGrid->GetGridNodes();
 	const CEnergyGrid::SGridNode* from = nullptr;
 	const CEnergyGrid::SGridNode* to = nullptr;
 	float minGap = std::numeric_limits<float>::max();
@@ -2010,6 +2039,7 @@ bool CEconomyManager::LinkToGrid(CCircuitUnit* unit, SGridLink& info)
 																	nullptr, pylonDef->GetCostM());
 	task->SetBuildPos(buildPos);
 	info.pylonPos = buildPos;
+	info.grid = ourGrid;
 	++info.pylons;
 	return true;
 }

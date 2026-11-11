@@ -43,6 +43,7 @@ public:
 	float GetNeededLink(CCircuitDef::Id defId) const;
 
 	struct SGridNode {
+		ICoreUnit::Id id;
 		springai::AIFloat3 pos;
 		float range;  // link range: two buildings link when closer than the sum of theirs
 		int grid;  // the game's gridNumber

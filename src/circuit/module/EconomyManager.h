@@ -54,6 +54,7 @@ private:
 public:
 	virtual int UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder) override;
 	virtual int UnitFinished(CCircuitUnit* unit) override;
+	virtual int UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId) override;
 	virtual int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 	virtual int UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
@@ -357,8 +358,11 @@ private:
 		int backoff;  // frames to wait after a failed attempt (60 s, doubled up to 5 min)
 		int pylons;  // pylons queued for it since it was last powered
 		springai::AIFloat3 pylonPos;  // our queued pylon's position, -RgtVector = none
+		int grid;  // the game's gridNumber the queued pylon grows
 	};
 	std::map<ICoreUnit::Id, SGridLink> gridLinks;
+	void WatchGridLink(CCircuitUnit* unit);  // a finished grid consumer of ours
+	void AbortGridPylon(const SGridLink& info);  // its queued pylon, unless started
 	int gridLinkMaxPylons;  // most pylons per consumer, 0 = watchdog off
 	float gridLinkMargin;  // capacity needed = margin x neededlink
 	void UpdateGridLinks();

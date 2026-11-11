@@ -330,7 +330,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 		if (grid <= 0) {
 			continue;
 		}
-		gridNodes.push_back({unit->GetPos(frame), range, grid, 0.f});
+		gridNodes.push_back({unit->GetId(), unit->GetPos(frame), range, grid, 0.f});
 		if (!cdef->IsMex() && (GetNeededLink(cdef->GetId()) <= 0.f) && (capacities.find(grid) == capacities.end())) {
 			const float capacity = u->GetRulesParamFloat("OD_gridMaximum", -1.f);
 			if (capacity >= 0.f) {
