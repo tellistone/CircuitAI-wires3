@@ -239,6 +239,9 @@ public:
 	// Weighted pick among escalation.super that are available and can be powered; nullptr = none now
 	CCircuitDef* DiceEscalationSuper() const;
 	int RollEscalationDelay() const;  // frames, random within escalation.delay
+	// Where escalation builds superDef: escalation.front ones on our frontline cluster (finished, not enemy-held, the
+	// nearest to the lane), the rest (or with no such cluster) at GetBigGunPos
+	springai::AIFloat3 GetEscalationSuperPos(CCircuitDef* superDef) const;
 	// economy.ms_pull_army and quota.attack_threat_floor: metal value of the known enemy army
 	// (EnemyManager::GetMobileCostNoCommFaded, faded as quota.enemy_half_life) per enemy team over our army's (no
 	// constructors or commanders on either side); negative while no enemy army is known. Writes both values out
@@ -677,10 +680,11 @@ private:
 	struct SEscalation {
 		bool isEnabled = false;
 		bool isOn = false;
-		float armyRatio = 3.f;  // allied mobile army metal / known enemy mobile army metal
+		float armyRatio = 2.f;  // allied mobile army metal / known enemy mobile army metal
 		bool isNeedTerra = true;  // a terraunit must have been seen
 		bool isTerraSeen = false;  // latched: terraform stays on the map
 		std::set<CCircuitDef::Id> enemyDefs;  // enemy big guns, superweapons and singus
+		std::set<CCircuitDef::Id> frontDefs;  // supers built on the frontline cluster
 		std::vector<SSuperInfo> supers;  // what we start; also what we assist
 		CCircuitDef* singuDef = nullptr;
 		int delayMin = FRAMES_PER_SEC;  // random wait before starting our own

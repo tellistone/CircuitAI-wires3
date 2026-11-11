@@ -53,7 +53,7 @@
 	"default": "turretmissile"
 },
 
-// Escalation mode: superweapons and singus instead of army. On while all of these hold (checked every <interval> s):
+// Escalation mode: superweapons and singus instead of army (enemy also lists heavy porc). On while all of these hold (checked every <interval> s):
 //   - the allied team's mobile army (finished, no constructors or commanders; ours included) is at least
 //     <army_ratio> x the known enemy mobile army (quota.enemy_half_life fading, as economy.ms_pull_army)
 //   - an enemy unit of <enemy> is known (seen and not seen dying)
@@ -65,13 +65,15 @@
 "escalation": {
 	"enable": true,
 	"interval": 2,
-	"army_ratio": 3.0,
+	"army_ratio": 2.0,
 	"terraform": true,
-	"enemy": ["staticheavyarty", "raveparty", "staticnuke", "zenith", "mahlazer", "energysingu"],
+	"enemy": ["staticheavyarty", "turretheavy", "turretantiheavy", "raveparty", "staticnuke", "zenith", "mahlazer", "energysingu"],
 	"super": {
-		"unit":   ["raveparty", "staticnuke", "zenith", "mahlazer"],
-		"weight": [ 0.25,        0.25,        0.25,     0.25]
+		"unit":   ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty"],
+		"weight": [ 0.20,        0.20,        0.20,     0.20,       0.20]
 	},
+	// Supers built on our frontline cluster (finished, not enemy-held, nearest the lane) instead of the territory middle
+	"front": ["staticheavyarty"],
 	"singu": "energysingu",
 	"delay": [1, 20]  // [<min>, <max>] seconds
 },

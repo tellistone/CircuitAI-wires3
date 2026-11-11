@@ -1734,7 +1734,7 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 	} else if (frame >= escSuperFrame) {
 		CCircuitDef* superDef = militaryMgr->DiceEscalationSuper();
 		if (superDef != nullptr) {
-			IBuilderTask* task = EnqueueTask(IBuilderTask::Priority::NOW, superDef, militaryMgr->GetBigGunPos(superDef),
+			IBuilderTask* task = EnqueueTask(IBuilderTask::Priority::NOW, superDef, militaryMgr->GetEscalationSuperPos(superDef),
 											 IBuilderTask::BuildType::BIG_GUN);
 			PromoteEscalation(task);
 			circuit->LOG("ESCALATION: start %s", superDef->GetDef()->GetName());

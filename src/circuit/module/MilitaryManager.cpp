@@ -1064,7 +1064,7 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& esc = root["escalation"];
 	escalation.isEnabled = esc.get("enable", false).asBool();
-	escalation.armyRatio = esc.get("army_ratio", 3.f).asFloat();
+	escalation.armyRatio = esc.get("army_ratio", 2.f).asFloat();
 	escalation.isNeedTerra = esc.get("terraform", true).asBool();
 	for (const Json::Value& name : esc["enemy"]) {
 		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
@@ -1086,6 +1086,14 @@ void CMilitaryManager::ReadConfig()
 		}
 		si.weight = escWeights.get(i, 1.f).asFloat();
 		escalation.supers.push_back(si);
+	}
+	for (const Json::Value& name : esc["front"]) {
+		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
+		if (cdef == nullptr) {
+			circuit->LOG("CONFIG %s: escalation.front has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
+			continue;
+		}
+		escalation.frontDefs.insert(cdef->GetId());
 	}
 	escalation.singuDef = circuit->GetCircuitDef(esc.get("singu", "").asCString());
 	const Json::Value& escDelay = esc["delay"];
@@ -3039,7 +3047,10 @@ CCircuitDef* CMilitaryManager::DiceEscalationSuper() const
 	std::vector<const SSuperInfo*> candidates;
 	float magnitude = 0.f;
 	for (const SSuperInfo& info : escalation.supers) {
-		if (info.cdef->IsAvailable(frame) && IsBigGunPowerable(info.cdef)) {
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
+		if (info.cdef->IsAvailable(frame) && (!economyMgr->IsGridConsumer(info.cdef)
+			|| economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef))))
+		{
 			candidates.push_back(&info);
 			magnitude += info.weight;
 		}
@@ -3058,6 +3069,21 @@ CCircuitDef* CMilitaryManager::DiceEscalationSuper() const
 		}
 	}
 	return candidates.back()->cdef;
+}
+
+AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef) const
+{
+	if (escalation.frontDefs.find(superDef->GetId()) == escalation.frontDefs.end()) {
+		return GetBigGunPos(superDef);
+	}
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
+	CMetalData::PointPredicate predicate = [inflMap, metalMgr, &clusters](const int index) {
+		return metalMgr->IsClusterFinished(index) && (inflMap->GetInfluenceAt(clusters[index].position) > -INFL_EPS);
+	};
+	const int index = metalMgr->FindNearestCluster(circuit->GetSetupManager()->GetLanePos(), predicate);
+	return (index >= 0) ? clusters[index].position : GetBigGunPos(superDef);
 }
 
 int CMilitaryManager::RollEscalationDelay() const
