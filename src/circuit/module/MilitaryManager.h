@@ -228,6 +228,17 @@ public:
 	// Not a grid consumer, or a grid with enough energy is in pylon reach of GetBigGunPos
 	bool IsBigGunPowerable(CCircuitDef* cdef) const;
 	void DiceBigGun();
+
+	// Escalation mode (build_chain.json "escalation"): on while the allied team's mobile army is at least army_ratio x
+	// the known enemy one, and an enemy big gun, superweapon or singu (escalation.enemy) is known, and (terraform:
+	// true) a terraunit has been seen on the map this game. Factories then build constructors only, and
+	// CBuilderManager::UpdateEscalation sends builders to superweapons and singus at NOW. Updated every interval s
+	bool IsEscalation() const { return escalation.isOn; }
+	bool IsEscalationSuper(const CCircuitDef* cdef) const;
+	CCircuitDef* GetEscalationSingu() const { return escalation.singuDef; }
+	// Weighted pick among escalation.super that are available and can be powered; nullptr = none now
+	CCircuitDef* DiceEscalationSuper() const;
+	int RollEscalationDelay() const;  // frames, random within escalation.delay
 	// economy.ms_pull_army and quota.attack_threat_floor: metal value of the known enemy army
 	// (EnemyManager::GetMobileCostNoCommFaded, faded as quota.enemy_half_life) per enemy team over our army's (no
 	// constructors or commanders on either side); negative while no enemy army is known. Writes both values out
@@ -420,6 +431,7 @@ private:
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
+	void UpdateEscalation();
 	void LogRaidStats();  // the RAID log, every minute
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
 	struct SRally {
@@ -661,6 +673,21 @@ private:
 		float weight;
 	};
 	std::vector<SSuperInfo> superInfos;
+
+	struct SEscalation {
+		bool isEnabled = false;
+		bool isOn = false;
+		float armyRatio = 3.f;  // allied mobile army metal / known enemy mobile army metal
+		bool isNeedTerra = true;  // a terraunit must have been seen
+		bool isTerraSeen = false;  // latched: terraform stays on the map
+		std::set<CCircuitDef::Id> enemyDefs;  // enemy big guns, superweapons and singus
+		std::vector<SSuperInfo> supers;  // what we start; also what we assist
+		CCircuitDef* singuDef = nullptr;
+		int delayMin = FRAMES_PER_SEC;  // random wait before starting our own
+		int delayMax = FRAMES_PER_SEC * 20;
+		int interval = FRAMES_PER_SEC * 2;
+		int logFrame = -1;  // last status log
+	} escalation;
 
 	std::shared_ptr<CGameTask> defend;
 	std::vector<std::pair<springai::AIFloat3, BuildVector>> buildDefence;

@@ -131,6 +131,23 @@ public:
 		int maxPriority;  // highest priority of a job a builder can be taken off (NOW never)
 	};
 	const SEscort& GetEscortCfg() const { return escort; }
+
+	// Escalation mode (MilitaryManager::IsEscalation), every escalation.interval: an allied superweapon
+	// (escalation.super) or singu being built gets our builders at NOW (our own job on it raised, an ally's frame
+	// assisted); with none of a kind being built, and no job of ours for one, we start one at NOW after a random
+	// escalation.delay. Off: the jobs raised drop back to NORMAL
+	void UpdateEscalation(bool isOn);
+	bool IsEscalationTask(const IBuilderTask* task) const {
+		return escalationTasks.find(const_cast<IBuilderTask*>(task)) != escalationTasks.end();
+	}
+private:
+	void PromoteEscalation(IBuilderTask* task);
+	void AssistEscalationFrame(CAllyUnit* frame);
+	std::set<IBuilderTask*> escalationTasks;  // raised to NOW by escalation mode
+	int escSuperFrame = -1;  // when we start our own superweapon; -1 = no timer
+	int escSinguFrame = -1;
+	bool isEscSuperLogged = false;  // "nothing to start" logged since the timer ran out
+public:
 private:
 	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);
 	bool IsPrioRepairFull(const CCircuitUnit* unit) const;

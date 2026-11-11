@@ -127,7 +127,13 @@ void CBRepairTask::Start(CCircuitUnit* unit)
 
 void CBRepairTask::OnUnitIdle(CCircuitUnit* unit)
 {
-	Unit* u = target->GetUnit();
+	// An ally's unit (escalation assist) has no target, only its id
+	CAllyUnit* repTarget = (target != nullptr) ? target : manager->GetCircuit()->GetFriendlyUnit(targetId);
+	if (repTarget == nullptr) {
+		manager->DoneTask(this);  // gone or finished out of the list
+		return;
+	}
+	Unit* u = repTarget->GetUnit();
 	if (u->GetHealth() < u->GetMaxHealth()) {
 		// unit stuck or event order fail
 		RemoveAssignee(unit);

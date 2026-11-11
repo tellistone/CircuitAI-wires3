@@ -1329,7 +1329,12 @@ IUnitTask* CFactoryManager::DefaultMakeTask(CCircuitUnit* unit)
 
 	} else {
 
+		// Escalation mode: queued army jobs wait, constructors still get built
+		const bool isEscalation = circuit->GetMilitaryManager()->IsEscalation();
 		for (const CRecruitTask* candy : factoryTasks) {
+			if (isEscalation && (candy->GetRecruitType() != CRecruitTask::RecruitType::BUILDPOWER)) {
+				continue;
+			}
 			if (candy->CanAssignTo(unit)) {
 				task = candy;
 				break;
@@ -1362,6 +1367,10 @@ IUnitTask* CFactoryManager::CreateFactoryTask(CCircuitUnit* unit)
 	IUnitTask* task = UpdateBuildPower(unit);
 	if (task != nullptr) {
 		return task;
+	}
+	// Escalation mode (MilitaryManager::IsEscalation): no army, the metal goes to superweapons and singus
+	if (circuit->GetMilitaryManager()->IsEscalation()) {
+		return EnqueueWait(false, FRAMES_PER_SEC * 3);
 	}
 
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();

@@ -53,6 +53,29 @@
 	"default": "turretmissile"
 },
 
+// Escalation mode: superweapons and singus instead of army. On while all of these hold (checked every <interval> s):
+//   - the allied team's mobile army (finished, no constructors or commanders; ours included) is at least
+//     <army_ratio> x the known enemy mobile army (quota.enemy_half_life fading, as economy.ms_pull_army)
+//   - an enemy unit of <enemy> is known (seen and not seen dying)
+//   - <terraform>: a terraunit (economy.terra) has been seen this game, ours, an ally's or an enemy's
+// Off as soon as one fails. While on: factories build constructors only (no army); builders go at NOW to an allied
+// (ours included) <super> or <singu> being built; with none of a kind being built, and no job of ours for one, we
+// start one at NOW after a random <delay> s: a <super> by weight among those under their behaviour.json limit/since
+// and with a grid in reach (as porcupine.superweapon), the singu at its economy.energy.rear site
+"escalation": {
+	"enable": true,
+	"interval": 2,
+	"army_ratio": 3.0,
+	"terraform": true,
+	"enemy": ["staticheavyarty", "raveparty", "staticnuke", "zenith", "mahlazer", "energysingu"],
+	"super": {
+		"unit":   ["raveparty", "staticnuke", "zenith", "mahlazer"],
+		"weight": [ 0.25,        0.25,        0.25,     0.25]
+	},
+	"singu": "energysingu",
+	"delay": [1, 20]  // [<min>, <max>] seconds
+},
+
 // Actions on building finished event
 "build_chain": {
 	// WARNING: Avoid recursion
