@@ -50,7 +50,7 @@ on it.
 |---|---|---|
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
 | `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored by covered traffic, height, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
-| `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs that stands out of coverage builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight. It takes over `MakeDefence`'s radar. |
+| `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
 | `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army near it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
@@ -78,6 +78,7 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
 | `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
+| `choke.radar.inside` | `0.25` | A builder standing in coverage builds a radar only if at least this share of its view (by weight) is new. |
 | `choke.objective.gain` | `1.5` | An objective's gain must be at least this × its cost. |
 | `choke.objective.power` | `1.3` | Our attack power must be at least this × the objective's defence. |
 | `choke.objective.retry` | `180` | Seconds before a failed objective may be tried again. |
@@ -177,18 +178,20 @@ radar is ignored. Candidates are the highest buildable cell of each 512-elmo blo
 enemy territory) or in our territory.
 
 Radar is built by builders as they expand, on every AI of the team, with no walks for it. Once the AI's first
-factory stands, a builder that finishes a job while standing out of coverage builds a radar nearby first when its
-AI's budget holds one, unless a NOW job is waiting. It's a NOW job, and it goes ahead even while metal stalls,
-because it's cheap and it's what lets the AI see raids coming. The budget is `choke.radar.share` of the AI's income,
-starts with one radar, so the first goes up in the opening, and holds two at most.
+factory stands, a builder that finishes a job builds a radar nearby first when its AI's budget holds one, unless a
+NOW job is waiting. Standing in coverage, it only does so where at least `choke.radar.inside` (25%) of the radar's
+view, by weight, is new, so radar near the coverage's edge still goes up but no radar doubles another. It's a NOW
+job, and it goes ahead even while metal stalls, because it's cheap and it's what lets the AI see raids coming. The
+budget is `choke.radar.share` of the AI's income, starts with one radar, so the first goes up in the opening, and
+holds two at most.
 
 The spot is one of the candidates within 600 elmos or the highest buildable cell there. Of those that add at least
-`choke.radar.min_gain` of the total weight, it takes the one with the most uncovered weight in its view for
-1 + risk. The spot must be reachable, have no threat on it (to the builder, or to a building there), and stand
-500 elmos from other radars (closer, the job cancels itself). Risk is 1 for each radar lost nearby, halving every
-5 minutes. A radar a builder was sent to build counts as coverage until a radar stands within 500 elmos of it, or
-for 90 s, so two builders never go for the same ground. A radar job its builder leaves is dropped after 3 s, so no
-other builder crosses the map for it.
+`choke.radar.min_gain` of the total weight (and pass the inside rule), it takes the one with the most uncovered
+weight in its view for 1 + risk. The spot must be reachable, have no threat on it (to the builder, or to a
+building there), and stand 500 elmos from other radars (closer, the job cancels itself). Risk is 1 for each radar
+lost nearby, halving every 5 minutes. A radar a builder was sent to build counts as coverage until a radar stands
+within 500 elmos of it, or for 90 s, so two builders never go for the same ground. A radar job its builder leaves
+is dropped after 3 s, so no other builder crosses the map for it.
 
 Why not a queued job: a radar queued for any builder lost the pick to nearer work every time, waited out the stall
 rule, and was given up. Picking the spot for the builder at hand gets it built at once.

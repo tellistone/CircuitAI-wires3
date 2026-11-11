@@ -123,9 +123,9 @@ AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(c
 	}
 	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
 	const AIFloat3 pos = unit->GetPos(circuit->GetLastFrame());
-	if (isCovered[traffic.IndexAt(pos.x, pos.z)]) {
-		return -RgtVector;  // it stands in our radar
-	}
+	const CChokeMap::SConfig& config = circuit->GetChokeMap()->GetConfig();
+	// Standing in our radar, only a radar that sees mostly new ground
+	const float minShare = isCovered[traffic.IndexAt(pos.x, pos.z)] ? config.radarInside : 0.f;
 	// The candidates near it, and the highest buildable cell near it (a block's candidate can stand further off)
 	auto isNear = [&pos](const AIFloat3& c) { return c.SqDistance2D(pos) <= SQUARE(REACH); };
 	std::vector<AIFloat3> spots;
@@ -141,12 +141,13 @@ AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(c
 			return p.pos.SqDistance2D(c) < SQUARE(RADAR_NEAR);
 		});
 	};
-	const float minGain = circuit->GetChokeMap()->GetConfig().radarGain * totalWeight;
+	const float minGain = config.radarGain * totalWeight;
 	AIFloat3 bestPos = -RgtVector;
 	float bestScore = 0.f;
 	for (const AIFloat3& c : spots) {
-		const float gain = GetGain(c);
-		if (gain < minGain) {
+		float share;
+		const float gain = GetGain(c, share);
+		if ((gain < minGain) || (share < minShare)) {
 			continue;
 		}
 		const float score = gain / (1.f + GetRisk(c));
@@ -387,12 +388,15 @@ std::vector<int> CSensorPlanner::MakeViewshed(const AIFloat3& pos, CCircuitDef* 
 	return cells;
 }
 
-float CSensorPlanner::GetGain(const AIFloat3& pos)
+float CSensorPlanner::GetGain(const AIFloat3& pos, float& outShare)
 {
 	float gain = 0.f;
+	float seen = 0.f;
 	for (int cell : GetViewshed(pos)) {
 		gain += isCovered[cell] ? 0.f : weights[cell];
+		seen += weights[cell];
 	}
+	outShare = (seen > 0.f) ? gain / seen : 0.f;
 	return gain;
 }
 

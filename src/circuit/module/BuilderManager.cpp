@@ -1560,7 +1560,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	if (task == nullptr) {
 		task = farTask;
 	}
-	// choke.radar.enable: a builder between jobs out of coverage builds a radar nearby first, unless a NOW job waits
+	// choke.radar.enable: a builder between jobs builds a radar nearby first, unless a NOW job waits for it
 	if ((unit->GetTask() == idleTask) && ((task == nullptr) || (task->GetPriority() != IBuilderTask::Priority::NOW))) {
 		IBuilderTask* radar = circuit->GetMilitaryManager()->GetSensorPlanner()->MakeRadarTask(unit,
 				[this, commState](const AIFloat3& spot) { return IsCommJobSafe(commState, spot); });
