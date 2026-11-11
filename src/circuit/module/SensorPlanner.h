@@ -35,14 +35,14 @@ class IBuilderTask;
  *   coverage doesn't flicker. Sight rays start half the model's height plus its sight emit height up.
  * - Candidates: the highest buildable cell of each 512-elmo block on our half of the map (not in enemy territory),
  *   or in our territory.
- * - A builder between jobs, with a factory up and no NOW job waiting, builds a radar first (a NOW job, stalls or not)
- *   when its AI's budget holds one: choke.radar.share of its income, at most two radars' worth, starting with one.
- *   Out of coverage, it builds it within 600 elmos (a candidate, or the highest buildable cell there); inside, at a
- *   candidate within a 30 s walk. Of the spots that add choke.radar.min_gain of the total weight, the one with the
- *   most coverage over the next 5 minutes for 1 + risk: the uncovered weight in its viewshed x the share of those
- *   minutes left once this builder has walked there. It must be reachable and free of threat, and stand 500 elmos
- *   from other radars (closer, ISensorTask drops the job). Risk is 1 for each radar lost near it, halving every
- *   5 minutes. A job its builder leaves is dropped after 3 s.
+ * - A builder between jobs that stands out of coverage, with a factory up and no NOW job waiting, builds a radar
+ *   nearby first (a NOW job, stalls or not) when its AI's budget holds one: choke.radar.share of its income, at most
+ *   two radars' worth, starting with one. So radar follows the builders as they expand, with no walks for it. The
+ *   spot is one of the candidates within 600 elmos or the highest buildable cell there: of those that add
+ *   choke.radar.min_gain of the total weight, the one with the most uncovered weight in its viewshed for 1 + risk.
+ *   It must be reachable and free of threat, and stand 500 elmos from other radars (closer, ISensorTask drops the
+ *   job). Risk is 1 for each radar lost near it, halving every 5 minutes. A job its builder leaves is dropped
+ *   after 3 s.
  * Viewsheds are cached while their cell is a candidate or a pending radar's
  */
 class CSensorPlanner {
@@ -67,7 +67,8 @@ private:
 		springai::AIFloat3 pos;
 		int frame;
 	};
-	// The authority's: the best spot for unit that isOk passes, its view covered from now on; -RgtVector if none
+	// The authority's: the best spot near unit that isOk passes, if unit stands out of coverage; its view is covered
+	// from now on. -RgtVector if none
 	springai::AIFloat3 TakeSpot(CCircuitUnit* unit, const std::function<bool(const springai::AIFloat3&)>& isOk);
 	void UpdateWeights();
 	void UpdateRadars();

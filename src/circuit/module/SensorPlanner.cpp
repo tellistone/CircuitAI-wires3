@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <set>
 
 namespace circuit {
@@ -38,9 +39,7 @@ using namespace springai;
 #define TARGET_LIFT		20.f  // sight rays end this high above a cell's ground
 #define PENDING_TIME	(FRAMES_PER_SEC * 90)  // a radar a builder was sent to build counts this long until one stands
 #define ORPHAN_TIMEOUT	(FRAMES_PER_SEC * 3)  // a radar job its builder left goes then: any builder takes a NOW job
-#define DARK_REACH		600.f  // elmos: a builder out of coverage builds its radar this close
-#define WALK_SEC		30.f  // a builder inside coverage walks at most this long to its radar
-#define HORIZON_SEC		300.f  // a radar's worth: the coverage it adds over this long from now
+#define REACH			600.f  // elmos: a builder out of coverage builds its radar this close
 #define RADAR_NEAR		500.f  // elmos: ISensorTask drops a job this close to a radar of its kind; a pending one ends
 
 CSensorPlanner::CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef)
@@ -124,22 +123,16 @@ AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(c
 	}
 	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
 	const AIFloat3 pos = unit->GetPos(circuit->GetLastFrame());
-	const float speed = std::max(unit->GetCircuitDef()->GetSpeed(), 1.f);
-	// Out of coverage: a radar where it stands. Inside: one at the coverage's edge, a walk away
-	const bool isDark = !isCovered[traffic.IndexAt(pos.x, pos.z)];
-	const float reach = isDark ? DARK_REACH : speed * WALK_SEC;
-	std::vector<AIFloat3> spots;
-	for (const AIFloat3& c : candidates) {
-		if (c.SqDistance2D(pos) <= SQUARE(reach)) {
-			spots.push_back(c);
-		}
+	if (isCovered[traffic.IndexAt(pos.x, pos.z)]) {
+		return -RgtVector;  // it stands in our radar
 	}
-	if (isDark) {  // a block's candidate can stand further off
-		const AIFloat3 local = FindHighest(pos.x - reach, pos.z - reach, pos.x + reach, pos.z + reach,
-				[&pos, reach](const AIFloat3& c) { return c.SqDistance2D(pos) <= SQUARE(reach); });
-		if (utils::is_valid(local)) {
-			spots.push_back(local);
-		}
+	// The candidates near it, and the highest buildable cell near it (a block's candidate can stand further off)
+	auto isNear = [&pos](const AIFloat3& c) { return c.SqDistance2D(pos) <= SQUARE(REACH); };
+	std::vector<AIFloat3> spots;
+	std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(spots), isNear);
+	const AIFloat3 local = FindHighest(pos.x - REACH, pos.z - REACH, pos.x + REACH, pos.z + REACH, isNear);
+	if (utils::is_valid(local)) {
+		spots.push_back(local);
 	}
 	auto isFree = [this](const AIFloat3& c) {
 		return std::none_of(radars.begin(), radars.end(), [&c](const std::pair<const ICoreUnit::Id, SRadar>& kv) {
@@ -156,9 +149,7 @@ AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(c
 		if (gain < minGain) {
 			continue;
 		}
-		// The share of the next 5 minutes it is up, once this builder has walked there
-		const float uptime = 1.f - c.distance2D(pos) / speed / HORIZON_SEC;
-		const float score = gain * uptime / (1.f + GetRisk(c));
+		const float score = gain / (1.f + GetRisk(c));
 		if ((score > bestScore) && isFree(c) && isOk(c)) {  // the costly tests last
 			bestScore = score;
 			bestPos = c;
