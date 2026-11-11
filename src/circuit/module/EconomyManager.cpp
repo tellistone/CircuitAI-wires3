@@ -92,6 +92,8 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, geoMorphFrame(0)
 		, geoMorphing(nullptr)
 		, geoMorphStart(-1)
+		, gridLinkMaxPylons(6)
+		, gridLinkMargin(1.1f)
 {
 	metalRes = circuit->GetCallback()->GetResourceByName(RES_NAME_METAL);
 	energyRes = circuit->GetCallback()->GetResourceByName(RES_NAME_ENERGY);
@@ -368,6 +370,12 @@ void CEconomyManager::ReadConfig()
 	pylonLinkInc = energy.get("link_inc", 16.0f).asFloat();
 
 	{
+		const Json::Value& gridLink = energy["grid_link"];
+		gridLinkMaxPylons = std::max(gridLink.get("max_pylons", 6).asInt(), 0);
+		gridLinkMargin = std::max(gridLink.get("margin", 1.1f).asFloat(), 1.f);
+	}
+
+	{
 		const Json::Value& geo = energy["geo"];
 		geoThreat = geo.get("threat", 1.0f).asFloat();
 		const std::string prio = geo.get("priority", "high").asString();
@@ -576,6 +584,11 @@ void CEconomyManager::Init()
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CEconomyManager::UpdateGeoMorph, this),
 									FRAMES_PER_SEC * 10, circuit->GetSkirmishAIId() + 2);
 		}
+
+		if (gridLinkMaxPylons > 0) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CEconomyManager::UpdateGridLinks, this),
+									FRAMES_PER_SEC * 2, circuit->GetSkirmishAIId() + 3);
+		}
 	};
 
 	circuit->GetSetupManager()->ExecOnFindStart(subinit);
@@ -583,6 +596,10 @@ void CEconomyManager::Init()
 
 int CEconomyManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 {
+	// The game keeps a consumer's nanoframe in the grid (active by neededlink): link it while it is being built, so it
+	// works the moment it finishes (a superweapon takes minutes)
+	WatchGridLink(unit);
+
 	auto search = createdHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != createdHandler.end()) {
 		search->second(unit, builder);
@@ -593,6 +610,8 @@ int CEconomyManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 
 int CEconomyManager::UnitFinished(CCircuitUnit* unit)
 {
+	WatchGridLink(unit);
+
 	auto search = finishedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != finishedHandler.end()) {
 		search->second(unit);
@@ -612,8 +631,21 @@ int CEconomyManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	return 0; //signaling: OK
 }
 
+int CEconomyManager::UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId)
+{
+	// An ally that drops shares its units: a Big Bertha it gave us is ours to power
+	WatchGridLink(unit);
+	return 0; //signaling: OK
+}
+
 int CEconomyManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
+	auto itLink = gridLinks.find(unit->GetId());
+	if (itLink != gridLinks.end()) {
+		AbortGridPylon(itLink->second);
+		gridLinks.erase(itLink);
+	}
+
 	auto search = destroyedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != destroyedHandler.end()) {
 		search->second(unit, attacker);
@@ -1824,6 +1856,207 @@ IBuilderTask* CEconomyManager::UpdatePylonTasks()
 		}, energyGrid), FRAMES_PER_SEC * 120);
 	}
 
+	return nullptr;
+}
+
+bool CEconomyManager::IsGridConsumer(CCircuitDef* cdef) const
+{
+	return (cdef != nullptr) && (energyGrid != nullptr) && (energyGrid->GetNeededLink(cdef->GetId()) > 0.f);
+}
+
+bool CEconomyManager::IsGridReachable(CCircuitDef* cdef, const AIFloat3& pos)
+{
+	if ((cdef == nullptr) || (energyGrid == nullptr)) {
+		return true;
+	}
+	const float needed = energyGrid->GetNeededLink(cdef->GetId());
+	if (needed <= 0.f) {
+		return true;
+	}
+	// The watchdog's pylons link each other at 2 x their range; 0.85 leaves room for the site search
+	const float pylonLink = (gridLinkMaxPylons > 0) ? energyGrid->GetPylonRange(pylonDef->GetId()) : 0.f;
+	const float reach = energyGrid->GetPylonRange(cdef->GetId()) + pylonLink * 2.f * 0.85f * gridLinkMaxPylons;
+	for (const CEnergyGrid::SGridNode& node : energyGrid->GetGridNodes()) {
+		if ((node.capacity >= needed * gridLinkMargin) && (pos.distance2D(node.pos) - node.range < reach)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void CEconomyManager::WatchGridLink(CCircuitUnit* unit)
+{
+	if ((gridLinkMaxPylons > 0) && IsGridConsumer(unit->GetCircuitDef())) {
+		// Kept if already watched (created, then finished). First read after one slow update of the overdrive
+		// gadget: it marks every new consumer unpowered at first
+		gridLinks.emplace(unit->GetId(), SGridLink{0, circuit->GetLastFrame() + FRAMES_PER_SEC * 2, 0, 0, -RgtVector, 0});
+	}
+}
+
+void CEconomyManager::AbortGridPylon(const SGridLink& info)
+{
+	IBuilderTask* task = FindGridPylonTask(info.pylonPos);
+	if ((task != nullptr) && (task->GetTarget() == nullptr)) {
+		circuit->GetBuilderManager()->AbortTask(task);
+	}
+}
+
+void CEconomyManager::UpdateGridLinks()
+{
+	if (gridLinks.empty()) {
+		return;
+	}
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	const int frame = circuit->GetLastFrame();
+	for (auto it = gridLinks.begin(); it != gridLinks.end();) {
+		CCircuitUnit* unit = circuit->GetTeamUnit(it->first);
+		if (unit == nullptr) {  // captured or given away: UnitDestroyed didn't run
+			AbortGridPylon(it->second);
+			it = gridLinks.erase(it);
+			continue;
+		}
+		SGridLink& info = (it++)->second;
+		if (frame < info.nextFrame) {
+			continue;
+		}
+		// Our pylon still queued or building: wait for it. Once it's up, read again after the gadget's next grid update
+		if (utils::is_valid(info.pylonPos)) {
+			if (FindGridPylonTask(info.pylonPos) == nullptr) {
+				info.pylonPos = -RgtVector;
+			}
+			info.nextFrame = frame + FRAMES_PER_SEC * 2;
+			continue;
+		}
+		info.nextFrame = frame + FRAMES_PER_SEC * 10;
+		// Paralysed or disarmed: out of the grid for now, and its gridNumber is stale. Not a read
+		Unit* u = unit->GetUnit();
+		if (CEnergyGrid::IsOffGrid(u, true)) {
+			continue;
+		}
+		if (u->GetRulesParamFloat("lowpower", 0.f) <= 0.f) {
+			info.darkReads = 0;
+			info.pylons = 0;
+			info.backoff = 0;
+			continue;
+		}
+		// Two unpowered reads in a row (10 s apart): a stunned fusion or a wind lull doesn't spend pylons
+		if (++info.darkReads < 2) {
+			continue;
+		}
+		if (!LinkToGrid(unit, info)) {
+			info.backoff = utils::clamp(info.backoff * 2, FRAMES_PER_SEC * 60, FRAMES_PER_SEC * 300);
+			info.nextFrame = frame + info.backoff;
+		}
+	}
+}
+
+bool CEconomyManager::LinkToGrid(CCircuitUnit* unit, SGridLink& info)
+{
+	const int frame = circuit->GetLastFrame();
+	const float pylonLink = energyGrid->GetPylonRange(pylonDef->GetId());  // 0: no real pylon (default def)
+	if ((pylonLink <= 0.f) || (info.pylons >= gridLinkMaxPylons) || !pylonDef->IsAvailable(frame)) {
+		return false;
+	}
+	// Its grid as the snapshot has it: a live read could be newer than the snapshot after the game renumbers grids.
+	// Not in it (just paralysed, or the snapshot predates it): look again on the next read
+	const std::vector<CEnergyGrid::SGridNode>& nodes = energyGrid->GetGridNodes();
+	auto itSelf = std::find_if(nodes.begin(), nodes.end(), [unit](const CEnergyGrid::SGridNode& n) {
+		return n.id == unit->GetId();
+	});
+	if (itSelf == nodes.end()) {
+		return true;
+	}
+	const int ourGrid = itSelf->grid;
+	// Another consumer in the same grid already has a pylon queued (Big Berthas stand together): that one grows
+	// the grid for both, so wait for it instead of laying a second line beside it
+	for (const auto& kv : gridLinks) {
+		if ((kv.first != unit->GetId()) && utils::is_valid(kv.second.pylonPos) && (kv.second.grid == ourGrid)) {
+			return true;
+		}
+	}
+	const float need = energyGrid->GetNeededLink(unit->GetCircuitDef()->GetId()) * gridLinkMargin;
+
+	// Closest pair: a building in its own grid (itself, our earlier pylons, a mex it touches) and one of another grid
+	// with enough energy. Never towards its own grid: pylons can't help a grid that is short of energy
+	const CEnergyGrid::SGridNode* from = nullptr;
+	const CEnergyGrid::SGridNode* to = nullptr;
+	float minGap = std::numeric_limits<float>::max();
+	for (const CEnergyGrid::SGridNode& a : nodes) {
+		if (a.grid != ourGrid) {
+			continue;
+		}
+		for (const CEnergyGrid::SGridNode& b : nodes) {
+			if ((b.grid == ourGrid) || (b.capacity < need)) {
+				continue;
+			}
+			const float gap = a.pos.distance2D(b.pos) - a.range - b.range;
+			if (gap < minGap) {
+				minGap = gap;
+				from = &a;
+				to = &b;
+			}
+		}
+	}
+	if (from == nullptr) {
+		return false;
+	}
+	if (minGap <= 0.f) {
+		return true;  // in reach already: the gadget links them on its next update
+	}
+	const float span = pylonLink * 2.f * 0.85f;
+	const int count = (int)std::ceil(minGap / span);
+	if (info.pylons + count > gridLinkMaxPylons) {
+		return false;
+	}
+
+	// On the line to the target: the last pylon goes midway through the overlap of both reaches, any other as far
+	// out as still links to its grid. Each step starts from the grown grid, so it re-plans around blocked ground
+	const float dist = from->pos.distance2D(to->pos);
+	const float reachFrom = from->range + pylonLink;
+	const float reachTo = to->range + pylonLink;
+	const float step = (count <= 1) ? (dist + reachFrom - reachTo) * 0.5f : reachFrom * 0.9f;
+	AIFloat3 ideal = from->pos + (to->pos - from->pos) / dist * step;
+	CTerrainManager::CorrectPosition(ideal);
+
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float sqFrom = SQUARE(reachFrom - SQUARE_SIZE);
+	const float sqTo = SQUARE(reachTo - SQUARE_SIZE);
+	const AIFloat3 fromPos = from->pos;
+	const AIFloat3 toPos = to->pos;
+	CTerrainManager::TerrainPredicate isLinked = [fromPos, toPos, sqFrom, sqTo, count](const AIFloat3& p) {
+		return (p.SqDistance2D(fromPos) < sqFrom) && ((count > 1) || (p.SqDistance2D(toPos) < sqTo));
+	};
+	AIFloat3 buildPos = terrainMgr->FindBuildSite(pylonDef, ideal, pylonLink * 0.5f, UNIT_COMMAND_BUILD_NO_FACING, isLinked);
+	if (!utils::is_valid(buildPos) && (count <= 1)) {  // no site touching both: one more step it is
+		CTerrainManager::TerrainPredicate isFromLinked = [fromPos, sqFrom](const AIFloat3& p) {
+			return p.SqDistance2D(fromPos) < sqFrom;
+		};
+		buildPos = terrainMgr->FindBuildSite(pylonDef, ideal, pylonLink * 0.5f, UNIT_COMMAND_BUILD_NO_FACING, isFromLinked);
+	}
+	if (!utils::is_valid(buildPos) || !terrainMgr->CanBeBuiltAtSafe(pylonDef, buildPos)) {
+		return false;
+	}
+
+	// Exactly there: CBPylonTask would otherwise search again around it and could miss the link
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueuePylon(IBuilderTask::Priority::HIGH, pylonDef, buildPos,
+																	nullptr, pylonDef->GetCostM());
+	task->SetBuildPos(buildPos);
+	info.pylonPos = buildPos;
+	info.grid = ourGrid;
+	++info.pylons;
+	return true;
+}
+
+IBuilderTask* CEconomyManager::FindGridPylonTask(const AIFloat3& pos) const
+{
+	if (!utils::is_valid(pos)) {
+		return nullptr;
+	}
+	for (IBuilderTask* task : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::PYLON)) {
+		if (task->GetTaskPos().SqDistance2D(pos) < SQUARE(SQUARE_SIZE)) {
+			return task;
+		}
+	}
 	return nullptr;
 }
 

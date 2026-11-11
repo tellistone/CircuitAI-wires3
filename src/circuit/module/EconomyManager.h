@@ -10,6 +10,7 @@
 
 #include "module/Module.h"
 #include "task/UnitTask.h"
+#include "unit/CoreUnit.h"
 #include "util/AvailList.h"
 
 #include "AIFloat3.h"
@@ -53,6 +54,7 @@ private:
 public:
 	virtual int UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder) override;
 	virtual int UnitFinished(CCircuitUnit* unit) override;
+	virtual int UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId) override;
 	virtual int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 	virtual int UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
@@ -153,6 +155,13 @@ public:
 	IBuilderTask* UpdateFactoryTasks();
 	IBuilderTask* UpdateStorageTasks();
 	IBuilderTask* UpdatePylonTasks();
+
+	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
+	// that much energy. False before Init
+	bool IsGridConsumer(CCircuitDef* cdef) const;
+	// Is a grid with margin x cdef's need within reach of pos, counting the pylons the watchdog may build
+	// (true for non-consumers)
+	bool IsGridReachable(CCircuitDef* cdef, const springai::AIFloat3& pos);
 
 	// Needs a geothermal vent (energygeo, energyheavygeo); read once per def, no engine call.
 	// By def id: allied units' defs can belong to another AI instance on our ally team (CAllyTeam::UpdateFriendlyUnits)
@@ -340,6 +349,25 @@ private:
 		int nextFrame;  // when to search again
 	};
 	std::map<CCircuitDef*, SRearInfo> rearInfos;  // economy.energy.rear: energy built behind the base
+
+	// Grid link watchdog (economy.energy.grid_link): our grid consumers (nanoframes too) that the game reports as unpowered
+	// get pylons, one at a time, towards the nearest other grid with enough energy
+	struct SGridLink {
+		int darkReads;  // unpowered reads in a row
+		int nextFrame;  // next read
+		int backoff;  // frames to wait after a failed attempt (60 s, doubled up to 5 min)
+		int pylons;  // pylons queued for it since it was last powered
+		springai::AIFloat3 pylonPos;  // our queued pylon's position, -RgtVector = none
+		int grid;  // the game's gridNumber the queued pylon grows
+	};
+	std::map<ICoreUnit::Id, SGridLink> gridLinks;
+	void WatchGridLink(CCircuitUnit* unit);  // a grid consumer of ours, from its nanoframe on
+	void AbortGridPylon(const SGridLink& info);  // its queued pylon, unless started
+	int gridLinkMaxPylons;  // most pylons per consumer, 0 = watchdog off
+	float gridLinkMargin;  // capacity needed = margin x neededlink
+	void UpdateGridLinks();
+	bool LinkToGrid(CCircuitUnit* unit, SGridLink& info);  // queues a pylon or finds it already in reach; false = can't
+	IBuilderTask* FindGridPylonTask(const springai::AIFloat3& pos) const;
 	// Open site behind the base (away from start->lane), min..max from the base, safe and, with a unit, reachable
 	// by it: linked to the grid if possible, else nearest straight back at max distance; -RgtVector if none.
 	// Sets info.facing

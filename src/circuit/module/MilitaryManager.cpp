@@ -1777,6 +1777,10 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 		if (!defDef->IsAvailable(frame) || (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))) {
 			continue;
 		}
+		// A grid consumer (Cerberus, Desolator, ...) only where a grid with enough energy is in pylon reach
+		if (!em->IsGridReachable(defDef, closestPoint->position)) {
+			continue;
+		}
 		float defCost = defDef->GetCostM();
 		totalCost += defCost;
 		if (totalCost <= closestPoint->cost) {
@@ -2944,6 +2948,14 @@ AIFloat3 CMilitaryManager::GetBigGunPos(CCircuitDef* bigDef) const
 	return pos;
 }
 
+bool CMilitaryManager::IsBigGunPowerable(CCircuitDef* cdef) const
+{
+	// A grid consumer (customParams.neededlink: Big Bertha, superweapons) needs a grid with enough energy in pylon
+	// reach of where it would be built, else it stands unpowered
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	return !economyMgr->IsGridConsumer(cdef) || economyMgr->IsGridReachable(cdef, GetBigGunPos(cdef));
+}
+
 void CMilitaryManager::DiceBigGun()
 {
 	if (superInfos.empty()) {
@@ -2954,7 +2966,7 @@ void CMilitaryManager::DiceBigGun()
 	candidates.reserve(superInfos.size());
 	float magnitude = 0.f;
 	for (SSuperInfo& info : superInfos) {
-		if (info.cdef->IsAvailable(circuit->GetLastFrame())) {
+		if (info.cdef->IsAvailable(circuit->GetLastFrame()) && IsBigGunPowerable(info.cdef)) {
 			candidates.push_back(info);
 			magnitude += info.weight;
 		}

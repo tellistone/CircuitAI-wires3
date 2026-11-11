@@ -105,6 +105,7 @@ private:
 CEnergyGrid::CEnergyGrid(CCircuitAI* circuit)
 		: circuit(circuit)
 		, markFrame(-1)
+		, gridNodesFrame(-FRAMES_PER_SEC)
 		, isForceRebuild(false)
 		, ownedFilter(nullptr)
 		, ownedClusters(nullptr)
@@ -131,6 +132,19 @@ CEnergyGrid::CEnergyGrid(CCircuitAI* circuit)
 		if (it != customParams.end()) {
 			pylonRanges[cdef.GetId()] = utils::string_to_float(it->second) - 1.f;
 			cdef.SetIsPylon(true);
+		}
+		it = customParams.find("income_energy");
+		if (it != customParams.end()) {
+			energyIncomes[cdef.GetId()] = utils::string_to_float(it->second);
+		} else if (customParams.find("windgen") != customParams.end()) {
+			energyIncomes[cdef.GetId()] = -1.f;  // varies: its current output
+		}
+		it = customParams.find("neededlink");
+		if (it != customParams.end()) {
+			const float needed = utils::string_to_float(it->second);
+			if (needed > 0.f) {
+				neededLinks[cdef.GetId()] = needed;
+			}
 		}
 	}
 
@@ -284,6 +298,143 @@ float CEnergyGrid::GetPylonRange(CCircuitDef::Id defId)
 {
 	auto it = pylonRanges.find(defId);
 	return (it != pylonRanges.end()) ? it->second : .0f;
+}
+
+float CEnergyGrid::GetNeededLink(CCircuitDef::Id defId) const
+{
+	auto it = neededLinks.find(defId);
+	return (it != neededLinks.end()) ? it->second : .0f;
+}
+
+bool CEnergyGrid::IsOffGrid(Unit* u, bool isConsumer)
+{
+	return (!isConsumer && !u->IsActivated()) || u->IsParalyzed()
+		|| (u->GetRulesParamFloat("disarmed", 0.f) > 0.f) || (u->GetRulesParamFloat("morphDisable", 0.f) > 0.f);
+}
+
+const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
+{
+	const int frame = circuit->GetLastFrame();
+	if (gridNodesFrame + FRAMES_PER_SEC > frame) {
+		return gridNodes;
+	}
+	gridNodesFrame = frame;
+	gridNodes.clear();
+
+	// The overdrive gadget puts gridNumber on every grid building, and the grid's capacity (OD_gridMaximum) on its
+	// energy buildings and pylons, not on mexes or consumers. All of a grid carry the same value: read it once per grid.
+	// Off ones (IsOffGrid) are out of both, with a stale gridNumber: they get their grid from what they overlap.
+	// Unfinished ones are left out (consumers' aside, which the game links while being built).
+	// By def id: allied units' defs can belong to another AI instance on our ally team
+	struct SRaw {
+		float income;  // off ones: their energy when back on
+		int gameGrid;  // 0 = off
+	};
+	std::vector<SRaw> raws;
+	std::vector<int> offs;  // indices of off ones
+	std::unordered_map<int, float> capacities;  // by gameGrid
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* unit = kv.second;
+		const CCircuitDef* cdef = unit->GetCircuitDef();
+		if (cdef == nullptr) {
+			continue;
+		}
+		const float range = GetPylonRange(cdef->GetId());
+		if (range <= 0.f) {
+			continue;
+		}
+		Unit* u = unit->GetUnit();
+		const bool isConsumer = GetNeededLink(cdef->GetId()) > 0.f;
+		SRaw raw = {0.f, 0};
+		if (IsOffGrid(u, isConsumer)) {
+			if (u->IsBeingBuilt()) {
+				continue;
+			}
+			auto it = energyIncomes.find(cdef->GetId());
+			if (it != energyIncomes.end()) {
+				raw.income = (it->second >= 0.f) ? it->second : u->GetRulesParamFloat("current_energyIncome", 0.f);
+			}
+			offs.push_back(raws.size());
+		} else {
+			raw.gameGrid = (int)u->GetRulesParamFloat("gridNumber", 0.f);
+			if (raw.gameGrid <= 0) {
+				continue;
+			}
+			if (!cdef->IsMex() && !isConsumer && (capacities.find(raw.gameGrid) == capacities.end())) {
+				const float capacity = u->GetRulesParamFloat("OD_gridMaximum", -1.f);
+				if (capacity >= 0.f) {
+					capacities[raw.gameGrid] = capacity;
+				}
+			}
+		}
+		gridNodes.push_back({unit->GetId(), unit->GetPos(frame), range, raw.gameGrid, 0.f});
+		raws.push_back(raw);
+	}
+
+	// Union-find: on ones by the game's grid, off ones with everything they overlap
+	std::vector<int> parent(raws.size());
+	for (unsigned i = 0; i < parent.size(); ++i) {
+		parent[i] = i;
+	}
+	std::function<int(int)> find = [&parent, &find](int i) {
+		return (parent[i] == i) ? i : (parent[i] = find(parent[i]));
+	};
+	auto unite = [&parent, &find](int a, int b) {
+		a = find(a);
+		b = find(b);
+		if (a != b) {
+			parent[std::max(a, b)] = std::min(a, b);
+		}
+	};
+	std::unordered_map<int, int> firstOfGrid;
+	for (unsigned i = 0; i < raws.size(); ++i) {
+		if (raws[i].gameGrid > 0) {
+			auto it = firstOfGrid.emplace(raws[i].gameGrid, i).first;
+			unite(i, it->second);
+		}
+	}
+	for (int i : offs) {
+		for (unsigned j = 0; j < gridNodes.size(); ++j) {
+			if ((i != (int)j)
+				&& (gridNodes[i].pos.SqDistance2D(gridNodes[j].pos) < SQUARE(gridNodes[i].range + gridNodes[j].range)))
+			{
+				unite(i, j);
+			}
+		}
+	}
+
+	// Per set: capacity = its game grids' capacities + its off ones' energy. Id = its lowest game grid, stable while
+	// the game keeps its numbers (the watchdog compares them across snapshots); a set of off ones only: -(first unit id)
+	struct SSet {
+		int id;
+		float capacity;
+		std::set<int> gameGrids;
+	};
+	std::unordered_map<int, SSet> sets;
+	for (unsigned i = 0; i < raws.size(); ++i) {
+		SSet& set = sets.emplace(find(i), SSet{0, 0.f, {}}).first->second;
+		set.capacity += raws[i].income;
+		if (raws[i].gameGrid > 0) {
+			set.gameGrids.insert(raws[i].gameGrid);
+		}
+	}
+	for (auto& kv : sets) {
+		SSet& set = kv.second;
+		for (int g : set.gameGrids) {
+			auto it = capacities.find(g);
+			if (it != capacities.end()) {
+				set.capacity += it->second;
+			}
+		}
+		set.id = set.gameGrids.empty() ? -gridNodes[kv.first].id : *set.gameGrids.begin();
+	}
+	for (unsigned i = 0; i < gridNodes.size(); ++i) {
+		const SSet& set = sets.find(find(i))->second;
+		gridNodes[i].grid = set.id;
+		gridNodes[i].capacity = set.capacity;
+	}
+	return gridNodes;
 }
 
 CEnergyNode* CEnergyGrid::FindNodeDef(CCircuitDef*& outDef, AIFloat3& outPos, CEnergyNode* node)
