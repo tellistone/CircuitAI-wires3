@@ -141,8 +141,10 @@ private:
 	// fedCells: cells of the shield-fed enemies, which may fire from the charge of linked shields (AddShieldAmmo)
 	void AddShield(const SEnemyData& e, const std::vector<int>& armedCells, const std::vector<int>& fedCells);
 	void AddShieldAmmo(const SEnemyData& e, const std::vector<int>& fedCells);
-	// Cells whose centre is within radius of e (and its own cell): f(x, z) for each in bounds, at most range cells off
-	template<typename F> void ForCellsInRadius(const SEnemyData& e, float radius, int range, F&& f) const;
+	// Cells whose centre is within radius of e, and its own cell: f(index) for each on the map. Count: of cells, the
+	// ones inside, by the same test, so that a charge split by the count adds up to the charge once painted
+	inline bool IsCellInRadius(const SEnemyData& e, float sqRadius, int x, int z) const;
+	template<typename F> void ForCellsInRadius(const SEnemyData& e, float radius, F&& f) const;
 	int CountCellsInRadius(const SEnemyData& e, float radius, const std::vector<int>& cells) const;
 
 	int GetCloakRange(const CCircuitDef* edef) const;

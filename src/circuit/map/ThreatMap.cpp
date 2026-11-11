@@ -68,24 +68,17 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 	isCounting = (countPower > 0.f);
 
 	// Shared map like group_count_power: the value of the AI that made it counts for all
-	constexpr float defEmptyShield = 1.f;
-	const Json::Value& qempty = quota.get("shield_empty_threat", defEmptyShield);
-	if (qempty.isNumeric() && (qempty.asFloat() >= 0.f) && (qempty.asFloat() <= 1.f)) {
-		emptyShieldMod = qempty.asFloat();
-	} else {
-		circuit->LOG("CONFIG %s: quota.shield_empty_threat must be a number 0..1, using %g",
-				circuit->GetSetupManager()->GetConfigName().c_str(), defEmptyShield);
-		emptyShieldMod = defEmptyShield;
-	}
-	constexpr float defAmmoTime = 10.f;
-	const Json::Value& qammo = quota.get("shield_ammo_time", defAmmoTime);
-	if (qammo.isNumeric() && (qammo.asFloat() > 0.f)) {
-		ammoTime = qammo.asFloat();
-	} else {
-		circuit->LOG("CONFIG %s: quota.shield_ammo_time must be a number > 0, using %g",
-				circuit->GetSetupManager()->GetConfigName().c_str(), defAmmoTime);
-		ammoTime = defAmmoTime;
-	}
+	auto readQuota = [&](const char* key, float def, float lo, float hi) {
+		const Json::Value& v = quota.get(key, def);
+		if (v.isNumeric() && (v.asFloat() >= lo) && (v.asFloat() <= hi)) {
+			return v.asFloat();
+		}
+		circuit->LOG("CONFIG %s: quota.%s must be a number %g..%g, using %g",
+				circuit->GetSetupManager()->GetConfigName().c_str(), key, lo, hi, def);
+		return def;
+	};
+	emptyShieldMod = readQuota("shield_empty_threat", 1.f, 0.f, 1.f);
+	ammoTime = readQuota("shield_ammo_time", 10.f, 0.1f, 600.f);
 
 	for (SThreatData* data : {&threatData0, &threatData1}) {
 		data->airThreat.resize(mapSize, THREAT_BASE);
@@ -577,19 +570,28 @@ void CThreatMap::AddShields(const std::vector<SEnemyData>& hostiles, const std::
 	}
 }
 
+inline bool CThreatMap::IsCellInRadius(const SEnemyData& e, float sqRadius, int x, int z) const
+{
+	// Its centre is within the radius, or it is e's own cell
+	int posx, posz;
+	PosToXZ(e.pos, posx, posz);
+	return ((x == posx) && (z == posz)) || (XZToPos(x, z).SqDistance2D(e.pos) <= sqRadius);
+}
+
 template<typename F>
-void CThreatMap::ForCellsInRadius(const SEnemyData& e, float radius, int range, F&& f) const
+void CThreatMap::ForCellsInRadius(const SEnemyData& e, float radius, F&& f) const
 {
 	int posx, posz;
 	PosToXZ(e.pos, posx, posz);
 	const float sqRadius = SQUARE(radius);
+	const int range = int(radius) / squareSize + 1;
 	const int beginX = std::max(int(posx - range + 1),      0);
 	const int endX   = std::min(int(posx + range    ),  width);
 	const int beginZ = std::max(int(posz - range + 1),      0);
 	const int endZ   = std::min(int(posz + range    ), height);
 	for (int z = beginZ; z < endZ; ++z) {
 		for (int x = beginX; x < endX; ++x) {
-			if (((x == posx) && (z == posz)) || (XZToPos(x, z).SqDistance2D(e.pos) <= sqRadius)) {
+			if (IsCellInRadius(e, sqRadius, x, z)) {
 				f(z * width + x);
 			}
 		}
@@ -598,15 +600,10 @@ void CThreatMap::ForCellsInRadius(const SEnemyData& e, float radius, int range, 
 
 int CThreatMap::CountCellsInRadius(const SEnemyData& e, float radius, const std::vector<int>& cells) const
 {
-	// The same test as ForCellsInRadius, so that what is counted is what gets painted
-	int posx, posz;
-	PosToXZ(e.pos, posx, posz);
 	const float sqRadius = SQUARE(radius);
 	int count = 0;
 	for (int index : cells) {
-		const int x = index % width;
-		const int z = index / width;
-		if (((x == posx) && (z == posz)) || (XZToPos(x, z).SqDistance2D(e.pos) <= sqRadius)) {
+		if (IsCellInRadius(e, sqRadius, index % width, index / width)) {
 			++count;
 		}
 	}
@@ -628,8 +625,7 @@ void CThreatMap::AddShield(const SEnemyData& e, const std::vector<int>& armedCel
 		return;  // shields no armed enemy
 	}
 	const float shieldVal = e.shieldPower / count;
-	// Bounds: cells test the radius
-	ForCellsInRadius(e, radius, e.cdef->GetThreatRange(CCircuitDef::ThreatType::SHIELD), [this, shieldVal](int index) {
+	ForCellsInRadius(e, radius, [this, shieldVal](int index) {
 		drawShieldArray[index] += shieldVal;
 	});
 }
@@ -645,7 +641,7 @@ void CThreatMap::AddShieldAmmo(const SEnemyData& e, const std::vector<int>& fedC
 		return;
 	}
 	const float ammoVal = e.shieldPower / count;
-	ForCellsInRadius(e, reach, int(reach) / squareSize + 1, [this, ammoVal](int index) {
+	ForCellsInRadius(e, reach, [this, ammoVal](int index) {
 		drawShieldAmmoArray[index] += ammoVal;
 	});
 }
@@ -686,25 +682,26 @@ float CThreatMap::GetEnemyUnitThreat(const CEnemyUnit* e) const
 float CThreatMap::GetOwnShieldMod(const CEnemyUnit* e, int index) const
 {
 	// A unit with its own shield fights worse as it drains: it's easily destroyed (quota.shield_empty_threat at
-	// empty, by its own charge only: area shields over it count in its health). 1 at full, as def threat is
+	// empty; area shields over it count in its health instead). 1 at full, as def threat is
 	const CCircuitDef* edef = e->GetCircuitDef();
 	if ((edef == nullptr) || (edef->GetMaxShield() <= 0.f)) {
 		return 1.f;
 	}
-	const float charge = utils::clamp(e->GetShieldPower() / edef->GetMaxShield(), 0.f, 1.f);
-	float mod = emptyShieldMod + (1.f - emptyShieldMod) * charge;
 	const float drain = edef->GetShieldDrain();
+	// Shield-fed weapon (Felon): the charge it can draw on, its own and its share of the linked shields'
+	// (AddShieldAmmo), which also refill its own, so a Felon firing in a full ball doesn't read as drained.
+	// At least its own: the cell may be from before it moved
+	const float charge = (drain > 0.f) ? std::max(shieldAmmoArray[index], e->GetShieldPower()) : e->GetShieldPower();
+	const float fill = utils::clamp(charge / edef->GetMaxShield(), 0.f, 1.f);
+	float mod = emptyShieldMod + (1.f - emptyShieldMod) * fill;
 	if (drain > 0.f) {
-		// Shield-fed weapon (Felon): the share of its full fire rate the charge it can draw on (its own and its share
-		// of the linked shields', AddShieldAmmo) and its regen keep up over quota.shield_ammo_time, against a lone
-		// Felon's at full charge (def threat). sqrt: threat goes as sqrt(dps). Empty: what the regen feeds; in a
-		// ball of full shields more than 1, up to sqrt(1 / a lone full Felon's share)
+		// The share of its full fire rate that charge and its regen keep up over quota.shield_ammo_time, against a
+		// lone Felon's at full charge (def threat). sqrt: threat goes as sqrt(dps). Empty: what the regen feeds; with
+		// full linked shields more than 1, up to sqrt(1 / a lone full Felon's share)
 		auto fireShare = [this, edef, drain](float ammo) {
 			return std::min((ammo / ammoTime + edef->GetShieldRegen()) / drain, 1.f);
 		};
-		const float ownShare = fireShare(edef->GetMaxShield());
-		const float ammo = std::max(shieldAmmoArray[index], e->GetShieldPower());  // a stale cell: its own at least
-		mod *= sqrtf(fireShare(ammo) / ownShare);
+		mod *= sqrtf(fireShare(charge) / fireShare(edef->GetMaxShield()));
 	}
 	return mod;
 }
