@@ -1007,7 +1007,9 @@ int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weapon
 //	}
 //	unit->SetDamagedFrame(lastFrame);
 
-	if ((attacker == nullptr) && (dir != ZeroVector) && IsValidWeaponDefId(weaponId)) {
+	// Unseen attacker: paint a fake enemy on the threat map. Skip friendly fire, or our own army
+	// becomes a threat that groups and builders avoid.
+	if ((attacker == nullptr) && !isFriendlyFire && (dir != ZeroVector) && IsValidWeaponDefId(weaponId)) {
 		CreateFakeEnemy(weaponId, unit->GetPos(lastFrame), dir);  // currently only for threatmap
 	}
 
