@@ -348,6 +348,21 @@ void CTerrainManager::DelBlocker(CCircuitDef* cdef, const AIFloat3& pos, int fac
 #endif
 }
 
+void CTerrainManager::SetLaneCells(std::vector<int>&& cells)
+{
+	for (int index : laneCells) {
+		blockingMap.DelBlocker(index % blockingMap.columns, index / blockingMap.columns, SBlockingMap::StructType::TERRA);
+	}
+	laneCells = std::move(cells);
+	for (int index : laneCells) {
+		blockingMap.AddBlocker(index % blockingMap.columns, index / blockingMap.columns, SBlockingMap::StructType::TERRA);
+	}
+
+#ifdef DEBUG_VIS
+	UpdateVis();
+#endif
+}
+
 void CTerrainManager::ResetBuildFrame()
 {
 	markFrame = -FRAMES_PER_SEC;

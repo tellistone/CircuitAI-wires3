@@ -189,6 +189,8 @@ private:
 	IBuilderTask* UpdateMexTasks(const springai::AIFloat3& position, CCircuitUnit* unit);
 	// mex_front cluster score for CMetalManager::GetMexToBuild; empty = plain nearest-spot search
 	std::function<float (int cluster, float dist)> GetMexFrontScore(float bias) const;
+	// choke.expand: per cluster, the score's factor for being behind a pocket's cut (lower is better); empty when off
+	std::vector<float> GetExpandMods() const;
 	// Metal of a whole feature of this def, 0 = none or not reclaimable; read once per def
 	float GetFeatureDefMetal(int featureDefId);
 	void UpdateEconomy();

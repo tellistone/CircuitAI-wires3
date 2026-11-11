@@ -8,6 +8,7 @@
 #ifndef SRC_CIRCUIT_MODULE_MILITARYMANAGER_H_
 #define SRC_CIRCUIT_MODULE_MILITARYMANAGER_H_
 
+#include "module/SpotScorer.h"
 #include "module/UnitModule.h"
 #include "setup/DefenceMatrix.h"
 #include "task/fighter/FighterTask.h"
@@ -17,6 +18,7 @@
 #include <vector>
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <unordered_map>
 
@@ -28,10 +30,14 @@ namespace circuit {
 
 class CGameTask;
 class CBDefenceTask;
+class IBuilderTask;
 class CRetreatTask;
 class CAttackTask;
 class CRaidTask;
 class ISquadTask;
+class CChokeDefence;
+class CSensorPlanner;
+class CFrontline;
 
 // Attack group route kinds (quota.attack_path_dynamic_cost)
 enum class AttackRoute: int { TARGET = 0, REINFORCE, FRONT, FLEE, CORNERED, _SIZE_ };
@@ -113,7 +119,18 @@ public:
 	// raise the count, and a half-taken cluster below 10 m/s stays out of porc mode
 	void MakeDefence(int cluster, const springai::AIFloat3& pos, CCircuitDef* sightDef = nullptr);
 	void AbortDefence(const CBDefenceTask* task);
+	// Aborts an unstarted tower the AI no longer wants there (porc mode ended, artillery near a choke). Unlike a
+	// tower that failed, its scored spot stays frozen and counts no failure
+	void CallOffDefence(IBuilderTask* task);
 	bool HasDefence(int cluster);
+	// MakeDefence's cap on a point's towers: MIN_BUILD_SEC x porcupine.amount x income
+	float GetDefenceCap() const;
+
+	// Chokepoint features (CChokeMap::SConfig), each off by default
+	CChokeDefence* GetChokeDefence() const { return chokeDefence.get(); }
+	CSpotScorer* GetSpotScorer() const { return spotScorer.get(); }
+	CSensorPlanner* GetSensorPlanner() const { return sensorPlanner.get(); }
+	CFrontline* GetFrontline() const { return frontline.get(); }
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	// Best spot by score (near the enemy, unseen for longest, not defended by known static enemies, not on our side);
 	// -RgtVector if none. Scouts (quota.scout_spot) and raid groups (quota.raider_spot) score the same spots but
@@ -466,6 +483,26 @@ private:
 
 	CDefenceMatrix* defence;
 	unsigned int defenceIdx;
+	// MakeDefence: queues towers at point in order while its total stays under cap; porc towers in a chain.
+	// isPooled: a choke point's share of its pocket, the list walked again while the cap has room (CChokeDefence).
+	// goal: where choke.spot.enable scores the attackers' spots, nullptr: today's shake around the point
+	void QueueTowers(CDefenceMatrix::SDefPoint* point, const std::vector<CDefenceMatrix::STower>& towers, float cap,
+			bool isPorc, bool isPooled, const CSpotScorer::SGoal* goal);
+	// The key's frozen spot, else a new one scored and frozen; -RgtVector if none (or 2 failures there)
+	springai::AIFloat3 GetTowerSpot(CDefenceMatrix::SDefPoint* point, int key, CCircuitDef* defDef,
+			const CSpotScorer::SGoal& goal);
+	// A task queued at the point or at one of its frozen spots
+	bool IsPointTask(const CDefenceMatrix::SDefPoint& point, const springai::AIFloat3& taskPos) const;
+	// choke.spot.enable: the porc sweep visits each point of a cluster we hold once per round, the most traffic
+	// our towers don't cover yet x income first (scored as the round starts)
+	void SweepByTraffic();
+	std::vector<std::pair<int, unsigned>> sweepOrder;  // {cluster, point index}: this round's
+	size_t sweepIdx;
+	bool isCallingOff;  // CallOffDefence is aborting a tower: AbortDefence counts no spot failure
+	std::unique_ptr<CChokeDefence> chokeDefence;
+	std::unique_ptr<CSpotScorer> spotScorer;
+	std::unique_ptr<CSensorPlanner> sensorPlanner;
+	std::unique_ptr<CFrontline> frontline;
 
 	std::vector<unsigned int> scoutPath;  // list of spot ids
 	unsigned int scoutIdx;

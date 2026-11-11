@@ -41,6 +41,21 @@ int COOAICallback::GetEnemyTeamSize() const
 	return sAICallback->getEnemyTeams(skirmishAIId, nullptr, -1) - 1;  // -1 for Gaia team :(
 }
 
+int COOAICallback::Game_GetPlayerTeam(int playerId) const
+{
+	return sAICallback->Game_getPlayerTeam(skirmishAIId, playerId);
+}
+
+int COOAICallback::Game_GetTeamAllyTeam(int teamId) const
+{
+	return sAICallback->Game_getTeamAllyTeam(skirmishAIId, teamId);
+}
+
+bool COOAICallback::Team_HasAIController(int teamId) const
+{
+	return sAICallback->Team_hasAIController(skirmishAIId, teamId);
+}
+
 const std::vector<Unit*>& COOAICallback::GetFriendlyUnits()
 {
 	unitIds.resize(MAX_UNITS);

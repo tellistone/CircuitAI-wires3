@@ -54,6 +54,8 @@ public:
 	void Init();
 	void AddBlocker(CCircuitDef* cdef, const springai::AIFloat3& pos, int facing);
 	void DelBlocker(CCircuitDef* cdef, const springai::AIFloat3& pos, int facing);
+	// choke.enable: blocking map cells kept free of buildings but mexes (CChokeDefence's lanes); replaces the last set
+	void SetLaneCells(std::vector<int>&& cells);
 	void ResetBuildFrame();
 	// TODO: Use IsInBounds test and Bound operation only if mask or search offsets (endr) are out of bounds
 	// TODO: Based on map complexity use BFS or circle to calculate build offset
@@ -121,6 +123,7 @@ private:
 
 	int allyZoneCells;  // side of a square
 	SBlockingMap blockingMap;
+	std::vector<int> laneCells;  // SetLaneCells
 	std::unordered_map<CCircuitDef::Id, IBlockMask*> blockInfos;  // owner
 	void MarkBlockerByMask(const SStructure& building, bool block, IBlockMask* mask);
 	void MarkBlocker(const SStructure& building, bool block);

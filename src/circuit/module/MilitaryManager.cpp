@@ -7,6 +7,9 @@
 
 #include "module/MilitaryManager.h"
 #include "module/BuilderManager.h"
+#include "module/ChokeDefence.h"
+#include "module/Frontline.h"
+#include "module/SensorPlanner.h"
 #include "module/EconomyManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -30,6 +33,7 @@
 #include "task/fighter/AntiHeavyTask.h"
 #include "task/fighter/SupportTask.h"
 #include "task/static/SuperTask.h"
+#include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathMulti.h"
@@ -60,11 +64,15 @@ using namespace springai;
 
 #define RESPONSE_EPS_MIN	0.1f  // response eps floor
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
+#define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
+#define SPOT_KEYS_PER_COPY	1000  // QueueTowers: a copy's spots are keyed by copy x this + the defenders slot
 
 CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
 		, fightIterator(0)
 		, defenceIdx(0)
+		, sweepIdx(0)
+		, isCallingOff(false)
 		, scoutIdx(0)
 		, armyCost(0.f)
 		, isAttackThreatFloor(false)
@@ -316,6 +324,10 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 	}
 
 	defence = circuit->GetAllyTeam()->GetDefenceMatrix().get();
+	chokeDefence = std::make_unique<CChokeDefence>(circuit);
+	spotScorer = std::make_unique<CSpotScorer>(circuit);
+	sensorPlanner = std::make_unique<CSensorPlanner>(circuit, radarDef);
+	frontline = std::make_unique<CFrontline>(circuit);
 
 	fightTasks.resize(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_));
 }
@@ -1098,6 +1110,10 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateIdle, this), interval, offset + 0);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateFight, this), 1/*interval / 2*/, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDefenceTasks, this), FRAMES_PER_SEC * 5, offset + 2);
+		// Chokepoint features: each returns at once while its flag is off (CChokeMap::SConfig)
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CChokeDefence::Update, chokeDefence.get()), FRAMES_PER_SEC * 2, offset + 1);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CFrontline::Update, frontline.get()), FRAMES_PER_SEC * 10, offset + 2);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CSensorPlanner::Update, sensorPlanner.get()), FRAMES_PER_SEC * 15, offset + 3);
 		if ((scoutQuota.perMex > 0.f) || (raiderQuota.perMex > 0.f)) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateScoutQuota, this), FRAMES_PER_SEC * 15, offset + 3);
 		}
@@ -1618,6 +1634,7 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 		case IUnitTask::Type::FIGHTER: {
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
+			frontline->ReleaseHold(taskF, 0);
 			OnRallyTaskEnd(attackRally, taskF);
 			OnRallyTaskEnd(raidRally, taskF);
 			if (taskF->GetFightType() == IFighterTask::FightType::GUARD) {
@@ -1677,8 +1694,7 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 
 	CMetalManager* mm = circuit->GetMetalManager();
 	CEconomyManager* em = circuit->GetEconomyManager();
-	const float metalIncome = std::min(em->GetAvgMetalIncome(), em->GetAvgEnergyIncome()) * em->GetEcoFactor();
-	float maxCost = MIN_BUILD_SEC * amountFactor * metalIncome;
+	const float maxCost = GetDefenceCap();
 	CDefenceMatrix::SDefPoint* closestPoint = nullptr;
 	CDefenceMatrix::SDefPoint* geoPoint = nullptr;
 	float minDist = std::numeric_limits<float>::max();
@@ -1707,8 +1723,6 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 		return;
 	}
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	float totalCost = .0f;
-	IBuilderTask* parentTask = nullptr;
 	// NOTE: circuit->GetTerrainManager()->IsWaterSector(pos) checks whole sector
 	//       but water recognized as height < 0
 	bool isWater = circuit->GetMap()->GetElevationAt(pos.x, pos.z) < -SQUARE_SIZE * 5;
@@ -1755,10 +1769,8 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	}
 	if (!isPorc) {
 		for (IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
-			if ((t->GetTarget() == nullptr) && (t->GetNextTask() != nullptr) &&
-				(closestPoint->position.SqDistance2D(t->GetTaskPos()) < SQUARE(SQUARE_SIZE)))
-			{
-				builderMgr->AbortTask(t);
+			if ((t->GetTarget() == nullptr) && (t->GetNextTask() != nullptr) && IsPointTask(*closestPoint, t->GetTaskPos())) {
+				CallOffDefence(t);
 				break;
 			}
 		}
@@ -1770,40 +1782,30 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	AIFloat3 backPos = closestPoint->position + backDir.Normalize2D() * SQUARE_SIZE * 16;
 	CTerrainManager::CorrectPosition(backPos);
 
+	// The towers it gets today, in order. choke.enable may send some of them to a choke of its pocket instead
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	const int frame = circuit->GetLastFrame();
+	std::vector<CDefenceMatrix::STower> picked;
 	for (unsigned i = 0; i < num; ++i) {
 		CCircuitDef* defDef = (isAirSlot && (i == 0) && prevent.airDef->IsAvailable(frame)) ? prevent.airDef : defenders[i];
 		if (!defDef->IsAvailable(frame) || (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))) {
 			continue;
 		}
-		// A grid consumer (Cerberus, Desolator, ...) only where a grid with enough energy is in pylon reach
-		if (!em->IsGridReachable(defDef, closestPoint->position)) {
-			continue;
-		}
-		float defCost = defDef->GetCostM();
-		totalCost += defCost;
-		if (totalCost <= closestPoint->cost) {
-			continue;
-		}
-		if (totalCost < maxCost) {
-			closestPoint->cost += defCost;
-			// Porc towers go in a chain, one after another. Preventive ones are queued each on its own, because the
-			// chain abort above cancels any unstarted chain outside porc mode, and would re-queue them on every call
-			const bool isFirst = !isPorc || (parentTask == nullptr);
-			const AIFloat3& buildPos = defDef->IsAttacker() ? closestPoint->position : backPos;
-			IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, defDef, buildPos,
-					IBuilderTask::BuildType::DEFENCE, defCost, SQUARE_SIZE * 32, isFirst);
-			if (isPorc) {
-				if (parentTask != nullptr) {
-					parentTask->SetNextTask(task);
-				}
-				parentTask = task;
-			}
-		} else {
-			// TODO: Auto-sort defenders by cost OR remove break?
-			break;
-		}
+		picked.push_back({defDef, (int)i});
+	}
+	const CChokeDefence::SPlan plan = chokeDefence->Plan(cluster, closestPoint, picked, maxCost);
+	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	const bool isSpot = chokeMap->GetConfig().isSpot && chokeMap->IsReady() && !closestPoint->isGeo;
+	CSpotScorer::SGoal clusterGoal;
+	clusterGoal.asset = closestPoint->position;
+	QueueTowers(closestPoint, plan.clusterList, maxCost, isPorc, false, isSpot ? &clusterGoal : nullptr);
+	// NOTE: The chain abort above leaves a choke's chain: other points of the pocket may still be in porc mode
+	if (plan.chokePoint != nullptr) {
+		CSpotScorer::SGoal chokeGoal;
+		chokeGoal.type = CSpotScorer::GoalType::CHOKE;
+		chokeGoal.choke = plan.choke;
+		chokeGoal.innerRegion = plan.innerRegion;
+		QueueTowers(plan.chokePoint, plan.chokeList, plan.chokeCap, isPorc, true, isSpot ? &chokeGoal : nullptr);
 	}
 
 	// Build sensors
@@ -1835,14 +1837,184 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 			}
 		}
 	};
-	// radar
-	if ((radarDef != nullptr) && radarDef->IsAvailable(frame) && (radarDef->GetCostM() < maxCost)) {
+	// radar (choke.radar.enable: the radar planner places them all)
+	if (!chokeMap->GetConfig().isRadar && (radarDef != nullptr) && radarDef->IsAvailable(frame)
+		&& (radarDef->GetCostM() < maxCost))
+	{
 		const float range = radarDef->GetDef()->GetRadarRadius() / (isPorc ? 4.f : SQRT_2);
 		checkSensor(IBuilderTask::BuildType::RADAR, radarDef, range);
 	}
 	// sonar
 	if (isWater && (sonarDef != nullptr) && sonarDef->IsAvailable(frame) && (sonarDef->GetCostM() < maxCost)) {
 		checkSensor(IBuilderTask::BuildType::SONAR, sonarDef, sonarDef->GetDef()->GetSonarRadius());
+	}
+}
+
+float CMilitaryManager::GetDefenceCap() const
+{
+	CEconomyManager* em = circuit->GetEconomyManager();
+	const float metalIncome = std::min(em->GetAvgMetalIncome(), em->GetAvgEnergyIncome()) * em->GetEcoFactor();
+	return MIN_BUILD_SEC * amountFactor * metalIncome;
+}
+
+void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::vector<CDefenceMatrix::STower>& towers,
+		float cap, bool isPorc, bool isPooled, const CSpotScorer::SGoal* goal)
+{
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	CEconomyManager* em = circuit->GetEconomyManager();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	auto behind = [&basePos](const AIFloat3& pos) {  // 16 squares towards our base
+		AIFloat3 backDir = basePos - pos;
+		AIFloat3 backPos = pos + backDir.Normalize2D() * SQUARE_SIZE * 16;
+		CTerrainManager::CorrectPosition(backPos);
+		return backPos;
+	};
+	AIFloat3 backPos = behind(point->position);  // support towers
+	float totalCost = .0f;
+	IBuilderTask* parentTask = nullptr;
+	// A pooled list (a choke point's share of its pocket's towers) is walked again while its cap has room, each copy
+	// of a tower with a spot of its own; there a tower that brings the total exactly to the cap still goes, so the
+	// one-tower floor of a choke's share is met
+	const int copies = isPooled ? POOL_COPIES : 1;
+	for (int copy = 0; copy < copies; ++copy) {
+		const float copyStart = totalCost;
+		for (const CDefenceMatrix::STower& tower : towers) {
+			CCircuitDef* defDef = tower.def;
+			// A grid consumer (Cerberus, Desolator, ...) only where a grid with enough energy is in pylon reach
+			if (!em->IsGridReachable(defDef, point->position)) {
+				continue;
+			}
+			float defCost = defDef->GetCostM();
+			totalCost += defCost;
+			if (totalCost <= point->cost) {
+				continue;
+			}
+			if (isPooled ? (totalCost > cap) : (totalCost >= cap)) {
+				// TODO: Auto-sort defenders by cost OR remove break?
+				return;
+			}
+			point->cost += defCost;
+			AIFloat3 buildPos = defDef->IsAttacker() ? point->position : backPos;
+			float shake = SQUARE_SIZE * 32;
+			if ((goal != nullptr) && defDef->IsAttacker()) {
+				const AIFloat3 spot = GetTowerSpot(point, copy * SPOT_KEYS_PER_COPY + tower.slot, defDef, *goal);
+				if (utils::is_valid(spot)) {
+					buildPos = spot;
+					shake = SQUARE_SIZE * 8;
+					backPos = behind(spot);  // the support towers after it cover it
+				}
+			}
+			// Porc towers go in a chain, one after another. Preventive ones are queued each on its own, because the
+			// chain abort in MakeDefence cancels any unstarted chain outside porc mode, and would re-queue them on
+			// every call
+			const bool isFirst = !isPorc || (parentTask == nullptr);
+			IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, defDef, buildPos,
+					IBuilderTask::BuildType::DEFENCE, defCost, shake, isFirst);
+			if (isPorc) {
+				if (parentTask != nullptr) {
+					parentTask->SetNextTask(task);
+				}
+				parentTask = task;
+			}
+		}
+		if (totalCost == copyStart) {
+			return;  // nothing on the list is in reach of a grid
+		}
+	}
+}
+
+AIFloat3 CMilitaryManager::GetTowerSpot(CDefenceMatrix::SDefPoint* point, int key, CCircuitDef* defDef,
+		const CSpotScorer::SGoal& goal)
+{
+	CDefenceMatrix::SSpot& spot = point->spots[key];
+	if (spot.isFrozen) {
+		return spot.pos;
+	}
+	if (spot.failures >= 2) {
+		return -RgtVector;
+	}
+	// Around the point within 300 elmos, or around the choke within choke.setback[1] + 0.3 ranges
+	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	AIFloat3 centre = point->position;
+	float radius = 300.f;
+	if (goal.type == CSpotScorer::GoalType::CHOKE) {
+		centre = chokeMap->GetCellPos(chokeMap->GetGraph().GetChokes()[goal.choke].centre);
+		radius = (chokeMap->GetConfig().setback[1] + 0.3f) * defDef->GetMaxRange();
+	}
+	const AIFloat3 pos = spotScorer->FindSpot(defDef, centre, radius, goal);
+	if (utils::is_valid(pos)) {
+		spot.pos = pos;
+		spot.isFrozen = true;
+	}
+	return pos;
+}
+
+void CMilitaryManager::CallOffDefence(IBuilderTask* task)
+{
+	isCallingOff = true;
+	circuit->GetBuilderManager()->AbortTask(task);
+	isCallingOff = false;
+}
+
+bool CMilitaryManager::IsPointTask(const CDefenceMatrix::SDefPoint& point, const AIFloat3& taskPos) const
+{
+	if (point.position.SqDistance2D(taskPos) < SQUARE(SQUARE_SIZE)) {
+		return true;
+	}
+	for (const auto& kv : point.spots) {
+		if (kv.second.isFrozen && (kv.second.pos.SqDistance2D(taskPos) < SQUARE(SQUARE_SIZE))) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void CMilitaryManager::SweepByTraffic()
+{
+	CMetalManager* mm = circuit->GetMetalManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float maxCost = GetDefenceCap();
+	auto isWanted = [&](int cluster, const CDefenceMatrix::SDefPoint& point) {
+		return (mm->IsClusterQueued(cluster) || mm->IsClusterFinished(cluster)) && !point.isGeo
+				&& (point.cost < maxCost) && !terrainMgr->IsZoneAlly(point.position);
+	};
+	for (int round = 0; round < 2; ++round) {
+		while (sweepIdx < sweepOrder.size()) {
+			const std::pair<int, unsigned> next = sweepOrder[sweepIdx++];
+			const CDefenceMatrix::SDefPoint& point = defence->GetDefPoints(next.first)[next.second];
+			if (isWanted(next.first, point)) {
+				MakeDefence(next.first, point.position);
+				return;
+			}
+		}
+		// Every point visited: a new round, scored once as it starts
+		const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+		const CMetalData::Clusters& clusters = mm->GetClusters();
+		CCircuitDef* mainDef = landDefenders.empty() ? defaultPorc : landDefenders.front();
+		std::vector<std::pair<float, std::pair<int, unsigned>>> scored;
+		for (unsigned cluster = 0; cluster < clusters.size(); ++cluster) {
+			const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(cluster);
+			for (unsigned i = 0; i < points.size(); ++i) {
+				if (isWanted(cluster, points[i])) {
+					const CChokeMap::SPointInfo* info = chokeMap->GetPointInfo(cluster, i);
+					const float income = (info != nullptr) ? info->income : clusters[cluster].income;
+					const float score = spotScorer->GetUncovered(mainDef, points[i].position, 300.f) * income;
+					scored.push_back({score, {(int)cluster, i}});
+				}
+			}
+		}
+		std::stable_sort(scored.begin(), scored.end(), [](const std::pair<float, std::pair<int, unsigned>>& a,
+				const std::pair<float, std::pair<int, unsigned>>& b) {
+			return a.first > b.first;
+		});
+		sweepOrder.clear();
+		for (const auto& kv : scored) {
+			sweepOrder.push_back(kv.second);
+		}
+		sweepIdx = 0;
+		if (sweepOrder.empty()) {
+			return;
+		}
 	}
 }
 
@@ -1962,6 +2134,20 @@ void CMilitaryManager::AbortDefence(const CBDefenceTask* task)
 		if ((task->GetTarget() == nullptr) && (point->cost >= defCost)) {
 			point->cost -= defCost;
 		}
+		// choke.spot.enable: a tower that failed before it started unfreezes its spot, and the scorer skips that ground
+		// for a while. One the AI called off itself keeps its spot for when it is queued again
+		for (auto& kv : point->spots) {
+			CDefenceMatrix::SSpot& spot = kv.second;
+			if (!isCallingOff && (task->GetTarget() == nullptr) && spot.isFrozen
+				&& (spot.pos.SqDistance2D(task->GetTaskPos()) < SQUARE(SQUARE_SIZE)))
+			{
+				spot.isFrozen = false;
+				++spot.failures;
+				spotScorer->MaskFailed(spot.pos);
+				circuit->LOG("CHOKE spot (%.0f, %.0f) for %s failed (%i)", spot.pos.x, spot.pos.z,
+						task->GetBuildDef()->GetDef()->GetName(), spot.failures);
+			}
+		}
 		IBuilderTask* next = task->GetNextTask();
 		while (next != nullptr) {
 			if (next->GetBuildDef() != nullptr) {
@@ -1985,7 +2171,7 @@ bool CMilitaryManager::HasDefence(int cluster)
 			return true;
 		}
 	}
-	return false;
+	return chokeDefence->IsDefendedAtChokes(cluster);  // choke.enable: the towers may be at its pocket's entrances
 }
 
 AIFloat3 CMilitaryManager::GetScoutPosition(CCircuitUnit* unit)
@@ -2535,6 +2721,27 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 {
 	outPositions.clear();
 
+	// quota.hold_choke: the attack group holding a frontline choke goes to its spot; choke.objective.enable: idle
+	// attack groups go to the objective's chokes
+	const AIFloat3 holdSpot = frontline->GetHoldSpot(unit);
+	if (utils::is_valid(holdSpot)) {
+		outPositions.push_back(holdSpot);
+		return;
+	}
+	IUnitTask* task = unit->GetTask();
+	const bool isAttack = (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+			&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK);
+	if (isAttack) {
+		for (const AIFloat3& pos : frontline->GetObjective()) {
+			if (circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), pos)) {
+				outPositions.push_back(pos);
+			}
+		}
+		if (!outPositions.empty()) {
+			return;
+		}
+	}
+
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -3058,6 +3265,11 @@ void CMilitaryManager::UpdateDefenceTasks()
 	 */
 	UpdatePreventSight();  // enemies near our mexes, half-taken clusters included (the sweep below skips those)
 
+	const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+	if (chokeMap->GetConfig().isSpot && chokeMap->IsReady()) {
+		SweepByTraffic();
+		return;
+	}
 	decltype(defenceIdx) prevIdx = defenceIdx;
 	while (defenceIdx < clusters.size()) {
 		int index = defenceIdx++;
@@ -3086,7 +3298,18 @@ void CMilitaryManager::UpdateDefence()
 		if (frame >= defElem.second) {
 			CCircuitDef* buildDef = defElem.first;
 			if (buildDef->IsAvailable(frame)) {
-				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, ibd->first,
+				AIFloat3 buildPos = ibd->first;
+				// choke.spot.enable: an attacker goes to the best spot within the main tower's range
+				const CChokeMap* chokeMap = circuit->GetAllyTeam()->GetChokeMap().get();
+				if (chokeMap->GetConfig().isSpot && chokeMap->IsReady() && buildDef->IsAttacker()) {
+					CSpotScorer::SGoal goal;
+					goal.asset = ibd->first;
+					const AIFloat3 spot = spotScorer->FindSpot(buildDef, ibd->first, chokeMap->GetMainRange(), goal);
+					if (utils::is_valid(spot)) {
+						buildPos = spot;
+					}
+				}
+				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, buildPos,
 														  IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
 			}
 			ibd->second.pop_back();

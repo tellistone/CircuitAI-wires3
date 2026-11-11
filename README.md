@@ -2,6 +2,10 @@ Circuit AI
 =========
 Spring RTS local native AI for Zero-K.
 
+### Chokepoints
+Terrain analysis for tower, radar and army placement, all off by default: see [doc/chokepoints.md](doc/chokepoints.md)
+for the config keys and the `choke_overlay` chat command.
+
 ### Requirements
 * gcc 5.4+
 * spring 104.0-dev

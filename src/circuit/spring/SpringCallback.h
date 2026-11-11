@@ -35,6 +35,9 @@ public:
 	}
 
 	int GetEnemyTeamSize() const;
+	int Game_GetPlayerTeam(int playerId) const;  // -1 for a spectator
+	int Game_GetTeamAllyTeam(int teamId) const;
+	bool Team_HasAIController(int teamId) const;  // an AI on this machine
 
 	std::vector<springai::Unit*> GetTeamUnits() const { return callback->GetTeamUnits(); }
 
