@@ -237,7 +237,7 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 	const std::map<std::string, float*> floats = {
 		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"defensible", &c.defensible},
 		{"near", &c.nearRanges}, {"lane", &c.lane}, {"gate_share", &c.gateShare}, {"traffic.spread", &c.spread},
-		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare},
+		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare}, {"radar.enemy", &c.radarEnemy},
 		{"objective.gain", &c.objGain}, {"objective.power", &c.objPower},
 	};
 	const std::map<std::string, bool*> flags = {

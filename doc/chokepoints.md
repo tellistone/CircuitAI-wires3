@@ -77,6 +77,7 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.openness.bands` | `[0.35, 0.65, 0.05]` | Chokepointed below, open above, and the margin around them. |
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a planned radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Most of the metal income spent on planned radar. |
+| `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
 | `choke.objective.gain` | `1.5` | An objective's gain must be at least this × its cost. |
 | `choke.objective.power` | `1.3` | Our attack power must be at least this × the objective's defence. |
 | `choke.objective.retry` | `180` | Seconds before a failed objective may be tried again. |
@@ -168,7 +169,10 @@ every 5 s. Our towers are listed once for the whole round.
 ### Radar planner (B)
 
 One AI per ally team plans radar: the one that builds the analysis. Each cell the enemy can reach weighs a floor plus
-its traffic, each scaled to add up to our mex income, plus the income of our clusters' mexes in it. Coverage is the
+its traffic, each scaled to add up to our mex income, plus the income of our clusters' mexes in it. Enemy ground (the
+enemy's half of the map, and enemy territory on ours) weighs `choke.radar.enemy` × our mex income more, spread over
+its cells, because artillery, bombers and raids only fire at what radar or sight shows. Radar is still built on our
+side, where it survives, and its range reaches well into the enemy's. Coverage is the
 union of the viewsheds of known static radars, ours and our allies', unfinished ones too. Mobile radar is ignored.
 Every 15 s it queues the candidate with the most uncovered weight for its cost × (1 + risk), if that adds at least
 `choke.radar.min_gain` of the total weight. Candidates are the highest buildable cell of each 512-elmo block on our

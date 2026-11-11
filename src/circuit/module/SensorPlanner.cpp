@@ -199,22 +199,28 @@ void CSensorPlanner::UpdateWeights()
 	const float income = (ourIncome > 0.f) ? ourIncome : mapIncome;
 
 	weights.assign(width * height, 0.f);
+	std::vector<uint8_t> isEnemyGround(width * height, 0);
 	int reachCount = 0;
+	int enemyCount = 0;
 	float trafficSum = 0.f;
 	for (int cell = 0; cell < width * height; ++cell) {
-		const float x = (cell % width + 0.5f) * size;
-		const float z = (cell / width + 0.5f) * size;
-		if (reach.IsPassable(reach.IndexAt(x, z))) {
+		const AIFloat3 pos((cell % width + 0.5f) * size, 0.f, (cell / width + 0.5f) * size);
+		if (reach.IsPassable(reach.IndexAt(pos.x, pos.z))) {
 			weights[cell] = 1.f;  // marks it reachable
 			++reachCount;
 			trafficSum += traffic.GetAt(cell);
+			// The enemy's half of the map, and enemy territory on ours
+			const int region = chokeMap->GetRegionAt(pos);
+			isEnemyGround[cell] = !chokeMap->IsOurHalf(pos) || ((region >= 0) && chokeMap->IsEnemyTerritory(region));
+			enemyCount += isEnemyGround[cell];
 		}
 	}
 	const float floor = (reachCount > 0) ? income / reachCount : 0.f;
 	const float trafficScale = (trafficSum > 0.f) ? income / trafficSum : 0.f;
+	const float enemyFloor = (enemyCount > 0) ? chokeMap->GetConfig().radarEnemy * income / enemyCount : 0.f;
 	for (int cell = 0; cell < width * height; ++cell) {
 		if (weights[cell] > 0.f) {
-			weights[cell] = floor + traffic.GetAt(cell) * trafficScale;
+			weights[cell] = floor + traffic.GetAt(cell) * trafficScale + (isEnemyGround[cell] ? enemyFloor : 0.f);
 		}
 	}
 	for (unsigned i = 0; i < spots.size(); ++i) {

@@ -168,6 +168,7 @@
 	"radar": {
 		"enable": false,  // the radar planner, which takes over MakeDefence's radar
 		"min_gain": 0.02,  // a planned radar must add at least this share of the map's weight to the coverage
+		"enemy": 2.0,  // extra weight of enemy ground (the enemy's half, and enemy territory on ours), x our mex income
 		"share": 0.05  // most of the metal income spent on planned radar
 	},
 	"objective": {

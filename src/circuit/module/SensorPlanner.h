@@ -24,8 +24,9 @@ class CCircuitDef;
 /*
  * choke.radar.enable: the radar planner (B), on CChokeMap's traffic grid, run by the ally team's authority AI only.
  * - Weight: each cell any enemy movement type reaches weighs a floor plus its traffic, each scaled to add up to our
- *   mex income, plus the income of our clusters' mexes in it. So radar goes to the approaches and our clusters
- *   first, then spreads over the rest.
+ *   mex income, plus the income of our clusters' mexes in it. Enemy ground (the enemy's half of the map, and enemy
+ *   territory on ours) weighs choke.radar.enemy x our mex income more, spread over its cells. So radar looks into
+ *   enemy ground and at the approaches and our clusters first, then spreads over the rest.
  * - Coverage: the union of the viewsheds of known static radars, ours and allies', nanoframes too. Mobile radar is
  *   ignored, so coverage doesn't flicker as scouts fly past.
  * - Candidates: the highest buildable cell of each 512-elmo block on our half of the map (not in enemy territory),

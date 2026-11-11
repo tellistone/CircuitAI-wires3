@@ -91,6 +91,7 @@ public:
 		float bands[3] = {0.35f, 0.65f, 0.05f};  // choke.openness.bands
 		float radarGain = 0.02f;  // choke.radar.min_gain
 		float radarShare = 0.05f;  // choke.radar.share
+		float radarEnemy = 2.f;  // choke.radar.enemy
 		float objGain = 1.5f;  // choke.objective.gain
 		float objPower = 1.3f;  // choke.objective.power
 		int objRetryFrames = FRAMES_PER_SEC * 180;  // choke.objective.retry
