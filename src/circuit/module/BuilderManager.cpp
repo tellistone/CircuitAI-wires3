@@ -1560,6 +1560,14 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	if (task == nullptr) {
 		task = farTask;
 	}
+	// choke.radar.enable: a builder between jobs builds a radar first, unless a NOW job waits for it
+	if ((unit->GetTask() == idleTask) && ((task == nullptr) || (task->GetPriority() != IBuilderTask::Priority::NOW))) {
+		IBuilderTask* radar = circuit->GetMilitaryManager()->GetSensorPlanner()->MakeRadarTask(unit,
+				[this, commState](const AIFloat3& spot) { return IsCommJobSafe(commState, spot); });
+		if (radar != nullptr) {
+			return radar;
+		}
+	}
 	if (task == nullptr) {
 		if ((unit->GetTask() != idleTask) || isNotReady) {
 			return nullptr;  // current task is in danger or unreachable
@@ -1567,16 +1575,8 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 		if (!IsCommJobSafe(commState, pos)) {
 			return nullptr;  // a builder with the flee on makes no job where it stands inside a flee zone
 		}
-		// Stalling: no new building from an idle constructor, only reclaim anywhere on the map. Else, standing
-		// outside our radar (choke.radar.enable): a radar nearby first
-		if (isStalling) {
-			task = economyMgr->UpdateReclaimTasks(pos, unit, false);
-		} else {
-			task = circuit->GetMilitaryManager()->GetSensorPlanner()->MakeIdleRadar(unit);
-			if (task == nullptr) {
-				task = CreateBuilderTask(pos, unit);
-			}
-		}
+		// Stalling: no new building from an idle constructor, only reclaim anywhere on the map
+		task = isStalling ? economyMgr->UpdateReclaimTasks(pos, unit, false) : CreateBuilderTask(pos, unit);
 	}
 
 	return const_cast<IBuilderTask*>(task);

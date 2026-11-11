@@ -50,7 +50,7 @@ on it.
 |---|---|---|
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
 | `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored by covered traffic, height, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
-| `choke.radar.enable` | `false` | **Radar planner (B).** Radar goes where it covers the most uncovered weight for its cost, while each new radar adds at least `choke.radar.min_gain` of the map's weight. It takes over `MakeDefence`'s radar. |
+| `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar first when its budget holds one, where it adds the most coverage over the next 5 minutes, if that is at least `choke.radar.min_gain` of the map's weight. It takes over `MakeDefence`'s radar. |
 | `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army near it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
@@ -75,8 +75,8 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.gate_share` | `0.25` | Share of the enemy army seen (plus a 300-metal prior) a leak type's cost must reach to start gating. |
 | `choke.traffic.spread` | `0.15` | Width of the traffic corridors, as a share of the route's length. |
 | `choke.openness.bands` | `[0.35, 0.65, 0.05]` | Chokepointed below, open above, and the margin around them. |
-| `choke.radar.min_gain` | `0.02` | Share of the map's weight a planned radar must add to the coverage. |
-| `choke.radar.share` | `0.05` | Most of the metal income spent on planned radar. |
+| `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
+| `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
 | `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
 | `choke.objective.gain` | `1.5` | An objective's gain must be at least this × its cost. |
 | `choke.objective.power` | `1.3` | Our attack power must be at least this × the objective's defence. |
@@ -168,30 +168,33 @@ every 5 s. Our towers are listed once for the whole round.
 
 ### Radar planner (B)
 
-One AI per ally team plans radar: the one that builds the analysis. Each cell the enemy can reach weighs a floor plus
-its traffic, each scaled to add up to our mex income, plus the income of our clusters' mexes in it. Enemy ground (the
-enemy's half of the map, and enemy territory on ours) weighs `choke.radar.enemy` × our mex income more, spread over
-its cells, because artillery, bombers and raids only fire at what radar or sight shows. Radar is still built on our
-side, where it survives, and its range reaches well into the enemy's. Coverage is the
-union of the viewsheds of known static radars, ours and our allies', unfinished ones too. Mobile radar is ignored.
-Its aim is the most coverage over time, starting now. Every 15 s it queues the candidate that adds the most coverage
-over the next 5 minutes for its cost × (1 + risk): the uncovered weight it sees × the share of those 5 minutes it is
-up, once the builder that gets it up soonest has walked there and built it. A spot with a great view that takes 2
-minutes to reach counts for 60% of one that is up at once. It needs to add at least `choke.radar.min_gain` of the
-total weight.
-Until half the weight is covered it is a HIGH job, NORMAL after, and the budget starts with one radar. A NORMAL job
-is only taken within 20 s of a builder's travel while nearer work is left, so without this the first radar waited
-for the builders to run out of work. Candidates are the highest buildable cell of each 512-elmo block on our
-half of the map (outside enemy territory) or in our territory. Risk is the threat there in main towers, plus 1 for
-each radar lost nearby, halving every 5 minutes. A planned radar that no builder starts within 90 s, or that dies
-before it is finished, counts as lost. At most one planned radar waits for a builder at a time, and spending is
-capped at `choke.radar.share` of income.
+One AI per ally team keeps the radar map, every 15 s: the one that builds the analysis. Each cell the enemy can reach
+weighs a floor plus its traffic, each scaled to add up to our mex income, plus the income of our clusters' mexes in
+it. Enemy ground (the enemy's half of the map, and enemy territory on ours) weighs `choke.radar.enemy` × our mex
+income more, spread over its cells, because artillery, bombers and raids only fire at what radar or sight shows.
+Coverage is the union of the viewsheds of known static radars, ours and our allies', unfinished ones too. Mobile
+radar is ignored. Candidates are the highest buildable cell of each 512-elmo block on our half of the map (outside
+enemy territory) or in our territory.
 
-An idle constructor that stands outside coverage builds a radar first, as a NOW job: the best of the candidates within
-600 elmos of it and the highest buildable cell there, that it can reach, with no threat on it, if that adds
-`choke.radar.min_gain`. This works for every AI of
-the team, and doesn't wait for the budget or the 15 s plan. A planned radar's view counts as covered until it is
-built or given up, so two constructors never go for the same ground.
+Radar is built by builders between jobs, on every AI of the team. Once the AI's first factory stands, a builder that
+finishes a job builds a radar first when its AI's budget holds one, unless a NOW job is waiting. It's a NOW job, and
+it goes ahead even while metal stalls, because it's cheap and it's what lets the AI see raids coming. The budget is
+`choke.radar.share` of the AI's income, starts with one radar, so the first goes up in the opening, and holds two at
+most. Where:
+
+- Out of coverage, within 600 elmos: the best of the candidates there and the highest buildable cell there.
+- Inside coverage, at a candidate within a 30 s walk, which pushes the edge out.
+
+The best spot adds the most coverage over the next 5 minutes for 1 + risk: the uncovered weight it sees × the share
+of those minutes it is up, once this builder has walked there and built it. It must add at least
+`choke.radar.min_gain` of the total weight, be reachable, have no threat on it, and stand 500 elmos from other
+radars (closer, the job cancels itself). Risk is the threat there in main towers, plus 1 for each radar lost
+nearby, halving every 5 minutes. A radar a builder was sent to build counts as coverage until it stands, or for
+90 s, so two builders never go for the same ground. A radar job its builder leaves is dropped after 10 s, so no
+other builder crosses the map for it.
+
+Why not a queued job: a radar queued for any builder lost the pick to nearer work every time, waited out the stall
+rule, and was given up. Picking the spot for the builder at hand gets it built at once.
 
 ### Holding the line (C), objectives (D) and rankings (E)
 
@@ -229,8 +232,7 @@ Lines in the AI's infolog, for tuning:
 - `CHOKE spot`: each spot search, and each failed spot.
 - `CHOKE artillery near choke`: towers called off.
 - `CHOKE hold` and `CHOKE objective`: slots and objectives starting, moving and ending.
-- `RADAR planned`: each planned radar, with coverage before and the share it adds. `RADAR for idle`: one for an idle
-  constructor.
+- `RADAR by`: each radar a builder is sent to build, with the coverage before it.
 
 ## Known limits
 

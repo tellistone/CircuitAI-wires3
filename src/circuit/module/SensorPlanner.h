@@ -25,41 +25,33 @@ class CCircuitUnit;
 class IBuilderTask;
 
 /*
- * choke.radar.enable: the radar planner (B), on CChokeMap's traffic grid, run by the ally team's authority AI only.
+ * choke.radar.enable: the radar planner (B), on CChokeMap's traffic grid. The ally team's authority AI keeps the map
+ * every 15 s; every AI's builders take their radar spots from it.
  * - Weight: each cell any enemy movement type reaches weighs a floor plus its traffic, each scaled to add up to our
  *   mex income, plus the income of our clusters' mexes in it. Enemy ground (the enemy's half of the map, and enemy
- *   territory on ours) weighs choke.radar.enemy x our mex income more, spread over its cells. So radar looks into
- *   enemy ground and at the approaches and our clusters first, then spreads over the rest.
- * - Coverage: the union of the viewsheds of known static radars, ours and allies', nanoframes too. Mobile radar is
- *   ignored, so coverage doesn't flicker as scouts fly past.
+ *   territory on ours) weighs choke.radar.enemy x our mex income more, spread over its cells.
+ * - Coverage: the union of the viewsheds of known static radars, ours and allies', nanoframes too; a radar a builder
+ *   was sent to build counts until it stands, or for 90 s. Mobile radar is ignored, so coverage doesn't flicker.
  * - Candidates: the highest buildable cell of each 512-elmo block on our half of the map (not in enemy territory),
  *   or in our territory.
- * - Every 15 s: the candidate that adds the most coverage over the next 5 minutes for its cost x (1 + risk) is
- *   queued: the uncovered weight in its viewshed x the share of those minutes it is up, once the builder that gets
- *   it up soonest has walked there and built it. Only if it adds at least choke.radar.min_gain of the total weight.
- *   It is a HIGH job until half the weight is covered, NORMAL after, and the budget starts with one radar, so the
- *   first ones go up in the opening. Risk is the threat there in main towers, plus 1 for each radar lost near it,
- *   halving every 5 minutes; a planned radar that no builder starts within 90 s, or that dies unfinished, counts as
- *   lost. At most one planned radar waits for a builder, and
- *   spending is capped at choke.radar.share of income.
- * - An idle constructor outside coverage gets a radar as a NOW job at the best of the candidates within 600 elmos of
- *   it and the highest buildable cell there, if that adds min_gain and has no threat on it (MakeIdleRadar, on any AI
- *   of the team: the authority's planner picks the spot).
- * A planned radar's view counts as covered until it is built or given up, so no second one goes there.
- * Candidates are tried best upper bound first (the weight in the square around them), at most 16 new viewsheds a
- * call; viewsheds are cached while their cell stays a candidate
+ * - A builder between jobs, with a factory up and no NOW job waiting, builds a radar first (a NOW job, stalls or not)
+ *   when its AI's budget holds one: choke.radar.share of its income, at most two radars' worth, starting with one.
+ *   Out of coverage, it builds it within 600 elmos (a candidate, or the highest buildable cell there); inside, at a
+ *   candidate within a 30 s walk. The spot adds the most coverage over the next 5 minutes for 1 + risk: the
+ *   uncovered weight in its viewshed x the share of those minutes it is up, once this builder has walked there and
+ *   built it. It must add choke.radar.min_gain of the total weight, be reachable and free of threat, and stand
+ *   500 elmos from other radars (closer, ISensorTask drops the job). Risk is the threat there in main towers, plus 1
+ *   for each radar lost near it, halving every 5 minutes.
+ * Viewsheds are cached while their cell is a candidate or a pending radar's
  */
 class CSensorPlanner {
 public:
 	CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef);
 	virtual ~CSensorPlanner();
 
-	void Update();  // every 15 s
-	// An idle constructor of ours: a radar nearby if it stands outside the team's coverage, queued NOW for it
-	IBuilderTask* MakeIdleRadar(CCircuitUnit* unit);
-	// The authority's: the best candidate within reach of pos that isOk passes, when pos is outside coverage and the
-	// candidate adds min_gain; its view counts as covered from now on. -RgtVector if none
-	springai::AIFloat3 TakeIdleSpot(const springai::AIFloat3& pos, const std::function<bool(const springai::AIFloat3&)>& isOk);
+	void Update();  // every 15 s; the authority's only
+	// A builder of this AI between jobs: its radar, queued NOW, or nullptr. isSafe: may it go there (flee zones)
+	IBuilderTask* MakeRadarTask(CCircuitUnit* unit, const std::function<bool(const springai::AIFloat3&)>& isSafe);
 
 	float GetCoveredShare() const { return (totalWeight > 0.f) ? coveredWeight / totalWeight : 1.f; }
 	const std::vector<uint8_t>& GetCovered() const { return isCovered; }  // per traffic cell (choke_overlay)
@@ -70,16 +62,21 @@ private:
 		springai::AIFloat3 pos;
 		std::vector<int> cells;  // its viewshed
 	};
-	struct SDeath {
+	struct SEvent {
 		springai::AIFloat3 pos;
 		int frame;
 	};
-	void AddPending(const springai::AIFloat3& pos);
+	// The authority's: the best spot for unit that isOk passes, its view covered from now on; -RgtVector if none
+	springai::AIFloat3 TakeSpot(CCircuitUnit* unit, const std::function<bool(const springai::AIFloat3&)>& isOk);
 	void UpdateWeights();
 	void UpdateRadars();
 	void UpdateCandidates();
-	const std::vector<int>& GetViewshed(const springai::AIFloat3& pos);  // a candidate's, cached
+	// Of the cells within [x0, x1] x [z0, z1] elmos that isIn passes, the first buildable of the 4 highest
+	springai::AIFloat3 FindHighest(float x0, float z0, float x1, float z1,
+			const std::function<bool(const springai::AIFloat3&)>& isIn) const;
+	const std::vector<int>& GetViewshed(const springai::AIFloat3& pos);  // cached
 	std::vector<int> MakeViewshed(const springai::AIFloat3& pos, float range, float emit) const;
+	float GetGain(const springai::AIFloat3& pos);  // the uncovered weight it sees
 	float GetRisk(const springai::AIFloat3& pos) const;
 
 	CCircuitAI* circuit;
@@ -89,13 +86,12 @@ private:
 	std::vector<uint8_t> isCovered;
 	float coveredWeight;
 	std::map<ICoreUnit::Id, SRadar> radars;  // known static radars
-	std::vector<SDeath> deaths;
-	std::vector<SDeath> pending;  // planned radars not built yet, by the frame they were planned
+	std::vector<SEvent> deaths;  // radars lost
+	std::vector<SEvent> pending;  // radars builders were sent to build
 	std::vector<springai::AIFloat3> candidates;
-	std::map<int, std::vector<int>> viewsheds;  // candidate's cell -> cells it sees
-	springai::AIFloat3 plannedPos;  // the last planned radar's, until its task is gone
-	float budget;  // metal planned radars may still spend
-	int lastFrame;
+	std::map<int, std::vector<int>> viewsheds;  // cell -> cells seen from it
+	float budget;  // metal this AI may still spend on radar
+	int budgetFrame;  // budget last grew then
 };
 
 } // namespace circuit
