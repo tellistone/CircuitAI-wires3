@@ -174,8 +174,11 @@ enemy's half of the map, and enemy territory on ours) weighs `choke.radar.enemy`
 its cells, because artillery, bombers and raids only fire at what radar or sight shows. Radar is still built on our
 side, where it survives, and its range reaches well into the enemy's. Coverage is the
 union of the viewsheds of known static radars, ours and our allies', unfinished ones too. Mobile radar is ignored.
-Every 15 s it queues the candidate with the most uncovered weight for its cost × (1 + risk), if that adds at least
-`choke.radar.min_gain` of the total weight. Candidates are the highest buildable cell of each 512-elmo block on our
+Every 15 s it queues the candidate with the most uncovered weight for its cost × (1 + risk) × (1 + the distance to our
+nearest builder ÷ a quarter of the map's diagonal), if that adds at least `choke.radar.min_gain` of the total weight.
+Until half the weight is covered it is a HIGH job, NORMAL after, and the budget starts with one radar. A NORMAL job
+is only taken within 20 s of a builder's travel while nearer work is left, so without this the first radar waited
+for the builders to run out of work. Candidates are the highest buildable cell of each 512-elmo block on our
 half of the map (outside enemy territory) or in our territory. Risk is the threat there in main towers, plus 1 for
 each radar lost nearby, halving every 5 minutes. A planned radar that no builder starts within 90 s, or that dies
 before it is finished, counts as lost. At most one planned radar waits for a builder at a time, and spending is

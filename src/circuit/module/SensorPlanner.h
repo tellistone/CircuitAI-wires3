@@ -34,11 +34,13 @@ class IBuilderTask;
  *   ignored, so coverage doesn't flicker as scouts fly past.
  * - Candidates: the highest buildable cell of each 512-elmo block on our half of the map (not in enemy territory),
  *   or in our territory.
- * - Every 15 s: the candidate with the most uncovered weight in its viewshed for its cost x (1 + risk) is queued,
- *   if it adds at least choke.radar.min_gain of the total weight. Risk is the threat there in main towers, plus 1
- *   for each radar lost near it, halving every 5 minutes; a planned radar that no builder starts within 90 s, or
- *   that dies unfinished, counts as lost. At most one planned radar waits for a builder, and spending is capped at
- *   choke.radar.share of income.
+ * - Every 15 s: the candidate with the most uncovered weight in its viewshed for its cost x (1 + risk) x (1 + the
+ *   distance to our nearest builder / a quarter of the map's diagonal) is queued, if it adds at least
+ *   choke.radar.min_gain of the total weight. It is a HIGH job until half the weight is covered, NORMAL after, and
+ *   the budget starts with one radar, so the first ones go up in the opening. Risk is the threat there in main
+ *   towers, plus 1 for each radar lost near it, halving every 5 minutes; a planned radar that no builder starts
+ *   within 90 s, or that dies unfinished, counts as lost. At most one planned radar waits for a builder, and
+ *   spending is capped at choke.radar.share of income.
  * - An idle constructor outside coverage gets a radar as a NOW job at the best of the candidates within 600 elmos of
  *   it and the highest buildable cell there, if that adds min_gain and has no threat on it (MakeIdleRadar, on any AI
  *   of the team: the authority's planner picks the spot).

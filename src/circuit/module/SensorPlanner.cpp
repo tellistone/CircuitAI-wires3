@@ -48,7 +48,7 @@ CSensorPlanner::CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef)
 		, totalWeight(0.f)
 		, coveredWeight(0.f)
 		, plannedPos(-RgtVector)
-		, budget(0.f)
+		, budget((radarDef != nullptr) ? radarDef->GetCostM() : 0.f)  // the first radar goes up at once
 		, lastFrame(-1)
 {
 }
@@ -122,15 +122,25 @@ void CSensorPlanner::Update()
 	};
 
 	UpdateCandidates();
+	// Nearer our builders first, so it goes up soon: a quarter of the map's diagonal from the nearest halves its score
+	const std::set<CCircuitUnit*>& workers = builderMgr->GetWorkers();
+	const float quarterDiag = CTerrainManager::GetTerrainDiagonal() * 0.25f;
+	auto travelOf = [&](const AIFloat3& pos) {
+		float minSq = std::numeric_limits<float>::max();
+		for (CCircuitUnit* w : workers) {
+			minSq = std::min(minSq, w->GetPos(frame).SqDistance2D(pos));
+		}
+		return workers.empty() ? 1.f : 1.f + std::sqrt(minSq) / quarterDiag;
+	};
 	struct SScored {
 		AIFloat3 pos;
 		float bound;  // score at most
-		float divisor;  // cost x (1 + risk)
+		float divisor;  // cost x (1 + risk) x travel
 	};
 	std::vector<SScored> scored;
 	std::set<int> candidateCells;
 	for (const AIFloat3& pos : candidates) {
-		const float divisor = cost * (1.f + GetRisk(pos));
+		const float divisor = cost * (1.f + GetRisk(pos)) * travelOf(pos);
 		scored.push_back({pos, boundAt(pos) / divisor, divisor});
 		candidateCells.insert(traffic.IndexAt(pos.x, pos.z));
 	}
@@ -170,14 +180,16 @@ void CSensorPlanner::Update()
 	if (!utils::is_valid(bestPos) || (bestGain < chokeMap->GetConfig().radarGain * totalWeight)) {
 		return;  // no radar adds enough
 	}
-	builderMgr->EnqueueTask(IBuilderTask::Priority::NORMAL, radarDef, bestPos, IBuilderTask::BuildType::RADAR, cost,
-			SQUARE_SIZE * 8.f, true, PLAN_TIMEOUT);
+	// HIGH until half the weight is covered: a NORMAL job far from our builders waits for them to run out of work
+	const bool isUrgent = (GetCoveredShare() < 0.5f);
+	builderMgr->EnqueueTask(isUrgent ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL, radarDef, bestPos,
+			IBuilderTask::BuildType::RADAR, cost, SQUARE_SIZE * 8.f, true, PLAN_TIMEOUT);
+	circuit->LOG("RADAR planned at (%.0f, %.0f)%s: covered %.0f%% +%.0f%%, %i of %i candidates seen, %.2f ms",
+			bestPos.x, bestPos.z, isUrgent ? " high" : "", GetCoveredShare() * 100.f, bestGain / totalWeight * 100.f,
+			viewCount, (int)candidates.size(), ms);
 	plannedPos = bestPos;
 	AddPending(bestPos);
 	budget -= cost;
-	circuit->LOG("RADAR planned at (%.0f, %.0f): covered %.0f%% +%.0f%%, %i of %i candidates seen, %.2f ms",
-			bestPos.x, bestPos.z, GetCoveredShare() * 100.f, bestGain / totalWeight * 100.f, viewCount,
-			(int)candidates.size(), ms);
 }
 
 IBuilderTask* CSensorPlanner::MakeIdleRadar(CCircuitUnit* unit)
