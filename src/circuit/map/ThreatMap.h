@@ -95,6 +95,7 @@ private:
 		FloatVec amphThreat;  // under water and surface on land
 		FloatVec cloakThreat;  // decloakers
 		FloatVec shield;  // shield power per armed enemy in the cell: each shield's share (AddShields)
+		FloatVec shieldAmmo;  // linked shield charge per shield-fed enemy (Felon) in the cell: each one's share
 		// Squad layers of air, surf and amph (GetSquadThreatAt); while drawing, the enemy unit count.
 		// Empty when group_count_power is 0
 		FloatVec airSquad;
@@ -137,12 +138,17 @@ private:
 	void AddDecloaker(const SEnemyData& e);
 	// Shields of hostile and peace enemies (Aspis is unarmed), each charge shared by the armed enemies inside it
 	void AddShields(const std::vector<SEnemyData>& hostiles, const std::vector<SEnemyData>& peaces);
-	void AddShield(const SEnemyData& e, const std::vector<int>& armedCells);
+	// fedCells: cells of the shield-fed enemies, which may fire from the charge of linked shields (AddShieldAmmo)
+	void AddShield(const SEnemyData& e, const std::vector<int>& armedCells, const std::vector<int>& fedCells);
+	void AddShieldAmmo(const SEnemyData& e, const std::vector<int>& fedCells);
+	// Cells whose centre is within radius of e (and its own cell): f(x, z) for each in bounds, at most range cells off
+	template<typename F> void ForCellsInRadius(const SEnemyData& e, float radius, int range, F&& f) const;
+	int CountCellsInRadius(const SEnemyData& e, float radius, const std::vector<int>& cells) const;
 
 	int GetCloakRange(const CCircuitDef* edef) const;
 	int GetShieldRange(const CCircuitDef* edef) const;
 	float GetEnemyUnitThreat(const CEnemyUnit* e) const;
-	float GetOwnShieldMod(const CEnemyUnit* e) const;  // threat x this by the enemy's own shield charge
+	float GetOwnShieldMod(const CEnemyUnit* e, int index) const;  // threat x this by its shield charge (index: its cell)
 	// The unit's threat layer: air for aircraft, amph for amphibious units, else surf; isSquad: its squad layer;
 	// isRaidView: of the raid view (no raid air layer). The 2-argument form: the view of the unit's task
 	float* GetLayer(CCircuitUnit* unit, bool isSquad, bool isRaidView) const;
@@ -166,6 +172,8 @@ private:
 
 	float countPower;  // quota.group_count_power
 	float emptyShieldMod;  // quota.shield_empty_threat: threat x this for an own-shield enemy at empty shield
+	float ammoTime;  // quota.shield_ammo_time: seconds of fire a shield-fed weapon is judged over
+	float ammoReach;  // largest shield radius of the shield-fed types: a shield links to theirs this much farther out
 	bool isCounting;  // countPower > 0: squad layers of their own, else they are the threat layers
 	float maxCount;  // most enemies (weighted) that could fire at one cell, last update
 	int countLogFrame;
@@ -192,6 +200,7 @@ private:
 	float* drawAirThreat;
 	float* drawCloakThreat;
 	float* drawShieldArray;
+	float* drawShieldAmmoArray;
 	float* drawAirSquad;  // nullptr unless isCounting
 	SDrawLayers drawPlain;  // surf and amph of the plain view
 	SDrawLayers drawRaid;  // ... and of the raid view (differences)
@@ -202,6 +211,7 @@ private:
 	float* amphThreat;
 	float* cloakThreat;
 	float* shieldArray;
+	float* shieldAmmoArray;
 	float* airSquad;  // the threat layers themselves unless isCounting
 	float* surfSquad;
 	float* amphSquad;

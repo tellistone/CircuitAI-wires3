@@ -119,7 +119,9 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, maxRangeType(RangeType::AIR)
 		, shieldRadius(.0f)
 		, maxShield(.0f)
-		, shieldAmmoFloor(1.f)
+		, shieldRegen(.0f)
+		, shieldDrain(.0f)
+		, isShieldLinked(false)
 		, reloadTime(0)
 		, targetCategory(0)
 		, immobileTypeId(-1)
@@ -228,7 +230,6 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 
 	WeaponDef* sd = def->GetShieldDef();
 	const bool isShield = (sd != nullptr);
-	float shieldRegen = 0.f;  // charge per second
 	if (isShield) {
 		Shield* shield = sd->GetShield();
 		shieldRadius = shield->GetRadius();
@@ -237,6 +238,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		const std::map<std::string, std::string>& shieldParams = sd->GetCustomParams();
 		auto itRate = shieldParams.find("shield_rate");
 		shieldRegen = (itRate != shieldParams.end()) ? utils::string_to_float(itRate->second) : shield->GetPowerRegen();
+		isShieldLinked = (shieldParams.find("unlinked") == shieldParams.end());  // Zero-K's unit_shield_link
 		delete shield;
 	}
 	delete sd;
@@ -343,10 +345,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		float reloadTime = wd->GetReload();  // seconds
 		it = customParams.find("shield_drain");  // charge per shot, taken from the unit's own shield
 		if ((it != customParams.end()) && (reloadTime > 0.f) && (maxShield > 0.f)) {
-			const float drainPerSec = utils::string_to_float(it->second) * wd->GetSalvoSize() / reloadTime;
-			if (drainPerSec > 0.f) {
-				shieldAmmoFloor = std::min(shieldAmmoFloor, utils::clamp(shieldRegen / drainPerSec, 0.f, 1.f));
-			}
+			shieldDrain += std::max(utils::string_to_float(it->second), 0.f) * wd->GetSalvoSize() / reloadTime;
 		}
 		if (minReloadTime > reloadTime) {
 			minReloadTime = reloadTime;
