@@ -27,6 +27,15 @@ CBRepairTask::~CBRepairTask()
 {
 }
 
+bool CBRepairTask::CanAssignTo(CCircuitUnit* unit) const
+{
+	if ((target == nullptr) && (targetId != -1)) {
+		// An ally's unit: only escalation mode makes these (CBuilderManager::UpdateEscalation)
+		return unit->GetCircuitDef()->IsAbleToRepair() && (cost > buildPower * MIN_BUILD_SEC);
+	}
+	return IRepairTask::CanAssignTo(unit);
+}
+
 void CBRepairTask::Update()
 {
 	if (units.empty()) {
