@@ -261,9 +261,13 @@ int CCircuitAI::HandleGameEvent(int topic, const void* data)
 			SCOPED_TIME(this, "EVENT_UNIT_DAMAGED");
 			struct SUnitDamagedEvent* evt = (struct SUnitDamagedEvent*)data;
 			CEnemyInfo* attacker = GetEnemyInfo(evt->attacker);
+			// The engine only reports an attacker id when it is in LOS or radar of our ally team,
+			// and visible enemies always have a CEnemyInfo. So an id with no CEnemyInfo is our own
+			// or an allied unit: friendly fire.
+			const bool isFriendlyFire = (evt->attacker >= 0) && (attacker == nullptr);
 			CCircuitUnit* unit = GetTeamUnit(evt->unit);
 			ret = (unit != nullptr)
-					? this->UnitDamaged(unit, attacker, evt->weaponDefId, AIFloat3(evt->dir_posF3))
+					? this->UnitDamaged(unit, attacker, evt->weaponDefId, AIFloat3(evt->dir_posF3), isFriendlyFire)
 					: ERROR_UNIT_DAMAGED;
 			break;
 		}
@@ -994,7 +998,7 @@ int CCircuitAI::UnitMoveFailed(CCircuitUnit* unit)
 	return 0;  // signaling: OK
 }
 
-int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, AIFloat3 dir)
+int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, AIFloat3 dir, bool isFriendlyFire)
 {
 	// FIXME: Doesn't work well with multi-shots (duck)
 //	if (lastFrame <= unit->GetDamagedFrame() + FRAMES_PER_SEC / 5) {
@@ -1002,7 +1006,9 @@ int CCircuitAI::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weapon
 //	}
 //	unit->SetDamagedFrame(lastFrame);
 
-	if ((attacker == nullptr) && (dir != ZeroVector) && IsValidWeaponDefId(weaponId)) {
+	// Unseen attacker: paint a fake enemy on the threat map. Skip friendly fire, or our own army
+	// becomes a threat that groups and builders avoid.
+	if ((attacker == nullptr) && !isFriendlyFire && (dir != ZeroVector) && IsValidWeaponDefId(weaponId)) {
 		CreateFakeEnemy(weaponId, unit->GetPos(lastFrame), dir);  // currently only for threatmap
 	}
 
