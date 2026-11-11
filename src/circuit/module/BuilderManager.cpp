@@ -1100,6 +1100,7 @@ void CBuilderManager::DequeueTask(IUnitTask* task, bool done)
 	if (task->GetType() == IUnitTask::Type::BUILDER) {
 		escalationTasks.erase(static_cast<IBuilderTask*>(task));
 		escIdleSince.erase(static_cast<IBuilderTask*>(task));
+		escStarted.erase(static_cast<IBuilderTask*>(task));
 	}
 	switch (task->GetType()) {
 		case IUnitTask::Type::BUILDER: {
@@ -1776,8 +1777,9 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 	}
 
 	// Our own jobs of either kind (the normal paths can queue them too). One placed, or with builders, holds its kind.
-	// Unplaced with none, it holds it for escalation.stale s and is then dropped: escalation jobs keep the threat
-	// check, so one in a threatened spot (a front Bertha) would otherwise pause factories until its 300 s timeout
+	// Unplaced with none, it holds it for escalation.stale s and then no longer does: escalation jobs keep the threat
+	// check, so one in a threatened spot (a front Bertha) would otherwise pause factories until its 300 s timeout.
+	// Then one escalation started is dropped; one of the normal paths (they often wait for an idle builder) stays
 	std::array<bool, ESC_KINDS> isOwnJob = {false, false};
 	std::vector<std::pair<IBuilderTask*, int>> staleJobs;
 	for (IBuilderTask::BuildType type : {IBuilderTask::BuildType::BIG_GUN, IBuilderTask::BuildType::ENERGY}) {
@@ -1789,7 +1791,9 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 			if ((task->GetTarget() == nullptr) && task->GetAssignees().empty()) {
 				auto it = escIdleSince.emplace(task, frame).first;
 				if (frame - it->second >= militaryMgr->GetEscalationStaleFrames()) {
-					staleJobs.push_back({task, kind});
+					if (escStarted.find(task) != escStarted.end()) {
+						staleJobs.push_back({task, kind});
+					}
 					continue;
 				}
 			} else {
@@ -1804,6 +1808,7 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		if ((job.second == 0) && militaryMgr->IsEscalationFront(job.first->GetBuildDef())) {
 			escProjects[0].isFrontStale = true;
 		}
+		++escProjects[job.second].staleCount;
 		AbortTask(job.first);  // DequeueTask forgets it in escalationTasks and escIdleSince
 	}
 
@@ -1816,6 +1821,9 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		} else {
 			allyTeam->ReleaseEscalation(kind, aiId);
 		}
+		if (isBuilt[kind]) {
+			project.staleCount = 0;  // a frame stands: the spot works
+		}
 		if (isBuilt[kind] || isOwnJob[kind] || allyTeam->IsEscalationClaimed(kind, frame, aiId)) {
 			project.startFrame = -1;
 			project.isLogged = false;
@@ -1824,9 +1832,10 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 			}
 			continue;
 		}
-		// None under way: start our own after a random wait
+		// None under way: start our own after a random wait, longer after jobs that went stale
 		if (project.startFrame < 0) {
-			project.startFrame = frame + militaryMgr->RollEscalationDelay();
+			const int delay = militaryMgr->RollEscalationDelay() << std::min(project.staleCount, 3);
+			project.startFrame = frame + std::min(delay, FRAMES_PER_SEC * 120);
 			continue;
 		}
 		if (frame < project.startFrame) {
@@ -1834,6 +1843,10 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		}
 		IBuilderTask* task = StartEscalation(kind);
 		if (task != nullptr) {
+			if (kind == 0) {
+				isEscalationBusy = true;
+			}
+			escStarted.insert(task);
 			PromoteEscalation(task);
 			allyTeam->ClaimEscalation(kind, frame, frame + ESC_CLAIM_FRAMES, aiId);
 			circuit->LOG("ESCALATION: start %s", task->GetBuildDef()->GetDef()->GetName());
@@ -1842,19 +1855,6 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		} else if (!project.isLogged) {
 			circuit->LOG("ESCALATION: no %s to start (limits, or no site or grid)", (kind == 0) ? "superweapon" : "singu");
 			project.isLogged = true;
-		}
-	}
-	// A superweapon start pending (timer running), or just started, counts too; "nothing to start" doesn't
-	const SEscProject& superProject = escProjects[0];
-	if ((superProject.startFrame >= 0) && !superProject.isLogged) {
-		isEscalationBusy = true;
-	}
-	if (!isEscalationBusy) {
-		for (const IBuilderTask* task : escalationTasks) {
-			if (task->GetBuildType() == IBuilderTask::BuildType::BIG_GUN) {
-				isEscalationBusy = true;  // started this update
-				break;
-			}
 		}
 	}
 }

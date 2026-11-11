@@ -3106,10 +3106,15 @@ AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef, bool isF
 		return GetBigGunPos(superDef);
 	}
 	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CThreatMap* threatMap = circuit->GetThreatMap();
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
-	CMetalData::PointPredicate predicate = [inflMap, metalMgr, &clusters](const int index) {
-		return metalMgr->IsClusterFinished(index) && (inflMap->GetInfluenceAt(clusters[index].position) > -INFL_EPS);
+	// Not enemy-held, and out of enemy weapon reach (influence is army balance, not coverage): builders keep the
+	// threat check on escalation jobs, and would leave a covered site to go stale
+	CMetalData::PointPredicate predicate = [inflMap, threatMap, metalMgr, &clusters](const int index) {
+		const AIFloat3& pos = clusters[index].position;
+		return metalMgr->IsClusterFinished(index) && (inflMap->GetInfluenceAt(pos) > -INFL_EPS)
+			&& (threatMap->GetAllThreatAt(pos) <= THREAT_MIN);
 	};
 	const int index = metalMgr->FindNearestCluster(circuit->GetSetupManager()->GetLanePos(), predicate);
 	return (index >= 0) ? clusters[index].position : GetBigGunPos(superDef);

@@ -138,8 +138,8 @@ public:
 	// assisted); with none of a kind being built, and no job of ours for one, we start one at NOW after a random
 	// escalation.delay. Off: the jobs raised drop back to NORMAL
 	void UpdateEscalation(bool isOn);
-	// Escalation has superweapon work: a frame or job of ours or an ally's, or a start due with something to pick.
-	// Factories pause only then (singus alone don't stop the army)
+	// Escalation has live superweapon work: a frame, a job of ours (placed, with builders, or younger than
+	// escalation.stale), or an ally's claim. Factories pause only then: not for a start timer, nor for singus alone
 	bool IsEscalationBusy() const { return isEscalationBusy; }
 	bool IsEscalationTask(const IBuilderTask* task) const {
 		return escalationTasks.find(const_cast<IBuilderTask*>(task)) != escalationTasks.end();
@@ -159,11 +159,14 @@ private:
 		int startFrame = -1;
 		bool isLogged = false;  // "nothing to start" logged since the timer ran out
 		bool isFrontStale = false;  // the last front job went stale: the next one is placed as the rest
+		int staleCount = 0;  // jobs dropped stale in a row: the next start waits 2^count x as long (up to 2 min)
 	};
 	std::array<SEscProject, ESC_KINDS> escProjects;
 	// Own unplaced escalation jobs without builders: since when. Past escalation.stale they are dropped, and
 	// until then they hold the kind (claim, factory pause)
 	std::map<IBuilderTask*, int> escIdleSince;
+	// Jobs escalation started itself (the only ones a stale wait drops; kept through an off spell)
+	std::set<IBuilderTask*> escStarted;
 	bool isEscalationBusy = false;
 public:
 private:
