@@ -311,6 +311,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 
 	// The overdrive gadget puts gridNumber on every grid building, and the grid's capacity (OD_gridMaximum) on its
 	// energy buildings and pylons, not on mexes or consumers. All of a grid carry the same value: read it once per grid.
+	// Nanoframes are in: the game links them from creation (their energy counts only once finished).
 	// Paralysed or disarmed ones are out of the grid and keep a stale gridNumber, so they are left out.
 	// By def id: allied units' defs can belong to another AI instance on our ally team
 	std::unordered_map<int, float> capacities;
@@ -323,7 +324,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 		}
 		const float range = GetPylonRange(cdef->GetId());
 		Unit* u = unit->GetUnit();
-		if ((range <= 0.f) || u->IsBeingBuilt() || u->IsParalyzed() || (u->GetRulesParamFloat("disarmed", 0.f) > 0.f)) {
+		if ((range <= 0.f) || u->IsParalyzed() || (u->GetRulesParamFloat("disarmed", 0.f) > 0.f)) {
 			continue;
 		}
 		const int grid = (int)u->GetRulesParamFloat("gridNumber", 0.f);

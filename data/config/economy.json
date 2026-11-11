@@ -56,7 +56,7 @@
 		},
 
 		// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, Desolator, Lucifer, strider hub, superweapons)
-		// work only on a grid with that much energy. Finished ones the game reports unpowered for 2 reads in a row
+		// work only on a grid with that much energy. Ours (from the first nanoframe) the game reports unpowered for 2 reads in a row
 		// (10 s apart) get energypylons, one at a time, from their own grid towards the nearest other grid with
 		// margin x neededlink, until they are powered. Superweapons are only drawn while some grid has that much, and
 		// porc consumers are only built where such a grid is in reach of max_pylons

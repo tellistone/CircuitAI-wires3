@@ -596,6 +596,10 @@ void CEconomyManager::Init()
 
 int CEconomyManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 {
+	// The game puts grid buildings in the grid from their first nanoframe: link it while it is being built, so it
+	// works the moment it finishes (a superweapon takes minutes)
+	WatchGridLink(unit);
+
 	auto search = createdHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != createdHandler.end()) {
 		search->second(unit, builder);
@@ -629,10 +633,8 @@ int CEconomyManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 
 int CEconomyManager::UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId)
 {
-	// An ally that drops shares its units: a finished Big Bertha it gave us is ours to power
-	if (!unit->GetUnit()->IsBeingBuilt()) {
-		WatchGridLink(unit);
-	}
+	// An ally that drops shares its units: a Big Bertha it gave us is ours to power
+	WatchGridLink(unit);
 	return 0; //signaling: OK
 }
 
@@ -1885,8 +1887,9 @@ bool CEconomyManager::IsGridReachable(CCircuitDef* cdef, const AIFloat3& pos)
 void CEconomyManager::WatchGridLink(CCircuitUnit* unit)
 {
 	if ((gridLinkMaxPylons > 0) && IsGridConsumer(unit->GetCircuitDef())) {
-		// First read after one slow update of the overdrive gadget: it marks every new consumer unpowered at first
-		gridLinks[unit->GetId()] = {0, circuit->GetLastFrame() + FRAMES_PER_SEC * 2, 0, 0, -RgtVector, 0};
+		// Kept if already watched (created, then finished). First read after one slow update of the overdrive
+		// gadget: it marks every new consumer unpowered at first
+		gridLinks.emplace(unit->GetId(), SGridLink{0, circuit->GetLastFrame() + FRAMES_PER_SEC * 2, 0, 0, -RgtVector, 0});
 	}
 }
 

@@ -49,7 +49,7 @@ public:
 		int grid;  // the game's gridNumber
 		float capacity;  // that grid's energy capacity (OD_gridMaximum), 0 = no energy in it
 	};
-	// Finished grid buildings of our ally team (ours and allies'), as the game groups them. Cached for 1 s
+	// Grid buildings of our ally team (ours and allies', nanoframes included), as the game groups them. Cached for 1 s
 	const std::vector<SGridNode>& GetGridNodes();
 
 	void SetAuthority(CCircuitAI* authority) { circuit = authority; }

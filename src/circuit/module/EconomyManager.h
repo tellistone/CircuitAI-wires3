@@ -350,7 +350,7 @@ private:
 	};
 	std::map<CCircuitDef*, SRearInfo> rearInfos;  // economy.energy.rear: energy built behind the base
 
-	// Grid link watchdog (economy.energy.grid_link): our finished grid consumers that the game reports as unpowered
+	// Grid link watchdog (economy.energy.grid_link): our grid consumers (nanoframes too) that the game reports as unpowered
 	// get pylons, one at a time, towards the nearest other grid with enough energy
 	struct SGridLink {
 		int darkReads;  // unpowered reads in a row
@@ -361,7 +361,7 @@ private:
 		int grid;  // the game's gridNumber the queued pylon grows
 	};
 	std::map<ICoreUnit::Id, SGridLink> gridLinks;
-	void WatchGridLink(CCircuitUnit* unit);  // a finished grid consumer of ours
+	void WatchGridLink(CCircuitUnit* unit);  // a grid consumer of ours, from its nanoframe on
 	void AbortGridPylon(const SGridLink& info);  // its queued pylon, unless started
 	int gridLinkMaxPylons;  // most pylons per consumer, 0 = watchdog off
 	float gridLinkMargin;  // capacity needed = margin x neededlink
