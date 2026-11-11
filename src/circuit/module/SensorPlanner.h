@@ -38,9 +38,9 @@ class IBuilderTask;
  * - A builder between jobs, with a factory up and no NOW job waiting, builds a radar nearby first (a NOW job, stalls
  *   or not) when its AI's budget holds one: choke.radar.share of its income, at most two radars' worth, starting
  *   with one. So radar follows the builders as they expand, with no walks for it. The spot is one of the candidates
- *   within 600 elmos or the highest buildable cell there: of those that add choke.radar.min_gain of the total
- *   weight (and, when the builder stands in coverage, whose view is at least choke.radar.inside new by weight), the
- *   one with the most uncovered weight in its viewshed for 1 + risk.
+ *   within 600 elmos or the highest buildable cell there: the one with the most uncovered weight in its viewshed
+ *   for 1 + risk, if that is choke.radar.min_gain of the total weight (and, when the builder stands in coverage,
+ *   its view is at least choke.radar.inside new by weight).
  *   It must be reachable and free of threat, and stand 500 elmos from other radars (closer, ISensorTask drops the
  *   job). Risk is 1 for each radar lost near it, halving every 5 minutes. A job its builder leaves is dropped
  *   after 3 s.

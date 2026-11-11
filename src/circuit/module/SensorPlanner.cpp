@@ -122,9 +122,21 @@ AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(c
 		return -RgtVector;  // no map yet
 	}
 	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
+	const int width = traffic.GetWidth();
 	const AIFloat3 pos = unit->GetPos(circuit->GetLastFrame());
 	const CChokeMap::SConfig& config = circuit->GetChokeMap()->GetConfig();
-	// Standing in our radar, only a radar that sees mostly new ground
+	const float minGain = config.radarGain * totalWeight;
+	// Too little uncovered weight in sight of any spot near it (once the map is covered): no search
+	const float span = REACH + radarDef->GetDef()->GetRadarRadius();
+	float nearGain = 0.f;
+	ForEachCellIn(width, traffic.GetHeight(), traffic.GetCellSize(), pos.x - span, pos.z - span, pos.x + span,
+			pos.z + span, [&](int x, int z) {
+		nearGain += isCovered[z * width + x] ? 0.f : weights[z * width + x];
+	});
+	if (nearGain < minGain) {
+		return -RgtVector;
+	}
+	// Standing in our radar, only a radar whose view is choke.radar.inside new
 	const float minShare = isCovered[traffic.IndexAt(pos.x, pos.z)] ? config.radarInside : 0.f;
 	// The candidates near it, and the highest buildable cell near it (a block's candidate can stand further off)
 	auto isNear = [&pos](const AIFloat3& c) { return c.SqDistance2D(pos) <= SQUARE(REACH); };
@@ -141,16 +153,14 @@ AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(c
 			return p.pos.SqDistance2D(c) < SQUARE(RADAR_NEAR);
 		});
 	};
-	const float minGain = config.radarGain * totalWeight;
 	AIFloat3 bestPos = -RgtVector;
 	float bestScore = 0.f;
 	for (const AIFloat3& c : spots) {
 		float share;
-		const float gain = GetGain(c, share);
-		if ((gain < minGain) || (share < minShare)) {
+		const float score = GetGain(c, share) / (1.f + GetRisk(c));  // where radars die, it must see more
+		if ((score < minGain) || (share < minShare)) {
 			continue;
 		}
-		const float score = gain / (1.f + GetRisk(c));
 		if ((score > bestScore) && isFree(c) && isOk(c)) {  // the costly tests last
 			bestScore = score;
 			bestPos = c;

@@ -180,18 +180,21 @@ enemy territory) or in our territory.
 Radar is built by builders as they expand, on every AI of the team, with no walks for it. Once the AI's first
 factory stands, a builder that finishes a job builds a radar nearby first when its AI's budget holds one, unless a
 NOW job is waiting. Standing in coverage, it only does so where at least `choke.radar.inside` (25%) of the radar's
-view, by weight, is new, so radar near the coverage's edge still goes up but no radar doubles another. It's a NOW
+view, by weight, is new, so radar near the coverage's edge still goes up but no radar doubles another. On open
+ground 25% lets radars stand about 830 elmos apart, 0.4 about 1350 and 0.5 about 1700 (radius 2100). It's a NOW
 job, and it goes ahead even while metal stalls, because it's cheap and it's what lets the AI see raids coming. The
 budget is `choke.radar.share` of the AI's income, starts with one radar, so the first goes up in the opening, and
 holds two at most.
 
-The spot is one of the candidates within 600 elmos or the highest buildable cell there. Of those that add at least
-`choke.radar.min_gain` of the total weight (and pass the inside rule), it takes the one with the most uncovered
-weight in its view for 1 + risk. The spot must be reachable, have no threat on it (to the builder, or to a
-building there), and stand 500 elmos from other radars (closer, the job cancels itself). Risk is 1 for each radar
-lost nearby, halving every 5 minutes. A radar a builder was sent to build counts as coverage until a radar stands
-within 500 elmos of it, or for 90 s, so two builders never go for the same ground. A radar job its builder leaves
-is dropped after 3 s, so no other builder crosses the map for it.
+The spot is one of the candidates within 600 elmos or the highest buildable cell there: the one with the most
+uncovered weight in its view for 1 + risk, if that is at least `choke.radar.min_gain` of the total weight and it
+passes the inside rule. So where radars died lately, a spot must see more to be worth another. It must be
+reachable, have no threat on it (to the builder, or to a building there), and stand 500 elmos from other radars
+(closer, the job cancels itself). Risk is 1 for each radar lost nearby, halving every 5 minutes. A radar a builder
+was sent to build counts as coverage until a radar stands within 500 elmos of it, or for 90 s, so two builders
+never go for the same ground. A radar job its builder leaves is dropped after 3 s, so no other builder crosses the
+map for it. Once little is left uncovered near a builder, it skips the search: one sum over the cells any spot
+near it could see.
 
 Why not a queued job: a radar queued for any builder lost the pick to nearer work every time, waited out the stall
 rule, and was given up. Picking the spot for the builder at hand gets it built at once.
