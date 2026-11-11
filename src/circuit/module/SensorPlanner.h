@@ -39,8 +39,9 @@ class IBuilderTask;
  *   for each radar lost near it, halving every 5 minutes; a planned radar that no builder starts within 90 s, or
  *   that dies unfinished, counts as lost. At most one planned radar waits for a builder, and spending is capped at
  *   choke.radar.share of income.
- * - An idle constructor outside coverage gets the best candidate within 1000 elmos of it as a NOW job, if that adds
- *   min_gain and has no threat on it (MakeIdleRadar, on any AI of the team: the authority's planner picks the spot).
+ * - An idle constructor outside coverage gets a radar as a NOW job at the best of the candidates within 600 elmos of
+ *   it and the highest buildable cell there, if that adds min_gain and has no threat on it (MakeIdleRadar, on any AI
+ *   of the team: the authority's planner picks the spot).
  * A planned radar's view counts as covered until it is built or given up, so no second one goes there.
  * Candidates are tried best upper bound first (the weight in the square around them), at most 16 new viewsheds a
  * call; viewsheds are cached while their cell stays a candidate

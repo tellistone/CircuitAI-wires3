@@ -40,7 +40,7 @@ using namespace springai;
 #define TARGET_LIFT		20.f  // sight rays end this high above a cell's ground
 #define FRESH_VIEWS		16  // most viewsheds made per Update
 #define PLAN_TIMEOUT	(FRAMES_PER_SEC * 90)  // a planned radar no builder starts by then is given up
-#define IDLE_REACH		1000.f  // elmos: an idle constructor's radar goes this close to it
+#define IDLE_REACH		600.f  // elmos: an idle constructor's radar goes this close to it
 
 CSensorPlanner::CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef)
 		: circuit(circuit)
@@ -211,13 +211,37 @@ AIFloat3 CSensorPlanner::TakeIdleSpot(const AIFloat3& pos, const std::function<b
 	if (weights.empty() || (isCovered.size() != weights.size()) || isCovered[traffic.IndexAt(pos.x, pos.z)]) {
 		return -RgtVector;  // no plan yet, or it stands in our radar
 	}
+	// The planner's candidates near it, and the highest buildable cell near it (a block's candidate can be further)
+	std::vector<AIFloat3> spots;
+	for (const AIFloat3& c : candidates) {
+		if ((c.SqDistance2D(pos) <= SQUARE(IDLE_REACH)) && isOk(c)) {
+			spots.push_back(c);
+		}
+	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const int size = traffic.GetCellSize();
+	std::vector<std::pair<float, AIFloat3>> cells;
+	ForEachCellIn(traffic.GetWidth(), traffic.GetHeight(), size, pos.x - IDLE_REACH, pos.z - IDLE_REACH,
+			pos.x + IDLE_REACH, pos.z + IDLE_REACH, [&](int x, int z) {
+		AIFloat3 c((x + 0.5f) * size, 0.f, (z + 0.5f) * size);
+		if (c.SqDistance2D(pos) <= SQUARE(IDLE_REACH)) {
+			c.y = terrainMgr->GetHeightAt(c.x, c.z);
+			cells.push_back({c.y, c});
+		}
+	});
+	std::stable_sort(cells.begin(), cells.end(), [](const std::pair<float, AIFloat3>& a, const std::pair<float, AIFloat3>& b) {
+		return a.first > b.first;
+	});
+	for (unsigned i = 0; i < std::min<unsigned>(cells.size(), BUILD_TRIES); ++i) {
+		if (terrainMgr->CanBuildAt(radarDef, cells[i].second) && isOk(cells[i].second)) {
+			spots.push_back(cells[i].second);
+			break;
+		}
+	}
 	AIFloat3 bestPos = -RgtVector;
 	float bestScore = 0.f;
 	float bestGain = 0.f;
-	for (const AIFloat3& c : candidates) {
-		if ((c.SqDistance2D(pos) > SQUARE(IDLE_REACH)) || !isOk(c)) {
-			continue;
-		}
+	for (const AIFloat3& c : spots) {
 		float gain = 0.f;
 		for (int cell : GetViewshed(c)) {
 			gain += isCovered[cell] ? 0.f : weights[cell];

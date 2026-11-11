@@ -181,8 +181,9 @@ each radar lost nearby, halving every 5 minutes. A planned radar that no builder
 before it is finished, counts as lost. At most one planned radar waits for a builder at a time, and spending is
 capped at `choke.radar.share` of income.
 
-An idle constructor that stands outside coverage builds a radar first, as a NOW job: the best candidate within 1000
-elmos of it that it can reach, with no threat on it, if that adds `choke.radar.min_gain`. This works for every AI of
+An idle constructor that stands outside coverage builds a radar first, as a NOW job: the best of the candidates within
+600 elmos of it and the highest buildable cell there, that it can reach, with no threat on it, if that adds
+`choke.radar.min_gain`. This works for every AI of
 the team, and doesn't wait for the budget or the 15 s plan. A planned radar's view counts as covered until it is
 built or given up, so two constructors never go for the same ground.
 
