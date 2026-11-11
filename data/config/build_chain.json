@@ -67,7 +67,7 @@
 	"interval": 2,
 	"army_ratio": 2.0,
 	"terraform": true,
-	"enemy": ["staticheavyarty", "staticarty", "turretheavy", "turretantiheavy", "raveparty", "staticnuke", "zenith", "mahlazer", "energysingu"],
+	"enemy": ["staticheavyarty", "staticarty", "turretheavy", "turretantiheavy", "raveparty", "staticnuke", "zenith", "mahlazer"],
 	"super": {
 		"unit":   ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty"],
 		"weight": [ 0.20,        0.20,        0.20,     0.20,       0.20]
