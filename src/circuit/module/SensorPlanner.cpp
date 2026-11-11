@@ -41,6 +41,7 @@ using namespace springai;
 #define FRESH_VIEWS		16  // most viewsheds made per Update
 #define PLAN_TIMEOUT	(FRAMES_PER_SEC * 90)  // a planned radar no builder starts by then is given up
 #define IDLE_REACH		600.f  // elmos: an idle constructor's radar goes this close to it
+#define HORIZON_SEC		300.f  // a planned radar's worth: the coverage it adds over this long from now
 
 CSensorPlanner::CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef)
 		: circuit(circuit)
@@ -122,27 +123,34 @@ void CSensorPlanner::Update()
 	};
 
 	UpdateCandidates();
-	// Nearer our builders first, so it goes up soon: a quarter of the map's diagonal from the nearest halves its score
+	// Coverage over the next 5 minutes: a radar counts for the share of them it is up, once the builder that gets it
+	// up soonest has walked there (as the crow flies) and built it
 	const std::set<CCircuitUnit*>& workers = builderMgr->GetWorkers();
-	const float quarterDiag = CTerrainManager::GetTerrainDiagonal() * 0.25f;
-	auto travelOf = [&](const AIFloat3& pos) {
-		float minSq = std::numeric_limits<float>::max();
+	auto uptimeOf = [&](const AIFloat3& pos) {
+		float delay = workers.empty() ? 0.f : std::numeric_limits<float>::max();
 		for (CCircuitUnit* w : workers) {
-			minSq = std::min(minSq, w->GetPos(frame).SqDistance2D(pos));
+			CCircuitDef* wdef = w->GetCircuitDef();
+			if (wdef->CanBuild(radarDef)) {
+				delay = std::min(delay, w->GetPos(frame).distance2D(pos) / std::max(wdef->GetSpeed(), 1.f)
+						+ radarDef->GetBuildTime() / std::max(wdef->GetBuildSpeed(), 1.f));
+			}
 		}
-		return workers.empty() ? 1.f : 1.f + std::sqrt(minSq) / quarterDiag;
+		return std::max(1.f - delay / HORIZON_SEC, 0.f);
 	};
 	struct SScored {
 		AIFloat3 pos;
 		float bound;  // score at most
-		float divisor;  // cost x (1 + risk) x travel
+		float divisor;  // cost x (1 + risk) / uptime
 	};
 	std::vector<SScored> scored;
 	std::set<int> candidateCells;
 	for (const AIFloat3& pos : candidates) {
-		const float divisor = cost * (1.f + GetRisk(pos)) * travelOf(pos);
-		scored.push_back({pos, boundAt(pos) / divisor, divisor});
 		candidateCells.insert(traffic.IndexAt(pos.x, pos.z));
+		const float uptime = uptimeOf(pos);
+		if (uptime > 0.f) {
+			const float divisor = cost * (1.f + GetRisk(pos)) / uptime;
+			scored.push_back({pos, boundAt(pos) / divisor, divisor});
+		}
 	}
 	for (auto it = viewsheds.begin(); it != viewsheds.end();) {  // only today's candidates stay cached
 		it = (candidateCells.count(it->first) == 0) ? viewsheds.erase(it) : std::next(it);
