@@ -142,6 +142,7 @@ private:
 	int GetCloakRange(const CCircuitDef* edef) const;
 	int GetShieldRange(const CCircuitDef* edef) const;
 	float GetEnemyUnitThreat(const CEnemyUnit* e) const;
+	float GetOwnShieldMod(const CEnemyUnit* e) const;  // threat x this by the enemy's own shield charge
 	// The unit's threat layer: air for aircraft, amph for amphibious units, else surf; isSquad: its squad layer;
 	// isRaidView: of the raid view (no raid air layer). The 2-argument form: the view of the unit's task
 	float* GetLayer(CCircuitUnit* unit, bool isSquad, bool isRaidView) const;
@@ -164,6 +165,7 @@ private:
 	int mapSize;
 
 	float countPower;  // quota.group_count_power
+	float emptyShieldMod;  // quota.shield_empty_threat: threat x this for an own-shield enemy at empty shield
 	bool isCounting;  // countPower > 0: squad layers of their own, else they are the threat layers
 	float maxCount;  // most enemies (weighted) that could fire at one cell, last update
 	int countLogFrame;

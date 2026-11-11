@@ -67,6 +67,17 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 	}
 	isCounting = (countPower > 0.f);
 
+	// Shared map like group_count_power: the value of the AI that made it counts for all
+	constexpr float defEmptyShield = 1.f;
+	const Json::Value& qempty = quota.get("shield_empty_threat", defEmptyShield);
+	if (qempty.isNumeric() && (qempty.asFloat() >= 0.f) && (qempty.asFloat() <= 1.f)) {
+		emptyShieldMod = qempty.asFloat();
+	} else {
+		circuit->LOG("CONFIG %s: quota.shield_empty_threat must be a number 0..1, using %g",
+				circuit->GetSetupManager()->GetConfigName().c_str(), defEmptyShield);
+		emptyShieldMod = defEmptyShield;
+	}
+
 	for (SThreatData* data : {&threatData0, &threatData1}) {
 		data->airThreat.resize(mapSize, THREAT_BASE);
 		data->surfThreat.resize(mapSize, THREAT_BASE);
@@ -613,7 +624,22 @@ float CThreatMap::GetEnemyUnitThreat(const CEnemyUnit* e) const
 	// Its share of the shields over its cell (AddShields), its own shield included
 	int x, z;
 	PosToXZ(e->GetPos(), x, z);
-	return e->GetDamage() * sqrtf(health + shieldArray[z * width + x] * SHIELD_MOD);  // / unit->GetUnit()->GetMaxHealth();
+	return e->GetDamage() * GetOwnShieldMod(e)
+			* sqrtf(health + shieldArray[z * width + x] * SHIELD_MOD);  // / unit->GetUnit()->GetMaxHealth();
+}
+
+float CThreatMap::GetOwnShieldMod(const CEnemyUnit* e) const
+{
+	// A unit with its own shield fights worse as it drains: it's easily destroyed (quota.shield_empty_threat at
+	// empty), and a shield-fed weapon (Felon) fires slower, down to what the regen feeds (sqrt: threat goes as
+	// sqrt(dps)). By its own charge only: area shields over it count in its health. 1 at full, as def threat is
+	const CCircuitDef* edef = e->GetCircuitDef();
+	if ((edef == nullptr) || (edef->GetMaxShield() <= 0.f)) {
+		return 1.f;
+	}
+	const float charge = utils::clamp(e->GetShieldPower() / edef->GetMaxShield(), 0.f, 1.f);
+	const float floor = edef->GetShieldAmmoFloor();
+	return (emptyShieldMod + (1.f - emptyShieldMod) * charge) * sqrtf(floor + (1.f - floor) * charge);
 }
 
 void CThreatMap::Prepare(SThreatData& threatData)

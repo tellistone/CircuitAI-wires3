@@ -225,6 +225,9 @@ public:
 	int GetThreatRange(ThreatType type) const { return threatRange[static_cast<ThreatT>(type)]; }
 	float GetShieldRadius() const { return shieldRadius; }
 	float GetMaxShield() const { return maxShield; }
+	// Shield-fed weapon (customParam shield_drain: Felon): the share of its full fire rate it keeps on an empty shield,
+	// its shield's regen / the charge it spends a second at full rate. 1: no weapon fires from the shield
+	float GetShieldAmmoFloor() const { return shieldAmmoFloor; }
 	int GetFireState() const { return fireState; }
 	int GetReloadTime() const { return reloadTime; }
 	int GetCategory() const { return category; }
@@ -375,6 +378,7 @@ private:
 	std::array<int, static_cast<ThreatT>(ThreatType::_SIZE_)> threatRange;
 	float shieldRadius;
 	float maxShield;
+	float shieldAmmoFloor;
 	FireType fireState;
 	int reloadTime;  // frames in ticks
 	int category;
