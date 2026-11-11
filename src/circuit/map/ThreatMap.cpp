@@ -67,12 +67,26 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 	}
 	isCounting = (countPower > 0.f);
 
+	// Shared map like group_count_power: the value of the AI that made it counts for all
+	auto readQuota = [&](const char* key, float def, float lo, float hi) {
+		const Json::Value& v = quota.get(key, def);
+		if (v.isNumeric() && (v.asFloat() >= lo) && (v.asFloat() <= hi)) {
+			return v.asFloat();
+		}
+		circuit->LOG("CONFIG %s: quota.%s must be a number %g..%g, using %g",
+				circuit->GetSetupManager()->GetConfigName().c_str(), key, lo, hi, def);
+		return def;
+	};
+	emptyShieldMod = readQuota("shield_empty_threat", 1.f, 0.f, 1.f);
+	ammoTime = readQuota("shield_ammo_time", 10.f, 0.1f, 600.f);
+
 	for (SThreatData* data : {&threatData0, &threatData1}) {
 		data->airThreat.resize(mapSize, THREAT_BASE);
 		data->surfThreat.resize(mapSize, THREAT_BASE);
 		data->amphThreat.resize(mapSize, THREAT_BASE);
 		data->cloakThreat.resize(mapSize, THREAT_BASE);
 		data->shield.resize(mapSize, 0.f);
+		data->shieldAmmo.resize(mapSize, 0.f);
 		// Raid view: always its own layers (the multipliers come from behaviour.json, read after this). With every
 		// multiplier at 1 they come out equal to surf and amph (FinishLayers)
 		data->raidSurf.resize(mapSize, THREAT_BASE);
@@ -93,6 +107,7 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 	drawRaid.amph = threatData1.raidAmph.data();
 	drawCloakThreat = threatData1.cloakThreat.data();
 	drawShieldArray = threatData1.shield.data();
+	drawShieldAmmoArray = threatData1.shieldAmmo.data();
 
 	const Json::Value& slack = quota["slack_mod"];
 	slackMod.allMod = slack.get("all", 1.f).asFloat();
@@ -101,6 +116,7 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 	slackMod.speedMod = speedSlack.get((unsigned)0, 1.f).asFloat() * DEFAULT_SLACK / squareSize;
 	slackMod.speedModMax = speedSlack.get((unsigned)1, 2).asInt() * DEFAULT_SLACK / squareSize;
 	constexpr float allowedRange = 2000.f;
+	ammoReach = 0.f;
 	for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
 		float slack = squareSize - 1 + cdef.GetAoe() / 2 + DEFAULT_SLACK * slackMod.allMod;
 		if (cdef.IsMobile()) {
@@ -126,6 +142,9 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 
 		cdef.SetThreatRange(CCircuitDef::ThreatType::CLOAK, GetCloakRange(&cdef));
 		cdef.SetThreatRange(CCircuitDef::ThreatType::SHIELD, GetShieldRange(&cdef));
+		if (cdef.GetShieldDrain() > 0.f) {
+			ammoReach = std::max(ammoReach, cdef.GetShieldRadius());
+		}
 	}
 }
 
@@ -524,6 +543,7 @@ void CThreatMap::AddShields(const std::vector<SEnemyData>& hostiles, const std::
 	// threat, so a share on them would be lost. A cell is inside when its centre is within the real shield radius
 	// (or it is the shield's own cell); the units are counted by the same test, so the shares add up to the charge.
 	std::vector<int> armedCells;  // cell of each armed enemy that a shield can cover
+	std::vector<int> fedCells;  // of those, the shield-fed ones (Felon)
 	armedCells.reserve(hostiles.size());
 	for (const SEnemyData& e : hostiles) {
 		if ((e.cdef == nullptr) || e.isBeingBuilt || e.IsFake()) {
@@ -533,6 +553,9 @@ void CThreatMap::AddShields(const std::vector<SEnemyData>& hostiles, const std::
 		PosToXZ(e.pos, x, z);
 		if ((x >= 0) && (x < width) && (z >= 0) && (z < height)) {
 			armedCells.push_back(z * width + x);
+			if (e.cdef->GetShieldDrain() > 0.f) {
+				fedCells.push_back(z * width + x);
+			}
 		}
 	}
 	if (armedCells.empty()) {
@@ -541,48 +564,86 @@ void CThreatMap::AddShields(const std::vector<SEnemyData>& hostiles, const std::
 	for (const std::vector<SEnemyData>* enemies : {&hostiles, &peaces}) {
 		for (const SEnemyData& e : *enemies) {
 			if ((e.cdef != nullptr) && (e.cdef->GetShieldMount() != nullptr) && !e.isBeingBuilt && !e.IsFake()) {
-				AddShield(e, armedCells);
+				AddShield(e, armedCells, fedCells);
 			}
 		}
 	}
 }
 
-void CThreatMap::AddShield(const SEnemyData& e, const std::vector<int>& armedCells)
+inline bool CThreatMap::IsCellInRadius(const SEnemyData& e, float sqRadius, int x, int z) const
+{
+	// Its centre is within the radius, or it is e's own cell
+	int posx, posz;
+	PosToXZ(e.pos, posx, posz);
+	return ((x == posx) && (z == posz)) || (XZToPos(x, z).SqDistance2D(e.pos) <= sqRadius);
+}
+
+template<typename F>
+void CThreatMap::ForCellsInRadius(const SEnemyData& e, float radius, F&& f) const
+{
+	int posx, posz;
+	PosToXZ(e.pos, posx, posz);
+	const float sqRadius = SQUARE(radius);
+	const int range = int(radius) / squareSize + 1;
+	const int beginX = std::max(int(posx - range + 1),      0);
+	const int endX   = std::min(int(posx + range    ),  width);
+	const int beginZ = std::max(int(posz - range + 1),      0);
+	const int endZ   = std::min(int(posz + range    ), height);
+	for (int z = beginZ; z < endZ; ++z) {
+		for (int x = beginX; x < endX; ++x) {
+			if (IsCellInRadius(e, sqRadius, x, z)) {
+				f(z * width + x);
+			}
+		}
+	}
+}
+
+int CThreatMap::CountCellsInRadius(const SEnemyData& e, float radius, const std::vector<int>& cells) const
+{
+	const float sqRadius = SQUARE(radius);
+	int count = 0;
+	for (int index : cells) {
+		if (IsCellInRadius(e, sqRadius, index % width, index / width)) {
+			++count;
+		}
+	}
+	return count;
+}
+
+void CThreatMap::AddShield(const SEnemyData& e, const std::vector<int>& armedCells, const std::vector<int>& fedCells)
 {
 	if (e.shieldPower <= 0.f) {
 		return;
 	}
-	int posx, posz;
-	PosToXZ(e.pos, posx, posz);
-	const float sqRadius = SQUARE(e.cdef->GetShieldRadius());
-	auto isInside = [&](int x, int z) {
-		return ((x == posx) && (z == posz)) || (XZToPos(x, z).SqDistance2D(e.pos) <= sqRadius);
-	};
-
-	int count = 0;
-	for (int index : armedCells) {
-		if (isInside(index % width, index / width)) {
-			++count;
-		}
+	if (!fedCells.empty() && e.cdef->IsShieldLinked()) {
+		AddShieldAmmo(e, fedCells);
 	}
+
+	const float radius = e.cdef->GetShieldRadius();
+	const int count = CountCellsInRadius(e, radius, armedCells);
 	if (count == 0) {
 		return;  // shields no armed enemy
 	}
 	const float shieldVal = e.shieldPower / count;
+	ForCellsInRadius(e, radius, [this, shieldVal](int index) {
+		drawShieldArray[index] += shieldVal;
+	});
+}
 
-	const int rangeShield = e.cdef->GetThreatRange(CCircuitDef::ThreatType::SHIELD);  // bounds: cells test the radius
-	const int beginX = std::max(int(posx - rangeShield + 1),      0);
-	const int endX   = std::min(int(posx + rangeShield    ),  width);
-	const int beginZ = std::max(int(posz - rangeShield + 1),      0);
-	const int endZ   = std::min(int(posz + rangeShield    ), height);
-
-	for (int z = beginZ; z < endZ; ++z) {
-		for (int x = beginX; x < endX; ++x) {
-			if (isInside(x, z)) {
-				drawShieldArray[z * width + x] += shieldVal;
-			}
-		}
+void CThreatMap::AddShieldAmmo(const SEnemyData& e, const std::vector<int>& fedCells)
+{
+	// Zero-K's shield link moves charge between touching shields (centres within the sum of their radii), so a
+	// Felon fires from the linked ones too. Its charge is shared by the shield-fed enemies it touches, so that
+	// two Felons in one ball don't both count it all
+	const float reach = e.cdef->GetShieldRadius() + ammoReach;
+	const int count = CountCellsInRadius(e, reach, fedCells);
+	if (count == 0) {
+		return;
 	}
+	const float ammoVal = e.shieldPower / count;
+	ForCellsInRadius(e, reach, [this, ammoVal](int index) {
+		drawShieldAmmoArray[index] += ammoVal;
+	});
 }
 
 int CThreatMap::GetCloakRange(const CCircuitDef* edef) const
@@ -613,7 +674,36 @@ float CThreatMap::GetEnemyUnitThreat(const CEnemyUnit* e) const
 	// Its share of the shields over its cell (AddShields), its own shield included
 	int x, z;
 	PosToXZ(e->GetPos(), x, z);
-	return e->GetDamage() * sqrtf(health + shieldArray[z * width + x] * SHIELD_MOD);  // / unit->GetUnit()->GetMaxHealth();
+	const int index = z * width + x;
+	return e->GetDamage() * GetOwnShieldMod(e, index)
+			* sqrtf(health + shieldArray[index] * SHIELD_MOD);  // / unit->GetUnit()->GetMaxHealth();
+}
+
+float CThreatMap::GetOwnShieldMod(const CEnemyUnit* e, int index) const
+{
+	// A unit with its own shield fights worse as it drains: it's easily destroyed (quota.shield_empty_threat at
+	// empty; area shields over it count in its health instead). 1 at full, as def threat is
+	const CCircuitDef* edef = e->GetCircuitDef();
+	if ((edef == nullptr) || (edef->GetMaxShield() <= 0.f)) {
+		return 1.f;
+	}
+	const float drain = edef->GetShieldDrain();
+	// Shield-fed weapon (Felon): the charge it can draw on, its own and its share of the linked shields'
+	// (AddShieldAmmo), which also refill its own, so a Felon firing in a full ball doesn't read as drained.
+	// At least its own: the cell may be from before it moved
+	const float charge = (drain > 0.f) ? std::max(shieldAmmoArray[index], e->GetShieldPower()) : e->GetShieldPower();
+	const float fill = utils::clamp(charge / edef->GetMaxShield(), 0.f, 1.f);
+	float mod = emptyShieldMod + (1.f - emptyShieldMod) * fill;
+	if (drain > 0.f) {
+		// The share of its full fire rate that charge and its regen keep up over quota.shield_ammo_time, against a
+		// lone Felon's at full charge (def threat). sqrt: threat goes as sqrt(dps). Empty: what the regen feeds; with
+		// full linked shields more than 1, up to sqrt(1 / a lone full Felon's share)
+		auto fireShare = [this, edef, drain](float ammo) {
+			return std::min((ammo / ammoTime + edef->GetShieldRegen()) / drain, 1.f);
+		};
+		mod *= sqrtf(fireShare(charge) / fireShare(edef->GetMaxShield()));
+	}
+	return mod;
 }
 
 void CThreatMap::Prepare(SThreatData& threatData)
@@ -623,6 +713,7 @@ void CThreatMap::Prepare(SThreatData& threatData)
 	std::fill(threatData.amphThreat.begin(), threatData.amphThreat.end(), THREAT_BASE);
 	std::fill(threatData.cloakThreat.begin(), threatData.cloakThreat.end(), THREAT_BASE);
 	std::fill(threatData.shield.begin(), threatData.shield.end(), 0.f);
+	std::fill(threatData.shieldAmmo.begin(), threatData.shieldAmmo.end(), 0.f);
 	// Raid layers hold differences while drawing (FinishLayers): 0, not THREAT_BASE
 	std::fill(threatData.raidSurf.begin(), threatData.raidSurf.end(), 0.f);
 	std::fill(threatData.raidAmph.begin(), threatData.raidAmph.end(), 0.f);
@@ -634,6 +725,7 @@ void CThreatMap::Prepare(SThreatData& threatData)
 	drawRaid.amph = threatData.raidAmph.data();
 	drawCloakThreat = threatData.cloakThreat.data();
 	drawShieldArray = threatData.shield.data();
+	drawShieldAmmoArray = threatData.shieldAmmo.data();
 
 	if (isCounting) {
 		std::fill(threatData.airSquad.begin(), threatData.airSquad.end(), 0.f);
@@ -780,6 +872,7 @@ void CThreatMap::SetReadPointers(SThreatData& threatData)
 	amphThreat = threatData.amphThreat.data();
 	cloakThreat = threatData.cloakThreat.data();
 	shieldArray = threatData.shield.data();
+	shieldAmmoArray = threatData.shieldAmmo.data();
 	// Not counting: the squad layers are the threat layers (squad threat = threat). Read only: the draw pointers
 	// never alias them (Prepare), or drawing the count would add into the threat
 	airSquad = isCounting ? threatData.airSquad.data() : airThreat;
