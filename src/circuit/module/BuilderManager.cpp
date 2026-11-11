@@ -1719,6 +1719,7 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		for (int kind = 0; kind < (int)escProjects.size(); ++kind) {
 			allyTeam->ReleaseEscalation(kind, aiId);
 		}
+		isEscalationBusy = false;
 		return;  // start timers kept: back on soon, a timer that ran out starts at once
 	}
 
@@ -1761,6 +1762,7 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		}
 	}
 
+	isEscalationBusy = false;
 	for (int kind = 0; kind < (int)escProjects.size(); ++kind) {
 		SEscProject& project = escProjects[kind];
 		// The claim tells allied AIs we hold a job before its frame shows (a builder may walk a minute to the site)
@@ -1772,6 +1774,9 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		if (isBuilt[kind] || isOwnJob[kind] || allyTeam->IsEscalationClaimed(kind, frame, aiId)) {
 			project.startFrame = -1;
 			project.isLogged = false;
+			if (kind == 0) {
+				isEscalationBusy = true;
+			}
 			continue;
 		}
 		// None under way: start our own after a random wait
@@ -1790,8 +1795,21 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 			project.startFrame = -1;
 			project.isLogged = false;
 		} else if (!project.isLogged) {
-			circuit->LOG("ESCALATION: no %s to start (limits, income, or no site or grid)", (kind == 0) ? "superweapon" : "singu");
+			circuit->LOG("ESCALATION: no %s to start (limits, or no site or grid)", (kind == 0) ? "superweapon" : "singu");
 			project.isLogged = true;
+		}
+	}
+	// A superweapon start pending (timer running), or just started, counts too; "nothing to start" doesn't
+	const SEscProject& superProject = escProjects[0];
+	if ((superProject.startFrame >= 0) && !superProject.isLogged) {
+		isEscalationBusy = true;
+	}
+	if (!isEscalationBusy) {
+		for (const IBuilderTask* task : escalationTasks) {
+			if (task->GetBuildType() == IBuilderTask::BuildType::BIG_GUN) {
+				isEscalationBusy = true;  // started this update
+				break;
+			}
 		}
 	}
 }

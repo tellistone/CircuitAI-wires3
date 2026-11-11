@@ -138,6 +138,9 @@ public:
 	// assisted); with none of a kind being built, and no job of ours for one, we start one at NOW after a random
 	// escalation.delay. Off: the jobs raised drop back to NORMAL
 	void UpdateEscalation(bool isOn);
+	// Escalation has superweapon work: a frame or job of ours or an ally's, or a start due with something to pick.
+	// Factories pause only then (singus alone don't stop the army)
+	bool IsEscalationBusy() const { return isEscalationBusy; }
 	bool IsEscalationTask(const IBuilderTask* task) const {
 		return escalationTasks.find(const_cast<IBuilderTask*>(task)) != escalationTasks.end();
 	}
@@ -155,6 +158,7 @@ private:
 		bool isLogged = false;  // "nothing to start" logged since the timer ran out
 	};
 	std::array<SEscProject, 2> escProjects;
+	bool isEscalationBusy = false;
 public:
 private:
 	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);

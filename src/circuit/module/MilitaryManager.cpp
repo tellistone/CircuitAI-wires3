@@ -1067,7 +1067,7 @@ void CMilitaryManager::ReadConfig()
 	const Json::Value& escRatio = esc["army_ratio"];  // [<on>, <off>], or one number for both
 	if (escRatio.isArray()) {
 		escalation.armyOn = escRatio.get((unsigned)0, 2.f).asFloat();
-		escalation.armyOff = std::min(escRatio.get((unsigned)1, 1.4f).asFloat(), escalation.armyOn);
+		escalation.armyOff = std::min(escRatio.get((unsigned)1, 1.5f).asFloat(), escalation.armyOn);
 	} else if (escRatio.isNumeric()) {
 		escalation.armyOn = escalation.armyOff = escRatio.asFloat();
 	}
@@ -3059,16 +3059,28 @@ CCircuitDef* CMilitaryManager::DiceEscalationSuper() const
 	// power escalation may use, whichever is less. Allies assisting only make it quicker
 	const float rate = std::min(std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome()),
 			circuit->GetBuilderManager()->GetBuildPower() * escalation.builderShare);
+	// Affordable ones first; with none affordable, any of the others (a slow superweapon beats an idle army)
 	std::vector<const SSuperInfo*> candidates;
+	std::vector<const SSuperInfo*> slowCandidates;
 	float magnitude = 0.f;
+	float slowMagnitude = 0.f;
 	for (const SSuperInfo& info : escalation.supers) {
-		if (info.cdef->IsAvailable(frame) && (info.cdef->GetCostM() <= rate * escalation.maxBuildSec)
-			&& (!economyMgr->IsGridConsumer(info.cdef)
-				|| economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef))))
+		if (!info.cdef->IsAvailable(frame) || (economyMgr->IsGridConsumer(info.cdef)
+			&& !economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef))))
 		{
+			continue;
+		}
+		if (info.cdef->GetCostM() <= rate * escalation.maxBuildSec) {
 			candidates.push_back(&info);
 			magnitude += info.weight;
+		} else {
+			slowCandidates.push_back(&info);
+			slowMagnitude += info.weight;
 		}
+	}
+	if (candidates.empty()) {
+		candidates.swap(slowCandidates);
+		magnitude = slowMagnitude;
 	}
 	if (candidates.empty()) {
 		return nullptr;
@@ -3156,8 +3168,8 @@ void CMilitaryManager::UpdateEscalation()
 	const bool isTerra = !escalation.isNeedTerra || escalation.isTerraSeen;
 
 	bool isOn = isArmy && isTerra && isEnemyTech;
-	if (!isOn && escalation.isOn && (frame < escalation.onFrame + escalation.minOnFrames)) {
-		isOn = true;  // min_on: not off this soon after it turned on
+	if (!isOn && escalation.isOn && isArmy && (frame < escalation.onFrame + escalation.minOnFrames)) {
+		isOn = true;  // min_on: not off this soon after it turned on, unless the army fell below armyOff
 	}
 	if (isOn != escalation.isOn) {
 		circuit->LOG("ESCALATION %s: allied army %.0f m vs enemy %.0f m (need x%.1f), terraform %s, enemy tech %s",

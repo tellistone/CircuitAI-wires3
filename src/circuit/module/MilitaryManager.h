@@ -231,16 +231,17 @@ public:
 
 	// Escalation mode (build_chain.json "escalation"): turns on when the allied team's mobile army is at least
 	// army_ratio[0] x the known enemy one, an enemy unit of escalation.enemy is known, and (terraform: true) a
-	// terraunit has been seen this game; stays on for at least min_on s, then while the army stays at army_ratio[1] x
-	// and the other two hold. Factories then build constructors only, and CBuilderManager::UpdateEscalation sends
+	// terraunit has been seen this game. Off as soon as the army falls below army_ratio[1] x; off when the other two
+	// fail, but not within min_on s of turning on. Factories then build constructors only (while
+	// CBuilderManager::IsEscalationBusy), and CBuilderManager::UpdateEscalation sends
 	// builders to superweapons and singus at NOW. Updated every interval s
 	bool IsEscalation() const { return escalation.isOn; }
 	float GetEscalationBuilderShare() const { return escalation.builderShare; }  // most of our build power on it
 	bool IsEscalationComm() const { return escalation.isComm; }  // commanders take escalation jobs
 	bool IsEscalationSuper(const CCircuitDef* cdef) const;
 	CCircuitDef* GetEscalationSingu() const { return escalation.singuDef; }
-	// Weighted pick among escalation.super that are available, can be powered and are affordable (cost over the lower
-	// of income and our escalation build power within max_build_sec); nullptr = none now
+	// Weighted pick among escalation.super that are available and can be powered, the affordable ones (cost over the
+	// lower of income and our escalation build power within max_build_sec) first; nullptr = none now
 	CCircuitDef* DiceEscalationSuper() const;
 	int RollEscalationDelay() const;  // frames, random within escalation.delay
 	// Where escalation builds superDef: escalation.front ones on our frontline cluster (finished, not enemy-held, the
@@ -685,7 +686,7 @@ private:
 		bool isEnabled = false;
 		bool isOn = false;
 		float armyOn = 2.f;  // allied mobile army metal / known enemy mobile army metal to turn on
-		float armyOff = 1.4f;  // ... below which it turns off
+		float armyOff = 1.5f;  // ... below which it turns off, min_on or not
 		int minOnFrames = FRAMES_PER_SEC * 60;  // shortest time on
 		int onFrame = -1;  // when it last turned on
 		float maxBuildSec = 420.f;  // affordability of a superweapon

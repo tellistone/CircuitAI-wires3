@@ -58,17 +58,22 @@
 //     <army_ratio>[0] x the known enemy mobile army (quota.enemy_half_life fading, as economy.ms_pull_army)
 //   - an enemy unit of <enemy> is known (seen and not seen dying)
 //   - <terraform>: a terraunit (economy.terra) has been seen this game, ours, an ally's or an enemy's
-// It stays on for at least <min_on> s, then while the army stays at <army_ratio>[1] x and the other two hold.
-// While on: factories build constructors only (no army); builders go at NOW to an allied (ours included) <super> or
-// <singu> being built, up to <builder_share> of our build power, commanders only with <comm>; with none of a kind
-// under way (and no allied CircuitAI holding a job for one), we start one at NOW after a random <delay> s: a <super>
-// by weight among those under their behaviour.json limit/since, with a grid in reach (as porcupine.superweapon), and
-// buildable within <max_build_sec> s at the lower of income and that build power; the singu at its
-// economy.energy.rear site. <front> supers are built on our frontline cluster, the rest as porcupine.superweapon
+// Off as soon as the army falls below <army_ratio>[1] x; off when one of the other two fails, but not within
+// <min_on> s of turning on. While on:
+//   - factories build constructors only (no army) while there is superweapon work: a frame or job, ours or an
+//     ally's, or a start due with something to pick (singus alone don't pause them)
+//   - builders go at NOW to an allied (ours included) <super> or <singu> being built, up to <builder_share> of our
+//     build power, commanders only with <comm>
+//   - with none of a kind under way (and no allied CircuitAI holding a job for one), we start one at NOW after a
+//     random <delay> s: a <super> by weight among those under their behaviour.json limit/since and with a grid in
+//     reach (as porcupine.superweapon), the ones buildable within <max_build_sec> s at the lower of income and that
+//     build power first (any of the rest when none is); the singu at its economy.energy.rear site
+// <front> supers are built on our frontline cluster, the rest as porcupine.superweapon. Off: escalation jobs drop
+// to NORMAL priority and stay queued
 "escalation": {
 	"enable": true,
 	"interval": 2,
-	"army_ratio": [2.0, 1.4],  // [<on>, <off>]
+	"army_ratio": [2.0, 1.5],  // [<on>, <off>]
 	"min_on": 60,
 	"max_build_sec": 420,
 	"builder_share": 0.7,
