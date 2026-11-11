@@ -18,8 +18,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     minutes. Narrow chokes keep a lane free of buildings.
   - Scored spots (F): towers, base towers and hold spots go to the best spot by covered traffic, height, threat and
     builder distance. Spots freeze once queued. The porc sweep visits points by uncovered traffic × income.
-  - Radar planner (B): radar where it covers the most weighted ground for its cost, while each new radar adds at
-    least `choke.radar.min_gain` of it.
+  - Radar planner (B): radar where it covers the most weighted ground for its cost (enemy ground counts
+    `choke.radar.enemy` extra), while each new radar adds at least `choke.radar.min_gain` of it. An idle constructor
+    outside radar builds one nearby first.
   - Holding the line (C), forward objectives (D) and enemy-held choke rankings (E).
   - Expansion bonus for clusters behind a defended cut.
   - `choke_overlay` chat command: draws chokes, pockets, lines, rankings, traffic, spots, radar and regions with map
