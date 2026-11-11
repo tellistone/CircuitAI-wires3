@@ -36,9 +36,19 @@ public:
 	void NewEnemy(CEnemyUnit* e) const;
 
 	float GetAllThreatAt(const springai::AIFloat3& position) const;
+	/*
+	 * Two views of the same enemies. The plain view, and the raid view for units whose task IsRaidView (raid and
+	 * scout tasks): on the surface and amphibious layers each enemy's threat is x its type's raid_thr_mod
+	 * (CCircuitDef::GetRaidThrMod), its unit count weight is CCircuitDef::GetRaidCountWeight; air is the same in both.
+	 * GetThreatAt(unit), GetSquadThreatAt, GetSquadThreatExcl and routes (CPathFinder) read the unit's task's view.
+	 * SetThreatType and GetThreatAt(position) always read the plain view: other modules read that shared layer
+	 */
+	static bool IsRaidView(const CCircuitUnit* unit);
 	void SetThreatType(CCircuitUnit* unit);
 	float GetThreatAt(const springai::AIFloat3& position) const;
 	float GetThreatAt(CCircuitUnit* unit, const springai::AIFloat3& position) const;
+	// The plain view whatever the unit's task (CMilitaryManager::GetTakeableContested's builder wall)
+	float GetPlainThreatAt(CCircuitUnit* unit, const springai::AIFloat3& position) const;
 	/*
 	 * Squad threat, for squads (IFighterTask::IsSquadThreat) and their routes (Lanchester's square law): the
 	 * threat x (1 + quota.group_count_power x the number of enemies that can fire at the cell, each weighted by
@@ -59,9 +69,14 @@ public:
 	float* GetSurfThreatArray() { return surfThreat; }
 	float* GetAmphThreatArray() { return amphThreat; }
 	float* GetCloakThreatArray() { return cloakThreat; }
-	float* GetAirSquadArray() { return airSquad; }
-	float* GetSurfSquadArray() { return surfSquad; }
-	float* GetAmphSquadArray() { return amphSquad; }
+	// Route layers (CPathFinder::FillMapData): isRaidView: the raid view (air has none); isSquad: squad threat
+	float* GetAirLayer(bool isSquad) const { return isSquad ? airSquad : airThreat; }
+	float* GetSurfLayer(bool isRaidView, bool isSquad) const {
+		return isRaidView ? (isSquad ? raidSurfSquad : raidSurf) : (isSquad ? surfSquad : surfThreat);
+	}
+	float* GetAmphLayer(bool isRaidView, bool isSquad) const {
+		return isRaidView ? (isSquad ? raidAmphSquad : raidAmph) : (isSquad ? amphSquad : amphThreat);
+	}
 	int GetThreatMapWidth() const { return width; }
 	int GetThreatMapHeight() const { return height; }
 
@@ -85,6 +100,21 @@ private:
 		FloatVec airSquad;
 		FloatVec surfSquad;
 		FloatVec amphSquad;
+		// Raid view of surf and amph (IsRaidView); while drawing, the difference the enemies with a raid multiplier
+		// make (FinishLayers). Their squad layers: while drawing, the difference in the unit count; empty when
+		// group_count_power is 0
+		FloatVec raidSurf;
+		FloatVec raidAmph;
+		FloatVec raidSurfSquad;
+		FloatVec raidAmphSquad;
+	};
+	// Where an enemy's ground and water threat is drawn: one view's surf and amph layers, and their squad layers
+	// (the unit count; nullptr unless isCounting)
+	struct SDrawLayers {
+		float* surf;
+		float* amph;
+		float* surfSquad;
+		float* amphSquad;
 	};
 
 	CMapManager* manager;
@@ -99,8 +129,11 @@ private:
 	// count: what the enemy adds to the unit count of the squad layers where it adds threat
 	// (SEnemyData::GetCountWeight; 0 unless isCounting)
 	void AddEnemyAir(const SEnemyData& e, const int slack = 0, const float count = 0.f);  // Enemy AntiAir
-	void AddEnemyAmphConst(const SEnemyData& e, const int slack = 0, const float count = 0.f);  // Enemy AntiAmph
-	void AddEnemyAmphGradient(const SEnemyData& e, const int slack = 0, const float count = 0.f);  // Enemy AntiAmph
+	// Enemy AntiAmph, threat and count (may be < 0: a raid view difference) drawn into layers
+	void AddEnemyAmphConst(const SEnemyData& e, const int slack, const float threat, const float count,
+			const SDrawLayers& layers);
+	void AddEnemyAmphGradient(const SEnemyData& e, const int slack, const float threat, const float count,
+			const SDrawLayers& layers);
 	void AddDecloaker(const SEnemyData& e);
 	// Shields of hostile and peace enemies (Aspis is unarmed), each charge shared by the armed enemies inside it
 	void AddShields(const std::vector<SEnemyData>& hostiles, const std::vector<SEnemyData>& peaces);
@@ -109,9 +142,12 @@ private:
 	int GetCloakRange(const CCircuitDef* edef) const;
 	int GetShieldRange(const CCircuitDef* edef) const;
 	float GetEnemyUnitThreat(const CEnemyUnit* e) const;
-	// The unit's threat layer: air for aircraft, amph for amphibious units, else surf; isSquad: its squad layer
-	float* GetLayer(CCircuitUnit* unit, bool isSquad) const;
-	void ApplyCountPower(SThreatData& threatData);  // squad layers: enemy unit count -> squad threat
+	// The unit's threat layer: air for aircraft, amph for amphibious units, else surf; isSquad: its squad layer;
+	// isRaidView: of the raid view (no raid air layer). The 2-argument form: the view of the unit's task
+	float* GetLayer(CCircuitUnit* unit, bool isSquad, bool isRaidView) const;
+	float* GetLayer(CCircuitUnit* unit, bool isSquad) const { return GetLayer(unit, isSquad, IsRaidView(unit)); }
+	// After drawing: squad layers (enemy unit count) -> squad threat; raid layers (differences) -> raid view
+	void FinishLayers(SThreatData& threatData);
 
 	void Prepare(SThreatData& threatData);
 	void SetReadPointers(SThreatData& threatData);  // the layers GetThreatAt etc read: threatData's
@@ -131,6 +167,14 @@ private:
 	bool isCounting;  // countPower > 0: squad layers of their own, else they are the threat layers
 	float maxCount;  // most enemies (weighted) that could fire at one cell, last update
 	int countLogFrame;
+	// For the THREAT log (tuning raid_thr_mod): hostile enemies and those drawn on the raid view again (a raid
+	// multiplier) at the last update; Update's run time since the last log
+	int hostileCount = 0;
+	int raidModCount = 0;
+	float updateMsSum = 0.f;
+	float updateMsMax = 0.f;
+	int updateNum = 0;
+	void LogStats();
 
 	int rangeDefault;
 	int distCloak;
@@ -144,13 +188,11 @@ private:
 	SThreatData threatData0, threatData1;  // Double-buffer for threading
 	std::atomic<SThreatData*> pThreatData;
 	float* drawAirThreat;
-	float* drawSurfThreat;
-	float* drawAmphThreat;
 	float* drawCloakThreat;
 	float* drawShieldArray;
 	float* drawAirSquad;  // nullptr unless isCounting
-	float* drawSurfSquad;
-	float* drawAmphSquad;
+	SDrawLayers drawPlain;  // surf and amph of the plain view
+	SDrawLayers drawRaid;  // ... and of the raid view (differences)
 	bool isUpdating;
 
 	float* airThreat;
@@ -161,6 +203,10 @@ private:
 	float* airSquad;  // the threat layers themselves unless isCounting
 	float* surfSquad;
 	float* amphSquad;
+	float* raidSurf;
+	float* raidAmph;
+	float* raidSurfSquad;  // the raid layers themselves unless isCounting
+	float* raidAmphSquad;
 	float* threatArray;  // current threat array for multiple GetThreatAt() calls
 
 #ifdef DEBUG_VIS

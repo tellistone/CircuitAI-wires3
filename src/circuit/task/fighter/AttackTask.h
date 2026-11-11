@@ -108,6 +108,13 @@ private:
 	float GetPickStrength(int frame) const;
 	// strength x quota.attack_keep_threat (not inside the base defence radius): what keeps the current target
 	float GetKeepStrength(const springai::AIFloat3& targetPos, float strength) const;
+	// quota.raid_attack_factor: FindTarget judges enemy raiders and scouts (IsRaidFactorTarget) outside the base
+	// defence radius and our fire range (the current target: 1.25x both) with its pick and keep strength x this:
+	// our units' raid_thr_mod (CCircuitDef::GetRaidThrMod)
+	// weighted by their power, at most 1 (the route approach and the escape judge at full strength, so a target
+	// is never picked more loosely than they would keep it). 1 when off
+	float GetRaidFactor() const;
+	static bool IsRaidFactorTarget(const CCircuitDef* edef);  // a raider or scout in any of its listed roles
 	// The one threat allowance used everywhere (picking, approach line, escape, path ahead, firing spots,
 	// flee destination, route caps): strength x base_bonus(spot) / thr_mod.distance(spot) / scale(spot).
 	// refSqDist: the near-base scale's reference (0: none); the 2-argument form uses the current fight's
@@ -123,7 +130,8 @@ private:
 	// i.e. a target nearer our base than refSqDist
 	void SetScaleAnchor(const CEnemyInfo* enemy, float refSqDist);
 	void ClearScaleAnchor();
-	bool IsInBaseRadius(const springai::AIFloat3& pos) const;  // inside the base defence radius
+	// inside the base defence radius (x scale)
+	bool IsInBaseRadius(const springai::AIFloat3& pos, float scale = 1.f) const;
 
 	/*
 	 * Merging and reinforcing

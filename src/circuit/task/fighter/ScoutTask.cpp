@@ -36,6 +36,7 @@ using namespace springai;
 CScoutTask::CScoutTask(ITaskManager* mgr, float powerMod)
 		: IFighterTask(mgr, FightType::SCOUT, powerMod)
 {
+	isRaidView = true;  // CThreatMap raid layers
 }
 
 CScoutTask::~CScoutTask()
@@ -245,7 +246,7 @@ bool CScoutTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 	CEnemyInfo* bestTarget = nullptr;
 	CEnemyInfo* worstTarget = nullptr;
 	enemyPositions.clear();
-	threatMap->SetThreatType(unit);
+	threatMap->SetThreatType(unit);  // shared state for other readers: on the plain layers, as always
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
@@ -254,7 +255,7 @@ bool CScoutTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 		}
 		const bool isBadTarget = (badTargets.find(enemy->GetId()) != badTargets.end());  // no safe approach found recently
 		const AIFloat3& ePos = enemy->GetPos();
-		const float power = threatMap->GetThreatAt(ePos);
+		const float power = threatMap->GetThreatAt(unit, ePos);  // the raid view, as the scout's other reads
 		if ((maxPower / GetThrDistModAt(ePos) <= power)
 			|| !terrainMgr->CanMoveToPos(area, ePos)
 			|| (enemy->GetVel().SqLength2D() >= speed))

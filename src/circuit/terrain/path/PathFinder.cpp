@@ -282,7 +282,7 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathSingleQuery(
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryPathSingle>(*this, MakeQueryId());
 	CQueryPathSingle* query = static_cast<CQueryPathSingle*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit));
+	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit), CThreatMap::IsRaidView(unit));
 	query->InitQuery(startPos, endPos, maxRange, std::move(hitTest), maxThreat, endPosOnly);
 
 	return pQuery;
@@ -296,7 +296,7 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathMultiQuery(
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryPathMulti>(*this, MakeQueryId());
 	CQueryPathMulti* query = static_cast<CQueryPathMulti*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit));
+	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit), CThreatMap::IsRaidView(unit));
 	query->InitQuery(startPos, maxRange, possibleTargets, std::move(hitTest), maxThreat, endPosOnly);
 
 	return pQuery;
@@ -307,12 +307,12 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathMultiQuery(
  */
 std::shared_ptr<IPathQuery> CPathFinder::CreateCostMapQuery(
 		CCircuitUnit* unit, CThreatMap* threatMap, int frame,  // SetMapData
-		const AIFloat3& startPos, bool isBottleneck, bool isSquadThreat)
+		const AIFloat3& startPos, bool isBottleneck, bool isSquadThreat, bool isRaidView)
 {
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryCostMap>(*this, MakeQueryId());
 	CQueryCostMap* query = static_cast<CQueryCostMap*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame, isSquadThreat, !isBottleneck);
+	FillMapData(query, unit, threatMap, frame, isSquadThreat, isRaidView, !isBottleneck);
 	query->InitQuery(startPos, isBottleneck);
 
 	return pQuery;
@@ -324,7 +324,7 @@ std::shared_ptr<IPathQuery> CPathFinder::CreateLineMapQuery(
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryLineMap>(*this, MakeQueryId());
 	CQueryLineMap* query = static_cast<CQueryLineMap*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit));
+	FillMapData(query, unit, threatMap, frame, IFighterTask::IsSquadThreat(unit), CThreatMap::IsRaidView(unit));
 	query->InitQuery(threatMap->GetThreatMapWidth(), threatMap->GetSquareSize());
 
 	return pQuery;
@@ -389,7 +389,7 @@ void CPathFinder::RunQuery(const std::shared_ptr<IPathQuery>& query, PathCallbac
 }
 
 void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, int frame, bool isSquadThreat,
-		bool allowCloak)
+		bool isRaidView, bool allowCloak)
 {
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	STerrainMapMobileType::Id mobileTypeId = cdef->GetMobileId();
@@ -405,10 +405,11 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap*
 		maxSlope = std::max(areaData->mobileType[mobileTypeId].maxSlope, 1e-3f);
 	}
 
-	// Squads route on the threat they judge with (IFighterTask::IsSquadThreat); cloak has no squad layer
-	float* airThreat = isSquadThreat ? threatMap->GetAirSquadArray() : threatMap->GetAirThreatArray();
-	float* surfThreat = isSquadThreat ? threatMap->GetSurfSquadArray() : threatMap->GetSurfThreatArray();
-	float* amphThreat = isSquadThreat ? threatMap->GetAmphSquadArray() : threatMap->GetAmphThreatArray();
+	// Squads route on the threat they judge with (IFighterTask::IsSquadThreat), raid and scout tasks on the raid
+	// view (CThreatMap::IsRaidView); cloak has neither
+	float* airThreat = threatMap->GetAirLayer(isSquadThreat);
+	float* surfThreat = threatMap->GetSurfLayer(isRaidView, isSquadThreat);
+	float* amphThreat = threatMap->GetAmphLayer(isRaidView, isSquadThreat);
 	float* threatArray;
 	CostFunc moveFun;
 	CostFunc threatFun;

@@ -124,7 +124,9 @@ private:
 	int UnitFinished(CCircuitUnit* unit);
 	int UnitIdle(CCircuitUnit* unit);
 	int UnitMoveFailed(CCircuitUnit* unit);
-	int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, springai::AIFloat3 dir, bool isFriendlyFire);
+	// damage: health lost (0 for paralysis damage)
+	int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker, int weaponId, springai::AIFloat3 dir, float damage,
+			bool isFriendlyFire);
 	int UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker);
 	int UnitGiven(ICoreUnit::Id unitId, int oldTeamId, int newTeamId);
 	int UnitCaptured(ICoreUnit::Id unitId, int oldTeamId, int newTeamId);
@@ -245,6 +247,8 @@ public:
 		return /*IsValidWeaponDefId(weaponDefId) ? */&weaponDefs[weaponDefId]/* : nullptr*/;
 	}
 	void BindUnitToWeaponDefs(CCircuitDef::Id unitDefId, const std::set<CWeaponDef::Id>& weaponDefs, bool isMobile);
+	// The one unit type that has this weapon (one mobile type, else the only type), -1 if none or several
+	CCircuitDef::Id GetWeaponOwnerId(CWeaponDef::Id weaponDefId) const;
 private:
 	void InitWeaponDefs();
 	WeaponDefs weaponDefs;  // owner

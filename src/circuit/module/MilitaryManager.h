@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <vector>
 #include <functional>
+#include <map>
 #include <set>
 #include <unordered_map>
 
@@ -267,6 +268,13 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
+	// quota.raid_attack_factor (default true): attack groups judge enemy raiders and scouts outside the base
+	// defence radius and their fire range with their strength x their units' raid_thr_mod (CAttackTask::GetRaidFactor)
+	bool IsRaidAttackFactor() const { return isRaidAttackFactor; }
+	// For tuning raid_thr_mod (the RAID log, once a minute): damage taken by ground units of raid and scout tasks
+	// (CThreatMap::IsRaidView), by attacker type (-1: unknown), and escapes of raid groups
+	void AddRaidDamage(CCircuitUnit* unit, CCircuitDef::Id attackerDefId, float damage);
+	void AddRaidEscape() { ++raidEscapes; }
 	// quota.group_count_aoe: an armed type whose fire's area of effect (CCircuitDef::GetFireAoe, radius) is at least
 	// this. A squad mostly of these doesn't count the enemies (IFighterTask::IsSquadThreat): one shot hits several of
 	// a swarm
@@ -412,6 +420,7 @@ private:
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
+	void LogRaidStats();  // the RAID log, every minute
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
 	struct SRally {
 		SRallyCfg cfg;
@@ -569,6 +578,9 @@ private:
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
 	float attackKeepThreat;  // quota.attack_keep_threat
+	bool isRaidAttackFactor;  // quota.raid_attack_factor
+	std::map<CCircuitDef::Id, float> raidDamage;  // AddRaidDamage, by attacker def id (-1: unknown type) since the last log
+	int raidEscapes = 0;  // AddRaidEscape since the last log
 	float countAoe;  // quota.group_count_aoe, elmos (radius); 0 = off
 	int attackOwnGroundFrame;  // quota.attack_own_ground_time, in frames
 	float attackFloorHold;  // quota.attack_floor_hold
