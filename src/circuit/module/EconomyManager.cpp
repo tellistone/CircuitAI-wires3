@@ -596,7 +596,7 @@ void CEconomyManager::Init()
 
 int CEconomyManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 {
-	// The game puts grid buildings in the grid from their first nanoframe: link it while it is being built, so it
+	// The game keeps a consumer's nanoframe in the grid (active by neededlink): link it while it is being built, so it
 	// works the moment it finishes (a superweapon takes minutes)
 	WatchGridLink(unit);
 
@@ -1930,7 +1930,7 @@ void CEconomyManager::UpdateGridLinks()
 		info.nextFrame = frame + FRAMES_PER_SEC * 10;
 		// Paralysed or disarmed: out of the grid for now, and its gridNumber is stale. Not a read
 		Unit* u = unit->GetUnit();
-		if (u->IsParalyzed() || (u->GetRulesParamFloat("disarmed", 0.f) > 0.f)) {
+		if (CEnergyGrid::IsOffGrid(u, true)) {
 			continue;
 		}
 		if (u->GetRulesParamFloat("lowpower", 0.f) <= 0.f) {

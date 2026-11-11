@@ -10,12 +10,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Grid consumers get linked to a grid with enough energy** (`economy.energy.grid_link`, default and shipped
   `max_pylons` 6, `margin` 1.1; `max_pylons` 0 = off). Structures with `customParams.neededlink` (Big Bertha,
   Cerberus, Desolator, Lucifer, strider hub, Disco, Zenith, Starlight) only work on a grid with that much energy, and
-  were often built unpowered. Every 10 s each of ours, from its first nanoframe on (the game links nanoframes, so the
-  line is built alongside it and it works once finished), is read for the game's `lowpower`; after 2 unpowered reads in
+  were often built unpowered. Every 10 s each of ours, from its first nanoframe on (the game keeps a consumer's nanoframe on
+  the grid, so the line is built alongside it and it works once finished), is read for the game's `lowpower`; after 2 unpowered reads in
   a row it gets energypylons, one at a time, from its own grid towards the nearest other grid with margin x
   neededlink (the game's `gridNumber` and `OD_gridMaximum`), until it is powered or the cap is reached. Never towards
-  its own grid, and a failed attempt waits 60 s, doubling up to 5 min. Paralysed or disarmed units are skipped (the
-  game takes them out of the grid and leaves their gridNumber stale). Consumers in one grid share a pylon line instead of
+  its own grid, and a failed attempt waits 60 s, doubling up to 5 min. Units the game has taken off the grid
+  (paralysed, disarmed, morphing, or not active: a solar closes for 4 s when hit) are skipped, as their gridNumber
+  is stale. Consumers in one grid share a pylon line instead of
   each laying their own (Big Berthas stand together), and consumers an ally gives us are watched too.
   - The superweapon dice only draws a grid consumer while a grid with margin x its need is within `max_pylons` reach
     of where it would be built; a queued gun is kept.

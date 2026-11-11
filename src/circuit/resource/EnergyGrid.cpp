@@ -300,6 +300,12 @@ float CEnergyGrid::GetNeededLink(CCircuitDef::Id defId) const
 	return (it != neededLinks.end()) ? it->second : .0f;
 }
 
+bool CEnergyGrid::IsOffGrid(Unit* u, bool isConsumer)
+{
+	return (!isConsumer && !u->IsActivated()) || u->IsParalyzed()
+		|| (u->GetRulesParamFloat("disarmed", 0.f) > 0.f) || (u->GetRulesParamFloat("morphDisable", 0.f) > 0.f);
+}
+
 const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 {
 	const int frame = circuit->GetLastFrame();
@@ -311,8 +317,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 
 	// The overdrive gadget puts gridNumber on every grid building, and the grid's capacity (OD_gridMaximum) on its
 	// energy buildings and pylons, not on mexes or consumers. All of a grid carry the same value: read it once per grid.
-	// Nanoframes are in: the game links them from creation (their energy counts only once finished).
-	// Paralysed or disarmed ones are out of the grid and keep a stale gridNumber, so they are left out.
+	// Off-grid ones are left out: their gridNumber is stale. That drops nanoframes too, except consumers'.
 	// By def id: allied units' defs can belong to another AI instance on our ally team
 	std::unordered_map<int, float> capacities;
 	circuit->UpdateFriendlyUnits();
@@ -323,8 +328,12 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 			continue;
 		}
 		const float range = GetPylonRange(cdef->GetId());
+		if (range <= 0.f) {
+			continue;
+		}
 		Unit* u = unit->GetUnit();
-		if ((range <= 0.f) || u->IsParalyzed() || (u->GetRulesParamFloat("disarmed", 0.f) > 0.f)) {
+		const bool isConsumer = GetNeededLink(cdef->GetId()) > 0.f;
+		if (IsOffGrid(u, isConsumer)) {
 			continue;
 		}
 		const int grid = (int)u->GetRulesParamFloat("gridNumber", 0.f);
@@ -332,7 +341,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 			continue;
 		}
 		gridNodes.push_back({unit->GetId(), unit->GetPos(frame), range, grid, 0.f});
-		if (!cdef->IsMex() && (GetNeededLink(cdef->GetId()) <= 0.f) && (capacities.find(grid) == capacities.end())) {
+		if (!cdef->IsMex() && !isConsumer && (capacities.find(grid) == capacities.end())) {
 			const float capacity = u->GetRulesParamFloat("OD_gridMaximum", -1.f);
 			if (capacity >= 0.f) {
 				capacities[grid] = capacity;

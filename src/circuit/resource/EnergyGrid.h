@@ -49,7 +49,11 @@ public:
 		int grid;  // the game's gridNumber
 		float capacity;  // that grid's energy capacity (OD_gridMaximum), 0 = no energy in it
 	};
-	// Grid buildings of our ally team (ours and allies', nanoframes included), as the game groups them. Cached for 1 s
+	// Out of the game's grid right now, as unit_mex_overdrive's status check has it: paralysed, disarmed, morphing,
+	// or not active (a solar closes for 4 s when hit; nanoframes aren't active). Consumers count as active.
+	// The game leaves such a unit's gridNumber stale
+	static bool IsOffGrid(springai::Unit* u, bool isConsumer);
+	// Grid buildings of our ally team (ours and allies'), as the game groups them. Cached for 1 s
 	const std::vector<SGridNode>& GetGridNodes();
 
 	void SetAuthority(CCircuitAI* authority) { circuit = authority; }
