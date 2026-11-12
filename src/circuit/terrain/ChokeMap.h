@@ -89,6 +89,9 @@ public:
 		float gateShare = 0.25f;  // choke.gate_share
 		float spread = 0.15f;  // choke.traffic.spread
 		float bands[3] = {0.35f, 0.65f, 0.05f};  // choke.openness.bands
+		float spotRadius = 300.f;  // choke.spot.radius: elmos from a defence point its towers may stand
+		float spotHeight = 0.5f;  // choke.spot.height: the most height adds to a spot's score (0.5 = +50%)
+		float spotHeightCap = 150.f;  // choke.spot.height_cap: elmos above the targets that earn all of it
 		float radarGain = 0.02f;  // choke.radar.min_gain
 		float radarShare = 0.05f;  // choke.radar.share
 		float radarEnemy = 2.f;  // choke.radar.enemy

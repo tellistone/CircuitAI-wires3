@@ -31,7 +31,6 @@ using namespace springai;
 
 #define MASK_FRAMES		(FRAMES_PER_SEC * 300)  // a failed build site is skipped for 5 minutes
 #define MAX_TARGETS		32
-#define HEIGHT_CAP		150.f  // elmos above the targets that still add to the score
 #define TARGET_LIFT		20.f  // sight rays end this high above a target's ground
 #define REFINE_COUNT	5  // best coarse candidates that get the half-cell pass
 #define MAX_CANDIDATES_SHOWN	200
@@ -83,6 +82,8 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	const float quarterDiag = CTerrainManager::GetTerrainDiagonal() * 0.25f;
 	const float ownThreat = std::max(def->GetThreat(), 1.f);
 	const CChokeMap::SConfig& cfg = chokeMap->GetConfig();
+	const float heightBonus = std::max(cfg.spotHeight, 0.f);
+	const float heightCap = std::max(cfg.spotHeightCap, 1.f);
 	auto factorAt = [&](const AIFloat3& c) {
 		float setback = 1.f;
 		if (isChokeGoal) {
@@ -136,11 +137,11 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 				cover += t.weight;
 			}
 		}
-		const float height = utils::clamp((c.y - meanHeight) / HEIGHT_CAP, 0.f, 1.f);
-		return cover * (1.f + 0.5f * height) * factor;
+		const float height = utils::clamp((c.y - meanHeight) / heightCap, 0.f, 1.f);
+		return cover * (1.f + heightBonus * height) * factor;
 	};
 
-	// Coarse candidates: traffic cell centres. No score beats the targets in range x factor x height's best 1.5
+	// Coarse candidates: traffic cell centres. No score beats the targets in range x factor x height's best
 	struct SCoarse {
 		AIFloat3 pos;
 		float factor;
@@ -159,7 +160,7 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			inRange += (c.SqDistance2D(t.pos) <= SQUARE(range)) ? t.weight : 0.f;
 		}
 		const float factor = (inRange > 0.f) ? factorAt(c) : 0.f;
-		coarse.push_back({c, factor, 1.5f * inRange * factor});
+		coarse.push_back({c, factor, (1.f + heightBonus) * inRange * factor});
 	});
 	std::stable_sort(coarse.begin(), coarse.end(), [](const SCoarse& a, const SCoarse& b) {
 		return a.bound > b.bound;

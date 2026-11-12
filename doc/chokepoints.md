@@ -75,6 +75,9 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.gate_share` | `0.25` | Share of the enemy army seen (plus a 300-metal prior) a leak type's cost must reach to start gating. |
 | `choke.traffic.spread` | `0.15` | Width of the traffic corridors, as a share of the route's length. |
 | `choke.openness.bands` | `[0.35, 0.65, 0.05]` | Chokepointed below, open above, and the margin around them. |
+| `choke.spot.radius` | `300` | Elmos from a defence point its towers may stand. |
+| `choke.spot.height` | `0.5` | The most a spot's height adds to its score: 0.5 is up to +50%, 1 up to double. |
+| `choke.spot.height_cap` | `150` | Elmos above the ground it covers at which a spot earns all of `choke.spot.height`. |
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
 | `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
@@ -150,11 +153,12 @@ started are called off.
 
 ### Scored spots (F)
 
-`score = cover × (1 + 0.5 × height) × setback ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
+`score = cover × (1 + choke.spot.height × height) × setback ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
 
 - *cover* is the traffic of the targets in range with a clear line of fire, halved for each of our towers that
   already covers a target.
-- *height* is the height above the targets, up to 150 elmos.
+- *height* is the height above the targets as a share of `choke.spot.height_cap`, up to 1. So a spot that high
+  or higher scores `1 + choke.spot.height` times as much (1.5× by default).
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.
 - Hold spots skip the builder term.
 

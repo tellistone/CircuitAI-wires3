@@ -164,7 +164,12 @@
 	"gate_share": 0.25,  // a leak type (amphibious, spiders, jumpers) starts gating once its cost reaches this share of the enemy army seen + 300 metal
 	"traffic": {"spread": 0.15},  // width of the enemy's traffic corridors, as a share of the route's length
 	"openness": {"bands": [0.35, 0.65, 0.05]},  // [<chokepointed below>, <open above>, <margin around them>]
-	"spot": {"enable": false},  // scored spots for every tower, base towers and hold spots; the porc sweep by need
+	"spot": {
+		"enable": false,  // scored spots for every tower, base towers and hold spots; the porc sweep by need
+		"radius": 300,  // elmos from a defence point its towers may stand
+		"height": 0.5,  // the most height adds to a spot's score: 0.5 = up to +50%, 1 = up to double
+		"height_cap": 150  // elmos above the ground it covers at which a spot earns all of "height"
+	},
 	"radar": {
 		"enable": false,  // the radar planner, which takes over MakeDefence's radar
 		"min_gain": 0.02,  // a radar must add at least this share of the map's weight to the coverage

@@ -22,14 +22,14 @@ struct STerrainMapArea;
 /*
  * choke.spot.enable: one scorer for towers at a cluster, towers at a choke, base towers and army hold spots, with
  * KAIK's GetDefensePos terms on CChokeMap's traffic field:
- *   score = cover x (1 + 0.5 x height) x setback / (1 + threat at the spot / the def's own threat)
+ *   score = cover x (1 + choke.spot.height x height) x setback / (1 + threat at the spot / the def's own threat)
  *           / (1 + distance to our nearest builder / a quarter of the map's diagonal)
  * cover is the traffic of the targets in range with a clear line (halved for each of our towers already covering
- * one), height is the height above the targets (up to 150 elmos), setback (choke goals) the closeness to
- * choke.setback x range behind the line. Hold spots skip the builder term. Candidates stay on the goal's side: a
- * choke's inner region, or the asset's region, or a wall cell no enemy walks. They are tried best upper bound first
- * (the traffic in range times the terms that need no line of sight) and the search stops when no bound can beat the
- * best score
+ * one), height is the height above the targets as a share of choke.spot.height_cap (up to 1), setback (choke goals)
+ * the closeness to choke.setback x range behind the line. Hold spots skip the builder term. Candidates stay on the
+ * goal's side: a choke's inner region, or the asset's region, or a wall cell no enemy walks. They are tried best upper
+ * bound first (the traffic in range times the terms that need no line of sight) and the search stops when no bound
+ * can beat the best score
  */
 class CSpotScorer {
 public:

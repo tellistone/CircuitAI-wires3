@@ -139,7 +139,11 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	for (unsigned i = 0; i < 3; ++i) {
 		config.bands[i] = bands.get(i, config.bands[i]).asFloat();
 	}
-	config.isSpot = choke["spot"].get("enable", false).asBool();
+	const Json::Value& spot = choke["spot"];
+	config.isSpot = spot.get("enable", false).asBool();
+	config.spotRadius = spot.get("radius", config.spotRadius).asFloat();
+	config.spotHeight = spot.get("height", config.spotHeight).asFloat();
+	config.spotHeightCap = spot.get("height_cap", config.spotHeightCap).asFloat();
 	const Json::Value& radar = choke["radar"];
 	config.isRadar = radar.get("enable", false).asBool();
 	config.radarGain = radar.get("min_gain", config.radarGain).asFloat();

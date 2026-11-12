@@ -1964,7 +1964,7 @@ AIFloat3 CMilitaryManager::GetTowerSpot(CDefenceMatrix::SDefPoint* point, int ke
 	if (spot.failures >= 2) {
 		return -RgtVector;
 	}
-	const AIFloat3 pos = spotScorer->FindSpot(defDef, goal, 300.f);  // a cluster's within 300 elmos of the point
+	const AIFloat3 pos = spotScorer->FindSpot(defDef, goal, circuit->GetChokeMap()->GetConfig().spotRadius);
 	if (utils::is_valid(pos)) {
 		spot.pos = pos;
 		spot.isFrozen = true;
