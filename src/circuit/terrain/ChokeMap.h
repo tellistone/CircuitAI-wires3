@@ -92,6 +92,7 @@ public:
 		float spotRadius = 300.f;  // choke.spot.radius: elmos from a defence point its towers may stand
 		float spotHeight = 0.5f;  // choke.spot.height: the most height adds to a spot's score (0.5 = +50%)
 		float spotHeightCap = 150.f;  // choke.spot.height_cap: elmos above the targets that earn all of it
+		float spotEnemy = 1.f;  // choke.spot.enemy: weight of the enemy value a tower can shoot, per its own cost
 		float radarGain = 0.02f;  // choke.radar.min_gain
 		float radarShare = 0.05f;  // choke.radar.share
 		float radarEnemy = 2.f;  // choke.radar.enemy

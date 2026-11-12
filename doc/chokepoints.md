@@ -78,6 +78,7 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.spot.radius` | `300` | Elmos from a defence point its towers may stand. |
 | `choke.spot.height` | `0.5` | The most a spot's height adds to its score: 0.5 is up to +50%, 1 up to double. |
 | `choke.spot.height_cap` | `150` | Elmos above the ground it covers at which a spot earns all of `choke.spot.height`. |
+| `choke.spot.enemy` | `1.0` | Weight of the enemy value a tower can shoot from a spot, per the tower's own cost: at 1, enemies worth the tower double the score. 0 turns it off. |
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
 | `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
@@ -153,7 +154,7 @@ started are called off.
 
 ### Scored spots (F)
 
-`score = cover × (1 + choke.spot.height × height) × setback ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
+`score = cover × (1 + choke.spot.height × height) × (1 + choke.spot.enemy × enemy value ÷ own cost) × setback ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
 
 - *cover* is the traffic of the targets in range with a clear line of fire, halved for each of our towers that
   already covers a target. At a choke the targets are its line and the band in front of it. At a defence point, the
@@ -163,6 +164,10 @@ started are called off.
   for nothing.
 - *height* is the height above the targets as a share of `choke.spot.height_cap`, up to 1. So a spot that high
   or higher scores `1 + choke.spot.height` times as much (1.5× by default).
+- *enemy value* is the cost of the known enemies a tower there could shoot: in range, in a clear line of fire, and
+  of a kind it can hit (fliers need anti-air). Buildings count at their last known position, and mobile units only
+  while in radar or sight. As towers skip threatened spots, an armed enemy only counts where the tower outranges
+  it, so in practice this finds unarmed targets (mexes, energy, radar, constructors) and outranged ones.
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.
 - Hold spots skip the builder term.
 

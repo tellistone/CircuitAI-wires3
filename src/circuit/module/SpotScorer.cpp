@@ -11,6 +11,7 @@
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "unit/ally/AllyUnit.h"
+#include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitDef.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
@@ -84,6 +85,32 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	const CChokeMap::SConfig& cfg = chokeMap->GetConfig();
 	const float heightBonus = std::max(cfg.spotHeight, 0.f);
 	const float heightCap = std::max(cfg.spotHeightCap, 1.f);
+	// choke.spot.enemy: known enemies a tower could shoot, each worth its cost per the tower's own. Buildings by their
+	// last known position, mobiles while in radar or sight. As threatened spots are skipped, an armed one only counts
+	// where the tower outranges it
+	std::vector<STarget> enemies;
+	if ((goal.type != GoalType::HOLD) && (cfg.spotEnemy > 0.f)) {
+		for (const auto& kv : circuit->GetEnemyInfos()) {
+			const CEnemyInfo* e = kv.second;
+			const CCircuitDef* edef = e->GetCircuitDef();
+			if (e->IsHidden() || (edef == nullptr) || (edef->IsMobile() && !e->IsInRadarOrLOS())
+				|| !(edef->IsAbleToFly() ? def->HasAntiAir() : def->HasAntiLand())
+				|| (e->GetPos().SqDistance2D(pos) > SQUARE(radius + range)))
+			{
+				continue;
+			}
+			enemies.push_back({e->GetPos(), cfg.spotEnemy * e->GetCost() / std::max(def->GetCostM(), 1.f)});
+		}
+	}
+	auto enemyAt = [&](const AIFloat3& c, bool isLine) {  // 1 + their worth in range (and in a clear line)
+		float value = 1.f;
+		for (const STarget& e : enemies) {
+			if ((c.SqDistance2D(e.pos) <= SQUARE(range)) && (!isLine || isHighArc || IsClearLine(c, emit, e.pos))) {
+				value += e.weight;
+			}
+		}
+		return value;
+	};
 	auto factorAt = [&](const AIFloat3& c) {
 		float setback = 1.f;
 		if (isChokeGoal) {
@@ -138,10 +165,11 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			}
 		}
 		const float height = utils::clamp((c.y - meanHeight) / heightCap, 0.f, 1.f);
-		return cover * (1.f + heightBonus * height) * factor;
+		return cover * (1.f + heightBonus * height) * factor * enemyAt(c, true);
 	};
 
-	// Coarse candidates: traffic cell centres. No score beats the targets in range x factor x height's best
+	// Coarse candidates: traffic cell centres. No score beats the targets in range x factor x height's best x the
+	// enemies in range
 	struct SCoarse {
 		AIFloat3 pos;
 		float factor;
@@ -160,7 +188,8 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			inRange += (c.SqDistance2D(t.pos) <= SQUARE(range)) ? t.weight : 0.f;
 		}
 		const float factor = (inRange > 0.f) ? factorAt(c) : 0.f;
-		coarse.push_back({c, factor, (1.f + heightBonus) * inRange * factor});
+		const float bound = (factor > 0.f) ? (1.f + heightBonus) * inRange * factor * enemyAt(c, false) : 0.f;
+		coarse.push_back({c, factor, bound});
 	});
 	std::stable_sort(coarse.begin(), coarse.end(), [](const SCoarse& a, const SCoarse& b) {
 		return a.bound > b.bound;
@@ -212,8 +241,8 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	lastCandidates = std::move(scored);
 
 	const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
-	circuit->LOG("CHOKE spot %s: %i of %i candidates, %i targets, score %.2f, %.2f ms", def->GetDef()->GetName(),
-			tested, (int)coarse.size(), (int)targets.size(), bestScore, ms);
+	circuit->LOG("CHOKE spot %s: %i of %i candidates, %i targets, %i enemies, score %.2f, %.2f ms",
+			def->GetDef()->GetName(), tested, (int)coarse.size(), (int)targets.size(), (int)enemies.size(), bestScore, ms);
 	return bestPos;
 }
 
