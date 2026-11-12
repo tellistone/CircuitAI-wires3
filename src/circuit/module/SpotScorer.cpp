@@ -77,7 +77,7 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	}
 	meanHeight /= targets.size();
 
-	// The terms without a line of sight: setback, threat and the builder's distance
+	// The terms without a line of sight: setback, the lean toward the enemy, threat and the builder's distance
 	const std::set<CCircuitUnit*>& workers = circuit->GetBuilderManager()->GetWorkers();
 	const int frame = circuit->GetLastFrame();
 	const float quarterDiag = CTerrainManager::GetTerrainDiagonal() * 0.25f;
@@ -111,6 +111,21 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 		}
 		return value;
 	};
+	// choke.spot.forward: a position's towers lean toward the enemy, by how much nearer the enemy walks to a spot than
+	// to the asset, as a share of the radius: 1 at a radius behind, 1 + forward at a radius ahead. The asset on a slope
+	// walks from its nearest walked cell; a spot on a wall cell no enemy walks stays level with the asset, as its
+	// nearest walked cell may be the ground below a cliff
+	const float spotForward = std::max(cfg.spotForward, 0.f);
+	const float assetDist = ((goal.type == GoalType::POSITION) && (spotForward > 0.f) && (radius > 0.f))
+			? traffic.GetEnemyDist(traffic.IndexAt(pos.x, pos.z), 2) : -1.f;
+	auto leanAt = [&](const AIFloat3& c) {
+		if (assetDist < 0.f) {
+			return 1.f;
+		}
+		const float d = traffic.GetEnemyDist(traffic.IndexAt(c.x, c.z), 0);
+		const float ahead = (d < 0.f) ? 0.f : utils::clamp((assetDist - d) / radius, -1.f, 1.f);
+		return 1.f + spotForward * 0.5f * (1.f + ahead);
+	};
 	auto factorAt = [&](const AIFloat3& c) {
 		float setback = 1.f;
 		if (isChokeGoal) {
@@ -131,7 +146,8 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			}
 			builderDist = std::sqrt(minSq);
 		}
-		return setback / (1.f + circuit->GetThreatMap()->GetAllThreatAt(c) / ownThreat) / (1.f + builderDist / quarterDiag);
+		return setback * leanAt(c) / (1.f + circuit->GetThreatMap()->GetAllThreatAt(c) / ownThreat)
+				/ (1.f + builderDist / quarterDiag);
 	};
 	// On the goal's side: a choke's inner region, the asset's region, or a wall cell no enemy walks
 	const int homeRegion = isChokeGoal ? goal.innerRegion : chokeMap->GetRegionAt(goal.asset);
@@ -241,8 +257,10 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	lastCandidates = std::move(scored);
 
 	const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
-	circuit->LOG("CHOKE spot %s: %i of %i candidates, %i targets, %i enemies, score %.2f, %.2f ms",
-			def->GetDef()->GetName(), tested, (int)coarse.size(), (int)targets.size(), (int)enemies.size(), bestScore, ms);
+	const float lean = utils::is_valid(bestPos) ? leanAt(bestPos) : 1.f;
+	circuit->LOG("CHOKE spot %s: %i of %i candidates, %i targets, %i enemies, lean %.2f, score %.2f, %.2f ms",
+			def->GetDef()->GetName(), tested, (int)coarse.size(), (int)targets.size(), (int)enemies.size(), lean, bestScore,
+			ms);
 	return bestPos;
 }
 

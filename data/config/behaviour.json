@@ -169,7 +169,8 @@
 		"radius": 300,  // elmos from a defence point its towers may stand
 		"height": 0.5,  // the most height adds to a spot's score: 0.5 = up to +50%, 1 = up to double
 		"height_cap": 150,  // elmos above the ground it covers at which a spot earns all of "height"
-		"enemy": 1.0  // weight of the known enemies a tower could shoot from a spot, per its own cost: 1 = enemies worth the tower double the score; 0 = off
+		"enemy": 1.0,  // weight of the known enemies a tower could shoot from a spot, per its own cost: 1 = enemies worth the tower double the score; 0 = off
+		"forward": 0.5  // lean of a cluster's, the base's and the radar guard's towers toward the enemy (walked): 0.5 = a spot a radius nearer the enemy than the point scores up to +50% over one a radius behind; 0 = off
 	},
 	"radar": {
 		"enable": false,  // the radar planner, which takes over MakeDefence's radar

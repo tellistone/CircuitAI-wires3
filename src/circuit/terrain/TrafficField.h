@@ -75,6 +75,9 @@ public:
 	 * field's density makes a ramp everyone climbs weigh more than the open ground before it
 	 */
 	std::vector<std::pair<int, float>> GetApproach(int assetCell, float maxElmos) const;
+	// Walked elmos from the nearest enemy source to cell, blended as the field; a cell off a type's walked ground
+	// takes its nearest walked cell's within reach cells. -1 where no type reaches it
+	float GetEnemyDist(int cell, int reach) const;
 
 private:
 	SParams params;

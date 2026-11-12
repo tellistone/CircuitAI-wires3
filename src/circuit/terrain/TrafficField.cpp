@@ -178,4 +178,27 @@ std::vector<std::pair<int, float>> CTrafficField::GetApproach(int assetCell, flo
 	return out;
 }
 
+float CTrafficField::GetEnemyDist(int cell, int reach) const
+{
+	float sum = 0.f;
+	float shares = 0.f;
+	for (const std::pair<int, float>& ts : blendShares) {
+		const SType& t = types[ts.first];
+		const int c = t.mask.NearestPassable(cell, reach);
+		if (c < 0) {
+			continue;
+		}
+		int de = NO_DIST;
+		for (const std::vector<uint16_t>& d : t.sourceDist) {
+			de = std::min<int>(de, d[c]);
+		}
+		if (de == NO_DIST) {
+			continue;
+		}
+		sum += ts.second * CDistanceFlood::ToElmos(t.mask, de);
+		shares += ts.second;
+	}
+	return (shares > 0.f) ? sum / shares : -1.f;
+}
+
 } // namespace circuit

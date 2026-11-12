@@ -79,6 +79,7 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.spot.height` | `0.5` | The most a spot's height adds to its score: 0.5 is up to +50%, 1 up to double. |
 | `choke.spot.height_cap` | `150` | Elmos above the ground it covers at which a spot earns all of `choke.spot.height`. |
 | `choke.spot.enemy` | `1.0` | Weight of the enemy value a tower can shoot from a spot, per the tower's own cost: at 1, enemies worth the tower double the score. 0 turns it off. |
+| `choke.spot.forward` | `0.5` | Lean of a defence point's, the base's and the radar guard's towers toward the enemy: a spot a radius nearer the enemy (walked) than the point scores up to this much more than one a radius behind. 0 turns it off. |
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
 | `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
@@ -154,7 +155,7 @@ started are called off.
 
 ### Scored spots (F)
 
-`score = cover × (1 + choke.spot.height × height) × (1 + choke.spot.enemy × enemy value ÷ own cost) × setback ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
+`score = cover × (1 + choke.spot.height × height) × (1 + choke.spot.enemy × enemy value ÷ own cost) × setback × lean ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
 
 - *cover* is the traffic of the targets in range with a clear line of fire, halved for each of our towers that
   already covers a target. At a choke the targets are its line and the band in front of it. At a defence point, the
@@ -169,6 +170,12 @@ started are called off.
   while in radar or sight. As towers skip threatened spots, an armed enemy only counts where the tower outranges
   it, so in practice this finds unarmed targets (mexes, energy, radar, constructors) and outranged ones.
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.
+- *lean* pulls a defence point's, the base's and the radar guard's towers toward the enemy. It is
+  `1 + choke.spot.forward × (1 + ahead) ÷ 2`, where *ahead* is how much nearer the enemy walks to the spot than to
+  the point, as a share of the radius (from −1 to 1). So by default a spot a radius ahead scores 1.5×, one level
+  with the point 1.25× and one a radius behind 1×. Distances are walked from the enemy's start boxes or factories
+  and blended over the enemy's types like the traffic, so on a plateau the top of its ramp is ahead and a cliff edge
+  facing the enemy isn't. A spot on ground no enemy walks counts as level with the point.
 - Hold spots skip the builder term.
 
 A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the

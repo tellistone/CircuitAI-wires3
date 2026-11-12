@@ -238,7 +238,7 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"defensible", &c.defensible},
 		{"near", &c.nearRanges}, {"lane", &c.lane}, {"gate_share", &c.gateShare}, {"traffic.spread", &c.spread},
 		{"spot.radius", &c.spotRadius}, {"spot.height", &c.spotHeight}, {"spot.height_cap", &c.spotHeightCap},
-		{"spot.enemy", &c.spotEnemy},
+		{"spot.enemy", &c.spotEnemy}, {"spot.forward", &c.spotForward},
 		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare}, {"radar.enemy", &c.radarEnemy},
 		{"radar.inside", &c.radarInside}, {"radar.guard_radius", &c.radarGuardRadius},
 		{"objective.gain", &c.objGain}, {"objective.power", &c.objPower},
