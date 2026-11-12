@@ -1661,7 +1661,7 @@ void CBuilderManager::PromoteEscalation(IBuilderTask* task)
 	escalationTasks.insert(task);
 }
 
-void CBuilderManager::AssistEscalationFrame(CAllyUnit* frame)
+IBuilderTask* CBuilderManager::AssistEscalationFrame(CAllyUnit* frame)
 {
 	// Ours with a job of ours on it: raise that job
 	CCircuitUnit* own = circuit->GetTeamUnit(frame->GetId());
@@ -1669,7 +1669,7 @@ void CBuilderManager::AssistEscalationFrame(CAllyUnit* frame)
 		auto it = unfinishedUnits.find(own);
 		if (it != unfinishedUnits.end()) {
 			PromoteEscalation(it->second);
-			return;
+			return it->second;
 		}
 	}
 	// An ally's frame (or ours that no job builds): assist it. The repair job follows it by id, ally units are
@@ -1686,6 +1686,7 @@ void CBuilderManager::AssistEscalationFrame(CAllyUnit* frame)
 		repairedUnits[frame->GetId()] = task;
 	}
 	PromoteEscalation(task);
+	return task;
 }
 
 bool CBuilderManager::IsEscalationSingu(const IBuilderTask* task) const
@@ -1763,8 +1764,16 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		return ((singuDef != nullptr) && (cdef->GetId() == singuDef->GetId())) ? 1 : -1;
 	};
 
-	// Allied (ours included) frames being built: raise our job on it, or assist it
-	std::array<bool, ESC_KINDS> isBuilt = {false, false};
+	// Per kind: held = something of it exists (no new start); live = work is going on (factories pause, claim)
+	const int staleFrames = militaryMgr->GetEscalationStaleFrames();
+	std::array<bool, ESC_KINDS> isHeld = {false, false};
+	std::array<bool, ESC_KINDS> isLive = {false, false};
+	std::array<bool, ESC_KINDS> isOwnLive = {false, false};  // a job of ours not placed yet: the claim covers it
+
+	// Allied (ours included) frames being built: raise our job on it, or assist it. Live while its progress went up in
+	// the last escalation.stale s, or our builders are on it: ZK frames don't decay, an abandoned one (under fire,
+	// out of reach, given up) would pause factories for good. Still assisted: builders go back once it's safe
+	std::map<int, SEscFrame> frames;
 	circuit->UpdateFriendlyUnits();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* au = kv.second;
@@ -1772,15 +1781,27 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		if ((kind < 0) || !au->GetUnit()->IsBeingBuilt()) {
 			continue;
 		}
-		isBuilt[kind] = true;
-		AssistEscalationFrame(au);
+		isHeld[kind] = true;
+		IBuilderTask* task = AssistEscalationFrame(au);
+		const float progress = au->GetUnit()->GetBuildProgress();
+		auto it = escFrames.find(au->GetId());
+		SEscFrame info = (it != escFrames.end()) ? it->second : SEscFrame{progress, frame};  // new: live for a while
+		if (progress > info.progress) {
+			info = {progress, frame};
+		}
+		frames[au->GetId()] = info;
+		if ((frame - info.riseFrame < staleFrames) || !task->GetAssignees().empty()) {
+			isLive[kind] = true;
+		}
+		escProjects[kind].staleCount = 0;  // a frame stands: the spot works
 	}
+	escFrames.swap(frames);  // frames finished or gone drop out
 
-	// Our own jobs of either kind (the normal paths can queue them too). One placed, or with builders, holds its kind.
-	// Unplaced with none, it holds it for escalation.stale s and then no longer does: escalation jobs keep the threat
-	// check, so one in a threatened spot (a front Bertha) would otherwise pause factories until its 300 s timeout.
-	// Then one escalation started is dropped; one of the normal paths (they often wait for an idle builder) stays
-	std::array<bool, ESC_KINDS> isOwnJob = {false, false};
+	// Our own jobs not placed yet, of either kind (the normal paths can queue them too); a placed one is its frame,
+	// above. Live with builders, or for escalation.stale s: escalation jobs keep the threat check, so one in a
+	// threatened spot (a front Bertha) would otherwise pause factories until its 300 s timeout. Past that, one
+	// escalation started is dropped; one of the normal paths (they often wait for an idle builder) stays, and only
+	// blocks a new start until its own timeout
 	std::vector<std::pair<IBuilderTask*, int>> staleJobs;
 	for (IBuilderTask::BuildType type : {IBuilderTask::BuildType::BIG_GUN, IBuilderTask::BuildType::ENERGY}) {
 		for (IBuilderTask* task : GetTasks(type)) {
@@ -1788,19 +1809,27 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 			if (kind < 0) {
 				continue;
 			}
-			if ((task->GetTarget() == nullptr) && task->GetAssignees().empty()) {
+			bool isJobLive = true;
+			if (task->GetTarget() != nullptr) {
+				isJobLive = false;  // placed: its frame tells
+				escIdleSince.erase(task);
+			} else if (task->GetAssignees().empty()) {
 				auto it = escIdleSince.emplace(task, frame).first;
-				if (frame - it->second >= militaryMgr->GetEscalationStaleFrames()) {
+				if (frame - it->second >= staleFrames) {
 					if (escStarted.find(task) != escStarted.end()) {
 						staleJobs.push_back({task, kind});
+						continue;
 					}
-					continue;
+					isJobLive = false;
 				}
 			} else {
 				escIdleSince.erase(task);
 			}
 			PromoteEscalation(task);
-			isOwnJob[kind] = true;
+			isHeld[kind] = true;
+			if (isJobLive) {
+				isLive[kind] = isOwnLive[kind] = true;
+			}
 		}
 	}
 	for (const auto& job : staleJobs) {
@@ -1809,27 +1838,25 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 			escProjects[0].isFrontStale = true;
 		}
 		++escProjects[job.second].staleCount;
-		AbortTask(job.first);  // DequeueTask forgets it in escalationTasks and escIdleSince
+		AbortTask(job.first);  // DequeueTask forgets it in escalationTasks, escIdleSince and escStarted
 	}
 
 	isEscalationBusy = false;
 	for (int kind = 0; kind < ESC_KINDS; ++kind) {
 		SEscProject& project = escProjects[kind];
-		// The claim tells allied AIs we hold a job before its frame shows (a builder may walk a minute to the site)
-		if (isOwnJob[kind]) {
+		// The claim tells allied AIs we hold a live job before its frame shows (a builder may walk a minute to the site)
+		if (isOwnLive[kind]) {
 			allyTeam->ClaimEscalation(kind, frame, frame + ESC_CLAIM_FRAMES, aiId);
 		} else {
 			allyTeam->ReleaseEscalation(kind, aiId);
 		}
-		if (isBuilt[kind]) {
-			project.staleCount = 0;  // a frame stands: the spot works
+		const bool isClaimed = allyTeam->IsEscalationClaimed(kind, frame, aiId);
+		if ((kind == 0) && (isLive[kind] || isClaimed)) {
+			isEscalationBusy = true;
 		}
-		if (isBuilt[kind] || isOwnJob[kind] || allyTeam->IsEscalationClaimed(kind, frame, aiId)) {
+		if (isHeld[kind] || isClaimed) {
 			project.startFrame = -1;
 			project.isLogged = false;
-			if (kind == 0) {
-				isEscalationBusy = true;
-			}
 			continue;
 		}
 		// None under way: start our own after a random wait, longer after jobs that went stale

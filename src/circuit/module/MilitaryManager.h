@@ -701,6 +701,8 @@ private:
 		bool isNeedTerra = true;  // a terraunit must have been seen
 		std::set<CCircuitDef::Id> enemyDefs;  // enemy big guns, superweapons and singus
 		std::set<CCircuitDef::Id> frontDefs;  // supers built on the frontline cluster
+		std::map<CCircuitDef::Id, std::vector<CCircuitDef::Id>> counters;  // enemy def: the supers it makes useless
+		std::set<CCircuitDef::Id> countered;  // supers left out of the pick: a counter of each is known (every update)
 		std::vector<SSuperInfo> supers;  // what we start; also what we assist
 		CCircuitDef* singuDef = nullptr;
 		int delayMin = FRAMES_PER_SEC;  // random wait before starting our own

@@ -1107,6 +1107,22 @@ void CMilitaryManager::ReadConfig()
 		}
 		escalation.frontDefs.insert(cdef->GetId());
 	}
+	const Json::Value& escCounter = esc["counter"];  // {<super>: [<enemy counter>, ...]}
+	for (const std::string& superName : escCounter.getMemberNames()) {
+		CCircuitDef* sdef = circuit->GetCircuitDef(superName.c_str());
+		if (sdef == nullptr) {
+			circuit->LOG("CONFIG %s: escalation.counter has unknown UnitDef '%s'", cfgName.c_str(), superName.c_str());
+			continue;
+		}
+		for (const Json::Value& name : escCounter[superName]) {
+			CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
+			if (cdef == nullptr) {
+				circuit->LOG("CONFIG %s: escalation.counter has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
+				continue;
+			}
+			escalation.counters[cdef->GetId()].push_back(sdef->GetId());
+		}
+	}
 	escalation.singuDef = circuit->GetCircuitDef(esc.get("singu", "").asCString());
 	const Json::Value& escDelay = esc["delay"];
 	escalation.delayMin = std::max(escDelay.get((unsigned)0, 1.f).asFloat(), 0.f) * FRAMES_PER_SEC;
@@ -3067,7 +3083,9 @@ CCircuitDef* CMilitaryManager::DiceEscalationSuper(bool isFrontOk) const
 	float magnitude = 0.f;
 	float slowMagnitude = 0.f;
 	for (const SSuperInfo& info : escalation.supers) {
-		if (!info.cdef->IsAvailable(frame) || (economyMgr->IsGridConsumer(info.cdef)
+		if (!info.cdef->IsAvailable(frame)
+			|| (escalation.countered.find(info.cdef->GetId()) != escalation.countered.end())  // e.g. nuke vs antinuke
+			|| (economyMgr->IsGridConsumer(info.cdef)
 			&& !economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef, isFrontOk))))
 		{
 			continue;
@@ -3140,10 +3158,15 @@ void CMilitaryManager::UpdateEscalation()
 	// Defs compared by id: allied AIs share the enemy list, and its units can carry another AI's CCircuitDef
 	bool isEnemyTech = false;
 	const CCircuitDef* techDef = nullptr;
+	escalation.countered.clear();
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CCircuitDef* edef = kv.second->GetCircuitDef();
 		if (edef == nullptr) {
 			continue;
+		}
+		auto cit = escalation.counters.find(edef->GetId());
+		if (cit != escalation.counters.end()) {
+			escalation.countered.insert(cit->second.begin(), cit->second.end());
 		}
 		if (edef->GetId() == terraId) {
 			circuit->GetAllyTeam()->SetTerraSeen();

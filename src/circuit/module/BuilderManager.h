@@ -138,15 +138,16 @@ public:
 	// assisted); with none of a kind being built, and no job of ours for one, we start one at NOW after a random
 	// escalation.delay. Off: the jobs raised drop back to NORMAL
 	void UpdateEscalation(bool isOn);
-	// Escalation has live superweapon work: a frame, a job of ours (placed, with builders, or younger than
-	// escalation.stale), or an ally's claim. Factories pause only then: not for a start timer, nor for singus alone
+	// Escalation has live superweapon work: a frame that progressed in the last escalation.stale s or has our builders,
+	// a job of ours not placed yet (with builders, or younger than escalation.stale), or an ally's claim. Factories pause
+	// only then: not for a start timer, a stuck frame (ZK frames don't decay), nor for singus alone
 	bool IsEscalationBusy() const { return isEscalationBusy; }
 	bool IsEscalationTask(const IBuilderTask* task) const {
 		return escalationTasks.find(const_cast<IBuilderTask*>(task)) != escalationTasks.end();
 	}
 private:
 	void PromoteEscalation(IBuilderTask* task);
-	void AssistEscalationFrame(CAllyUnit* frame);
+	IBuilderTask* AssistEscalationFrame(CAllyUnit* frame);
 	IBuilderTask* StartEscalation(int kind);
 	// Our build power on escalation jobs (singu jobs only with isSingu) is at its share of all of it, unit's added:
 	// escalation.builder_share, and singu_share of that for singus
@@ -162,9 +163,15 @@ private:
 		int staleCount = 0;  // jobs dropped stale in a row: the next start waits 2^count x as long (up to 2 min)
 	};
 	std::array<SEscProject, ESC_KINDS> escProjects;
-	// Own unplaced escalation jobs without builders: since when. Past escalation.stale they are dropped, and
-	// until then they hold the kind (claim, factory pause)
+	// Own unplaced escalation jobs without builders: since when. Until escalation.stale they are live (claim,
+	// factory pause); past it one escalation started is dropped, one of the normal paths only blocks a new start
 	std::map<IBuilderTask*, int> escIdleSince;
+	// Escalation frames (unit id): build progress, and when it last went up. Kept through an off spell
+	struct SEscFrame {
+		float progress;
+		int riseFrame;
+	};
+	std::map<int, SEscFrame> escFrames;
 	// Jobs escalation started itself (the only ones a stale wait drops; kept through an off spell)
 	std::set<IBuilderTask*> escStarted;
 	bool isEscalationBusy = false;
