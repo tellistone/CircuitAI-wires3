@@ -1910,7 +1910,7 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 					const AIFloat3 spot = GetTowerSpot(point, key, defDef, *goal);
 					if (utils::is_valid(spot)) {
 						buildPos = spot;
-						shake = SQUARE_SIZE * 8;
+						shake = 0.f;  // built where it was scored: a shake slides a ledge's tower down its slope
 						backPos = GetBackPos(spot);  // the support towers after it cover it
 					}
 					break;

@@ -114,7 +114,7 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 	circuit->LOG("RADAR by %s at (%.0f, %.0f): %.0f%% covered with it", unit->GetCircuitDef()->GetDef()->GetName(),
 			spot.x, spot.z, planner->GetCoveredShare() * 100.f);
 	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NOW, radarDef, spot,
-			IBuilderTask::BuildType::RADAR, cost, SQUARE_SIZE * 8.f, true, ORPHAN_TIMEOUT);
+			IBuilderTask::BuildType::RADAR, cost, 0.f, true, ORPHAN_TIMEOUT);  // no shake: built where it sees most
 	task->SetNextTask(MakeGuardTask(spot));  // queued once the radar stands; dropped with it
 	return task;
 }
@@ -144,7 +144,7 @@ IBuilderTask* CSensorPlanner::MakeGuardTask(const AIFloat3& radarPos)
 		pos = radarPos;
 	}
 	return circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::HIGH, guardDef, pos,
-			IBuilderTask::BuildType::DEFENCE, guardDef->GetCostM(), SQUARE_SIZE * 8.f, false);
+			IBuilderTask::BuildType::DEFENCE, guardDef->GetCostM(), 0.f, false);
 }
 
 AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(const AIFloat3&)>& isOk)

@@ -122,8 +122,8 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			if ((goal.area != nullptr) && !terrainMgr->CanMoveToPos(goal.area, c)) {
 				return -1.f;
 			}
-		} else if (!terrainMgr->CanBuildAt(def, c)) {
-			return -1.f;
+		} else if ((circuit->GetThreatMap()->GetAllThreatAt(c) > THREAT_MIN) || !terrainMgr->CanBuildAt(def, c)) {
+			return -1.f;  // a builder only builds out of threat (FindBuildSite): it would move such a tower elsewhere
 		}
 		// A position's asset itself must stay in reach and in sight
 		if ((goal.type == GoalType::POSITION) && ((c.SqDistance2D(goal.asset) > SQUARE(0.8f * range))

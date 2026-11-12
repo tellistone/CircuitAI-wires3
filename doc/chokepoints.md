@@ -166,6 +166,10 @@ started are called off.
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.
 - Hold spots skip the builder term.
 
+A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the
+nearest safe site, often down the slope of the ledge it was meant for. It's built where it was scored, without the
+usual random shake, and so are radars and their guards.
+
 Spots stay on the goal's side: a choke's inner region, or the defended point's region, or a wall cell no enemy
 walks (a ledge). AA towers aren't scored, they go to the point as before. A slot's lost tower is rebuilt at its old
 spot, because each slot takes its first spot that no tower stands on or is queued at.

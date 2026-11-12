@@ -20,7 +20,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     builder distance. Spots freeze once queued. The porc sweep visits points by uncovered traffic × income.
     `choke.spot.radius` sets how far from a defence point its towers may stand, and `choke.spot.height` and
     `height_cap` how much high ground counts. A defence point's targets are its approach by walking distance,
-    weighted by traffic, so towers cover the ramp up to a plateau rather than the ground below its cliffs.
+    weighted by traffic, so towers cover the ramp up to a plateau rather than the ground below its cliffs. Towers
+    skip spots under enemy threat and are built exactly where scored, so they stay on their ledge.
   - Radar planner (B): a builder between jobs builds a radar within 600 elmos first, when its AI's budget holds
     one, at the spot that adds the most weighted coverage (enemy ground counts `choke.radar.enemy` extra), if that
     is at least `choke.radar.min_gain` of it. Standing in coverage, at least `choke.radar.inside` of the radar's
