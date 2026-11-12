@@ -1701,6 +1701,10 @@ bool CBuilderManager::IsEscalationFull(CCircuitUnit* unit, bool isSingu) const
 	float share = militaryMgr->GetEscalationBuilderShare();
 	if (isSingu) {
 		share *= militaryMgr->GetEscalationSinguShare();
+	} else if (circuit->GetEconomyManager()->IsMetalFull()) {
+		// Metal overflowing: the rest of the builders can't spend it, more on the superweapon can (factories stay
+		// paused). One that joined may stay on after it drains (isEscalationFree), so this doesn't flicker
+		share = 1.f;
 	}
 	float power = 0.f;
 	for (const IBuilderTask* task : escalationTasks) {
@@ -1781,7 +1785,6 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 		if ((kind < 0) || !au->GetUnit()->IsBeingBuilt()) {
 			continue;
 		}
-		isHeld[kind] = true;
 		IBuilderTask* task = AssistEscalationFrame(au);
 		const float progress = au->GetUnit()->GetBuildProgress();
 		auto it = escFrames.find(au->GetId());
@@ -1790,10 +1793,15 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 			info = {progress, frame};
 		}
 		frames[au->GetId()] = info;
-		if ((frame - info.riseFrame < staleFrames) || !task->GetAssignees().empty()) {
+		const bool isAssisted = !task->GetAssignees().empty();
+		if ((frame - info.riseFrame < staleFrames) || isAssisted) {
 			isLive[kind] = true;
 		}
-		escProjects[kind].staleCount = 0;  // a frame stands: the spot works
+		// Stuck this long, it no longer blocks a new start (behaviour.json limit still counts it)
+		if ((frame - info.riseFrame < staleFrames * ESC_STUCK_STALES) || isAssisted) {
+			isHeld[kind] = true;
+			escProjects[kind].staleCount = 0;  // a frame stands: the spot works
+		}
 	}
 	escFrames.swap(frames);  // frames finished or gone drop out
 
@@ -1809,11 +1817,13 @@ void CBuilderManager::UpdateEscalation(bool isOn)
 			if (kind < 0) {
 				continue;
 			}
-			bool isJobLive = true;
 			if (task->GetTarget() != nullptr) {
-				isJobLive = false;  // placed: its frame tells
-				escIdleSince.erase(task);
-			} else if (task->GetAssignees().empty()) {
+				escIdleSince.erase(task);  // placed: its frame tells (above)
+				PromoteEscalation(task);
+				continue;
+			}
+			bool isJobLive = true;
+			if (task->GetAssignees().empty()) {
 				auto it = escIdleSince.emplace(task, frame).first;
 				if (frame - it->second >= staleFrames) {
 					if (escStarted.find(task) != escStarted.end()) {

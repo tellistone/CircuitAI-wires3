@@ -1330,7 +1330,7 @@ IUnitTask* CFactoryManager::DefaultMakeTask(CCircuitUnit* unit)
 	} else {
 
 		// Escalation pause: queued army jobs wait, constructors and anti-air still get built
-		const bool isEscalation = IsEscalationPause();
+		const bool isEscalation = circuit->GetBuilderManager()->IsEscalationBusy();
 		for (const CRecruitTask* candy : factoryTasks) {
 			if (isEscalation && (candy->GetRecruitType() != CRecruitTask::RecruitType::BUILDPOWER)
 				&& (candy->GetRecruitType() != CRecruitTask::RecruitType::AA))
@@ -1371,7 +1371,7 @@ IUnitTask* CFactoryManager::CreateFactoryTask(CCircuitUnit* unit)
 		return task;
 	}
 	// Escalation pause: no army, the metal goes to the superweapon. Anti-air still, if enemy air calls for it
-	if (IsEscalationPause()) {
+	if (circuit->GetBuilderManager()->IsEscalationBusy()) {
 		task = UpdateEscalationAA(unit);
 		return (task != nullptr) ? task : EnqueueWait(false, FRAMES_PER_SEC * 3);
 	}
@@ -1392,16 +1392,16 @@ IUnitTask* CFactoryManager::CreateFactoryTask(CCircuitUnit* unit)
 	return EnqueueWait(false, FRAMES_PER_SEC * 3);
 }
 
-bool CFactoryManager::IsEscalationPause() const
-{
-	// Metal near full: the escalation builders can't spend it all (builder_share), so the factories take the rest
-	return circuit->GetBuilderManager()->IsEscalationBusy() && !circuit->GetEconomyManager()->IsMetalFull();
-}
-
 CRecruitTask* CFactoryManager::UpdateEscalationAA(CCircuitUnit* unit)
 {
 	if (!CanEnqueueTask() || (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f)) {
 		return nullptr;
+	}
+	// One at a time: RoleProbability counts finished anti-air only, every paused factory would queue one
+	for (const CRecruitTask* t : factoryTasks) {
+		if (t->GetRecruitType() == CRecruitTask::RecruitType::AA) {
+			return nullptr;
+		}
 	}
 	auto it = factoryDefs.find(unit->GetCircuitDef()->GetId());
 	if (it == factoryDefs.end()) {

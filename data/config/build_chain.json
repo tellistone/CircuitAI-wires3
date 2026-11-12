@@ -60,20 +60,21 @@
 //   - <terraform>: a terraunit (economy.terra) has been seen this game, ours, an ally's or an enemy's
 // Off as soon as the army falls below <army_ratio>[1] x; off when one of the other two fails, but not within
 // <min_on> s of turning on. While on:
-//   - factories build constructors only (no army, but anti-air the response asks for against enemy air) while there
-//     is live superweapon work and metal storage isn't near full: a frame that progressed in the last <stale> s or
-//     has our builders, a job of ours not placed yet (with builders, or younger than <stale> s), or an allied
-//     CircuitAI's job. Not for a start timer, a stuck frame (ZK frames don't decay), nor singus alone
+//   - factories build constructors only (no army, but anti-air the response asks for against enemy air, one at a
+//     time) while there is live superweapon work: a frame that progressed in the last <stale> s or has our
+//     builders, a job of ours not placed yet (with builders, or younger than <stale> s), or an allied CircuitAI's
+//     job. Not for a start timer, a stuck frame (ZK frames don't decay), nor singus alone
 //   - builders go at NOW to an allied (ours included) <super> or <singu> being built, up to <builder_share> of our
-//     build power (singus at most <singu_share> of that), commanders only with <comm>. A job of ours not placed
-//     yet that no builder takes for <stale> s is no longer live: dropped if escalation started it (a dropped
-//     <front> super's next one is placed as the rest; each drop in a row doubles the next start's wait, up to
-//     2 min), kept if a normal path queued it (it still blocks a new start until its own timeout)
-//   - with nothing of a kind there (no frame, no job of ours, no allied CircuitAI holding a job for one), we start
-//     one at NOW after a random <delay> s: a <super> by weight among those under their behaviour.json limit/since,
-//     with a grid in reach (as porcupine.superweapon) and not made useless by a known enemy <counter>, the ones
-//     buildable within <max_build_sec> s at the lower of income and that build power first (any of the rest when
-//     none is); the singu at its economy.energy.rear site
+//     build power (all of it while metal is near full; singus at most <singu_share> of <builder_share>),
+//     commanders only with <comm>. A job of ours not placed yet that no builder takes for <stale> s is no longer
+//     live: dropped if escalation started it (a dropped <front> super's next one is placed as the rest; each drop
+//     in a row doubles the next start's wait, up to 2 min), kept if a normal path queued it (it still blocks a
+//     new start until its own timeout)
+//   - with nothing of a kind there (no frame, not counting one stuck for 3 x <stale> s; no job of ours; no allied
+//     CircuitAI holding a job for one), we start one at NOW after a random <delay> s: a <super> by weight among
+//     those under their behaviour.json limit/since, with a grid in reach (as porcupine.superweapon) and not made
+//     useless by a known enemy <counter>, the ones buildable within <max_build_sec> s at the lower of income and
+//     that build power first (any of the rest when none is); the singu at its economy.energy.rear site
 // <front> supers are built on our frontline cluster (finished, not enemy-held, out of enemy weapon reach, nearest
 // the lane), the rest as porcupine.superweapon. Off: escalation jobs drop to NORMAL priority and stay queued
 "escalation": {

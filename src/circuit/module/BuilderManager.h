@@ -150,10 +150,11 @@ private:
 	IBuilderTask* AssistEscalationFrame(CAllyUnit* frame);
 	IBuilderTask* StartEscalation(int kind);
 	// Our build power on escalation jobs (singu jobs only with isSingu) is at its share of all of it, unit's added:
-	// escalation.builder_share, and singu_share of that for singus
+	// escalation.builder_share (all of it while metal is near full), and singu_share of builder_share for singus
 	bool IsEscalationFull(CCircuitUnit* unit, bool isSingu) const;
 	bool IsEscalationSingu(const IBuilderTask* task) const;
 	static constexpr int ESC_CLAIM_FRAMES = FRAMES_PER_SEC * 30;  // ally-team claim, refreshed every update
+	static constexpr int ESC_STUCK_STALES = 3;  // a frame without progress this many escalation.stale stops blocking a start
 	std::set<IBuilderTask*> escalationTasks;  // raised to NOW by escalation mode
 	// Per kind (0 superweapon, 1 singu): when we start our own (-1 = no timer); kept through a short off spell
 	struct SEscProject {
