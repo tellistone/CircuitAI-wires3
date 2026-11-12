@@ -11,6 +11,7 @@
 #include "module/EconomyManager.h"
 #include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
+#include "module/SpotScorer.h"
 #include "resource/MetalManager.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
@@ -112,8 +113,38 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 	budget -= cost;
 	circuit->LOG("RADAR by %s at (%.0f, %.0f): %.0f%% covered with it", unit->GetCircuitDef()->GetDef()->GetName(),
 			spot.x, spot.z, planner->GetCoveredShare() * 100.f);
-	return circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NOW, radarDef, spot,
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NOW, radarDef, spot,
 			IBuilderTask::BuildType::RADAR, cost, SQUARE_SIZE * 8.f, true, ORPHAN_TIMEOUT);
+	task->SetNextTask(MakeGuardTask(spot));  // queued once the radar stands; dropped with it
+	return task;
+}
+
+IBuilderTask* CSensorPlanner::MakeGuardTask(const AIFloat3& radarPos)
+{
+	const CChokeMap::SConfig& config = circuit->GetChokeMap()->GetConfig();
+	CCircuitDef* guardDef = config.radarGuard.empty() ? nullptr : circuit->GetCircuitDef(config.radarGuard.c_str());
+	if ((guardDef == nullptr) || !guardDef->IsAvailable(circuit->GetLastFrame())) {
+		return nullptr;
+	}
+	// A tower of ours or an ally's already reaches it
+	const int frame = circuit->GetLastFrame();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if (!cdef->IsMobile() && cdef->IsAttacker()
+			&& (kv.second->GetPos(frame).SqDistance2D(radarPos) < SQUARE(cdef->GetMaxRange())))
+		{
+			return nullptr;
+		}
+	}
+	// The spot scorer's best spot covering its approaches, else beside it
+	CSpotScorer::SGoal goal;
+	goal.asset = radarPos;
+	AIFloat3 pos = circuit->GetMilitaryManager()->GetSpotScorer()->FindSpot(guardDef, goal, config.radarGuardRadius);
+	if (!utils::is_valid(pos)) {
+		pos = radarPos;
+	}
+	return circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::HIGH, guardDef, pos,
+			IBuilderTask::BuildType::DEFENCE, guardDef->GetCostM(), SQUARE_SIZE * 8.f, false);
 }
 
 AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(const AIFloat3&)>& isOk)

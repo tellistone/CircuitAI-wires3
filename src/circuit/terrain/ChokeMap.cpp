@@ -146,6 +146,8 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.radarShare = radar.get("share", config.radarShare).asFloat();
 	config.radarEnemy = radar.get("enemy", config.radarEnemy).asFloat();
 	config.radarInside = radar.get("inside", config.radarInside).asFloat();
+	config.radarGuard = radar.get("guard", "").asString();
+	config.radarGuardRadius = radar.get("guard_radius", config.radarGuardRadius).asFloat();
 	const Json::Value& objective = choke["objective"];
 	config.isObjective = objective.get("enable", false).asBool();
 	config.objGain = objective.get("gain", config.objGain).asFloat();

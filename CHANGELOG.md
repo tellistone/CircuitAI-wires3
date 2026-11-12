@@ -22,7 +22,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     one, at the spot that adds the most weighted coverage (enemy ground counts `choke.radar.enemy` extra), if that
     is at least `choke.radar.min_gain` of it. Standing in coverage, at least `choke.radar.inside` of the radar's
     view must be new. So radar follows the builders as they expand. The first goes up once the first factory
-    stands.
+    stands. Once a radar stands, a `choke.radar.guard` tower (turretmissile) goes at the best spot within
+    `choke.radar.guard_radius` (300 elmos), unless a tower already reaches it.
   - Holding the line (C), forward objectives (D) and enemy-held choke rankings (E).
   - Expansion bonus for clusters behind a defended cut.
   - `choke_overlay` chat command: draws chokes, pockets, lines, rankings, traffic, spots, radar and regions with map

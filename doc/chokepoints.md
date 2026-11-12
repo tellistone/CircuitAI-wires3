@@ -79,6 +79,8 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
 | `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
 | `choke.radar.inside` | `0.25` | A builder standing in coverage builds a radar only if at least this share of its view (by weight) is new. |
+| `choke.radar.guard` | `"turretmissile"` | Tower queued once a new radar stands, at the best spot near it. `""` turns it off. |
+| `choke.radar.guard_radius` | `300` | Elmos from the radar the guard tower may stand. |
 | `choke.objective.gain` | `1.5` | An objective's gain must be at least this × its cost. |
 | `choke.objective.power` | `1.3` | Our attack power must be at least this × the objective's defence. |
 | `choke.objective.retry` | `180` | Seconds before a failed objective may be tried again. |
@@ -184,7 +186,8 @@ view, by weight, is new, so radar near the coverage's edge still goes up but no 
 ground 25% lets radars stand about 830 elmos apart, 0.4 about 1350 and 0.5 about 1700 (radius 2100). It's a NOW
 job, and it goes ahead even while metal stalls, because it's cheap and it's what lets the AI see raids coming. The
 budget is `choke.radar.share` of the AI's income, starts with one radar, so the first goes up in the opening, and
-holds two at most.
+holds two at most. To hold radar back early on, give the radar's unit entry a `since` in seconds, as for any unit,
+for example `"staticradar": {"since": 120}`.
 
 The spot is one of the candidates within 600 elmos or the highest buildable cell there: the one with the most
 uncovered weight in its view for 1 + risk, if that is at least `choke.radar.min_gain` of the total weight and it
@@ -195,6 +198,13 @@ was sent to build counts as coverage until a radar stands within 500 elmos of it
 never go for the same ground. A radar job its builder leaves is dropped after 3 s, so no other builder crosses the
 map for it. Once little is left uncovered near a builder, it skips the search: one sum over the cells any spot
 near it could see.
+
+Each new radar gets a guard: once it stands, a `choke.radar.guard` tower (turretmissile) is queued as a HIGH job
+at the spot scorer's best spot within `choke.radar.guard_radius` (300 elmos). That's the spot that covers the
+radar's approaches best, keeps the radar in range and in sight, and favours height. If no spot passes, it goes
+beside the radar. No guard is queued where a tower of ours or an ally's already reaches the radar. The guard is
+outside the radar budget and waits out metal stalls like any tower, so it never slows the radar down. If the radar
+is never built, the guard is dropped with it.
 
 Why not a queued job: a radar queued for any builder lost the pick to nearer work every time, waited out the stall
 rule, and was given up. Picking the spot for the builder at hand gets it built at once.

@@ -44,6 +44,10 @@ class IBuilderTask;
  *   It must be reachable and free of threat, and stand 500 elmos from other radars (closer, ISensorTask drops the
  *   job). Risk is 1 for each radar lost near it, halving every 5 minutes. A job its builder leaves is dropped
  *   after 3 s.
+ * - choke.radar.guard: the radar job's next job is that tower, HIGH, at the spot scorer's best spot within
+ *   choke.radar.guard_radius covering the radar's approaches (beside the radar if none passes), unless a tower of
+ *   ours or an ally's already reaches the radar. It is queued once the radar stands, outside the radar budget and
+ *   under the usual stall rule, and dropped if the radar is.
  * Viewsheds are cached while their cell is a candidate or a pending radar's
  */
 class CSensorPlanner {
@@ -70,6 +74,7 @@ private:
 	};
 	// The authority's: the best spot near unit that isOk passes; its view is covered from now on. -RgtVector if none
 	springai::AIFloat3 TakeSpot(CCircuitUnit* unit, const std::function<bool(const springai::AIFloat3&)>& isOk);
+	IBuilderTask* MakeGuardTask(const springai::AIFloat3& radarPos);  // detached, or nullptr if none is needed
 	void UpdateWeights();
 	void UpdateRadars();
 	void UpdateCandidates();
