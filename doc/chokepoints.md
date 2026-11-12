@@ -156,7 +156,11 @@ started are called off.
 `score = cover × (1 + choke.spot.height × height) × setback ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
 
 - *cover* is the traffic of the targets in range with a clear line of fire, halved for each of our towers that
-  already covers a target.
+  already covers a target. At a choke the targets are its line and the band in front of it. At a defence point, the
+  base or a radar, they're the point's own approach: the cells on near-shortest routes from the enemy to it, by
+  walking distance, each weighted by its traffic. Traffic piles up where routes narrow, so the ramp up to a plateau
+  outweighs the open ground before it, and the ground below the plateau's cliffs, which leads elsewhere, counts
+  for nothing.
 - *height* is the height above the targets as a share of `choke.spot.height_cap`, up to 1. So a spot that high
   or higher scores `1 + choke.spot.height` times as much (1.5× by default).
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.

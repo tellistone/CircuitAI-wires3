@@ -44,6 +44,7 @@ public:
 		int key = -1;  // movement class (CChokeMap::MoveKey)
 		std::vector<float> field;
 		std::vector<std::vector<uint16_t>> sourceDist;  // De per source, NO_DIST where unreached
+		SCellMask mask;  // the cells it floods, for walks from any asset
 	};
 	static constexpr uint16_t NO_DIST = 0xFFFF;
 
@@ -67,11 +68,13 @@ public:
 
 	float GetAt(int cell) const { return blended.empty() ? 0.f : blended[cell]; }
 	/*
-	 * A position's own approach, for any asset (even one away from the fixed destinations): the weight, 0..1, of
-	 * cell x being on a near-shortest route from the enemy to the asset, from the De floods: detour = De(x) +
-	 * |x - asset| - De(asset) under 3 tau, weighted and blended as the field
+	 * A position's own approach, for any asset (even one away from the fixed destinations): (cell, weight) for the
+	 * cells within maxElmos walking of it on a near-shortest route from the enemy to it. Per type, Dg is walked from
+	 * the asset, and a cell's detour De(x) + Dg(x) - De(asset) under 3 tau keeps exp(-detour / tau) of the type's
+	 * field there, blended as the field. Walking keeps the ground below a plateau's cliffs off its approach, and the
+	 * field's density makes a ramp everyone climbs weigh more than the open ground before it
 	 */
-	float GetApproachWeight(int cell, int assetCell, float distToAsset) const;
+	std::vector<std::pair<int, float>> GetApproach(int assetCell, float maxElmos) const;
 
 private:
 	SParams params;
@@ -79,6 +82,8 @@ private:
 	std::vector<SType> types;
 	std::vector<std::pair<int, float>> blendShares;  // (index in types, share) of the last Blend
 	std::vector<float> blended;
+	mutable std::vector<int> floodDist, floodReached, touched;  // GetApproach's, kept between calls
+	mutable std::vector<float> approach;
 };
 
 } // namespace circuit

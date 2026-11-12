@@ -2024,7 +2024,8 @@ void CMilitaryManager::SweepByTraffic()
 				}
 			}
 		}
-		const std::vector<float> uncovered = spotScorer->GetUncovered(chokeMap->GetMainDef(), positions, 300.f);
+		const std::vector<float> uncovered = spotScorer->GetUncovered(chokeMap->GetMainDef(), positions,
+				chokeMap->GetConfig().spotRadius);
 		std::vector<std::pair<float, std::pair<int, unsigned>>> scored;
 		for (size_t k = 0; k < wanted.size(); ++k) {
 			const CChokeMap::SPointInfo* info = chokeMap->GetPointInfo(wanted[k].first, wanted[k].second);

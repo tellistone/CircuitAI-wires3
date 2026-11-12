@@ -245,8 +245,9 @@ std::vector<float> CSpotScorer::GetUncovered(CCircuitDef* def, const std::vector
 /*
  * What a spot should cover, halved for each of our towers that already covers it, best 32 kept:
  * - a choke: its line, and a band one weapon range deep on the enemy's side, weighted by traffic;
- * - a position: its local approach (CTrafficField::GetApproachWeight), plus the asset itself with a floor weight
- *   (the mean target weight, or 1 with no traffic), so a spot near it is picked on height and sight alone
+ * - a position: its own approach (CTrafficField::GetApproach, walked up to twice the reach), plus the asset itself
+ *   with a floor weight (the mean target weight, or 1 with no traffic), so a spot near it is picked on height and
+ *   sight alone
  */
 std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, const AIFloat3& pos, float radius,
 		const SGoal& goal, const std::vector<STower>& towers) const
@@ -261,30 +262,32 @@ std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, con
 	const bool isChokeGoal = (goal.type != GoalType::POSITION);
 	const CRegionGraph::SChoke* choke = isChokeGoal ? &graph.GetChokes()[goal.choke] : nullptr;
 	const int outerRegion = isChokeGoal ? graph.OtherSide(*choke, goal.innerRegion) : -1;
-	const int assetCell = traffic.IndexAt(goal.asset.x, goal.asset.z);
 
 	std::vector<STarget> targets;
-	ForEachCellIn(traffic.GetWidth(), traffic.GetHeight(), cellSize, pos.x - reach, pos.z - reach,
-			pos.x + reach, pos.z + reach, [&](int x, int z) {
+	auto add = [&](int x, int z, float weight) {
 		AIFloat3 c((x + 0.5f) * cellSize, 0.f, (z + 0.5f) * cellSize);
-		if (c.SqDistance2D(pos) > SQUARE(reach)) {
-			return;
-		}
-		const int cell = z * traffic.GetWidth() + x;
-		float weight = 0.f;
-		if (isChokeGoal) {
-			const float d = graph.GetLineDist(*choke, c.x, c.z);
-			if ((d <= cellSize) || ((d <= range) && (graph.GetRegionAt(c.x, c.z) == outerRegion))) {
-				weight = traffic.GetAt(cell);
-			}
-		} else {
-			weight = traffic.GetApproachWeight(cell, assetCell, c.distance2D(goal.asset));
-		}
-		if (weight > 0.f) {
+		if ((weight > 0.f) && (c.SqDistance2D(pos) <= SQUARE(reach))) {
 			c.y = terrainMgr->GetHeightAt(c.x, c.z);
 			targets.push_back({c, weight});
 		}
-	});
+	};
+	if (isChokeGoal) {
+		ForEachCellIn(traffic.GetWidth(), traffic.GetHeight(), cellSize, pos.x - reach, pos.z - reach,
+				pos.x + reach, pos.z + reach, [&](int x, int z) {
+			const float cx = (x + 0.5f) * cellSize;
+			const float cz = (z + 0.5f) * cellSize;
+			const float d = graph.GetLineDist(*choke, cx, cz);
+			if ((d <= cellSize) || ((d <= range) && (graph.GetRegionAt(cx, cz) == outerRegion))) {
+				add(x, z, traffic.GetAt(z * traffic.GetWidth() + x));
+			}
+		});
+	} else {
+		for (const std::pair<int, float>& cw : traffic.GetApproach(traffic.IndexAt(goal.asset.x, goal.asset.z),
+				2.f * reach))
+		{
+			add(cw.first % traffic.GetWidth(), cw.first / traffic.GetWidth(), cw.second);
+		}
+	}
 	auto keepBest = [&targets](size_t count) {
 		std::stable_sort(targets.begin(), targets.end(), [](const STarget& a, const STarget& b) {
 			return a.weight > b.weight;

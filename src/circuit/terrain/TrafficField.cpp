@@ -19,6 +19,7 @@ CTrafficField::SType CTrafficField::BuildType(int key, const SCellMask& mask, co
 	const size_t sourceCount = sources.size();
 	SType type;
 	type.key = key;
+	type.mask = mask;
 	type.field.assign(n, 0.f);
 	type.sourceDist.resize(sourceCount);
 	std::vector<int> dist;
@@ -140,26 +141,41 @@ void CTrafficField::Blend(const std::vector<std::pair<int, float>>& shares)
 	}
 }
 
-float CTrafficField::GetApproachWeight(int cell, int assetCell, float distToAsset) const
+std::vector<std::pair<int, float>> CTrafficField::GetApproach(int assetCell, float maxElmos) const
 {
-	const float straight = distToAsset * 2.f / cellSize;  // chamfer units: 2 per cell length
-	float weight = 0.f;
 	for (const std::pair<int, float>& ts : blendShares) {
 		const SType& t = types[ts.first];
+		const int seed = t.mask.NearestPassable(assetCell, 2);  // an asset on a slope: the nearest cell it walks
+		if (seed < 0) {
+			continue;
+		}
+		CDistanceFlood::Rerun(t.mask, {seed}, CDistanceFlood::FromElmos(t.mask, maxElmos), floodDist, floodReached);
+		approach.resize(floodDist.size(), 0.f);
 		for (const std::vector<uint16_t>& de : t.sourceDist) {
-			const uint16_t deAsset = de[assetCell];
-			const uint16_t deCell = de[cell];
-			if ((deAsset == NO_DIST) || (deCell == NO_DIST) || (deAsset == 0)) {
+			if ((de[seed] == NO_DIST) || (de[seed] == 0)) {
 				continue;
 			}
-			const float tau = std::max(params.spread * deAsset, 1.f);
-			const float detour = std::max(deCell + straight - deAsset, 0.f);
-			if (detour < 3.f * tau) {
-				weight += ts.second / t.sourceDist.size() * std::exp(-detour / tau);
+			const float tau = std::max(params.spread * de[seed], 1.f);
+			const float share = ts.second / t.sourceDist.size();
+			for (int cell : floodReached) {
+				const int detour = de[cell] + floodDist[cell] - de[seed];  // >= 0: chamfer distance is a metric
+				if ((de[cell] == NO_DIST) || (t.field[cell] <= 0.f) || (detour >= 3.f * tau)) {
+					continue;
+				}
+				if (approach[cell] == 0.f) {
+					touched.push_back(cell);
+				}
+				approach[cell] += share * t.field[cell] * std::exp(-detour / tau);
 			}
 		}
 	}
-	return weight;
+	std::vector<std::pair<int, float>> out;
+	for (int cell : touched) {  // nearest the asset first
+		out.push_back({cell, approach[cell]});
+		approach[cell] = 0.f;
+	}
+	touched.clear();
+	return out;
 }
 
 } // namespace circuit
