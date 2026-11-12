@@ -1329,7 +1329,14 @@ IUnitTask* CFactoryManager::DefaultMakeTask(CCircuitUnit* unit)
 
 	} else {
 
+		// Escalation pause: queued army jobs wait, constructors and anti-air still get built
+		const bool isEscalation = circuit->GetBuilderManager()->IsEscalationBusy();
 		for (const CRecruitTask* candy : factoryTasks) {
+			if (isEscalation && (candy->GetRecruitType() != CRecruitTask::RecruitType::BUILDPOWER)
+				&& (candy->GetRecruitType() != CRecruitTask::RecruitType::AA))
+			{
+				continue;
+			}
 			if (candy->CanAssignTo(unit)) {
 				task = candy;
 				break;
@@ -1363,6 +1370,11 @@ IUnitTask* CFactoryManager::CreateFactoryTask(CCircuitUnit* unit)
 	if (task != nullptr) {
 		return task;
 	}
+	// Escalation pause: no army, the metal goes to the superweapon. Anti-air still, if enemy air calls for it
+	if (circuit->GetBuilderManager()->IsEscalationBusy()) {
+		task = UpdateEscalationAA(unit);
+		return (task != nullptr) ? task : EnqueueWait(false, FRAMES_PER_SEC * 3);
+	}
 
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	// Metal stalls (the constructors' latch) and the factories are over their ms_pull share, this one included: wait
@@ -1378,6 +1390,50 @@ IUnitTask* CFactoryManager::CreateFactoryTask(CCircuitUnit* unit)
 	}
 
 	return EnqueueWait(false, FRAMES_PER_SEC * 3);
+}
+
+CRecruitTask* CFactoryManager::UpdateEscalationAA(CCircuitUnit* unit)
+{
+	if (!CanEnqueueTask() || (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f)) {
+		return nullptr;
+	}
+	// One at a time: RoleProbability counts finished anti-air only, every paused factory would queue one
+	for (const CRecruitTask* t : factoryTasks) {
+		if (t->GetRecruitType() == CRecruitTask::RecruitType::AA) {
+			return nullptr;
+		}
+	}
+	auto it = factoryDefs.find(unit->GetCircuitDef()->GetId());
+	if (it == factoryDefs.end()) {
+		return nullptr;
+	}
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	const float range = unit->GetCircuitDef()->GetBuildDistance();
+	std::vector<std::pair<CCircuitDef*, float>> candidates;
+	float magnitude = 0.f;
+	for (CCircuitDef* bd : it->second.buildDefs) {
+		if ((bd->GetMainRole() != ROLE_TYPE(AA)) || !bd->IsAvailable(frame) || !terrainMgr->CanBeBuiltAt(bd, pos, range)) {
+			continue;
+		}
+		const float prob = militaryMgr->RoleProbability(bd);  // > 0: enemy air outweighs our anti-air (response.json)
+		if (prob > 0.f) {
+			candidates.push_back(std::make_pair(bd, prob));
+			magnitude += prob;
+		}
+	}
+	if (candidates.empty()) {
+		return nullptr;
+	}
+	CCircuitDef* buildDef = RollCandidate(candidates, magnitude);
+	if (buildDef == nullptr) {
+		buildDef = candidates.back().first;
+	}
+	UnitDef* def = unit->GetCircuitDef()->GetDef();
+	const float radius = std::max(def->GetXSize(), def->GetZSize()) * SQUARE_SIZE / 2;
+	return EnqueueTask(CRecruitTask::Priority::NORMAL, buildDef, pos, CRecruitTask::RecruitType::AA, radius);
 }
 
 IUnitTask* CFactoryManager::CreateAssistTask(CCircuitUnit* unit)

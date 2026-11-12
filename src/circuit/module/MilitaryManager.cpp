@@ -1062,6 +1062,73 @@ void CMilitaryManager::ReadConfig()
 	}
 	DiceBigGun();
 
+	const Json::Value& esc = root["escalation"];
+	escalation.isEnabled = esc.get("enable", false).asBool();
+	const Json::Value& escRatio = esc["army_ratio"];  // [<on>, <off>], or one number for both
+	if (escRatio.isArray()) {
+		escalation.armyOn = escRatio.get((unsigned)0, 2.f).asFloat();
+		escalation.armyOff = std::min(escRatio.get((unsigned)1, 1.5f).asFloat(), escalation.armyOn);
+	} else if (escRatio.isNumeric()) {
+		escalation.armyOn = escalation.armyOff = escRatio.asFloat();
+	}
+	escalation.minOnFrames = std::max(esc.get("min_on", 60.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	escalation.maxBuildSec = esc.get("max_build_sec", 420.f).asFloat();
+	escalation.builderShare = utils::clamp(esc.get("builder_share", 0.7f).asFloat(), 0.f, 1.f);
+	escalation.isComm = esc.get("comm", false).asBool();
+	escalation.singuShare = utils::clamp(esc.get("singu_share", 0.34f).asFloat(), 0.f, 1.f);
+	escalation.staleFrames = std::max(esc.get("stale", 60.f).asFloat(), 1.f) * FRAMES_PER_SEC;
+	escalation.isNeedTerra = esc.get("terraform", true).asBool();
+	for (const Json::Value& name : esc["enemy"]) {
+		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
+		if (cdef == nullptr) {
+			circuit->LOG("CONFIG %s: escalation.enemy has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
+			continue;
+		}
+		escalation.enemyDefs.insert(cdef->GetId());
+	}
+	const Json::Value& escSuper = esc["super"];
+	const Json::Value& escWeights = escSuper["weight"];
+	for (unsigned i = 0; i < escSuper["unit"].size(); ++i) {
+		const char* name = escSuper["unit"][i].asCString();
+		SSuperInfo si;
+		si.cdef = circuit->GetCircuitDef(name);
+		if (si.cdef == nullptr) {
+			circuit->LOG("CONFIG %s: escalation.super has unknown UnitDef '%s'", cfgName.c_str(), name);
+			continue;
+		}
+		si.weight = escWeights.get(i, 1.f).asFloat();
+		escalation.supers.push_back(si);
+	}
+	for (const Json::Value& name : esc["front"]) {
+		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
+		if (cdef == nullptr) {
+			circuit->LOG("CONFIG %s: escalation.front has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
+			continue;
+		}
+		escalation.frontDefs.insert(cdef->GetId());
+	}
+	const Json::Value& escCounter = esc["counter"];  // {<super>: [<enemy counter>, ...]}
+	for (const std::string& superName : escCounter.getMemberNames()) {
+		CCircuitDef* sdef = circuit->GetCircuitDef(superName.c_str());
+		if (sdef == nullptr) {
+			circuit->LOG("CONFIG %s: escalation.counter has unknown UnitDef '%s'", cfgName.c_str(), superName.c_str());
+			continue;
+		}
+		for (const Json::Value& name : escCounter[superName]) {
+			CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
+			if (cdef == nullptr) {
+				circuit->LOG("CONFIG %s: escalation.counter has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
+				continue;
+			}
+			escalation.counters[cdef->GetId()].push_back(sdef->GetId());
+		}
+	}
+	escalation.singuDef = circuit->GetCircuitDef(esc.get("singu", "").asCString());
+	const Json::Value& escDelay = esc["delay"];
+	escalation.delayMin = std::max(escDelay.get((unsigned)0, 1.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	escalation.delayMax = std::max(escDelay.get((unsigned)1, 20.f).asFloat() * FRAMES_PER_SEC, (float)escalation.delayMin);
+	escalation.interval = std::max(esc.get("interval", 2.f).asFloat(), 0.5f) * FRAMES_PER_SEC;
+
 	defaultPorc = circuit->GetCircuitDef(porc.get("default", "").asCString());
 	if (defaultPorc == nullptr) {
 		defaultPorc = circuit->GetEconomyManager()->GetDefaultDef();
@@ -1122,6 +1189,9 @@ void CMilitaryManager::Init()
 		}
 		if (isResponseGates) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResponseGates, this), FRAMES_PER_SEC * 2, offset + 3);
+		}
+		if (escalation.isEnabled) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateEscalation, this), escalation.interval, offset + 2);
 		}
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogRaidStats, this), FRAMES_PER_SEC * 60, offset + 2);
 
@@ -2986,6 +3056,167 @@ void CMilitaryManager::DiceBigGun()
 		}
 	}
 	bigGunDef = candidates[choice].cdef;
+}
+
+bool CMilitaryManager::IsEscalationSuper(const CCircuitDef* cdef) const
+{
+	// By id: allied AIs' units can carry another AI's CCircuitDef
+	for (const SSuperInfo& info : escalation.supers) {
+		if (info.cdef->GetId() == cdef->GetId()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+CCircuitDef* CMilitaryManager::DiceEscalationSuper(bool isFrontOk) const
+{
+	const int frame = circuit->GetLastFrame();
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	// Metal per second it can be built at: income (the lower of metal and energy, ZK builds take both), or the build
+	// power escalation may use, whichever is less. Allies assisting only make it quicker
+	const float rate = std::min(std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome()),
+			circuit->GetBuilderManager()->GetBuildPower() * escalation.builderShare);
+	// Affordable ones first; with none affordable, any of the others (a slow superweapon beats an idle army)
+	std::vector<const SSuperInfo*> candidates;
+	std::vector<const SSuperInfo*> slowCandidates;
+	float magnitude = 0.f;
+	float slowMagnitude = 0.f;
+	for (const SSuperInfo& info : escalation.supers) {
+		if (!info.cdef->IsAvailable(frame)
+			|| (escalation.countered.find(info.cdef->GetId()) != escalation.countered.end())  // e.g. nuke vs antinuke
+			|| (economyMgr->IsGridConsumer(info.cdef)
+			&& !economyMgr->IsGridReachable(info.cdef, GetEscalationSuperPos(info.cdef, isFrontOk))))
+		{
+			continue;
+		}
+		if (info.cdef->GetCostM() <= rate * escalation.maxBuildSec) {
+			candidates.push_back(&info);
+			magnitude += info.weight;
+		} else {
+			slowCandidates.push_back(&info);
+			slowMagnitude += info.weight;
+		}
+	}
+	if (candidates.empty()) {
+		candidates.swap(slowCandidates);
+		magnitude = slowMagnitude;
+	}
+	if (candidates.empty()) {
+		return nullptr;
+	}
+	if (magnitude <= 0.f) {
+		return candidates[rand() % candidates.size()]->cdef;
+	}
+	float dice = (float)rand() / RAND_MAX * magnitude;
+	for (const SSuperInfo* info : candidates) {
+		dice -= info->weight;
+		if (dice < 0.f) {
+			return info->cdef;
+		}
+	}
+	return candidates.back()->cdef;
+}
+
+AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef, bool isFrontOk) const
+{
+	if (!isFrontOk || !IsEscalationFront(superDef)) {
+		return GetBigGunPos(superDef);
+	}
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
+	// Not enemy-held, and out of enemy weapon reach (influence is army balance, not coverage): builders keep the
+	// threat check on escalation jobs, and would leave a covered site to go stale
+	CMetalData::PointPredicate predicate = [inflMap, threatMap, metalMgr, &clusters](const int index) {
+		const AIFloat3& pos = clusters[index].position;
+		return metalMgr->IsClusterFinished(index) && (inflMap->GetInfluenceAt(pos) > -INFL_EPS)
+			&& (threatMap->GetAllThreatAt(pos) <= THREAT_MIN);
+	};
+	const int index = metalMgr->FindNearestCluster(circuit->GetSetupManager()->GetLanePos(), predicate);
+	return (index >= 0) ? clusters[index].position : GetBigGunPos(superDef);
+}
+
+bool CMilitaryManager::IsEscalationFront(const CCircuitDef* cdef) const
+{
+	return escalation.frontDefs.find(cdef->GetId()) != escalation.frontDefs.end();
+}
+
+int CMilitaryManager::RollEscalationDelay() const
+{
+	return escalation.delayMin + rand() % (escalation.delayMax - escalation.delayMin + 1);
+}
+
+void CMilitaryManager::UpdateEscalation()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	const int frame = circuit->GetLastFrame();
+	const CCircuitDef::Id terraId = circuit->GetBuilderManager()->GetTerraDef()->GetId();
+
+	// Enemies we know of (statics stay known out of sight until seen dying, or forgotten after 20 min).
+	// Defs compared by id: allied AIs share the enemy list, and its units can carry another AI's CCircuitDef
+	bool isEnemyTech = false;
+	const CCircuitDef* techDef = nullptr;
+	escalation.countered.clear();
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if (edef == nullptr) {
+			continue;
+		}
+		auto cit = escalation.counters.find(edef->GetId());
+		if (cit != escalation.counters.end()) {
+			escalation.countered.insert(cit->second.begin(), cit->second.end());
+		}
+		if (edef->GetId() == terraId) {
+			circuit->GetAllyTeam()->SetTerraSeen();
+		}
+		if (!isEnemyTech && (escalation.enemyDefs.find(edef->GetId()) != escalation.enemyDefs.end())) {
+			isEnemyTech = true;
+			techDef = edef;
+		}
+	}
+
+	// Allied team's mobile army, ours included: finished, no constructors or commanders (as the enemy sum)
+	float allyArmy = 0.f;
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* au = kv.second;
+		const CCircuitDef* cdef = au->GetCircuitDef();
+		if (cdef == nullptr) {
+			continue;
+		}
+		if (cdef->GetId() == terraId) {
+			circuit->GetAllyTeam()->SetTerraSeen();
+			continue;
+		}
+		if (!cdef->IsMobile() || cdef->IsBuilder() || cdef->IsRoleComm() || au->GetUnit()->IsBeingBuilt()) {
+			continue;
+		}
+		allyArmy += cdef->GetCostM();
+	}
+	const float enemyArmy = circuit->GetEnemyManager()->GetMobileCostNoCommFaded(frame, enemyHalfLife);
+	// Hysteresis: on at armyOn x, off below armyOff x. Escalation stops our reinforcements, so the ratio falls while
+	// it is on; one threshold would switch it on and off every few seconds
+	const float ratio = escalation.isOn ? escalation.armyOff : escalation.armyOn;
+	const bool isArmy = (allyArmy > 0.f) && (allyArmy >= ratio * enemyArmy);
+	const bool isTerra = !escalation.isNeedTerra || circuit->GetAllyTeam()->IsTerraSeen();
+
+	bool isOn = isArmy && isTerra && isEnemyTech;
+	if (!isOn && escalation.isOn && isArmy && (frame < escalation.onFrame + escalation.minOnFrames)) {
+		isOn = true;  // min_on: not off this soon after it turned on, unless the army fell below armyOff
+	}
+	if (isOn != escalation.isOn) {
+		circuit->LOG("ESCALATION %s: allied army %.0f m vs enemy %.0f m (need x%.1f), terraform %s, enemy tech %s",
+				isOn ? "ON" : "OFF", allyArmy, enemyArmy, ratio,
+				circuit->GetAllyTeam()->IsTerraSeen() ? "seen" : "not seen",
+				(techDef != nullptr) ? techDef->GetDef()->GetName() : "none");
+		escalation.isOn = isOn;
+		if (isOn) {
+			escalation.onFrame = frame;
+		}
+	}
+	circuit->GetBuilderManager()->UpdateEscalation(isOn);
 }
 
 float CMilitaryManager::GetEnemyArmyRatio(float& enemyPerTeam, float& ours) const

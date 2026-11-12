@@ -14,6 +14,7 @@
 #include "terrain/TerrainData.h"
 #include "unit/CircuitUnit.h"
 
+#include <array>
 #include <map>
 #include <set>
 #include <vector>
@@ -131,6 +132,51 @@ public:
 		int maxPriority;  // highest priority of a job a builder can be taken off (NOW never)
 	};
 	const SEscort& GetEscortCfg() const { return escort; }
+
+	// Escalation mode (MilitaryManager::IsEscalation), every escalation.interval: an allied superweapon
+	// (escalation.super) or singu being built gets our builders at NOW (our own job on it raised, an ally's frame
+	// assisted); with none of a kind being built, and no job of ours for one, we start one at NOW after a random
+	// escalation.delay. Off: the jobs raised drop back to NORMAL
+	void UpdateEscalation(bool isOn);
+	// Escalation has live superweapon work: a frame that progressed in the last escalation.stale s or has our builders,
+	// a job of ours not placed yet (with builders, or younger than escalation.stale), or an ally's claim. Factories pause
+	// only then: not for a start timer, a stuck frame (ZK frames don't decay), nor for singus alone
+	bool IsEscalationBusy() const { return isEscalationBusy; }
+	bool IsEscalationTask(const IBuilderTask* task) const {
+		return escalationTasks.find(const_cast<IBuilderTask*>(task)) != escalationTasks.end();
+	}
+private:
+	void PromoteEscalation(IBuilderTask* task);
+	IBuilderTask* AssistEscalationFrame(CAllyUnit* frame);
+	IBuilderTask* StartEscalation(int kind);
+	// Our build power on escalation jobs (singu jobs only with isSingu) is at its share of all of it, unit's added:
+	// escalation.builder_share (all of it while metal is near full), and singu_share of builder_share for singus
+	bool IsEscalationFull(CCircuitUnit* unit, bool isSingu) const;
+	bool IsEscalationSingu(const IBuilderTask* task) const;
+	static constexpr int ESC_CLAIM_FRAMES = FRAMES_PER_SEC * 30;  // ally-team claim, refreshed every update
+	static constexpr int ESC_STUCK_STALES = 3;  // a frame without progress this many escalation.stale stops blocking a start
+	std::set<IBuilderTask*> escalationTasks;  // raised to NOW by escalation mode
+	// Per kind (0 superweapon, 1 singu): when we start our own (-1 = no timer); kept through a short off spell
+	struct SEscProject {
+		int startFrame = -1;
+		bool isLogged = false;  // "nothing to start" logged since the timer ran out
+		bool isFrontStale = false;  // the last front job went stale: the next one is placed as the rest
+		int staleCount = 0;  // jobs dropped stale in a row: the next start waits 2^count x as long (up to 2 min)
+	};
+	std::array<SEscProject, ESC_KINDS> escProjects;
+	// Own unplaced escalation jobs without builders: since when. Until escalation.stale they are live (claim,
+	// factory pause); past it one escalation started is dropped, one of the normal paths only blocks a new start
+	std::map<IBuilderTask*, int> escIdleSince;
+	// Escalation frames (unit id): build progress, and when it last went up. Kept through an off spell
+	struct SEscFrame {
+		float progress;
+		int riseFrame;
+	};
+	std::map<int, SEscFrame> escFrames;
+	// Jobs escalation started itself (the only ones a stale wait drops; kept through an off spell)
+	std::set<IBuilderTask*> escStarted;
+	bool isEscalationBusy = false;
+public:
 private:
 	void PullRepairer(IBuilderTask* task, CCircuitUnit* target);
 	bool IsPrioRepairFull(const CCircuitUnit* unit) const;

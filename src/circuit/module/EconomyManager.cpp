@@ -1337,6 +1337,32 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	return nullptr;
 }
 
+IBuilderTask* CEconomyManager::EnqueueEscalationEnergy(CCircuitDef* cdef)
+{
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	auto it = rearInfos.find(cdef);
+	if (it != rearInfos.end()) {
+		const AIFloat3 pos = GetRearPos(cdef, nullptr);
+		if (utils::is_valid(pos)) {
+			// Exactly on the open site, reserved now (as UpdateEnergyTasks does)
+			IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::NOW, cdef, pos,
+														 IBuilderTask::BuildType::ENERGY, 0.f, true);
+			task->SetFacing(it->second.facing);  // before SetBuildPos: the blocker uses it
+			task->SetBuildPos(pos);
+			it->second.nextFrame = 0;
+			return task;
+		}
+	}
+	// No rear site: near the base, the builder searches for an open spot around it
+	AIFloat3 pos = circuit->GetSetupManager()->GetBasePos();
+	CTerrainManager::CorrectPosition(pos);
+	if (!circuit->GetTerrainManager()->CanBeBuiltAtSafe(cdef, pos)) {
+		return nullptr;
+	}
+	return builderMgr->EnqueueTask(IBuilderTask::Priority::NOW, cdef, pos, IBuilderTask::BuildType::ENERGY,
+								   SQUARE_SIZE * 32.0f, true);
+}
+
 AIFloat3 CEconomyManager::GetRearPos(CCircuitDef* cdef, CCircuitUnit* unit)
 {
 	SRearInfo& info = rearInfos.find(cdef)->second;
