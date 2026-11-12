@@ -1478,7 +1478,8 @@
 	"staticradar": {
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine"],
-		"attribute": ["raid_target"]
+		"attribute": ["raid_target"],
+		"since": 0  // seconds into the game before any radar is built; holds back choke.radar too
 	},
 	"staticcon": {
 		// threat 0 (unarmed: no influence, never counts toward safe)

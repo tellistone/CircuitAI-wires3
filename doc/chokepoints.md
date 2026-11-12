@@ -187,7 +187,7 @@ ground 25% lets radars stand about 830 elmos apart, 0.4 about 1350 and 0.5 about
 job, and it goes ahead even while metal stalls, because it's cheap and it's what lets the AI see raids coming. The
 budget is `choke.radar.share` of the AI's income, starts with one radar, so the first goes up in the opening, and
 holds two at most. To hold radar back early on, give the radar's unit entry a `since` in seconds, as for any unit,
-for example `"staticradar": {"since": 120}`.
+for example `"since": 120` in the `staticradar` entry (shipped as 0).
 
 The spot is one of the candidates within 600 elmos or the highest buildable cell there: the one with the most
 uncovered weight in its view for 1 + risk, if that is at least `choke.radar.min_gain` of the total weight and it
