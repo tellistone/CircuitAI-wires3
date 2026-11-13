@@ -45,6 +45,10 @@ using namespace springai;
 #define BLEND_COOLDOWN		(FRAMES_PER_SEC * 30)
 #define GRAPH_CELL			32  // elmos: the graph's cells, two slope map pixels
 #define TRAFFIC_CELL		64  // elmos: the traffic field's cells
+// Of a cell's 4 finer parts (slope pixels for a graph cell, graph cells for a traffic cell), how many must pass. 3 keeps
+// a steep rim one or two parts thick wherever it falls on the grid; at 2, every such rim that straddles two cells
+// vanished, and a cliff or a spike's side leaked where the engine lets nothing through
+#define PASS_NEED			3
 
 // Everything a build job reads and writes. Filled on the main thread, run on the area worker, applied on the main
 // thread: the worker never touches CChokeMap
@@ -395,8 +399,8 @@ void CChokeMap::RunJob(SBuildJob& job)
 	const size_t classCount = job.classes.size();
 
 	/*
-	 * Masks: a 32 elmo cell passes for a class when at least 2 of its 4 slope pixels pass the same slope and depth
-	 * tests CTerrainData applies per sector
+	 * Masks: a 32 elmo cell passes for a class when at least 3 of its 4 slope pixels pass the same slope and depth
+	 * tests CTerrainData applies per sector (PASS_NEED)
 	 */
 	if (job.isMasks) {
 		const clock::time_point t0 = clock::now();
@@ -439,7 +443,7 @@ void CChokeMap::RunJob(SBuildJob& job)
 					for (int x = 0; x < width; ++x) {
 						const int s = (z * 2) * smW + x * 2;
 						const int count = isPass(s) + isPass(s + 1) + isPass(s + smW) + isPass(s + smW + 1);
-						mask.cells[z * width + x] = (count >= 2) ? 1 : 0;
+						mask.cells[z * width + x] = (count >= PASS_NEED) ? 1 : 0;
 					}
 				}
 				it = walkMasks.emplace(cp.mobileId, std::move(mask)).first;
@@ -490,7 +494,7 @@ void CChokeMap::RunJob(SBuildJob& job)
 		const clock::time_point t0 = clock::now();
 		SCellMask built;  // the coarse mask flooded
 		for (int ci : job.trafficClasses) {
-			SCellMask coarse = job.masks[ci].Downsample(TRAFFIC_CELL / GRAPH_CELL, 2);
+			SCellMask coarse = job.masks[ci].Downsample(TRAFFIC_CELL / GRAPH_CELL, PASS_NEED);
 			if (job.trafficTypes.empty()) {
 				// A source on a wall for this class (a factory on a slope): its nearest passable cell within 4 cells
 				std::vector<CTrafficField::Cells> sources = job.sourceCells;

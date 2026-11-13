@@ -11,8 +11,9 @@ when `choke_overlay` asks for it.
 ## The analysis
 
 - **Threat graph.** The map is cut into 32-elmo cells that the enemy's *gating* movement types can cross (walkers,
-  tanks, and hovers when the map has water). The open areas become regions, and the narrow gaps between them become
-  chokes. A choke is *defensible* when it is at most `choke.defensible` main-tower ranges wide. Amphibious bots,
+  tanks, and hovers when the map has water). A cell counts as crossable when at least 3 of its 4 slope-map pixels
+  are, so a cliff or a spike's side only one or two pixels thick stays a wall wherever it falls on the grid. The open
+  areas become regions, and the narrow gaps between them become chokes. A choke is *defensible* when it is at most `choke.defensible` main-tower ranges wide. Amphibious bots,
   spiders and jumpers are *leak* types: they don't shape the graph, and each cluster keeps a tower of its own against
   them and anything else the cut doesn't stop. Jumpers cross a wall when it is no longer than their jump along a row
   or a column of cells. A leak type starts gating once its own cost reaches `choke.gate_share` of the enemy army seen
@@ -32,7 +33,8 @@ when `choke_overlay` asks for it.
   points, and has no enemy territory right outside it.
 - **Lines.** The *current line* is the cut nearest our territory against enemy territory. The *forward line* is the
   cut nearest our territory against the enemy's side of the map. A region both sides hold counts as ours.
-- **Traffic field.** On 64-elmo cells, one layer per enemy movement type: where its units are likely to walk from the
+- **Traffic field.** On 64-elmo cells (crossable when at least 3 of their four 32-elmo cells are), one layer per enemy
+  movement type: where its units are likely to walk from the
   enemy's factories (or start boxes) to our clusters and base. The layers are blended by the enemy's army mix, at most
   every 30 s and only when a share moves by more than 0.1.
 - **Openness.** Half the share of mex income that is open from the enemy side, plus half the width of the narrowest
