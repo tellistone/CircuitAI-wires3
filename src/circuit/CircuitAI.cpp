@@ -16,6 +16,8 @@
 #include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
+#include "terrain/ChokeMap.h"
+#include "terrain/ChokeOverlay.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
 #include "task/PlayerTask.h"
@@ -782,6 +784,11 @@ int CCircuitAI::Update(int frame)
 
 int CCircuitAI::Message(int playerId, const char* message)
 {
+	CChokeMap* chokeMap = (allyTeam != nullptr) ? allyTeam->GetChokeMap().get() : nullptr;
+	if ((chokeMap != nullptr) && chokeMap->GetOverlay()->OnChat(this, playerId, message)) {
+		return 0;  // choke_overlay (doc/chokepoints.md)
+	}
+
 #ifdef DEBUG_VIS
 	const char cmdBreak[]   = "~break";
 

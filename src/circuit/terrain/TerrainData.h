@@ -225,6 +225,9 @@ public:
 	SAreaData* GetNextAreaData() {
 		return (pAreaData.load() == &areaData0) ? &areaData1 : &areaData0;
 	}
+	// Bumped on the main thread after an area update that found the heightmap changed (terraform): CChokeMap
+	// rebuilds its masks when it moves
+	int GetHeightVersion() const { return heightVersion; }
 
 private:
 	static CMap* map;
@@ -233,6 +236,8 @@ private:
 	FloatVec slopeMap;
 	bool isUpdating;
 	int aiToUpdate;
+	bool isHeightChanged;  // set on the area worker, read on the main thread once the update is done
+	int heightVersion;
 // ---- Threaded areas updater ---- END
 
 public:

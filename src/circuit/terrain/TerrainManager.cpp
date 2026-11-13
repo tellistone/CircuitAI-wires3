@@ -348,6 +348,21 @@ void CTerrainManager::DelBlocker(CCircuitDef* cdef, const AIFloat3& pos, int fac
 #endif
 }
 
+void CTerrainManager::SetLaneCells(std::vector<int>&& cells)
+{
+	for (int index : laneCells) {
+		blockingMap.DelBlocker(index % blockingMap.columns, index / blockingMap.columns, SBlockingMap::StructType::TERRA);
+	}
+	laneCells = std::move(cells);
+	for (int index : laneCells) {
+		blockingMap.AddBlocker(index % blockingMap.columns, index / blockingMap.columns, SBlockingMap::StructType::TERRA);
+	}
+
+#ifdef DEBUG_VIS
+	UpdateVis();
+#endif
+}
+
 void CTerrainManager::ResetBuildFrame()
 {
 	markFrame = -FRAMES_PER_SEC;
@@ -1461,6 +1476,20 @@ bool CTerrainManager::CanBeBuiltAt(CCircuitDef* cdef, const AIFloat3& position, 
 		return true;
 	}
 	return sector->position.distance2D(GetSector(iS).position) < range;
+}
+
+bool CTerrainManager::CanBuildAt(CCircuitDef* cdef, const AIFloat3& position)
+{
+	return CanBeBuiltAt(cdef, position) && circuit->GetMap()->IsPossibleToBuildAt(cdef->GetDef(), position, UNIT_FACING_SOUTH);
+}
+
+float CTerrainManager::GetHeightAt(float x, float z) const
+{
+	const int width = GetTerrainWidth() / SQUARE_SIZE;
+	const int height = GetTerrainHeight() / SQUARE_SIZE;
+	const int hx = utils::clamp(int(x) / SQUARE_SIZE, 0, width - 1);
+	const int hz = utils::clamp(int(z) / SQUARE_SIZE, 0, height - 1);
+	return areaData->heightMap[hz * width + hx];
 }
 
 bool CTerrainManager::CanBeBuiltAt(CCircuitDef* cdef, const AIFloat3& position)
