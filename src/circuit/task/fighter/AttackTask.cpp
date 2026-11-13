@@ -39,7 +39,7 @@ using namespace springai;
 // Routes per target decision: each one whose approach to the target it reaches is unsafe drops that target
 // and routes again to the rest
 static constexpr int MAX_TARGET_ROUTES = 3;
-// A target dropped for an unsafe route approach isn't picked again for this long
+// A target dropped for an unsafe route approach, or that an empty route couldn't reach, isn't picked again for this long
 static constexpr int REJECTED_TARGET_FRAMES = FRAMES_PER_SEC * 6;
 // Goals of one target route
 static constexpr size_t MAX_TARGET_GOALS = 16;
@@ -400,11 +400,10 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		reinforce = nullptr;
 	}  // else: nothing to join, carry on as a small attack group
 
-	const AIFloat3& startPos = leader->GetPos(frame);
 	// A route is still being worked out: keep the current pick until it comes back, unless the target is
 	// already within range or in contact (then engage as usual)
 	if (!IsQueryReady(leader) && (target != nullptr)
-		&& (GetRangePos(target, frame).SqDistance2D(startPos) >= SQUARE(highestRange))
+		&& !IsInLeaderRange(target, GetRangePos(target, frame), frame)
 		&& !IsInContact(target, true, frame))
 	{
 		return;
@@ -438,14 +437,12 @@ void CAttackTask::Decide(int frame, bool isReuse)
 bool CAttackTask::EngageInRange(int frame, bool isWalking)
 {
 	// A target that passes the usual checks (FindTarget) and whose range spot (GetRangePos: position) is already
-	// within our range (highestRange of the leader), or that is in contact: engage it. FindTarget's own verdict, so
-	// the two never disagree.
-	// Walking to a group the pick is used only in range: with no enemy we could hit within 2x our
-	// range (a range spot is at most a fire range in front of its target) or the contact bound, skip FindTarget, it
-	// couldn't engage
-	if (isWalking
-		&& (FindNearestHittable(frame, std::max(2.f * highestRange, GetContactBound(frame))) == nullptr))
-	{
+	// within our range (IsInLeaderRange), or that is in contact: engage it. FindTarget's own verdict, so the two never
+	// disagree.
+	// Walking to a group the pick is used only in range: with no enemy we could hit within the contact bound, skip
+	// FindTarget, it couldn't engage. The bound is over 1.25x highestRange + our fire range, so it also covers a range
+	// spot (at most a fire range in front of its target) within highestRange
+	if (isWalking && (FindNearestHittable(frame, GetContactBound(frame)) == nullptr)) {
 		SetTarget(nullptr);
 		fleeTargetId = -1;  // as FindTarget: the target we fled from is ours only at the next pick
 		return false;
@@ -1190,40 +1187,59 @@ float CAttackTask::GetContactReach(const CEnemyInfo* enemy) const
 {
 	// Our fire range: the group's power-weighted median, as elsewhere (one long-range unit doesn't widen it).
 	// The enemy's own range: it can hit us from there (an outranging skirmisher or artillery shelling us)
-	const float fireRange = std::max(fireRangeLand, fireRangeWater);
-	float reach = fireRange;
+	float reach = GetGroundFireRange();
 	CCircuitDef* edef = enemy->GetCircuitDef();
 	float eRange;
 	if ((edef != nullptr) && IsGroundDangerDef(edef, false, eRange)) {  // mobile, armed, not flying or anti-air only
-		reach = std::max(reach, std::min(eRange, highestRange + CONTACT_SPOT_MOD * fireRange));
+		reach = std::max(reach, std::min(eRange, GetContactCap()));
 	}
 	return reach + DEFAULT_SLACK;
 }
 
+float CAttackTask::GetContactCap() const
+{
+	return highestRange + CONTACT_SPOT_MOD * GetGroundFireRange();
+}
+
 bool CAttackTask::IsInContact(const CEnemyInfo* enemy, bool isCurrent, int frame, float* outSqDist)
 {
-	UpdateContactUnits(frame);
 	const float reach = GetContactReach(enemy) * (isCurrent ? RAID_FREE_KEEP : 1.f);
-	const AIFloat3& ePos = enemy->GetPos();
-	if (ePos.SqDistance2D(leader->GetPos(frame)) > SQUARE(contactSpread + reach)) {
-		return false;  // beyond the reach of every unit we count
-	}
-	float minSqDist = std::numeric_limits<float>::max();
-	for (const AIFloat3& p : contactPos) {
-		minSqDist = std::min(minSqDist, ePos.SqDistance2D(p));
-	}
-	if (outSqDist != nullptr) {
-		*outSqDist = minSqDist;
-	}
-	return minSqDist < SQUARE(reach);
+	return IsSeenByUnits(enemy, enemy->GetPos(), reach, frame, outSqDist);
 }
 
 float CAttackTask::GetContactBound(int frame)
 {
 	UpdateContactUnits(frame);
-	const float fireRange = std::max(fireRangeLand, fireRangeWater);
-	const float maxReach = std::max(fireRange, highestRange + CONTACT_SPOT_MOD * fireRange) + DEFAULT_SLACK;
-	return contactSpread + maxReach * RAID_FREE_KEEP;
+	return contactSpread + (GetContactCap() + DEFAULT_SLACK) * RAID_FREE_KEEP;  // the cap is above our fire range
+}
+
+bool CAttackTask::IsSeenByUnits(const CEnemyInfo* enemy, const AIFloat3& pos, float range, int frame, float* outSqDist)
+{
+	UpdateContactUnits(frame);
+	float minSqDist = std::numeric_limits<float>::max();
+	bool isSeen = false;
+	if (pos.SqDistance2D(leader->GetPos(frame)) <= SQUARE(contactSpread + range)) {  // else beyond every unit we count
+		float aimLift = 0.f, targetLift = 0.f;
+		const bool isSight = GetSightLifts(enemy, aimLift, targetLift);
+		CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
+		const float sqRange = SQUARE(range);
+		for (const AIFloat3& p : contactPos) {
+			const float sqDist = pos.SqDistance2D(p);
+			minSqDist = std::min(minSqDist, sqDist);
+			isSeen = isSeen
+				|| ((sqDist < sqRange) && (!isSight || terrainMgr->IsLineClear(p, pos, aimLift, targetLift, false)));
+		}
+	}
+	if (outSqDist != nullptr) {
+		*outSqDist = minSqDist;
+	}
+	return isSeen;
+}
+
+bool CAttackTask::IsInLeaderRange(const CEnemyInfo* enemy, const AIFloat3& rangePos, int frame)
+{
+	return (rangePos.SqDistance2D(leader->GetPos(frame)) < SQUARE(highestRange))
+		&& IsSeenByUnits(enemy, rangePos, highestRange, frame);
 }
 
 /*
@@ -1252,8 +1268,7 @@ void CAttackTask::FindTarget()
 	// A runner that outranges us is dropped at a lower speed: we would only catch it inside its range.
 	// Our range: the group's weighted median weapon range (as IsSiegeTarget), not highestRange (that includes LOS)
 	const float sqOutrangeSpeed = SQUARE(highestSpeed * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
-	const float groundRange = std::max(fireRangeLand, fireRangeWater);
-	const float sqHighestRange = SQUARE(highestRange);
+	const float groundRange = GetGroundFireRange();
 	// Divided by the thr_mod.distance curve at each judged spot
 	const float maxPower = GetPickStrength(frame);
 	// The current target is judged against a looser allowance (quota.attack_keep_threat x) at its spot and on
@@ -1363,8 +1378,8 @@ void CAttackTask::FindTarget()
 		// Where range and the approach line are measured from, and a disc goal's spot: a radar-only parked
 		// mobile's anchor (its radar position wobbles by the engine's radar error), else its position (GetRangePos)
 		AIFloat3 rangePos;
-		bool isContact;  // IsInContact: ranked ahead of every enemy not in contact
-		bool isInRange;  // within highestRange of the leader, or in contact: engaged at once, no route
+		bool isContact;  // IsInContact: while engaged, ranked ahead of every enemy not in contact
+		bool isInRange;  // IsInLeaderRange, or in contact: engaged at once, no route
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
 	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop).
@@ -1384,13 +1399,14 @@ void CAttackTask::FindTarget()
 		const bool isPrev = (enemy->GetId() == prevTargetId);
 		float contactSqDist;
 		const bool isContact = IsInContact(enemy, isPrev, frame, &contactSqDist);
-		// In contact: already fighting us. It needs no route, so a rejected route approach doesn't matter, and a
-		// runner still within reach is shot at as it goes (and a kiter's step back doesn't flip the pick)
-		if (!isContact && IsRejected(enemy->GetId(), -1, -1, frame)) {
+		// In contact: already fighting us. It needs no route, so a rejected route doesn't matter. In the fight (in
+		// contact while engaged), a runner still within reach is shot at as it goes, and a kiter's step back doesn't
+		// flip the pick; a roaming group doesn't chase a raider or scout that pokes it and runs.
+		// IsRunningAway: runs away faster than we chase (or nearly as fast, and outranges us)
+		if ((!isContact && IsRejected(enemy->GetId(), -1, -1, frame))
+			|| (!(isContact && isEngaged) && IsRunningAway(enemy, pos, sqMaxSpeed, sqOutrangeSpeed, groundRange)))
+		{
 			continue;
-		}
-		if (!isContact && IsRunningAway(enemy, pos, sqMaxSpeed, sqOutrangeSpeed, groundRange)) {
-			continue;  // runs away faster than we chase (or nearly as fast, and outranges us)
 		}
 		const AIFloat3& ePos = enemy->GetPos();
 		if (IsDangerAt(leader, ePos, powerFor(enemy, isContact), refFor(enemy))
@@ -1406,7 +1422,8 @@ void CAttackTask::FindTarget()
 		}
 		// Ranked by Own to Enemy distance x near-base scale, times the type's target_dist_mod (behaviour.json)
 		// so unwanted types count as farther. From the range position: a radar-only parked mobile's wobble would
-		// shift its rank. In contact: from our nearest unit (contact enemies rank among themselves, ahead of the rest)
+		// shift its rank. In contact: from our nearest unit (while engaged, contact enemies rank among themselves, ahead of
+		// the rest)
 		const float scale = std::min(c.rangePos.SqDistance2D(basePos) / sqOBDist, 1.f);
 		const float sqOEDist = pos.SqDistance2D(c.rangePos);
 		// quota.attack_own_ground_time and the floors: our territory (IsAllyTerritory: our buildings and land
@@ -1421,7 +1438,7 @@ void CAttackTask::FindTarget()
 		{
 			continue;
 		}
-		c.isInRange = (sqOEDist < sqHighestRange) || isContact;
+		c.isInRange = isContact || IsInLeaderRange(enemy, c.rangePos, frame);
 		c.rawKey = (isContact ? contactSqDist : sqOEDist) * scale;
 		c.key = c.rawKey * SQUARE(distModFor(enemy));
 		if (IsSiegeTarget(enemy, frame)) {  // quota.attack_static_cells.siege_bonus
@@ -1444,10 +1461,11 @@ void CAttackTask::FindTarget()
 
 	// Nearest candidates first. Keep the nearest MAX_TARGET_GOALS targets as goals of one route query (Update); the
 	// nearest is the target until the route says which one we can actually reach under the threat cap, with a safe approach.
-	// Enemies in contact come first: finish the fight we're in before walking off to another target (a preferred type,
-	// a contested cluster), which would also put the line back on mid-fight
-	std::sort(candidates.begin(), candidates.end(), [](const SCandidate& a, const SCandidate& b) {
-		return (a.isContact != b.isContact) ? a.isContact : (a.key < b.key);
+	// While engaged, enemies in contact come first: finish the fight we're in before walking off to another target (a
+	// preferred type, a contested cluster), which would also put the line back on mid-fight. Roaming, target_dist_mod
+	// ranks them as any other (a scout poking the front row doesn't pull the group off its walk)
+	std::sort(candidates.begin(), candidates.end(), [isEngaged](const SCandidate& a, const SCandidate& b) {
+		return (isEngaged && (a.isContact != b.isContact)) ? a.isContact : (a.key < b.key);
 	});
 	routeGoals.clear();
 	const SCandidate* best = nullptr;
@@ -1523,10 +1541,10 @@ void CAttackTask::FindTarget()
 	}
 
 	// Stickiness: keep the current target unless another is clearly nearer (STICKY_DIST by distance), so
-	// near-equal targets don't flip back and forth between decisions. Only against a best of its own kind: a current
-	// target out of contact doesn't win over one in contact
+	// near-equal targets don't flip back and forth between decisions. Except that a current target out of contact
+	// doesn't win over a best in contact (while engaged, contact ranks first anyway)
 	const float sqSticky = SQUARE(STICKY_DIST);
-	const bool isSticky = (prev != nullptr) && (prev->isContact == best->isContact)
+	const bool isSticky = (prev != nullptr) && (prev->isContact || !best->isContact)
 			&& (best->key >= prev->key * sqSticky);
 	// The current target was kept above although really nearer than the best; if stickiness won't keep it
 	// either, leave it out too (all of its goals), or it would take the route
@@ -1648,7 +1666,12 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 			}
 		}
 		pPath = path;
-		// No candidate reachable within our threat cap: drop the target and head for the front
+		// No candidate reachable within our threat cap: drop the target and head for the front. Its targets are
+		// rejected as for an unsafe approach: else the next decision routes to them again, the costliest search there
+		// is (all that is reachable under the cap), e.g. to a target on a plateau with no way up
+		for (const STargetGoal& g : goals) {
+			rejectedUntil[{g.id, -1}] = {frame + REJECTED_TARGET_FRAMES, -1};
+		}
 		SetTarget(nullptr);
 		ClearScaleAnchor();
 		FallbackFrontPos(isDecisionReuse);

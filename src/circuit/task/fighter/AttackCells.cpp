@@ -10,7 +10,6 @@
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
-#include "terrain/path/PathFinder.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
@@ -27,7 +26,7 @@ using namespace springai;
 static constexpr float PARKED_SPEED_MOD = 1.25f;
 // quota.attack_static_cells.siege_bonus: for a slow mobile type whose weapon range is at least this x our fire range
 static constexpr float SIEGE_RANGE_MOD = 1.2f;
-// Firing cells' line-of-sight test aims at half the target's height, within these (elmos)
+// Lines of fire (firing cells, the pick, firing spots) aim at half the target's height, within these (elmos)
 static constexpr float CELL_TARGET_LIFT_MIN = SQUARE_SIZE;
 static constexpr float CELL_TARGET_LIFT_MAX = 32.f;
 // A cell target with no safe firing cell is banned for CELL_BAN_FRAMES << level, level up to CELL_BAN_MAX_LEVEL
@@ -37,6 +36,25 @@ static constexpr int CELL_BAN_MAX_LEVEL = 2;
 // changes by more than CELL_BAN_THREAT_CHANGE (fraction)
 static constexpr int CELL_BAN_RESET_FRAMES = FRAMES_PER_SEC * 60;
 static constexpr float CELL_BAN_THREAT_CHANGE = 0.25f;
+
+float CAttackTask::GetTargetLift(CCircuitDef* edef)
+{
+	return (edef != nullptr) ? utils::clamp(edef->GetHeight() * 0.5f, CELL_TARGET_LIFT_MIN, CELL_TARGET_LIFT_MAX)
+			: CELL_TARGET_LIFT_MIN;
+}
+
+bool CAttackTask::GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const
+{
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	if (((edef != nullptr) && edef->IsAbleToFly()) || (enemy->GetPos().y < -SQUARE_SIZE * 5)) {
+		return false;  // flying above the lifts, or under water (torpedoes): terrain isn't what blocks it
+	}
+	// No lower than the lifts of target routes (half the leader's height, at SQUARE_SIZE: GetHitTest) and of firing
+	// cells: a stricter pick would read the end of their walk as out of sight, and route to the same spot again
+	outAimLift = std::max(GetMilitaryMgr()->GetAttackCells().aimHeight, leader->GetCircuitDef()->GetHeight() * 0.5f);
+	outTargetLift = GetTargetLift(edef);
+	return true;
+}
 
 bool CAttackTask::GetCellAnchor(const CEnemyInfo* enemy, int frame, AIFloat3& outPos, int& outEpoch) const
 {
@@ -128,17 +146,10 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 		isNear[sec] = (utils::angle_diff((sec + 0.5f) * twoPi / sectors, bearingUs) <= static_cast<float>(M_PI) * 0.5f);
 	}
 
-	const int sqSize = circuit->GetPathfinder()->GetSquareSize();
-	const int maxX = terrainMgr->GetSectorXSize() - 1;
-	const int maxZ = terrainMgr->GetSectorZSize() - 1;
-	auto toPathXY = [sqSize, maxX, maxZ](const AIFloat3& p) {
-		return int2(utils::clamp(int(p.x) / sqSize, 0, maxX), utils::clamp(int(p.z) / sqSize, 0, maxZ));
-	};
-	const int2 targetXY = toPathXY(tPos);
-	// Aimed from cell_aim_height above a cell at half the target's height (a tall strider shows over a low ridge)
-	const float targetLift = utils::clamp(enemy->GetCircuitDef()->GetHeight() * 0.5f,
-			CELL_TARGET_LIFT_MIN, CELL_TARGET_LIFT_MAX);
-	const NSMicroPather::TestFunc hitTest = ISquadTask::MakeHitTest(terrainMgr, cfg.aimHeight, targetLift);
+	const int2 targetXY = terrainMgr->GetSectorXY(tPos);
+	// Aimed from cell_aim_height above a cell at half the target's height (GetTargetLift)
+	const NSMicroPather::TestFunc hitTest = ISquadTask::MakeHitTest(terrainMgr, cfg.aimHeight,
+			GetTargetLift(enemy->GetCircuitDef()));
 	STerrainMapArea* area = leader->GetArea();
 	const float strength = std::max(power, THREAT_MIN);
 	constexpr float NO_SCORE = std::numeric_limits<float>::max();
@@ -163,7 +174,7 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 			return false;
 		}
 		isThreatOk = true;
-		if (!hitTest(toPathXY(p), targetXY)) {  // the costly test last
+		if (!hitTest(terrainMgr->GetSectorXY(p), targetXY)) {  // the costly test last
 			return false;
 		}
 		const float score = cfg.threatWeight * std::max(threat, 0.f) / strength + p.distance2D(lPos) / fireRange;

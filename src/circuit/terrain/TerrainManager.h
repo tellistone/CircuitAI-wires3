@@ -138,6 +138,17 @@ public:
 	std::pair<STerrainMapArea*, bool> GetCurrentMapArea(CCircuitDef* cdef, const springai::AIFloat3& position);
 	std::pair<STerrainMapArea*, bool> GetCurrentMapArea(CCircuitDef* cdef, const int indexSector);
 	int GetSectorIndex(const springai::AIFloat3& position) const { return terrainData->GetSectorIndex(position); }
+	int2 GetSectorXY(const springai::AIFloat3& position) const;  // sector (= path square) column and row, clamped to the map
+	// Line of fire over the sector grid, from fromHeight above sector 'from' to toHeight above sector 'to': blocked where
+	// a sector in between (not the ends' own) rises above the straight line at its highest point. sectors: an
+	// SAreaData's (a route query holds on to the one it started with)
+	static bool IsLineClear(const std::vector<STerrainMapSector>& sectors, int sectorXSize,
+			int2 from, int2 to, float fromHeight, float toHeight);
+	// The same between two positions, aimed aimLift above 'from' at targetLift above 'to'. The ends' heights: their
+	// sectors' highest points, as target routes (a route node knows only its sector), or isExact: the ground under them,
+	// never above that, so a stricter test (firing spots). Water counts as its surface
+	bool IsLineClear(const springai::AIFloat3& from, const springai::AIFloat3& to, float aimLift, float targetLift,
+			bool isExact) const;
 	bool CanMoveToPos(STerrainMapArea* area, const springai::AIFloat3& destination);
 	springai::AIFloat3 GetBuildPosition(CCircuitDef* cdef, const springai::AIFloat3& position);
 	springai::AIFloat3 GetMovePosition(STerrainMapArea* sourceArea, const springai::AIFloat3& position);

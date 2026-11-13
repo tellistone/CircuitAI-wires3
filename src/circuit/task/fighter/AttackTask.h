@@ -203,20 +203,39 @@ private:
 	// FindTarget, then engage the target if it is already within range; true: engaged.
 	// isWalking: only the in-range result matters, so no FindTarget when no enemy is near
 	bool EngageInRange(int frame, bool isWalking);
+	// Its range spot (GetRangePos) within highestRange of the leader, and seen from there (IsSeenByUnits). Not only
+	// from the leader: in line it stands its row's offset behind the front row, which stands where the route ended
+	bool IsInLeaderRange(const CEnemyInfo* enemy, const springai::AIFloat3& rangePos, int frame);
+	// Lines of fire (pick, firing spots): aimed from cell_aim_height or half the leader's height above our units at
+	// GetTargetLift above the enemy. None for flying or underwater enemies
+	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const override;
+	static float GetTargetLift(CCircuitDef* edef);  // half its height (a tall strider shows over a low ridge), 8-32
+	float GetGroundFireRange() const { return std::max(fireRangeLand, fireRangeWater); }
 	/*
 	 * Contact: an enemy we are already fighting. Within its contact reach (GetContactReach) of one of our units that
-	 * isn't a straggler (within GetGroupRadius of the leader). FindTarget engages it at once (no route), judges it at
-	 * the keep allowance while engaged, doesn't drop it as a runner or for a rejected route, exempts it from the raid
-	 * factor and the own-ground rule, and ranks it ahead of every enemy not in contact
+	 * isn't a straggler (within GetGroupRadius of the leader), with a line of fire from one of them (HasLineOfFire).
+	 * In FindTarget:
+	 *   always:        engaged at once (no route); a rejected route doesn't matter; exempt from the raid factor and the
+	 *                  own-ground rule
+	 *   while engaged: the fight we accepted: judged at the keep allowance, not dropped as a runner, ranked ahead of
+	 *                  every enemy not in contact
 	 */
 	// Our fire range, or the enemy's own range if longer (a mobile that can hit the ground: IsGroundDangerDef), capped
-	// at highestRange + our firing-spot distance; + 64 elmos. Buildings and unknown types: our fire range + 64
+	// at GetContactCap; + 64 elmos. Buildings and unknown types: our fire range + 64
 	float GetContactReach(const CEnemyInfo* enemy) const;
+	// highestRange + our firing-spot distance: never below our fire range (highestRange includes the median's own)
+	float GetContactCap() const;
 	// isCurrent: our current target, kept in contact out to RAID_FREE_KEEP x its reach. outSqDist: squared distance
-	// from our nearest unit in contact
+	// from our nearest unit
 	bool IsInContact(const CEnemyInfo* enemy, bool isCurrent, int frame, float* outSqDist = nullptr);
 	// Farthest an enemy in contact can be from the leader (the units' spread + the longest reach, kept)
 	float GetContactBound(int frame);
+	// One of the units contact counts (UpdateContactUnits) within range of the enemy at pos, with a line of fire to
+	// it by the route's test (HasLineOfFire, not exact: arriving where a route ended keeps it seen, and so does a unit
+	// at its firing spot, whose test is stricter). Tried until one sees it. outSqDist: our nearest unit's squared
+	// distance
+	bool IsSeenByUnits(const CEnemyInfo* enemy, const springai::AIFloat3& pos, float range, int frame,
+			float* outSqDist = nullptr);
 	void UpdateContactUnits(int frame);  // contactPos and contactSpread, once per frame
 
 	/*

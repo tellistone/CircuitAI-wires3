@@ -84,7 +84,8 @@ protected:
 	// Firing spot for a unit: within its spot range (GetSpotRange) of the target, trading walking distance against
 	// threat and against spots other units are heading to.
 	// NONE: no usable range (old orders); SPOT: a safe spot; HOLD: every spot dangerous but the unit's own
-	// spot is safe; RISKY: nowhere safe, the unit's spot neither: the least dangerous spot
+	// spot is safe, or no spot has a line of fire (GetSightLifts); RISKY: nowhere safe, the unit's spot neither: the
+	// least dangerous spot
 	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
 	// Where a unit of the group is heading (its last firing spot if still usable, else where it stands) and its
 	// health-scaled power (GetUnitStrengths): it backs up spots near there
@@ -100,9 +101,17 @@ protected:
 	// isClose (melee's close spots): 0-0.95x GetSpotRange from the target; else 0.6-0.95x GetFireRange
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isClose) const;
 	bool GetKeptFireSpot(CCircuitUnit* unit, bool isClose, springai::AIFloat3& outPos) const;  // last spot, if still in that band
-	// After Attack: every unit with spots (melee too) holds without one (HOLD: every spot dangerous) and the target is
-	// out of their weapon range. The group would stand still for as long as it keeps this target
+	// After Attack: every unit with spots (melee too) holds without one (HOLD: every spot dangerous, or none in sight)
+	// and the target is out of their weapon range, or out of sight (GetSightLifts). The group would stand still for as
+	// long as it keeps this target
 	bool IsAllHolding() const;
+	// Lifts (elmos above the ground) for a line of fire to this enemy: from our units' aim, at the enemy.
+	// false (default): no line of fire needed. With lifts, firing spots must have one (FindFireSpot, IsAllHolding)
+	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const { return false; }
+	// A line of fire from 'from' to the enemy at 'to' (GetSightLifts; true if it needs none). isExact: the ground
+	// heights at both ends, else their sectors' highest points as target routes (CTerrainManager::IsLineClear)
+	bool HasLineOfFire(const springai::AIFloat3& from, const CEnemyInfo* enemy, const springai::AIFloat3& to,
+			bool isExact) const;
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
 	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
 	// each unit's own bearing from the target
