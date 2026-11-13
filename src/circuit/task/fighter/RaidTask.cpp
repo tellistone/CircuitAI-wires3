@@ -473,7 +473,10 @@ bool CRaidTask::FindTarget()
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
-		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)) {
+		// Not one another raid group already targets from clearly nearer (IsClaimedByNearer)
+		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)
+			|| IsClaimedByNearer(enemy, pos, false, circuit->GetLastFrame()))
+		{
 			continue;
 		}
 		auto itHeld = heldTargets.find(enemy->GetId());

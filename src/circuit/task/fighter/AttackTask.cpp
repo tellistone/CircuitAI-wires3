@@ -1292,8 +1292,9 @@ void CAttackTask::FindTarget()
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
-		// Cheap checks first
+		// Cheap checks first. Not one another raid or attack group already targets from clearly nearer (IsClaimedByNearer)
 		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)
+			|| IsClaimedByNearer(enemy, pos, true, frame)
 			|| IsRejected(enemy->GetId(), -1, -1, frame)
 			|| !isTargetableType(enemy))
 		{
