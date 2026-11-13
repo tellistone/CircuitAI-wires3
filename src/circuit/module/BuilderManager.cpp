@@ -350,12 +350,11 @@ void CBuilderManager::ReadConfig()
 	const Json::Value& rest = root["economy"]["restore"];
 	restore.range = rest.get("range", 0.f).asFloat();
 	restore.depth = std::max(rest.get("depth", 24.f).asFloat(), 1.f);
-	restore.share = utils::clamp(rest.get("share", 0.25f).asFloat(), 0.01f, 1.f);
+	restore.share = utils::clamp(rest.get("share", 0.12f).asFloat(), 0.01f, 1.f);
 	restore.maxTasks = std::max(rest.get("jobs", 2).asInt(), 1);
 	restore.maxBuilders = std::max(rest.get("builders", 2).asInt(), 1);
 	restore.maxTries = std::max(rest.get("tries", 3).asInt(), 1);
-	restore.cooldown = rest.get("cooldown", 30.f).asFloat() * FRAMES_PER_SEC;
-	restore.allyHold = rest.get("ally_hold", 300.f).asFloat() * FRAMES_PER_SEC;
+	restore.cooldown = std::max(rest.get("cooldown", 30.f).asFloat(), 1.f) * FRAMES_PER_SEC;
 
 	const Json::Value& cond = root["porcupine"]["superweapon"]["condition"];
 	super.minIncome = cond.get((unsigned)0, 50.f).asFloat();
@@ -494,7 +493,7 @@ void CBuilderManager::Init()
 								COMM_FLEE_INTERVAL, offset + 5);
 		if (restore.range > 0.f) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CBuilderManager::UpdateRestore, this),
-									FRAMES_PER_SEC * 5, offset + 6);
+									FRAMES_PER_SEC * 2, offset + 6);
 		}
 	};
 
@@ -2614,40 +2613,52 @@ void CBuilderManager::UpdateBuild()
 	}
 }
 
-// Cells of RESTORE_CELL heightmap squares (128 elmos): a terraform segment is up to 200 elmos, so one terraunit each
-#define RESTORE_CELL	16
+int CBuilderManager::SRestore::CellOf(const AIFloat3& pos) const
+{
+	const float cellSize = CELL * SQUARE_SIZE;
+	const int x = utils::clamp(int(pos.x / cellSize), 0, cellsX - 1);
+	const int z = utils::clamp(int(pos.z / cellSize), 0, cellsZ - 1);
+	return z * cellsX + x;
+}
+
+AIFloat3 CBuilderManager::SRestore::CellPos(int cell, float offset) const
+{
+	const float cellSize = CELL * SQUARE_SIZE;
+	// ZK keeps terraform points inside the map: the max corner stays a terraform square (16 elmos) off the edge
+	return AIFloat3(std::min((cell % cellsX + offset) * cellSize, CTerrainManager::GetTerrainWidth() - 2.f * SQUARE_SIZE), 0.f,
+					std::min((cell / cellsX + offset) * cellSize, CTerrainManager::GetTerrainHeight() - 2.f * SQUARE_SIZE));
+}
 
 void CBuilderManager::ScanRestore()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const FloatVec& start = terrainMgr->GetStartHeightMap();
+	const FloatVec& start = circuit->GetTerrainManager()->GetStartHeightMap();
 	const FloatVec& now = restore.scanned->heightMap;
-	restore.dug.clear();
 	const int width = circuit->GetMap()->GetWidth();
-	if ((width <= 0) || (start.size() != now.size())) {
+	if ((width <= 0) || now.empty() || (start.size() != now.size())) {
 		return;
 	}
 	const int height = now.size() / width;
-	const int cellsX = (width + RESTORE_CELL - 1) / RESTORE_CELL;
-	const int cellsZ = (height + RESTORE_CELL - 1) / RESTORE_CELL;
-	for (int cz = 0; cz < cellsZ; ++cz) {
-		const int zEnd = std::min((cz + 1) * RESTORE_CELL, height);
-		for (int cx = 0; cx < cellsX; ++cx) {
-			const int xEnd = std::min((cx + 1) * RESTORE_CELL, width);
+	if (restore.grid.empty()) {
+		restore.cellsX = (width + SRestore::CELL - 1) / SRestore::CELL;
+		restore.cellsZ = (height + SRestore::CELL - 1) / SRestore::CELL;
+		restore.grid.resize(restore.cellsX * restore.cellsZ);
+	}
+	for (int cz = 0; cz < restore.cellsZ; ++cz) {
+		const int zEnd = std::min((cz + 1) * SRestore::CELL, height);
+		for (int cx = 0; cx < restore.cellsX; ++cx) {
+			const int xEnd = std::min((cx + 1) * SRestore::CELL, width);
 			int samples = 0;
 			int off = 0;
-			for (int z = cz * RESTORE_CELL; z < zEnd; z += 2) {  // every other square: 64 samples a cell
-				for (int x = cx * RESTORE_CELL, i = z * width + x; x < xEnd; x += 2, i += 2) {
+			for (int z = cz * SRestore::CELL; z < zEnd; z += 2) {  // every other square: 64 samples a cell
+				for (int x = cx * SRestore::CELL, i = z * width + x; x < xEnd; x += 2, i += 2) {
 					++samples;
 					if (std::fabs(now[i] - start[i]) >= restore.depth) {
 						++off;
 					}
 				}
 			}
-			if ((off > 0) && (off >= restore.share * samples)) {
-				restore.dug.push_back(cz * cellsX + cx);
-			}
+			restore.grid[cz * restore.cellsX + cx].isDug = (off > 0) && (off >= restore.share * samples);
 		}
 	}
 }
@@ -2660,102 +2671,92 @@ void CBuilderManager::UpdateRestore()
 		restore.scanned = areaData;
 		ScanRestore();
 	}
+	std::vector<SRestore::SCell>& grid = restore.grid;
+	if (grid.empty()) {
+		return;
+	}
 	const int frame = circuit->GetLastFrame();
-	const int width = circuit->GetMap()->GetWidth();
-	const int cellsX = (width + RESTORE_CELL - 1) / RESTORE_CELL;
-	const float cellSize = RESTORE_CELL * SQUARE_SIZE;
-	const float mapX = CTerrainManager::GetTerrainWidth();
-	const float mapZ = CTerrainManager::GetTerrainHeight();
-	auto cellOf = [cellsX, cellSize, mapX, mapZ](const AIFloat3& pos) {
-		return int(utils::clamp(pos.z, 0.f, mapZ - 1.f) / cellSize) * cellsX + int(utils::clamp(pos.x, 0.f, mapX - 1.f) / cellSize);
-	};
-	const std::unordered_set<int> dug(restore.dug.begin(), restore.dug.end());
 
-	// Jobs no builder took are chosen again every time: builders move, enemies come and go
-	std::vector<CBRestoreTask*> untaken;
-	for (auto& kv : restore.cells) {
-		if ((kv.second.task != nullptr) && kv.second.task->GetAssignees().empty()) {
-			untaken.push_back(kv.second.task);
-		}
-	}
-	for (CBRestoreTask* task : untaken) {
-		AbortTask(task);  // OnRestoreEnd clears the cell's task
-	}
-	int jobCount = 0;
-	for (auto it = restore.cells.begin(); it != restore.cells.end();) {
-		SRestore::SCell& cell = it->second;
-		if (dug.find(it->first) == dug.end()) {
-			cell.tries = 0;  // back to the start height: a new dig there gets new tries
-		}
-		if (cell.task != nullptr) {
-			++jobCount;
-		} else if ((cell.until < frame) && (cell.tries == 0)) {
-			it = restore.cells.erase(it);
-			continue;
-		}
-		++it;
-	}
-
-	// An ally's terraform (its terraunit, ours are our restores) holds its cell: no tug-of-war over its walls and ramps.
-	// An allied building skips its cell: its levelled pad is off the start height too
-	std::unordered_set<int> blocked;
+	// An ally's terraform (its terraunit; ours are our restores) gives its cell up while it stays dug: no tug-of-war
+	// over its walls and ramps. An allied building skips its cell: its levelled pad is off the start height too
 	const CCircuitDef::Id terraId = terraDef->GetId();
 	circuit->UpdateFriendlyUnits();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* au = kv.second;
 		const CCircuitDef* cdef = au->GetCircuitDef();
-		if (cdef == nullptr) {
+		if ((cdef == nullptr) || ((cdef->GetId() != terraId) && cdef->IsMobile())) {
 			continue;
 		}
-		const int c = cellOf(au->GetPos(frame));
-		if (cdef->GetId() == terraId) {
-			if (circuit->GetTeamUnit(au->GetId()) == nullptr) {
-				SRestore::SCell& cell = restore.cells[c];
-				cell.until = std::max(cell.until, frame + restore.allyHold);
-			}
-		} else if (!cdef->IsMobile() && (dug.find(c) != dug.end())) {
-			blocked.insert(c);
+		SRestore::SCell& cell = grid[restore.CellOf(au->GetPos(frame))];
+		if (cdef->GetId() != terraId) {
+			cell.buildingFrame = frame;
+		} else if (circuit->GetTeamUnit(au->GetId()) == nullptr) {
+			cell.tries = restore.maxTries;
+			cell.until = std::max(cell.until, frame + restore.cooldown);  // over the heightmap's lag once it's done
 		}
 	}
-	// While stalling no constructor takes a terraform job (IsStallSpend): don't make jobs only to drop them
-	if ((jobCount >= restore.maxTasks) || dug.empty() || circuit->GetEconomyManager()->IsStalling()) {
-		return;
-	}
-	// A known enemy at or next to the cell: ZK makes terraform 20x dearer near enemies, and it may be digging there
-	const int cellsZ = (int(mapZ) / SQUARE_SIZE + RESTORE_CELL - 1) / RESTORE_CELL;
+	// A known enemy on or next to a cell: ZK makes terraform 20x slower near enemies, and it may be digging there
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
 		if (!enemy->IsInRadarOrLOS()) {
 			continue;
 		}
-		const int c = cellOf(enemy->GetPos());
-		const int cx = c % cellsX;
-		const int cz = c / cellsX;
-		for (int z = std::max(cz - 1, 0); z <= std::min(cz + 1, cellsZ - 1); ++z) {
-			for (int x = std::max(cx - 1, 0); x <= std::min(cx + 1, cellsX - 1); ++x) {
-				if (dug.find(z * cellsX + x) != dug.end()) {
-					blocked.insert(z * cellsX + x);
-				}
+		const int c = restore.CellOf(enemy->GetPos());
+		const int cx = c % restore.cellsX;
+		const int cz = c / restore.cellsX;
+		for (int z = std::max(cz - 1, 0); z <= std::min(cz + 1, restore.cellsZ - 1); ++z) {
+			for (int x = std::max(cx - 1, 0); x <= std::min(cx + 1, restore.cellsX - 1); ++x) {
+				grid[z * restore.cellsX + x].enemyFrame = frame;
 			}
 		}
 	}
-
-	// Open cells by their nearest builder, within restore.range and with no threat on them
 	CThreatMap* threatMap = circuit->GetThreatMap();
+	auto isUnsafe = [this, &grid, frame, threatMap](int c) {
+		return (grid[c].enemyFrame == frame) || (threatMap->GetAllThreatAt(restore.CellPos(c, 0.5f)) > THREAT_MIN);
+	};
+
+	// Drop jobs whose cell turned unsafe (builders on them leave, the cell backs off), and the ones no builder took:
+	// they are chosen again below, by the builders' positions now
+	std::vector<CBRestoreTask*> drops;
+	for (int c = 0; c < (int)grid.size(); ++c) {
+		CBRestoreTask* task = grid[c].task;
+		if ((task != nullptr) && (task->GetAssignees().empty() || isUnsafe(c))) {
+			drops.push_back(task);
+		}
+	}
+	for (CBRestoreTask* task : drops) {
+		if (task->GetAssignees().empty()) {
+			AbortTask(task);  // OnRestoreEnd clears the cell's task
+		} else {
+			task->DropForDanger();
+		}
+	}
+
+	// Open cells by their nearest builder, within restore.range. While stalling no constructor takes a terraform
+	// job (IsStallSpend): don't make jobs only to drop them
+	const bool isStalling = circuit->GetEconomyManager()->IsStalling();
 	const float sqRange = SQUARE(restore.range);
+	int jobCount = 0;
 	std::vector<std::pair<float, int>> candidates;  // sqDist to the nearest builder, cell
-	for (int c : restore.dug) {
-		auto it = restore.cells.find(c);
-		if (((it != restore.cells.end())
-				&& ((it->second.task != nullptr) || (it->second.until >= frame) || (it->second.tries >= restore.maxTries)))
-			|| (blocked.find(c) != blocked.end()))
+	for (int c = 0; c < (int)grid.size(); ++c) {
+		SRestore::SCell& cell = grid[c];
+		if (cell.task != nullptr) {
+			++jobCount;
+			continue;
+		}
+		if (!cell.isDug) {
+			if (cell.until < frame) {
+				cell.tries = 0;  // back at the start height and not held: a new dig there gets new tries
+				cell.backoff = 0;
+			}
+			continue;
+		}
+		if (isStalling || (cell.until >= frame) || (cell.tries >= restore.maxTries) || (cell.buildingFrame == frame)
+			|| isUnsafe(c))
 		{
 			continue;
 		}
-		const AIFloat3 center((c % cellsX + 0.5f) * cellSize, 0.f, (c / cellsX + 0.5f) * cellSize);
-		if (threatMap->GetAllThreatAt(center) > THREAT_MIN) {
-			continue;
-		}
+		const AIFloat3 center = restore.CellPos(c, 0.5f);
 		float minSqDist = std::numeric_limits<float>::max();
 		for (CCircuitUnit* worker : workers) {
 			minSqDist = std::min(minSqDist, worker->GetPos(frame).SqDistance2D(center));
@@ -2764,36 +2765,39 @@ void CBuilderManager::UpdateRestore()
 			candidates.emplace_back(minSqDist, c);
 		}
 	}
-	const int count = std::min<int>(restore.maxTasks - jobCount, candidates.size());
+	const int count = utils::clamp<int>(restore.maxTasks - jobCount, 0, candidates.size());
 	std::partial_sort(candidates.begin(), candidates.begin() + count, candidates.end());
 	for (int i = 0; i < count; ++i) {
 		const int c = candidates[i].second;
-		const float x0 = (c % cellsX) * cellSize;
-		const float z0 = (c / cellsX) * cellSize;
-		const AIFloat3 minPos(x0, 0.f, z0);
-		const AIFloat3 maxPos(std::min(x0 + cellSize, mapX - 2 * SQUARE_SIZE), 0.f, std::min(z0 + cellSize, mapZ - 2 * SQUARE_SIZE));
-		CBRestoreTask* task = new CBRestoreTask(this, IBuilderTask::Priority::HIGH, c, minPos, maxPos);
+		CBRestoreTask* task = new CBRestoreTask(this, IBuilderTask::Priority::HIGH, c);
 		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::TERRAFORM)].insert(task);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
-		restore.cells[c].task = task;
+		grid[c].task = task;
 	}
 }
 
 void CBuilderManager::OnRestoreEnd(CBRestoreTask* task, bool done)
 {
-	auto it = restore.cells.find(task->GetCell());
-	if ((it == restore.cells.end()) || (it->second.task != task)) {
+	const int c = task->GetCell();
+	if ((c >= (int)restore.grid.size()) || (restore.grid[c].task != task)) {
 		return;
 	}
-	SRestore::SCell& cell = it->second;
+	SRestore::SCell& cell = restore.grid[c];
 	cell.task = nullptr;
-	if (task->IsAssigned()) {  // a builder was on it: wait for the heightmap (10 s) and for the danger to pass
-		cell.until = std::max(cell.until, circuit->GetLastFrame() + restore.cooldown);
-		if (done) {
-			++cell.tries;  // still off after <tries> finished jobs: something (a building, the enemy) keeps it so
-		}
+	if (!task->IsAssigned()) {
+		return;  // no builder took it: it's chosen again on the next update
 	}
+	// A builder was on it: wait for the heightmap (10 s) and for the danger to pass
+	int hold = restore.cooldown;
+	if (task->IsDanger()) {  // the cell or the way there stays unsafe: back off, 1x, 2x, 4x, 8x cooldown
+		cell.backoff = (cell.backoff > 0) ? std::min(cell.backoff * 2, restore.cooldown * 8) : restore.cooldown;
+		hold = cell.backoff;
+	} else if (done) {
+		++cell.tries;  // still dug after <tries> finished jobs: something (a building, the enemy) keeps it so
+		cell.backoff = 0;
+	}
+	cell.until = std::max(cell.until, circuit->GetLastFrame() + hold);
 }
 
 void CBuilderManager::UpdateAreaUsers()

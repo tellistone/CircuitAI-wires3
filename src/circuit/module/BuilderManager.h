@@ -135,15 +135,21 @@ public:
 	};
 	const SEscort& GetEscortCfg() const { return escort; }
 
-	// Restore terraformed ground (economy.json "restore"): every few seconds, cells whose height is off the map's
-	// start by <depth> or more on <share> of their samples get a HIGH CBRestoreTask, nearest builder first, while a
-	// builder is within <range>, no known enemy is at or next to the cell and no threat is on it. Cells with an
-	// allied building are skipped (levelled pads), and an ally's terraform holds its cell for <ally_hold>
+	// Restore terraformed ground (economy.json "restore"), every 2 s: a cell whose height is off the map's start by
+	// <depth> or more on <share> of its samples gets a HIGH CBRestoreTask, nearest builder first, while a builder is
+	// within <range> and the cell is safe: no known enemy on it or next to it, no threat on it. A job whose cell turns
+	// unsafe, or whose builder's path there crosses threat, is dropped and its cell backs off (cooldown, doubling).
+	// Cells with an allied building are skipped (levelled pads); an ally's terraform gives its cell up
 	struct SRestore {
+		static constexpr int CELL = 16;  // cell side in heightmap squares (128 elmos): one terraform segment each
 		struct SCell {
 			CBRestoreTask* task = nullptr;
-			int until = -1;  // frame the cell is held off until (after a job, or an ally's terraform)
-			int tries = 0;  // jobs done while the cell stays off; reset once it is back
+			int until = -1;  // frame the cell is held off until
+			int tries = 0;  // jobs done while it stays dug; reset once it is back and not held
+			int backoff = 0;  // last hold after a danger drop, frames (0 = none since the last finished job)
+			int enemyFrame = -1;  // frame a known enemy was seen on or next to it
+			int buildingFrame = -1;  // frame an allied building was seen on it
+			bool isDug = false;
 		};
 		float range = 0.f;  // builder to cell, 0 = off
 		float depth;
@@ -152,11 +158,13 @@ public:
 		int maxBuilders;  // per job
 		int maxTries;
 		int cooldown;  // frames
-		int allyHold;  // frames
+		int cellsX = 0;
+		int cellsZ = 0;
+		std::vector<SCell> grid;  // cellsX * cellsZ
 		const SAreaData* scanned = nullptr;  // heightmap of the last scan (TerrainData swaps it on change)
-		std::vector<int> dug;  // cells off the start height at the last scan
-		std::unordered_map<int, SCell> cells;
 		int nextTag = 1 << 20;  // ZK terraform tags: a float, below 2^24
+		int CellOf(const springai::AIFloat3& pos) const;
+		springai::AIFloat3 CellPos(int cell, float offset) const;  // offset 0 = min corner, 0.5 = centre, 1 = max
 	};
 	const SRestore& GetRestore() const { return restore; }
 	int NextRestoreTag() { return restore.nextTag++; }

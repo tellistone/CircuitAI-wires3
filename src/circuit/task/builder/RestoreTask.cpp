@@ -16,13 +16,13 @@ namespace circuit {
 
 using namespace springai;
 
-CBRestoreTask::CBRestoreTask(ITaskManager* mgr, Priority priority, int cell, const AIFloat3& minPos, const AIFloat3& maxPos)
-		: IBuilderTask(mgr, priority, nullptr, (minPos + maxPos) * 0.5f, Type::BUILDER, BuildType::TERRAFORM, 1.f, 0.f, 0)
+CBRestoreTask::CBRestoreTask(ITaskManager* mgr, Priority priority, int cell)
+		: IBuilderTask(mgr, priority, nullptr, mgr->GetCircuit()->GetBuilderManager()->GetRestore().CellPos(cell, 0.5f),
+					   Type::BUILDER, BuildType::TERRAFORM, 1.f, 0.f, 0)
 		, cell(cell)
-		, minPos(minPos)
-		, maxPos(maxPos)
 		, tag(-1)
 		, isAssigned(false)
+		, isDanger(false)
 {
 }
 
@@ -50,6 +50,12 @@ void CBRestoreTask::AssignTo(CCircuitUnit* unit)
 	isAssigned = true;
 }
 
+void CBRestoreTask::DropForDanger()
+{
+	isDanger = true;
+	manager->AbortTask(this);
+}
+
 void CBRestoreTask::Stop(bool done)
 {
 	manager->GetCircuit()->GetBuilderManager()->OnRestoreEnd(this, done);
@@ -63,7 +69,10 @@ void CBRestoreTask::Execute(CCircuitUnit* unit)
 		unit->CmdPriority(ClampPriority());
 		if (tag < 0) {
 			// The first builder makes the terraform: ZK's lasso layout (LuaUI/Widgets/gui_lasso_terraform.lua)
-			tag = circuit->GetBuilderManager()->NextRestoreTag();
+			CBuilderManager* builderMgr = circuit->GetBuilderManager();
+			tag = builderMgr->NextRestoreTag();
+			const AIFloat3 minPos = builderMgr->GetRestore().CellPos(cell, 0.f);
+			const AIFloat3 maxPos = builderMgr->GetRestore().CellPos(cell, 1.f);
 			unit->CmdTerraform({
 				5.f,  // terraform type: restore
 				static_cast<float>(circuit->GetTeamId()),
@@ -89,8 +98,8 @@ void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
 	const F3Vec& path = query->GetPathInfo()->posPath;
 	for (size_t i = 1; i < path.size(); ++i) {  // not where the builder stands: it can't help that
 		if (threatMap->GetPlainThreatAt(unit, path[i]) > THREAT_MIN) {
-			// One builder's unsafe way drops the job for all on it: the cooldown stops a re-take on every update
-			manager->AbortTask(this);
+			// One builder's unsafe way drops the job for all on it: the cell's back-off stops a re-take every update
+			DropForDanger();
 			return;
 		}
 	}
@@ -100,7 +109,8 @@ void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
 void CBRestoreTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	// Idle at the cell after the order: no terraunit of the tag is left (or none was needed), for every builder on it
-	const float range = unit->GetCircuitDef()->GetBuildDistance() + position.distance2D(maxPos) + 100.f;  // + terraunit leash
+	const float range = unit->GetCircuitDef()->GetBuildDistance()
+			+ CBuilderManager::SRestore::CELL * SQUARE_SIZE * 0.71f + 100.f;  // + half the cell's diagonal + terraunit leash
 	if ((tag >= 0) && (unit->GetPos(manager->GetCircuit()->GetLastFrame()).SqDistance2D(position) < SQUARE(range))) {
 		manager->DoneTask(this);
 	} else if (++buildFails <= 2) {  // the engine sometimes drops orders

@@ -15,9 +15,8 @@ namespace circuit {
 
 class CBRestoreTask: public IBuilderTask {
 public:
-	// cell: index in CBuilderManager's restore grid; [minPos, maxPos]: the square to restore (x, z)
-	CBRestoreTask(ITaskManager* mgr, Priority priority, int cell,
-				  const springai::AIFloat3& minPos, const springai::AIFloat3& maxPos);
+	// cell: index in CBuilderManager's restore grid, the square to restore
+	CBRestoreTask(ITaskManager* mgr, Priority priority, int cell);
 	virtual ~CBRestoreTask();
 
 	// A builder within restore.range, no threat to it on the cell, up to restore.builders on it
@@ -35,13 +34,14 @@ public:
 
 	int GetCell() const { return cell; }
 	bool IsAssigned() const { return isAssigned; }
+	bool IsDanger() const { return isDanger; }
+	void DropForDanger();  // the cell or the way there turned unsafe: the cell backs off (OnRestoreEnd)
 
 private:
 	int cell;
-	springai::AIFloat3 minPos;
-	springai::AIFloat3 maxPos;
 	int tag;  // ZK's terraform command tag, -1 = no terraform made yet
 	bool isAssigned;  // a builder has taken the job: its end puts the cell on cooldown
+	bool isDanger;
 };
 
 } // namespace circuit

@@ -127,17 +127,17 @@
 	},
 
 	// Restore terraformed ground (enemy trenches and walls) to the map's start height, as HIGH constructor jobs.
-	// Every 5 s the map is cut into 128-elmo cells; a cell is "dug" when at least <share> of its samples are <depth>
-	// elmos or more off the height the map had when the AI started. A dug cell gets a job when a constructor is within
-	// <range>, there is no threat on it and no known enemy on it or the cells next to it (ZK makes terraform 20x
-	// dearer near enemies). Only a constructor within <range> with no threat to it on the cell takes it, <builders> at
-	// most per job, <jobs> jobs at once (nearest first). The job is dropped when a builder's threat-aware path there
-	// crosses threat (checked again while it walks). After a job the cell waits <cooldown> s, and
-	// after <tries> finished jobs that left it dug it is given up until it is back at the start height.
-	// Cells with an allied building are skipped (levelled pads); an ally's terraform holds its cell for <ally_hold> s.
-	// range 0 disables.
-	"restore": {"range": 1000, "depth": 24, "share": 0.25, "jobs": 2, "builders": 2, "tries": 3,
-	            "cooldown": 30, "ally_hold": 300},
+	// Every 2 s, on 128-elmo cells: a cell is "dug" when at least <share> of its samples (one per 16 elmos) are
+	// <depth> elmos or more off the height the map had when the AI started. A dug cell gets a job when a constructor
+	// is within <range> and the cell is safe: no threat on it and no known enemy on it or the cells next to it (ZK
+	// makes terraform 20x slower near enemies). Only a constructor within <range> with no threat to it on the cell
+	// takes it, <builders> at most per job, <jobs> jobs at once (nearest first).
+	// A job is dropped when its cell stops being safe (an enemy comes near) or a builder's threat-aware path there
+	// crosses threat; the cell then waits <cooldown> s, doubling on each such drop up to 8x until a job finishes.
+	// After a finished job the cell waits <cooldown> s, and after <tries> finished jobs that left it dug it is given
+	// up until it is back at the start height. Cells with an allied building are skipped (levelled pads); an ally's
+	// terraform gives its cell up the same way. range 0 disables.
+	"restore": {"range": 1000, "depth": 24, "share": 0.12, "jobs": 2, "builders": 2, "tries": 3, "cooldown": 30},
 
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,
