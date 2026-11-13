@@ -59,11 +59,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Attack groups vs raiders** (`quota.raid_attack_factor`, default and shipped `true`). The same value on our side:
   an attack group judges an enemy raider or scout (any role in its list) outside the base defence radius with its
   pick and keep strength x its units' `raid_thr_mod` (power-weighted, at most 1). A skirmisher group needs about 4x
-  the strength to go after raiders in the field. Inside the base defence radius, within its own fire range + 64 elmos
-  (raiders already fighting it), and on the route approach and the escape, it judges at full strength, so a raider
-  target is never picked more loosely than it is kept, and a group never ignores raiders shooting it. The current
-  target keeps the base and fire range exemptions out to 1.25x, so a raider stepping back and forth across either line
-  doesn't flip the pick.
+  the strength to go after raiders in the field. Inside the base defence radius, in contact with the group (raiders
+  already fighting it; see "Attack groups stay in the fight after a kill"), and on the route approach and the escape,
+  it judges at full strength, so a raider target is never picked more loosely than it is kept, and a group never
+  ignores raiders shooting it. The current target keeps the base and contact exemptions out to 1.25x, so a raider
+  stepping back and forth across either line doesn't flip the pick.
 
 - **Raid tuning logs**. Once a minute: `THREAT raid view` (how many enemies have a multiplier, the cell where the
   raid view differs most from the plain one, and the threat map update time) and `RAID` (raid group escapes, and the
@@ -607,6 +607,51 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   facing (a hold, the end of a walk) ignored a new path ending within 256 elmos of where it faced from, so it didn't
   move for a target just out of range; it now always walks a route to a target. Since holding groups stand in line,
   facing the threat, this happened often.
+- **Attack groups stay in the fight after a kill.** When a target died, the next pick was a fresh one made from the
+  leader: the rest of the fight lost the keep allowance (`quota.attack_keep_threat`), enemies stepping back were
+  dropped as runners, and an enemy in range of the front rows but not of the leader was routed to. So the group went
+  back to roaming, formed its line (standing at the leader, or walking a route), and engaged again a decision or two
+  later, with units leaving their firing spots each time. Worst against units that outrange us, such as Fencers
+  (range 600, must stop to fire): they always stand beyond the leader's range and are dropped as runners whenever
+  they move. Now an enemy is **in contact** when it is within the group's fire range + 64 elmos of one of its units
+  (stragglers aside), or, for a mobile enemy, its own range + 64 reaches one (capped at the group's highest weapon
+  or sight range + 0.9x its fire range, so far artillery is still routed to as a siege target), and one of those
+  units has a line of fire to it (see "Attack groups don't go for targets behind cliffs"); the current target stays
+  in contact out to 1.25x.
+  - **Always:** an enemy in contact is engaged at once (no route, no line), isn't dropped for a rejected route
+    approach, and counts as already fighting us for the raid factor, the own-ground rule and other groups' target
+    claims (all were the leader's fire range + 64).
+  - **While engaged** (the fight the group accepted): every enemy in contact gets the keep allowance, isn't dropped
+    as a runner, and ranks ahead of every enemy not in contact. A fight is still started at the usual allowance.
+  - **Roaming,** enemies in contact rank by `target_dist_mod` like any other and runners are dropped, so a scout or
+    raider that pokes the front row and runs doesn't pull the group off its walk.
+  - **Stickiness** works as before, except that while engaged a current target out of contact doesn't stay the
+    pick over a best in contact.
+
+  The approach line check is unchanged (from the target towards the leader). And when the target dies, the group
+  picks the next one at its next update (about 1 s) instead of its next decision (up to 2 s).
+- **Attack groups don't go for targets behind cliffs.** Only target routes and firing cells checked for a line of
+  fire. A target within the leader's range (a flat 2D distance) was engaged at once, and a firing spot was any
+  passable point at 0.9x range. So a group facing a target on a plateau walked to the cliff foot, where it could
+  neither see nor hit it, or the engine walked its units the long way round, on no route of ours. Now one line check
+  (`CTerrainManager::IsLineClear`: the highest point of each path square in between, aimed from `cell_aim_height` or
+  half the leader's height, whichever is higher, at half the target's height, 8 to 32 elmos) also serves:
+  - **The pick,** for a target in range or in contact: from one of the units within range or reach of it, else the
+    target is routed to, and the route ends where the group can see it. A line of fire starts a fight but doesn't
+    keep it: the current target needs none while engaged, so a target stepping behind a crest doesn't make the group
+    form its line and route again; the firing spots move the units round it instead.
+  - **Firing spots,** judged from the ground at both ends, which is stricter, so a unit at its spot never reads its
+    target as out of sight. A spot more than 40 elmos up or down, or across water, also needs a straight walk over
+    ground the unit can move on (a rock in a field doesn't drop a spot). A unit with no spot left holds where it
+    stands instead of getting a direct Attack order.
+  - **The hold-off ban** (6, 12, 24 s) counts a unit within range but out of sight as holding, and no longer waits
+    on stragglers or busy units, which the attack order skips (raid groups' 10 s pass too).
+  - **An empty target route** (after the firing cells' retry as discs) rejects its targets for 6 s, instead of the
+    costliest search there is again at the next decision (a target on a plateau with no way up).
+  - **No test** for flying or underwater (below -40) targets, flying groups (gunships), or weapons that arc over
+    terrain (`CWeaponDef::IsHighTrajectory`: Rogue, Recluse, artillery). Defend, anti-air and raid groups keep their
+    firing spots. Routes and cells no longer test the target's own path square, where higher ground may stand
+    behind the target; their lift always cleared it, so they are unchanged.
 - **Geothermal plants are actually queued.** Three checks shared with other energy kept geo off the build list in
   practice. The energy-job cap allowed a 500-metal job only while no energy job at all was queued (below 62.5 build
   power), and solar or wind jobs nearly always were; geo now has its own cap of one geo job at a time. The energy
