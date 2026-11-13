@@ -35,8 +35,10 @@ using namespace springai;
 #define BUILDER_HALF	(FRAMES_PER_SEC * 60)  // an unseen enemy constructor's value halves this often
 #define INCOME_SEC		180.f  // an objective's gain: this much of the income it brings behind the line
 #define WANT_MARGIN		1.2f  // a choke wants this much more than the enemy army near it
+#define WANT_OTHER		0.5f  // an enemy threatens its region's other line chokes by this share (its nearest in full)
 #define SWITCH_SHARE	1.3f  // a slot or objective moves only to one this much better
 #define SAMPLE_COUNT	8  // LOS samples on a choke's line
+#define SEEN_MIN		0.25f  // a choke's defence is trusted for at least this share of its line seen lately
 #define HOLD_RETRY		(FRAMES_PER_SEC * 30)  // a slot with no hold spot is scored again after this
 #define HOLD_END		(FRAMES_PER_SEC * 30)  // a hold ends once its choke is this long not short
 #define HOLD_LEASE		(FRAMES_PER_SEC * 60)  // a claim lapses when its group hasn't asked for its spot this long
@@ -51,7 +53,7 @@ bool Contains(const std::vector<int>& list, int value)
 // A choke's defence as far as we know it: what we saw, more for the share of its line we haven't seen lately
 float ExpectedDefence(const CFrontline::SRank& rank)
 {
-	return rank.defence / std::max(rank.confidence, 0.25f);
+	return rank.defence / std::max(rank.confidence, SEEN_MIN);
 }
 
 }  // namespace
@@ -99,10 +101,10 @@ void CFrontline::Update()
 }
 
 /*
- * E: a choke's outer side is the one more chokes away from our territory. Enemy towers count when the line or our
- * approach to it (one main-tower range deep) is in their range, enemy mobiles within a main-tower range of the line.
- * Unarmed enemy units share their cost equally between the entrances of their region from our side, counted at
- * those within 2 x choke.near ranges of them
+ * E: enemy-held chokes and the enemy line's. A choke's outer side is the one more chokes away from our territory.
+ * Enemy towers count when the line or our approach to it (one main-tower range deep) is in their range, enemy
+ * mobiles within a main-tower range of the line. Unarmed enemy units share their cost equally between the entrances
+ * of their region from our side, counted at those within 2 x choke.near ranges of them
  */
 void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 {
@@ -137,12 +139,16 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 		}
 	}
 
+	std::vector<bool> isEnemyLine(chokes.size(), false);
+	for (int c : chokeMap->GetEnemyLine()) {
+		isEnemyLine[c] = true;
+	}
 	CMapManager* mapMgr = circuit->GetMapManager();
 	ranks.clear();
 	for (int c = 0; c < (int)chokes.size(); ++c) {
 		const CRegionGraph::SChoke& choke = chokes[c];
 		const AIFloat3 centre = chokeMap->GetCellPos(choke.centre);
-		SRank rank = {choke.id, 0.f, 0.f, 0.f, values[c]};
+		SRank rank = {choke.id, 0.f, 0.f, 0.f, values[c], false, false};
 		bool isCovered = false;  // by enemy towers
 		for (const SArmed& e : armed) {
 			const float reach = e.isMobile ? mainRange : e.range + mainRange;
@@ -161,7 +167,8 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 		};
 		const int a = choke.regionA, b = choke.regionB;
 		const int outer = (farness(a) == farness(b)) ? -1 : (farness(a) > farness(b)) ? a : b;
-		if (!isCovered && ((outer < 0) || !chokeMap->IsEnemyTerritory(outer))) {
+		rank.isHeld = isCovered || ((outer >= 0) && chokeMap->IsEnemyTerritory(outer));
+		if (!rank.isHeld && !isEnemyLine[c]) {
 			continue;
 		}
 
@@ -178,6 +185,7 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 			fresh += (frame - seen[i] <= RECENT_FRAMES) ? 1 : 0;
 		}
 		rank.confidence = (count > 0) ? float(fresh) / count : 0.f;
+		rank.isUndefended = (rank.defence <= 0.f) && (rank.confidence >= SEEN_MIN);
 		ranks.push_back(rank);
 	}
 	std::stable_sort(ranks.begin(), ranks.end(), [](const SRank& x, const SRank& y) {
@@ -190,7 +198,8 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 
 /*
  * C: each of our points behind the current line counts at its nearest line choke. Our towers count when their range
- * reaches the line, enemy mobiles within choke.near ranges of its centre
+ * reaches the line. An enemy mobile counts at the line chokes out into its region: the nearest in full, the others
+ * by half (none when no line choke opens into its region)
  */
 void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 {
@@ -229,19 +238,46 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 			towers.push_back({kv.second->GetPos(frame), false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f});
 		}
 	}
-	const float nearRange = chokeMap->GetConfig().nearRanges * chokeMap->GetMainRange();
+	// Enemy mobiles in the region outside a line choke: each threatens the nearest of its region's line chokes in full,
+	// the rest by half
+	std::vector<int> outer(line.size(), -1);
+	for (size_t i = 0; i < line.size(); ++i) {
+		const CRegionGraph::SChoke& choke = chokes[line[i]];
+		outer[i] = behind[choke.regionA] ? (behind[choke.regionB] ? -1 : choke.regionB)
+				: (behind[choke.regionB] ? choke.regionA : -1);
+	}
+	std::vector<float> wanted(line.size(), 0.f), wantedCost(line.size(), 0.f);
+	for (const SArmed& e : armed) {
+		const int region = e.isMobile ? chokeMap->GetRegionAt(e.pos) : -1;
+		if (region < 0) {
+			continue;
+		}
+		std::vector<size_t> touching;  // line chokes out into its region
+		size_t nearest = 0;
+		float bestDist = std::numeric_limits<float>::max();
+		for (size_t i = 0; i < line.size(); ++i) {
+			if (outer[i] != region) {
+				continue;
+			}
+			touching.push_back(i);
+			const float dist = graph.GetLineDist(chokes[line[i]], e.pos.x, e.pos.z);
+			if (dist < bestDist) {
+				bestDist = dist;
+				nearest = i;
+			}
+		}
+		for (size_t i : touching) {
+			const float share = WANT_MARGIN * ((i == nearest) ? 1.f : WANT_OTHER);
+			wanted[i] += e.threat * share;
+			wantedCost[i] += e.cost * share;
+		}
+	}
 	for (size_t i = 0; i < line.size(); ++i) {
 		const CRegionGraph::SChoke& choke = chokes[line[i]];
 		const AIFloat3 centre = chokeMap->GetCellPos(choke.centre);
 		const int inner = behind[choke.regionA] ? choke.regionA : behind[choke.regionB] ? choke.regionB : -1;
 		SFront f = {choke.id, (inner >= 0) ? graph.GetRegions()[inner].id : -1,
-				income[i] * chokeMap->GetChokeTraffic(line[i]), 0.f, 0.f, 0.f};
-		for (const SArmed& e : armed) {
-			if (e.isMobile && (centre.SqDistance2D(e.pos) <= SQUARE(nearRange))) {
-				f.wanted += e.threat * WANT_MARGIN;
-				f.wantedCost += e.cost * WANT_MARGIN;
-			}
-		}
+				income[i] * chokeMap->GetChokeTraffic(line[i]), wanted[i], wantedCost[i], 0.f};
 		for (const SArmed& t : towers) {
 			if ((centre.distance2D(t.pos) <= t.range + choke.width * 0.5f + 64.f)
 				&& (graph.GetLineDist(choke, t.pos.x, t.pos.z) <= t.range))
@@ -360,11 +396,11 @@ void CFrontline::UpdateObjective()
 	if (!objective.chokeIds.empty()) {
 		float defence = 0.f;
 		for (int id : objective.chokeIds) {
-			const SRank* rank = FindRank(id);
+			const SRank* rank = FindHeld(id);
 			defence += (rank != nullptr) ? ExpectedDefence(*rank) : 0.f;
 		}
 		const bool isTaken = std::none_of(objective.chokeIds.begin(), objective.chokeIds.end(), [this](int id) {
-			return FindRank(id) != nullptr;
+			return FindHeld(id) != nullptr;
 		});
 		const bool isFailed = (armyPower < defence) || (frame >= objective.startFrame + COMMIT_FRAMES);
 		if (isTaken || isFailed) {
@@ -436,7 +472,7 @@ CFrontline::SObjective CFrontline::MakeObjective(float& outArmyPower) const
 	// Cost: the enemy-held forward chokes' defence, and what holding them takes
 	float cost = 0.f;
 	for (int c : forward) {
-		const SRank* rank = FindRank(chokes[c].id);
+		const SRank* rank = FindHeld(chokes[c].id);
 		if (Contains(current, c) || (rank == nullptr)) {
 			continue;
 		}
@@ -553,9 +589,11 @@ float CFrontline::GetIncomeIn(const std::vector<bool>& regions) const
 	return income;
 }
 
-const CFrontline::SRank* CFrontline::FindRank(int chokeId) const
+const CFrontline::SRank* CFrontline::FindHeld(int chokeId) const
 {
-	auto it = std::find_if(ranks.begin(), ranks.end(), [chokeId](const SRank& r) { return r.chokeId == chokeId; });
+	auto it = std::find_if(ranks.begin(), ranks.end(), [chokeId](const SRank& r) {
+		return r.isHeld && (r.chokeId == chokeId);
+	});
 	return (it != ranks.end()) ? &*it : nullptr;
 }
 
