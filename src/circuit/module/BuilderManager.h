@@ -136,10 +136,10 @@ public:
 	const SEscort& GetEscortCfg() const { return escort; }
 
 	// Restore terraformed ground (economy.json "restore"), every 2 s: a cell whose height is off the map's start by
-	// <depth> or more on <share> of its samples gets a HIGH CBRestoreTask, nearest builder first, while a builder is
-	// within <range> and the cell is safe: no known enemy on it or next to it, no threat on it. A job whose cell turns
-	// unsafe, or whose builder's path there crosses threat, is dropped and its builders stop. Any drop of a job a
-	// builder took (also a builder hit or killed) backs its cell off (cooldown, doubling).
+	// <depth> or more on <share> of its samples gets a CBRestoreTask at <priority>, nearest builder first, while a
+	// builder is within <range> and the cell is safe: no known enemy on it or next to it, no threat on it. A job
+	// whose cell turns unsafe, or whose builder's path there crosses threat, is dropped and its builders stop. Any
+	// drop of a job a builder took (also a builder hit or killed) backs its cell off (cooldown, doubling).
 	// Cells with an allied building are skipped (levelled pads); an ally's terraform gives its cell up
 	struct SRestore {
 		static constexpr int CELL = 16;  // cell side in heightmap squares (128 elmos): one terraform segment each
@@ -159,6 +159,7 @@ public:
 		int maxBuilders;  // per job
 		int maxTries;
 		int cooldown;  // frames
+		IBuilderTask::Priority priority;  // of the jobs (and ZK's build priority they send)
 		int cellsX = 0;
 		int cellsZ = 0;
 		std::vector<SCell> grid;  // cellsX * cellsZ

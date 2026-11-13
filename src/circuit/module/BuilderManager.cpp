@@ -355,6 +355,15 @@ void CBuilderManager::ReadConfig()
 	restore.maxBuilders = std::max(rest.get("builders", 2).asInt(), 1);
 	restore.maxTries = std::max(rest.get("tries", 3).asInt(), 1);
 	restore.cooldown = std::max(rest.get("cooldown", 30.f).asFloat(), 1.f) * FRAMES_PER_SEC;
+	{
+		const std::string prio = rest.get("priority", "high").asString();
+		restore.priority = (prio == "low") ? IBuilderTask::Priority::LOW
+				: (prio == "normal") ? IBuilderTask::Priority::NORMAL
+				: IBuilderTask::Priority::HIGH;
+		if ((prio != "low") && (prio != "normal") && (prio != "high")) {
+			circuit->LOG("CONFIG economy.restore.priority: unknown value '%s', using 'high'", prio.c_str());
+		}
+	}
 
 	const Json::Value& cond = root["porcupine"]["superweapon"]["condition"];
 	super.minIncome = cond.get((unsigned)0, 50.f).asFloat();
@@ -2762,7 +2771,7 @@ void CBuilderManager::UpdateRestore()
 	std::partial_sort(candidates.begin(), candidates.begin() + count, candidates.end());
 	for (int i = 0; i < count; ++i) {
 		const int c = candidates[i].second;
-		CBRestoreTask* task = new CBRestoreTask(this, IBuilderTask::Priority::HIGH, c);
+		CBRestoreTask* task = new CBRestoreTask(this, restore.priority, c);
 		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::TERRAFORM)].insert(task);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
