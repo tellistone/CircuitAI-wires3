@@ -201,9 +201,10 @@ public:
 	// Chokes of the cut nearest our territory against enemy territory (C), and against the enemy side (D)
 	const std::vector<int>& GetCurrentLine() const { return currentLine; }
 	const std::vector<int>& GetForwardLine() const { return forwardLine; }
-	// The edge of enemy territory (the enemy side while they hold none) facing ours: its chokes into regions we reach
-	// without crossing it, ascending
+	// The current line's cut nearest enemy territory instead, and the chokes the two share: where the lines touch,
+	// which every cheapest cut between the sides passes (empty while the lines don't touch). Ascending
 	const std::vector<int>& GetEnemyLine() const { return enemyLine; }
+	const std::vector<int>& GetFrontLine() const { return frontLine; }
 	// Per region: the chokes of the cut nearest it from our territory (E), up to choke.entrances of them
 	const std::vector<int>& GetEntrancesFromUs(int region) const;
 
@@ -361,7 +362,7 @@ private:
 	std::vector<std::vector<float>> pointChokeDist;  // per point info, per choke: walking elmos, -1 out of reach
 	SCutCache sideCuts;  // from the enemy side, up to choke.entrances (AnalyzePoints)
 	mutable SCutCache entranceCuts;  // from our regions (GetEntrancesFromUs)
-	std::vector<int> currentLine, forwardLine, enemyLine;
+	std::vector<int> currentLine, forwardLine, enemyLine, frontLine;
 	float openness;
 	Openness opennessBand;
 	bool isOpennessSet;

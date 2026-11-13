@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <cmath>
 #include <limits>
 
@@ -416,8 +417,8 @@ void CChokeMap::AnalyzePoints()
 /*
  * The current line: the cut nearest our territory against enemy territory (C). The forward line: the cut nearest our
  * territory against the enemy side, through chokes the enemy may hold (D). Chokes too wide to defend count double.
- * The enemy line: the edge of enemy territory facing ours, whatever its width. Entrances from us: per region, the cut
- * nearest it from our territory (E)
+ * The enemy line: the same cut nearest enemy territory, and the front line the chokes both share, which every
+ * cheapest cut between the sides passes. Entrances from us: per region, the cut nearest it from our territory (E)
  */
 void CChokeMap::UpdateLines()
 {
@@ -435,29 +436,14 @@ void CChokeMap::UpdateLines()
 	if (theirs.empty()) {
 		theirs = enemySide;
 	}
-	auto lineOf = [this, &capacity, &ours](const std::vector<int>& from) {
-		const CRegionGraph::SCut cut = graph.CutFrom(from, ours, capacity, NO_LIMIT);
-		return cut.isOpen ? std::vector<int>() : cut.nearTarget;
-	};
-	currentLine = lineOf(theirs);
-	forwardLine = lineOf(enemySide);
-	// Enemy line: where their ground ends facing ours, the chokes out of it into ground we reach without crossing it
-	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
-	std::vector<bool> isTheirs(graph.GetRegions().size(), false);
-	for (int r : theirs) {
-		isTheirs[r] = true;
-	}
-	std::vector<bool> isEdge(chokes.size());
-	for (size_t c = 0; c < chokes.size(); ++c) {
-		isEdge[c] = (isTheirs[chokes[c].regionA] != isTheirs[chokes[c].regionB]);
-	}
-	const std::vector<bool> isReached = graph.ReachableFrom(ours, isEdge);
-	enemyLine.clear();
-	for (size_t c = 0; c < chokes.size(); ++c) {
-		if (isEdge[c] && (isReached[chokes[c].regionA] || isReached[chokes[c].regionB])) {
-			enemyLine.push_back(c);
-		}
-	}
+	// An open cut has no chokes
+	CRegionGraph::SCut cut = graph.CutFrom(theirs, ours, capacity, NO_LIMIT);
+	currentLine = std::move(cut.nearTarget);
+	enemyLine = std::move(cut.nearSource);
+	frontLine.clear();
+	std::set_intersection(currentLine.begin(), currentLine.end(), enemyLine.begin(), enemyLine.end(),
+			std::back_inserter(frontLine));
+	forwardLine = graph.CutFrom(enemySide, ours, capacity, NO_LIMIT).nearTarget;
 	// Entrances from us: found when first asked, as only regions with enemy units are
 	entranceCuts.Reset(std::move(ours), ChokeCapacity(1.f, 1.f), config.entrances, graph.GetRegions().size());
 }

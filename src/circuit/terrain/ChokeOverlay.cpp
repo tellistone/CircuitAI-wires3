@@ -449,7 +449,8 @@ void CChokeOverlay::DrawPockets()
 }
 
 /*
- * Current line orange, forward line yellow, enemy line red, objective magenta; hold slots cyan, with their spots
+ * Current line orange, forward line yellow, enemy line red, front line white, objective magenta; hold slots cyan,
+ * with their spots
  */
 void CChokeOverlay::DrawLines()
 {
@@ -466,6 +467,9 @@ void CChokeOverlay::DrawLines()
 	}
 	for (int c : chokeMap->GetEnemyLine()) {
 		drawChoke(c, Colour::RED, 64.f);
+	}
+	for (int c : chokeMap->GetFrontLine()) {
+		drawChoke(c, Colour::WHITE, 192.f);
 	}
 	const CFrontline* frontline = circuit->GetMilitaryManager()->GetFrontline();
 	for (int id : frontline->GetObjectiveChokes()) {
