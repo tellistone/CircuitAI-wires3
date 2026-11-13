@@ -203,6 +203,21 @@ private:
 	// FindTarget, then engage the target if it is already within range; true: engaged.
 	// isWalking: only the in-range result matters, so no FindTarget when no enemy is near
 	bool EngageInRange(int frame, bool isWalking);
+	/*
+	 * Contact: an enemy we are already fighting. Within its contact reach (GetContactReach) of one of our units that
+	 * isn't a straggler (within GetGroupRadius of the leader). FindTarget engages it at once (no route), judges it at
+	 * the keep allowance while engaged, doesn't drop it as a runner or for a rejected route, exempts it from the raid
+	 * factor and the own-ground rule, and ranks it ahead of every enemy not in contact
+	 */
+	// Our fire range, or the enemy's own range if longer (a mobile that can hit the ground: IsGroundDangerDef), capped
+	// at highestRange + our firing-spot distance; + 64 elmos. Buildings and unknown types: our fire range + 64
+	float GetContactReach(const CEnemyInfo* enemy) const;
+	// isCurrent: our current target, kept in contact out to RAID_FREE_KEEP x its reach. outSqDist: squared distance
+	// from our nearest unit in contact
+	bool IsInContact(const CEnemyInfo* enemy, bool isCurrent, int frame, float* outSqDist = nullptr);
+	// Farthest an enemy in contact can be from the leader (the units' spread + the longest reach, kept)
+	float GetContactBound(int frame);
+	void UpdateContactUnits(int frame);  // contactPos and contactSpread, once per frame
 
 	/*
 	 * Firing cells (quota.attack_static_cells; AttackCells.cpp): where the group shoots a building or a parked
@@ -368,6 +383,12 @@ private:
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget (0: on enemy-held ground)
 	float targetSqKey;  // the last FindTarget's pick: its ranking key (squared distance, scaled), for SeekMerge
+	bool isTargetInRange;  // the last FindTarget's pick is within range (EngageInRange): highestRange of the leader, or contact
+	// Contact (UpdateContactUnits): positions of our units within GetGroupRadius of the leader, their farthest
+	// distance from it, and the frame they were read at
+	std::vector<springai::AIFloat3> contactPos;
+	float contactSpread;
+	int contactFrame;
 	SRoute lastRoute;  // dropped when a unit joins or leaves: a fresh route re-sends the path at the group's new speed
 
 	// Holding

@@ -29,11 +29,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Attack groups vs raiders** (`quota.raid_attack_factor`, default and shipped `true`). The same value on our side:
   an attack group judges an enemy raider or scout (any role in its list) outside the base defence radius with its
   pick and keep strength x its units' `raid_thr_mod` (power-weighted, at most 1). A skirmisher group needs about 4x
-  the strength to go after raiders in the field. Inside the base defence radius, within its own fire range + 64 elmos
-  (raiders already fighting it), and on the route approach and the escape, it judges at full strength, so a raider
-  target is never picked more loosely than it is kept, and a group never ignores raiders shooting it. The current
-  target keeps the base and fire range exemptions out to 1.25x, so a raider stepping back and forth across either line
-  doesn't flip the pick.
+  the strength to go after raiders in the field. Inside the base defence radius, in contact with the group (raiders
+  already fighting it; see "Attack groups stay in the fight after a kill"), and on the route approach and the escape,
+  it judges at full strength, so a raider target is never picked more loosely than it is kept, and a group never
+  ignores raiders shooting it. The current target keeps the base and contact exemptions out to 1.25x, so a raider
+  stepping back and forth across either line doesn't flip the pick.
 
 - **Raid tuning logs**. Once a minute: `THREAT raid view` (how many enemies have a multiplier, the cell where the
   raid view differs most from the plain one, and the threat map update time) and `RAID` (raid group escapes, and the
@@ -562,6 +562,22 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   facing (a hold, the end of a walk) ignored a new path ending within 256 elmos of where it faced from, so it didn't
   move for a target just out of range; it now always walks a route to a target. Since holding groups stand in line,
   facing the threat, this happened often.
+- **Attack groups stay in the fight after a kill.** When a target died, the next pick was a fresh one made from the
+  leader: the rest of the fight lost the keep allowance (`quota.attack_keep_threat`), enemies stepping back were
+  dropped as runners, and an enemy in range of the front rows but not of the leader was routed to. So the group went
+  back to roaming, formed its line (standing at the leader, or walking a route), and engaged again a decision or two
+  later, with units leaving their firing spots each time. Worst against units that outrange us, such as Fencers
+  (range 600, must stop to fire): they always stand beyond the leader's range and are dropped as runners whenever
+  they move. Now an enemy is **in contact** when it is within the group's fire range + 64 elmos of one of its units
+  (stragglers aside), or, for a mobile enemy, its own range + 64 reaches one (capped at the group's highest weapon
+  or sight range + 0.9x its fire range, so far artillery is still routed to as a siege target); the current target
+  stays in contact out to 1.25x. An enemy in contact is engaged at once (no route, no line), ranks ahead of every
+  enemy not in contact (stickiness only within each kind), isn't dropped as a runner or for a rejected route
+  approach, and counts as already fighting us for the raid factor and the own-ground rule (both were the leader's
+  fire range + 64). While the group is engaged, every enemy in contact gets the keep allowance; a fight is still
+  started at the usual allowance. The approach line check is unchanged (from the target towards the leader). And
+  when the target dies, the group picks the next one at its next update (about 1 s) instead of its next decision
+  (up to 2 s).
 - **Geothermal plants are actually queued.** Three checks shared with other energy kept geo off the build list in
   practice. The energy-job cap allowed a 500-metal job only while no energy job at all was queued (below 62.5 build
   power), and solar or wind jobs nearly always were; geo now has its own cap of one geo job at a time. The energy
