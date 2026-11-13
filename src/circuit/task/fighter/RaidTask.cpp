@@ -442,7 +442,7 @@ bool CRaidTask::FindTarget()
 	const float maxPower = GetSafeThreat() * (IsCautious(circuit->GetLastFrame()) ? 0.75f : 1.f);
 	const float weaponRange = cdef->GetMaxRange();
 	// IsClaimedByNearer: already in reach. The current target keeps it out to 1.25x (as the attack task's
-	// RAID_FREE_KEEP), so an enemy at the edge isn't picked and dropped by turns
+	// TARGET_KEEP), so an enemy at the edge isn't picked and dropped by turns
 	const float sqClaimFree = SQUARE(weaponRange + DEFAULT_SLACK);
 	const float sqClaimFreeKeep = sqClaimFree * SQUARE(1.25f);
 	const CEnemyInfo* prevTarget = target;

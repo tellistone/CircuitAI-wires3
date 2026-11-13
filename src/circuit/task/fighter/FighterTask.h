@@ -84,7 +84,8 @@ protected:
 	// Firing spot for a unit: within its spot range (GetSpotRange) of the target, trading walking distance against
 	// threat and against spots other units are heading to.
 	// NONE: no usable range (old orders); SPOT: a safe spot; HOLD: every spot dangerous but the unit's own
-	// spot is safe; RISKY: nowhere safe, the unit's spot neither: the least dangerous spot
+	// spot is safe, or no spot has a line of fire and a direct walk there (GetUnitSightLifts); RISKY: nowhere safe, the
+	// unit's spot neither: the least dangerous spot
 	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
 	// Where a unit of the group is heading (its last firing spot if still usable, else where it stands) and its
 	// health-scaled power (GetUnitStrengths): it backs up spots near there
@@ -100,9 +101,17 @@ protected:
 	// isClose (melee's close spots): 0-0.95x GetSpotRange from the target; else 0.6-0.95x GetFireRange
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isClose) const;
 	bool GetKeptFireSpot(CCircuitUnit* unit, bool isClose, springai::AIFloat3& outPos) const;  // last spot, if still in that band
-	// After Attack: every unit with spots (melee too) holds without one (HOLD: every spot dangerous) and the target is
-	// out of their weapon range. The group would stand still for as long as it keeps this target
+	// After Attack: every unit with spots (melee too) holds without one (HOLD: every spot dangerous, or none in sight)
+	// and the target is out of their weapon range, or out of sight (GetUnitSightLifts). The group would stand still for
+	// as long as it keeps this target
 	bool IsAllHolding() const;
+	// Lifts (elmos above the ground) for a line of fire to this enemy: from our units' aim, at the enemy.
+	// false (default): no line of fire needed. With lifts, firing spots must have one judged from the ground there, and
+	// a direct walk there up or down a cliff (FindFireSpot, IsAllHolding; CTerrainManager::IsLineClear, IsWalkClear)
+	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const { return false; }
+	// The same for one unit: false too if its weapon arcs over terrain (CCircuitDef::IsHighTrajectory), as it fires
+	// from below, unseen
+	bool GetUnitSightLifts(CCircuitUnit* unit, const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const;
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
 	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
 	// each unit's own bearing from the target

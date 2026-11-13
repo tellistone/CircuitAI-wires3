@@ -141,7 +141,29 @@ public:
 	std::pair<STerrainMapArea*, bool> GetCurrentMapArea(CCircuitDef* cdef, const springai::AIFloat3& position);
 	std::pair<STerrainMapArea*, bool> GetCurrentMapArea(CCircuitDef* cdef, const int indexSector);
 	int GetSectorIndex(const springai::AIFloat3& position) const { return terrainData->GetSectorIndex(position); }
+	int2 GetSectorXY(const springai::AIFloat3& position) const;  // sector (= path square) column and row, clamped to the map
+private:
+	// The ground under pos (GetHeightAt; water at its surface). Never above its sector's highest point: a map's size is
+	// a multiple of 512 elmos, so the clamps at its edges agree
+	float GetGroundHeight(const springai::AIFloat3& pos) const { return std::max(GetHeightAt(pos.x, pos.z), 0.f); }
+public:
+	// Line of fire over the sector grid, from fromHeight above sector 'from' to toHeight above sector 'to': blocked where
+	// a sector in between (not the ends' own) rises above the straight line at its highest point. sectors: an
+	// SAreaData's (a route query holds on to the one it started with)
+	static bool IsLineClear(const std::vector<STerrainMapSector>& sectors, int sectorXSize,
+			int2 from, int2 to, float fromHeight, float toHeight);
+	// The same between two positions, aimed aimLift above 'from' at targetLift above 'to'. The ends' heights: their
+	// sectors' highest points, as target routes (a route node knows only its sector), or isExact: the ground under them,
+	// never above that, so a stricter test (firing spots). Water counts as its surface.
+	// For a unit that walks to where a route ended. A fixed spot (chokepoint towers) uses CSpotScorer::IsClearLine, a
+	// finer ray: looser than this, so a pick by one could fail the other at the same spot
+	bool IsLineClear(const springai::AIFloat3& from, const springai::AIFloat3& to, float aimLift, float targetLift,
+			bool isExact) const;
 	bool CanMoveToPos(STerrainMapArea* area, const springai::AIFloat3& destination);
+	// A unit of the area walks straight from 'from' to 'to', not the long way round a cliff or a lake: the sectors on
+	// the line ('from''s own excluded) are ones it can move on (CanMoveToPos). Where the ground at the ends differs by
+	// no more than maxClimb, only water blocks: an impassable rock or crater rim in a field costs a short detour
+	bool IsWalkClear(STerrainMapArea* area, const springai::AIFloat3& from, const springai::AIFloat3& to, float maxClimb);
 	springai::AIFloat3 GetBuildPosition(CCircuitDef* cdef, const springai::AIFloat3& position);
 	springai::AIFloat3 GetMovePosition(STerrainMapArea* sourceArea, const springai::AIFloat3& position);
 	springai::AIFloat3 ShiftPos(CCircuitDef* cdef, const springai::AIFloat3& position, float range, bool isOrtho = false);

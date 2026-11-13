@@ -1198,6 +1198,78 @@ std::pair<STerrainMapArea*, bool> CTerrainManager::GetCurrentMapArea(CCircuitDef
 	return std::make_pair(area, area != nullptr);
 }
 
+int2 CTerrainManager::GetSectorXY(const AIFloat3& position) const
+{
+	const int convertStoP = GetConvertStoP();
+	return int2(utils::clamp(int(position.x) / convertStoP, 0, GetSectorXSize() - 1),
+			utils::clamp(int(position.z) / convertStoP, 0, GetSectorZSize() - 1));
+}
+
+// The sectors on the straight line from 'from' to 'to' (all octant line draw), 'from' excluded: isOk(x, y, t) for each,
+// t = 0..1 along the line, until one fails (then false)
+template<typename F>
+static bool IsSectorLineOk(int2 from, int2 to, F&& isOk)
+{
+	const int dx =  abs(to.x - from.x), sx = from.x < to.x ? 1 : -1;
+	const int dy = -abs(to.y - from.y), sy = from.y < to.y ? 1 : -1;
+	int err = dx + dy;  // error value e_xy
+	for (int x = from.x, y = from.y;;) {
+		const int e2 = 2 * err;
+		if (e2 >= dy) {  // e_xy + e_x > 0
+			if (x == to.x) break;
+			err += dy; x += sx;
+		}
+		if (e2 <= dx) {  // e_xy + e_y < 0
+			if (y == to.y) break;
+			err += dx; y += sy;
+		}
+		if (!isOk(x, y, fabs((dx > -dy) ? float(x - from.x) / dx : float(y - from.y) / dy))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool CTerrainManager::IsLineClear(const std::vector<STerrainMapSector>& sectors, int sectorXSize,
+		int2 from, int2 to, float fromHeight, float toHeight)
+{
+	const float diffHeight = toHeight - fromHeight;
+	return IsSectorLineOk(from, to, [&](int x, int y, float t) {
+		// The target's own sector is skipped: it stands in it (higher ground there may be behind it)
+		return ((x == to.x) && (y == to.y)) || (sectors[y * sectorXSize + x].maxElevation <= diffHeight * t + fromHeight);
+	});
+}
+
+bool CTerrainManager::IsWalkClear(STerrainMapArea* area, const AIFloat3& from, const AIFloat3& to, float maxClimb)
+{
+	if (area == nullptr) {
+		return true;  // as CanMoveToPos
+	}
+	const std::vector<STerrainMapAreaSector>& sectors = GetSectorList(area);
+	const std::vector<STerrainMapSector>& terrain = areaData->sector;
+	const int sectorXSize = GetSectorXSize();
+	const int2 f = GetSectorXY(from);
+	const int2 t = GetSectorXY(to);
+	const bool isClimb = fabsf(GetGroundHeight(to) - GetGroundHeight(from)) > maxClimb;
+	return IsSectorLineOk(f, t, [&](int x, int y, float) {
+		const int i = y * sectorXSize + x;
+		return (sectors[i].area == area) || (!isClimb && !terrain[i].isWater);
+	});
+}
+
+bool CTerrainManager::IsLineClear(const AIFloat3& from, const AIFloat3& to, float aimLift, float targetLift,
+		bool isExact) const
+{
+	const std::vector<STerrainMapSector>& sectors = areaData->sector;
+	const int sectorXSize = GetSectorXSize();
+	auto heightAt = [&](const AIFloat3& pos, const int2& s) {
+		return isExact ? GetGroundHeight(pos) : std::max(sectors[s.y * sectorXSize + s.x].maxElevation, 0.f);
+	};
+	const int2 f = GetSectorXY(from);
+	const int2 t = GetSectorXY(to);
+	return IsLineClear(sectors, sectorXSize, f, t, heightAt(from, f) + aimLift, heightAt(to, t) + targetLift);
+}
+
 bool CTerrainManager::CanMoveToPos(STerrainMapArea* area, const AIFloat3& destination)
 {
 	const int iS = GetSectorIndex(destination);

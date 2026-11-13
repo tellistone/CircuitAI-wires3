@@ -282,6 +282,7 @@ const float ARC_SPAN      = 0.25f;  // half the arc, x PI
 const float SUPPORT_RADIUS = 400.f; // own units heading within this of a spot back up a unit there
 const int   SPOT_KEEP     = FRAMES_PER_SEC * 10;  // last spot forgotten this long after its order
 const int   RISKY_GRACE   = FRAMES_PER_SEC * 3;   // pull-back leaves a unit sent to a RISKY spot alone
+const float WALK_CLIMB    = 40.f;   // with lifts (GetUnitSightLifts): a spot this much up or down needs a direct walk
 }
 
 bool IFighterTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
@@ -422,8 +423,20 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	auto costOf = [&](const SCandidate& c, float worst) {
 		return wThreat * (worst / strength + CROWD_WEIGHT * c.crowd) + c.dist;
 	};
+	// With lifts (GetUnitSightLifts), only spots with a line of fire to the target, judged from the ground there:
+	// stricter than the pick's (sectors' highest points), so a unit at its spot never reads the target as out of sight.
+	// And only spots it walks to directly: one up on a plateau seen from below would be reached the long way round, on
+	// the engine's path, not a route of ours. Blind or round the long way, the target needs a route (FindTarget).
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	float aimLift, targetLift;
+	const bool isSight = GetUnitSightLifts(unit, target, aimLift, targetLift);
 	std::vector<SCandidate> cands;
 	auto add = [&](const AIFloat3& p) {
+		if (isSight && (!terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)
+			|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p, WALK_CLIMB)))
+		{
+			return;
+		}
 		int crowd = 0;
 		for (size_t i = 0; i < claims.size(); ++i) {
 			if ((i != self) && (claims[i].pos.SqDistance2D(p) < SQUARE(CROWD_RADIUS))) {
@@ -450,7 +463,6 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		add(keptPos);
 	}
 	// Spots on an arc around the target, facing us or the planned side (+-45 degrees: keeps the group together)
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	AIFloat3 dir = uPos - tPos;
 	const float bearing = (arcBearing != nullptr) ? *arcBearing : (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
 	const float radius = range * FIRE_RADIUS;
@@ -497,27 +509,49 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		outPos = risky->pos;
 		return FireSpot::RISKY;
 	}
+	// No spot in sight of the target that we walk to directly (or none we can stand on): hold rather than a direct
+	// Attack, which the engine would turn into a walk round to wherever it can fire from
+	if (isSight) {
+		outPos = uPos;
+		return FireSpot::HOLD;
+	}
 	return FireSpot::NONE;
 }
 
 bool IFighterTask::IsAllHolding() const
 {
 	// HOLD (IFighterTask::Attack): unit with a spot range (melee too) ordered on this target without a firing spot
-	const int frame = manager->GetCircuit()->GetLastFrame();
+	CCircuitAI* circuit = manager->GetCircuit();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& tPos = target->GetPos();
 	int ranged = 0;
 	for (CCircuitUnit* unit : units) {
-		if (GetSpotRange(unit) < SQUARE_SIZE * 4) {
-			continue;  // direct Attack (no spot)
+		if ((GetSpotRange(unit) < SQUARE_SIZE * 4) || (unit->Blocker() != nullptr) || IsOutOfReach(unit, frame)) {
+			continue;  // no spot (direct Attack), busy, or a straggler: Attack gives it no spot
 		}
 		++ranged;
-		// Weapon range, not spot range: a melee unit with a real gun (Reaver) shoots from well outside its spot
-		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())
-			|| (unit->GetPos(frame).SqDistance2D(target->GetPos()) <= SQUARE(GetFireRange(unit))))
+		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end()) || IsScooting(unit)) {
+			return false;  // has a spot, or steps back as it reloads (it fires)
+		}
+		// Can already shoot it: weapon range, not spot range (a melee unit with a real gun, Reaver, shoots from well
+		// outside its spot), and in sight as firing spots must be (else it holds at a cliff foot, within range)
+		const AIFloat3& pos = unit->GetPos(frame);
+		float aimLift, targetLift;
+		if ((pos.SqDistance2D(tPos) <= SQUARE(GetFireRange(unit)))
+			&& (!GetUnitSightLifts(unit, target, aimLift, targetLift)
+				|| terrainMgr->IsLineClear(pos, tPos, aimLift, targetLift, true)))
 		{
-			return false;  // has a spot, or can already shoot it
+			return false;
 		}
 	}
 	return ranged > 0;
+}
+
+bool IFighterTask::GetUnitSightLifts(CCircuitUnit* unit, const CEnemyInfo* enemy, float& outAimLift,
+		float& outTargetLift) const
+{
+	return !unit->GetCircuitDef()->IsHighTrajectory() && GetSightLifts(enemy, outAimLift, outTargetLift);
 }
 
 const std::vector<IFighterTask::SUnitStrength>& IFighterTask::GetUnitStrengths() const

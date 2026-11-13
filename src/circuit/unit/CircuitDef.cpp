@@ -133,6 +133,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, hasAntiLand(false)
 		, hasAntiWater(false)
 		, isAlwaysHit(false)
+		, isHighTrajectory(false)
 		, isAmphibious(false)
 		, isLander(false)
 		, isMex(false)
@@ -408,7 +409,11 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		}
 		if ((weaponCat & circuit->GetLandCategory()) && isLandWeapon) {
 			float& mr = maxRange[static_cast<RangeT>(RangeType::LAND)];
-			mr = std::max(mr, (isAbleToFly && (wt == "Cannon")) ? range * 1.25f : range);  // 1.25 - gunship height hax
+			const float landRange = (isAbleToFly && (wt == "Cannon")) ? range * 1.25f : range;  // 1.25 - gunship height hax
+			if (landRange > mr) {
+				mr = landRange;
+				isHighTrajectory = circuit->GetWeaponDef(wd->GetWeaponDefId())->IsHighTrajectory();
+			}
 			if (mr > maxRange[static_cast<RangeT>(maxRangeType)]) {
 				maxRangeType = RangeType::LAND;
 			}

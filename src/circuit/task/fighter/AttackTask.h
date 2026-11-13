@@ -198,11 +198,49 @@ private:
 	// One decision: reinforce a stronger group, or pick a target and engage it or route to it, else go to the
 	// front. isReuse: a normal decision no unit asked to re-plan, which may keep a fresh route to the same goal
 	void Decide(int frame, bool isReuse);
-	// Picks the target and fills routeGoals (and screenedGoals)
-	void FindTarget();
+	// Picks the target and fills routeGoals (and screenedGoals). true: the pick is within range (IsInLeaderRange) or
+	// in contact, so EngageInRange engages it
+	bool FindTarget();
 	// FindTarget, then engage the target if it is already within range; true: engaged.
 	// isWalking: only the in-range result matters, so no FindTarget when no enemy is near
 	bool EngageInRange(int frame, bool isWalking);
+	// Its range spot (GetRangePos) within highestRange of the leader, and seen from there (IsSeenByUnits). Not only
+	// from the leader: in line it stands its row's offset behind the front row, which stands where the route ended.
+	// isCurrent: our current target, which needs no line of fire while engaged (IsSeenByUnits)
+	bool IsInLeaderRange(const CEnemyInfo* enemy, const springai::AIFloat3& rangePos, bool isCurrent, int frame);
+	// Lines of fire (pick, firing spots): aimed from cell_aim_height or half the leader's height above our units at
+	// half the enemy's height (8-32 elmos) above it. None for flying or underwater enemies, or a flying group
+	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const override;
+	float GetGroundFireRange() const { return std::max(fireRangeLand, fireRangeWater); }
+	/*
+	 * Contact: an enemy we are already fighting. Within its contact reach (GetContactReach) of one of our units that
+	 * isn't a straggler (within GetGroupRadius of the leader), with a line of fire from one of them (IsSeenByUnits).
+	 * In FindTarget:
+	 *   always:        engaged at once (no route); a rejected route doesn't matter; exempt from the raid factor and the
+	 *                  own-ground rule
+	 *   while engaged: the fight we accepted: judged at the keep allowance, not dropped as a runner, ranked ahead of
+	 *                  every enemy not in contact
+	 */
+	// Our fire range, or the enemy's own range if longer (a mobile that can hit the ground: IsGroundDangerDef), capped
+	// at GetContactCap; + 64 elmos. Buildings and unknown types: our fire range + 64
+	float GetContactReach(const CEnemyInfo* enemy) const;
+	// highestRange + our firing-spot distance: never below our fire range (highestRange includes the median's own)
+	float GetContactCap() const;
+	// isCurrent: our current target, kept in contact out to TARGET_KEEP x its reach, and while engaged with no line
+	// of fire (IsSeenByUnits). outSqDist: squared distance from our nearest unit
+	bool IsInContact(const CEnemyInfo* enemy, bool isCurrent, int frame, float* outSqDist = nullptr);
+	// Farthest an enemy in contact can be from the leader (the units' spread + the longest reach, kept)
+	float GetContactBound(int frame);
+	// One of the units contact counts (UpdateContactUnits) within range of the enemy at pos, with a line of fire to
+	// it (GetSightLifts) by the route's test (CTerrainManager::IsLineClear, not exact: arriving where a route ended
+	// keeps it seen, and so does a unit at its firing spot, whose test is stricter). Tried until one sees it; a unit
+	// whose weapon arcs over terrain (IsHighTrajectory) always does. isCurrent: our current target needs none while
+	// engaged: a line of fire starts a fight, the firing spots keep it (a target behind a crest: new spots around it;
+	// none in sight: every unit holds and IsAllHolding passes on it), so the line isn't formed again at every crest.
+	// outSqDist: our nearest unit's squared distance
+	bool IsSeenByUnits(const CEnemyInfo* enemy, const springai::AIFloat3& pos, float range, bool isCurrent, int frame,
+			float* outSqDist = nullptr);
+	void UpdateContactUnits(int frame);  // contactUnits and contactSpread, once per frame
 
 	/*
 	 * Firing cells (quota.attack_static_cells; AttackCells.cpp): where the group shoots a building or a parked
@@ -368,6 +406,15 @@ private:
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget (0: on enemy-held ground)
 	float targetSqKey;  // the last FindTarget's pick: its ranking key (squared distance, scaled), for SeekMerge
+	// Contact (UpdateContactUnits): our units within GetGroupRadius of the leader (where they stand, and whether
+	// their weapon arcs over terrain), their farthest distance from it, and the frame they were read at
+	struct SContactUnit {
+		springai::AIFloat3 pos;
+		bool isHighTrajectory;
+	};
+	std::vector<SContactUnit> contactUnits;
+	float contactSpread;
+	int contactFrame;
 	SRoute lastRoute;  // dropped when a unit joins or leaves: a fresh route re-sends the path at the group's new speed
 
 	// Holding
