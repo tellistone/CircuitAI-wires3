@@ -115,6 +115,9 @@ void CScoutTask::Update()
 void CScoutTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	IFighterTask::OnUnitIdle(unit);
+	if (isFleeing) {
+		return;  // arrived at the flee spot: wait out the clear time here, then scouting resumes
+	}
 	if (units.find(unit) != units.end()) {
 		RemoveAssignee(unit);
 	}
@@ -134,6 +137,10 @@ void CScoutTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
+
+	if (CheckFlee(unit, pos, frame)) {
+		return;
+	}
 
 	const bool isTargetsFound = FindTarget(unit, pos);
 
@@ -344,6 +351,9 @@ bool CScoutTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 
 void CScoutTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating)
 {
+	if (isFleeing) {
+		return;  // asked before the flee started
+	}
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
 
@@ -371,6 +381,10 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
 		}
 		position = PickScoutPosition(unit, safeThreat);
+		if (!utils::is_valid(position)) {
+			HoldScout(unit);
+			return;
+		}
 	}
 
 	RunScoutQuery(unit, true, 0);
@@ -409,52 +423,60 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query, bool isCapped, in
 	auto isSafeNow = [&](const AIFloat3& p) {
 		return utils::is_valid(p) && (threatMap->GetThreatAt(unit, p) < safeThreat / GetThrDistModAt(p));
 	};
-	auto getHomePos = [&]() {
-		return circuit->GetTerrainManager()->GetMovePosition(unit->GetArea(), circuit->GetSetupManager()->GetBasePos());
-	};
-
+	if (isFleeing) {
+		return;  // asked before the flee started
+	}
 	if (pPath->path.size() > 2) {
 		ActivatePath(unit, pPath, -1, isCapped && hasCap);
 		return;
 	}
 
-	// No capped route to a spot we can reach: danger is in the way (or we stand in it)
-	if (pPath->path.empty() && isCapped && hasCap
-		&& utils::is_valid(position) && circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), position))
-	{
-		if (attempt < 2) {
-			// Try another scouting spot; keep scouts off this one for a while
-			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
-			position = PickScoutPosition(unit, safeThreat);
-		} else if (!isSafeNow(position)) {
-			// Least-threat route, but only to a destination that is safe right now
-			// (spot picking ignores mobile enemies); else go home
-			position = getHomePos();
-		}
-		RunScoutQuery(unit, attempt < 2, attempt + 1);
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	// The pathfinder checks the cap on every cell next to the start: a scout standing in danger gets no capped
+	// route to anywhere. That's the scout's spot, not the destination's fault: flee instead of blocking spots
+	if (CheckFlee(unit, pos, frame)) {
 		return;
 	}
 
-	// No route at all (e.g. still inside the factory), or the spot is right here. Always give an order, so the
-	// scout never stands with an empty queue: plain move to the spot if it is safe, otherwise towards home.
-	// The next update re-plans from wherever this gets us.
-	AIFloat3 movePos = position;
+	// No capped route to a spot we can reach: danger is in the way
+	if (pPath->path.empty() && isCapped && hasCap
+		&& utils::is_valid(position) && circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), position))
+	{
+		// Keep scouts off this spot for a while
+		circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
+		if (attempt < 2) {
+			// Try another scouting spot
+			position = PickScoutPosition(unit, safeThreat);
+			if (!utils::is_valid(position)) {
+				HoldScout(unit);
+				return;
+			}
+			RunScoutQuery(unit, true, attempt + 1);
+		} else if (isSafeNow(position)) {
+			// Least-threat route, but only to a destination that is safe right now (spot picking ignores mobile
+			// enemies). If it leads into danger after all, the flee takes over
+			RunScoutQuery(unit, false, attempt + 1);
+		} else {
+			HoldScout(unit);
+		}
+		return;
+	}
+
+	// No route at all (e.g. still inside the factory), or the spot is right here: plain move to the spot if it is
+	// safe, otherwise wait and pick a fresh spot on the next update. Scouts never head home.
 	if (!isSafeNow(position)) {
 		if (utils::is_valid(position) && !pPath->path.empty()) {
 			// Standing next to a spot that turned dangerous: keep scouts off it for a while
 			circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
 		}
-		movePos = getHomePos();
-		position = -RgtVector;  // forces a fresh pick on the next update
-	}
-	if (!utils::is_valid(movePos)) {
-		unit->GetTravelAct()->StateWait();
+		HoldScout(unit);
 		return;
 	}
 	// NOTE: This runs in a pathfinder callback, which can run inside an allied AI's engine event (shared pathfinder),
 	//       where orders are rejected by the server. A one-point path goes through ActivatePath, which handles that.
 	std::shared_ptr<PathInfo> pMove = std::make_shared<PathInfo>();
-	pMove->posPath.push_back(movePos);
+	pMove->posPath.push_back(position);
 	ActivatePath(unit, pMove, -1, false);
 }
 
@@ -521,6 +543,9 @@ void CScoutTask::ApproachTarget(CCircuitUnit* unit, const AIFloat3& pos, float f
 
 void CScoutTask::ApplyApproachPath(const CQueryPathSingle* query, ICoreUnit::Id targetId, bool isUpdating)
 {
+	if (isFleeing) {
+		return;  // asked before the flee started
+	}
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
 
@@ -550,7 +575,7 @@ AIFloat3 CScoutTask::PickScoutPosition(CCircuitUnit* unit, float safeThreat)
 		return spot;
 	}
 	// Random safe spot
-	for (int i = 0; i < 4; ++i) {
+	for (int i = 0; i < 8; ++i) {
 		float x = rand() % terrainMgr->GetTerrainWidth();
 		float z = rand() % terrainMgr->GetTerrainHeight();
 		AIFloat3 rndPos(x, circuit->GetMap()->GetElevationAt(x, z), z);
@@ -559,8 +584,8 @@ AIFloat3 CScoutTask::PickScoutPosition(CCircuitUnit* unit, float safeThreat)
 			return rndPos;
 		}
 	}
-	// Nothing safe found: head home
-	return terrainMgr->GetMovePosition(unit->GetArea(), circuit->GetSetupManager()->GetBasePos());
+	// Nothing safe found: the caller waits and picks again on the next update (scouts never head home)
+	return -RgtVector;
 }
 
 void CScoutTask::ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath, ICoreUnit::Id pathTargetId, bool isCapped)
@@ -611,6 +636,142 @@ bool CScoutTask::IsPathUnsafe(CCircuitUnit* unit) const
 		}
 	}
 	return false;
+}
+
+bool CScoutTask::IsInDanger(CCircuitUnit* unit, const AIFloat3& p) const
+{
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	return threatMap->GetThreatAt(unit, p) >= GetSafeThreat(unit) / GetThrDistModAt(p);
+}
+
+bool CScoutTask::CheckFlee(CCircuitUnit* unit, const AIFloat3& pos, int frame)
+{
+	// A cloaked route ignores the plain threat on purpose: cloaked scouts sneak through it
+	if (IsCloakRoute(unit) || !IsInDanger(unit, pos)) {
+		if (!isFleeing) {
+			return false;
+		}
+		if (safeSinceFrame < 0) {
+			safeSinceFrame = frame;
+		}
+		if (frame < safeSinceFrame + FLEE_CLEAR_FRAMES) {
+			return true;  // keep running along the flee path (or wait at its end) until clear for long enough
+		}
+		// Clear: resume scouting from here with a fresh spot
+		isFleeing = false;
+		safeSinceFrame = -1;
+		fleeDest = -RgtVector;
+		position = -RgtVector;
+		return false;
+	}
+
+	if (!isFleeing) {
+		isFleeing = true;
+		lastFleeFrame = -1;
+		SetTarget(nullptr);
+		lastAttackId = -1;
+	}
+	safeSinceFrame = -1;
+	// Re-plan once a second (the danger moves), or straight away when the run ended or its spot turned dangerous
+	if ((frame >= lastFleeFrame + FRAMES_PER_SEC)
+		|| ((frame >= lastFleeFrame + THREAT_UPDATE_RATE) && IsQueryReady(unit)
+			&& (!unit->GetTravelAct()->IsActive() || !utils::is_valid(fleeDest) || IsInDanger(unit, fleeDest))))
+	{
+		Flee(unit, pos, frame);
+	}
+	return true;
+}
+
+void CScoutTask::Flee(CCircuitUnit* unit, const AIFloat3& pos, int frame)
+{
+	lastFleeFrame = frame;
+	CCircuitAI* circuit = manager->GetCircuit();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	STerrainMapArea* area = unit->GetArea();
+	const float safeThreat = GetSafeThreat(unit);
+	const float width = terrainMgr->GetTerrainWidth();
+	const float height = terrainMgr->GetTerrainHeight();
+
+	// Candidate spots on rings around the scout, nearest ring first. Prefer spots well clear of the threat (half the
+	// safe level) so the scout doesn't stop right at the edge; else any safe spot; else the least dangerous one
+	static F3Vec clearSpots;  // NOTE: micro-opt
+	static F3Vec safeSpots;
+	clearSpots.clear();
+	safeSpots.clear();
+	AIFloat3 leastSpot = -RgtVector;
+	float leastRatio = std::numeric_limits<float>::max();
+	constexpr int DIRS = 16;
+	constexpr int MAX_SPOTS = 4;
+	int ring = 0;
+	for (float radius = 250.f; (radius <= 3000.f) && (clearSpots.size() < MAX_SPOTS); radius += 250.f, ++ring) {
+		const float offset = (ring % 2) * 0.5f;  // stagger the rings
+		for (int i = 0; i < DIRS; ++i) {
+			const float angle = 2.f * static_cast<float>(M_PI) * (i + offset) / DIRS;
+			AIFloat3 p(utils::clamp(pos.x + radius * cosf(angle), 1.f, width - 1.f), pos.y,
+					   utils::clamp(pos.z + radius * sinf(angle), 1.f, height - 1.f));
+			p = terrainMgr->GetMovePosition(area, p);
+			if (!utils::is_valid(p) || !terrainMgr->CanMoveToPos(area, p)) {
+				continue;
+			}
+			const float ratio = threatMap->GetThreatAt(unit, p) * GetThrDistModAt(p) / safeThreat;
+			if (ratio < 0.5f) {
+				clearSpots.push_back(p);
+			} else if (ratio < 1.f) {
+				if (safeSpots.size() < MAX_SPOTS) {
+					safeSpots.push_back(p);
+				}
+			} else if (ratio < leastRatio) {
+				leastRatio = ratio;
+				leastSpot = p;
+			}
+		}
+	}
+	const F3Vec* spots = !clearSpots.empty() ? &clearSpots : &safeSpots;
+	if (spots->empty()) {
+		if (!utils::is_valid(leastSpot)) {
+			return;  // nowhere to go (e.g. still inside the factory): try again in a second
+		}
+		safeSpots.push_back(leastSpot);
+	}
+	fleeDest = spots->front();  // nearest: the straight-move fallback when no route is found
+
+	// Least-threat route (no cap: we stand in danger, every route starts in it) to whichever spot is cheapest to reach
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
+			unit, threatMap, frame,
+			pos, pathfinder->GetSquareSize(), *spots);
+	pathQueries[unit] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyFleePath(static_cast<const CQueryPathMulti*>(query));
+		}
+	});
+}
+
+void CScoutTask::ApplyFleePath(const CQueryPathMulti* query)
+{
+	if (!isFleeing) {
+		return;  // the flee ended while this was in flight
+	}
+	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
+	CCircuitUnit* unit = query->GetUnit();
+	if (!pPath->posPath.empty()) {
+		fleeDest = pPath->posPath.back();
+		ActivatePath(unit, pPath, -1, false);
+	} else if (utils::is_valid(fleeDest)) {
+		std::shared_ptr<PathInfo> pMove = std::make_shared<PathInfo>();
+		pMove->posPath.push_back(fleeDest);
+		ActivatePath(unit, pMove, -1, false);
+	}
+}
+
+void CScoutTask::HoldScout(CCircuitUnit* unit)
+{
+	position = -RgtVector;  // forces a fresh pick on the next update
+	unit->GetTravelAct()->StateWait();
 }
 
 } // namespace circuit

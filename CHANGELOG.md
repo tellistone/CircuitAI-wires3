@@ -397,6 +397,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Scouts flee instead of going home.** A scout standing in threat it can't take now drops its target and runs to
+  the nearest safe spot around it (least-threat route; spots well clear of the threat first), and goes back to
+  scouting once it has been out of threat for 2 seconds. The scout task no longer sends scouts to the base: when no
+  safe scouting spot or route is found, the scout waits and picks again on the next update. A scout standing in
+  danger no longer blocks good scouting spots because its own start cell made every capped route fail. Cloaked
+  scouts on a cloak route don't flee (they sneak through threat on purpose). The low-health retreat is unchanged.
+
 - **Constructors freeze in every stall again** (reverts that part of #108). In a metal stall a constructor within
   `ms_pull` x the factory pull no longer starts new spending: constructors hold all new spending in any stall, as
   before #108, and the flee-turret skip is back to its old test. The factory side of #108 stays.
