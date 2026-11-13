@@ -29,7 +29,9 @@ public:
 	bool CanChooseStartPos() const { return startPosType == CGameSetup::StartPos_ChooseInGame; }
 
 	CAllyTeam* GetAllyTeam(int allyTeamId) const { return allyTeams[allyTeamId]; }
+	int GetAllyTeamCount() const { return allyTeams.size(); }
 	const CAllyTeam::SBox& GetStartBox(int boxId) { return boxes[boxId]; }
+	const BoxMap& GetBoxes() const { return boxes; }
 
 private:
 	void Init(AllyMap&& ats, BoxMap&& bm,

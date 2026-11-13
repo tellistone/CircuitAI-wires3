@@ -29,6 +29,7 @@ class CAllyUnit;
 class CMapManager;
 class CMetalManager;
 class CEnergyGrid;
+class CChokeMap;
 class CDefenceMatrix;
 class CPathFinder;
 class CFactoryData;
@@ -105,6 +106,7 @@ public:
 	const std::shared_ptr<CEnemyManager>&  GetEnemyManager()  { return enemyManager; }
 	const std::shared_ptr<CMetalManager>&  GetMetalManager()  { return metalManager; }
 	const std::shared_ptr<CEnergyGrid>&    GetEnergyGrid()    { return energyGrid; }
+	const std::shared_ptr<CChokeMap>&      GetChokeMap()      { return chokeMap; }
 	const std::shared_ptr<CDefenceMatrix>& GetDefenceMatrix() { return defence; }
 	const std::shared_ptr<CPathFinder>&    GetPathfinder()    { return pathfinder; }
 	const std::shared_ptr<CFactoryData>&   GetFactoryData()   { return factoryData; }
@@ -166,6 +168,7 @@ private:
 	std::shared_ptr<CMapManager> mapManager;
 	std::shared_ptr<CMetalManager> metalManager;
 	std::shared_ptr<CEnergyGrid> energyGrid;
+	std::shared_ptr<CChokeMap> chokeMap;
 	std::shared_ptr<CDefenceMatrix> defence;
 	std::shared_ptr<CPathFinder> pathfinder;
 	std::shared_ptr<CFactoryData> factoryData;

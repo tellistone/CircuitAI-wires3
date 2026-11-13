@@ -54,6 +54,8 @@ public:
 	void Init();
 	void AddBlocker(CCircuitDef* cdef, const springai::AIFloat3& pos, int facing);
 	void DelBlocker(CCircuitDef* cdef, const springai::AIFloat3& pos, int facing);
+	// choke.enable: blocking map cells kept free of buildings but mexes (CChokeDefence's lanes); replaces the last set
+	void SetLaneCells(std::vector<int>&& cells);
 	void ResetBuildFrame();
 	// TODO: Use IsInBounds test and Bound operation only if mask or search offsets (endr) are out of bounds
 	// TODO: Based on map complexity use BFS or circle to calculate build offset
@@ -121,6 +123,7 @@ private:
 
 	int allyZoneCells;  // side of a square
 	SBlockingMap blockingMap;
+	std::vector<int> laneCells;  // SetLaneCells
 	std::unordered_map<CCircuitDef::Id, IBlockMask*> blockInfos;  // owner
 	void MarkBlockerByMask(const SStructure& building, bool block, IBlockMask* mask);
 	void MarkBlocker(const SStructure& building, bool block);
@@ -201,6 +204,8 @@ public:
 	bool CanBeBuiltAt(CCircuitDef* cdef, const springai::AIFloat3& position, const float range);  // NOTE: returns false if the area was too small to be recorded
 	bool CanBeBuiltAt(CCircuitDef* cdef, const springai::AIFloat3& position);
 	bool CanBeBuiltAtSafe(CCircuitDef* cdef, const springai::AIFloat3& position);
+	// CanBeBuiltAt, and the engine finds room for the footprint there (facing south)
+	bool CanBuildAt(CCircuitDef* cdef, const springai::AIFloat3& position);
 	bool CanReachAt(CCircuitUnit* unit, const springai::AIFloat3& destination, const float range);
 	bool CanReachAtSafe(CCircuitUnit* unit, const springai::AIFloat3& destination, const float range);
 	bool CanMobileReachAt(STerrainMapArea* area, const springai::AIFloat3& destination, const float range);
@@ -215,6 +220,7 @@ public:
 	bool IsStuckInWater(CCircuitDef* cdef, const springai::AIFloat3& position) const;
 
 	SAreaData* GetAreaData() const { return areaData; }
+	float GetHeightAt(float x, float z) const;  // the heightmap square under (x, z), clamped to the map
 	void UpdateAreaUsers(int interval);
 	void OnAreaUsersUpdated() { terrainData->OnAreaUsersUpdated(); }
 private:

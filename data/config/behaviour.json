@@ -125,7 +125,8 @@
 		"all": 1.0,  // threat map 64-elmos slack multiplier for all units
 		"static": 1.0,  // additional 64-elmo-cells for static units
 		"speed": [0.36, 5.2]  // [<64elmo_cells_speed_mod>, <max_64elmo_cells>]
-	}
+	},
+	"hold_choke": false  // true = the idle attack group holds at a frontline choke that needs it (doc/chokepoints.md, C)
 },
 
 // If unit's health drops below specified percent it will retreat
@@ -145,6 +146,50 @@
 	// [<margin>, <ally_threat>, <ally_radius>]: ground builders other than commanders flee as the commander does (commander.json hide): from an armed mobile enemy seen now within its weapon range + margin, unless they and our armed units and static defences within ally_radius, minus the enemies' threat, reach ally_threat (-1 = flee regardless). They run to the nearest defended mex cluster, factory or base (not to attack groups) and work again once nothing seen in the last 5 s is within range + margin + max(25%, 50), or cover reaches ally_threat over 1.25x the enemies' threat. Jobs keep out of that line unless so covered; armed builds (turrets) and repairs of armed units or turrets only keep out of range + margin, and for 5 s after any of them flees, all their jobs also keep out of the enemy it ran from, at the wider line, even once it is unseen. Cornered, they build a static defence behind them that can hit the enemy and outranges it (or help such a one started on their side) and stay on it until it is done, they are hurt or metal stalls; one nobody has started is dropped 30 s after its last builder leaves. Flying builders never flee; margin -1 = off. A unit type can override the margin with its own builder_flee_margin in its "behaviour" entry
 	"builder_flee": [-1, 0.0, 500.0],
 	"flee_log": false  // true = one infolog line per flee start and end ("FLEE start/end"), commanders and other builders, with the threat and cover; for test games
+},
+
+// Chokepoints, see doc/chokepoints.md. Each ally team learns the map's shape: which gaps are chokes, which mex
+// clusters sit behind which chokes, where the enemy is likely to walk, and how open the map is. It is built only when
+// a feature below (or quota.hold_choke) is on, or when the choke_overlay chat command asks, and every feature is off
+// by default. Sizes are in main-tower ranges (the first porcupine land defender) unless noted
+"choke": {
+	"enable": false,  // choke defence: a pocket's towers beyond each cluster's first go to its entrances; defence points split by region; lanes kept free of buildings
+	"region": {
+		"min_area": 0.5,  // smallest region, in main-tower ranges squared
+		"merge": 0.7  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
+	},
+	"defensible": 2.0,  // widest choke towers try to close
+	"entrances": 3,  // most entrances before a cluster counts as open
+	"near": 2.5,  // furthest useful entrance from a defence point
+	"setback": [0.6, 0.8],  // ideal tower distance behind a choke's line, in the tower's weapon ranges
+	"lane": 96.0,  // elmos: corridor kept free of buildings (but mexes) through chokes under 3x this wide
+	"gate_share": 0.25,  // a leak type (amphibious, spiders, jumpers) starts gating once its cost reaches this share of the enemy army seen + 300 metal
+	"traffic": {"spread": 0.15},  // width of the enemy's traffic corridors, as a share of the route's length
+	"openness": {"bands": [0.35, 0.65, 0.05]},  // [<chokepointed below>, <open above>, <margin around them>]
+	"spot": {
+		"enable": false,  // scored spots for every tower, base towers and hold spots; the porc sweep by need
+		"radius": 300,  // elmos from a defence point its towers may stand
+		"height": 0.5,  // the most height adds to a spot's score: 0.5 = up to +50%, 1 = up to double
+		"height_cap": 150,  // elmos above the ground it covers at which a spot earns all of "height"
+		"enemy": 1.0,  // weight of the known enemies a tower could shoot from a spot, per its own cost: 1 = enemies worth the tower double the score; 0 = off
+		"forward": 0.5  // lean of a cluster's, the base's and the radar guard's towers the way their approach comes from: 0.5 = a spot a radius toward an approach from one side scores up to +50% over one a radius away; 0 = off
+	},
+	"radar": {
+		"enable": false,  // the radar planner, which takes over MakeDefence's radar
+		"min_gain": 0.02,  // a radar must add at least this share of the map's weight to the coverage
+		"enemy": 2.0,  // extra weight of enemy ground (the enemy's half, and enemy territory on ours), x our mex income
+		"inside": 0.25,  // a builder standing in coverage builds one only if at least this share of its view is new
+		"guard": "turretmissile",  // tower queued once a new radar stands, at the best spot near it; "" = none
+		"guard_radius": 300,  // elmos from the radar the guard tower may stand
+		"share": 0.05  // share of metal income the radar budget grows by (it starts with one radar, holds two)
+	},
+	"objective": {
+		"enable": false,  // forward objectives for idle attack groups
+		"gain": 1.5,  // gain over cost
+		"power": 1.3,  // our attack power over their defence
+		"retry": 180  // seconds before a failed objective may be tried again
+	},
+	"expand": false  // mex expansion favours clusters behind a defended cut (needs mex_front)
 },
 
 "defence": {
@@ -1442,7 +1487,8 @@
 	"staticradar": {
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine"],
-		"attribute": ["raid_target"]
+		"attribute": ["raid_target"],
+		"since": 0  // seconds into the game before any radar is built; holds back choke.radar too
 	},
 	"staticcon": {
 		// threat 0 (unarmed: no influence, never counts toward safe)
