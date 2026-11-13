@@ -106,13 +106,10 @@ protected:
 	// long as it keeps this target
 	bool IsAllHolding() const;
 	// Lifts (elmos above the ground) for a line of fire to this enemy: from our units' aim, at the enemy.
-	// false (default): no line of fire needed. With lifts, firing spots must have one, and a direct walk there
-	// (FindFireSpot, IsAllHolding)
+	// false (default): no line of fire needed. With lifts, firing spots must have one judged from the ground there, and
+	// a direct walk there up or down a cliff (FindFireSpot, IsAllHolding; CTerrainManager::IsLineClear, IsWalkClear).
+	// Not for units whose weapon arcs over terrain (CCircuitDef::IsHighTrajectory)
 	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const { return false; }
-	// A line of fire from 'from' to the enemy at 'to' (GetSightLifts; true if it needs none). isExact: the ground
-	// heights at both ends, else their sectors' highest points as target routes (CTerrainManager::IsLineClear)
-	bool HasLineOfFire(const springai::AIFloat3& from, const CEnemyInfo* enemy, const springai::AIFloat3& to,
-			bool isExact) const;
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
 	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
 	// each unit's own bearing from the target

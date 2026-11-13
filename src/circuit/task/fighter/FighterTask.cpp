@@ -282,19 +282,13 @@ const float ARC_SPAN      = 0.25f;  // half the arc, x PI
 const float SUPPORT_RADIUS = 400.f; // own units heading within this of a spot back up a unit there
 const int   SPOT_KEEP     = FRAMES_PER_SEC * 10;  // last spot forgotten this long after its order
 const int   RISKY_GRACE   = FRAMES_PER_SEC * 3;   // pull-back leaves a unit sent to a RISKY spot alone
+const float WALK_CLIMB    = 40.f;   // with lifts (GetSightLifts): a spot this much above or below needs a direct walk
 }
 
 bool IFighterTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 {
 	return (fireSpotReach > 0.f)
 		&& (unit->GetPos(frame).SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * fireSpotReach));
-}
-
-bool IFighterTask::HasLineOfFire(const AIFloat3& from, const CEnemyInfo* enemy, const AIFloat3& to, bool isExact) const
-{
-	float aimLift, targetLift;
-	return !GetSightLifts(enemy, aimLift, targetLift)
-		|| manager->GetCircuit()->GetTerrainManager()->IsLineClear(from, to, aimLift, targetLift, isExact);
 }
 
 float IFighterTask::GetFireRange(CCircuitUnit* unit) const
@@ -432,14 +426,15 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	// With lifts (GetSightLifts), only spots with a line of fire to the target, judged from the ground there: stricter
 	// than the pick's (sectors' highest points), so a unit at its spot never reads the target as out of sight. And
 	// only spots it walks to directly: one up on a plateau seen from below would be reached the long way round, on
-	// the engine's path, not a route of ours. Blind or round the long way, the target needs a route (FindTarget)
+	// the engine's path, not a route of ours. Blind or round the long way, the target needs a route (FindTarget).
+	// Not for a weapon that arcs over terrain (IsHighTrajectory): it fires from below, unseen
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	float aimLift, targetLift;
-	const bool isSight = GetSightLifts(target, aimLift, targetLift);
+	const bool isSight = GetSightLifts(target, aimLift, targetLift) && !unit->GetCircuitDef()->IsHighTrajectory();
 	std::vector<SCandidate> cands;
 	auto add = [&](const AIFloat3& p) {
 		if (isSight && (!terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)
-			|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p)))
+			|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p, WALK_CLIMB)))
 		{
 			return;
 		}
@@ -527,21 +522,28 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 bool IFighterTask::IsAllHolding() const
 {
 	// HOLD (IFighterTask::Attack): unit with a spot range (melee too) ordered on this target without a firing spot
-	const int frame = manager->GetCircuit()->GetLastFrame();
+	CCircuitAI* circuit = manager->GetCircuit();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const int frame = circuit->GetLastFrame();
 	const AIFloat3& tPos = target->GetPos();
+	float aimLift, targetLift;
+	const bool isSight = GetSightLifts(target, aimLift, targetLift);
 	int ranged = 0;
 	for (CCircuitUnit* unit : units) {
-		if (GetSpotRange(unit) < SQUARE_SIZE * 4) {
-			continue;  // direct Attack (no spot)
+		if ((GetSpotRange(unit) < SQUARE_SIZE * 4) || (unit->Blocker() != nullptr) || IsOutOfReach(unit, frame)) {
+			continue;  // no spot (direct Attack), busy, or a straggler: Attack gives it no spot
 		}
 		++ranged;
-		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end())) {
-			return false;  // has a spot
+		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end()) || IsScooting(unit)) {
+			return false;  // has a spot, or steps back as it reloads (it fires)
 		}
 		// Can already shoot it: weapon range, not spot range (a melee unit with a real gun, Reaver, shoots from well
 		// outside its spot), and in sight as firing spots must be (else it holds at a cliff foot, within range)
 		const AIFloat3& pos = unit->GetPos(frame);
-		if ((pos.SqDistance2D(tPos) <= SQUARE(GetFireRange(unit))) && HasLineOfFire(pos, target, tPos, true)) {
+		if ((pos.SqDistance2D(tPos) <= SQUARE(GetFireRange(unit)))
+			&& (!isSight || unit->GetCircuitDef()->IsHighTrajectory()
+				|| terrainMgr->IsLineClear(pos, tPos, aimLift, targetLift, true)))
+		{
 			return false;
 		}
 	}

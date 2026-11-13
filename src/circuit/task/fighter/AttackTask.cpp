@@ -160,7 +160,6 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, anchorTargetId(-1)
 		, pickSqDist(0.f)
 		, targetSqKey(0.f)
-		, isTargetInRange(false)
 		, contactSpread(0.f)
 		, contactFrame(-1)
 		, lastRoute({nullptr, -RgtVector, -1, 0, ROUTE_REUSE_FRAMES, AIFloat3(-RgtVector), -1, 0.f, -1})
@@ -403,7 +402,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	// A route is still being worked out: keep the current pick until it comes back, unless the target is
 	// already within range or in contact (then engage as usual)
 	if (!IsQueryReady(leader) && (target != nullptr)
-		&& !IsInLeaderRange(target, GetRangePos(target, frame), frame)
+		&& !IsInLeaderRange(target, GetRangePos(target, frame), true, frame)
 		&& !IsInContact(target, true, frame))
 	{
 		return;
@@ -447,8 +446,7 @@ bool CAttackTask::EngageInRange(int frame, bool isWalking)
 		fleeTargetId = -1;  // as FindTarget: the target we fled from is ours only at the next pick
 		return false;
 	}
-	FindTarget();
-	if ((target == nullptr) || !isTargetInRange) {
+	if (!FindTarget()) {
 		return false;
 	}
 	state = State::ENGAGE;
@@ -1167,7 +1165,7 @@ void CAttackTask::UpdateContactUnits(int frame)
 		return;
 	}
 	contactFrame = frame;
-	contactPos.clear();
+	contactUnits.clear();
 	float sqSpread = 0.f;
 	const AIFloat3& leaderPos = leader->GetPos(frame);
 	const float sqGroupRadius = SQUARE(GetGroupRadius());
@@ -1177,7 +1175,7 @@ void CAttackTask::UpdateContactUnits(int frame)
 		if (sqDist > sqGroupRadius) {
 			continue;  // a straggler (IsOutOfReach): it walks to the leader, it doesn't pull the group into a fight
 		}
-		contactPos.push_back(pos);
+		contactUnits.push_back({pos, unit->GetCircuitDef()->IsHighTrajectory()});
 		sqSpread = std::max(sqSpread, sqDist);
 	}
 	contactSpread = sqrtf(sqSpread);
@@ -1204,7 +1202,7 @@ float CAttackTask::GetContactCap() const
 bool CAttackTask::IsInContact(const CEnemyInfo* enemy, bool isCurrent, int frame, float* outSqDist)
 {
 	const float reach = GetContactReach(enemy) * (isCurrent ? RAID_FREE_KEEP : 1.f);
-	return IsSeenByUnits(enemy, enemy->GetPos(), reach, frame, outSqDist);
+	return IsSeenByUnits(enemy, enemy->GetPos(), reach, isCurrent, frame, outSqDist);
 }
 
 float CAttackTask::GetContactBound(int frame)
@@ -1213,21 +1211,22 @@ float CAttackTask::GetContactBound(int frame)
 	return contactSpread + (GetContactCap() + DEFAULT_SLACK) * RAID_FREE_KEEP;  // the cap is above our fire range
 }
 
-bool CAttackTask::IsSeenByUnits(const CEnemyInfo* enemy, const AIFloat3& pos, float range, int frame, float* outSqDist)
+bool CAttackTask::IsSeenByUnits(const CEnemyInfo* enemy, const AIFloat3& pos, float range, bool isCurrent, int frame,
+		float* outSqDist)
 {
 	UpdateContactUnits(frame);
 	float minSqDist = std::numeric_limits<float>::max();
 	bool isSeen = false;
 	if (pos.SqDistance2D(leader->GetPos(frame)) <= SQUARE(contactSpread + range)) {  // else beyond every unit we count
 		float aimLift = 0.f, targetLift = 0.f;
-		const bool isSight = GetSightLifts(enemy, aimLift, targetLift);
+		const bool isSight = GetSightLifts(enemy, aimLift, targetLift) && !(isCurrent && (State::ENGAGE == state));
 		CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
 		const float sqRange = SQUARE(range);
-		for (const AIFloat3& p : contactPos) {
-			const float sqDist = pos.SqDistance2D(p);
+		for (const SContactUnit& u : contactUnits) {
+			const float sqDist = pos.SqDistance2D(u.pos);
 			minSqDist = std::min(minSqDist, sqDist);
-			isSeen = isSeen
-				|| ((sqDist < sqRange) && (!isSight || terrainMgr->IsLineClear(p, pos, aimLift, targetLift, false)));
+			isSeen = isSeen || ((sqDist < sqRange) && (!isSight || u.isHighTrajectory
+				|| terrainMgr->IsLineClear(u.pos, pos, aimLift, targetLift, false)));
 		}
 	}
 	if (outSqDist != nullptr) {
@@ -1236,17 +1235,17 @@ bool CAttackTask::IsSeenByUnits(const CEnemyInfo* enemy, const AIFloat3& pos, fl
 	return isSeen;
 }
 
-bool CAttackTask::IsInLeaderRange(const CEnemyInfo* enemy, const AIFloat3& rangePos, int frame)
+bool CAttackTask::IsInLeaderRange(const CEnemyInfo* enemy, const AIFloat3& rangePos, bool isCurrent, int frame)
 {
 	return (rangePos.SqDistance2D(leader->GetPos(frame)) < SQUARE(highestRange))
-		&& IsSeenByUnits(enemy, rangePos, highestRange, frame);
+		&& IsSeenByUnits(enemy, rangePos, highestRange, isCurrent, frame);
 }
 
 /*
  * Targets and routes
  */
 
-void CAttackTask::FindTarget()
+bool CAttackTask::FindTarget()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
@@ -1438,7 +1437,7 @@ void CAttackTask::FindTarget()
 		{
 			continue;
 		}
-		c.isInRange = isContact || IsInLeaderRange(enemy, c.rangePos, frame);
+		c.isInRange = isContact || IsInLeaderRange(enemy, c.rangePos, isPrev, frame);
 		c.rawKey = (isContact ? contactSqDist : sqOEDist) * scale;
 		c.key = c.rawKey * SQUARE(distModFor(enemy));
 		if (IsSiegeTarget(enemy, frame)) {  // quota.attack_static_cells.siege_bonus
@@ -1541,10 +1540,11 @@ void CAttackTask::FindTarget()
 	}
 
 	// Stickiness: keep the current target unless another is clearly nearer (STICKY_DIST by distance), so
-	// near-equal targets don't flip back and forth between decisions. Except that a current target out of contact
-	// doesn't win over a best in contact (while engaged, contact ranks first anyway)
+	// near-equal targets don't flip back and forth between decisions. While engaged, a current target out of contact
+	// doesn't win over a best in contact (the fight ranks first: a best out of contact means none passed). Roaming, as
+	// any other target
 	const float sqSticky = SQUARE(STICKY_DIST);
-	const bool isSticky = (prev != nullptr) && (prev->isContact || !best->isContact)
+	const bool isSticky = (prev != nullptr) && (!isEngaged || prev->isContact || !best->isContact)
 			&& (best->key >= prev->key * sqSticky);
 	// The current target was kept above although really nearer than the best; if stickiness won't keep it
 	// either, leave it out too (all of its goals), or it would take the route
@@ -1574,16 +1574,15 @@ void CAttackTask::FindTarget()
 		lastRoute.sector = -1;
 	}
 
-	isTargetInRange = (best != nullptr) && best->isInRange;  // EngageInRange
-	if (best != nullptr) {
-		SetTarget(best->enemy);
-		position = best->rangePos;  // GetRangePos
-		targetSqKey = best->key;
-		SetScaleAnchor(best->enemy, refFor(best->enemy));
-	} else {
+	if (best == nullptr) {
 		ClearScaleAnchor();  // no fight accepted: no near-base discount
+		return false;
 	}
-	// Return: target, startPos=leader->pos, endPos=position
+	SetTarget(best->enemy);
+	position = best->rangePos;  // GetRangePos
+	targetSqKey = best->key;
+	SetScaleAnchor(best->enemy, refFor(best->enemy));
+	return best->isInRange;  // target, startPos=leader->pos, endPos=position
 }
 
 void CAttackTask::UpdatePastFloor()

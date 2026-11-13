@@ -37,7 +37,8 @@ static constexpr int CELL_BAN_MAX_LEVEL = 2;
 static constexpr int CELL_BAN_RESET_FRAMES = FRAMES_PER_SEC * 60;
 static constexpr float CELL_BAN_THREAT_CHANGE = 0.25f;
 
-float CAttackTask::GetTargetLift(CCircuitDef* edef)
+// Lines of fire aim at half the target's height: a tall strider shows over a low ridge
+static float GetTargetLift(CCircuitDef* edef)
 {
 	return (edef != nullptr) ? utils::clamp(edef->GetHeight() * 0.5f, CELL_TARGET_LIFT_MIN, CELL_TARGET_LIFT_MAX)
 			: CELL_TARGET_LIFT_MIN;

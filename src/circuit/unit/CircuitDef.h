@@ -252,6 +252,8 @@ public:
 	bool HasAntiLand()  const { return hasAntiLand; }
 	bool HasAntiWater() const { return hasAntiWater; }
 	bool IsAlwaysHit()  const { return isAlwaysHit; }
+	// Its longest-range ground weapon arcs over terrain (CWeaponDef::IsHighTrajectory: Rogue, Recluse, artillery)
+	bool IsHighTrajectory() const { return isHighTrajectory; }
 
 	bool IsMobile()        const { return speed > .1f; }
 	bool IsAbleToFly()     const { return isAbleToFly; }
@@ -402,6 +404,7 @@ private:
 	bool hasAntiLand : 1;  // surface (water and land)
 	bool hasAntiWater : 1;  // under water
 	bool isAlwaysHit : 1;  // FIXME: calc per weapon
+	bool isHighTrajectory : 1;
 
 	bool isPlane : 1;  // no hover attack
 	bool isFloater : 1;

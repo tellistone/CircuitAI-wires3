@@ -139,6 +139,11 @@ public:
 	std::pair<STerrainMapArea*, bool> GetCurrentMapArea(CCircuitDef* cdef, const int indexSector);
 	int GetSectorIndex(const springai::AIFloat3& position) const { return terrainData->GetSectorIndex(position); }
 	int2 GetSectorXY(const springai::AIFloat3& position) const;  // sector (= path square) column and row, clamped to the map
+private:
+	// The ground under pos (a height map sample in sector s, its GetSectorXY; water at its surface): never above the
+	// sector's highest point
+	float GetGroundHeight(const springai::AIFloat3& pos, const int2& s) const;
+public:
 	// Line of fire over the sector grid, from fromHeight above sector 'from' to toHeight above sector 'to': blocked where
 	// a sector in between (not the ends' own) rises above the straight line at its highest point. sectors: an
 	// SAreaData's (a route query holds on to the one it started with)
@@ -150,9 +155,10 @@ public:
 	bool IsLineClear(const springai::AIFloat3& from, const springai::AIFloat3& to, float aimLift, float targetLift,
 			bool isExact) const;
 	bool CanMoveToPos(STerrainMapArea* area, const springai::AIFloat3& destination);
-	// Every sector on the straight line from 'from' to 'to' ('from''s own excluded) is one the area can move on
-	// (CanMoveToPos): a unit walks there directly, not the long way round a cliff or a lake
-	bool IsWalkClear(STerrainMapArea* area, const springai::AIFloat3& from, const springai::AIFloat3& to);
+	// A unit of the area walks straight from 'from' to 'to', not the long way round a cliff or a lake: the sectors on
+	// the line ('from''s own excluded) are ones it can move on (CanMoveToPos). Where the ground at the ends differs by
+	// no more than maxClimb, only water blocks: an impassable rock or crater rim in a field costs a short detour
+	bool IsWalkClear(STerrainMapArea* area, const springai::AIFloat3& from, const springai::AIFloat3& to, float maxClimb);
 	springai::AIFloat3 GetBuildPosition(CCircuitDef* cdef, const springai::AIFloat3& position);
 	springai::AIFloat3 GetMovePosition(STerrainMapArea* sourceArea, const springai::AIFloat3& position);
 	springai::AIFloat3 ShiftPos(CCircuitDef* cdef, const springai::AIFloat3& position, float range, bool isOrtho = false);

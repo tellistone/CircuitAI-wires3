@@ -1225,16 +1225,35 @@ bool CTerrainManager::IsLineClear(const std::vector<STerrainMapSector>& sectors,
 	});
 }
 
-bool CTerrainManager::IsWalkClear(STerrainMapArea* area, const AIFloat3& from, const AIFloat3& to)
+bool CTerrainManager::IsWalkClear(STerrainMapArea* area, const AIFloat3& from, const AIFloat3& to, float maxClimb)
 {
 	if (area == nullptr) {
 		return true;  // as CanMoveToPos
 	}
 	const std::vector<STerrainMapAreaSector>& sectors = GetSectorList(area);
+	const std::vector<STerrainMapSector>& terrain = areaData->sector;
 	const int sectorXSize = GetSectorXSize();
-	return IsSectorLineOk(GetSectorXY(from), GetSectorXY(to), [&](int x, int y, float) {
-		return sectors[y * sectorXSize + x].area == area;
+	const int2 f = GetSectorXY(from);
+	const int2 t = GetSectorXY(to);
+	const bool isClimb = fabsf(GetGroundHeight(to, t) - GetGroundHeight(from, f)) > maxClimb;
+	return IsSectorLineOk(f, t, [&](int x, int y, float) {
+		const int i = y * sectorXSize + x;
+		return (sectors[i].area == area) || (!isClimb && !terrain[i].isWater);
 	});
+}
+
+float CTerrainManager::GetGroundHeight(const AIFloat3& pos, const int2& s) const
+{
+	// The height map sample under pos, kept within sector s (pos off the map: its edge), so never above the sector's
+	// highest point: as CTerrainData works those out
+	const FloatVec& heightMap = areaData->heightMap;
+	const int sectorXSize = GetSectorXSize();
+	const int convertStoHM = GetConvertStoP() / SQUARE_SIZE;
+	const int iH = (s.y * convertStoHM + utils::clamp(int(pos.z) / SQUARE_SIZE - s.y * convertStoHM, 0, convertStoHM - 1))
+			* (sectorXSize * convertStoHM)
+			+ s.x * convertStoHM + utils::clamp(int(pos.x) / SQUARE_SIZE - s.x * convertStoHM, 0, convertStoHM - 1);
+	const float height = (iH < (int)heightMap.size()) ? heightMap[iH] : areaData->sector[s.y * sectorXSize + s.x].maxElevation;
+	return std::max(height, 0.f);
 }
 
 bool CTerrainManager::IsLineClear(const AIFloat3& from, const AIFloat3& to, float aimLift, float targetLift,
@@ -1242,20 +1261,8 @@ bool CTerrainManager::IsLineClear(const AIFloat3& from, const AIFloat3& to, floa
 {
 	const std::vector<STerrainMapSector>& sectors = areaData->sector;
 	const int sectorXSize = GetSectorXSize();
-	const FloatVec& heightMap = areaData->heightMap;
-	const int convertStoHM = GetConvertStoP() / SQUARE_SIZE;
-	const int heightMapXSize = sectorXSize * convertStoHM;  // as the sectors' highest points are worked out (CTerrainData)
 	auto heightAt = [&](const AIFloat3& pos, const int2& s) {
-		float height = sectors[s.y * sectorXSize + s.x].maxElevation;
-		if (isExact) {  // the height map sample under pos lies in sector s, so it is never above its highest point
-			const int iH = (s.y * convertStoHM + utils::clamp(int(pos.z) / SQUARE_SIZE - s.y * convertStoHM, 0, convertStoHM - 1))
-					* heightMapXSize + s.x * convertStoHM
-					+ utils::clamp(int(pos.x) / SQUARE_SIZE - s.x * convertStoHM, 0, convertStoHM - 1);
-			if (iH < (int)heightMap.size()) {
-				height = heightMap[iH];
-			}
-		}
-		return std::max(height, 0.f);
+		return isExact ? GetGroundHeight(pos, s) : std::max(sectors[s.y * sectorXSize + s.x].maxElevation, 0.f);
 	};
 	const int2 f = GetSectorXY(from);
 	const int2 t = GetSectorXY(to);

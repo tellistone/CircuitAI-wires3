@@ -585,8 +585,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     as a runner, and ranks ahead of every enemy not in contact. A fight is still started at the usual allowance.
   - **Roaming,** enemies in contact rank by `target_dist_mod` like any other and runners are dropped, so a scout or
     raider that pokes the front row and runs doesn't pull the group off its walk.
-  - **Stickiness** works as before, except that a current target out of contact doesn't stay the pick over a best
-    in contact.
+  - **Stickiness** works as before, except that while engaged a current target out of contact doesn't stay the
+    pick over a best in contact.
 
   The approach line check is unchanged (from the target towards the leader). And when the target dies, the group
   picks the next one at its next update (about 1 s) instead of its next decision (up to 2 s).
@@ -599,13 +599,21 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     reach) of it, not only the leader (in line, the front row stands where the route ended). The test is the one
     target routes end on: the highest point of each path square (64 elmos on most maps) between them, aimed from
     `cell_aim_height` or half the leader's height, whichever is higher, at half the target's height (8 to 32
-    elmos). A target that fails is routed to, and the route ends where the group can see it.
+    elmos). A target that fails is routed to, and the route ends where the group can see it. A line of fire starts
+    a fight but doesn't keep it: the current target needs none while engaged, so a target stepping behind a crest
+    doesn't make the group form its line and route again; the firing spots move the units round it instead.
   - **Firing spots** need one judged from the ground at the spot and under the target, a stricter test, so a unit
-    at its spot never reads its target as out of sight. They also need a direct walk: every path square on the
-    straight line there is one the unit can move on, so a spot up on the plateau isn't reached the long way round
-    on the engine's path. Other spots are dropped, and a unit with no spot left holds where it stands instead of
-    getting a direct Attack order. When every unit holds, the hold-off ban passes
-    on the target for 6, 12 or 24 s; a unit within range but out of sight now counts as holding.
+    at its spot never reads its target as out of sight. A spot more than 40 elmos above or below the unit also needs
+    a direct walk: every path square on the straight line there is one the unit can move on, so a spot up on the
+    plateau isn't reached the long way round on the engine's path. Any walk across water does too. A rock or crater
+    rim in a field doesn't drop a spot. Other spots are dropped, and a unit with no spot left holds where it stands
+    instead of getting a direct Attack order. When every unit holds, the hold-off ban passes on the target for 6,
+    12 or 24 s; a unit within range but out of sight now counts as holding.
+  - **Weapons that arc over terrain** (`CWeaponDef::IsHighTrajectory`: Rogue, Recluse, artillery) aren't held to the
+    line: such a unit counts as seeing a target within reach in the pick, and its firing spots aren't checked.
+  - **The hold-off ban no longer waits on stragglers.** Units the attack order skips (busy, or stragglers walking to
+    the leader) don't count; one of them kept the whole group from passing on the target. This also applies to raid
+    groups' 10 s pass.
   - **An empty target route** (nothing reachable within the threat cap, after the firing cells' retry as discs)
     rejects its targets for 6 s, as an unsafe approach does. The next decision used to route to them again, with
     the costliest search there is (everything reachable under the cap), e.g. to a target on a plateau with no way up.
