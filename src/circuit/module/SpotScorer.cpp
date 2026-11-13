@@ -159,6 +159,61 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 				&& ((homeRegion < 0) || (region == CRegionGraph::NO_REGION) || isHomeSide[region])
 				&& ((goal.type == GoalType::HOLD) || !chokeMap->IsOnLane(c));
 	};
+	// A tower only where a builder of ours that can build it gets within build range, walking its own class's mask
+	// from where it stands: else no one takes the job, and it waits 5 minutes, holding up the porc chain behind it,
+	// before it is dropped. A builder that flies lifts the test; one of a class no factory builds isn't counted, and
+	// with none counted there's no test
+	struct SWalker {
+		int classIdx;
+		int part;
+		float range;
+	};
+	std::vector<SWalker> walkers;
+	bool isAnyReach = (goal.type == GoalType::HOLD);  // a hold's group checks its own way there
+	for (CCircuitUnit* w : workers) {
+		CCircuitDef* wdef = w->GetCircuitDef();
+		if (isAnyReach || !wdef->CanBuild(def)) {
+			continue;
+		}
+		if (wdef->IsAbleToFly()) {
+			isAnyReach = true;
+			continue;
+		}
+		const int classIdx = chokeMap->GetWalkClass(wdef);
+		if (classIdx < 0) {
+			continue;
+		}
+		const std::vector<int>& parts = chokeMap->GetClassParts(classIdx);
+		if (parts.empty()) {
+			continue;
+		}
+		const SCellMask& mask = chokeMap->GetClassMask(classIdx);
+		const AIFloat3 wpos = w->GetPos(frame);
+		const int cell = mask.NearestPassable(mask.IndexAt(wpos.x, wpos.z), 2);
+		const SWalker walker = {classIdx, (cell >= 0) ? parts[cell] : -1, wdef->GetBuildDistance() + SQUARE_SIZE * 2};
+		if ((walker.part >= 0) && std::none_of(walkers.begin(), walkers.end(), [&walker](const SWalker& o) {
+			return (o.classIdx == walker.classIdx) && (o.part == walker.part) && (o.range >= walker.range);
+		})) {
+			walkers.push_back(walker);
+		}
+	}
+	auto isInReach = [&](const AIFloat3& c) {
+		if (isAnyReach || walkers.empty()) {
+			return true;
+		}
+		return std::any_of(walkers.begin(), walkers.end(), [&](const SWalker& walker) {
+			const SCellMask& mask = chokeMap->GetClassMask(walker.classIdx);
+			const std::vector<int>& parts = chokeMap->GetClassParts(walker.classIdx);
+			bool isNear = false;
+			ForEachCellIn(mask.width, mask.height, mask.cellSize, c.x - walker.range, c.z - walker.range,
+					c.x + walker.range, c.z + walker.range, [&](int x, int z) {
+				const int i = z * mask.width + x;
+				isNear = isNear || ((parts[i] == walker.part)
+						&& (SQUARE(mask.CentreX(i) - c.x) + SQUARE(mask.CentreZ(i) - c.z) <= SQUARE(walker.range)));
+			});
+			return isNear;
+		});
+	};
 	AIFloat3 assetGround = goal.asset;
 	assetGround.y = terrainMgr->GetHeightAt(goal.asset.x, goal.asset.z);
 	auto scoreAt = [&](AIFloat3 c, float factor) {
@@ -167,8 +222,10 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			if ((goal.area != nullptr) && !terrainMgr->CanMoveToPos(goal.area, c)) {
 				return -1.f;
 			}
-		} else if ((circuit->GetThreatMap()->GetAllThreatAt(c) > THREAT_MIN) || !terrainMgr->CanBuildAt(def, c)) {
-			return -1.f;  // a builder only builds out of threat (FindBuildSite): it would move such a tower elsewhere
+		} else if ((circuit->GetThreatMap()->GetAllThreatAt(c) > THREAT_MIN) || !terrainMgr->CanBuildAt(def, c)
+			|| !isInReach(c))
+		{
+			return -1.f;  // a builder only builds out of threat (FindBuildSite), and only where it gets in range
 		}
 		// A position's asset itself must stay in reach and in sight
 		if ((goal.type == GoalType::POSITION) && ((c.SqDistance2D(goal.asset) > SQUARE(0.8f * range))

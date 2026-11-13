@@ -186,8 +186,10 @@ nearest safe site, often down the slope of the ledge it was meant for. It's buil
 usual random shake, and so are radars and their guards.
 
 Spots stay on the goal's side: a choke's inner region or the defended point's region, any region the enemy only
-walks into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). AA towers aren't
-scored, they go to the point as before. A point keeps its spots by tower type, and a new tower takes the first one of
+walks into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). A tower's spot
+must also be within build range of ground that one of our builders able to build it can walk to from where it stands,
+on that builder's own movement mask; otherwise no builder would take the job, and it would wait 5 minutes, holding up
+the porc chain behind it, before being dropped. AA towers aren't scored, they go to the point as before. A point keeps its spots by tower type, and a new tower takes the first one of
 its type that no tower stands on or is queued at, so a lost tower is rebuilt at its old spot.
 
 A spot freezes once its tower is queued. A tower that is cancelled before it starts unfreezes its spot and masks that

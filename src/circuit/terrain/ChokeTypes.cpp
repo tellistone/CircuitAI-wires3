@@ -48,9 +48,15 @@ CChokeMap::MoveKey CChokeMap::KeyOf(const CCircuitDef* cdef)
 int CChokeMap::ClassOf(const CCircuitDef* cdef) const
 {
 	// Every Zero-K commander is amphibious: counting them would open every water lane from the first frame
-	if ((cdef == nullptr) || !cdef->IsMobile() || cdef->IsAbleToFly() || (cdef->GetMobileId() < 0)
-		|| cdef->IsRoleComm() || cdef->IsEnemyRoleAny(CCircuitDef::GetMask(ROLE_TYPE(COMM))))
-	{
+	if ((cdef == nullptr) || cdef->IsRoleComm() || cdef->IsEnemyRoleAny(CCircuitDef::GetMask(ROLE_TYPE(COMM)))) {
+		return -1;
+	}
+	return GetWalkClass(cdef);
+}
+
+int CChokeMap::GetWalkClass(const CCircuitDef* cdef) const
+{
+	if (!cdef->IsMobile() || cdef->IsAbleToFly() || (cdef->GetMobileId() < 0)) {
 		return -1;
 	}
 	const MoveKey key = KeyOf(cdef);

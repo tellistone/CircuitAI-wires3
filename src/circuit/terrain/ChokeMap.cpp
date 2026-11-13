@@ -345,6 +345,7 @@ void CChokeMap::InitMoveClasses()
 		return a.key < b.key;
 	});
 	classMasks.resize(moveClasses.size());
+	classParts.resize(moveClasses.size());
 
 	std::ostringstream text;
 	text << "CHOKE move classes:";
@@ -535,6 +536,7 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 		maskFrame = frame;
 		if (job.isMasksChanged) {
 			classMasks = std::move(job.masks);
+			classParts.assign(classMasks.size(), {});
 			reachMask = classMasks.front();
 			for (const SCellMask& m : classMasks) {
 				reachMask.Unite(m);
@@ -738,6 +740,37 @@ int CChokeMap::FindMoveClass(const std::string& name) const
 	}
 	CCircuitDef* cdef = circuit->GetCircuitDef(name.c_str());
 	return (cdef != nullptr) ? ClassOf(cdef) : -1;
+}
+
+const std::vector<int>& CChokeMap::GetClassParts(int classIdx) const
+{
+	std::vector<int>& parts = classParts[classIdx];
+	const SCellMask& mask = classMasks[classIdx];
+	if (!parts.empty() || mask.cells.empty()) {
+		return parts;
+	}
+	parts.assign(mask.Size(), -1);
+	std::vector<int> stack;
+	int count = 0;
+	for (int s = 0; s < mask.Size(); ++s) {
+		if (!mask.IsPassable(s) || (parts[s] >= 0)) {
+			continue;
+		}
+		parts[s] = count;
+		stack.push_back(s);
+		while (!stack.empty()) {
+			const int cell = stack.back();
+			stack.pop_back();
+			ForEachNeighbour(mask, cell, [&](int next, int) {
+				if (parts[next] < 0) {
+					parts[next] = count;
+					stack.push_back(next);
+				}
+			});
+		}
+		++count;
+	}
+	return parts;
 }
 
 bool CChokeMap::IsGating(int classIdx) const

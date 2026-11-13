@@ -177,6 +177,9 @@ public:
 
 	const std::vector<SMoveClass>& GetMoveClasses() const { return moveClasses; }
 	const SCellMask& GetClassMask(int classIdx) const { return classMasks[classIdx]; }
+	// Connected parts of a class's mask by cell (ForEachNeighbour's moves), -1 on walls: made when first asked
+	const std::vector<int>& GetClassParts(int classIdx) const;
+	int GetWalkClass(const CCircuitDef* cdef) const;  // the class it moves as, -1 if none (air, or no factory builds it)
 	int FindMoveClass(const std::string& name) const;  // by unit def or class name, -1 if none
 	bool IsGating(int classIdx) const;
 	std::string DescribeTypeSet() const;  // each type in the set: its name, role and share
@@ -312,6 +315,7 @@ private:
 	// Terrain
 	std::vector<SMoveClass> moveClasses;
 	std::vector<SCellMask> classMasks;  // per class, 32 elmo cells
+	mutable std::vector<std::vector<int>> classParts;  // per class, empty until asked (GetClassParts)
 	SCellMask reachMask;  // union of every class
 	CRegionGraph graph;  // built on the union of the gating classes
 	std::vector<SLane> lanes;
