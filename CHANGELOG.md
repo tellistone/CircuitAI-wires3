@@ -609,8 +609,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   units has a line of fire to it (see "Attack groups don't go for targets behind cliffs"); the current target stays
   in contact out to 1.25x.
   - **Always:** an enemy in contact is engaged at once (no route, no line), isn't dropped for a rejected route
-    approach, and counts as already fighting us for the raid factor and the own-ground rule (both were the leader's
-    fire range + 64).
+    approach, and counts as already fighting us for the raid factor, the own-ground rule and other groups' target
+    claims (all were the leader's fire range + 64).
   - **While engaged** (the fight the group accepted): every enemy in contact gets the keep allowance, isn't dropped
     as a runner, and ranks ahead of every enemy not in contact. A fight is still started at the usual allowance.
   - **Roaming,** enemies in contact rank by `target_dist_mod` like any other and runners are dropped, so a scout or
