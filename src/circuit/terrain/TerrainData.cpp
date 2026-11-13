@@ -258,6 +258,7 @@ void CTerrainData::Init(CCircuitAI* circuit)
 	map->GetSlopeMap(slopeMap);
 	const FloatVec& standardSlopeMap = slopeMap;
 	map->GetHeightMap(areaData.heightMap);
+	startHeightMap = areaData.heightMap;
 	const FloatVec& standardHeightMap = areaData.heightMap;
 	const int convertStoSM = convertStoP / 16;  // * for conversion, / for reverse conversion
 	const int convertStoHM = convertStoP / 8;  // * for conversion, / for reverse conversion

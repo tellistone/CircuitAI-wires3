@@ -18,6 +18,7 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace springai {
@@ -31,6 +32,7 @@ class CQueryCostMap;
 class CRetreatTask;
 class CBRepairTask;
 class CBReclaimTask;
+class CBRestoreTask;
 class CCombatTask;
 
 struct SBuildChain;
@@ -133,6 +135,49 @@ public:
 		int maxPriority;  // highest priority of a job a builder can be taken off (NOW never)
 	};
 	const SEscort& GetEscortCfg() const { return escort; }
+
+	// Restore terraformed ground (economy.json "restore"), every 2 s: a cell whose height is off the map's start by
+	// <depth> or more on <share> of its samples gets a CBRestoreTask at <priority>, nearest builder first, while a
+	// builder is within <range> and the cell is safe: no known enemy on it or next to it, no threat on it. A job
+	// whose cell turns unsafe, or whose builder's path there crosses threat, is dropped and its builders stop. Any
+	// drop of a job a builder took (also a builder hit or killed) backs its cell off (cooldown, doubling).
+	// Cells with an allied building are skipped (levelled pads); an ally's terraform gives its cell up
+	struct SRestore {
+		static constexpr int CELL = 16;  // cell side in heightmap squares (128 elmos): one terraform segment each
+		struct SCell {
+			CBRestoreTask* task = nullptr;
+			int until = -1;  // frame the cell is held off until
+			int tries = 0;  // jobs done while it stays dug; reset once it is back and not held
+			int backoff = 0;  // last hold after a drop, frames (0 = none since the last finished job)
+			int enemyFrame = -1;  // frame a known enemy was seen on or next to it
+			int buildingFrame = -1;  // frame an allied building was seen on it
+			bool isDug = false;
+		};
+		float range = 0.f;  // builder to cell, 0 = off
+		float depth;
+		float share;
+		int maxTasks;
+		int maxBuilders;  // per job
+		int maxTries;
+		int cooldown;  // frames
+		IBuilderTask::Priority priority;  // of the jobs (and ZK's build priority they send)
+		int cellsX = 0;
+		int cellsZ = 0;
+		std::vector<SCell> grid;  // cellsX * cellsZ
+		int dugCount = 0;  // dug cells at the last scan
+		const SAreaData* scanned = nullptr;  // heightmap of the last scan (TerrainData swaps it on change)
+		int nextTag = 1 << 20;  // ZK terraform tags: a float, below 2^24
+		int CellOf(const springai::AIFloat3& pos) const;
+		springai::AIFloat3 CellPos(int cell, float offset) const;  // offset 0 = min corner, 0.5 = centre, 1 = max
+	};
+	const SRestore& GetRestore() const { return restore; }
+	int NextRestoreTag() { return restore.nextTag++; }
+	void OnRestoreEnd(CBRestoreTask* task, bool done);
+private:
+	void UpdateRestore();
+	void ScanRestore();
+	SRestore restore;
+public:
 
 	// Escalation mode (MilitaryManager::IsEscalation), every escalation.interval: an allied superweapon
 	// (escalation.super) or singu being built gets our builders at NOW (our own job on it raised, an ally's frame
