@@ -160,7 +160,7 @@ bool ISquadTask::IsClaimedByNearer(const CEnemyInfo* enemy, const AIFloat3& pos,
 		if ((t == this) || !((ft == FightType::RAID) || (isAttackToo && (ft == FightType::ATTACK)))) {
 			continue;
 		}
-		const CCircuitUnit* other = static_cast<const ISquadTask*>(t)->GetLeader();
+		CCircuitUnit* other = static_cast<const ISquadTask*>(t)->GetLeader();
 		if ((other != nullptr) && (other->GetPos(frame).SqDistance2D(ePos) < sqClaimDist)) {
 			return true;
 		}
