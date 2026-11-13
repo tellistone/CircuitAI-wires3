@@ -441,7 +441,11 @@ bool CRaidTask::FindTarget()
 	// so the group doesn't pick a target at the edge of the danger it just left and bounce back and forth
 	const float maxPower = GetSafeThreat() * (IsCautious(circuit->GetLastFrame()) ? 0.75f : 1.f);
 	const float weaponRange = cdef->GetMaxRange();
-	const float sqClaimFree = SQUARE(weaponRange + DEFAULT_SLACK);  // IsClaimedByNearer: already in reach
+	// IsClaimedByNearer: already in reach. The current target keeps it out to 1.25x (as the attack task's
+	// RAID_FREE_KEEP), so an enemy at the edge isn't picked and dropped by turns
+	const float sqClaimFree = SQUARE(weaponRange + DEFAULT_SLACK);
+	const float sqClaimFreeKeep = sqClaimFree * SQUARE(1.25f);
+	const CEnemyInfo* prevTarget = target;
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
 	const float range = std::max(leader->GetUnit()->GetMaxRange() + threatMap->GetSquareSize() * 2,
@@ -477,7 +481,8 @@ bool CRaidTask::FindTarget()
 		// Not one another raid group already targets from clearly nearer, unless within our fire range + 64 elmos
 		// (IsClaimedByNearer)
 		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)
-			|| IsClaimedByNearer(enemy, pos, sqClaimFree, true, false, circuit->GetLastFrame()))
+			|| IsClaimedByNearer(enemy, pos, (enemy == prevTarget) ? sqClaimFreeKeep : sqClaimFree,
+				/*isRaidClaim*/ true, /*isAttackClaim*/ false, circuit->GetLastFrame()))
 		{
 			continue;
 		}
