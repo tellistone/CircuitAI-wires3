@@ -12,6 +12,8 @@
 #include "setup/SetupManager.h"
 #include "resource/MetalManager.h"
 #include "resource/EnergyGrid.h"
+#include "module/ChokeDefence.h"
+#include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "map/ThreatMap.h"
 #include "map/InfluenceMap.h"
@@ -42,6 +44,8 @@ namespace circuit {
 using namespace springai;
 
 #define PYLON_RANGE		500.0f
+#define EXPAND_DEFENDED	0.3f  // choke.expand: score off a cluster behind a cut with towers at it
+#define EXPAND_GATED	0.15f  // and behind a defensible cut without
 
 const char* RES_NAME_METAL = "Metal";
 const char* RES_NAME_ENERGY = "Energy";
@@ -981,12 +985,34 @@ CMetalManager::ClusterScore CEconomyManager::GetMexFrontScore(float bias) const
 	const AIFloat3 laneDir = lanePos - basePos;
 	const float sqLaneLen = laneDir.SqLength2D();
 	const float startedMod = 1.f - mexFrontStarted;
-	return [metalMgr, basePos, laneDir, sqLaneLen, bias, startedMod](int cluster, float dist) {
+	const std::vector<float> expandMods = GetExpandMods();
+	return [metalMgr, basePos, laneDir, sqLaneLen, bias, startedMod, expandMods](int cluster, float dist) {
 		const AIFloat3& center = metalMgr->GetClusters()[cluster].position;
 		const float progress = utils::clamp((center - basePos).dot2D(laneDir) / sqLaneLen, -1.f, 1.f);
 		const float mod = metalMgr->IsClusterStarted(cluster) ? startedMod : 1.f;
-		return dist * (1.f - bias * progress) * mod;
+		const float expandMod = expandMods.empty() ? 1.f : expandMods[cluster];
+		return dist * (1.f - bias * progress) * mod * expandMod;
 	};
+}
+
+std::vector<float> CEconomyManager::GetExpandMods() const
+{
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	if (!chokeMap->GetConfig().isExpand || !chokeMap->IsReady()) {
+		return {};
+	}
+	const CChokeDefence* chokeDefence = circuit->GetMilitaryManager()->GetChokeDefence();
+	std::vector<float> mods(circuit->GetMetalManager()->GetClusters().size(), 1.f);
+	for (const CChokeMap::SPointInfo& pi : chokeMap->GetPointInfos()) {
+		if (pi.pocket < 0) {
+			continue;
+		}
+		const CChokeMap::SPocket& pocket = chokeMap->GetPockets()[pi.pocket];
+		const float mod = chokeDefence->IsPocketDefended(pocket) ? 1.f - EXPAND_DEFENDED
+				: pocket.isQualified ? 1.f - EXPAND_GATED : 1.f;
+		mods[pi.cluster] = std::min(mods[pi.cluster], mod);
+	}
+	return mods;
 }
 
 std::vector<CEconomyManager::SReclaimFeature> CEconomyManager::GetReclaimFeatures(const std::vector<int>& featureIds)

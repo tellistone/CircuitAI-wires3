@@ -84,6 +84,9 @@ public:
 	// Enemies seen dying or forgotten (20 min unseen) don't count. Used by economy.ms_pull_army,
 	// quota.attack_threat_floor, the base gather size and resign. Walks all known enemies: about once a second at most
 	float GetMobileCostNoCommFaded(int frame, float halfLife) const;
+	// What an enemy adds to GetMobileCostNoCommFaded, as a share of its cost: 0 when it isn't counted, 1 in radar or
+	// LOS, fading by half every halfLife frames since last seen otherwise. CChokeMap weighs enemy types by it
+	float GetArmyCostWeight(const CEnemyUnit* e, int frame, float halfLife) const;
 	// Log text for the same sum: its part from enemies in radar or LOS and from hidden ones (with their unfaded total),
 	// and the enemy types that carry most of it
 	std::string GetMobileCostReport(int frame, float halfLife) const;
@@ -116,9 +119,6 @@ public:
 private:
 	void ReadConfig();
 	void KMeansIteration();
-	// What an enemy adds to GetMobileCostNoCommFaded, as a share of its cost: 0 when it isn't counted, 1 in radar or
-	// LOS, fading by half every halfLife frames since last seen otherwise
-	float GetArmyCostWeight(const CEnemyUnit* e, int frame, float halfLife) const;
 
 	struct SGroupData {
 		std::vector<SEnemyGroup> enemyGroups;

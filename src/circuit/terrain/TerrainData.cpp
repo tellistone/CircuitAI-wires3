@@ -51,6 +51,8 @@ CTerrainData::CTerrainData()
 		, gameAttribute(nullptr)
 		, isUpdating(false)
 		, aiToUpdate(0)
+		, isHeightChanged(false)
+		, heightVersion(0)
 //		, isClusterizing(false)
 		, isInitialized(false)
 #ifdef DEBUG_VIS
@@ -805,6 +807,7 @@ void CTerrainData::UpdateAreas()
 	}
 
 	percentLand = tmpPercentLand * 100.0 / (sectorXSize * convertStoHM * sectorZSize * convertStoHM);
+	isHeightChanged = isHeightChanged || !changedSectors.empty();  // until the main thread takes it
 
 	for (auto& it : immobileType) {
 		it.typeUsable = (((100.0 * it.sector.size()) / float(sectorXSize * sectorZSize) >= 20.0) || ((double)convertStoP * convertStoP * it.sector.size() >= 1.8e7));
@@ -963,6 +966,10 @@ void CTerrainData::OnAreaUsersUpdated()
 
 	pAreaData = GetNextAreaData();
 	isUpdating = false;
+	if (isHeightChanged) {
+		isHeightChanged = false;
+		++heightVersion;
+	}
 
 #ifdef DEBUG_VIS
 	UpdateVis();

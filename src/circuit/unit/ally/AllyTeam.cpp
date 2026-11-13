@@ -15,6 +15,7 @@
 #include "setup/DefenceMatrix.h"
 #include "setup/SetupManager.h"
 #include "terrain/path/PathFinder.h"
+#include "terrain/ChokeMap.h"
 #include "terrain/TerrainData.h"
 #include "CircuitAI.h"
 #include "util/math/RayBox.h"
@@ -83,6 +84,8 @@ void CAllyTeam::Init(CCircuitAI* circuit, float decloakRadius)
 	}
 
 	energyGrid = std::make_shared<CEnergyGrid>(circuit);
+	// Before the defence matrix: its init splits clusters by region when choke.enable is on
+	chokeMap = std::make_shared<CChokeMap>(circuit);
 	defence = std::make_shared<CDefenceMatrix>(circuit);
 	pathfinder = std::make_shared<CPathFinder>(circuit->GetScheduler(), &circuit->GetGameAttribute()->GetTerrainData());
 	factoryData = std::make_shared<CFactoryData>(circuit);
@@ -105,6 +108,7 @@ void CAllyTeam::Release()
 	mapManager = nullptr;
 	metalManager = nullptr;
 	energyGrid = nullptr;
+	chokeMap = nullptr;
 	defence = nullptr;
 	pathfinder = nullptr;
 	factoryData = nullptr;
@@ -401,6 +405,7 @@ void CAllyTeam::DelegateAuthority(CCircuitAI* curOwner)
 			// The pathfinder ran on the leaving AI's scheduler, which stops now: without this every ally's
 			// path queries would wait forever once the first allied AI is released (team died or resigned)
 			pathfinder->SetScheduler(circuit->GetScheduler());
+			chokeMap->SetAuthority(circuit);
 			circuit->GetScheduler()->RunOnRelease(std::make_shared<CGameTask>(&CAllyTeam::DelegateAuthority, this, circuit));
 			break;
 		}

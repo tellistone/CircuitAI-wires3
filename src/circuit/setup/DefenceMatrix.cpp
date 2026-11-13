@@ -10,7 +10,9 @@
 #include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
+#include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
+#include "unit/ally/AllyTeam.h"
 #include "CircuitAI.h"
 #include "util/math/HierarchCluster.h"
 #include "util/math/RagMatrix.h"
@@ -20,6 +22,7 @@
 #include "json/json.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "spring/SpringMap.h"
 
@@ -68,14 +71,24 @@ void CDefenceMatrix::Init(CCircuitAI* circuit)
 	float maxDistance = rangeDef->GetMaxRange() * 0.75f * 2;
 	CHierarchCluster clust;
 	CEncloseCircle enclose;
+	// choke.enable: spots in different regions never share a point
+	CChokeMap* chokeMap = circuit->GetChokeMap();
+	const bool isRegionSplit = chokeMap->GetConfig().isChoke && chokeMap->IsReady();
 
 	for (unsigned k = 0; k < clusters.size(); ++k) {
 		const CMetalData::MetalIndices& idxSpots = clusters[k].idxSpots;
 		int nrows = idxSpots.size();
 		CRagMatrix distmatrix(nrows);
+		std::vector<int> regions;  // isRegionSplit: per spot
+		for (int i = 0; isRegionSplit && (i < nrows); ++i) {
+			regions.push_back(chokeMap->GetRegionAt(spots[idxSpots[i]].position));
+		}
 		for (int i = 1; i < nrows; ++i) {
 			for (int j = 0; j < i; ++j) {
 				distmatrix(i, j) = spots[idxSpots[i]].position.distance2D(spots[idxSpots[j]].position);
+				if (isRegionSplit && (regions[i] != regions[j])) {
+					distmatrix(i, j) += maxDistance * 100.f;  // a choke between them: never one point
+				}
 			}
 		}
 
@@ -100,6 +113,7 @@ void CDefenceMatrix::Init(CCircuitAI* circuit)
 	if (militaryMgr->IsGeoDefence()) {
 		AddGeoPoints(circuit, maxDistance * 0.5f);
 	}
+	chokeMap->Reanalyze();  // pockets need the points
 }
 
 void CDefenceMatrix::AddGeoPoints(CCircuitAI* circuit, float coverRange)
@@ -126,8 +140,40 @@ void CDefenceMatrix::AddGeoPoints(CCircuitAI* circuit, float coverRange)
 	}
 }
 
+float CDefenceMatrix::SDefPoint::GetSpotSqDist(const AIFloat3& pos) const
+{
+	float best = std::numeric_limits<float>::max();
+	for (const SSpot& spot : spots) {
+		if (spot.isFrozen) {
+			best = std::min(best, spot.pos.SqDistance2D(pos));
+		}
+	}
+	return best;
+}
+
 CDefenceMatrix::SDefPoint* CDefenceMatrix::GetDefPoint(const AIFloat3& pos, float defCost)
 {
+	// choke.spot.enable: a scored spot can stand a few hundred elmos off its point, nearer another one. A tower on it,
+	// or slid a little off it, is its point's
+	SDefPoint* spotPoint = nullptr;
+	float spotSq = SQUARE(SQUARE_SIZE * 8);  // as IsSpotTaken
+	auto checkSpots = [&pos, &spotPoint, &spotSq](SDefPoint& point) {
+		const float sq = point.GetSpotSqDist(pos);
+		if (sq < spotSq) {
+			spotSq = sq;
+			spotPoint = &point;
+		}
+	};
+	for (SClusterInfo& info : clusterInfos) {
+		std::for_each(info.defPoints.begin(), info.defPoints.end(), checkSpots);
+	}
+	for (auto& kv : chokePoints) {
+		checkSpots(kv.second);
+	}
+	if (spotPoint != nullptr) {
+		return spotPoint;
+	}
+
 	int index = metalManager->FindNearestCluster(pos);
 	if (index < 0) {
 		return nullptr;
@@ -157,7 +203,43 @@ CDefenceMatrix::SDefPoint* CDefenceMatrix::GetDefPoint(const AIFloat3& pos, floa
 			}
 		}
 	}
+	// So is a choke point (choke.enable)
+	for (auto& kv : chokePoints) {
+		if (kv.second.cost >= defCost) {
+			const float tmp = pos.distance2D(kv.second.position);
+			if (tmp < dist) {
+				dist = tmp;
+				point = &kv.second;
+			}
+		}
+	}
 	return point;
+}
+
+CDefenceMatrix::SDefPoint* CDefenceMatrix::GetChokePoint(int chokeId)
+{
+	auto it = chokePoints.find(chokeId);
+	return (it != chokePoints.end()) ? &it->second : nullptr;
+}
+
+CDefenceMatrix::SDefPoint* CDefenceMatrix::AddChokePoint(int chokeId, const AIFloat3& anchor)
+{
+	SDefPoint& point = chokePoints[chokeId];
+	point.position = anchor;
+	point.cost = 0.f;
+	point.chokeId = chokeId;
+	return &point;
+}
+
+CDefenceMatrix::SPocketState* CDefenceMatrix::GetPocketState(const std::vector<int>& chokeIds)
+{
+	auto it = pocketStates.find(chokeIds);
+	return (it != pocketStates.end()) ? &it->second : nullptr;
+}
+
+CDefenceMatrix::SPocketState* CDefenceMatrix::AddPocketState(const std::vector<int>& chokeIds, const SPocketState& state)
+{
+	return &(pocketStates[chokeIds] = state);
 }
 
 void CDefenceMatrix::SetBaseRange(float range)

@@ -59,6 +59,7 @@ public:
 	CCircuitDef* GetTerraDef() const { return terraDef; }
 
 	unsigned int GetWorkerCount() const { return workers.size(); }
+	const std::set<CCircuitUnit*>& GetWorkers() const { return workers; }
 	float GetJobSwitch() const { return jobSwitch; }
 	void AddBuildPower(CCircuitUnit* unit);
 	void DelBuildPower(CCircuitUnit* unit);
