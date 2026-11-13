@@ -11,8 +11,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with
   all of them off the AI plays as before.
   - Each ally team learns the map's shape, shared by allied AIs and built on the area worker. It finds the chokes
-    between regions the enemy's walkers can cross, the pockets of clusters behind them, and the current and forward
-    lines. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
+    between regions the enemy's walkers can cross, the pockets of clusters behind them, the current and forward
+    lines, and the enemy line at the edge of enemy territory. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
   - Choke defence (A): each cluster of a qualified pocket keeps its AA and its first tower, and the rest goes to the
     pocket's entrances, from a budget of what its held clusters would spend anyway. Modes switch at most every 3
     minutes. Narrow chokes keep a lane free of buildings.

@@ -33,7 +33,10 @@ when `choke_overlay` asks for it.
   form a *pocket*. A pocket is *qualified* when every entrance is defensible, within `choke.near` ranges of its
   points, and has no enemy territory right outside it.
 - **Lines.** The *current line* is the cut nearest our territory against enemy territory. The *forward line* is the
-  cut nearest our territory against the enemy's side of the map. A region both sides hold counts as ours.
+  cut nearest our territory against the enemy's side of the map. The *enemy line* is the edge of enemy territory
+  facing ours: every choke out of it into ground we can walk to without crossing it, however wide (out of the
+  enemy's side while they hold no territory). A region both sides hold counts as ours. Nothing acts on the enemy
+  line yet; the overlay draws it.
 - **Traffic field.** On 64-elmo cells (crossable by the same rule over their four 32-elmo cells), one layer per enemy
   movement type: where its units are likely to walk from the
   enemy's factories (or start boxes) to our clusters and base. The layers are blended by the enemy's army mix, at most
@@ -119,7 +122,7 @@ enemy types: TANK3(gating 0.60) TKBOT3(promoted to gating 0.35)`.
 |---|---|
 | `chokes` | Each choke from end to end of its line: green when defensible, grey when not. Lanes are yellow rectangles. |
 | `pockets` | Each pocket's entrances by mode: green at chokes, white on cluster, grey not decided yet. Blue lines link its points to them. Points are red when open, green gated, grey unreached. Magenta marks the anchors of choke points. |
-| `lines` | The current line orange, the forward line yellow, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
+| `lines` | The current line orange, the forward line yellow, the enemy line red, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
 | `ranks` | Enemy-held chokes: red when defended, white when not. Labels give the defence, the unarmed value behind and the share seen in the last 3 minutes. |
 | `traffic` | The busiest cells of the blended traffic field: bigger and redder the busier. |
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
