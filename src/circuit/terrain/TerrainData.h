@@ -237,6 +237,11 @@ private:
 
 public:
 	bool IsInitialized() const { return isInitialized; }
+	// Heightmap when the first of our AIs started (the map's start shape, as long as no AI joins mid-game)
+	const FloatVec& GetStartHeightMap() const { return startHeightMap; }
+private:
+	FloatVec startHeightMap;
+public:
 
 	// debug, could be used for defence perimeter calculation
 //	void DrawConvexHulls(springai::Drawer* drawer);

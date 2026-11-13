@@ -195,6 +195,7 @@ public:
 	bool IsStuckInWater(CCircuitDef* cdef, const springai::AIFloat3& position) const;
 
 	SAreaData* GetAreaData() const { return areaData; }
+	const FloatVec& GetStartHeightMap() const { return terrainData->GetStartHeightMap(); }
 	void UpdateAreaUsers(int interval);
 	void OnAreaUsersUpdated() { terrainData->OnAreaUsersUpdated(); }
 private:

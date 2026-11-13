@@ -18,6 +18,7 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace springai {
@@ -31,6 +32,7 @@ class CQueryCostMap;
 class CRetreatTask;
 class CBRepairTask;
 class CBReclaimTask;
+class CBRestoreTask;
 class CCombatTask;
 
 struct SBuildChain;
@@ -132,6 +134,38 @@ public:
 		int maxPriority;  // highest priority of a job a builder can be taken off (NOW never)
 	};
 	const SEscort& GetEscortCfg() const { return escort; }
+
+	// Restore terraformed ground (economy.json "restore"): every few seconds, cells whose height is off the map's
+	// start by <depth> or more on <share> of their samples get a HIGH CBRestoreTask, nearest builder first, while a
+	// builder is within <range>, no known enemy is at or next to the cell and no threat is on it. Cells with an
+	// allied building are skipped (levelled pads), and an ally's terraform holds its cell for <ally_hold>
+	struct SRestore {
+		struct SCell {
+			CBRestoreTask* task = nullptr;
+			int until = -1;  // frame the cell is held off until (after a job, or an ally's terraform)
+			int tries = 0;  // jobs done while the cell stays off; reset once it is back
+		};
+		float range = 0.f;  // builder to cell, 0 = off
+		float depth;
+		float share;
+		int maxTasks;
+		int maxBuilders;  // per job
+		int maxTries;
+		int cooldown;  // frames
+		int allyHold;  // frames
+		const SAreaData* scanned = nullptr;  // heightmap of the last scan (TerrainData swaps it on change)
+		std::vector<int> dug;  // cells off the start height at the last scan
+		std::unordered_map<int, SCell> cells;
+		int nextTag = 1 << 20;  // ZK terraform tags: a float, below 2^24
+	};
+	const SRestore& GetRestore() const { return restore; }
+	int NextRestoreTag() { return restore.nextTag++; }
+	void OnRestoreEnd(CBRestoreTask* task, bool done);
+private:
+	void UpdateRestore();
+	void ScanRestore();
+	SRestore restore;
+public:
 
 	// Escalation mode (MilitaryManager::IsEscalation), every escalation.interval: an allied superweapon
 	// (escalation.super) or singu being built gets our builders at NOW (our own job on it raised, an ally's frame

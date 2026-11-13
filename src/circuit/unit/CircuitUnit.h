@@ -45,6 +45,7 @@ namespace circuit {
 #define CMD_AIR_MANUALFIRE			38571
 #define CMD_WANTED_SPEED			38825
 #define CMD_AIR_STRAFE				39381
+#define CMD_RESTORE_GROUND			39739  // ZK restore terraform (not the engine's CMD_RESTORE)
 #define CMD_TERRAFORM_INTERNAL		39801
 
 class CCircuitDef;
