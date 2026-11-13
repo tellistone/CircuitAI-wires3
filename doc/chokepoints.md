@@ -186,12 +186,13 @@ nearest safe site, often down the slope of the ledge it was meant for. It's buil
 usual random shake, and so are radars and their guards.
 
 Spots stay on the goal's side: a choke's inner region or the defended point's region, any region the enemy only
-walks into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). AA towers aren't scored, they go to the point as before. A slot's lost tower is rebuilt at its old
-spot, because each slot takes its first spot that no tower stands on or is queued at.
+walks into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). AA towers aren't
+scored, they go to the point as before. A point keeps its spots by tower type, and a new tower takes the first one of
+its type that no tower stands on or is queued at, so a lost tower is rebuilt at its old spot.
 
 A spot freezes once its tower is queued. A tower that is cancelled before it starts unfreezes its spot and masks that
-ground for 5 minutes. After 2 failures at a slot, that slot goes back to the old placement. Towers the AI calls off
-itself (porc mode ending, artillery near a choke) keep their spot and count no failure.
+ground for 5 minutes. Once a spot fails twice, the point's new towers of that type go back to the old placement.
+Towers the AI calls off itself (porc mode ending, artillery near a choke) keep their spot and count no failure.
 
 The porc sweep scores every point of the clusters we hold when a round starts, then visits them in that order, one
 every 5 s. Our towers are listed once for the whole round.
@@ -241,12 +242,13 @@ rule, and was given up. Picking the spot for the builder at hand gets it built a
 - **Frontline.** The current line's chokes, ranked by our income behind each one × its traffic. Each of our points
   behind the line counts at its nearest line choke.
 - **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army seen near it in
-  the last 3 minutes. Its choke keeps it until 30 s after it was last short, so an enemy army that steps out of range
-  or dies doesn't send it away at once, unless another short one ranks 1.3× higher. Then it moves to the top-ranked
-  short choke, or ends if none is. The first idle attack group to ask whose power makes up
-  the shortfall claims it, walks to its scored hold spot, and keeps the claim while it keeps asking. A group that
-  hasn't asked for a minute (it went to fight elsewhere) loses it. A slot with nowhere to stand (no traffic near the
-  choke) stays free and is tried again after 30 s. A group that runs from a fight gives up its claim for 30 s.
+  the last 3 minutes. The first idle attack group to ask while that choke is short, and whose power makes up the
+  shortfall, claims it, walks to its scored hold spot, and keeps the claim while it keeps asking. Once claimed, the
+  slot keeps its choke until 30 s after it was last short, so an enemy army that steps out of range or dies doesn't
+  walk the group away at once, unless another short choke ranks 1.3× higher. Then it moves to the top-ranked short
+  choke, or ends if none is. A group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A
+  slot with nowhere to stand (no traffic near the choke) stays free and is tried again after 30 s. A group that runs
+  from a fight gives up its claim for 30 s.
 - **Objectives.** When the forward line is shorter than the current line, or as long with more income behind it,
   its enemy-held chokes become an objective. That needs the gain to be `choke.objective.gain` × the cost, and our
   attack power to be `choke.objective.power` × their defence. Their defence is what we saw there, over the share of

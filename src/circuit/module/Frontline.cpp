@@ -257,9 +257,10 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 }
 
 /*
- * C: a slot is at the top-ranked choke whose towers are short of what it wants. Its choke keeps it until 30 s after it
- * was last short (an enemy army walking in and out of range doesn't move it), unless another short one ranks 1.3x
- * higher; then it moves to the top short one, or ends if none is. Its group keeps the claim when it moves
+ * C: a slot is at the top-ranked choke whose towers are short of what it wants. Once claimed, its choke keeps it until
+ * 30 s after it was last short (an enemy army walking in and out of range doesn't walk its group away), unless another
+ * short one ranks 1.3x higher; then it moves to the top short one, or ends if none is. Its group keeps the claim when
+ * it moves
  */
 void CFrontline::UpdateHolds()
 {
@@ -274,7 +275,6 @@ void CFrontline::UpdateHolds()
 		}
 	}
 	holds.resize(slotCount);
-	auto isShort = [](const SFront& f) { return f.wanted > f.towers; };
 	auto isTaken = [this](int chokeId) {
 		return std::any_of(holds.begin(), holds.end(), [chokeId](const SHold& h) { return h.chokeId == chokeId; });
 	};
@@ -284,13 +284,13 @@ void CFrontline::UpdateHolds()
 			hold.spot = -RgtVector;
 		}
 		const SFront* current = FindFront(hold.chokeId);
-		if ((current != nullptr) && isShort(*current)) {
+		if ((current != nullptr) && (current->GetShortfall() > 0.f)) {
 			hold.shortFrame = frame;
 		}
-		const bool isKept = (current != nullptr) && (frame < hold.shortFrame + HOLD_END);
+		const bool isKept = (current != nullptr) && (hold.task != nullptr) && (frame < hold.shortFrame + HOLD_END);
 		const SFront* best = nullptr;
 		for (const SFront& f : front) {  // highest rank first
-			if (isShort(f) && ((f.chokeId == hold.chokeId) || !isTaken(f.chokeId))) {
+			if ((f.GetShortfall() > 0.f) && ((f.chokeId == hold.chokeId) || !isTaken(f.chokeId))) {
 				best = &f;
 				break;
 			}
@@ -327,7 +327,7 @@ void CFrontline::Fortify()
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	for (const SFront& f : front) {
-		if (f.wanted <= f.towers) {
+		if (f.GetShortfall() <= 0.f) {
 			continue;
 		}
 		const int choke = graph.FindChoke(f.chokeId);
@@ -470,11 +470,11 @@ AIFloat3 CFrontline::GetHoldSpot(CCircuitUnit* leader)
 	}
 	auto it = std::find_if(holds.begin(), holds.end(), [task](const SHold& h) { return h.task == task; });
 	if (it == holds.end()) {
-		// A free slot whose shortfall this group can make up
+		// A free slot at a short choke, whose shortfall this group can make up
 		it = std::find_if(holds.begin(), holds.end(), [this, task, frame](const SHold& h) {
 			const SFront* f = FindFront(h.chokeId);
-			return (f != nullptr) && (h.task == nullptr) && (frame >= h.retryFrame)
-					&& (task->GetAttackPower() >= f->wanted - f->towers);
+			return (f != nullptr) && (h.task == nullptr) && (frame >= h.retryFrame) && (f->GetShortfall() > 0.f)
+					&& (task->GetAttackPower() >= f->GetShortfall());
 		});
 		if (it == holds.end()) {
 			return -RgtVector;

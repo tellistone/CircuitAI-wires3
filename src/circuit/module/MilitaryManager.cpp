@@ -65,7 +65,6 @@ using namespace springai;
 #define RESPONSE_EPS_MIN	0.1f  // response eps floor
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
-#define SPOT_KEYS_PER_COPY	1000  // QueueTowers: a slot's spots are keyed by copy x this + the defenders slot
 
 CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
@@ -1783,13 +1782,13 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	// The towers it gets today, in order. choke.enable may send some of them to a choke of its pocket instead
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	const int frame = circuit->GetLastFrame();
-	std::vector<CDefenceMatrix::STower> picked;
+	std::vector<CCircuitDef*> picked;
 	for (unsigned i = 0; i < num; ++i) {
 		CCircuitDef* defDef = (isAirSlot && (i == 0) && prevent.airDef->IsAvailable(frame)) ? prevent.airDef : defenders[i];
 		if (!defDef->IsAvailable(frame) || (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))) {
 			continue;
 		}
-		picked.push_back({defDef, (int)i});
+		picked.push_back(defDef);
 	}
 	const CChokeDefence::SPlan plan = chokeDefence->Plan(cluster, closestPoint, picked, maxCost, sightDef != nullptr);
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
@@ -1862,23 +1861,22 @@ AIFloat3 CMilitaryManager::GetBackPos(const AIFloat3& pos) const
 	return backPos;
 }
 
-void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::vector<CDefenceMatrix::STower>& towers,
-		float cap, bool isPorc, const CSpotScorer::SGoal* goal)
+void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::vector<CCircuitDef*>& towers, float cap,
+		bool isPorc, const CSpotScorer::SGoal* goal)
 {
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	CEconomyManager* em = circuit->GetEconomyManager();
 	AIFloat3 backPos = GetBackPos(point->position);  // support towers
 	float totalCost = .0f;
 	IBuilderTask* parentTask = nullptr;
-	std::set<int> usedKeys;  // this call's (a chained task isn't in the task lists yet)
+	std::set<int> usedSpots;  // this call's (a chained task isn't in the task lists yet)
 	// A choke point's list (its share of its pocket's towers) is walked again while its cap has room; there a tower
 	// that brings the total exactly to the cap still goes, so the one-tower floor of a choke's share is met
 	const bool isPooled = (point->chokeId >= 0);
 	const int copies = isPooled ? POOL_COPIES : 1;
 	for (int copy = 0; copy < copies; ++copy) {
 		const float copyStart = totalCost;
-		for (const CDefenceMatrix::STower& tower : towers) {
-			CCircuitDef* defDef = tower.def;
+		for (CCircuitDef* defDef : towers) {
 			// A grid consumer (Cerberus, Desolator, ...) only where a grid with enough energy is in pylon reach
 			if (!em->IsGridReachable(defDef, point->position)) {
 				continue;
@@ -1895,26 +1893,13 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 			point->cost += defCost;
 			AIFloat3 buildPos = defDef->IsAttacker() ? point->position : backPos;
 			float shake = SQUARE_SIZE * 32;
-			// An attacker that shoots the ground gets a scored spot: its slot's first one that no tower stands on or
-			// is queued at, so a lost tower is rebuilt where it stood
-			if ((goal != nullptr) && defDef->IsAttacker() && !defDef->IsRoleAA()) {
-				for (int k = 0; k < POOL_COPIES; ++k) {
-					const int key = k * SPOT_KEYS_PER_COPY + tower.slot;
-					auto it = point->spots.find(key);
-					if ((usedKeys.count(key) > 0) || ((it != point->spots.end()) && it->second.isFrozen
-						&& IsSpotTaken(it->second.pos)))
-					{
-						continue;
-					}
-					usedKeys.insert(key);
-					const AIFloat3 spot = GetTowerSpot(point, key, defDef, *goal);
-					if (utils::is_valid(spot)) {
-						buildPos = spot;
-						shake = 0.f;  // built where it was scored: a shake slides a ledge's tower down its slope
-						backPos = GetBackPos(spot);  // the support towers after it cover it
-					}
-					break;
-				}
+			// An attacker that shoots the ground gets a scored spot
+			const AIFloat3 spot = ((goal != nullptr) && defDef->IsAttacker() && !defDef->IsRoleAA())
+					? GetTowerSpot(point, defDef, *goal, usedSpots) : -RgtVector;
+			if (utils::is_valid(spot)) {
+				buildPos = spot;
+				shake = 0.f;  // built where it was scored: a shake slides a ledge's tower down its slope
+				backPos = GetBackPos(spot);  // the support towers after it cover it
 			}
 			// Porc towers go in a chain, one after another. Preventive ones are queued each on its own, because the
 			// chain abort in MakeDefence cancels any unstarted chain outside porc mode, and would re-queue them on
@@ -1954,20 +1939,40 @@ bool CMilitaryManager::IsSpotTaken(const AIFloat3& pos) const
 	return false;
 }
 
-AIFloat3 CMilitaryManager::GetTowerSpot(CDefenceMatrix::SDefPoint* point, int key, CCircuitDef* defDef,
-		const CSpotScorer::SGoal& goal)
+AIFloat3 CMilitaryManager::GetTowerSpot(CDefenceMatrix::SDefPoint* point, CCircuitDef* defDef,
+		const CSpotScorer::SGoal& goal, std::set<int>& used)
 {
-	CDefenceMatrix::SSpot& spot = point->spots[key];
-	if (spot.isFrozen) {
-		return spot.pos;
+	std::vector<CDefenceMatrix::SSpot>& spots = point->spots;
+	int index = -1;  // a spot that failed once, scored again
+	bool isGivenUp = false;
+	for (int i = 0; i < (int)spots.size(); ++i) {
+		const CDefenceMatrix::SSpot& spot = spots[i];
+		if ((spot.def != defDef) || (used.count(i) > 0)) {
+			continue;
+		}
+		if (spot.isFrozen) {
+			if (!IsSpotTaken(spot.pos)) {
+				used.insert(i);
+				return spot.pos;
+			}
+		} else if (spot.failures >= 2) {
+			isGivenUp = true;
+		} else {
+			index = i;
+		}
 	}
-	if (spot.failures >= 2) {
+	if (isGivenUp) {
 		return -RgtVector;
 	}
 	const AIFloat3 pos = spotScorer->FindSpot(defDef, goal, circuit->GetChokeMap()->GetConfig().spotRadius);
 	if (utils::is_valid(pos)) {
-		spot.pos = pos;
-		spot.isFrozen = true;
+		if (index < 0) {
+			index = spots.size();
+			spots.push_back({defDef, pos});
+		}
+		spots[index].pos = pos;
+		spots[index].isFrozen = true;
+		used.insert(index);
 	}
 	return pos;
 }
@@ -2157,8 +2162,7 @@ void CMilitaryManager::AbortDefence(const CBDefenceTask* task)
 		}
 		// choke.spot.enable: a tower that failed before it started unfreezes its spot, and the scorer skips that ground
 		// for a while. One the AI called off itself keeps its spot for when it is queued again
-		for (auto& kv : point->spots) {
-			CDefenceMatrix::SSpot& spot = kv.second;
+		for (CDefenceMatrix::SSpot& spot : point->spots) {
 			if (!isCallingOff && (task->GetTarget() == nullptr) && spot.isFrozen
 				&& (spot.pos.SqDistance2D(task->GetTaskPos()) < SQUARE(SQUARE_SIZE)))
 			{

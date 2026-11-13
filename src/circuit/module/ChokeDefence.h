@@ -31,7 +31,7 @@ class CCircuitDef;
 class CChokeDefence {
 public:
 	using Mode = CDefenceMatrix::DefenceMode;
-	using Towers = std::vector<CDefenceMatrix::STower>;
+	using Towers = std::vector<CCircuitDef*>;
 	// Where MakeDefence's towers for a point go
 	struct SPlan {
 		Mode mode = Mode::CLUSTER;

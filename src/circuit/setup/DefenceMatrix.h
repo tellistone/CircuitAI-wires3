@@ -22,14 +22,11 @@ class CMetalManager;
 
 class CDefenceMatrix {
 public:
-	// A tower MakeDefence picks for a point: its def, and its slot (index) in the defenders list
-	struct STower {
-		CCircuitDef* def;
-		int slot;
-	};
-	// choke.spot.enable: a spot scored for one slot of a point, frozen once queued (CSpotScorer). A tower there that
-	// is cancelled before it starts unfreezes it and counts as a failure; after 2 the slot goes back to today's shake
+	// choke.spot.enable: a spot scored for a tower type at a point, frozen once queued (CSpotScorer), so a lost tower of
+	// that type is rebuilt there. A tower there that is cancelled before it starts unfreezes it and counts as a
+	// failure; once one fails twice, the point's new towers of that type go back to today's shake
 	struct SSpot {
+		CCircuitDef* def;
 		springai::AIFloat3 pos;
 		bool isFrozen = false;
 		int failures = 0;
@@ -39,7 +36,7 @@ public:
 		float cost;
 		bool isGeo = false;  // a geothermal vent's own point (porcupine.geo): defended only for that vent
 		int chokeId = -1;  // choke.enable: a choke point, at its anchor behind that choke (CChokeDefence)
-		std::map<int, SSpot> spots = {};  // by slot
+		std::vector<SSpot> spots = {};
 		// Squared distance from pos to its nearest frozen spot, float max with none
 		float GetSpotSqDist(const springai::AIFloat3& pos) const;
 	};

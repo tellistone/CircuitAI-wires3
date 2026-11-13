@@ -31,8 +31,8 @@ namespace {
 float CostOf(const CChokeDefence::Towers& towers)
 {
 	float cost = 0.f;
-	for (const CDefenceMatrix::STower& tower : towers) {
-		cost += tower.def->GetCostM();
+	for (const CCircuitDef* def : towers) {
+		cost += def->GetCostM();
 	}
 	return cost;
 }
@@ -77,12 +77,12 @@ CChokeDefence::SPlan CChokeDefence::Plan(int cluster, const CDefenceMatrix::SDef
 	// The cluster keeps its AA and its first other tower, the main one
 	CCircuitDef* mainDef = nullptr;
 	Towers keep, rest;
-	for (const CDefenceMatrix::STower& tower : picked) {
-		if (!tower.def->IsRoleAA() && (mainDef != nullptr)) {
-			rest.push_back(tower);
+	for (CCircuitDef* def : picked) {
+		if (!def->IsRoleAA() && (mainDef != nullptr)) {
+			rest.push_back(def);
 		} else {
-			mainDef = tower.def->IsRoleAA() ? mainDef : tower.def;
-			keep.push_back(tower);
+			mainDef = def->IsRoleAA() ? mainDef : def;
+			keep.push_back(def);
 		}
 	}
 	if (rest.empty()) {
@@ -136,7 +136,7 @@ CChokeDefence::SPlan CChokeDefence::Plan(int cluster, const CDefenceMatrix::SDef
 			continue;
 		}
 		const float share = (totalTraffic > 0.f) ? chokeMap->GetChokeTraffic(c) / totalTraffic : 1.f / pocket.chokes.size();
-		const float cap = std::max(rest.front().def->GetCostM(), budget * share);
+		const float cap = std::max(rest.front()->GetCostM(), budget * share);
 		const int inner = pocket.isInner[chokes[c].regionA] ? chokes[c].regionA : chokes[c].regionB;
 		CDefenceMatrix::SDefPoint* chokePoint = GetChokePoint(c, inner, mainDef);
 		const float room = cap - chokePoint->cost;

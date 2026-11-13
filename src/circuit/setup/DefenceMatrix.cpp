@@ -143,9 +143,9 @@ void CDefenceMatrix::AddGeoPoints(CCircuitAI* circuit, float coverRange)
 float CDefenceMatrix::SDefPoint::GetSpotSqDist(const AIFloat3& pos) const
 {
 	float best = std::numeric_limits<float>::max();
-	for (const auto& kv : spots) {
-		if (kv.second.isFrozen) {
-			best = std::min(best, kv.second.pos.SqDistance2D(pos));
+	for (const SSpot& spot : spots) {
+		if (spot.isFrozen) {
+			best = std::min(best, spot.pos.SqDistance2D(pos));
 		}
 	}
 	return best;
