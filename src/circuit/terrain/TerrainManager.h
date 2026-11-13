@@ -143,9 +143,9 @@ public:
 	int GetSectorIndex(const springai::AIFloat3& position) const { return terrainData->GetSectorIndex(position); }
 	int2 GetSectorXY(const springai::AIFloat3& position) const;  // sector (= path square) column and row, clamped to the map
 private:
-	// The ground under pos (a height map sample in sector s, its GetSectorXY; water at its surface): never above the
-	// sector's highest point
-	float GetGroundHeight(const springai::AIFloat3& pos, const int2& s) const;
+	// The ground under pos (GetHeightAt; water at its surface). Never above its sector's highest point: a map's size is
+	// a multiple of 512 elmos, so the clamps at its edges agree
+	float GetGroundHeight(const springai::AIFloat3& pos) const { return std::max(GetHeightAt(pos.x, pos.z), 0.f); }
 public:
 	// Line of fire over the sector grid, from fromHeight above sector 'from' to toHeight above sector 'to': blocked where
 	// a sector in between (not the ends' own) rises above the straight line at its highest point. sectors: an
@@ -154,7 +154,9 @@ public:
 			int2 from, int2 to, float fromHeight, float toHeight);
 	// The same between two positions, aimed aimLift above 'from' at targetLift above 'to'. The ends' heights: their
 	// sectors' highest points, as target routes (a route node knows only its sector), or isExact: the ground under them,
-	// never above that, so a stricter test (firing spots). Water counts as its surface
+	// never above that, so a stricter test (firing spots). Water counts as its surface.
+	// For a unit that walks to where a route ended. A fixed spot (chokepoint towers) uses CSpotScorer::IsClearLine, a
+	// finer ray: looser than this, so a pick by one could fail the other at the same spot
 	bool IsLineClear(const springai::AIFloat3& from, const springai::AIFloat3& to, float aimLift, float targetLift,
 			bool isExact) const;
 	bool CanMoveToPos(STerrainMapArea* area, const springai::AIFloat3& destination);

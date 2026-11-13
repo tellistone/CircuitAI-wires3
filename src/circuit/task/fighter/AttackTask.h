@@ -209,7 +209,7 @@ private:
 	// isCurrent: our current target, which needs no line of fire while engaged (IsSeenByUnits)
 	bool IsInLeaderRange(const CEnemyInfo* enemy, const springai::AIFloat3& rangePos, bool isCurrent, int frame);
 	// Lines of fire (pick, firing spots): aimed from cell_aim_height or half the leader's height above our units at
-	// half the enemy's height (8-32 elmos) above it. None for flying or underwater enemies
+	// half the enemy's height (8-32 elmos) above it. None for flying or underwater enemies, or a flying group
 	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const override;
 	float GetGroundFireRange() const { return std::max(fireRangeLand, fireRangeWater); }
 	/*
@@ -226,7 +226,7 @@ private:
 	float GetContactReach(const CEnemyInfo* enemy) const;
 	// highestRange + our firing-spot distance: never below our fire range (highestRange includes the median's own)
 	float GetContactCap() const;
-	// isCurrent: our current target, kept in contact out to RAID_FREE_KEEP x its reach, and while engaged with no line
+	// isCurrent: our current target, kept in contact out to TARGET_KEEP x its reach, and while engaged with no line
 	// of fire (IsSeenByUnits). outSqDist: squared distance from our nearest unit
 	bool IsInContact(const CEnemyInfo* enemy, bool isCurrent, int frame, float* outSqDist = nullptr);
 	// Farthest an enemy in contact can be from the leader (the units' spread + the longest reach, kept)

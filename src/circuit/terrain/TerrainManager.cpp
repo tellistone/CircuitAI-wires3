@@ -1250,25 +1250,11 @@ bool CTerrainManager::IsWalkClear(STerrainMapArea* area, const AIFloat3& from, c
 	const int sectorXSize = GetSectorXSize();
 	const int2 f = GetSectorXY(from);
 	const int2 t = GetSectorXY(to);
-	const bool isClimb = fabsf(GetGroundHeight(to, t) - GetGroundHeight(from, f)) > maxClimb;
+	const bool isClimb = fabsf(GetGroundHeight(to) - GetGroundHeight(from)) > maxClimb;
 	return IsSectorLineOk(f, t, [&](int x, int y, float) {
 		const int i = y * sectorXSize + x;
 		return (sectors[i].area == area) || (!isClimb && !terrain[i].isWater);
 	});
-}
-
-float CTerrainManager::GetGroundHeight(const AIFloat3& pos, const int2& s) const
-{
-	// The height map sample under pos, kept within sector s (pos off the map: its edge), so never above the sector's
-	// highest point: as CTerrainData works those out
-	const FloatVec& heightMap = areaData->heightMap;
-	const int sectorXSize = GetSectorXSize();
-	const int convertStoHM = GetConvertStoP() / SQUARE_SIZE;
-	const int iH = (s.y * convertStoHM + utils::clamp(int(pos.z) / SQUARE_SIZE - s.y * convertStoHM, 0, convertStoHM - 1))
-			* (sectorXSize * convertStoHM)
-			+ s.x * convertStoHM + utils::clamp(int(pos.x) / SQUARE_SIZE - s.x * convertStoHM, 0, convertStoHM - 1);
-	const float height = (iH < (int)heightMap.size()) ? heightMap[iH] : areaData->sector[s.y * sectorXSize + s.x].maxElevation;
-	return std::max(height, 0.f);
 }
 
 bool CTerrainManager::IsLineClear(const AIFloat3& from, const AIFloat3& to, float aimLift, float targetLift,
@@ -1277,7 +1263,7 @@ bool CTerrainManager::IsLineClear(const AIFloat3& from, const AIFloat3& to, floa
 	const std::vector<STerrainMapSector>& sectors = areaData->sector;
 	const int sectorXSize = GetSectorXSize();
 	auto heightAt = [&](const AIFloat3& pos, const int2& s) {
-		return isExact ? GetGroundHeight(pos, s) : std::max(sectors[s.y * sectorXSize + s.x].maxElevation, 0.f);
+		return isExact ? GetGroundHeight(pos) : std::max(sectors[s.y * sectorXSize + s.x].maxElevation, 0.f);
 	};
 	const int2 f = GetSectorXY(from);
 	const int2 t = GetSectorXY(to);

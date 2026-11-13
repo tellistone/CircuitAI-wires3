@@ -621,37 +621,27 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   The approach line check is unchanged (from the target towards the leader). And when the target dies, the group
   picks the next one at its next update (about 1 s) instead of its next decision (up to 2 s).
 - **Attack groups don't go for targets behind cliffs.** Only target routes and firing cells checked for a line of
-  fire. A target within the leader's highest weapon or sight range (a flat 2D distance) was engaged at once, and a
-  unit's firing spot was any passable point at 0.9x its range. So a group facing a target on a plateau walked to the
-  cliff foot, where it could neither see nor hit it, or its units got Attack orders the engine turned into a walk
-  the long way round, on no route of ours. It stayed on the target until the target moved. Now:
-  - **The pick** needs a line of fire for a target in range or in contact, from one of the units within range (or
-    reach) of it, not only the leader (in line, the front row stands where the route ended). The test is the one
-    target routes end on: the highest point of each path square (64 elmos on most maps) between them, aimed from
-    `cell_aim_height` or half the leader's height, whichever is higher, at half the target's height (8 to 32
-    elmos). A target that fails is routed to, and the route ends where the group can see it. A line of fire starts
-    a fight but doesn't keep it: the current target needs none while engaged, so a target stepping behind a crest
-    doesn't make the group form its line and route again; the firing spots move the units round it instead.
-  - **Firing spots** need one judged from the ground at the spot and under the target, a stricter test, so a unit
-    at its spot never reads its target as out of sight. A spot more than 40 elmos above or below the unit also needs
-    a direct walk: every path square on the straight line there is one the unit can move on, so a spot up on the
-    plateau isn't reached the long way round on the engine's path. Any walk across water does too. A rock or crater
-    rim in a field doesn't drop a spot. Other spots are dropped, and a unit with no spot left holds where it stands
-    instead of getting a direct Attack order. When every unit holds, the hold-off ban passes on the target for 6,
-    12 or 24 s; a unit within range but out of sight now counts as holding.
-  - **Weapons that arc over terrain** (`CWeaponDef::IsHighTrajectory`: Rogue, Recluse, artillery) aren't held to the
-    line: such a unit counts as seeing a target within reach in the pick, and its firing spots aren't checked.
-  - **The hold-off ban no longer waits on stragglers.** Units the attack order skips (busy, or stragglers walking to
-    the leader) don't count; one of them kept the whole group from passing on the target. This also applies to raid
-    groups' 10 s pass.
-  - **An empty target route** (nothing reachable within the threat cap, after the firing cells' retry as discs)
-    rejects its targets for 6 s, as an unsafe approach does. The next decision used to route to them again, with
-    the costliest search there is (everything reachable under the cap), e.g. to a target on a plateau with no way up.
-  - Flying and underwater targets (below -40) aren't checked. Attack groups only: defend, anti-air and raid groups
-    keep their firing spots.
-  - One line check (`CTerrainManager::IsLineClear`) serves target routes, firing cells, the pick and firing spots.
-    It no longer tests the target's own path square, where higher ground may stand behind the target; routes and
-    cells are unchanged by that, as their lift always cleared it.
+  fire. A target within the leader's range (a flat 2D distance) was engaged at once, and a firing spot was any
+  passable point at 0.9x range. So a group facing a target on a plateau walked to the cliff foot, where it could
+  neither see nor hit it, or the engine walked its units the long way round, on no route of ours. Now one line check
+  (`CTerrainManager::IsLineClear`: the highest point of each path square in between, aimed from `cell_aim_height` or
+  half the leader's height, whichever is higher, at half the target's height, 8 to 32 elmos) also serves:
+  - **The pick,** for a target in range or in contact: from one of the units within range or reach of it, else the
+    target is routed to, and the route ends where the group can see it. A line of fire starts a fight but doesn't
+    keep it: the current target needs none while engaged, so a target stepping behind a crest doesn't make the group
+    form its line and route again; the firing spots move the units round it instead.
+  - **Firing spots,** judged from the ground at both ends, which is stricter, so a unit at its spot never reads its
+    target as out of sight. A spot more than 40 elmos up or down, or across water, also needs a straight walk over
+    ground the unit can move on (a rock in a field doesn't drop a spot). A unit with no spot left holds where it
+    stands instead of getting a direct Attack order.
+  - **The hold-off ban** (6, 12, 24 s) counts a unit within range but out of sight as holding, and no longer waits
+    on stragglers or busy units, which the attack order skips (raid groups' 10 s pass too).
+  - **An empty target route** (after the firing cells' retry as discs) rejects its targets for 6 s, instead of the
+    costliest search there is again at the next decision (a target on a plateau with no way up).
+  - **No test** for flying or underwater (below -40) targets, flying groups (gunships), or weapons that arc over
+    terrain (`CWeaponDef::IsHighTrajectory`: Rogue, Recluse, artillery). Defend, anti-air and raid groups keep their
+    firing spots. Routes and cells no longer test the target's own path square, where higher ground may stand
+    behind the target; their lift always cleared it, so they are unchanged.
 - **Geothermal plants are actually queued.** Three checks shared with other energy kept geo off the build list in
   practice. The energy-job cap allowed a 500-metal job only while no energy job at all was queued (below 62.5 build
   power), and solar or wind jobs nearly always were; geo now has its own cap of one geo job at a time. The energy

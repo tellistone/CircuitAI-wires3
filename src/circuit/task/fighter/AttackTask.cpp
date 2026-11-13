@@ -47,10 +47,10 @@ static constexpr size_t MAX_TARGET_GOALS = 16;
 // For this long after an escape, targets are picked (and their approach checked) at CAUTIOUS_POWER x our strength
 static constexpr int CAUTIOUS_FRAMES = FRAMES_PER_SEC * 4;
 static constexpr float CAUTIOUS_POWER = 0.75f;
-// quota.raid_attack_factor: the current target keeps its exemptions from the factor (base radius, contact) out to this
-// x the radius / reach, so a raider stepping back and forth across the line doesn't flip the pick. The current target
-// stays in contact out to this x its reach too (IsInContact)
-static constexpr float RAID_FREE_KEEP = 1.25f;
+// The current target stays in contact out to this x its reach (IsInContact), and keeps its exemptions from
+// quota.raid_attack_factor (base radius, contact) out to this x the radius, so an enemy stepping back and forth across
+// either line doesn't flip the pick
+static constexpr float TARGET_KEEP = 1.25f;
 // Contact by an enemy's own range is capped at highestRange + this x our fire range (the firing-spot ring,
 // IFighterTask's arc spots): a unit in contact walks at most about highestRange to its spot, as a group whose leader
 // is within highestRange does. Long-range artillery farther out is routed to (siege, firing cells) as before
@@ -1203,14 +1203,14 @@ float CAttackTask::GetContactCap() const
 
 bool CAttackTask::IsInContact(const CEnemyInfo* enemy, bool isCurrent, int frame, float* outSqDist)
 {
-	const float reach = GetContactReach(enemy) * (isCurrent ? RAID_FREE_KEEP : 1.f);
+	const float reach = GetContactReach(enemy) * (isCurrent ? TARGET_KEEP : 1.f);
 	return IsSeenByUnits(enemy, enemy->GetPos(), reach, isCurrent, frame, outSqDist);
 }
 
 float CAttackTask::GetContactBound(int frame)
 {
 	UpdateContactUnits(frame);
-	return contactSpread + (GetContactCap() + DEFAULT_SLACK) * RAID_FREE_KEEP;  // the cap is above our fire range
+	return contactSpread + (GetContactCap() + DEFAULT_SLACK) * TARGET_KEEP;  // the cap is above our fire range
 }
 
 bool CAttackTask::IsSeenByUnits(const CEnemyInfo* enemy, const AIFloat3& pos, float range, bool isCurrent, int frame,
@@ -1287,7 +1287,7 @@ bool CAttackTask::FindTarget()
 	// (skirmishers: about 4x the strength to go after raiders in the field). At full strength inside the base
 	// defence radius (raiding our base) and in contact (IsInContact: already fighting us; skipped, the
 	// group would walk off on Move orders, which Zero-K's skirmish micro ignores, and the escape judges at full
-	// strength, so it would neither fight nor flee). The current target keeps both out to RAID_FREE_KEEP x
+	// strength, so it would neither fight nor flee). The current target keeps both out to TARGET_KEEP x
 	const float raidFactor = GetRaidFactor();
 	// While engaged, every enemy in contact is part of the fight we accepted: judged at the keep allowance as the
 	// current target is, so a kill doesn't drop the rest of the fight (the next pick has no current target). A fight
@@ -1301,7 +1301,7 @@ bool CAttackTask::FindTarget()
 		if ((raidFactor >= 1.f) || !IsRaidFactorTarget(e->GetCircuitDef())) {
 			return power;
 		}
-		const bool isFree = isContact || (isPrev ? IsInBaseRadius(ePos, RAID_FREE_KEEP) : isBase);
+		const bool isFree = isContact || (isPrev ? IsInBaseRadius(ePos, TARGET_KEEP) : isBase);
 		return isFree ? power : power * raidFactor;
 	};
 
