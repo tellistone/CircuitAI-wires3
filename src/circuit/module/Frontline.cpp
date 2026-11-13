@@ -257,9 +257,9 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 }
 
 /*
- * C: a slot is at the top-ranked choke whose towers are short of what it wants, and moves to another only when that
- * one ranks 1.3x higher (or its own choke is no longer short). It ends once its choke is 30 s not short and none
- * other is. Its group keeps the claim when it moves
+ * C: a slot is at the top-ranked choke whose towers are short of what it wants. Its choke keeps it until 30 s after it
+ * was last short (an enemy army walking in and out of range doesn't move it), unless another short one ranks 1.3x
+ * higher; then it moves to the top short one, or ends if none is. Its group keeps the claim when it moves
  */
 void CFrontline::UpdateHolds()
 {
@@ -284,10 +284,10 @@ void CFrontline::UpdateHolds()
 			hold.spot = -RgtVector;
 		}
 		const SFront* current = FindFront(hold.chokeId);
-		const bool isCurrentShort = (current != nullptr) && isShort(*current);
-		if (isCurrentShort) {
+		if ((current != nullptr) && isShort(*current)) {
 			hold.shortFrame = frame;
 		}
+		const bool isKept = (current != nullptr) && (frame < hold.shortFrame + HOLD_END);
 		const SFront* best = nullptr;
 		for (const SFront& f : front) {  // highest rank first
 			if (isShort(f) && ((f.chokeId == hold.chokeId) || !isTaken(f.chokeId))) {
@@ -295,7 +295,7 @@ void CFrontline::UpdateHolds()
 				break;
 			}
 		}
-		if ((hold.chokeId >= 0) && (best == nullptr) && ((current == nullptr) || (frame >= hold.shortFrame + HOLD_END))) {
+		if ((hold.chokeId >= 0) && (best == nullptr) && !isKept) {
 			circuit->LOG("CHOKE hold at choke %i ends", hold.chokeId);
 			hold = SHold();
 			continue;
@@ -303,7 +303,7 @@ void CFrontline::UpdateHolds()
 		if ((best == nullptr) || (best == current)) {
 			continue;
 		}
-		if (!isCurrentShort || (best->rank >= SWITCH_SHARE * current->rank)) {
+		if (!isKept || (best->rank >= SWITCH_SHARE * current->rank)) {
 			circuit->LOG("CHOKE hold at choke %i (rank %.1f, wants %.0f, towers %.0f)", best->chokeId, best->rank,
 					best->wanted, best->towers);
 			hold.chokeId = best->chokeId;

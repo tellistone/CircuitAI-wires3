@@ -22,6 +22,7 @@
 #include "json/json.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "spring/SpringMap.h"
 
@@ -139,8 +140,40 @@ void CDefenceMatrix::AddGeoPoints(CCircuitAI* circuit, float coverRange)
 	}
 }
 
+float CDefenceMatrix::SDefPoint::GetSpotSqDist(const AIFloat3& pos) const
+{
+	float best = std::numeric_limits<float>::max();
+	for (const auto& kv : spots) {
+		if (kv.second.isFrozen) {
+			best = std::min(best, kv.second.pos.SqDistance2D(pos));
+		}
+	}
+	return best;
+}
+
 CDefenceMatrix::SDefPoint* CDefenceMatrix::GetDefPoint(const AIFloat3& pos, float defCost)
 {
+	// choke.spot.enable: a scored spot can stand a few hundred elmos off its point, nearer another one. A tower on it,
+	// or slid a little off it, is its point's
+	SDefPoint* spotPoint = nullptr;
+	float spotSq = SQUARE(SQUARE_SIZE * 8);  // as IsSpotTaken
+	auto checkSpots = [&pos, &spotPoint, &spotSq](SDefPoint& point) {
+		const float sq = point.GetSpotSqDist(pos);
+		if (sq < spotSq) {
+			spotSq = sq;
+			spotPoint = &point;
+		}
+	};
+	for (SClusterInfo& info : clusterInfos) {
+		std::for_each(info.defPoints.begin(), info.defPoints.end(), checkSpots);
+	}
+	for (auto& kv : chokePoints) {
+		checkSpots(kv.second);
+	}
+	if (spotPoint != nullptr) {
+		return spotPoint;
+	}
+
 	int index = metalManager->FindNearestCluster(pos);
 	if (index < 0) {
 		return nullptr;

@@ -1981,15 +1981,7 @@ void CMilitaryManager::CallOffDefence(IBuilderTask* task)
 
 bool CMilitaryManager::IsPointTask(const CDefenceMatrix::SDefPoint& point, const AIFloat3& taskPos) const
 {
-	if (point.position.SqDistance2D(taskPos) < SQUARE(SQUARE_SIZE)) {
-		return true;
-	}
-	for (const auto& kv : point.spots) {
-		if (kv.second.isFrozen && (kv.second.pos.SqDistance2D(taskPos) < SQUARE(SQUARE_SIZE))) {
-			return true;
-		}
-	}
-	return false;
+	return std::min(point.position.SqDistance2D(taskPos), point.GetSpotSqDist(taskPos)) < SQUARE(SQUARE_SIZE);
 }
 
 void CMilitaryManager::SweepByTraffic()

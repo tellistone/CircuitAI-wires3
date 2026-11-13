@@ -40,6 +40,8 @@ public:
 		bool isGeo = false;  // a geothermal vent's own point (porcupine.geo): defended only for that vent
 		int chokeId = -1;  // choke.enable: a choke point, at its anchor behind that choke (CChokeDefence)
 		std::map<int, SSpot> spots = {};  // by slot
+		// Squared distance from pos to its nearest frozen spot, float max with none
+		float GetSpotSqDist(const springai::AIFloat3& pos) const;
 	};
 	// choke.enable: how a pocket (CChokeMap::SPocket) is defended (CChokeDefence)
 	enum class DefenceMode: char {CLUSTER, CHOKES};
@@ -66,6 +68,7 @@ private:
 public:
 	std::vector<SDefPoint>& GetDefPoints(int index) { return clusterInfos[index].defPoints; }
 	int GetClusterCount() const { return clusterInfos.size(); }
+	// The point a tower at pos belongs to: the one with a frozen spot under it, else the nearest with that cost spent
 	SDefPoint* GetDefPoint(const springai::AIFloat3& pos, float cost);
 
 	// choke.enable: choke points by choke id (never removed: towers built there stay), and pocket states by the

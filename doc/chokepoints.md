@@ -241,8 +241,9 @@ rule, and was given up. Picking the spot for the builder at hand gets it built a
 - **Frontline.** The current line's chokes, ranked by our income behind each one × its traffic. Each of our points
   behind the line counts at its nearest line choke.
 - **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army seen near it in
-  the last 3 minutes. It moves only to a choke ranked 1.3× higher, or to any short one once its own isn't short. It
-  ends once its choke has been 30 s not short and no other is. The first idle attack group to ask whose power makes up
+  the last 3 minutes. Its choke keeps it until 30 s after it was last short, so an enemy army that steps out of range
+  or dies doesn't send it away at once, unless another short one ranks 1.3× higher. Then it moves to the top-ranked
+  short choke, or ends if none is. The first idle attack group to ask whose power makes up
   the shortfall claims it, walks to its scored hold spot, and keeps the claim while it keeps asking. A group that
   hasn't asked for a minute (it went to fight elsewhere) loses it. A slot with nowhere to stand (no traffic near the
   choke) stays free and is tried again after 30 s. A group that runs from a fight gives up its claim for 30 s.
