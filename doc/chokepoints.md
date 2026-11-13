@@ -185,15 +185,17 @@ A tower skips spots that enemy threat reaches, because a builder only builds out
 nearest safe site, often down the slope of the ledge it was meant for. It's built where it was scored, without the
 usual random shake, and so are radars and their guards.
 
-Spots stay on the goal's side: a choke's inner region or the defended point's region, any region the enemy only
-walks into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). A tower's spot
-must also be within build range of ground that one of our builders able to build it can walk to from where it stands,
-on that builder's own movement mask; otherwise no builder would take the job, and it would wait 5 minutes, holding up
-the porc chain behind it, before being dropped. AA towers aren't scored, they go to the point as before. A point keeps its spots by tower type, and a new tower takes the first one of
-its type that no tower stands on or is queued at, so a lost tower is rebuilt at its old spot.
+Spots stay on the goal's side: a choke's inner region or the defended point's region, any region the enemy only walks
+into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). A tower's spot must also
+be within build range of ground that one of our builders able to build it can walk to from where it stands, on that
+builder's own movement mask; otherwise no builder would take the job, and it would wait 5 minutes, holding up the
+porc chain behind it, before being dropped. AA towers aren't scored, they go to the point as before. A point keeps
+its spots by tower type, and a new tower takes the first one of its type that no tower stands on or is queued at, so
+a lost tower is rebuilt at its old spot.
 
 A spot freezes once its tower is queued. A tower that is cancelled before it starts unfreezes its spot and masks that
-ground for 5 minutes. Once a spot fails twice, the point's new towers of that type go back to the old placement.
+ground for 5 minutes. Builders lost or chased off on the way count too, so once a spot fails twice within 10 minutes,
+the point's new towers of that type go back to the old placement until 10 minutes after the last failure.
 Towers the AI calls off itself (porc mode ending, artillery near a choke) keep their spot and count no failure.
 
 The porc sweep scores every point of the clusters we hold when a round starts, then visits them in that order, one

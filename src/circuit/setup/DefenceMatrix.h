@@ -24,12 +24,14 @@ class CDefenceMatrix {
 public:
 	// choke.spot.enable: a spot scored for a tower type at a point, frozen once queued (CSpotScorer), so a lost tower of
 	// that type is rebuilt there. A tower there that is cancelled before it starts unfreezes it and counts as a
-	// failure; once one fails twice, the point's new towers of that type go back to today's shake
+	// failure; once one fails twice within 10 minutes, the point's new towers of that type go back to today's shake
+	// until 10 minutes after the last failure
 	struct SSpot {
 		CCircuitDef* def;
 		springai::AIFloat3 pos;
 		bool isFrozen = false;
-		int failures = 0;
+		int failures = 0;  // in a row, each within 10 minutes of the last
+		int failFrame = 0;  // the last failure
 	};
 	struct SDefPoint {
 		springai::AIFloat3 position;

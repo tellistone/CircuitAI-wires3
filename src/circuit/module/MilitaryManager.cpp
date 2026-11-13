@@ -65,6 +65,7 @@ using namespace springai;
 #define RESPONSE_EPS_MIN	0.1f  // response eps floor
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
+#define SPOT_GIVE_UP		(FRAMES_PER_SEC * 600)  // choke.spot.enable: two failures this close give a type up this long
 
 CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
@@ -1943,7 +1944,8 @@ AIFloat3 CMilitaryManager::GetTowerSpot(CDefenceMatrix::SDefPoint* point, CCircu
 		const CSpotScorer::SGoal& goal, std::set<int>& used)
 {
 	std::vector<CDefenceMatrix::SSpot>& spots = point->spots;
-	int index = -1;  // a spot that failed once, scored again
+	const int frame = circuit->GetLastFrame();
+	int index = -1;  // a spot that failed, scored again
 	bool isGivenUp = false;
 	for (int i = 0; i < (int)spots.size(); ++i) {
 		const CDefenceMatrix::SSpot& spot = spots[i];
@@ -1955,7 +1957,7 @@ AIFloat3 CMilitaryManager::GetTowerSpot(CDefenceMatrix::SDefPoint* point, CCircu
 				used.insert(i);
 				return spot.pos;
 			}
-		} else if (spot.failures >= 2) {
+		} else if ((spot.failures >= 2) && (frame < spot.failFrame + SPOT_GIVE_UP)) {
 			isGivenUp = true;
 		} else {
 			index = i;
@@ -2161,13 +2163,15 @@ void CMilitaryManager::AbortDefence(const CBDefenceTask* task)
 			point->cost -= defCost;
 		}
 		// choke.spot.enable: a tower that failed before it started unfreezes its spot, and the scorer skips that ground
-		// for a while. One the AI called off itself keeps its spot for when it is queued again
+		// for a while. One the AI called off itself keeps its spot for when it is queued again. Builders lost or
+		// chased off on the way fail a spot too, so the count starts again once 10 minutes pass without a failure
+		const int frame = circuit->GetLastFrame();
+		const bool isFailed = !isCallingOff && (task->GetTarget() == nullptr);
 		for (CDefenceMatrix::SSpot& spot : point->spots) {
-			if (!isCallingOff && (task->GetTarget() == nullptr) && spot.isFrozen
-				&& (spot.pos.SqDistance2D(task->GetTaskPos()) < SQUARE(SQUARE_SIZE)))
-			{
+			if (isFailed && spot.isFrozen && (spot.pos.SqDistance2D(task->GetTaskPos()) < SQUARE(SQUARE_SIZE))) {
 				spot.isFrozen = false;
-				++spot.failures;
+				spot.failures = (frame < spot.failFrame + SPOT_GIVE_UP) ? spot.failures + 1 : 1;
+				spot.failFrame = frame;
 				spotScorer->MaskFailed(spot.pos);
 				circuit->LOG("CHOKE spot (%.0f, %.0f) for %s failed (%i)", spot.pos.x, spot.pos.z,
 						task->GetBuildDef()->GetDef()->GetName(), spot.failures);

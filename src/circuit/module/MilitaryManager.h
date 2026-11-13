@@ -491,7 +491,7 @@ private:
 	springai::AIFloat3 GetBackPos(const springai::AIFloat3& pos) const;  // 16 squares towards our base
 	bool IsSpotTaken(const springai::AIFloat3& pos) const;  // a tower of ours stands there, or is queued there
 	// A frozen spot of the type's at the point that no tower stands on or is queued at, else one scored and frozen
-	// now; -RgtVector if none (or one of the type's failed twice). used: spot indices this call queued at already
+	// now; -RgtVector if none (or the type is given up there). used: spot indices this call queued at already
 	springai::AIFloat3 GetTowerSpot(CDefenceMatrix::SDefPoint* point, CCircuitDef* defDef, const CSpotScorer::SGoal& goal,
 			std::set<int>& used);
 	// A task queued at the point or at one of its frozen spots
