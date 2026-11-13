@@ -150,6 +150,29 @@ const AIFloat3& ISquadTask::GetLeaderPos(int frame) const
 	return (leader != nullptr) ? leader->GetPos(frame) : GetPosition();
 }
 
+bool ISquadTask::IsClaimedByNearer(const CEnemyInfo* enemy, const AIFloat3& pos, float sqFreeDist,
+		bool isRaidClaim, bool isAttackClaim, int frame) const
+{
+	static constexpr float CLAIM_NEARER = 0.8f;  // the other group must be under 0.8x our distance to the enemy
+	const AIFloat3& ePos = enemy->GetPos();
+	const float sqDist = pos.SqDistance2D(ePos);
+	if (sqDist < sqFreeDist) {
+		return false;
+	}
+	const float sqClaimDist = sqDist * SQUARE(CLAIM_NEARER);
+	for (const IFighterTask* t : enemy->GetTasks()) {
+		const FightType ft = t->GetFightType();
+		if ((t == this) || !((isRaidClaim && (ft == FightType::RAID)) || (isAttackClaim && (ft == FightType::ATTACK)))) {
+			continue;
+		}
+		CCircuitUnit* other = static_cast<const ISquadTask*>(t)->GetLeader();
+		if ((other != nullptr) && (other->GetPos(frame).SqDistance2D(ePos) < sqClaimDist)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool ISquadTask::IsMoveCompatible(CCircuitUnit* unit, float speedRatio) const
 {
 	assert(leader != nullptr);

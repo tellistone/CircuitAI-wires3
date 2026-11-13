@@ -1294,8 +1294,14 @@ void CAttackTask::FindTarget()
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
-		// Cheap checks first
+		// Cheap checks first. Not one another raid or attack group already targets from clearly nearer, unless within our
+		// fire range + 64 elmos (IsClaimedByNearer); the current target out to RAID_FREE_KEEP x that, so an enemy at the
+		// edge isn't picked and dropped by turns. A raid's claim doesn't take our current target: a passing raid would
+		// make us re-route away and back
+		const bool isPrevTarget = (enemy->GetId() == prevTargetId);
 		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)
+			|| IsClaimedByNearer(enemy, pos, isPrevTarget ? sqFireFreeKeep : sqOwnGroundFree,
+					/*isRaidClaim*/ !isPrevTarget, /*isAttackClaim*/ true, frame)
 			|| IsRejected(enemy->GetId(), -1, -1, frame)
 			|| !isTargetableType(enemy))
 		{
