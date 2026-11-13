@@ -133,7 +133,8 @@
 	// makes terraform 20x slower near enemies). Only a constructor within <range> with no threat to it on the cell
 	// takes it, <builders> at most per job, <jobs> jobs at once (nearest first).
 	// A job is dropped when its cell stops being safe (an enemy comes near) or a builder's threat-aware path there
-	// crosses threat; the cell then waits <cooldown> s, doubling on each such drop up to 8x until a job finishes.
+	// crosses threat, and its builders stop. After any drop of a job a builder took (also a builder hit or killed)
+	// the cell waits <cooldown> s, doubling on each drop up to 8x until a job finishes.
 	// After a finished job the cell waits <cooldown> s, and after <tries> finished jobs that left it dug it is given
 	// up until it is back at the start height. Cells with an allied building are skipped (levelled pads); an ally's
 	// terraform gives its cell up the same way. range 0 disables.

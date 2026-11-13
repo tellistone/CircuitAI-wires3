@@ -2644,6 +2644,8 @@ void CBuilderManager::ScanRestore()
 		restore.cellsZ = (height + SRestore::CELL - 1) / SRestore::CELL;
 		restore.grid.resize(restore.cellsX * restore.cellsZ);
 	}
+	const int frame = circuit->GetLastFrame();
+	restore.dugCount = 0;
 	for (int cz = 0; cz < restore.cellsZ; ++cz) {
 		const int zEnd = std::min((cz + 1) * SRestore::CELL, height);
 		for (int cx = 0; cx < restore.cellsX; ++cx) {
@@ -2658,7 +2660,14 @@ void CBuilderManager::ScanRestore()
 					}
 				}
 			}
-			restore.grid[cz * restore.cellsX + cx].isDug = (off > 0) && (off >= restore.share * samples);
+			SRestore::SCell& cell = restore.grid[cz * restore.cellsX + cx];
+			cell.isDug = (off > 0) && (off >= restore.share * samples);
+			if (cell.isDug) {
+				++restore.dugCount;
+			} else if (cell.until < frame) {
+				cell.tries = 0;  // back at the start height and not held: a new dig there gets new tries
+				cell.backoff = 0;
+			}
 		}
 	}
 }
@@ -2678,21 +2687,24 @@ void CBuilderManager::UpdateRestore()
 	const int frame = circuit->GetLastFrame();
 
 	// An ally's terraform (its terraunit; ours are our restores) gives its cell up while it stays dug: no tug-of-war
-	// over its walls and ramps. An allied building skips its cell: its levelled pad is off the start height too
+	// over its walls and ramps. An allied building skips its cell (its levelled pad is off the start height too):
+	// looked up only while some cell is dug
 	const CCircuitDef::Id terraId = terraDef->GetId();
 	circuit->UpdateFriendlyUnits();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* au = kv.second;
 		const CCircuitDef* cdef = au->GetCircuitDef();
-		if ((cdef == nullptr) || ((cdef->GetId() != terraId) && cdef->IsMobile())) {
+		if (cdef == nullptr) {
 			continue;
 		}
-		SRestore::SCell& cell = grid[restore.CellOf(au->GetPos(frame))];
-		if (cdef->GetId() != terraId) {
-			cell.buildingFrame = frame;
-		} else if (circuit->GetTeamUnit(au->GetId()) == nullptr) {
-			cell.tries = restore.maxTries;
-			cell.until = std::max(cell.until, frame + restore.cooldown);  // over the heightmap's lag once it's done
+		if (cdef->GetId() == terraId) {
+			if (circuit->GetTeamUnit(au->GetId()) == nullptr) {
+				SRestore::SCell& cell = grid[restore.CellOf(au->GetPos(frame))];
+				cell.tries = restore.maxTries;
+				cell.until = std::max(cell.until, frame + restore.cooldown);  // over the heightmap's lag once it's done
+			}
+		} else if (!cdef->IsMobile() && (restore.dugCount > 0)) {
+			grid[restore.CellOf(au->GetPos(frame))].buildingFrame = frame;
 		}
 	}
 	// A known enemy on or next to a cell: ZK makes terraform 20x slower near enemies, and it may be digging there
@@ -2715,25 +2727,10 @@ void CBuilderManager::UpdateRestore()
 		return (grid[c].enemyFrame == frame) || (threatMap->GetAllThreatAt(restore.CellPos(c, 0.5f)) > THREAT_MIN);
 	};
 
-	// Drop jobs whose cell turned unsafe (builders on them leave, the cell backs off), and the ones no builder took:
-	// they are chosen again below, by the builders' positions now
-	std::vector<CBRestoreTask*> drops;
-	for (int c = 0; c < (int)grid.size(); ++c) {
-		CBRestoreTask* task = grid[c].task;
-		if ((task != nullptr) && (task->GetAssignees().empty() || isUnsafe(c))) {
-			drops.push_back(task);
-		}
-	}
-	for (CBRestoreTask* task : drops) {
-		if (task->GetAssignees().empty()) {
-			AbortTask(task);  // OnRestoreEnd clears the cell's task
-		} else {
-			task->DropForDanger();
-		}
-	}
-
-	// Open cells by their nearest builder, within restore.range. While stalling no constructor takes a terraform
-	// job (IsStallSpend): don't make jobs only to drop them
+	// One pass over the cells. A job is kept while a builder is on it and its cell is safe. Otherwise it is dropped:
+	// one no builder took is chosen again right here, by where the builders are now; one whose cell turned unsafe
+	// stops its builders and its cell backs off (OnRestoreEnd). Then open cells by their nearest builder, within
+	// restore.range. While stalling no constructor takes a terraform job (IsStallSpend): don't make jobs only to drop them
 	const bool isStalling = circuit->GetEconomyManager()->IsStalling();
 	const float sqRange = SQUARE(restore.range);
 	int jobCount = 0;
@@ -2741,18 +2738,14 @@ void CBuilderManager::UpdateRestore()
 	for (int c = 0; c < (int)grid.size(); ++c) {
 		SRestore::SCell& cell = grid[c];
 		if (cell.task != nullptr) {
-			++jobCount;
-			continue;
-		}
-		if (!cell.isDug) {
-			if (cell.until < frame) {
-				cell.tries = 0;  // back at the start height and not held: a new dig there gets new tries
-				cell.backoff = 0;
+			if (!cell.task->GetAssignees().empty() && !isUnsafe(c)) {
+				++jobCount;
+				continue;
 			}
-			continue;
+			AbortTask(cell.task);  // OnRestoreEnd clears the cell's task and sets its hold; the grid stays as it is
 		}
-		if (isStalling || (cell.until >= frame) || (cell.tries >= restore.maxTries) || (cell.buildingFrame == frame)
-			|| isUnsafe(c))
+		if (!cell.isDug || isStalling || (cell.until >= frame) || (cell.tries >= restore.maxTries)
+			|| (cell.buildingFrame == frame) || isUnsafe(c))
 		{
 			continue;
 		}
@@ -2788,16 +2781,15 @@ void CBuilderManager::OnRestoreEnd(CBRestoreTask* task, bool done)
 	if (!task->IsAssigned()) {
 		return;  // no builder took it: it's chosen again on the next update
 	}
-	// A builder was on it: wait for the heightmap (10 s) and for the danger to pass
-	int hold = restore.cooldown;
-	if (task->IsDanger()) {  // the cell or the way there stays unsafe: back off, 1x, 2x, 4x, 8x cooldown
-		cell.backoff = (cell.backoff > 0) ? std::min(cell.backoff * 2, restore.cooldown * 8) : restore.cooldown;
-		hold = cell.backoff;
-	} else if (done) {
+	// A builder was on it: wait for the heightmap (10 s). A drop is danger or failure (enemy near, threat on the way,
+	// a builder hit or killed, unreachable): back off, 1x, 2x, 4x, 8x cooldown, until a job finishes
+	if (done) {
 		++cell.tries;  // still dug after <tries> finished jobs: something (a building, the enemy) keeps it so
 		cell.backoff = 0;
+	} else {
+		cell.backoff = (cell.backoff > 0) ? std::min(cell.backoff * 2, restore.cooldown * 8) : restore.cooldown;
 	}
-	cell.until = std::max(cell.until, circuit->GetLastFrame() + hold);
+	cell.until = std::max(cell.until, circuit->GetLastFrame() + (done ? restore.cooldown : cell.backoff));
 }
 
 void CBuilderManager::UpdateAreaUsers()

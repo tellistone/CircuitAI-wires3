@@ -11,6 +11,8 @@
 
 #include "task/builder/BuilderTask.h"
 
+#include <map>
+
 namespace circuit {
 
 class CBRestoreTask: public IBuilderTask {
@@ -22,9 +24,12 @@ public:
 	// A builder within restore.range, no threat to it on the cell, up to restore.builders on it
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;
 	virtual void AssignTo(CCircuitUnit* unit) override;
+	virtual void RemoveAssignee(CCircuitUnit* unit) override;
 
 	virtual void Stop(bool done) override;
 protected:
+	// Dropped: the builders still on it stop, so none keeps restoring next to what made us drop it
+	virtual void Cancel() override;
 	virtual void Execute(CCircuitUnit* unit) override;
 	// The builder's threat-aware path there (asked again while it walks): any threat on it drops the job
 	virtual void ApplyPath(const CQueryPathSingle* query) override;
@@ -34,14 +39,12 @@ public:
 
 	int GetCell() const { return cell; }
 	bool IsAssigned() const { return isAssigned; }
-	bool IsDanger() const { return isDanger; }
-	void DropForDanger();  // the cell or the way there turned unsafe: the cell backs off (OnRestoreEnd)
 
 private:
 	int cell;
 	int tag;  // ZK's terraform command tag, -1 = no terraform made yet
-	bool isAssigned;  // a builder has taken the job: its end puts the cell on cooldown
-	bool isDanger;
+	bool isAssigned;  // a builder has taken the job: its end puts the cell on hold
+	std::map<CCircuitUnit*, int> orderFrames;  // frame each builder got its own restore order
 };
 
 } // namespace circuit

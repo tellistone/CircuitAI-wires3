@@ -22,7 +22,6 @@ CBRestoreTask::CBRestoreTask(ITaskManager* mgr, Priority priority, int cell)
 		, cell(cell)
 		, tag(-1)
 		, isAssigned(false)
-		, isDanger(false)
 {
 }
 
@@ -50,16 +49,29 @@ void CBRestoreTask::AssignTo(CCircuitUnit* unit)
 	isAssigned = true;
 }
 
-void CBRestoreTask::DropForDanger()
+void CBRestoreTask::RemoveAssignee(CCircuitUnit* unit)
 {
-	isDanger = true;
-	manager->AbortTask(this);
+	IBuilderTask::RemoveAssignee(unit);
+	orderFrames.erase(unit);
 }
 
 void CBRestoreTask::Stop(bool done)
 {
 	manager->GetCircuit()->GetBuilderManager()->OnRestoreEnd(this, done);
 	IBuilderTask::Stop(done);
+}
+
+void CBRestoreTask::Cancel()
+{
+	// The idle task only records its units, and the next job may send no orders (a wait while stalling): stop ZK's
+	// restore and its repair here. A builder that left for another job (or retreats) is off the list already
+	CCircuitAI* circuit = manager->GetCircuit();
+	for (CCircuitUnit* unit : units) {
+		TRY_UNIT(circuit, unit,
+			unit->GetUnit()->Stop();
+		)
+	}
+	IBuilderTask::Cancel();
 }
 
 void CBRestoreTask::Execute(CCircuitUnit* unit)
@@ -89,6 +101,7 @@ void CBRestoreTask::Execute(CCircuitUnit* unit)
 		// ZK's fallback repairs the nearest terraunit of the tag until none is left, then the order ends
 		unit->GetUnit()->ExecuteCustomCommand(CMD_RESTORE_GROUND, {position.x, position.y, position.z, static_cast<float>(tag)});
 	)
+	orderFrames.emplace(unit, circuit->GetLastFrame());  // the first order's frame: a re-send doesn't move it
 }
 
 void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
@@ -99,7 +112,7 @@ void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
 	for (size_t i = 1; i < path.size(); ++i) {  // not where the builder stands: it can't help that
 		if (threatMap->GetPlainThreatAt(unit, path[i]) > THREAT_MIN) {
 			// One builder's unsafe way drops the job for all on it: the cell's back-off stops a re-take every update
-			DropForDanger();
+			manager->AbortTask(this);
 			return;
 		}
 	}
@@ -108,15 +121,15 @@ void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
 
 void CBRestoreTask::OnUnitIdle(CCircuitUnit* unit)
 {
-	// Idle at the cell after the order: no terraunit of the tag is left (or none was needed), for every builder on it
-	const float range = unit->GetCircuitDef()->GetBuildDistance()
-			+ CBuilderManager::SRestore::CELL * SQUARE_SIZE * 0.71f + 100.f;  // + half the cell's diagonal + terraunit leash
-	if ((tag >= 0) && (unit->GetPos(manager->GetCircuit()->GetLastFrame()).SqDistance2D(position) < SQUARE(range))) {
-		manager->DoneTask(this);
-	} else if (++buildFails <= 2) {  // the engine sometimes drops orders
-		Execute(unit);
+	// AI orders reach units over the network, so an idle can be from the builder's last move or an order before ours
+	auto it = orderFrames.find(unit);
+	if (it == orderFrames.end()) {
+		return;  // not ordered yet: its travel goes on, and Execute comes when it arrives
+	}
+	if (manager->GetCircuit()->GetLastFrame() < it->second + FRAMES_PER_SEC) {
+		Execute(unit);  // too soon to be ours (or the engine dropped it): send it again, same tag
 	} else {
-		manager->AbortTask(this);
+		manager->DoneTask(this);  // ZK ended the order: no terraunit of the tag is left (or none was needed)
 	}
 }
 

@@ -138,7 +138,8 @@ public:
 	// Restore terraformed ground (economy.json "restore"), every 2 s: a cell whose height is off the map's start by
 	// <depth> or more on <share> of its samples gets a HIGH CBRestoreTask, nearest builder first, while a builder is
 	// within <range> and the cell is safe: no known enemy on it or next to it, no threat on it. A job whose cell turns
-	// unsafe, or whose builder's path there crosses threat, is dropped and its cell backs off (cooldown, doubling).
+	// unsafe, or whose builder's path there crosses threat, is dropped and its builders stop. Any drop of a job a
+	// builder took (also a builder hit or killed) backs its cell off (cooldown, doubling).
 	// Cells with an allied building are skipped (levelled pads); an ally's terraform gives its cell up
 	struct SRestore {
 		static constexpr int CELL = 16;  // cell side in heightmap squares (128 elmos): one terraform segment each
@@ -146,7 +147,7 @@ public:
 			CBRestoreTask* task = nullptr;
 			int until = -1;  // frame the cell is held off until
 			int tries = 0;  // jobs done while it stays dug; reset once it is back and not held
-			int backoff = 0;  // last hold after a danger drop, frames (0 = none since the last finished job)
+			int backoff = 0;  // last hold after a drop, frames (0 = none since the last finished job)
 			int enemyFrame = -1;  // frame a known enemy was seen on or next to it
 			int buildingFrame = -1;  // frame an allied building was seen on it
 			bool isDug = false;
@@ -161,6 +162,7 @@ public:
 		int cellsX = 0;
 		int cellsZ = 0;
 		std::vector<SCell> grid;  // cellsX * cellsZ
+		int dugCount = 0;  // dug cells at the last scan
 		const SAreaData* scanned = nullptr;  // heightmap of the last scan (TerrainData swaps it on change)
 		int nextTag = 1 << 20;  // ZK terraform tags: a float, below 2^24
 		int CellOf(const springai::AIFloat3& pos) const;
