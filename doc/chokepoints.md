@@ -62,8 +62,8 @@ on it.
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
 
-The rankings of enemy-held chokes (E) feed D and the overlay. They are computed when C or D is on, or when the
-overlay is on.
+The rankings of enemy-held chokes and the enemy line's (E) feed D and the overlay. They are computed when C or D is
+on, or when the overlay is on.
 
 ## Tuning keys
 
@@ -124,7 +124,7 @@ enemy types: TANK3(gating 0.60) TKBOT3(promoted to gating 0.35)`.
 | `chokes` | Each choke from end to end of its line: green when defensible, grey when not. Lanes are yellow rectangles. |
 | `pockets` | Each pocket's entrances by mode: green at chokes, white on cluster, grey not decided yet. Blue lines link its points to them. Points are red when open, green gated, grey unreached. Magenta marks the anchors of choke points. |
 | `lines` | The current line orange, the forward line yellow, the enemy line red, the front line white, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
-| `ranks` | Enemy-held chokes: red when defended, white when not. Labels give the defence, the unarmed value behind and the share seen in the last 3 minutes. |
+| `ranks` | Enemy-held chokes and the enemy line's: red when defended, white when undefended, grey when not seen enough to say. Labels say which, and give the defence, the unarmed value behind and the share seen in the last 3 minutes. |
 | `traffic` | The busiest cells of the blended traffic field: bigger and redder the busier. |
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
@@ -267,8 +267,11 @@ rule, and was given up. Picking the spot for the builder at hand gets it built a
   - It lasts until taken, for at most 4 minutes in all (switches included), or until our attack power falls below its
     defence as it is now. A failed one waits `choke.objective.retry` seconds.
 - **Rankings.** A choke is enemy-held when its outer side from us is enemy territory, or known enemy towers cover its
-  line. Its defence is the threat of enemy towers reaching the line or our approach to it, plus enemy mobiles within a
-  main-tower range. Its value is the cost of unarmed enemy units directly behind it.
+  line. Every choke of the enemy line is ranked too, held or not. Its defence is the threat of enemy towers reaching
+  the line or our approach to it, plus enemy mobiles within a main-tower range. Its value is the cost of unarmed
+  enemy units directly behind it. A ranked choke is *undefended* when no armed enemy is in reach and we saw at least
+  a quarter of its line in the last 3 minutes; with less seen, no defence only means we don't know. Objectives (D)
+  still take only enemy-held chokes.
 
 ## Logs
 
