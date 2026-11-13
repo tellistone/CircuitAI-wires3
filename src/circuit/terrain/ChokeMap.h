@@ -183,6 +183,9 @@ public:
 
 	bool IsEnemySide(int region) const { return isEnemySide[region]; }
 	bool IsOurSide(int region) const { return isOurSide[region]; }
+	// Per region: the region itself, and each region the enemy side walks into only through it (a mesa or a dead end
+	// off it). Only the region itself while the enemy side is unknown
+	std::vector<bool> GetShelteredBy(int region) const;
 	bool IsEnemyTerritory(int region) const { return isEnemyTerritory[region]; }
 	bool IsOurTerritory(int region) const { return isOurTerritory[region]; }
 	std::vector<int> GetOurRegions() const;  // our territory, or our side before we hold any

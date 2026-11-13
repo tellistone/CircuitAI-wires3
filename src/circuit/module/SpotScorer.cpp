@@ -111,19 +111,19 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 		}
 		return value;
 	};
-	// choke.spot.forward: a position's towers lean toward the enemy, by how much nearer the enemy walks to a spot than
-	// to the asset, as a share of the radius: 1 at a radius behind, 1 + forward at a radius ahead. The asset on a slope
-	// walks from its nearest walked cell; a spot on a wall cell no enemy walks stays level with the asset, as its
-	// nearest walked cell may be the ground below a cliff
-	const float spotForward = std::max(cfg.spotForward, 0.f);
-	const float assetDist = ((goal.type == GoalType::POSITION) && (spotForward > 0.f) && (radius > 0.f))
-			? traffic.GetEnemyDist(traffic.IndexAt(pos.x, pos.z), 2) : -1.f;
+	// choke.spot.forward: a position's towers lean the way its approach comes from. pull: the targets' weighted offsets
+	// from the asset; a spot's ahead (-1 to 1) is its offset along pull, per radius, times how one-sided the approach
+	// is (|pull| over the targets' weighted distance), so 0 for an approach from all sides
+	const float spotForward = (goal.type == GoalType::POSITION) ? std::max(cfg.spotForward, 0.f) : 0.f;
+	AIFloat3 pull = ZeroVector;
+	float spread = 0.f;
+	for (const STarget& t : targets) {
+		pull += (t.pos - pos) * t.weight;
+		spread += t.pos.distance2D(pos) * t.weight;
+	}
+	const float aheadScale = ((spread > 0.f) && (radius > 0.f)) ? 1.f / (radius * spread) : 0.f;
 	auto leanAt = [&](const AIFloat3& c) {
-		if (assetDist < 0.f) {
-			return 1.f;
-		}
-		const float d = traffic.GetEnemyDist(traffic.IndexAt(c.x, c.z), 0);
-		const float ahead = (d < 0.f) ? 0.f : utils::clamp((assetDist - d) / radius, -1.f, 1.f);
+		const float ahead = ((c.x - pos.x) * pull.x + (c.z - pos.z) * pull.z) * aheadScale;
 		return 1.f + spotForward * 0.5f * (1.f + ahead);
 	};
 	auto factorAt = [&](const AIFloat3& c) {
@@ -149,12 +149,14 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 		return setback * leanAt(c) / (1.f + circuit->GetThreatMap()->GetAllThreatAt(c) / ownThreat)
 				/ (1.f + builderDist / quarterDiag);
 	};
-	// On the goal's side: a choke's inner region, the asset's region, or a wall cell no enemy walks
+	// On the goal's side: the home region (a choke's inner region, the asset's), a region the enemy only walks into
+	// through it (high ground off it), or a wall cell no enemy walks
 	const int homeRegion = isChokeGoal ? goal.innerRegion : chokeMap->GetRegionAt(goal.asset);
+	const std::vector<bool> isHomeSide = chokeMap->GetShelteredBy(homeRegion);
 	auto isCandidate = [&](const AIFloat3& c) {
 		const int region = graph.GetRegionAt(c.x, c.z);
 		return (c.SqDistance2D(pos) <= SQUARE(radius)) && !IsMasked(c)
-				&& ((homeRegion < 0) || (region == homeRegion) || (region == CRegionGraph::NO_REGION))
+				&& ((homeRegion < 0) || (region == CRegionGraph::NO_REGION) || isHomeSide[region])
 				&& ((goal.type == GoalType::HOLD) || !chokeMap->IsOnLane(c));
 	};
 	AIFloat3 assetGround = goal.asset;

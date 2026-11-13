@@ -34,12 +34,31 @@ SCellMask SCellMask::Downsample(int factor, int need) const
 	for (int z = 0; z < out.height; ++z) {
 		for (int x = 0; x < out.width; ++x) {
 			int count = 0;
-			for (int dz = 0; dz < factor; ++dz) {
-				for (int dx = 0; dx < factor; ++dx) {
-					count += cells[(z * factor + dz) * width + x * factor + dx];
-				}
+			for (int k = 0; k < factor * factor; ++k) {
+				count += IsPassable(x * factor + k % factor, z * factor + k / factor);
 			}
 			out.cells[z * out.width + x] = (count >= need) ? 1 : 0;
+		}
+	}
+	// Two passing neighbours that no pair of fine cells crosses between (a thin diagonal wall): the later one closes
+	for (int z = 0; z < out.height; ++z) {
+		for (int x = 0; x < out.width; ++x) {
+			for (int dir = 0; dir < 2; ++dir) {  // east, then south
+				const int nx = x + 1 - dir;
+				const int nz = z + dir;
+				if (!out.IsPassable(x, z) || !out.IsPassable(nx, nz)) {
+					continue;
+				}
+				bool isCrossed = false;
+				for (int k = 0; (k < factor) && !isCrossed; ++k) {
+					const int fx = (dir == 0) ? nx * factor - 1 : x * factor + k;  // the fine cell on this side
+					const int fz = (dir == 0) ? z * factor + k : nz * factor - 1;
+					isCrossed = IsPassable(fx, fz) && IsPassable(fx + 1 - dir, fz + dir);
+				}
+				if (!isCrossed) {
+					out.cells[nz * out.width + nx] = 0;
+				}
+			}
 		}
 	}
 	return out;

@@ -99,6 +99,30 @@ void CChokeMap::UpdateSides()
 	sideCuts.Reset(RegionsWhere(isEnemySide), ChokeCapacity(1.f, 1.f), config.entrances, count);
 }
 
+std::vector<bool> CChokeMap::GetShelteredBy(int region) const
+{
+	std::vector<bool> isSheltered(graph.GetRegions().size(), false);
+	if (region < 0) {
+		return isSheltered;
+	}
+	isSheltered[region] = true;
+	std::vector<int> enemySide = RegionsWhere(isEnemySide);
+	enemySide.erase(std::remove(enemySide.begin(), enemySide.end(), region), enemySide.end());
+	if (enemySide.empty()) {
+		return isSheltered;
+	}
+	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
+	std::vector<bool> isBlocked(chokes.size());
+	for (size_t c = 0; c < chokes.size(); ++c) {
+		isBlocked[c] = (chokes[c].regionA == region) || (chokes[c].regionB == region);
+	}
+	const std::vector<bool> isReached = graph.ReachableFrom(enemySide, isBlocked);
+	for (size_t r = 0; r < isSheltered.size(); ++r) {
+		isSheltered[r] = isSheltered[r] || !isReached[r];
+	}
+	return isSheltered;
+}
+
 /*
  * Territory: regions holding a side's buildings, joining after 20 s and leaving 60 s (ours) or 120 s (the enemy's)
  * after the last one went. Only the enemy's towers and buildings of 150 metal or more count, so a lone mex or solar

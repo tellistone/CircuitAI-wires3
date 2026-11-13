@@ -46,8 +46,8 @@ using namespace springai;
 #define GRAPH_CELL			32  // elmos: the graph's cells, two slope map pixels
 #define TRAFFIC_CELL		64  // elmos: the traffic field's cells
 // Of a cell's 4 finer parts (slope pixels for a graph cell, graph cells for a traffic cell), how many must pass. 3 keeps
-// a steep rim one or two parts thick wherever it falls on the grid; at 2, every such rim that straddles two cells
-// vanished, and a cliff or a spike's side leaked where the engine lets nothing through
+// a steep rim one or two parts thick wherever it falls on the grid (and Downsample closes what a thin diagonal one
+// leaves open); at 2, every such rim that straddles two cells vanished, and a cliff or a spike's side leaked
 #define PASS_NEED			3
 
 // Everything a build job reads and writes. Filled on the main thread, run on the area worker, applied on the main
@@ -400,15 +400,13 @@ void CChokeMap::RunJob(SBuildJob& job)
 
 	/*
 	 * Masks: a 32 elmo cell passes for a class when at least 3 of its 4 slope pixels pass the same slope and depth
-	 * tests CTerrainData applies per sector (PASS_NEED)
+	 * tests CTerrainData applies per sector (PASS_NEED, SCellMask::Downsample)
 	 */
 	if (job.isMasks) {
 		const clock::time_point t0 = clock::now();
 		const int hmW = job.mapWidth;
 		const int smW = job.mapWidth / 2;
 		const int smH = job.mapHeight / 2;
-		const int width = job.mapWidth / 4;
-		const int height = job.mapHeight / 4;
 		std::vector<float> minH(smW * smH), maxH(smW * smH);
 		for (int sz = 0; sz < smH; ++sz) {
 			for (int sx = 0; sx < smW; ++sx) {
@@ -437,16 +435,12 @@ void CChokeMap::RunJob(SBuildJob& job)
 					return (cp.maxSlope >= slope) && (cp.minElevation <= minH[s]) && (cp.maxElevation >= maxH[s])
 							&& (!job.waterIsHarmful || (minH[s] >= 0.f));
 				};
-				SCellMask mask;
-				mask.Resize(width, height, GRAPH_CELL);
-				for (int z = 0; z < height; ++z) {
-					for (int x = 0; x < width; ++x) {
-						const int s = (z * 2) * smW + x * 2;
-						const int count = isPass(s) + isPass(s + 1) + isPass(s + smW) + isPass(s + smW + 1);
-						mask.cells[z * width + x] = (count >= PASS_NEED) ? 1 : 0;
-					}
+				SCellMask pixels;
+				pixels.Resize(smW, smH, GRAPH_CELL / 2);
+				for (int s = 0; s < smW * smH; ++s) {
+					pixels.cells[s] = isPass(s) ? 1 : 0;
 				}
-				it = walkMasks.emplace(cp.mobileId, std::move(mask)).first;
+				it = walkMasks.emplace(cp.mobileId, pixels.Downsample(2, PASS_NEED)).first;
 			}
 			SCellMask mask = it->second;
 			if (cp.jumpRange > 0.f) {

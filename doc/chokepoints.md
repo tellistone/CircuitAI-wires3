@@ -12,7 +12,8 @@ when `choke_overlay` asks for it.
 
 - **Threat graph.** The map is cut into 32-elmo cells that the enemy's *gating* movement types can cross (walkers,
   tanks, and hovers when the map has water). A cell counts as crossable when at least 3 of its 4 slope-map pixels
-  are, so a cliff or a spike's side only one or two pixels thick stays a wall wherever it falls on the grid. The open
+  are, so a cliff or a spike's side only one or two pixels thick stays a wall wherever it falls on the grid. Of two
+  crossable neighbours that no pair of pixels crosses between (a thin diagonal cliff), one closes. The open
   areas become regions, and the narrow gaps between them become chokes. A choke is *defensible* when it is at most `choke.defensible` main-tower ranges wide. Amphibious bots,
   spiders and jumpers are *leak* types: they don't shape the graph, and each cluster keeps a tower of its own against
   them and anything else the cut doesn't stop. Jumpers cross a wall when it is no longer than their jump along a row
@@ -33,7 +34,7 @@ when `choke_overlay` asks for it.
   points, and has no enemy territory right outside it.
 - **Lines.** The *current line* is the cut nearest our territory against enemy territory. The *forward line* is the
   cut nearest our territory against the enemy's side of the map. A region both sides hold counts as ours.
-- **Traffic field.** On 64-elmo cells (crossable when at least 3 of their four 32-elmo cells are), one layer per enemy
+- **Traffic field.** On 64-elmo cells (crossable by the same rule over their four 32-elmo cells), one layer per enemy
   movement type: where its units are likely to walk from the
   enemy's factories (or start boxes) to our clusters and base. The layers are blended by the enemy's army mix, at most
   every 30 s and only when a share moves by more than 0.1.
@@ -81,7 +82,7 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.spot.height` | `0.5` | The most a spot's height adds to its score: 0.5 is up to +50%, 1 up to double. |
 | `choke.spot.height_cap` | `150` | Elmos above the ground it covers at which a spot earns all of `choke.spot.height`. |
 | `choke.spot.enemy` | `1.0` | Weight of the enemy value a tower can shoot from a spot, per the tower's own cost: at 1, enemies worth the tower double the score. 0 turns it off. |
-| `choke.spot.forward` | `0.5` | Lean of a defence point's, the base's and the radar guard's towers toward the enemy: a spot a radius nearer the enemy (walked) than the point scores up to this much more than one a radius behind. 0 turns it off. |
+| `choke.spot.forward` | `0.5` | Lean of a defence point's, the base's and the radar guard's towers the way the enemy comes from: a spot a radius toward the point's approach scores up to this much more than one a radius away from it. 0 turns it off. |
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
 | `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
@@ -172,20 +173,20 @@ started are called off.
   while in radar or sight. As towers skip threatened spots, an armed enemy only counts where the tower outranges
   it, so in practice this finds unarmed targets (mexes, energy, radar, constructors) and outranged ones.
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.
-- *lean* pulls a defence point's, the base's and the radar guard's towers toward the enemy. It is
-  `1 + choke.spot.forward × (1 + ahead) ÷ 2`, where *ahead* is how much nearer the enemy walks to the spot than to
-  the point, as a share of the radius (from −1 to 1). So by default a spot a radius ahead scores 1.5×, one level
-  with the point 1.25× and one a radius behind 1×. Distances are walked from the enemy's start boxes or factories
-  and blended over the enemy's types like the traffic, so on a plateau the top of its ramp is ahead and a cliff edge
-  facing the enemy isn't. A spot on ground no enemy walks counts as level with the point.
+- *lean* pulls a defence point's, the base's and the radar guard's towers the way the enemy comes from. It is
+  `1 + choke.spot.forward × (1 + ahead) ÷ 2`, where *ahead* (from −1 to 1) is how far the spot sits toward the
+  point's approach, as a share of the radius, times how one-sided that approach is. The approach is the targets
+  above, walked from the enemy, so on a plateau the lean points down its ramp, not at a cliff edge facing the
+  enemy. By default a spot a radius toward an approach from one side scores 1.5×, one a radius away from it 1×,
+  and an approach from all sides leans nowhere.
 - Hold spots skip the builder term.
 
 A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the
 nearest safe site, often down the slope of the ledge it was meant for. It's built where it was scored, without the
 usual random shake, and so are radars and their guards.
 
-Spots stay on the goal's side: a choke's inner region, or the defended point's region, or a wall cell no enemy
-walks (a ledge). AA towers aren't scored, they go to the point as before. A slot's lost tower is rebuilt at its old
+Spots stay on the goal's side: a choke's inner region or the defended point's region, any region the enemy only
+walks into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). AA towers aren't scored, they go to the point as before. A slot's lost tower is rebuilt at its old
 spot, because each slot takes its first spot that no tower stands on or is queued at.
 
 A spot freezes once its tower is queued. A tower that is cancelled before it starts unfreezes its spot and masks that

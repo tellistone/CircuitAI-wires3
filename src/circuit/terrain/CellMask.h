@@ -58,7 +58,9 @@ struct SCellMask {
 	}
 	// The passable cell nearest index within reach cells (straight-line distance, ties in cell order), -1 if none
 	int NearestPassable(int index, int reach) const;
-	// A coarser grid, factor x factor cells into one: a coarse cell passes when at least `need` of its cells pass
+	// A coarser grid, factor x factor cells into one: a coarse cell passes when at least `need` of its cells pass, and
+	// of two passing neighbours with no passing pair of fine cells across their border, the later one closes. So the
+	// coarse grid walks only where the fine one does, even past a thin diagonal wall
 	SCellMask Downsample(int factor, int need) const;
 	// What a jump of `span` elmos crosses: every run of wall cells along a row or a column with passable cells at
 	// both ends at most `span` apart passes. Thicker walls, and walls at the map edge, stay
