@@ -149,6 +149,8 @@ public:
 	// Before this frame a non-combat constructor needs an escort (or a defended cluster) to build a mex
 	int GetMexEscortFrame() const { return mexEscortFrame; }
 	IBuilderTask* UpdateEnergyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	// Escalation mode: a NOW job for cdef at its rear site (economy.energy.rear), else near the base; nullptr = no site
+	IBuilderTask* EnqueueEscalationEnergy(CCircuitDef* cdef);
 	// Queue a geo on the nearest free, safe vent when none is queued and income allows
 	IBuilderTask* UpdateGeoTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateFactoryTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
@@ -341,7 +343,6 @@ private:
 	int geoMorphFrame;  // earliest frame for geothermal morph
 	std::set<CCircuitUnit*> geoMorphees;  // finished geothermals that can morph
 	CCircuitUnit* geoMorphing;  // geothermal being morphed (one at a time)
-	int geoMorphStart;
 	struct SRearInfo {
 		float minDist;  // min distance from the base position
 		float maxDist;  // max distance from the base position

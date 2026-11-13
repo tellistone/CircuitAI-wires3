@@ -95,7 +95,6 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, geoMorphIncome(-1.f)
 		, geoMorphFrame(0)
 		, geoMorphing(nullptr)
-		, geoMorphStart(-1)
 		, gridLinkMaxPylons(6)
 		, gridLinkMargin(1.1f)
 {
@@ -627,7 +626,11 @@ int CEconomyManager::UnitFinished(CCircuitUnit* unit)
 int CEconomyManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	// NOTE: If more actions should be done then consider moving into damagedHandler
-	if (unit->IsMorphing() && (unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth() * 0.5f)) {
+	// Commanders only: a geothermal's morph ignores the commander stop (CMD_UPGRADE_STOP) and runs on, and the
+	// commander morph list would later send it a commander upgrade
+	if (unit->IsMorphing() && !IsGeoDef(unit->GetCircuitDef())
+		&& (unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth() * 0.5f))
+	{
 		unit->StopUpgrade();  // StopMorph();
 		AddMorphee(unit);
 	}
@@ -1363,6 +1366,32 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	return nullptr;
 }
 
+IBuilderTask* CEconomyManager::EnqueueEscalationEnergy(CCircuitDef* cdef)
+{
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	auto it = rearInfos.find(cdef);
+	if (it != rearInfos.end()) {
+		const AIFloat3 pos = GetRearPos(cdef, nullptr);
+		if (utils::is_valid(pos)) {
+			// Exactly on the open site, reserved now (as UpdateEnergyTasks does)
+			IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::NOW, cdef, pos,
+														 IBuilderTask::BuildType::ENERGY, 0.f, true);
+			task->SetFacing(it->second.facing);  // before SetBuildPos: the blocker uses it
+			task->SetBuildPos(pos);
+			it->second.nextFrame = 0;
+			return task;
+		}
+	}
+	// No rear site: near the base, the builder searches for an open spot around it
+	AIFloat3 pos = circuit->GetSetupManager()->GetBasePos();
+	CTerrainManager::CorrectPosition(pos);
+	if (!circuit->GetTerrainManager()->CanBeBuiltAtSafe(cdef, pos)) {
+		return nullptr;
+	}
+	return builderMgr->EnqueueTask(IBuilderTask::Priority::NOW, cdef, pos, IBuilderTask::BuildType::ENERGY,
+								   SQUARE_SIZE * 32.0f, true);
+}
+
 AIFloat3 CEconomyManager::GetRearPos(CCircuitDef* cdef, CCircuitUnit* unit)
 {
 	SRearInfo& info = rearInfos.find(cdef)->second;
@@ -1569,14 +1598,21 @@ void CEconomyManager::UpdateGeoMorph()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
 	const int frame = circuit->GetLastFrame();
+	// One at a time, by ZK's own state (unit_morph's "morphing" rules param): a morph short of metal can run far past
+	// its 90 s, and a timeout here used to start a second one while the first still ran. A geo morphed by a player
+	// counts too. The rules param is set when ZK starts the morph, at the latest 10 s (this interval) after the command
+	auto isMorphing = [](CCircuitUnit* unit) {
+		return unit->GetUnit()->GetRulesParamFloat("morphing", 0.f) > 0.f;
+	};
 	if (geoMorphing != nullptr) {
-		if (frame < geoMorphStart + FRAMES_PER_SEC * 300) {
-			return;  // one at a time
+		if (isMorphing(geoMorphing)) {
+			return;
 		}
-		geoMorphing = nullptr;  // morph got stuck or was stopped: let another one try
+		geoMorphing = nullptr;  // stopped or refused: that geo isn't retried, let another one try
 	}
 	if (geoMorphees.empty() || (frame < geoMorphFrame) || (GetAvgMetalIncome() < geoMorphIncome) ||
-		IsMetalEmpty() || IsEnergyStalling())
+		IsMetalEmpty() || IsEnergyStalling() ||
+		std::any_of(geoMorphees.begin(), geoMorphees.end(), isMorphing))
 	{
 		return;
 	}
@@ -1592,7 +1628,6 @@ void CEconomyManager::UpdateGeoMorph()
 		}
 		unit->Morph();
 		geoMorphing = unit;
-		geoMorphStart = frame;
 		geoMorphees.erase(it);
 		break;
 	}

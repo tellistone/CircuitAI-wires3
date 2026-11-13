@@ -245,6 +245,29 @@ public:
 	// Not a grid consumer, or a grid with enough energy is in pylon reach of GetBigGunPos
 	bool IsBigGunPowerable(CCircuitDef* cdef) const;
 	void DiceBigGun();
+
+	// Escalation mode (build_chain.json "escalation"): turns on when the allied team's mobile army is at least
+	// army_ratio[0] x the known enemy one, an enemy unit of escalation.enemy is known, and (terraform: true) a
+	// terraunit has been seen this game. Off as soon as the army falls below army_ratio[1] x; off when the other two
+	// fail, but not within min_on s of turning on. Factories then build constructors only (while
+	// CBuilderManager::IsEscalationBusy), and CBuilderManager::UpdateEscalation sends
+	// builders to superweapons and singus at NOW. Updated every interval s
+	bool IsEscalation() const { return escalation.isOn; }
+	float GetEscalationBuilderShare() const { return escalation.builderShare; }  // most of our build power on it
+	bool IsEscalationComm() const { return escalation.isComm; }  // commanders take escalation jobs
+	bool IsEscalationSuper(const CCircuitDef* cdef) const;
+	CCircuitDef* GetEscalationSingu() const { return escalation.singuDef; }
+	// Weighted pick among escalation.super that are available and can be powered, the affordable ones (cost over the
+	// lower of income and our escalation build power within max_build_sec) first; nullptr = none now
+	CCircuitDef* DiceEscalationSuper(bool isFrontOk = true) const;
+	int RollEscalationDelay() const;  // frames, random within escalation.delay
+	// Where escalation builds superDef: escalation.front ones on our frontline cluster (finished, not enemy-held, the
+	// nearest to the lane), the rest (or with no such cluster) at GetBigGunPos
+	// isFrontOk false: the last front job of escalation went stale, place this one as the rest
+	springai::AIFloat3 GetEscalationSuperPos(CCircuitDef* superDef, bool isFrontOk = true) const;
+	bool IsEscalationFront(const CCircuitDef* cdef) const;
+	int GetEscalationStaleFrames() const { return escalation.staleFrames; }
+	float GetEscalationSinguShare() const { return escalation.singuShare; }
 	// economy.ms_pull_army and quota.attack_threat_floor: metal value of the known enemy army
 	// (EnemyManager::GetMobileCostNoCommFaded, faded as quota.enemy_half_life) per enemy team over our army's (no
 	// constructors or commanders on either side); negative while no enemy army is known. Writes both values out
@@ -437,6 +460,7 @@ private:
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
+	void UpdateEscalation();
 	void LogRaidStats();  // the RAID log, every minute
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
 	struct SRally {
@@ -701,6 +725,30 @@ private:
 		float weight;
 	};
 	std::vector<SSuperInfo> superInfos;
+
+	struct SEscalation {
+		bool isEnabled = false;
+		bool isOn = false;
+		float armyOn = 2.f;  // allied mobile army metal / known enemy mobile army metal to turn on
+		float armyOff = 1.5f;  // ... below which it turns off, min_on or not
+		int minOnFrames = FRAMES_PER_SEC * 60;  // shortest time on
+		int onFrame = -1;  // when it last turned on
+		float maxBuildSec = 420.f;  // affordability of a superweapon
+		float builderShare = 0.7f;
+		float singuShare = 0.34f;  // most of builderShare on singus
+		int staleFrames = FRAMES_PER_SEC * 60;  // an unplaced job with no builders this long is dropped
+		bool isComm = false;
+		bool isNeedTerra = true;  // a terraunit must have been seen
+		std::set<CCircuitDef::Id> enemyDefs;  // enemy big guns, superweapons and singus
+		std::set<CCircuitDef::Id> frontDefs;  // supers built on the frontline cluster
+		std::map<CCircuitDef::Id, std::vector<CCircuitDef::Id>> counters;  // enemy def: the supers it makes useless
+		std::set<CCircuitDef::Id> countered;  // supers left out of the pick: a counter of each is known (every update)
+		std::vector<SSuperInfo> supers;  // what we start; also what we assist
+		CCircuitDef* singuDef = nullptr;
+		int delayMin = FRAMES_PER_SEC;  // random wait before starting our own
+		int delayMax = FRAMES_PER_SEC * 20;
+		int interval = FRAMES_PER_SEC * 2;
+	} escalation;
 
 	std::shared_ptr<CGameTask> defend;
 	std::vector<std::pair<springai::AIFloat3, BuildVector>> buildDefence;

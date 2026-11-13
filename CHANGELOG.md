@@ -557,6 +557,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Only one geothermal morphs at a time** (`economy.energy.geo.morph`). The AI used to give up waiting after 300 s
+  and start the next geo, while a morph short of metal (it can run well past its 90 s) was still going. It now waits
+  as long as ZK reports a geo of ours morphing (the `morphing` rules param), a player-started one included. A
+  damaged morphing geo is no longer sent the commander's upgrade stop and added to the commander morph list.
+
 - **Scout slots are per movement type and only for raiders that scout.** The scout quota (`quota.scout` + mex bonus)
   is worked out per movement type, but a raider with the scout attribute compared it with every scout task, so Ticks
   (`mine` role), Fleas, Darts, Swifts, Blastwings and scouts of other movement types used up its slots. It now counts

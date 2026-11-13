@@ -77,6 +77,9 @@ public:
 	// Any of the economy.json constructor rules asks for one more (buildDef from its factory at pos)
 	bool IsBuilderNeeded(CCircuitDef* buildDef, const springai::AIFloat3& pos) const;
 	CRecruitTask* UpdateFirePower(CCircuitUnit* unit);
+	// While paused for escalation (CBuilderManager::IsEscalationBusy): anti-air the response wants (RoleProbability),
+	// one at a time, queued as RecruitType::AA, which the pause lets through
+	CRecruitTask* UpdateEscalationAA(CCircuitUnit* unit);
 	bool IsHighPriority(CAllyUnit* unit) const;
 
 	CCircuitDef* GetFactoryToBuild(springai::AIFloat3 position = -RgtVector,

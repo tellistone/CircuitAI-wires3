@@ -41,6 +41,8 @@ template<typename T> static inline constexpr T SQUARE(T x) { return x * x; }
 #define MIN_BUILD_SEC	16
 #define MAX_BUILD_SEC	40
 #define MAX_TRAVEL_SEC	60
+// Escalation job kinds: 0 superweapon, 1 singu (CAllyTeam claims, CBuilderManager projects)
+#define ESC_KINDS	2
 #define ASSIGN_TIMEOUT	(FRAMES_PER_SEC * 300)
 
 #define THREAT_MIN		1.0f
