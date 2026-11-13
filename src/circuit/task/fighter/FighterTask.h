@@ -84,8 +84,8 @@ protected:
 	// Firing spot for a unit: within its spot range (GetSpotRange) of the target, trading walking distance against
 	// threat and against spots other units are heading to.
 	// NONE: no usable range (old orders); SPOT: a safe spot; HOLD: every spot dangerous but the unit's own
-	// spot is safe, or no spot has a line of fire (GetSightLifts); RISKY: nowhere safe, the unit's spot neither: the
-	// least dangerous spot
+	// spot is safe, or no spot has a line of fire and a direct walk there (GetSightLifts); RISKY: nowhere safe, the
+	// unit's spot neither: the least dangerous spot
 	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
 	// Where a unit of the group is heading (its last firing spot if still usable, else where it stands) and its
 	// health-scaled power (GetUnitStrengths): it backs up spots near there
@@ -106,7 +106,8 @@ protected:
 	// long as it keeps this target
 	bool IsAllHolding() const;
 	// Lifts (elmos above the ground) for a line of fire to this enemy: from our units' aim, at the enemy.
-	// false (default): no line of fire needed. With lifts, firing spots must have one (FindFireSpot, IsAllHolding)
+	// false (default): no line of fire needed. With lifts, firing spots must have one, and a direct walk there
+	// (FindFireSpot, IsAllHolding)
 	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const { return false; }
 	// A line of fire from 'from' to the enemy at 'to' (GetSightLifts; true if it needs none). isExact: the ground
 	// heights at both ends, else their sectors' highest points as target routes (CTerrainManager::IsLineClear)

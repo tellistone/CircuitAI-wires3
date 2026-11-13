@@ -601,8 +601,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     `cell_aim_height` or half the leader's height, whichever is higher, at half the target's height (8 to 32
     elmos). A target that fails is routed to, and the route ends where the group can see it.
   - **Firing spots** need one judged from the ground at the spot and under the target, a stricter test, so a unit
-    at its spot never reads its target as out of sight. Blind spots are dropped, and a unit with no spot in sight
-    holds where it stands instead of getting a direct Attack order. When every unit holds, the hold-off ban passes
+    at its spot never reads its target as out of sight. They also need a direct walk: every path square on the
+    straight line there is one the unit can move on, so a spot up on the plateau isn't reached the long way round
+    on the engine's path. Other spots are dropped, and a unit with no spot left holds where it stands instead of
+    getting a direct Attack order. When every unit holds, the hold-off ban passes
     on the target for 6, 12 or 24 s; a unit within range but out of sight now counts as holding.
   - **An empty target route** (nothing reachable within the threat cap, after the firing cells' retry as discs)
     rejects its targets for 6 s, as an unsafe approach does. The next decision used to route to them again, with

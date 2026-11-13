@@ -430,14 +430,18 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		return wThreat * (worst / strength + CROWD_WEIGHT * c.crowd) + c.dist;
 	};
 	// With lifts (GetSightLifts), only spots with a line of fire to the target, judged from the ground there: stricter
-	// than the pick's (sectors' highest points), so a unit at its spot never reads the target as out of sight
+	// than the pick's (sectors' highest points), so a unit at its spot never reads the target as out of sight. And
+	// only spots it walks to directly: one up on a plateau seen from below would be reached the long way round, on
+	// the engine's path, not a route of ours. Blind or round the long way, the target needs a route (FindTarget)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	float aimLift, targetLift;
 	const bool isSight = GetSightLifts(target, aimLift, targetLift);
 	std::vector<SCandidate> cands;
 	auto add = [&](const AIFloat3& p) {
-		if (isSight && !terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)) {
-			return;  // blind: the engine would walk it round to a spot it can fire from, on no route of ours
+		if (isSight && (!terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)
+			|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p)))
+		{
+			return;
 		}
 		int crowd = 0;
 		for (size_t i = 0; i < claims.size(); ++i) {
@@ -511,8 +515,8 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		outPos = risky->pos;
 		return FireSpot::RISKY;
 	}
-	// No spot in sight of the target (or none we can stand on): hold rather than a direct Attack, which the engine
-	// would turn into a walk round to wherever it can fire from
+	// No spot in sight of the target that we walk to directly (or none we can stand on): hold rather than a direct
+	// Attack, which the engine would turn into a walk round to wherever it can fire from
 	if (isSight) {
 		outPos = uPos;
 		return FireSpot::HOLD;

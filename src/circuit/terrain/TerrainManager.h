@@ -150,6 +150,9 @@ public:
 	bool IsLineClear(const springai::AIFloat3& from, const springai::AIFloat3& to, float aimLift, float targetLift,
 			bool isExact) const;
 	bool CanMoveToPos(STerrainMapArea* area, const springai::AIFloat3& destination);
+	// Every sector on the straight line from 'from' to 'to' ('from''s own excluded) is one the area can move on
+	// (CanMoveToPos): a unit walks there directly, not the long way round a cliff or a lake
+	bool IsWalkClear(STerrainMapArea* area, const springai::AIFloat3& from, const springai::AIFloat3& to);
 	springai::AIFloat3 GetBuildPosition(CCircuitDef* cdef, const springai::AIFloat3& position);
 	springai::AIFloat3 GetMovePosition(STerrainMapArea* sourceArea, const springai::AIFloat3& position);
 	springai::AIFloat3 ShiftPos(CCircuitDef* cdef, const springai::AIFloat3& position, float range, bool isOrtho = false);
