@@ -58,7 +58,7 @@ on it.
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
 | `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored by covered traffic, height, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
 | `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
-| `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army near it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
+| `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army in the region outside it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
 
@@ -249,14 +249,17 @@ rule, and was given up. Picking the spot for the builder at hand gets it built a
 
 - **Frontline.** The current line's chokes, ranked by our income behind each one × its traffic. Each of our points
   behind the line counts at its nearest line choke.
-- **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army seen near it in
-  the last 3 minutes. The first idle attack group to ask while that choke is short, and whose power makes up the
-  shortfall, claims it, walks to its scored hold spot, and keeps the claim while it keeps asking. Once claimed, the
-  slot keeps its choke until 30 s after it was last short, so an enemy army that steps out of range or dies doesn't
-  walk the group away at once, unless another short choke ranks 1.3× higher. Then it moves to the top-ranked short
-  choke, or ends if none is. A group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A
-  slot with nowhere to stand (no traffic near the choke) stays free and is tried again after 30 s. A group that runs
-  from a fight gives up its claim for 30 s.
+- **Enemy army at a choke.** An enemy mobile seen in the last 3 minutes counts at the line chokes that open into the
+  region it stands in: at the one nearest it in full, and at the others by half. One in a region no line choke opens
+  into, ours or further out, doesn't count.
+- **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army at it. The first
+  idle attack group to ask while that choke is short, and whose power makes up the shortfall, claims it, walks to its
+  scored hold spot, and keeps the claim while it keeps asking. Once claimed, the slot keeps its choke until 30 s
+  after it was last short, so an enemy army that steps out of its region or dies doesn't walk the group away at once,
+  unless another short choke ranks 1.3× higher. Then it moves to the top-ranked short choke, or ends if none is. A
+  group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A slot with nowhere to stand (no
+  traffic near the choke) stays free and is tried again after 30 s. A group that runs from a fight gives up its claim
+  for 30 s.
 - **Objectives.** When the forward line is shorter than the current line, or as long with more income behind it,
   its enemy-held chokes become an objective. That needs the gain to be `choke.objective.gain` × the cost, and our
   attack power to be `choke.objective.power` × their defence. Their defence is what we saw there, over the share of

@@ -35,6 +35,7 @@ using namespace springai;
 #define BUILDER_HALF	(FRAMES_PER_SEC * 60)  // an unseen enemy constructor's value halves this often
 #define INCOME_SEC		180.f  // an objective's gain: this much of the income it brings behind the line
 #define WANT_MARGIN		1.2f  // a choke wants this much more than the enemy army near it
+#define WANT_OTHER		0.5f  // an enemy threatens its region's other line chokes by this share (its nearest in full)
 #define SWITCH_SHARE	1.3f  // a slot or objective moves only to one this much better
 #define SAMPLE_COUNT	8  // LOS samples on a choke's line
 #define SEEN_MIN		0.25f  // a choke's defence is trusted for at least this share of its line seen lately
@@ -197,7 +198,8 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 
 /*
  * C: each of our points behind the current line counts at its nearest line choke. Our towers count when their range
- * reaches the line, enemy mobiles within choke.near ranges of its centre
+ * reaches the line. An enemy mobile counts at the line chokes out into its region: the nearest in full, the others
+ * by half (none when no line choke opens into its region)
  */
 void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 {
@@ -236,19 +238,46 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 			towers.push_back({kv.second->GetPos(frame), false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f});
 		}
 	}
-	const float nearRange = chokeMap->GetConfig().nearRanges * chokeMap->GetMainRange();
+	// Enemy mobiles in the region outside a line choke: each threatens the nearest of its region's line chokes in full,
+	// the rest by half
+	std::vector<int> outer(line.size(), -1);
+	for (size_t i = 0; i < line.size(); ++i) {
+		const CRegionGraph::SChoke& choke = chokes[line[i]];
+		outer[i] = behind[choke.regionA] ? (behind[choke.regionB] ? -1 : choke.regionB)
+				: (behind[choke.regionB] ? choke.regionA : -1);
+	}
+	std::vector<float> wanted(line.size(), 0.f), wantedCost(line.size(), 0.f);
+	for (const SArmed& e : armed) {
+		const int region = e.isMobile ? chokeMap->GetRegionAt(e.pos) : -1;
+		if (region < 0) {
+			continue;
+		}
+		std::vector<size_t> touching;  // line chokes out into its region
+		size_t nearest = 0;
+		float bestDist = std::numeric_limits<float>::max();
+		for (size_t i = 0; i < line.size(); ++i) {
+			if (outer[i] != region) {
+				continue;
+			}
+			touching.push_back(i);
+			const float dist = graph.GetLineDist(chokes[line[i]], e.pos.x, e.pos.z);
+			if (dist < bestDist) {
+				bestDist = dist;
+				nearest = i;
+			}
+		}
+		for (size_t i : touching) {
+			const float share = WANT_MARGIN * ((i == nearest) ? 1.f : WANT_OTHER);
+			wanted[i] += e.threat * share;
+			wantedCost[i] += e.cost * share;
+		}
+	}
 	for (size_t i = 0; i < line.size(); ++i) {
 		const CRegionGraph::SChoke& choke = chokes[line[i]];
 		const AIFloat3 centre = chokeMap->GetCellPos(choke.centre);
 		const int inner = behind[choke.regionA] ? choke.regionA : behind[choke.regionB] ? choke.regionB : -1;
 		SFront f = {choke.id, (inner >= 0) ? graph.GetRegions()[inner].id : -1,
-				income[i] * chokeMap->GetChokeTraffic(line[i]), 0.f, 0.f, 0.f};
-		for (const SArmed& e : armed) {
-			if (e.isMobile && (centre.SqDistance2D(e.pos) <= SQUARE(nearRange))) {
-				f.wanted += e.threat * WANT_MARGIN;
-				f.wantedCost += e.cost * WANT_MARGIN;
-			}
-		}
+				income[i] * chokeMap->GetChokeTraffic(line[i]), wanted[i], wantedCost[i], 0.f};
 		for (const SArmed& t : towers) {
 			if ((centre.distance2D(t.pos) <= t.range + choke.width * 0.5f + 64.f)
 				&& (graph.GetLineDist(choke, t.pos.x, t.pos.z) <= t.range))
