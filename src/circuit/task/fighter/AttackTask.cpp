@@ -1400,11 +1400,16 @@ bool CAttackTask::FindTarget()
 		const bool isPrev = (enemy->GetId() == prevTargetId);
 		float contactSqDist;
 		const bool isContact = IsInContact(enemy, isPrev, frame, &contactSqDist);
-		// In contact: already fighting us. It needs no route, so a rejected route doesn't matter. In the fight (in
-		// contact while engaged), a runner still within reach is shot at as it goes, and a kiter's step back doesn't
-		// flip the pick; a roaming group doesn't chase a raider or scout that pokes it and runs.
+		// In contact: already fighting us. It needs no route, so a rejected route doesn't matter, and another group's
+		// claim doesn't take it: a claim stops us heading for an enemy, not shooting one we reach (the current target
+		// stays in contact out to TARGET_KEEP x, so an enemy at the edge isn't picked and dropped by turns). Else not
+		// one another raid or attack group already targets from clearly nearer (IsClaimedByNearer); a raid's claim
+		// doesn't take our current target: a passing raid would make us re-route away and back.
+		// In the fight (in contact while engaged), a runner still within reach is shot at as it goes, and a kiter's step
+		// back doesn't flip the pick; a roaming group doesn't chase a raider or scout that pokes it and runs.
 		// IsRunningAway: runs away faster than we chase (or nearly as fast, and outranges us)
-		if ((!isContact && IsRejected(enemy->GetId(), -1, -1, frame))
+		if ((!isContact && (IsRejected(enemy->GetId(), -1, -1, frame)
+				|| IsClaimedByNearer(enemy, pos, 0.f, /*isRaidClaim*/ !isPrev, /*isAttackClaim*/ true, frame)))
 			|| (!(isContact && isEngaged) && IsRunningAway(enemy, pos, sqMaxSpeed, sqOutrangeSpeed, groundRange)))
 		{
 			continue;

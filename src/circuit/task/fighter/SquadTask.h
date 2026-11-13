@@ -41,6 +41,12 @@ public:
 
 	CCircuitUnit* GetLeader() const { return leader; }
 	const springai::AIFloat3& GetLeaderPos(int frame) const;
+	// Target claims: a raid group (isRaidClaim) or an attack group (isAttackClaim) other than us targets this enemy and
+	// its leader is clearly nearer to it than pos (under CLAIM_NEARER x our distance). Near-equal groups may both keep
+	// it, so two groups don't swap one target back and forth as they move. Never within sqFreeDist of pos: a claim
+	// stops us heading for an enemy, not shooting one we already reach
+	bool IsClaimedByNearer(const CEnemyInfo* enemy, const springai::AIFloat3& pos, float sqFreeDist,
+			bool isRaidClaim, bool isAttackClaim, int frame) const;
 
 	/*
 	 * Rallies (quota.attack_merge.rally, quota.raid_rally: CMilitaryManager::UpdateRally)
