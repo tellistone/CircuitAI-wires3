@@ -10,6 +10,7 @@
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "module/FactoryManager.h"
+#include "module/Frontline.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
@@ -962,6 +963,7 @@ bool CAttackTask::Flee(int frame)
 	state = State::ROAM;
 	isHolding = false;
 	ClearScaleAnchor();  // running: judge danger at full value, also on the way home
+	GetMilitaryMgr()->GetFrontline()->ReleaseHold(this, FRAMES_PER_SEC * 30);  // quota.hold_choke: driven off it
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {

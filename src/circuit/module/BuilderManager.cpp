@@ -8,6 +8,7 @@
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
+#include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -1580,6 +1581,14 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 
 	if (task == nullptr) {
 		task = farTask;
+	}
+	// choke.radar.enable: a builder between jobs builds a radar nearby first, unless a NOW job waits for it
+	if ((unit->GetTask() == idleTask) && ((task == nullptr) || (task->GetPriority() != IBuilderTask::Priority::NOW))) {
+		IBuilderTask* radar = circuit->GetMilitaryManager()->GetSensorPlanner()->MakeRadarTask(unit,
+				[this, commState](const AIFloat3& spot) { return IsCommJobSafe(commState, spot); });
+		if (radar != nullptr) {
+			return radar;
+		}
 	}
 	if (task == nullptr) {
 		if ((unit->GetTask() != idleTask) || isNotReady) {

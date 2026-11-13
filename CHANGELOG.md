@@ -7,6 +7,36 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
+  `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with
+  all of them off the AI plays as before.
+  - Each ally team learns the map's shape, shared by allied AIs and built on the area worker. It finds the chokes
+    between regions the enemy's walkers can cross, the pockets of clusters behind them, and the current and forward
+    lines. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
+  - Choke defence (A): each cluster of a qualified pocket keeps its AA and its first tower, and the rest goes to the
+    pocket's entrances, from a budget of what its held clusters would spend anyway. Modes switch at most every 3
+    minutes. Narrow chokes keep a lane free of buildings.
+  - Scored spots (F): towers, base towers and hold spots go to the best spot by covered traffic, height, threat and
+    builder distance. Spots freeze once queued. The porc sweep visits points by uncovered traffic × income.
+    `choke.spot.radius` sets how far from a defence point its towers may stand, and `choke.spot.height` and
+    `height_cap` how much high ground counts. A defence point's targets are its approach by walking distance,
+    weighted by traffic, so towers cover the ramp up to a plateau rather than the ground below its cliffs. Towers
+    skip spots under enemy threat and are built exactly where scored, so they stay on their ledge.
+    `choke.spot.enemy` adds the value of known enemies a tower could shoot from a spot. `choke.spot.forward` leans
+    a defence point's, the base's and the radar guard's towers the way their approach comes from. Spots may stand on
+    high ground or a dead end the enemy only reaches through the goal's own region.
+  - Radar planner (B): a builder between jobs builds a radar within 600 elmos first, when its AI's budget holds
+    one, at the spot that adds the most weighted coverage (enemy ground counts `choke.radar.enemy` extra), if that
+    is at least `choke.radar.min_gain` of it. Standing in coverage, at least `choke.radar.inside` of the radar's
+    view must be new. So radar follows the builders as they expand. The first goes up once the first factory
+    stands. Once a radar stands, a `choke.radar.guard` tower (turretmissile) goes at the best spot within
+    `choke.radar.guard_radius` (300 elmos), unless a tower already reaches it.
+  - Holding the line (C), forward objectives (D) and enemy-held choke rankings (E).
+  - Expansion bonus for clusters behind a defended cut.
+  - `choke_overlay` chat command: draws chokes, pockets, lines, rankings, traffic, spots, radar and regions with map
+    figures, and announces each threat-graph rebuild with the enemy types behind it. In games with no human
+    opponents it tunes keys live and saves map fixtures.
+
 - **Raid view of the threat map** (per-unit `raid_thr_mod` and `quota.raid_thr_role`, 0.1..4, default 1 = off;
   shipped `{"skirmish": 0.25, "assault": 0.34}`). Raiders swarm and dodge slow skirmisher and assault shots, but raid
   and scout tasks judged those units at full threat, as if they were standing still. Raid and scout tasks now read

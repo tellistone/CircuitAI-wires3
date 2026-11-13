@@ -175,6 +175,7 @@ public:
 	const EnemyInfos& GetEnemyInfos() const { return enemyInfos; }
 
 	CAllyTeam* GetAllyTeam() const { return allyTeam; }
+	CChokeMap* GetChokeMap() const { return allyTeam->GetChokeMap().get(); }  // the ally team's
 
 	void DisableControl(CCircuitUnit* unit);
 	void DisableControl(const std::string data);
