@@ -20,13 +20,15 @@ public:
 				  const springai::AIFloat3& minPos, const springai::AIFloat3& maxPos);
 	virtual ~CBRestoreTask();
 
-	// A builder within restore.range whose straight line to the cell has no threat, up to restore.builders on it
+	// A builder within restore.range, no threat to it on the cell, up to restore.builders on it
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;
 	virtual void AssignTo(CCircuitUnit* unit) override;
 
 	virtual void Stop(bool done) override;
 protected:
 	virtual void Execute(CCircuitUnit* unit) override;
+	// The builder's threat-aware path there (asked again while it walks): any threat on it drops the job
+	virtual void ApplyPath(const CQueryPathSingle* query) override;
 
 public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;

@@ -115,7 +115,7 @@ protected:
 	void Update(CCircuitUnit* unit);
 	virtual bool Reevaluate(CCircuitUnit* unit);
 	void UpdatePath(CCircuitUnit* unit);
-	void ApplyPath(const CQueryPathSingle* query);
+	virtual void ApplyPath(const CQueryPathSingle* query);
 	void HideAssignee(CCircuitUnit* unit);
 	void ShowAssignee(CCircuitUnit* unit);
 	virtual CAllyUnit* FindSameAlly(CCircuitUnit* builder, const std::vector<springai::Unit*>& friendlies);

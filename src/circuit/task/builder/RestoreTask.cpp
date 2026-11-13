@@ -8,6 +8,7 @@
 #include "task/TaskManager.h"
 #include "module/BuilderManager.h"
 #include "map/ThreatMap.h"
+#include "terrain/path/QueryPathSingle.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
@@ -36,21 +37,11 @@ bool CBRestoreTask::CanAssignTo(CCircuitUnit* unit) const
 	if ((units.find(unit) == units.end()) && (units.size() >= (unsigned)restore.maxBuilders)) {
 		return false;
 	}
-	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
-	const float dist = pos.distance2D(position);
-	if (dist > restore.range) {
+	if (unit->GetPos(circuit->GetLastFrame()).SqDistance2D(position) > SQUARE(restore.range)) {
 		return false;
 	}
-	// The spot and the straight way there: no threat to this builder (the builder's path avoids threat on its own)
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	const float step = threatMap->GetSquareSize();
-	const AIFloat3 dir = (dist > 1.f) ? (position - pos) / dist : ZeroVector;
-	for (float d = dist; d > 0.f; d -= step) {
-		if (threatMap->GetPlainThreatAt(unit, pos + dir * d) > THREAT_MIN) {
-			return false;
-		}
-	}
-	return true;
+	// The spot here; the way there is checked on the builder's path (ApplyPath)
+	return circuit->GetThreatMap()->GetPlainThreatAt(unit, position) <= THREAT_MIN;
 }
 
 void CBRestoreTask::AssignTo(CCircuitUnit* unit)
@@ -89,6 +80,21 @@ void CBRestoreTask::Execute(CCircuitUnit* unit)
 		// ZK's fallback repairs the nearest terraunit of the tag until none is left, then the order ends
 		unit->GetUnit()->ExecuteCustomCommand(CMD_RESTORE_GROUND, {position.x, position.y, position.z, static_cast<float>(tag)});
 	)
+}
+
+void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
+{
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	CCircuitUnit* unit = query->GetUnit();
+	const F3Vec& path = query->GetPathInfo()->posPath;
+	for (size_t i = 1; i < path.size(); ++i) {  // not where the builder stands: it can't help that
+		if (threatMap->GetPlainThreatAt(unit, path[i]) > THREAT_MIN) {
+			// One builder's unsafe way drops the job for all on it: the cooldown stops a re-take on every update
+			manager->AbortTask(this);
+			return;
+		}
+	}
+	IBuilderTask::ApplyPath(query);
 }
 
 void CBRestoreTask::OnUnitIdle(CCircuitUnit* unit)
