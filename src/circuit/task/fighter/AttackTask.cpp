@@ -945,6 +945,9 @@ bool CAttackTask::UpdateEscape(int frame)
 	}
 	// One forced re-plan per normal decision interval (~2 s): if the new route is still unsafe ahead
 	// (route caps are looser than per-spot allowances), wait for the next normal decision
+	if (!utils::is_valid(corneredPos)) {  // not walking a cornered route (it runs through threat)
+		HoldForReplan(frame);  // the line itself just ahead: stop rather than walk on until the new route
+	}
 	if (isPathAheadUnsafe && !isReplanForced && (frame >= lastTouched + FRAMES_PER_SEC)) {
 		lastTouched = frame;
 		isReplanForced = true;
@@ -2024,7 +2027,8 @@ bool CAttackTask::ReuseRoute(ICoreUnit::Id targetId, const AIFloat3& goal, int f
 		|| (frame >= lastRoute.frame + lastRoute.reuseFrames)
 		|| (!lastRoute.IsCell() && (goal.SqDistance2D(lastRoute.goal) >= sqMoved))
 		|| isPathAheadUnsafe || !endangered.empty()
-		|| !leader->GetTravelAct()->IsActive() || (leader->GetTravelAct()->GetPath() != lastRoute.path))
+		|| !leader->GetTravelAct()->IsActive() || (leader->GetTravelAct()->GetPath() != lastRoute.path)
+		|| IsRouteStale(lastRoute.path, frame))  // a turret seen since: plan anew (quota.danger_margin)
 	{
 		return false;
 	}

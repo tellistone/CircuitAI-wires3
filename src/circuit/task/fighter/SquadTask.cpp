@@ -528,6 +528,7 @@ NSMicroPather::TestFunc ISquadTask::MakeHitTest(CTerrainManager* terrainMgr, flo
 bool ISquadTask::IsInDanger(int frame, float fleeShare)
 {
 	isPathAheadUnsafe = false;
+	isPathAheadDanger = false;
 	endangered.clear();
 	const float safeThreat = GetEscapeSafeThreat();
 	float dangerPower = 0.f;
@@ -550,17 +551,97 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 	if (path == nullptr) {
 		return false;
 	}
-	// The stretch of path the group covers in the next ~2s
+	if (leader->GetUnit()->IsCloaked()) {
+		return false;  // a cloaked leader walks through unseen
+	}
+	// The stretch of path the group covers in the next ~4 s (at least 400 elmos): a turret seen after the route was
+	// planned is caught before the group walks into its range, not as it gets there. Unsafe (re-plan): at or above the
+	// margin's share of the line (quota.danger_margin, as the routes avoid); danger (hold until the new route): the line
 	const AIFloat3& pos = leader->GetPos(frame);
-	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
+	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 4.f, 400.f);
 	const float sqLookAhead = SQUARE(lookAhead);
-	for (const AIFloat3& p : path->posPath) {
-		if ((p.SqDistance2D(pos) < sqLookAhead) && IsDangerAt(leader, p, safeThreat)) {
-			isPathAheadUnsafe = !leader->GetUnit()->IsCloaked();  // a cloaked leader walks through unseen
+	// A route that already crossed the margin when it arrived was planned knowing it (no other way, or the cost was
+	// worth it): only margin ground that appeared since (a turret seen on the way) asks for a re-plan, else a group
+	// whose only way runs through would re-plan at every decision
+	if (path.get() != seenPath) {
+		seenPath = path.get();
+		isSeenPathMargin = IsPathRestUnsafe(path, frame);
+	}
+	const float marginThreat = safeThreat * manager->GetCircuit()->GetMilitaryManager()->GetDangerMargin();
+	// Ahead only, from the point nearest the leader on: ground just walked out of doesn't stop the group next to it
+	const F3Vec& pts = path->posPath;
+	size_t from = 0;
+	float minSqDist = std::numeric_limits<float>::max();
+	for (size_t i = 0; i < pts.size(); ++i) {
+		const float sqDist = pts[i].SqDistance2D(pos);
+		if (sqDist < minSqDist) {
+			minSqDist = sqDist;
+			from = i;
+		}
+	}
+	for (size_t i = from; i < pts.size(); ++i) {
+		const AIFloat3& p = pts[i];
+		if (p.SqDistance2D(pos) >= sqLookAhead) {
+			break;  // the rest lies farther along
+		}
+		if (IsDangerAt(leader, p, safeThreat)) {
+			isPathAheadUnsafe = isPathAheadDanger = true;
 			break;
+		}
+		isPathAheadUnsafe = isPathAheadUnsafe || (!isSeenPathMargin && IsDangerAt(leader, p, marginThreat));
+	}
+	return false;
+}
+
+bool ISquadTask::IsRouteStale(const std::shared_ptr<PathInfo>& path, int frame) const
+{
+	return (path != nullptr) && (path.get() == seenPath) && !isSeenPathMargin && IsPathRestUnsafe(path, frame);
+}
+
+bool ISquadTask::IsPathRestUnsafe(const std::shared_ptr<PathInfo>& path, int frame) const
+{
+	if ((path == nullptr) || path->posPath.empty() || leader->GetUnit()->IsCloaked()) {
+		return false;
+	}
+	const F3Vec& pts = path->posPath;
+	const AIFloat3& pos = leader->GetPos(frame);
+	size_t from = 0;
+	float minSqDist = std::numeric_limits<float>::max();
+	for (size_t i = 0; i < pts.size(); ++i) {
+		const float sqDist = pts[i].SqDistance2D(pos);
+		if (sqDist < minSqDist) {
+			minSqDist = sqDist;
+			from = i;
+		}
+	}
+	const float marginThreat = GetEscapeSafeThreat() * manager->GetCircuit()->GetMilitaryManager()->GetDangerMargin();
+	for (size_t i = from; i < pts.size(); ++i) {
+		if (IsDangerAt(leader, pts[i], marginThreat)) {
+			return true;
 		}
 	}
 	return false;
+}
+
+void ISquadTask::HoldForReplan(int frame)
+{
+	// Once per route: a new route that still runs through (no other way, or attack's looser cap) is walked
+	ITravelAction* travelAct = leader->GetTravelAct();
+	const std::shared_ptr<PathInfo>& path = travelAct->GetPath();
+	if (!isPathAheadDanger || !travelAct->IsActive() || (path == nullptr) || (path.get() == heldPath)) {
+		return;
+	}
+	heldPath = path.get();
+	CCircuitAI* circuit = manager->GetCircuit();
+	for (CCircuitUnit* unit : units) {
+		if ((unit->Blocker() != nullptr) || IsScooting(unit)) {
+			continue;
+		}
+		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
+		TRY_UNIT(circuit, unit,
+			unit->CmdMoveTo(unit->GetPos(frame), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		)
+	}
 }
 
 bool ISquadTask::IsInFleeGrace(int frame, bool isDanger, bool isFightOn, int graceFrames)

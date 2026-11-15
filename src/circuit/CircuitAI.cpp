@@ -1107,8 +1107,12 @@ int CCircuitAI::EnemyEnterLOS(CEnemyInfo* enemy)
 	if (!isSuddenThreat) {
 		return 0;  // signaling: OK
 	}
-	// Force unit's reaction
-	auto friendlies = callback->GetFriendlyUnitIdsIn(enemy->GetPos(), 500.0f);
+	// Force unit's reaction: ours within 500 elmos, or within the enemy's weapon range + 400 (about 4 s of a walking
+	// group: IsInDanger's look-ahead) if longer, so a turret seen at the edge of LOS re-plans the groups heading into it
+	// at the next threat-map update instead of at their next decision
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	const float reactRadius = std::max(500.f, (edef != nullptr) ? edef->GetMaxRange() + 400.f : 0.f);
+	auto friendlies = callback->GetFriendlyUnitIdsIn(enemy->GetPos(), reactRadius);
 	if (friendlies.empty()) {
 		return 0;  // signaling: OK
 	}
