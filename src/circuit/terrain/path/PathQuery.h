@@ -53,6 +53,11 @@ public:
 	// (SetThreatFloor in either order). maxWeight caps (1 + threat / allowance) (0 or less = no cap)
 	void SetThreatAllowance(std::vector<float>&& allowByDist, float step, const springai::AIFloat3& basePos,
 			int pathMapXSize, int squareSize, float maxWeight = 0.f);
+	// Route margin (quota.danger_margin): a cell whose threat is at or above margin x the allowance there costs mod
+	// times as much, so a route keeps clear of ground just under the escape's line where it can (it may still cross
+	// it: the cap alone blocks). Same allowance sampling as SetThreatAllowance; call in any order with the others
+	void SetThreatMargin(std::vector<float> allowByDist, float step, const springai::AIFloat3& basePos,
+			int pathMapXSize, int squareSize, float margin, float mod);
 	float GetThreatFloor() const { return threatFloor; }
 	const FloatVec& GetHeightMap() const { return heightMap; }
 

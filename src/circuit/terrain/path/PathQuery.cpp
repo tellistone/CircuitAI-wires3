@@ -63,6 +63,33 @@ void IPathQuery::SetThreatAllowance(std::vector<float>&& allowByDist, float step
 	};
 }
 
+void IPathQuery::SetThreatMargin(std::vector<float> allowByDist, float step, const springai::AIFloat3& basePos,
+		int pathMapXSize, int squareSize, float margin, float mod)
+{
+	if (allowByDist.empty() || !(step > 0.f) || (pathMapXSize <= 0) || !(margin > 0.f) || !(mod > 1.f)) {
+		return;
+	}
+	// Stored as the threat at which a cell turns hot: margin x allowance
+	for (float& a : allowByDist) {
+		a *= margin;
+	}
+	auto hotAt = std::make_shared<const std::vector<float>>(std::move(allowByDist));
+	const float* arr = threatArray;
+	const float invStep = 1.f / step;
+	const float bx = basePos.x;
+	const float bz = basePos.z;
+	const float sq = static_cast<float>(squareSize);
+	const int last = static_cast<int>(hotAt->size()) - 1;
+	threatFun = [fun = std::move(threatFun), arr, hotAt, invStep, bx, bz, sq, pathMapXSize, last, mod](int index) {
+		const int z = index / pathMapXSize;
+		const float dx = ((index - z * pathMapXSize) + 0.5f) * sq - bx;
+		const float dz = (z + 0.5f) * sq - bz;
+		const int i = std::min(static_cast<int>(sqrtf(dx * dx + dz * dz) * invStep), last);
+		const float cost = fun(index);
+		return (arr[index] >= (*hotAt)[i]) ? cost * mod : cost;
+	};
+}
+
 void IPathQuery::SetThreatFloor(float value)
 {
 	threatFloor = std::max(value, 0.f);

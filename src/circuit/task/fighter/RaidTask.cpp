@@ -396,6 +396,7 @@ void CRaidTask::Update()
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, threatMap, frame,
 			startPos, pathRange, goals, GetHitTest(), GetSafeThreat() / pathMod);
+	SetRouteMargin(query.get(), GetSafeThreat());  // quota.danger_margin: clear of ground just under the escape's line
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -722,6 +723,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, threatMap, frame,
 			pos, position, pathfinder->GetSquareSize());
+	SetRouteMargin(query.get(), GetSafeThreat());  // quota.danger_margin
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 

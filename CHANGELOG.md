@@ -16,6 +16,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   pulls back endangered units without a fresh spot, and flees only if the danger lasts the grace. One grace per 8 s;
   not while running already, holding ground in the base radius, or cornered.
 
+- **Routes and firing spots keep a margin under the danger line** (`quota.danger_margin`: `[<share>, <cost x>]`,
+  default and shipped `[0.75, 3]`; share 1 = off). Routes may use any cell under their threat cap, and the raid cap is
+  the escape's line itself (the attack cap is looser still: one value for the whole route), and firing spots any spot
+  under the line. So a group that knew of a turret could still walk along the edge of its range (the threat map draws
+  a turret's edge at half its threat), and tip over the escape's line as units fanned out off the path or took a few
+  hits, then pull back. Now attack target, front and reinforce routes and raid target and roam routes cost
+  `<cost x>` as much on cells at or above `<share>` x the group's allowance there (the escape's, by distance from
+  base), and firing spots (every group with an escape) are looked for under `<share>` x the line first, then at the
+  line as before.
+
 - **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
   `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with
   all of them off the AI plays as before.

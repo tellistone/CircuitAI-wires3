@@ -384,15 +384,16 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	};
 	// Danger = what the task's escape calls dangerous (same allowance as its IsInDanger), for the local support.
 	// The allowance is always above 0, so where there is no threat there is no danger (no need to work it out)
-	auto isDanger = [&](const AIFloat3& p, float threat) {
-		return hasDangerLine && (threat > 0.f) && (threat >= GetAllowedThreatAt(p, supportAt(p)));
+	// share < 1: the margin's stricter line (quota.danger_margin), which a SPOT is looked for under first
+	auto isDanger = [&](const AIFloat3& p, float threat, float share = 1.f) {
+		return hasDangerLine && (threat > 0.f) && (threat >= share * GetAllowedThreatAt(p, supportAt(p)));
 	};
 	const float startThreat = GetTaskThreatAt(unit, uPos);
 	const bool isSafeHere = hasDangerLine && !isDanger(uPos, startThreat);
 
 	// Straight walk from the unit to p: is it dangerous, and its worst threat. A unit already in danger may
 	// step out: the danger it starts in is ignored until the line leaves it, unless it gets hotter than here.
-	auto checkWalk = [&](const AIFloat3& p, float& outPeak) {
+	auto checkWalk = [&](const AIFloat3& p, float& outPeak, float share = 1.f) {
 		outPeak = 0.f;
 		AIFloat3 dir = p - uPos;
 		dir.y = 0.f;
@@ -407,7 +408,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 			AIFloat3 q = uPos + dir * d;
 			CTerrainManager::CorrectPosition(q);
 			const float qThreat = GetTaskThreatAt(unit, q);
-			if (!isDanger(q, qThreat)) {
+			if (!isDanger(q, qThreat, share)) {
 				isLeft = true;
 			} else if (isLeft || (qThreat > startThreat)) {
 				isWalkDanger = true;
@@ -482,10 +483,23 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	}
 
 	// SPOT: the cheapest spot with a safe walk there (ties: the earlier candidate). The walk is the costly check,
-	// so spots are tried cheapest first and only until one passes
+	// so spots are tried cheapest first and only until one passes. First with a margin under the danger line
+	// (quota.danger_margin): a spot just under it tips over as soon as the unit takes a few hits or a turret is seen;
+	// then, if none is that clear, at the line itself as before
 	std::vector<size_t> order(cands.size());
 	std::iota(order.begin(), order.end(), 0);
 	std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return cands[a].cost < cands[b].cost; });
+	const float margin = circuit->GetMilitaryManager()->GetDangerMargin();
+	if (margin < 1.f) {
+		float peak;
+		for (size_t i : order) {
+			SCandidate& c = cands[i];
+			if (!isDanger(c.pos, c.threat, margin) && !checkWalk(c.pos, peak, margin)) {
+				outPos = c.pos;
+				return FireSpot::SPOT;
+			}
+		}
+	}
 	for (size_t i : order) {
 		SCandidate& c = cands[i];
 		if (!isDanger(c.pos, c.threat) && !checkWalk(c.pos, c.walkPeak)) {

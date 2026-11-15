@@ -311,6 +311,10 @@ public:
 	// own check re-places its firing spots and pulls back endangered units this long before it flees (ISquadTask::IsInFleeGrace)
 	int GetRaidFleeGrace() const { return raidFleeGrace; }
 	int GetAttackFleeGrace() const { return attackFleeGrace; }
+	// quota.danger_margin [<share>, <cost x>] (share 1 = off): attack and raid routes cost mod x more on cells at or above
+	// share x the escape's allowance, and firing spots prefer spots under share x it (IFighterTask::FindFireSpot)
+	float GetDangerMargin() const { return dangerMargin; }
+	float GetDangerMarginMod() const { return dangerMarginMod; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
 	// quota.raid_attack_factor (default true): attack groups judge enemy raiders and scouts outside the base
 	// defence radius and their fire range with their strength x their units' raid_thr_mod (CAttackTask::GetRaidFactor)
@@ -647,6 +651,8 @@ private:
 	float attackFleeShare;  // quota.attack_flee_share
 	int raidFleeGrace;  // quota.raid_flee_grace (frames)
 	int attackFleeGrace;  // quota.attack_flee_grace (frames)
+	float dangerMargin = 1.f;  // quota.danger_margin[0]
+	float dangerMarginMod = 1.f;  // quota.danger_margin[1]
 	float attackKeepThreat;  // quota.attack_keep_threat
 	bool isRaidAttackFactor;  // quota.raid_attack_factor
 	std::map<CCircuitDef::Id, float> raidDamage;  // AddRaidDamage, by attacker def id (-1: unknown type) since the last log

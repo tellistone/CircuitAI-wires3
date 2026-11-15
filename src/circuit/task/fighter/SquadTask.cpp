@@ -582,6 +582,31 @@ bool ISquadTask::IsInFleeGrace(int frame, bool isDanger, bool isFightOn, int gra
 	return frame < graceFrame + graceFrames;
 }
 
+void ISquadTask::SetRouteMargin(IPathQuery* query, float strength) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const float margin = militaryMgr->GetDangerMargin();
+	const float mod = militaryMgr->GetDangerMarginMod();
+	if ((margin >= 1.f) || (mod <= 1.f) || IsCloakRoute(leader)) {
+		return;
+	}
+	// The allowance depends only on distance from our base: sampled here at half-cell steps out to the map diagonal
+	// (as CAttackTask::SetRouteThreat); the route runs on a worker thread
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float step = std::max(pathfinder->GetSquareSize() * 0.5f, 1.f);
+	const float width = CTerrainManager::GetTerrainWidth();
+	const float height = CTerrainManager::GetTerrainHeight();
+	const int count = static_cast<int>(sqrtf(width * width + height * height) / step) + 2;
+	std::vector<float> allowByDist(count);
+	for (int i = 0; i < count; ++i) {
+		allowByDist[i] = GetAllowedThreatAt(basePos + AIFloat3((i + 0.5f) * step, 0.f, 0.f), strength);
+	}
+	query->SetThreatMargin(std::move(allowByDist), step, basePos, pathfinder->GetPathMapXSize(),
+			pathfinder->GetSquareSize(), margin, mod);
+}
+
 void ISquadTask::PullBackEndangered(int frame, bool isKeepSpots)
 {
 	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {

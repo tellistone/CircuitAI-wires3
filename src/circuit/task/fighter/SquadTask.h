@@ -158,6 +158,9 @@ protected:
 	// danger lasts. isDanger: the group would flee now; isFightOn: engaged, and the target still passes the task's own
 	// check. One grace per FLEE_GRACE_COOLDOWN. true: in grace, re-spot instead of fleeing
 	bool IsInFleeGrace(int frame, bool isDanger, bool isFightOn, int graceFrames);
+	// Route margin (quota.danger_margin): cells at or above share x this task's allowance for strength
+	// (GetAllowedThreatAt) cost more. Not for a cloak-routed leader (another threat scale)
+	void SetRouteMargin(IPathQuery* query, float strength) const;
 	int graceFrame = -1;  // start of the current grace (-1: none)
 	int lastGraceFrame = -FRAMES_PER_SEC * 60;  // start of the last grace
 	std::vector<CCircuitUnit*> endangered;  // from the last IsInDanger

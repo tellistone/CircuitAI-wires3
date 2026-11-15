@@ -1985,6 +1985,11 @@ void CAttackTask::SetRouteThreat(IPathQuery* query, AttackRoute route) const
 		const float maxFrac = 0.5f * militaryMgr->GetBaseThrBonusMin() / militaryMgr->GetThrDistModMax(fightType);
 		query->SetThreatFloor(strength * std::min(frac, maxFrac));
 	}
+	// Capped routes keep clear of ground just under the escape's line where they can (quota.danger_margin): a route
+	// skirting a known turret there tips over once units fan out off the path or take a few hits
+	if (isCapped) {
+		SetRouteMargin(query, strength);
+	}
 }
 
 void CAttackTask::RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete)
