@@ -559,20 +559,11 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 	const AIFloat3& pos = leader->GetPos(frame);
 	const float sqLookAhead = SQUARE(GetLookAhead());
 	const F3Vec& pts = path->posPath;
-	size_t from = 0;
-	float minSqDist = std::numeric_limits<float>::max();
-	for (size_t i = 0; i < pts.size(); ++i) {
-		const float sqDist = pts[i].SqDistance2D(pos);
-		if (sqDist < minSqDist) {
-			minSqDist = sqDist;
-			from = i;
-		}
-	}
-	for (size_t i = from; (i < pts.size()) && (pts[i].SqDistance2D(pos) < sqLookAhead); ++i) {
-		if (IsDangerAt(leader, pts[i], safeThreat)) {
-			isPathAheadUnsafe = true;
-			break;
-		}
+	auto it = std::min_element(pts.begin(), pts.end(), [&pos](const AIFloat3& a, const AIFloat3& b) {
+		return a.SqDistance2D(pos) < b.SqDistance2D(pos);
+	});
+	for (; (it != pts.end()) && (it->SqDistance2D(pos) < sqLookAhead) && !isPathAheadUnsafe; ++it) {
+		isPathAheadUnsafe = IsDangerAt(leader, *it, safeThreat);
 	}
 	return false;
 }
@@ -670,9 +661,7 @@ void ISquadTask::PullBackEndangered(int frame, bool isKeepSpots)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	for (CCircuitUnit* unit : endangered) {
-		if ((unit->Blocker() != nullptr) || IsOnRiskySpot(unit, frame) || IsScooting(unit)
-			|| (isKeepSpots && IsOnFreshSpot(unit, frame)))
-		{
+		if ((unit->Blocker() != nullptr) || IsOnFreshSpot(unit, frame, !isKeepSpots) || IsScooting(unit)) {
 			continue;  // busy, just sent to the least dangerous firing spot (don't bounce it back), or stepping back already
 		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
