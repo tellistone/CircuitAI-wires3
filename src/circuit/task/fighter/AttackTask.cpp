@@ -911,9 +911,9 @@ bool CAttackTask::UpdateEscape(int frame)
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
 	isAtFleeDest = false;
 	// The escape would flee from a fight the pick still accepts (it judges the target's spot, the escape each unit's).
-	// For a turret just seen, the flee grace (quota.attack_flee_grace) re-spots first. If the group flees anyway, it
-	// passes on the target (6, 12, 24 s), or the next pick sends it straight back. Not while running already, holding
-	// ground or cornered
+	// For a turret just seen, the flee grace (quota.attack_flee_grace) re-spots first. If the group flees anyway from a
+	// target standing still, it passes on it (6, 12, 24 s), or the next pick sends it straight back (a moving one may
+	// follow us, and is then the one to fight). Not while running already, holding ground or cornered
 	const bool isMismatch = isDanger && !isHoldGround && (frame >= fleeFrame) && IsFightOn(frame);
 	if (IsInFleeGrace(frame, isMismatch, GetMilitaryMgr()->GetAttackFleeGrace(), GetMilitaryMgr()->GetAttackFleeShare())) {
 		if (updCount % 2 == 0) {
@@ -929,7 +929,7 @@ bool CAttackTask::UpdateEscape(int frame)
 		PullBackEndangered(frame, true);  // those without a fresh spot (stragglers, no spot range)
 		return true;
 	}
-	CEnemyInfo* fledTarget = isMismatch ? target : nullptr;  // Flee lets it go
+	CEnemyInfo* fledTarget = (isMismatch && !IsMoving(target)) ? target : nullptr;  // Flee lets it go
 	const bool isFleeing = isDanger && !isHoldGround && Flee(frame);
 	if (isFleeing && (fledTarget != nullptr)) {
 		Ban(heldBans, fledTarget, -1, frame);
@@ -1974,7 +1974,7 @@ void CAttackTask::SetRouteThreat(IPathQuery* query, AttackRoute route) const
 	// (quota.danger_margin): a route skirting a known turret there tips over once units fan out off the path or take a
 	// few hits
 	const bool isEscape = (route == AttackRoute::FLEE) || (route == AttackRoute::CORNERED);
-	SetRouteAllowance(query, strength, militaryMgr->IsAttackRouteDynamic(route), isCapped,
+	SetRouteAllowance(query, strength, militaryMgr->IsAttackRouteDynamic(route), /*isMargin*/ isCapped,
 			isEscape ? militaryMgr->GetAttackFleePathMaxWeight() : 0.f);
 
 	// Capped routes ignore light threat: at or below quota.attack_path_ignore_threat x the group's current strength it

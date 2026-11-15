@@ -9,14 +9,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Attack and raid groups stop fleeing and returning to the same fight.** The pick judges the target's own spot
   (attack: the fled-from target at the keep allowance), the escape each unit's spot, so a group could flee, be sent
-  straight back by the next pick, and flee again, taking hits both ways. Now a group that flees from a target its own
-  pick still accepts passes on it for a while (attack: 6, 12, 24 s, as held targets; raid: 10 s).
+  straight back by the next pick, and flee again, taking hits both ways. Now a group that flees from a target standing
+  still that its own pick still accepts passes on it for a while (attack: 6, 12, 24 s, as held targets; raid: 10 s).
   **Flee grace** (`quota.attack_flee_grace`, `quota.raid_flee_grace`, seconds; default and shipped 2; 0 = off): when
   that happens within 3 s of a turret near the group being seen for the first time (a second turret beside the one it
   fights), the group first re-places its firing spots and pulls back endangered units, and flees only if the danger
   lasts the grace, or at once when the re-spot found no safe spot for units holding the flee share of its strength.
-  The next grace can start 6 s after one ends. Not while running already, holding ground in the base radius, or
-  cornered.
+  One grace per turret seen. Not while running already, holding ground in the base radius, or cornered.
 
 - **Routes and firing spots keep a margin under the danger line** (`quota.danger_margin`: `[<share>, <cost x>]`,
   default and shipped `[0.75, 3]`; share 1 = off). Routes and firing spots could use ground right up to the escape's
@@ -24,7 +23,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   knew of a turret could skirt its range and tip over the line as units fanned out or took hits. Now attack target,
   front and reinforce routes and raid target and roam routes cost `<cost x>` as much on cells at or above `<share>` x
   the escape's allowance there, and firing spots (every group with an escape) are looked for under `<share>` x the
-  line first (a unit's last spot: at the line, so it doesn't shuttle between two), then at the line as before.
+  line first (a unit's last spot: at the line, so it doesn't shuttle between two; a unit standing over the margin may
+  walk out of it), then at the line as before.
 
 - **Groups react sooner to a turret seen ahead.** A route planned before a turret was seen was walked until the next
   decision (attack: up to 2 s) or until the danger was within ~2 s of the leader's walk. Now a turret seen for the

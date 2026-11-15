@@ -387,6 +387,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 
 	// Straight walk from the unit to p: is it dangerous, and its worst threat. A unit already in danger may
 	// step out: the danger it starts in is ignored until the line leaves it, unless it gets hotter than here.
+	// share < 1: judged against the margin's line from the start, so a unit in the margin band may step out of it too
 	auto checkWalk = [&](const AIFloat3& p, float& outPeak, float share = 1.f) {
 		outPeak = 0.f;
 		AIFloat3 dir = p - uPos;
@@ -396,7 +397,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 			return false;
 		}
 		dir /= dist;
-		bool isLeft = isSafeHere;
+		bool isLeft = !isDanger(uPos, startThreat, share);
 		bool isWalkDanger = false;
 		for (float d = step; d < dist; d += step) {
 			AIFloat3 q = uPos + dir * d;

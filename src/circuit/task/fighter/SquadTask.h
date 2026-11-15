@@ -152,6 +152,8 @@ protected:
 	bool IsInDanger(int frame, float fleeShare);
 	// What the group walks in ~4 s, at least 400 elmos
 	float GetLookAhead() const;
+	// Faster than 0.5 elmos per frame: a firing spot goes stale at once
+	static bool IsMoving(const CEnemyInfo* enemy);
 	// Endangered units that didn't make the whole group flee go to the strength-weighted centre of the safe ones, at
 	// most once a second. Also when the leader is the one in danger (the group follows its path, so a stuck leader would
 	// keep everyone heading into it). A unit sent to a RISKY firing spot in the last 3 s stays.
@@ -161,16 +163,16 @@ protected:
 	// units in its range over the escape's line while the fight itself still passes. isMismatch: the group would flee
 	// now from a target that still passes the task's own check (IsFightOn). For graceFrames the caller re-places firing
 	// spots (at once on the first update: frame == graceFrame) and pulls back endangered units instead, and flees only
-	// if the danger lasts. A grace starts only within SUDDEN_GRACE_WINDOW of OnSuddenThreat and FLEE_GRACE_COOLDOWN
-	// after the last one ended, runs its full time from its start, and ends early once the re-spot found no safe spot
-	// for endangered units holding fleeShare of our strength (IsRespotHopeless). true: in grace
+	// if the danger lasts. A grace starts only within SUDDEN_GRACE_WINDOW of OnSuddenThreat, once per turret seen, runs
+	// its full time from its start, and ends early once the re-spot found no safe spot for endangered units holding
+	// fleeShare of our strength (IsRespotHopeless). true: in grace
 	bool IsInFleeGrace(int frame, bool isMismatch, int graceFrames, float fleeShare);
 	bool IsRespotHopeless(int frame, float fleeShare) const;
 	// Threat cost against this task's allowance for strength (GetAllowedThreatAt) at each cell of a route
 	// (IPathQuery::SetThreatAllowance). isDynamic: weighed against it; isMargin: clear of ground just under the escape's
 	// line where it can (quota.danger_margin; not for a cloak-routed leader, on another threat scale)
 	void SetRouteAllowance(IPathQuery* query, float strength, bool isDynamic, bool isMargin, float maxWeight = 0.f) const;
-	int suddenFrame = -FRAMES_PER_SEC * 60;  // last turret first seen within our reach (OnSuddenThreat)
+	int suddenFrame = -FRAMES_PER_SEC * 60;  // last turret first seen within our reach (OnSuddenThreat), until a grace
 	int graceFrame = -FRAMES_PER_SEC * 60;  // start of the last grace
 	std::vector<CCircuitUnit*> endangered;  // from the last IsInDanger
 	bool isPathAheadUnsafe = false;  // from the last IsInDanger

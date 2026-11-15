@@ -568,6 +568,12 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 	return false;
 }
 
+bool ISquadTask::IsMoving(const CEnemyInfo* enemy)
+{
+	static constexpr float MOVING_SPEED = 0.5f;
+	return enemy->GetVel().SqLength2D() > SQUARE(MOVING_SPEED);
+}
+
 float ISquadTask::GetLookAhead() const
 {
 	return std::max(lowestSpeed * 4.f, 400.f);  // the slowest unit sets the group's pace
@@ -591,12 +597,12 @@ void ISquadTask::OnSuddenThreat(const CCircuitDef* edef, const AIFloat3& pos, in
 bool ISquadTask::IsInFleeGrace(int frame, bool isMismatch, int graceFrames, float fleeShare)
 {
 	static constexpr int SUDDEN_GRACE_WINDOW = FRAMES_PER_SEC * 3;
-	static constexpr int FLEE_GRACE_COOLDOWN = FRAMES_PER_SEC * 6;  // a group stepping in and out of the same danger flees
 	if (!isMismatch || (graceFrames <= 0)) {
 		return false;
 	}
-	if ((frame < suddenFrame + SUDDEN_GRACE_WINDOW) && (frame >= graceFrame + graceFrames + FLEE_GRACE_COOLDOWN)) {
+	if ((frame < suddenFrame + SUDDEN_GRACE_WINDOW) && (frame >= graceFrame + graceFrames)) {
 		graceFrame = frame;
+		suddenFrame = -SUDDEN_GRACE_WINDOW;  // one grace per turret seen: a dip in the danger doesn't start another
 		return true;
 	}
 	if ((frame < graceFrame + graceFrames) && IsRespotHopeless(frame, fleeShare)) {
