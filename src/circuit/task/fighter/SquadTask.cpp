@@ -570,7 +570,7 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 
 float ISquadTask::GetLookAhead() const
 {
-	return std::max(leader->GetCircuitDef()->GetSpeed() * 4.f, 400.f);
+	return std::max(lowestSpeed * 4.f, 400.f);  // the slowest unit sets the group's pace
 }
 
 void ISquadTask::OnSuddenThreat(const CCircuitDef* edef, const AIFloat3& pos, int frame)
@@ -584,33 +584,39 @@ void ISquadTask::OnSuddenThreat(const CCircuitDef* edef, const AIFloat3& pos, in
 	if ((range <= 0.f) || (leader->GetPos(frame).SqDistance2D(pos) >= SQUARE(range + GetLookAhead()))) {
 		return;
 	}
-	if (!edef->IsMobile()) {
-		suddenFrame = frame;  // a turret: the grace; a mobile one walks on, so its danger grows rather than settles
-	}
+	suddenFrame = frame;
 	leader->ForceUpdate(frame + THREAT_UPDATE_RATE);  // once it is on the threat map; any unit re-plans the group
 }
 
-ISquadTask::FleeGrace ISquadTask::UpdateFleeGrace(int frame, bool isGraceCase, int graceFrames)
+bool ISquadTask::IsInFleeGrace(int frame, bool isMismatch, int graceFrames, float fleeShare)
 {
 	static constexpr int SUDDEN_GRACE_WINDOW = FRAMES_PER_SEC * 3;
 	static constexpr int FLEE_GRACE_COOLDOWN = FRAMES_PER_SEC * 6;  // a group stepping in and out of the same danger flees
-	if (!isGraceCase || (graceFrames <= 0)) {
-		return FleeGrace::NONE;
+	if (!isMismatch || (graceFrames <= 0)) {
+		return false;
 	}
-	const int graceEnd = graceFrame + graceFrames;
-	if ((frame < suddenFrame + SUDDEN_GRACE_WINDOW) && (frame >= graceEnd + FLEE_GRACE_COOLDOWN)) {
+	if ((frame < suddenFrame + SUDDEN_GRACE_WINDOW) && (frame >= graceFrame + graceFrames + FLEE_GRACE_COOLDOWN)) {
 		graceFrame = frame;
-		isGraceOver = false;
-		return FleeGrace::ON;
+		return true;
 	}
-	if (frame < graceEnd) {
-		return FleeGrace::ON;
+	if ((frame < graceFrame + graceFrames) && IsRespotHopeless(frame, fleeShare)) {
+		graceFrame = frame - graceFrames;  // over now
 	}
-	if (isGraceOver || (frame >= graceEnd + FLEE_GRACE_COOLDOWN)) {
-		return FleeGrace::NONE;
+	return frame < graceFrame + graceFrames;
+}
+
+bool ISquadTask::IsRespotHopeless(int frame, float fleeShare) const
+{
+	// Endangered units sent to a RISKY spot (no safe one) stay in danger: the pull-back skips them
+	float riskyPower = 0.f;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		if (IsOnFreshSpot(s.unit, frame, true)
+			&& (std::find(endangered.begin(), endangered.end(), s.unit) != endangered.end()))
+		{
+			riskyPower += s.power;
+		}
 	}
-	isGraceOver = true;
-	return FleeGrace::OVER;
+	return (riskyPower > 0.f) && (riskyPower >= fleeShare * GetStrengthSum());
 }
 
 void ISquadTask::SetRouteAllowance(IPathQuery* query, float strength, bool isDynamic, bool isMargin, float maxWeight) const

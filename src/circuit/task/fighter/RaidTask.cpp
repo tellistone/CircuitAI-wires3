@@ -247,24 +247,29 @@ void CRaidTask::Update()
 	/*
 	 * Escape: checked on every update (not just every decision), also while engaging or regrouping
 	 */
-	const bool isInDanger = IsInDanger(frame, static_cast<CMilitaryManager*>(manager)->GetRaidFleeShare());
-	// Flee grace (quota.raid_flee_grace): danger the fight doesn't see (units in range of a turret just spotted beside
-	// the target) first gets new firing spots and a pull-back; the group flees only if it lasts
-	const bool isGraceCase = isInDanger && (frame >= fleeFrame) && IsFightOn(frame);
-	const FleeGrace grace = UpdateFleeGrace(frame, isGraceCase, GetMilitaryMgr()->GetRaidFleeGrace());
-	const bool isGrace = (FleeGrace::ON == grace);
-	if (FleeGrace::OVER == grace) {
-		heldTargets[target->GetId()] = frame;  // its own check passes, the escape won't stay: pass on it for 10 s
-	}
-	if (isInDanger && !isGrace && Flee(frame)) {
-		return;
+	const float fleeShare = GetMilitaryMgr()->GetRaidFleeShare();
+	const bool isInDanger = IsInDanger(frame, fleeShare);
+	// Fleeing from a fight the pick still accepts: for a turret just seen, the flee grace (quota.raid_flee_grace)
+	// re-spots first; if the group flees anyway, it passes on the target for 10 s, or the next pick sends it straight back
+	const bool isMismatch = isInDanger && (frame >= fleeFrame) && IsFightOn(frame);
+	const bool isGrace = IsInFleeGrace(frame, isMismatch, GetMilitaryMgr()->GetRaidFleeGrace(), fleeShare);
+	if (isInDanger && !isGrace) {
+		const ICoreUnit::Id fledId = isMismatch ? target->GetId() : -1;  // Flee lets it go
+		if (Flee(frame)) {
+			if (isMismatch) {
+				heldTargets[fledId] = frame;
+			}
+			return;
+		}
 	}
 	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot
 	if (isFightPending) {
 		SendPendingFight(frame);
 	}
 	if (isGrace) {
-		attackFrame = frame - attackRepeat;  // orders again now: spots avoid the new danger
+		if (frame == graceFrame) {
+			attackFrame = frame - attackRepeat;  // orders again now: spots avoid the new danger
+		}
 		Attack(frame, true);
 	}
 	PullBackEndangered(frame, isGrace);  // in grace: those without a fresh spot

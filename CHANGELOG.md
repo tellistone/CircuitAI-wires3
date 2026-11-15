@@ -7,38 +7,31 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
-- **Flee grace for attack and raid groups** (`quota.attack_flee_grace`, `quota.raid_flee_grace`, seconds; default and
-  shipped 2; 0 = off). A turret spotted beside the one a group is fighting put the units on the firing arc in its
-  range over the escape's line, while the target's own spot (and, for attack groups, the keep allowance) still passed.
-  The group ran for 2 s, and the next pick sent it straight back, taking hits both ways. Now, while engaged and the
-  target still passes the task's own check (attack: threat at its spot under the keep allowance; raid: as its pick,
-  for a target standing still), the group first re-places its firing spots at once (they avoid the new danger) and
-  pulls back endangered units without a fresh spot, and flees only if the danger lasts the grace. Only within 3 s of
-  a turret near the group being seen for the first time (a mobile enemy walks on, so its danger grows rather than
-  settles, and a fight we are slowly losing flees at once as before); the grace runs its full time from its start,
-  and the next can start 6 s after it ends. When the danger lasts the grace (or comes back within those 6 s), the
-  group flees and passes on the target for a while (attack: 6, 12, 24 s, as held targets; raid: 10 s), so the pick
-  doesn't send it straight back into a fight its escape rejects. Not while running already, holding ground in the
-  base radius, or cornered.
+- **Attack and raid groups stop fleeing and returning to the same fight.** The pick judges the target's own spot
+  (attack: the fled-from target at the keep allowance), the escape each unit's spot, so a group could flee, be sent
+  straight back by the next pick, and flee again, taking hits both ways. Now a group that flees from a target its own
+  pick still accepts passes on it for a while (attack: 6, 12, 24 s, as held targets; raid: 10 s).
+  **Flee grace** (`quota.attack_flee_grace`, `quota.raid_flee_grace`, seconds; default and shipped 2; 0 = off): when
+  that happens within 3 s of a turret near the group being seen for the first time (a second turret beside the one it
+  fights), the group first re-places its firing spots and pulls back endangered units, and flees only if the danger
+  lasts the grace, or at once when the re-spot found no safe spot for units holding the flee share of its strength.
+  The next grace can start 6 s after one ends. Not while running already, holding ground in the base radius, or
+  cornered.
 
 - **Routes and firing spots keep a margin under the danger line** (`quota.danger_margin`: `[<share>, <cost x>]`,
-  default and shipped `[0.75, 3]`; share 1 = off). Routes may use any cell under their threat cap, and the raid cap is
-  the escape's line itself (the attack cap is looser still: one value for the whole route), and firing spots any spot
-  under the line. So a group that knew of a turret could still walk along the edge of its range (the threat map draws
-  a turret's edge at half its threat), and tip over the escape's line as units fanned out off the path or took a few
-  hits, then pull back. Now attack target, front and reinforce routes and raid target and roam routes cost
-  `<cost x>` as much on cells at or above `<share>` x the group's allowance there (the escape's, by distance from
-  base), and firing spots (every group with an escape) are looked for under `<share>` x the line first, then at the
-  line as before. A unit's last firing spot passes at the line, so threat wavering around the margin doesn't shuttle
-  it between two spots.
+  default and shipped `[0.75, 3]`; share 1 = off). Routes and firing spots could use ground right up to the escape's
+  line (the raid route cap is that line; the threat map draws a turret's edge at half its threat), so a group that
+  knew of a turret could skirt its range and tip over the line as units fanned out or took hits. Now attack target,
+  front and reinforce routes and raid target and roam routes cost `<cost x>` as much on cells at or above `<share>` x
+  the escape's allowance there, and firing spots (every group with an escape) are looked for under `<share>` x the
+  line first (a unit's last spot: at the line, so it doesn't shuttle between two), then at the line as before.
 
-- **Groups react sooner to a turret seen ahead.** A route planned before a turret was seen was walked until the
-  next decision (attack: up to 2 s) or until the danger was within ~2 s of the leader's walk, so a group could reach
-  the edge of its range before turning. Now an armed enemy seen for the first time also makes each attack and raid
-  group whose leader is within its range (ground, or air for flying groups; at most 2000 elmos) + the group's
-  look-ahead re-plan at the next threat-map update (our units within 500 elmos of it still do, as before), and the
-  path-ahead check of attack and raid groups looks about 4 s of walking ahead (at least 400 elmos), ahead of the
-  leader only (ground just walked out of no longer asks for a re-plan).
+- **Groups react sooner to a turret seen ahead.** A route planned before a turret was seen was walked until the next
+  decision (attack: up to 2 s) or until the danger was within ~2 s of the leader's walk. Now a turret seen for the
+  first time makes each attack and raid group whose leader is within its range (ground, or air for flying groups; at
+  most 2000 elmos) + the group's look-ahead re-plan at the next threat-map update (our units within 500 elmos of any
+  first-seen enemy still do, as before), and the path-ahead check looks about 4 s of the group's walk ahead (at least
+  400 elmos), ahead of the leader only.
 
 - **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
   `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with

@@ -308,7 +308,7 @@ public:
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
 	// quota.raid_flee_grace / quota.attack_flee_grace (frames; 0 = off): an engaged group whose target still passes its
-	// own check re-places its firing spots and pulls back endangered units this long before it flees (ISquadTask::UpdateFleeGrace)
+	// own check re-places its firing spots and pulls back endangered units this long before it flees (ISquadTask::IsInFleeGrace)
 	int GetRaidFleeGrace() const { return raidFleeGrace; }
 	int GetAttackFleeGrace() const { return attackFleeGrace; }
 	// quota.danger_margin [<share>, <cost x>] (share 1 = off): attack and raid routes cost mod x more on cells at or above
@@ -447,8 +447,8 @@ public:
 
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
-	// An armed enemy seen for the first time (CCircuitAI::EnemyEnterLOS): attack and raid groups within its reach + their
-	// path look-ahead re-plan at the next threat-map update and get the flee grace for a while (ISquadTask::OnSuddenThreat)
+	// A turret seen for the first time (CCircuitAI::EnemyEnterLOS): attack and raid groups within its reach + their path
+	// look-ahead re-plan at the next threat-map update and get the flee grace for a while (ISquadTask::OnSuddenThreat)
 	void ReactSuddenThreat(CEnemyInfo* enemy);
 
 private:

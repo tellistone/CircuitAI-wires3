@@ -3626,7 +3626,9 @@ void CMilitaryManager::MarkPointOfInterest(CEnemyInfo* enemy)
 void CMilitaryManager::ReactSuddenThreat(CEnemyInfo* enemy)
 {
 	CCircuitDef* edef = enemy->GetCircuitDef();
-	if ((edef == nullptr) || !enemy->IsAttacker()) {
+	// Turrets only: they are sudden once (first seen). A mobile enemy is sudden again at each return to LOS out of
+	// radar, which at the edge of LOS can be several times a second
+	if ((edef == nullptr) || edef->IsMobile() || !enemy->IsAttacker()) {
 		return;
 	}
 	const int frame = circuit->GetLastFrame();

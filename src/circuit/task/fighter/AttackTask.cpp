@@ -910,27 +910,30 @@ bool CAttackTask::UpdateEscape(int frame)
 	const bool isDanger = IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
 	isAtFleeDest = false;
-	// Flee grace (quota.attack_flee_grace): danger that the fight we accepted doesn't see (units on the firing arc in
-	// range of a turret just spotted beside the target) first gets new firing spots and a pull-back; the group flees
-	// only if it lasts. Not while running already, holding ground or cornered
-	const bool isGraceCase = isDanger && !isHoldGround && (frame >= fleeFrame) && IsFightOn(frame);
-	const FleeGrace grace = UpdateFleeGrace(frame, isGraceCase, GetMilitaryMgr()->GetAttackFleeGrace());
-	if (FleeGrace::ON == grace) {
+	// The escape would flee from a fight the pick still accepts (it judges the target's spot, the escape each unit's).
+	// For a turret just seen, the flee grace (quota.attack_flee_grace) re-spots first. If the group flees anyway, it
+	// passes on the target (6, 12, 24 s), or the next pick sends it straight back. Not while running already, holding
+	// ground or cornered
+	const bool isMismatch = isDanger && !isHoldGround && (frame >= fleeFrame) && IsFightOn(frame);
+	if (IsInFleeGrace(frame, isMismatch, GetMilitaryMgr()->GetAttackFleeGrace(), GetMilitaryMgr()->GetAttackFleeShare())) {
 		if (updCount % 2 == 0) {
 			ISquadTask::Update();  // units with empty shields still retreat (normally done at each decision)
 			if (leader == nullptr) {  // task aborted
 				return true;
 			}
 		}
-		attackFrame = frame - attackRepeat;  // orders again now, not at the 2 s repeat: spots avoid the new danger
+		if (frame == graceFrame) {
+			attackFrame = frame - attackRepeat;  // orders again now, not at the 3 s repeat: spots avoid the new danger
+		}
 		Engage(frame);
 		PullBackEndangered(frame, true);  // those without a fresh spot (stragglers, no spot range)
 		return true;
 	}
-	if (FleeGrace::OVER == grace) {
-		Ban(heldBans, target, -1, frame);  // its own check passes, the escape won't stay: pass on it (6, 12, 24 s)
-	}
+	CEnemyInfo* fledTarget = isMismatch ? target : nullptr;  // Flee lets it go
 	const bool isFleeing = isDanger && !isHoldGround && Flee(frame);
+	if (isFleeing && (fledTarget != nullptr)) {
+		Ban(heldBans, fledTarget, -1, frame);
+	}
 	// Already at the flee destination (stronger group, haven, base): no cornered rule, carry on as usual
 	// (pull-back and normal decisions)
 	if (isDanger && !isFleeing && !isAtFleeDest) {
