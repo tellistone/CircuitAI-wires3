@@ -51,8 +51,9 @@ public:
 	// isDynamic: the usual 2x threat weight becomes (1 + threat / allowance), so a cell costs threat x (1 + threat /
 	// allowance) instead of 2 x threat: cheaper below the allowance, the same at it, steeper above. Units pathed on the
 	// cloak array (weight 1x) get half of that. maxWeight caps (1 + threat / allowance) (0 or less = no cap).
-	// margin < 1 (quota.danger_margin): a cell at or above margin x the allowance costs marginMod times as much, so a
-	// route keeps clear of ground just under the escape's line where it can (it may still cross it: the cap alone blocks)
+	// margin < 1 (quota.danger_margin): a cell costs more from margin x the allowance on, up to marginMod times as much at
+	// the allowance and above, so a route keeps clear of ground just under the escape's line where it can (it may still
+	// cross it: the cap alone blocks)
 	void SetThreatAllowance(std::vector<float>&& allowByDist, float step, const springai::AIFloat3& basePos,
 			int pathMapXSize, int squareSize, bool isDynamic, float maxWeight, float margin, float marginMod);
 	float GetThreatFloor() const { return threatFloor; }

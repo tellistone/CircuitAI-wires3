@@ -139,6 +139,7 @@ void ISquadTask::Merge(ISquadTask* task)
 	task->scoots.clear();
 	attackPower += task->GetAttackPower();
 	areaPower += task->GetAreaPower();
+	suddenFrame = std::max(suddenFrame, task->suddenFrame);  // a turret it just saw counts for us too
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
 	shields.insert(sh.begin(), sh.end());
 

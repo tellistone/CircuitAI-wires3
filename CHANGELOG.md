@@ -21,8 +21,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   default and shipped `[0.75, 3]`; share 1 = off). Routes and firing spots could use ground right up to the escape's
   line (the raid route cap is that line; the threat map draws a turret's edge at half its threat), so a group that
   knew of a turret could skirt its range and tip over the line as units fanned out or took hits. Now attack target,
-  front and reinforce routes and raid target and roam routes cost `<cost x>` as much on cells at or above `<share>` x
-  the escape's allowance there, and firing spots (every group with an escape) are looked for under `<share>` x the
+  front and reinforce routes and raid target and roam routes cost more from `<share>` x the escape's allowance on, up
+  to `<cost x>` as much at the allowance (a ramp, so small threat changes don't flip a route; `<cost x>` 1 = routes
+  off, spots only), and firing spots (every group with an escape) are looked for under `<share>` x the
   line first (a unit's last spot: at the line, so it doesn't shuttle between two; a unit standing over the margin may
   walk out of it), then at the line as before.
 

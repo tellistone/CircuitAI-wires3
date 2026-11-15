@@ -311,8 +311,9 @@ public:
 	// own check re-places its firing spots and pulls back endangered units this long before it flees (ISquadTask::IsInFleeGrace)
 	int GetRaidFleeGrace() const { return raidFleeGrace; }
 	int GetAttackFleeGrace() const { return attackFleeGrace; }
-	// quota.danger_margin [<share>, <cost x>] (share 1 = off): attack and raid routes cost mod x more on cells at or above
-	// share x the escape's allowance, and firing spots prefer spots under share x it (IFighterTask::FindFireSpot)
+	// quota.danger_margin [<share>, <cost x>] (share 1 = off): attack and raid routes cost more from share x the escape's
+	// allowance on, up to mod x at the allowance (cost 1 = routes off), and firing spots prefer spots under share x it
+	// (IFighterTask::FindFireSpot)
 	float GetDangerMargin() const { return dangerMargin; }
 	float GetDangerMarginMod() const { return dangerMarginMod; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
