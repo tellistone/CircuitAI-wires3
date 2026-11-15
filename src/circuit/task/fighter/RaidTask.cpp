@@ -30,7 +30,6 @@
 
 #include "AISCommands.h"
 
-#define MOVING_SPEED	0.5f  // elmos per frame: a target faster than this counts as moving (no firing spots)
 // quota.raid_rally joiners
 #define CHASE_TRAVEL_SEC	30.f  // chase a bigger group only within this many seconds of straight travel...
 #define CHASE_KEEP_SEC	36.f  // ...and keep chasing it out to this (no flip-flop at the edge)
@@ -247,17 +246,34 @@ void CRaidTask::Update()
 	/*
 	 * Escape: checked on every update (not just every decision), also while engaging or regrouping
 	 */
-	const bool isInDanger = IsInDanger(frame, static_cast<CMilitaryManager*>(manager)->GetRaidFleeShare());
-	if (isInDanger && Flee(frame)) {
-		return;
+	const float fleeShare = GetMilitaryMgr()->GetRaidFleeShare();
+	const bool isInDanger = IsInDanger(frame, fleeShare);
+	// Fleeing from a fight the pick still accepts: for a turret just seen, the flee grace (quota.raid_flee_grace)
+	// re-spots first; if the group flees anyway, it passes on the target for 10 s, or the next pick sends it straight back
+	const bool isMismatch = isInDanger && (frame >= fleeFrame) && IsFightOn(frame);
+	const bool isGrace = IsInFleeGrace(frame, isMismatch, GetMilitaryMgr()->GetRaidFleeGrace(), fleeShare);
+	if (isInDanger && !isGrace) {
+		const ICoreUnit::Id fledId = isMismatch ? target->GetId() : -1;  // Flee lets it go
+		if (Flee(frame)) {
+			if (isMismatch) {
+				heldTargets[fledId] = frame;
+			}
+			return;
+		}
 	}
 	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot
 	if (isFightPending) {
 		SendPendingFight(frame);
 	}
-	PullBackEndangered(frame);
-	if (frame < fleeFrame) {
-		return;  // keep running along the escape path for a moment instead of turning straight back
+	if (isGrace) {
+		if (frame == graceFrame) {
+			attackFrame = frame - attackRepeat;  // orders again now: spots avoid the new danger
+		}
+		Attack(frame, true);
+	}
+	PullBackEndangered(frame, isGrace);  // in grace: those without a fresh spot
+	if (isGrace || (frame < fleeFrame)) {
+		return;  // fleeing: keep running along the escape path for a moment instead of turning straight back
 	}
 
 	/*
@@ -346,8 +362,7 @@ void CRaidTask::Update()
 				}
 			}
 		} else {
-			const AIFloat3& tVel = target->GetVel();
-			if (tVel.SqLength2D() > SQUARE(MOVING_SPEED)) {
+			if (IsMoving(target)) {
 				// Moving target (fleeing builder etc.): a firing spot goes stale at once, chase it directly
 				AttackDirect(frame);
 			} else {
@@ -387,6 +402,7 @@ void CRaidTask::Update()
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, threatMap, frame,
 			startPos, pathRange, goals, GetHitTest(), GetSafeThreat() / pathMod);
+	SetRouteAllowance(query.get(), GetSafeThreat(), /*isDynamic*/ false, /*isMargin*/ true);
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -713,6 +729,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, threatMap, frame,
 			pos, position, pathfinder->GetSquareSize());
+	SetRouteAllowance(query.get(), GetSafeThreat(), /*isDynamic*/ false, /*isMargin*/ true);
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -934,6 +951,18 @@ float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float sqDist = basePos.SqDistance2D(pos);
 	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist) / GetThrDistModAt(pos);
+}
+
+bool CRaidTask::IsFightOn(int frame) const
+{
+	// Only where Update gives firing spots: a ground group, a target standing still
+	if ((State::ENGAGE != state) || (target == nullptr) || leader->GetCircuitDef()->IsAbleToFly() || IsMoving(target)) {
+		return false;
+	}
+	// As FindTarget judges it (cautious after an escape)
+	const AIFloat3& tPos = target->GetPos();
+	const float power = GetSafeThreat() * (IsCautious(frame) ? 0.75f : 1.f);
+	return GetTaskThreatAt(leader, tPos) < GetSafeThreatAt(tPos, power);
 }
 
 bool CRaidTask::Flee(int frame)

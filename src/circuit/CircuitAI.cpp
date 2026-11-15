@@ -1107,6 +1107,8 @@ int CCircuitAI::EnemyEnterLOS(CEnemyInfo* enemy)
 	if (!isSuddenThreat) {
 		return 0;  // signaling: OK
 	}
+	// Attack and raid groups heading into its range react too (a turret seen at the edge of LOS)
+	militaryManager->ReactSuddenThreat(enemy);
 	// Force unit's reaction
 	auto friendlies = callback->GetFriendlyUnitIdsIn(enemy->GetPos(), 500.0f);
 	if (friendlies.empty()) {

@@ -339,10 +339,10 @@ bool IFighterTask::GetKeptFireSpot(CCircuitUnit* unit, bool isClose, AIFloat3& o
 	return true;
 }
 
-bool IFighterTask::IsOnRiskySpot(CCircuitUnit* unit, int frame) const
+bool IFighterTask::IsOnFreshSpot(CCircuitUnit* unit, int frame, bool isRiskyOnly) const
 {
 	auto it = fireSpots.find(unit);
-	return (it != fireSpots.end()) && it->second.isRisky && (frame < it->second.frame + RISKY_GRACE);
+	return (it != fireSpots.end()) && (!isRiskyOnly || it->second.isRisky) && (frame < it->second.frame + RISKY_GRACE);
 }
 
 IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
@@ -378,15 +378,17 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	};
 	// Danger = what the task's escape calls dangerous (same allowance as its IsInDanger), for the local support.
 	// The allowance is always above 0, so where there is no threat there is no danger (no need to work it out)
-	auto isDanger = [&](const AIFloat3& p, float threat) {
-		return hasDangerLine && (threat > 0.f) && (threat >= GetAllowedThreatAt(p, supportAt(p)));
+	// share < 1: the margin's stricter line (quota.danger_margin), which a SPOT is looked for under first
+	auto isDanger = [&](const AIFloat3& p, float threat, float share = 1.f) {
+		return hasDangerLine && (threat > 0.f) && (threat >= share * GetAllowedThreatAt(p, supportAt(p)));
 	};
 	const float startThreat = GetTaskThreatAt(unit, uPos);
 	const bool isSafeHere = hasDangerLine && !isDanger(uPos, startThreat);
 
 	// Straight walk from the unit to p: is it dangerous, and its worst threat. A unit already in danger may
 	// step out: the danger it starts in is ignored until the line leaves it, unless it gets hotter than here.
-	auto checkWalk = [&](const AIFloat3& p, float& outPeak) {
+	// share < 1: judged against the margin's line from the start, so a unit in the margin band may step out of it too
+	auto checkWalk = [&](const AIFloat3& p, float& outPeak, float share = 1.f) {
 		outPeak = 0.f;
 		AIFloat3 dir = p - uPos;
 		dir.y = 0.f;
@@ -395,13 +397,13 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 			return false;
 		}
 		dir /= dist;
-		bool isLeft = isSafeHere;
+		bool isLeft = !isDanger(uPos, startThreat, share);
 		bool isWalkDanger = false;
 		for (float d = step; d < dist; d += step) {
 			AIFloat3 q = uPos + dir * d;
 			CTerrainManager::CorrectPosition(q);
 			const float qThreat = GetTaskThreatAt(unit, q);
-			if (!isDanger(q, qThreat)) {
+			if (!isDanger(q, qThreat, share)) {
 				isLeft = true;
 			} else if (isLeft || (qThreat > startThreat)) {
 				isWalkDanger = true;
@@ -453,14 +455,15 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		return (arcBearing == nullptr) || (d.Length2D() < 1.f)
 			|| (utils::angle_diff(atan2f(d.z, d.x), *arcBearing) <= static_cast<float>(M_PI) * ARC_SPAN + 1e-3f);
 	};
-	// Where it stands, and its last spot, while in the fire band (and on the planned arc): the distance term
+	// Its last spot, and where it stands, while in the fire band (and on the planned arc): the distance term
 	// favours them
-	if (IsInFireBand(unit, uPos, isClose) && isOnArc(uPos)) {
-		add(uPos);
-	}
 	AIFloat3 keptPos;
 	if (GetKeptFireSpot(unit, isClose, keptPos) && isOnArc(keptPos)) {
 		add(keptPos);
+	}
+	const size_t keptCount = cands.size();  // its last spot: no margin (see SPOT)
+	if (IsInFireBand(unit, uPos, isClose) && isOnArc(uPos)) {
+		add(uPos);
 	}
 	// Spots on an arc around the target, facing us or the planned side (+-45 degrees: keeps the group together)
 	AIFloat3 dir = uPos - tPos;
@@ -476,10 +479,25 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	}
 
 	// SPOT: the cheapest spot with a safe walk there (ties: the earlier candidate). The walk is the costly check,
-	// so spots are tried cheapest first and only until one passes
+	// so spots are tried cheapest first and only until one passes. First with a margin under the danger line
+	// (quota.danger_margin): a spot just under it tips over as soon as the unit takes a few hits or a turret is seen.
+	// Its last spot passes at the line, so threat wavering around the margin doesn't shuttle it between two spots.
+	// Then, if none passed, at the line itself as before
 	std::vector<size_t> order(cands.size());
 	std::iota(order.begin(), order.end(), 0);
 	std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return cands[a].cost < cands[b].cost; });
+	const float margin = circuit->GetMilitaryManager()->GetDangerMargin();
+	if (margin < 1.f) {
+		float peak;
+		for (size_t i : order) {
+			SCandidate& c = cands[i];
+			const float share = (i < keptCount) ? 1.f : margin;
+			if (!isDanger(c.pos, c.threat, share) && !checkWalk(c.pos, peak, share)) {
+				outPos = c.pos;
+				return FireSpot::SPOT;
+			}
+		}
+	}
 	for (size_t i : order) {
 		SCandidate& c = cands[i];
 		if (!isDanger(c.pos, c.threat) && !checkWalk(c.pos, c.walkPeak)) {

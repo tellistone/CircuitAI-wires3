@@ -175,6 +175,9 @@ private:
 	bool UpdateEscape(int frame);
 	// Fighting a target inside the base defence radius: stand and fight instead of fleeing
 	bool IsHoldingGround(int frame) const;
+	// Engaged, and the target still passes FindTarget's own check at its spot (the keep allowance): the flee grace
+	// (quota.attack_flee_grace) re-spots instead of fleeing
+	bool IsFightOn(int frame) const;
 	bool Flee(int frame);  // false: nowhere better to go, fight instead
 	// Nearest stronger attack group we can stand beside, else the nearest safe defence point of a cluster we hold,
 	// else the closest haven, else base

@@ -139,6 +139,7 @@ void ISquadTask::Merge(ISquadTask* task)
 	task->scoots.clear();
 	attackPower += task->GetAttackPower();
 	areaPower += task->GetAreaPower();
+	suddenFrame = std::max(suddenFrame, task->suddenFrame);  // a turret it just saw counts for us too
 	const std::set<CCircuitUnit*>& sh = task->GetShields();
 	shields.insert(sh.begin(), sh.end());
 
@@ -550,20 +551,106 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 	if (path == nullptr) {
 		return false;
 	}
-	// The stretch of path the group covers in the next ~2s
+	if (leader->GetUnit()->IsCloaked()) {
+		return false;  // a cloaked leader walks through unseen
+	}
+	// The stretch of path ahead of the leader that the group covers in the next ~4 s: a turret seen after the route was
+	// planned is caught before the group walks into its range. Ahead only, from the point nearest the leader on: ground
+	// just walked out of doesn't ask for a re-plan
 	const AIFloat3& pos = leader->GetPos(frame);
-	const float lookAhead = std::max(leader->GetCircuitDef()->GetSpeed() * 2.f, 200.f);
-	const float sqLookAhead = SQUARE(lookAhead);
-	for (const AIFloat3& p : path->posPath) {
-		if ((p.SqDistance2D(pos) < sqLookAhead) && IsDangerAt(leader, p, safeThreat)) {
-			isPathAheadUnsafe = !leader->GetUnit()->IsCloaked();  // a cloaked leader walks through unseen
-			break;
-		}
+	const float sqLookAhead = SQUARE(GetLookAhead());
+	const F3Vec& pts = path->posPath;
+	auto it = std::min_element(pts.begin(), pts.end(), [&pos](const AIFloat3& a, const AIFloat3& b) {
+		return a.SqDistance2D(pos) < b.SqDistance2D(pos);
+	});
+	for (; (it != pts.end()) && (it->SqDistance2D(pos) < sqLookAhead) && !isPathAheadUnsafe; ++it) {
+		isPathAheadUnsafe = IsDangerAt(leader, *it, safeThreat);
 	}
 	return false;
 }
 
-void ISquadTask::PullBackEndangered(int frame)
+bool ISquadTask::IsMoving(const CEnemyInfo* enemy)
+{
+	static constexpr float MOVING_SPEED = 0.5f;
+	return enemy->GetVel().SqLength2D() > SQUARE(MOVING_SPEED);
+}
+
+float ISquadTask::GetLookAhead() const
+{
+	return std::max(lowestSpeed * 4.f, 400.f);  // the slowest unit sets the group's pace
+}
+
+void ISquadTask::OnSuddenThreat(const CCircuitDef* edef, const AIFloat3& pos, int frame)
+{
+	static constexpr float SUDDEN_RANGE_MAX = 2000.f;  // long-range artillery isn't a turret beside the target
+	if (leader == nullptr) {
+		return;
+	}
+	const auto rangeType = leader->GetCircuitDef()->IsAbleToFly() ? CCircuitDef::RangeType::AIR : CCircuitDef::RangeType::LAND;
+	const float range = std::min(edef->GetMaxRange(rangeType), SUDDEN_RANGE_MAX);
+	if ((range <= 0.f) || (leader->GetPos(frame).SqDistance2D(pos) >= SQUARE(range + GetLookAhead()))) {
+		return;
+	}
+	suddenFrame = frame;
+	leader->ForceUpdate(frame + THREAT_UPDATE_RATE);  // once it is on the threat map; any unit re-plans the group
+}
+
+bool ISquadTask::IsInFleeGrace(int frame, bool isMismatch, int graceFrames, float fleeShare)
+{
+	static constexpr int SUDDEN_GRACE_WINDOW = FRAMES_PER_SEC * 3;
+	if (!isMismatch || (graceFrames <= 0)) {
+		return false;
+	}
+	if ((frame < suddenFrame + SUDDEN_GRACE_WINDOW) && (frame >= graceFrame + graceFrames)) {
+		graceFrame = frame;
+		suddenFrame = -SUDDEN_GRACE_WINDOW;  // one grace per turret seen: a dip in the danger doesn't start another
+		return true;
+	}
+	if ((frame < graceFrame + graceFrames) && IsRespotHopeless(frame, fleeShare)) {
+		graceFrame = frame - graceFrames;  // over now
+	}
+	return frame < graceFrame + graceFrames;
+}
+
+bool ISquadTask::IsRespotHopeless(int frame, float fleeShare) const
+{
+	// Endangered units sent to a RISKY spot (no safe one) stay in danger: the pull-back skips them
+	float riskyPower = 0.f;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		if (IsOnFreshSpot(s.unit, frame, true)
+			&& (std::find(endangered.begin(), endangered.end(), s.unit) != endangered.end()))
+		{
+			riskyPower += s.power;
+		}
+	}
+	return (riskyPower > 0.f) && (riskyPower >= fleeShare * GetStrengthSum());
+}
+
+void ISquadTask::SetRouteAllowance(IPathQuery* query, float strength, bool isDynamic, bool isMargin, float maxWeight) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const float margin = (isMargin && !IsCloakRoute(leader)) ? militaryMgr->GetDangerMargin() : 1.f;
+	if (!isDynamic && (margin >= 1.f)) {
+		return;
+	}
+	// The allowance depends only on distance from our base (base bonus, distance curve, near-base scale): sampled here,
+	// on this thread, at half-cell steps out to the map diagonal; the route runs on a worker thread
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float step = std::max(pathfinder->GetSquareSize() * 0.5f, 1.f);
+	const float width = CTerrainManager::GetTerrainWidth();
+	const float height = CTerrainManager::GetTerrainHeight();
+	const int count = static_cast<int>(sqrtf(width * width + height * height) / step) + 2;
+	std::vector<float> allowByDist(count);
+	for (int i = 0; i < count; ++i) {
+		allowByDist[i] = GetAllowedThreatAt(basePos + AIFloat3((i + 0.5f) * step, 0.f, 0.f), strength);
+	}
+	query->SetThreatAllowance(std::move(allowByDist), step, basePos, pathfinder->GetPathMapXSize(),
+			pathfinder->GetSquareSize(), isDynamic, maxWeight, margin, militaryMgr->GetDangerMarginMod());
+}
+
+void ISquadTask::PullBackEndangered(int frame, bool isKeepSpots)
 {
 	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {
 		return;
@@ -587,7 +674,7 @@ void ISquadTask::PullBackEndangered(int frame)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	for (CCircuitUnit* unit : endangered) {
-		if ((unit->Blocker() != nullptr) || IsOnRiskySpot(unit, frame) || IsScooting(unit)) {
+		if ((unit->Blocker() != nullptr) || IsOnFreshSpot(unit, frame, !isKeepSpots) || IsScooting(unit)) {
 			continue;  // busy, just sent to the least dangerous firing spot (don't bounce it back), or stepping back already
 		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path
