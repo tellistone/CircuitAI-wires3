@@ -3623,6 +3623,20 @@ void CMilitaryManager::MarkPointOfInterest(CEnemyInfo* enemy)
 	rp.weight = rp.units.size();  // TODO
 }
 
+void CMilitaryManager::ReactSuddenThreat(CEnemyInfo* enemy)
+{
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	if ((edef == nullptr) || !enemy->IsAttacker()) {
+		return;
+	}
+	const int frame = circuit->GetLastFrame();
+	for (IFighterTask::FightType type : {IFighterTask::FightType::ATTACK, IFighterTask::FightType::RAID}) {
+		for (IFighterTask* task : GetTasks(type)) {
+			static_cast<ISquadTask*>(task)->OnSuddenThreat(edef, enemy->GetPos(), frame);
+		}
+	}
+}
+
 void CMilitaryManager::UnmarkPointOfInterest(CEnemyInfo* enemy)
 {
 	if (enemy->GetCircuitDef() != circuit->GetEconomyManager()->GetMexDef()) {  // TODO: if one of the list

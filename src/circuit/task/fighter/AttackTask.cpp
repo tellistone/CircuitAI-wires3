@@ -913,12 +913,22 @@ bool CAttackTask::UpdateEscape(int frame)
 	// Flee grace (quota.attack_flee_grace): danger that the fight we accepted doesn't see (units on the firing arc in
 	// range of a turret just spotted beside the target) first gets new firing spots and a pull-back; the group flees
 	// only if it lasts. Not while running already, holding ground or cornered
-	const bool isGraceCase = isDanger && !isHoldGround && (frame >= fleeFrame);
-	if (IsInFleeGrace(frame, isGraceCase, isGraceCase && IsFightOn(frame), GetMilitaryMgr()->GetAttackFleeGrace())) {
+	const bool isGraceCase = isDanger && !isHoldGround && (frame >= fleeFrame) && IsFightOn(frame);
+	const FleeGrace grace = UpdateFleeGrace(frame, isGraceCase, GetMilitaryMgr()->GetAttackFleeGrace());
+	if (FleeGrace::ON == grace) {
+		if (updCount % 2 == 0) {
+			ISquadTask::Update();  // units with empty shields still retreat (normally done at each decision)
+			if (leader == nullptr) {  // task aborted
+				return true;
+			}
+		}
 		attackFrame = frame - attackRepeat;  // orders again now, not at the 2 s repeat: spots avoid the new danger
 		Engage(frame);
 		PullBackEndangered(frame, true);  // those without a fresh spot (stragglers, no spot range)
 		return true;
+	}
+	if (FleeGrace::OVER == grace) {
+		Ban(heldBans, target, -1, frame);  // its own check passes, the escape won't stay: pass on it (6, 12, 24 s)
 	}
 	const bool isFleeing = isDanger && !isHoldGround && Flee(frame);
 	// Already at the flee destination (stronger group, haven, base): no cornered rule, carry on as usual
@@ -1950,45 +1960,28 @@ void CAttackTask::SetRouteThreat(IPathQuery* query, AttackRoute route) const
 {
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
 	const float strength = GetSafeThreat();
-	if (militaryMgr->IsAttackRouteDynamic(route)) {
-		// Threat is weighed against the allowance at each cell (what the escape and the path-ahead check use):
-		// light threat costs less than the flat 2x, threat at the allowance the same, heavier threat more
-		// (quadratic). Big groups walk through what small ones go around.
-		// The allowance depends only on distance from our base (base bonus, distance curve, near-base scale): sample
-		// it here, on this thread, at half-cell steps out to the map diagonal; the route runs on a worker thread
-		CPathFinder* pathfinder = manager->GetCircuit()->GetPathfinder();
-		const AIFloat3& basePos = manager->GetCircuit()->GetSetupManager()->GetBasePos();
-		const float step = std::max(pathfinder->GetSquareSize() * 0.5f, 1.f);
-		const float width = CTerrainManager::GetTerrainWidth();
-		const float height = CTerrainManager::GetTerrainHeight();
-		const int count = static_cast<int>(sqrtf(width * width + height * height) / step) + 2;
-		std::vector<float> allowByDist(count);
-		for (int i = 0; i < count; ++i) {
-			allowByDist[i] = GetAllowedThreatAt(basePos + AIFloat3((i + 0.5f) * step, 0.f, 0.f), strength);
-		}
-		// Escapes: capped, so a weak group under heavy fire doesn't trade a short run through the worst of it
-		// for a much longer one through moderate threat (more time under fire, and a wider search)
-		const bool isEscape = (route == AttackRoute::FLEE) || (route == AttackRoute::CORNERED);
-		query->SetThreatAllowance(std::move(allowByDist), step, basePos, pathfinder->GetPathMapXSize(),
-				pathfinder->GetSquareSize(), isEscape ? militaryMgr->GetAttackFleePathMaxWeight() : 0.f);
-	}
-
-	// Capped routes (target, front, reinforce) ignore light threat: at or below quota.attack_path_ignore_threat x
-	// the group's current strength it costs nothing, so the route goes straight through it instead of around.
-	// Never above half the lowest per-spot allowance anywhere (strength x the lowest base bonus / the attack
-	// thr_mod.distance curve's highest value; near-base scale <= 1), or the path-ahead check and the escape would
-	// flag ground the route treats as free
 	const bool isCapped = (route == AttackRoute::TARGET) || (route == AttackRoute::FRONT)
 			|| (route == AttackRoute::REINFORCE);
+	// Dynamic: threat is weighed against the allowance at each cell (what the escape and the path-ahead check use):
+	// light threat costs less than the flat 2x, threat at the allowance the same, heavier threat more (quadratic). Big
+	// groups walk through what small ones go around. Escapes: capped, so a weak group under heavy fire doesn't trade a
+	// short run through the worst of it for a much longer one through moderate threat (more time under fire, and a
+	// wider search).
+	// Capped routes (target, front, reinforce) also keep clear of ground just under the escape's line where they can
+	// (quota.danger_margin): a route skirting a known turret there tips over once units fan out off the path or take a
+	// few hits
+	const bool isEscape = (route == AttackRoute::FLEE) || (route == AttackRoute::CORNERED);
+	SetRouteAllowance(query, strength, militaryMgr->IsAttackRouteDynamic(route), isCapped,
+			isEscape ? militaryMgr->GetAttackFleePathMaxWeight() : 0.f);
+
+	// Capped routes ignore light threat: at or below quota.attack_path_ignore_threat x the group's current strength it
+	// costs nothing, so the route goes straight through it instead of around. Never above half the lowest per-spot
+	// allowance anywhere (strength x the lowest base bonus / the attack thr_mod.distance curve's highest value;
+	// near-base scale <= 1), or the path-ahead check and the escape would flag ground the route treats as free
 	const float frac = militaryMgr->GetAttackPathIgnoreThreat();
 	if (isCapped && (frac > 0.f)) {
 		const float maxFrac = 0.5f * militaryMgr->GetBaseThrBonusMin() / militaryMgr->GetThrDistModMax(fightType);
 		query->SetThreatFloor(strength * std::min(frac, maxFrac));
-	}
-	// Capped routes keep clear of ground just under the escape's line where they can (quota.danger_margin): a route
-	// skirting a known turret there tips over once units fan out off the path or take a few hits
-	if (isCapped) {
-		SetRouteMargin(query, strength);
 	}
 }
 

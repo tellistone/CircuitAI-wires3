@@ -460,14 +460,15 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		return (arcBearing == nullptr) || (d.Length2D() < 1.f)
 			|| (utils::angle_diff(atan2f(d.z, d.x), *arcBearing) <= static_cast<float>(M_PI) * ARC_SPAN + 1e-3f);
 	};
-	// Where it stands, and its last spot, while in the fire band (and on the planned arc): the distance term
+	// Its last spot, and where it stands, while in the fire band (and on the planned arc): the distance term
 	// favours them
-	if (IsInFireBand(unit, uPos, isClose) && isOnArc(uPos)) {
-		add(uPos);
-	}
 	AIFloat3 keptPos;
 	if (GetKeptFireSpot(unit, isClose, keptPos) && isOnArc(keptPos)) {
 		add(keptPos);
+	}
+	const size_t keptCount = cands.size();  // its last spot: no margin (see SPOT)
+	if (IsInFireBand(unit, uPos, isClose) && isOnArc(uPos)) {
+		add(uPos);
 	}
 	// Spots on an arc around the target, facing us or the planned side (+-45 degrees: keeps the group together)
 	AIFloat3 dir = uPos - tPos;
@@ -484,8 +485,9 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 
 	// SPOT: the cheapest spot with a safe walk there (ties: the earlier candidate). The walk is the costly check,
 	// so spots are tried cheapest first and only until one passes. First with a margin under the danger line
-	// (quota.danger_margin): a spot just under it tips over as soon as the unit takes a few hits or a turret is seen;
-	// then, if none is that clear, at the line itself as before
+	// (quota.danger_margin): a spot just under it tips over as soon as the unit takes a few hits or a turret is seen.
+	// Its last spot passes at the line, so threat wavering around the margin doesn't shuttle it between two spots.
+	// Then, if none passed, at the line itself as before
 	std::vector<size_t> order(cands.size());
 	std::iota(order.begin(), order.end(), 0);
 	std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return cands[a].cost < cands[b].cost; });
@@ -494,7 +496,8 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		float peak;
 		for (size_t i : order) {
 			SCandidate& c = cands[i];
-			if (!isDanger(c.pos, c.threat, margin) && !checkWalk(c.pos, peak, margin)) {
+			const float share = (i < keptCount) ? 1.f : margin;
+			if (!isDanger(c.pos, c.threat, share) && !checkWalk(c.pos, peak, share)) {
 				outPos = c.pos;
 				return FireSpot::SPOT;
 			}

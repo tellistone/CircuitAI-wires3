@@ -41,6 +41,10 @@ public:
 
 	CCircuitUnit* GetLeader() const { return leader; }
 	const springai::AIFloat3& GetLeaderPos(int frame) const;
+	// An enemy seen for the first time (CMilitaryManager::ReactSuddenThreat) at pos: if its reach (ground or air range,
+	// as the leader, at most SUDDEN_RANGE_MAX) is within GetLookAhead of the leader, re-plan at the next threat-map
+	// update instead of at the next decision; a turret also allows the flee grace for SUDDEN_GRACE_WINDOW (UpdateFleeGrace)
+	void OnSuddenThreat(const CCircuitDef* edef, const springai::AIFloat3& pos, int frame);
 	// Target claims: a raid group (isRaidClaim) or an attack group (isAttackClaim) other than us targets this enemy and
 	// its leader is clearly nearer to it than pos (under CLAIM_NEARER x our distance). Near-equal groups may both keep
 	// it, so two groups don't swap one target back and forth as they move. Never within sqFreeDist of pos: a claim
@@ -144,25 +148,33 @@ protected:
 	 * Escape check of attack and raid groups. Danger: threat at or above GetAllowedThreatAt for GetEscapeSafeThreat
 	 */
 	// Fills 'endangered' (units standing in danger; cloaked ones can't be shot) and 'isPathAheadUnsafe' (danger on the
-	// leader's path ahead within ~4 s of walking). True: the endangered units hold at least fleeShare of the group's strength
+	// leader's path ahead within GetLookAhead). True: the endangered units hold at least fleeShare of the group's strength
 	bool IsInDanger(int frame, float fleeShare);
+	// What the group walks in ~4 s, at least 400 elmos
+	float GetLookAhead() const;
 	// Endangered units that didn't make the whole group flee go to the strength-weighted centre of the safe ones, at
 	// most once a second. Also when the leader is the one in danger (the group follows its path, so a stuck leader would
 	// keep everyone heading into it). A unit sent to a RISKY firing spot in the last 3 s stays.
 	// isKeepSpots: also leave alone units sent to any firing spot in the last 3 s (the flee grace re-spots them first)
 	void PullBackEndangered(int frame, bool isKeepSpots = false);
-	// Flee grace (quota.attack_flee_grace, quota.raid_flee_grace). A newly seen enemy (a second turret beside the one we
+	// Flee grace (quota.attack_flee_grace, quota.raid_flee_grace). An enemy just seen (a second turret beside the one we
 	// fight) can put units standing in its range over the escape's line while the fight itself still passes. Fleeing
-	// then turns the group round for 2 s, and the next pick sends it straight back. Instead, for graceFrames from the
-	// start of the danger, the caller re-places firing spots and pulls back endangered units, and flees only if the
-	// danger lasts. isDanger: the group would flee now; isFightOn: engaged, and the target still passes the task's own
-	// check. One grace per FLEE_GRACE_COOLDOWN. true: in grace, re-spot instead of fleeing
-	bool IsInFleeGrace(int frame, bool isDanger, bool isFightOn, int graceFrames);
-	// Route margin (quota.danger_margin): cells at or above share x this task's allowance for strength
-	// (GetAllowedThreatAt) cost more. Not for a cloak-routed leader (another threat scale)
-	void SetRouteMargin(IPathQuery* query, float strength) const;
-	int graceFrame = -1;  // start of the current grace (-1: none)
-	int lastGraceFrame = -FRAMES_PER_SEC * 60;  // start of the last grace
+	// then turns the group round, and the next pick sends it straight back. Instead the caller re-places firing spots
+	// and pulls back endangered units for graceFrames, and flees only if the danger lasts. isGraceCase: the group would
+	// flee now, engaged on a target that still passes the task's own check. A grace starts only within
+	// SUDDEN_GRACE_WINDOW of OnSuddenThreat, and FLEE_GRACE_COOLDOWN after the last one ended; it runs its full time
+	// from its start (a dip in the danger doesn't restart it).
+	// ON: in grace, re-spot instead of fleeing. OVER (once, the danger lasted or came back within the cooldown): flee,
+	// and pass on the target for a while, or the pick sends the group straight back. NONE: as usual
+	enum class FleeGrace: char {NONE, ON, OVER};
+	FleeGrace UpdateFleeGrace(int frame, bool isGraceCase, int graceFrames);
+	// Threat cost against this task's allowance for strength (GetAllowedThreatAt) at each cell of a route
+	// (IPathQuery::SetThreatAllowance). isDynamic: weighed against it; isMargin: clear of ground just under the escape's
+	// line where it can (quota.danger_margin; not for a cloak-routed leader, on another threat scale)
+	void SetRouteAllowance(IPathQuery* query, float strength, bool isDynamic, bool isMargin, float maxWeight = 0.f) const;
+	int suddenFrame = -FRAMES_PER_SEC * 60;  // last turret first seen within our reach (OnSuddenThreat)
+	int graceFrame = -FRAMES_PER_SEC * 60;  // start of the last grace
+	bool isGraceOver = true;  // the last grace reported OVER
 	std::vector<CCircuitUnit*> endangered;  // from the last IsInDanger
 	bool isPathAheadUnsafe = false;  // from the last IsInDanger
 	int pullFrame = 0;  // last pull-back

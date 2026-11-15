@@ -553,11 +553,11 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 	if (leader->GetUnit()->IsCloaked()) {
 		return false;  // a cloaked leader walks through unseen
 	}
-	// The stretch of path ahead of the leader that the group covers in the next ~4 s (at least 400 elmos): a turret
-	// seen after the route was planned is caught before the group walks into its range. Ahead only, from the point
-	// nearest the leader on: ground just walked out of doesn't ask for a re-plan
+	// The stretch of path ahead of the leader that the group covers in the next ~4 s: a turret seen after the route was
+	// planned is caught before the group walks into its range. Ahead only, from the point nearest the leader on: ground
+	// just walked out of doesn't ask for a re-plan
 	const AIFloat3& pos = leader->GetPos(frame);
-	const float sqLookAhead = SQUARE(std::max(leader->GetCircuitDef()->GetSpeed() * 4.f, 400.f));
+	const float sqLookAhead = SQUARE(GetLookAhead());
 	const F3Vec& pts = path->posPath;
 	size_t from = 0;
 	float minSqDist = std::numeric_limits<float>::max();
@@ -577,36 +577,61 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 	return false;
 }
 
-bool ISquadTask::IsInFleeGrace(int frame, bool isDanger, bool isFightOn, int graceFrames)
+float ISquadTask::GetLookAhead() const
 {
-	// Danger over, or the fight is lost (target dead, or its own spot too hot now): no grace
-	if (!isDanger || !isFightOn || (graceFrames <= 0)) {
-		graceFrame = -1;
-		return false;
-	}
-	if (graceFrame < 0) {
-		// A group stepping in and out of the same danger gets no grace after grace: it flees
-		static constexpr int FLEE_GRACE_COOLDOWN = FRAMES_PER_SEC * 8;
-		if (frame < lastGraceFrame + FLEE_GRACE_COOLDOWN) {
-			return false;
-		}
-		graceFrame = lastGraceFrame = frame;
-	}
-	// Run out: flee (graceFrame stays set until the danger ends, so no new grace starts mid-escape)
-	return frame < graceFrame + graceFrames;
+	return std::max(leader->GetCircuitDef()->GetSpeed() * 4.f, 400.f);
 }
 
-void ISquadTask::SetRouteMargin(IPathQuery* query, float strength) const
+void ISquadTask::OnSuddenThreat(const CCircuitDef* edef, const AIFloat3& pos, int frame)
+{
+	static constexpr float SUDDEN_RANGE_MAX = 2000.f;  // long-range artillery isn't a turret beside the target
+	if (leader == nullptr) {
+		return;
+	}
+	const auto rangeType = leader->GetCircuitDef()->IsAbleToFly() ? CCircuitDef::RangeType::AIR : CCircuitDef::RangeType::LAND;
+	const float range = std::min(edef->GetMaxRange(rangeType), SUDDEN_RANGE_MAX);
+	if ((range <= 0.f) || (leader->GetPos(frame).SqDistance2D(pos) >= SQUARE(range + GetLookAhead()))) {
+		return;
+	}
+	if (!edef->IsMobile()) {
+		suddenFrame = frame;  // a turret: the grace; a mobile one walks on, so its danger grows rather than settles
+	}
+	leader->ForceUpdate(frame + THREAT_UPDATE_RATE);  // once it is on the threat map; any unit re-plans the group
+}
+
+ISquadTask::FleeGrace ISquadTask::UpdateFleeGrace(int frame, bool isGraceCase, int graceFrames)
+{
+	static constexpr int SUDDEN_GRACE_WINDOW = FRAMES_PER_SEC * 3;
+	static constexpr int FLEE_GRACE_COOLDOWN = FRAMES_PER_SEC * 6;  // a group stepping in and out of the same danger flees
+	if (!isGraceCase || (graceFrames <= 0)) {
+		return FleeGrace::NONE;
+	}
+	const int graceEnd = graceFrame + graceFrames;
+	if ((frame < suddenFrame + SUDDEN_GRACE_WINDOW) && (frame >= graceEnd + FLEE_GRACE_COOLDOWN)) {
+		graceFrame = frame;
+		isGraceOver = false;
+		return FleeGrace::ON;
+	}
+	if (frame < graceEnd) {
+		return FleeGrace::ON;
+	}
+	if (isGraceOver || (frame >= graceEnd + FLEE_GRACE_COOLDOWN)) {
+		return FleeGrace::NONE;
+	}
+	isGraceOver = true;
+	return FleeGrace::OVER;
+}
+
+void ISquadTask::SetRouteAllowance(IPathQuery* query, float strength, bool isDynamic, bool isMargin, float maxWeight) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const float margin = militaryMgr->GetDangerMargin();
-	const float mod = militaryMgr->GetDangerMarginMod();
-	if ((margin >= 1.f) || (mod <= 1.f) || IsCloakRoute(leader)) {
+	const float margin = (isMargin && !IsCloakRoute(leader)) ? militaryMgr->GetDangerMargin() : 1.f;
+	if (!isDynamic && (margin >= 1.f)) {
 		return;
 	}
-	// The allowance depends only on distance from our base: sampled here at half-cell steps out to the map diagonal
-	// (as CAttackTask::SetRouteThreat); the route runs on a worker thread
+	// The allowance depends only on distance from our base (base bonus, distance curve, near-base scale): sampled here,
+	// on this thread, at half-cell steps out to the map diagonal; the route runs on a worker thread
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float step = std::max(pathfinder->GetSquareSize() * 0.5f, 1.f);
@@ -617,8 +642,8 @@ void ISquadTask::SetRouteMargin(IPathQuery* query, float strength) const
 	for (int i = 0; i < count; ++i) {
 		allowByDist[i] = GetAllowedThreatAt(basePos + AIFloat3((i + 0.5f) * step, 0.f, 0.f), strength);
 	}
-	query->SetThreatMargin(std::move(allowByDist), step, basePos, pathfinder->GetPathMapXSize(),
-			pathfinder->GetSquareSize(), margin, mod);
+	query->SetThreatAllowance(std::move(allowByDist), step, basePos, pathfinder->GetPathMapXSize(),
+			pathfinder->GetSquareSize(), isDynamic, maxWeight, margin, militaryMgr->GetDangerMarginMod());
 }
 
 void ISquadTask::PullBackEndangered(int frame, bool isKeepSpots)

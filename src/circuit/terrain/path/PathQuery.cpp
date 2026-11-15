@@ -37,9 +37,10 @@ IPathQuery::~IPathQuery()
 }
 
 void IPathQuery::SetThreatAllowance(std::vector<float>&& allowByDist, float step, const springai::AIFloat3& basePos,
-		int pathMapXSize, int squareSize, float maxWeight)
+		int pathMapXSize, int squareSize, bool isDynamic, float maxWeight, float margin, float marginMod)
 {
-	if (allowByDist.empty() || !(step > 0.f) || (pathMapXSize <= 0)) {
+	const float hotLoad = ((margin < 1.f) && (marginMod > 1.f)) ? std::max(margin, 0.f) : std::numeric_limits<float>::max();
+	if (allowByDist.empty() || !(step > 0.f) || (pathMapXSize <= 0) || (!isDynamic && (hotLoad > 1.f))) {
 		return;  // keep the flat weight
 	}
 	// Stored as 1 / allowance; shared, as the cost function is copied for each run
@@ -54,39 +55,15 @@ void IPathQuery::SetThreatAllowance(std::vector<float>&& allowByDist, float step
 	const float sq = static_cast<float>(squareSize);
 	const int last = static_cast<int>(invAllow->size()) - 1;
 	const float maxW = (maxWeight > 0.f) ? maxWeight : std::numeric_limits<float>::max();
-	threatFun = [fun = std::move(threatFun), arr, invAllow, invStep, bx, bz, sq, pathMapXSize, last, maxW](int index) {
+	threatFun = [fun = std::move(threatFun), arr, invAllow, invStep, bx, bz, sq, pathMapXSize, last, isDynamic, maxW,
+			hotLoad, marginMod](int index) {
 		const int z = index / pathMapXSize;
 		const float dx = ((index - z * pathMapXSize) + 0.5f) * sq - bx;
 		const float dz = (z + 0.5f) * sq - bz;
 		const int i = std::min(static_cast<int>(sqrtf(dx * dx + dz * dz) * invStep), last);
-		return fun(index) * 0.5f * std::min(1.f + arr[index] * (*invAllow)[i], maxW);
-	};
-}
-
-void IPathQuery::SetThreatMargin(std::vector<float> allowByDist, float step, const springai::AIFloat3& basePos,
-		int pathMapXSize, int squareSize, float margin, float mod)
-{
-	if (allowByDist.empty() || !(step > 0.f) || (pathMapXSize <= 0) || !(margin > 0.f) || !(mod > 1.f)) {
-		return;
-	}
-	// Stored as the threat at which a cell turns hot: margin x allowance
-	for (float& a : allowByDist) {
-		a *= margin;
-	}
-	auto hotAt = std::make_shared<const std::vector<float>>(std::move(allowByDist));
-	const float* arr = threatArray;
-	const float invStep = 1.f / step;
-	const float bx = basePos.x;
-	const float bz = basePos.z;
-	const float sq = static_cast<float>(squareSize);
-	const int last = static_cast<int>(hotAt->size()) - 1;
-	threatFun = [fun = std::move(threatFun), arr, hotAt, invStep, bx, bz, sq, pathMapXSize, last, mod](int index) {
-		const int z = index / pathMapXSize;
-		const float dx = ((index - z * pathMapXSize) + 0.5f) * sq - bx;
-		const float dz = (z + 0.5f) * sq - bz;
-		const int i = std::min(static_cast<int>(sqrtf(dx * dx + dz * dz) * invStep), last);
-		const float cost = fun(index);
-		return (arr[index] >= (*hotAt)[i]) ? cost * mod : cost;
+		const float load = arr[index] * (*invAllow)[i];  // threat / allowance
+		const float weight = isDynamic ? 0.5f * std::min(1.f + load, maxW) : 1.f;
+		return fun(index) * ((load >= hotLoad) ? weight * marginMod : weight);
 	};
 }
 

@@ -13,8 +13,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   The group ran for 2 s, and the next pick sent it straight back, taking hits both ways. Now, while engaged and the
   target still passes the task's own check (attack: threat at its spot under the keep allowance; raid: as its pick,
   for a target standing still), the group first re-places its firing spots at once (they avoid the new danger) and
-  pulls back endangered units without a fresh spot, and flees only if the danger lasts the grace. One grace per 8 s;
-  not while running already, holding ground in the base radius, or cornered.
+  pulls back endangered units without a fresh spot, and flees only if the danger lasts the grace. Only within 3 s of
+  a turret near the group being seen for the first time (a mobile enemy walks on, so its danger grows rather than
+  settles, and a fight we are slowly losing flees at once as before); the grace runs its full time from its start,
+  and the next can start 6 s after it ends. When the danger lasts the grace (or comes back within those 6 s), the
+  group flees and passes on the target for a while (attack: 6, 12, 24 s, as held targets; raid: 10 s), so the pick
+  doesn't send it straight back into a fight its escape rejects. Not while running already, holding ground in the
+  base radius, or cornered.
 
 - **Routes and firing spots keep a margin under the danger line** (`quota.danger_margin`: `[<share>, <cost x>]`,
   default and shipped `[0.75, 3]`; share 1 = off). Routes may use any cell under their threat cap, and the raid cap is
@@ -24,14 +29,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   hits, then pull back. Now attack target, front and reinforce routes and raid target and roam routes cost
   `<cost x>` as much on cells at or above `<share>` x the group's allowance there (the escape's, by distance from
   base), and firing spots (every group with an escape) are looked for under `<share>` x the line first, then at the
-  line as before.
+  line as before. A unit's last firing spot passes at the line, so threat wavering around the margin doesn't shuttle
+  it between two spots.
 
 - **Groups react sooner to a turret seen ahead.** A route planned before a turret was seen was walked until the
   next decision (attack: up to 2 s) or until the danger was within ~2 s of the leader's walk, so a group could reach
-  the edge of its range before turning. Now an enemy seen for the first time makes our units within its weapon
-  range + 400 elmos (at least 500, as before) re-plan at the next threat-map update, and the path-ahead check of
-  attack and raid groups looks about 4 s of walking ahead (at least 400 elmos), ahead of the leader only (ground just
-  walked out of no longer asks for a re-plan).
+  the edge of its range before turning. Now an armed enemy seen for the first time also makes each attack and raid
+  group whose leader is within its range (ground, or air for flying groups; at most 2000 elmos) + the group's
+  look-ahead re-plan at the next threat-map update (our units within 500 elmos of it still do, as before), and the
+  path-ahead check of attack and raid groups looks about 4 s of walking ahead (at least 400 elmos), ahead of the
+  leader only (ground just walked out of no longer asks for a re-plan).
 
 - **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
   `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with

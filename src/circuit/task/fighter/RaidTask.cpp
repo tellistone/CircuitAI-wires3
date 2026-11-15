@@ -250,23 +250,26 @@ void CRaidTask::Update()
 	const bool isInDanger = IsInDanger(frame, static_cast<CMilitaryManager*>(manager)->GetRaidFleeShare());
 	// Flee grace (quota.raid_flee_grace): danger the fight doesn't see (units in range of a turret just spotted beside
 	// the target) first gets new firing spots and a pull-back; the group flees only if it lasts
-	const bool isGraceCase = isInDanger && (frame >= fleeFrame);
-	if (IsInFleeGrace(frame, isGraceCase, isGraceCase && IsFightOn(frame), GetMilitaryMgr()->GetRaidFleeGrace())) {
-		attackFrame = frame - attackRepeat;  // orders again now: spots avoid the new danger
-		Attack(frame, true);
-		PullBackEndangered(frame, true);  // those without a fresh spot
-		return;
+	const bool isGraceCase = isInDanger && (frame >= fleeFrame) && IsFightOn(frame);
+	const FleeGrace grace = UpdateFleeGrace(frame, isGraceCase, GetMilitaryMgr()->GetRaidFleeGrace());
+	const bool isGrace = (FleeGrace::ON == grace);
+	if (FleeGrace::OVER == grace) {
+		heldTargets[target->GetId()] = frame;  // its own check passes, the escape won't stay: pass on it for 10 s
 	}
-	if (isInDanger && Flee(frame)) {
+	if (isInDanger && !isGrace && Flee(frame)) {
 		return;
 	}
 	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot
 	if (isFightPending) {
 		SendPendingFight(frame);
 	}
-	PullBackEndangered(frame);
-	if (frame < fleeFrame) {
-		return;  // keep running along the escape path for a moment instead of turning straight back
+	if (isGrace) {
+		attackFrame = frame - attackRepeat;  // orders again now: spots avoid the new danger
+		Attack(frame, true);
+	}
+	PullBackEndangered(frame, isGrace);  // in grace: those without a fresh spot
+	if (isGrace || (frame < fleeFrame)) {
+		return;  // fleeing: keep running along the escape path for a moment instead of turning straight back
 	}
 
 	/*
@@ -396,7 +399,7 @@ void CRaidTask::Update()
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			leader, threatMap, frame,
 			startPos, pathRange, goals, GetHitTest(), GetSafeThreat() / pathMod);
-	SetRouteMargin(query.get(), GetSafeThreat());  // quota.danger_margin: clear of ground just under the escape's line
+	SetRouteAllowance(query.get(), GetSafeThreat(), false, true);  // quota.danger_margin: clear of the escape's line
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
@@ -723,7 +726,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, threatMap, frame,
 			pos, position, pathfinder->GetSquareSize());
-	SetRouteMargin(query.get(), GetSafeThreat());  // quota.danger_margin
+	SetRouteAllowance(query.get(), GetSafeThreat(), false, true);  // quota.danger_margin
 	pathQueries[leader] = query;
 	query->HoldTask(this);
 
