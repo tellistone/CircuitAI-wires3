@@ -268,7 +268,6 @@ void CRaidTask::Update()
 	if (frame < fleeFrame) {
 		return;  // keep running along the escape path for a moment instead of turning straight back
 	}
-	HoldForReplan(frame);  // the line itself just ahead: stop rather than walk on until the new route
 
 	/*
 	 * Regroup if required
@@ -710,7 +709,6 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// Still walking the roam route to this same destination, planned under 3 s ago, with no danger at the
 	// destination, on the stretch ahead or to any unit: keep it instead of planning the same route again
 	if (!isDanger && !isPathAheadUnsafe && endangered.empty() && (position.SqDistance2D(roamGoal) < 1.f)
-		&& !IsRouteStale(roamPath, frame)  // a turret seen since the route was planned: plan anew
 		&& (frame < roamPathFrame + FRAMES_PER_SEC * 3) && (roamPath != nullptr)
 		&& leader->GetTravelAct()->IsActive() && (leader->GetTravelAct()->GetPath() == roamPath))
 	{

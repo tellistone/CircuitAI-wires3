@@ -27,16 +27,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   line as before.
 
 - **Groups react sooner to a turret seen ahead.** A route planned before a turret was seen was walked until the
-  next decision (attack: up to 2 s, reused up to 3 s) or until the danger was within ~2 s of the leader's walk, so a
-  group could reach the edge of its range before turning. Now:
-  - the path-ahead check looks about 4 s of walking ahead (at least 400 elmos), ahead of the leader only, and asks for
-    a re-plan at `quota.danger_margin`'s share of the line, not only at the line, for margin ground that appeared
-    after the route arrived (a route planned through it knowingly isn't re-planned at every decision);
-  - attack target and front routes and raid roam routes aren't reused when the rest of the route crosses such ground;
-  - with the line itself just ahead, the units stop where they are (once per route) instead of walking on while the
-    new route is worked out (not while fleeing or cornered);
-  - an enemy seen for the first time makes our units within its weapon range + 400 elmos (at least 500, as before)
-    re-plan at the next threat-map update.
+  next decision (attack: up to 2 s) or until the danger was within ~2 s of the leader's walk, so a group could reach
+  the edge of its range before turning. Now an enemy seen for the first time makes our units within its weapon
+  range + 400 elmos (at least 500, as before) re-plan at the next threat-map update, and the path-ahead check of
+  attack and raid groups looks about 4 s of walking ahead (at least 400 elmos), ahead of the leader only (ground just
+  walked out of no longer asks for a re-plan).
 
 - **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
   `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with

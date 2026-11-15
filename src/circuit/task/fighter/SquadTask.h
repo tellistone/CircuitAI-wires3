@@ -144,7 +144,7 @@ protected:
 	 * Escape check of attack and raid groups. Danger: threat at or above GetAllowedThreatAt for GetEscapeSafeThreat
 	 */
 	// Fills 'endangered' (units standing in danger; cloaked ones can't be shot) and 'isPathAheadUnsafe' (danger on the
-	// leader's path within ~2 s of walking). True: the endangered units hold at least fleeShare of the group's strength
+	// leader's path ahead within ~4 s of walking). True: the endangered units hold at least fleeShare of the group's strength
 	bool IsInDanger(int frame, float fleeShare);
 	// Endangered units that didn't make the whole group flee go to the strength-weighted centre of the safe ones, at
 	// most once a second. Also when the leader is the one in danger (the group follows its path, so a stuck leader would
@@ -164,20 +164,7 @@ protected:
 	int graceFrame = -1;  // start of the current grace (-1: none)
 	int lastGraceFrame = -FRAMES_PER_SEC * 60;  // start of the last grace
 	std::vector<CCircuitUnit*> endangered;  // from the last IsInDanger
-	bool isPathAheadUnsafe = false;  // from the last IsInDanger: margin's share of the line ahead (re-plan)
-	bool isPathAheadDanger = false;  // from the last IsInDanger: the line itself ahead (hold until the new route)
-	// The leader's path from the point nearest it on has a cell at or above the margin's share of the line
-	// (quota.danger_margin): a route planned before a turret was seen, not to be reused
-	bool IsPathRestUnsafe(const std::shared_ptr<PathInfo>& path, int frame) const;
-	// isPathAheadDanger: the units stop where they are (once per route) instead of walking on while the new route is
-	// worked out. Callers: not while fleeing (escape routes run through threat)
-	void HoldForReplan(int frame);
-	const PathInfo* heldPath = nullptr;  // the route HoldForReplan last stopped (compared only)
-	// path is the leader's route IsInDanger saw arrive clean of margin ground, and now its rest has some (a turret
-	// seen since): don't reuse it
-	bool IsRouteStale(const std::shared_ptr<PathInfo>& path, int frame) const;
-	const PathInfo* seenPath = nullptr;  // the leader's route when IsInDanger last saw it change (compared only)
-	bool isSeenPathMargin = false;  // seenPath already crossed margin ground when it arrived
+	bool isPathAheadUnsafe = false;  // from the last IsInDanger
 	int pullFrame = 0;  // last pull-back
 
 	/*
