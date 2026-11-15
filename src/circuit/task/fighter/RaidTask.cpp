@@ -248,6 +248,15 @@ void CRaidTask::Update()
 	 * Escape: checked on every update (not just every decision), also while engaging or regrouping
 	 */
 	const bool isInDanger = IsInDanger(frame, static_cast<CMilitaryManager*>(manager)->GetRaidFleeShare());
+	// Flee grace (quota.raid_flee_grace): danger the fight doesn't see (units in range of a turret just spotted beside
+	// the target) first gets new firing spots and a pull-back; the group flees only if it lasts
+	const bool isGraceCase = isInDanger && (frame >= fleeFrame);
+	if (IsInFleeGrace(frame, isGraceCase, isGraceCase && IsFightOn(frame), GetMilitaryMgr()->GetRaidFleeGrace())) {
+		attackFrame = frame - attackRepeat;  // orders again now: spots avoid the new danger
+		Attack(frame, true);
+		PullBackEndangered(frame, true);  // those without a fresh spot
+		return;
+	}
 	if (isInDanger && Flee(frame)) {
 		return;
 	}
@@ -934,6 +943,20 @@ float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float sqDist = basePos.SqDistance2D(pos);
 	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist) / GetThrDistModAt(pos);
+}
+
+bool CRaidTask::IsFightOn(int frame) const
+{
+	// Only where Update gives firing spots: a ground group, a target standing still
+	if ((State::ENGAGE != state) || (target == nullptr) || leader->GetCircuitDef()->IsAbleToFly()
+		|| (target->GetVel().SqLength2D() > SQUARE(MOVING_SPEED)))
+	{
+		return false;
+	}
+	// As FindTarget judges it (cautious after an escape)
+	const AIFloat3& tPos = target->GetPos();
+	const float power = GetSafeThreat() * (IsCautious(frame) ? 0.75f : 1.f);
+	return GetTaskThreatAt(leader, tPos) < GetSafeThreatAt(tPos, power);
 }
 
 bool CRaidTask::Flee(int frame)

@@ -7,6 +7,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Flee grace for attack and raid groups** (`quota.attack_flee_grace`, `quota.raid_flee_grace`, seconds; default and
+  shipped 2; 0 = off). A turret spotted beside the one a group is fighting put the units on the firing arc in its
+  range over the escape's line, while the target's own spot (and, for attack groups, the keep allowance) still passed.
+  The group ran for 2 s, and the next pick sent it straight back, taking hits both ways. Now, while engaged and the
+  target still passes the task's own check (attack: threat at its spot under the keep allowance; raid: as its pick,
+  for a target standing still), the group first re-places its firing spots at once (they avoid the new danger) and
+  pulls back endangered units without a fresh spot, and flees only if the danger lasts the grace. One grace per 8 s;
+  not while running already, holding ground in the base radius, or cornered.
+
 - **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
   `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with
   all of them off the AI plays as before.

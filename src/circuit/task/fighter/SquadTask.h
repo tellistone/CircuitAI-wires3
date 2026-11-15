@@ -149,7 +149,17 @@ protected:
 	// Endangered units that didn't make the whole group flee go to the strength-weighted centre of the safe ones, at
 	// most once a second. Also when the leader is the one in danger (the group follows its path, so a stuck leader would
 	// keep everyone heading into it). A unit sent to a RISKY firing spot in the last 3 s stays.
-	void PullBackEndangered(int frame);
+	// isKeepSpots: also leave alone units sent to any firing spot in the last 3 s (the flee grace re-spots them first)
+	void PullBackEndangered(int frame, bool isKeepSpots = false);
+	// Flee grace (quota.attack_flee_grace, quota.raid_flee_grace). A newly seen enemy (a second turret beside the one we
+	// fight) can put units standing in its range over the escape's line while the fight itself still passes. Fleeing
+	// then turns the group round for 2 s, and the next pick sends it straight back. Instead, for graceFrames from the
+	// start of the danger, the caller re-places firing spots and pulls back endangered units, and flees only if the
+	// danger lasts. isDanger: the group would flee now; isFightOn: engaged, and the target still passes the task's own
+	// check. One grace per FLEE_GRACE_COOLDOWN. true: in grace, re-spot instead of fleeing
+	bool IsInFleeGrace(int frame, bool isDanger, bool isFightOn, int graceFrames);
+	int graceFrame = -1;  // start of the current grace (-1: none)
+	int lastGraceFrame = -FRAMES_PER_SEC * 60;  // start of the last grace
 	std::vector<CCircuitUnit*> endangered;  // from the last IsInDanger
 	bool isPathAheadUnsafe = false;  // from the last IsInDanger
 	int pullFrame = 0;  // last pull-back

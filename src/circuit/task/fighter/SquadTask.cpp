@@ -563,7 +563,26 @@ bool ISquadTask::IsInDanger(int frame, float fleeShare)
 	return false;
 }
 
-void ISquadTask::PullBackEndangered(int frame)
+bool ISquadTask::IsInFleeGrace(int frame, bool isDanger, bool isFightOn, int graceFrames)
+{
+	// Danger over, or the fight is lost (target dead, or its own spot too hot now): no grace
+	if (!isDanger || !isFightOn || (graceFrames <= 0)) {
+		graceFrame = -1;
+		return false;
+	}
+	if (graceFrame < 0) {
+		// A group stepping in and out of the same danger gets no grace after grace: it flees
+		static constexpr int FLEE_GRACE_COOLDOWN = FRAMES_PER_SEC * 8;
+		if (frame < lastGraceFrame + FLEE_GRACE_COOLDOWN) {
+			return false;
+		}
+		graceFrame = lastGraceFrame = frame;
+	}
+	// Run out: flee (graceFrame stays set until the danger ends, so no new grace starts mid-escape)
+	return frame < graceFrame + graceFrames;
+}
+
+void ISquadTask::PullBackEndangered(int frame, bool isKeepSpots)
 {
 	if (endangered.empty() || (frame < pullFrame + FRAMES_PER_SEC)) {
 		return;
@@ -587,7 +606,9 @@ void ISquadTask::PullBackEndangered(int frame)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	for (CCircuitUnit* unit : endangered) {
-		if ((unit->Blocker() != nullptr) || IsOnRiskySpot(unit, frame) || IsScooting(unit)) {
+		if ((unit->Blocker() != nullptr) || IsOnRiskySpot(unit, frame) || IsScooting(unit)
+			|| (isKeepSpots && IsOnFreshSpot(unit, frame)))
+		{
 			continue;  // busy, just sent to the least dangerous firing spot (don't bounce it back), or stepping back already
 		}
 		unit->GetTravelAct()->StateWait();  // re-activated with the group's next path

@@ -910,6 +910,16 @@ bool CAttackTask::UpdateEscape(int frame)
 	const bool isDanger = IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
 	isAtFleeDest = false;
+	// Flee grace (quota.attack_flee_grace): danger that the fight we accepted doesn't see (units on the firing arc in
+	// range of a turret just spotted beside the target) first gets new firing spots and a pull-back; the group flees
+	// only if it lasts. Not while running already, holding ground or cornered
+	const bool isGraceCase = isDanger && !isHoldGround && (frame >= fleeFrame);
+	if (IsInFleeGrace(frame, isGraceCase, isGraceCase && IsFightOn(frame), GetMilitaryMgr()->GetAttackFleeGrace())) {
+		attackFrame = frame - attackRepeat;  // orders again now, not at the 2 s repeat: spots avoid the new danger
+		Engage(frame);
+		PullBackEndangered(frame, true);  // those without a fresh spot (stragglers, no spot range)
+		return true;
+	}
 	const bool isFleeing = isDanger && !isHoldGround && Flee(frame);
 	// Already at the flee destination (stronger group, haven, base): no cornered rule, carry on as usual
 	// (pull-back and normal decisions)
@@ -956,6 +966,16 @@ bool CAttackTask::IsHoldingGround(int frame) const
 	// Only inside the base defence radius (where thr_mod.base_bonus applies): out in the field the enemy
 	// is nearer our base than we are in about half of all fights, and those should still be escapable
 	return (State::ENGAGE == state) && (target != nullptr) && IsInBaseRadius(target->GetPos());
+}
+
+bool CAttackTask::IsFightOn(int frame) const
+{
+	if ((State::ENGAGE != state) || (target == nullptr)) {
+		return false;
+	}
+	// As FindTarget judges the current target (no raid factor: an engaged target is mostly in contact, exempt)
+	const AIFloat3 rangePos = GetRangePos(target, frame);
+	return !IsDangerAt(leader, rangePos, GetKeepStrength(rangePos, GetPickStrength(frame)), scaleRefSqDist);
 }
 
 bool CAttackTask::Flee(int frame)

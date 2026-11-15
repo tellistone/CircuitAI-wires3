@@ -345,6 +345,12 @@ bool IFighterTask::IsOnRiskySpot(CCircuitUnit* unit, int frame) const
 	return (it != fireSpots.end()) && it->second.isRisky && (frame < it->second.frame + RISKY_GRACE);
 }
 
+bool IFighterTask::IsOnFreshSpot(CCircuitUnit* unit, int frame) const
+{
+	auto it = fireSpots.find(unit);
+	return (it != fireSpots.end()) && (frame < it->second.frame + RISKY_GRACE);
+}
+
 IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
 		const float* arcBearing, bool isClose, AIFloat3& outPos) const
 {

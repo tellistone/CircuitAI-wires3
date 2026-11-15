@@ -545,6 +545,9 @@ void CMilitaryManager::ReadConfig()
 	};
 	const float noMax = std::numeric_limits<float>::max();
 	attackFleeShare = readAttackNum("attack_flee_share", 0.5f, 0.f, 1.f);
+	// Seconds an engaged group re-spots before it flees, while its target still passes; 0 = off (flee at once)
+	attackFleeGrace = static_cast<int>(readAttackNum("attack_flee_grace", 2.f, 0.f, 10.f) * FRAMES_PER_SEC);
+	raidFleeGrace = static_cast<int>(readAttackNum("raid_flee_grace", 2.f, 0.f, 10.f) * FRAMES_PER_SEC);
 	attackKeepThreat = readAttackNum("attack_keep_threat", 1.34f, 1.f, noMax);  // below 1 = off
 	const Json::Value& qraidFactor = quotas.get("raid_attack_factor", true);
 	if (!qraidFactor.isBool()) {

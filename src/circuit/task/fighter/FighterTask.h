@@ -113,6 +113,7 @@ protected:
 	// from below, unseen
 	bool GetUnitSightLifts(CCircuitUnit* unit, const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const;
 	bool IsOnRiskySpot(CCircuitUnit* unit, int frame) const;  // sent to a RISKY spot within 3 s: no pull-back
+	bool IsOnFreshSpot(CCircuitUnit* unit, int frame) const;  // sent to any firing spot within 3 s
 	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
 	// each unit's own bearing from the target
 	virtual bool GetFireArcBearing(float& outBearing) const { return false; }
