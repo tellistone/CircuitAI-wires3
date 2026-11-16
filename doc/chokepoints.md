@@ -116,6 +116,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.height_cap` | `150` | Elmos above the targets that earn all of `turret.height`. |
 | `turret.travel` | `1000` | Constructor walk that halves a spot's rank. |
 | `turret.choke` | `100` | Metal a choke of our current line or the enemy line in range adds (C). |
+| `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
 | `turret.light` | `["turretlaser", "turretmissile"]` | The light turrets both callers may build: Lotus and Picket. |
 | `turret.enemy_reach` | `600` | Distance to a known enemy building that starts the near-enemy caller. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
@@ -316,7 +317,9 @@ sweep rebuild a home tower.
 **Callers.** One update a second runs both, each turret from `turret.light` at NORMAL priority:
 
 1. After a flee that ends clear or covered, centred where the flee started, with only the light defs that hit what
-   it fled from (after gunships, only Picket). Only builders whose flee is on: the commander by default, other
+   it fled from (after gunships, only Picket). Not before `turret.after_flee_since` seconds of game time, and not
+   when a defence that hits what it fled from (ours or an ally's, finished, being built or queued) stands within
+   `turret.radius` of where the flee started. Only builders whose flee is on: the commander by default, other
    constructors with `retreat.builder_flee`. A cornered flee keeps the cornered defence, a hurt one goes for repair.
 2. A mobile ground constructor with a known enemy building within `turret.enemy_reach` and no armed ally (a mobile
    or a finished tower, its own power left out) within `turret.ally_radius`, centred on itself. A finished picker

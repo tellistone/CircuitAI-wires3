@@ -71,6 +71,7 @@ void CTurretPicker::ReadConfig()
 	c.travel = turret.get("travel", c.travel).asFloat();
 	c.choke = turret.get("choke", c.choke).asFloat();
 	c.isAfterFlee = turret.get("after_flee", c.isAfterFlee).asBool();
+	c.afterFleeSince = turret.get("after_flee_since", c.afterFleeSince).asFloat();
 	c.isNearEnemy = turret.get("near_enemy", c.isNearEnemy).asBool();
 	c.enemyReach = turret.get("enemy_reach", c.enemyReach).asFloat();
 	c.allyRadius = turret.get("ally_radius", c.allyRadius).asFloat();

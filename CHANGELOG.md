@@ -15,9 +15,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `turret.min_value` × the turret's cost, inside our buildings' influence, out of threat, buildable and reachable;
   among those it leans toward enemy buildings (`turret.front`) and prefers a short walk. The turret is built on that
   exact spot, or not at all. Two callers, on by default (`turret.after_flee`, `turret.near_enemy`): a constructor
-  whose flee ended clear or covered (centred where it started), and a mobile ground constructor near a known enemy
-  building with no armed ally around. They help a turret already being built nearby instead of ordering one, and are
-  held to a cooldown, a budget (`turret.share` of income a minute) and one order a second. Picker and cornered towers
+  whose flee ended clear or covered (centred where it started, after `turret.after_flee_since` and only with no
+  defence there yet), and a mobile ground constructor near a known enemy building with no armed ally around. They
+  help a turret already being built nearby instead of ordering one, and are held to a cooldown, a budget (`turret.share` of income a minute) and one order a second. Picker and cornered towers
   no longer change the defence points' tower counts. New `turrets` overlay layer, `choke_overlay turret <x> <z>
   [def]` test command and `TURRET` log lines; the `turret.*` keys can be set live.
 

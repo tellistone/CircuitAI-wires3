@@ -66,6 +66,7 @@ public:
 		float choke = 100.f;  // metal
 		// Callers (CBuilderManager::UpdateTurrets)
 		bool isAfterFlee = true;
+		float afterFleeSince = 0.f;  // seconds of game time before the after-flee caller starts
 		bool isNearEnemy = true;
 		std::vector<CCircuitDef*> light;
 		float enemyReach = 600.f;

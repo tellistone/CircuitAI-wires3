@@ -2631,7 +2631,9 @@ void CBuilderManager::UpdateTurrets()
 		if (state.turretAskFrame < 0) {
 			continue;
 		}
-		if (!cfg.isAfterFlee || (frame - state.turretAskFrame > TURRET_ASK_FRAMES) || !utils::is_valid(state.fleeFrom)) {
+		if (!cfg.isAfterFlee || (frame < cfg.afterFleeSince * FRAMES_PER_SEC)
+			|| (frame - state.turretAskFrame > TURRET_ASK_FRAMES) || !utils::is_valid(state.fleeFrom))
+		{
 			state.turretAskFrame = -1;
 			continue;
 		}
@@ -2643,15 +2645,24 @@ void CBuilderManager::UpdateTurrets()
 		const bool isAir = state.isFleeAir;
 		const bool isWater = circuit->GetMap()->GetElevationAt(centre.x, centre.z) < -SQUARE_SIZE * 5;
 		// MakeCommDefence's canHit, without its outrange part: after gunships, only one that hits air
-		const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, [isAir, isWater](const CCircuitDef* d) {
+		auto canHit = [isAir, isWater](const CCircuitDef* d) {
 			return isAir ? d->HasAntiAir() : (isWater ? d->HasAntiWater() : d->HasAntiLand());
-		});
+		};
+		const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, canHit);
 		if (defs.empty()) {
 			state.turretAskFrame = -1;
 			continue;
 		}
 		if (AssistTurret(unit, centre, "after flee")) {
 			state.turretAskFrame = -1;
+			continue;
+		}
+		AIFloat3 defencePos;
+		if (HasTurretDefence(centre, cfg.radius, canHit, defencePos)) {
+			state.turretAskFrame = -1;
+			circuit->LOG("TURRET after flee, by %s %i: nothing, a defence at (%.0f, %.0f) within %.0f of (%.0f, %.0f)",
+					unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), defencePos.x, defencePos.z, cfg.radius,
+					centre.x, centre.z);
 			continue;
 		}
 		if (isOrdered || !IsTurretBudget(maxCost(defs))) {
@@ -2777,6 +2788,33 @@ bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre, c
 			unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), best->GetBuildDef()->GetDef()->GetName(),
 			(best->GetTarget() != nullptr) ? "being built" : "picker job", tpos.x, tpos.z);
 	return true;
+}
+
+bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
+		const std::function<bool (const CCircuitDef*)>& canHit, AIFloat3& outPos) const
+{
+	// Finished or being built, ours or an ally's; and our jobs not started yet (the porc sweep's, say)
+	const int frame = circuit->GetLastFrame();
+	const float sqRadius = SQUARE(radius);
+	auto isDefence = [&canHit](const CCircuitDef* d) {
+		return (d != nullptr) && !d->IsMobile() && d->IsAttacker() && canHit(d);
+	};
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const AIFloat3& pos = kv.second->GetPos(frame);
+		if (utils::is_valid(pos) && (pos.SqDistance2D(centre) <= sqRadius) && isDefence(kv.second->GetCircuitDef())) {
+			outPos = pos;
+			return true;
+		}
+	}
+	for (const IBuilderTask* t : GetTasks(IBuilderTask::BuildType::DEFENCE)) {
+		if ((t->GetTarget() == nullptr) && (t->GetPosition().SqDistance2D(centre) <= sqRadius)
+			&& isDefence(t->GetBuildDef()))
+		{
+			outPos = t->GetPosition();
+			return true;
+		}
+	}
+	return false;
 }
 
 bool CBuilderManager::IsTurretBudget(float cost)

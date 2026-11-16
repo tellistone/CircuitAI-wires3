@@ -312,6 +312,7 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"height", &c.height},
 		{"height_cap", &c.heightCap}, {"travel", &c.travel}, {"choke", &c.choke}, {"enemy_reach", &c.enemyReach},
 		{"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown}, {"share", &c.share},
+		{"after_flee_since", &c.afterFleeSince},
 	};
 	const std::map<std::string, bool*> flags = {
 		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy},

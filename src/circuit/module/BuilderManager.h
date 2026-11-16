@@ -290,10 +290,11 @@ public:
 private:
 	// Once a second: a constructor whose flee ended clear or covered (centred where the flee started), then each
 	// mobile ground constructor with a known enemy building within turret.enemy_reach and no armed ally within
-	// turret.ally_radius (centred on itself). Gates in order: the caller's switch; the constructor is free; its
-	// cooldown (turret.cooldown); metal not stalling; the trigger; it helps a turret of ours being built, or a picker
-	// job, within turret.radius instead if there is one; the budget (turret.share of income over a minute, one light
-	// turret a minute always); one order a second
+	// turret.ally_radius (centred on itself). Gates in order: the caller's switch (after a flee: and
+	// turret.after_flee_since passed); the constructor is free; its cooldown (turret.cooldown); metal not stalling;
+	// the trigger; it helps a turret of ours being built, or a picker job, within turret.radius instead if there is
+	// one; after a flee, no other defence that hits what it fled from within turret.radius; the budget (turret.share
+	// of income over a minute, one light turret a minute always); one order a second
 	void UpdateTurrets();
 	// Not player-led, retreating, morphing, on a defence job or on a HIGH or NOW one
 	bool IsTurretFree(CCircuitUnit* unit) const;
@@ -301,6 +302,10 @@ private:
 	std::vector<CCircuitDef*> GetTurretDefs(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit) const;
 	bool AssistTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, const char* caller);
+	// A static defence of ours or an ally's (a nanoframe or a queued job of ours too) within radius of centre, of a
+	// kind canHit accepts; outPos its position
+	bool HasTurretDefence(const springai::AIFloat3& centre, float radius,
+			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos) const;
 	bool IsTurretBudget(float cost);
 	// Asks for a turret and starts the cooldown, whatever the result
 	IBuilderTask* OrderTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,

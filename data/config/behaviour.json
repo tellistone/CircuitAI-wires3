@@ -218,7 +218,8 @@
 	// constructor helps a turret of ours being built (or a picker job) within radius instead of ordering one, orders
 	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and picker turrets ordered in the last
 	// minute cost up to share x the minute's metal income (one light turret a minute always)
-	"after_flee": true,  // a constructor whose flee ended clear or covered orders one where the flee started, of the light defs that hit what it fled from (the commander's flee is on by default; other builders' with retreat.builder_flee)
+	"after_flee": true,  // a constructor whose flee ended clear or covered orders one where the flee started, of the light defs that hit what it fled from, unless a defence that hits it (ours or an ally's, being built or queued too) stands within radius (the commander's flee is on by default; other builders' with retreat.builder_flee)
+	"after_flee_since": 0,  // seconds of game time before after_flee starts
 	"near_enemy": true,  // a mobile ground constructor with a known enemy building within enemy_reach and no armed ally within ally_radius orders one around itself
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
 	"enemy_reach": 600,
