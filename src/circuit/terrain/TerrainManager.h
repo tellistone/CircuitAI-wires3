@@ -69,6 +69,9 @@ public:
 									 float searchRadius,
 									 int facing,
 									 TerrainPredicate& predicate);
+	// turret.*: the build site at pos (shifted one block square at most), open on the blocking map (lanes and queued
+	// jobs block it) and buildable there; -RgtVector if none
+	springai::AIFloat3 FindSiteAt(CCircuitDef* cdef, const springai::AIFloat3& pos, int facing);
 
 	const SBlockingMap& GetBlockingMap();
 	bool IsZoneAlly(const springai::AIFloat3& pos) const;

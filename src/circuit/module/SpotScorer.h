@@ -63,22 +63,24 @@ public:
 
 	const std::vector<SCandidate>& GetLastCandidates() const { return lastCandidates; }  // choke_overlay
 
-private:
-	struct STarget {
-		springai::AIFloat3 pos;  // on the ground
-		float weight;
-	};
+	// Shared with CTurretPicker
 	struct STower {
 		springai::AIFloat3 pos;
 		float range;
 		float emit;
 		bool isHighArc;
 	};
-	std::vector<STarget> MakeTargets(CCircuitDef* def, const springai::AIFloat3& pos, float radius, const SGoal& goal,
-			const std::vector<STower>& towers) const;
 	std::vector<STower> GetTowers() const;  // ours and allies', queued too
 	bool IsClearLine(const springai::AIFloat3& from, float emit, const springai::AIFloat3& to) const;
-	bool IsMasked(const springai::AIFloat3& pos) const;
+	bool IsMasked(const springai::AIFloat3& pos) const;  // MaskFailed's cell, still masked
+
+private:
+	struct STarget {
+		springai::AIFloat3 pos;  // on the ground
+		float weight;
+	};
+	std::vector<STarget> MakeTargets(CCircuitDef* def, const springai::AIFloat3& pos, float radius, const SGoal& goal,
+			const std::vector<STower>& towers) const;
 
 	CCircuitAI* circuit;
 	std::map<int, int> failedCells;  // traffic cell -> frame the mask ends

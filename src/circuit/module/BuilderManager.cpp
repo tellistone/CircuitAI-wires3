@@ -10,11 +10,13 @@
 #include "module/MilitaryManager.h"
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
+#include "module/TurretPicker.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "spring/SpringMap.h"
 #include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
+#include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/ally/AllyUnit.h"
@@ -67,6 +69,8 @@ static constexpr int COMM_DANGER_MEMORY = FRAMES_PER_SEC * 5;  // jobs and morph
 static constexpr int BUILDER_SCAR_FRAMES = FRAMES_PER_SEC * 5;  // other builders all keep jobs off a spot one of them fled from this long
 static constexpr int BUILDER_CORNER_TIMEOUT = FRAMES_PER_SEC * 30;  // an unstarted cornered defence nobody builds is dropped after this
 static constexpr int BUILDER_IDLE_WAIT = FRAMES_PER_SEC * 3;  // other builders idle in a flee zone with no safe job look again after this
+static constexpr int TURRET_ASK_FRAMES = FRAMES_PER_SEC * 10;  // an after-flee turret request lasts this long
+static constexpr int TURRET_BUDGET_FRAMES = FRAMES_PER_SEC * 60;  // the turret budget's rolling window
 
 CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
@@ -505,6 +509,9 @@ void CBuilderManager::Init()
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CBuilderManager::UpdateRestore, this),
 									FRAMES_PER_SEC * 2, offset + 6);
 		}
+		// turret.*: always scheduled, as choke_overlay set may switch a caller on
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CBuilderManager::UpdateTurrets, this),
+								FRAMES_PER_SEC, offset + 7);
 	};
 
 	circuit->GetSetupManager()->ExecOnFindStart(subinit);
@@ -2439,6 +2446,7 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 		const int timeout = isBuilder ? BUILDER_CORNER_TIMEOUT : ASSIGN_TIMEOUT;
 		task = EnqueueTask(IBuilderTask::Priority::HIGH, buildDef, buildPos, IBuilderTask::BuildType::DEFENCE,
 						   buildDef->GetCostM(), SQUARE_SIZE * 8.f, true, timeout);
+		static_cast<CBDefenceTask*>(task)->SetOffPoints();  // no defence point counts it
 	}
 	if (isBuilder) {
 		state->cornerTask = task;
@@ -2544,6 +2552,9 @@ void CBuilderManager::StartCommFlee(CCircuitUnit* unit, SCommState* state)
 	CRetreatTask* flee = EnqueueRetreat();
 	flee->SetFlee(state->escapeGoal, frame);
 	AssignTask(unit, flee);
+	state->fleeFrom = unit->GetPos(frame);  // turret.after_flee: the turret goes where it was raided
+	state->isFleeAir = state->isAir;
+	state->turretAskFrame = -1;
 	if (!state->IsComm()) {
 		fleeScars.push_back({state->dangerPos, state->dangerRange, state->nearZone.threat, frame + BUILDER_SCAR_FRAMES});
 	}
@@ -2566,6 +2577,7 @@ void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat
 	if ((state->allZone.count == 0) || (retreat->IsArrived() && state->IsCovered(state->allZone.threat, COMM_END_COVER_MOD))) {
 		retreat->EndFlee(unit);  // back to work: jobs stay out of uncovered flee zones
 		LogFlee(unit, (state->allZone.count == 0) ? "end: clear" : "end: covered", state);
+		state->turretAskFrame = circuit->GetLastFrame();  // turret.after_flee: UpdateTurrets takes it up
 		return;
 	}
 	const AIFloat3& goal = retreat->GetFleeGoal();
@@ -2580,6 +2592,262 @@ void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat
 	} else if (state->escapeGoal.SqDistance2D(goal) > SQUARE(DEFAULT_SLACK)) {
 		retreat->Redirect(unit, state->escapeGoal);
 	}
+}
+
+bool CBuilderManager::IsTurretJobSafe(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	return IsCommJobSafe(GetCommState(unit), pos);
+}
+
+void CBuilderManager::UpdateTurrets()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
+	const CTurretPicker::SConfig& cfg = picker->GetConfig();
+	if (!picker->IsAnyCaller()) {
+		return;  // switched off live (choke_overlay set)
+	}
+	circuit->GetChokeMap()->Request();  // T and C read the analysis; builds it once if no choke feature asked
+	const int frame = circuit->GetLastFrame();
+	for (auto it = turretCooldowns.begin(); it != turretCooldowns.end();) {
+		it = (it->second <= frame) ? turretCooldowns.erase(it) : std::next(it);
+	}
+	auto isCooling = [this](const CCircuitUnit* unit) {
+		return turretCooldowns.find(unit->GetId()) != turretCooldowns.end();
+	};
+	auto maxCost = [](const std::vector<CCircuitDef*>& defs) {
+		float cost = 0.f;
+		for (const CCircuitDef* d : defs) {
+			cost = std::max(cost, d->GetCostM());
+		}
+		return cost;
+	};
+	const bool isStalling = IsMetalStalling();
+	bool isOrdered = false;  // one order a second: a group arriving together orders once, the rest help
+
+	// After a flee that ended clear or covered: centred where it started, only defs that hit what it fled from
+	for (auto& kv : comms) {
+		SCommState& state = kv.second;
+		if (state.turretAskFrame < 0) {
+			continue;
+		}
+		if (!cfg.isAfterFlee || (frame - state.turretAskFrame > TURRET_ASK_FRAMES) || !utils::is_valid(state.fleeFrom)) {
+			state.turretAskFrame = -1;
+			continue;
+		}
+		CCircuitUnit* unit = kv.first;
+		if (!IsTurretFree(unit) || isCooling(unit) || isStalling) {
+			continue;  // the request waits
+		}
+		const AIFloat3 centre = state.fleeFrom;
+		const bool isAir = state.isFleeAir;
+		const bool isWater = circuit->GetMap()->GetElevationAt(centre.x, centre.z) < -SQUARE_SIZE * 5;
+		// MakeCommDefence's canHit, without its outrange part: after gunships, only one that hits air
+		const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, [isAir, isWater](const CCircuitDef* d) {
+			return isAir ? d->HasAntiAir() : (isWater ? d->HasAntiWater() : d->HasAntiLand());
+		});
+		if (defs.empty()) {
+			state.turretAskFrame = -1;
+			continue;
+		}
+		if (AssistTurret(unit, centre, "after flee")) {
+			state.turretAskFrame = -1;
+			continue;
+		}
+		if (isOrdered || !IsTurretBudget(maxCost(defs))) {
+			continue;
+		}
+		state.turretAskFrame = -1;
+		OrderTurret(unit, centre, defs, "after flee");
+		isOrdered = true;
+	}
+
+	// Near a known enemy building with no armed ally around: centred on itself
+	if (!cfg.isNearEnemy || isStalling) {
+		return;
+	}
+	std::vector<AIFloat3> enemyBuildings;
+	for (const auto& kv : circuit->GetEnemyInfos()) {
+		const CEnemyInfo* e = kv.second;
+		const CCircuitDef* edef = e->GetCircuitDef();
+		if (!e->IsHidden() && (edef != nullptr) && !edef->IsMobile() && !e->GetData()->IsFake()) {
+			enemyBuildings.push_back(e->GetPos());
+		}
+	}
+	if (enemyBuildings.empty()) {
+		return;
+	}
+	const float sqReach = SQUARE(cfg.enemyReach);
+	for (CCircuitUnit* unit : workers) {
+		const CCircuitDef* cdef = unit->GetCircuitDef();
+		if (!cdef->IsMobile() || cdef->IsAbleToFly() || !IsTurretFree(unit) || isCooling(unit)) {
+			continue;
+		}
+		const AIFloat3& pos = unit->GetPos(frame);
+		if (std::none_of(enemyBuildings.begin(), enemyBuildings.end(), [&](const AIFloat3& b) {
+			return b.SqDistance2D(pos) <= sqReach;
+		})) {
+			continue;
+		}
+		if (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS) > 0.f) {
+			continue;  // allied power around (a finished picker turret counts)
+		}
+		const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, pos, nullptr);
+		if (defs.empty() || AssistTurret(unit, pos, "near enemy") || isOrdered || !IsTurretBudget(maxCost(defs))) {
+			continue;
+		}
+		OrderTurret(unit, pos, defs, "near enemy");
+		isOrdered = true;
+	}
+}
+
+bool CBuilderManager::IsTurretFree(CCircuitUnit* unit) const
+{
+	const IUnitTask* task = unit->GetTask();
+	if ((task == nullptr) || unit->IsMorphing()) {
+		return false;
+	}
+	switch (task->GetType()) {
+		case IUnitTask::Type::IDLE:
+		case IUnitTask::Type::WAIT: {
+			return true;
+		}
+		case IUnitTask::Type::BUILDER: {
+			const IBuilderTask* taskB = static_cast<const IBuilderTask*>(task);
+			return (taskB->GetBuildType() != IBuilderTask::BuildType::DEFENCE)
+				&& (taskB->GetPriority() < IBuilderTask::Priority::HIGH);
+		}
+		default: {
+			return false;  // player-led, retreating, fighting
+		}
+	}
+}
+
+std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, const AIFloat3& centre,
+		const std::function<bool (const CCircuitDef*)>& canHit) const
+{
+	const int frame = circuit->GetLastFrame();
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	std::vector<CCircuitDef*> defs;
+	for (CCircuitDef* d : circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().light) {
+		if (d->IsAvailable(frame) && cdef->CanBuild(d) && (!canHit || canHit(d)) && terrainMgr->CanBeBuiltAt(d, centre)) {
+			defs.push_back(d);
+		}
+	}
+	return defs;
+}
+
+bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre, const char* caller)
+{
+	// Whoever queued it: the porc sweep, a cornered builder or the picker. A started one, or a picker job not
+	// started yet. The nearest the builder may take
+	const CTurretPicker::SConfig& cfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	const float buildDist = unit->GetCircuitDef()->GetBuildDistance();
+	const SCommState* state = GetCommState(unit);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	IBuilderTask* best = nullptr;
+	float bestSqDist = std::numeric_limits<float>::max();
+	for (IBuilderTask* t : GetTasks(IBuilderTask::BuildType::DEFENCE)) {
+		const CCircuitDef* tdef = t->GetBuildDef();
+		if ((t == unit->GetTask()) || (tdef == nullptr) || !tdef->IsAttacker()
+			|| ((t->GetTarget() == nullptr) && !static_cast<CBDefenceTask*>(t)->IsPicker()))
+		{
+			continue;
+		}
+		const AIFloat3& tpos = t->GetPosition();
+		const float sqDist = tpos.SqDistance2D(pos);
+		if ((tpos.SqDistance2D(centre) > SQUARE(cfg.radius)) || (sqDist >= bestSqDist) || !t->CanAssignTo(unit)
+			|| !terrainMgr->CanReachAt(unit, tpos, buildDist) || !IsCommJobSafe(state, tpos, t))
+		{
+			continue;
+		}
+		best = t;
+		bestSqDist = sqDist;
+	}
+	if (best == nullptr) {
+		return false;
+	}
+	turretCooldowns[unit->GetId()] = frame + int(cfg.cooldown * FRAMES_PER_SEC);
+	AssignTask(unit, best);
+	const AIFloat3& tpos = best->GetPosition();
+	circuit->LOG("TURRET %s, by %s %i: helps the %s %s at (%.0f, %.0f)", caller,
+			unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), best->GetBuildDef()->GetDef()->GetName(),
+			(best->GetTarget() != nullptr) ? "being built" : "picker job", tpos.x, tpos.z);
+	return true;
+}
+
+bool CBuilderManager::IsTurretBudget(float cost)
+{
+	// Picker turrets ordered in the last minute, this one included, cost up to turret.share of the minute's income;
+	// one a minute always, so an early raid still gets an answer
+	const int frame = circuit->GetLastFrame();
+	while (!turretSpends.empty() && (frame - turretSpends.front().frame >= TURRET_BUDGET_FRAMES)) {
+		turretSpends.pop_front();
+	}
+	if (turretSpends.empty()) {
+		return true;
+	}
+	float spent = 0.f;
+	for (const STurretSpend& s : turretSpends) {
+		spent += s.cost;
+	}
+	const float share = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().share;
+	const float minuteIncome = circuit->GetEconomyManager()->GetAvgMetalIncome() * TURRET_BUDGET_FRAMES / FRAMES_PER_SEC;
+	return spent + cost <= share * minuteIncome;
+}
+
+IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& centre,
+		const std::vector<CCircuitDef*>& defs, const char* caller)
+{
+	CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
+	const int frame = circuit->GetLastFrame();
+	turretCooldowns[unit->GetId()] = frame + int(picker->GetConfig().cooldown * FRAMES_PER_SEC);
+	STurretOrder order;
+	order.builder = unit;
+	order.centre = centre;
+	order.defs = defs;
+	order.caller = caller;
+	IBuilderTask* task = picker->Order(order);
+	if (task != nullptr) {
+		turretSpends.push_back({frame, task->GetBuildDef()->GetCostM()});
+	}
+	return task;
+}
+
+std::string CBuilderManager::OrderTurretAt(const AIFloat3& pos, CCircuitDef* def)
+{
+	// The nearest free mobile ground constructor; no cooldown or budget
+	const int frame = circuit->GetLastFrame();
+	CCircuitUnit* builder = nullptr;
+	float bestSqDist = std::numeric_limits<float>::max();
+	for (CCircuitUnit* unit : workers) {
+		const CCircuitDef* cdef = unit->GetCircuitDef();
+		if (!cdef->IsMobile() || cdef->IsAbleToFly() || !IsTurretFree(unit) || ((def != nullptr) && !cdef->CanBuild(def))) {
+			continue;
+		}
+		const float sqDist = unit->GetPos(frame).SqDistance2D(pos);
+		if (sqDist < bestSqDist) {
+			bestSqDist = sqDist;
+			builder = unit;
+		}
+	}
+	if (builder == nullptr) {
+		return "no free constructor";
+	}
+	CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
+	STurretOrder order;
+	order.builder = builder;
+	order.centre = pos;
+	if (def != nullptr) {
+		order.defs.push_back(def);
+	}
+	order.priority = IBuilderTask::Priority::HIGH;
+	order.caller = "test";
+	picker->Order(order);
+	return picker->GetLast().line;
 }
 
 void CBuilderManager::LogFlee(CCircuitUnit* unit, const char* event, const SCommState* state) const
