@@ -380,7 +380,9 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	// The allowance is always above 0, so where there is no threat there is no danger (no need to work it out)
 	// share < 1: the margin's stricter line (quota.danger_margin), which a SPOT is looked for under first
 	auto isDanger = [&](const AIFloat3& p, float threat, float share = 1.f) {
-		return hasDangerLine && (threat > 0.f) && (threat >= share * GetAllowedThreatAt(p, supportAt(p)));
+		return hasDangerLine && (threat > 0.f)
+				&& (threat >= share * GetAllowedThreatFor(p, supportAt(p),
+						(share > 0.f) ? threat / share : std::numeric_limits<float>::max()));
 	};
 	const float startThreat = GetTaskThreatAt(unit, uPos);
 	const bool isSafeHere = hasDangerLine && !isDanger(uPos, startThreat);
@@ -681,7 +683,7 @@ float IFighterTask::GetTaskThreatExcl(CCircuitUnit* unit, const AIFloat3& pos, f
 bool IFighterTask::IsDangerAt(CCircuitUnit* unit, const AIFloat3& p, float strength) const
 {
 	const float threat = GetTaskThreatAt(unit, p);
-	return (threat > 0.f) && (threat >= GetAllowedThreatAt(p, strength));
+	return (threat > 0.f) && (threat >= GetAllowedThreatFor(p, strength, threat));
 }
 
 #ifdef DEBUG_VIS

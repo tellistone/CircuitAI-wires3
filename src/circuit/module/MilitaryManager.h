@@ -37,6 +37,7 @@ class CRaidTask;
 class ISquadTask;
 class CChokeDefence;
 class CSensorPlanner;
+class CAllyCover;
 class CFrontline;
 class CTurretPicker;
 
@@ -354,9 +355,11 @@ public:
 		springai::AIFloat3 pos;
 		float sqRadius;
 	};
-	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below allowedAt(centre)
-	// (squad threat for a squad), reachable within 'reach'. Empty when quota.contested.bonus <= 1
-	void GetTakeableContested(CCircuitUnit* unit, float reach, const std::function<float (const springai::AIFloat3&)>& allowedAt,
+	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below
+	// allowedAt(centre, that threat) (squad threat for a squad), reachable within 'reach'. Empty when
+	// quota.contested.bonus <= 1. allowedAt gets the threat it is compared with (CAttackTask: allied cover's band)
+	void GetTakeableContested(CCircuitUnit* unit, float reach,
+			const std::function<float (const springai::AIFloat3&, float)>& allowedAt,
 			std::vector<SContestedSpot>& outSpots);
 	static bool IsInContested(const std::vector<SContestedSpot>& spots, const springai::AIFloat3& pos) {
 		for (const SContestedSpot& c : spots) {
@@ -367,6 +370,8 @@ public:
 		return false;
 	}
 	float GetAttackPathIgnoreThreat() const { return attackPathIgnoreThreat; }
+	// quota.attack_ally_cover: allies over a spot multiply an attack group's strength there (CAllyCover)
+	CAllyCover* GetAllyCover() const { return allyCover.get(); }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
@@ -679,6 +684,7 @@ private:
 	int attackThreatFloorLogFrame;  // next periodic THREAT FLOOR log line
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
+	std::unique_ptr<CAllyCover> allyCover;  // quota.attack_ally_cover
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat

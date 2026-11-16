@@ -18,10 +18,13 @@
 #include <array>
 
 namespace springai {
+	class Unit;
 	class WeaponMount;
 }
 
 namespace circuit {
+
+class CCircuitAI;
 
 #define ROLE_TYPE(x)	static_cast<CCircuitDef::RoleT>(CCircuitDef::RoleType::x)
 
@@ -223,6 +226,9 @@ public:
 	float GetMaxRange(RangeType type) const { return maxRange[static_cast<RangeT>(type)]; }
 	float GetMaxRange() const { return maxRange[static_cast<RangeT>(maxRangeType)]; }
 	int GetThreatRange(ThreatType type) const { return threatRange[static_cast<ThreatT>(type)]; }
+	// A dynamic commander's fitted weapons (rules params comm_weapon_id_1 and _2; its def's own weapons aren't the
+	// fitted ones): the longest one's range x comm_range_mult, and its AoE. Both 0 with none fitted
+	static void GetCommWeaponRange(CCircuitAI* circuit, springai::Unit* unit, float& outRange, float& outAoe);
 	float GetShieldRadius() const { return shieldRadius; }
 	float GetMaxShield() const { return maxShield; }
 	float GetShieldRegen() const { return shieldRegen; }  // charge per second

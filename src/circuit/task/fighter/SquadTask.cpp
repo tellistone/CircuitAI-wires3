@@ -650,7 +650,7 @@ void ISquadTask::SetRouteAllowance(IPathQuery* query, float strength, bool isDyn
 	const int count = static_cast<int>(sqrtf(width * width + height * height) / step) + 2;
 	std::vector<float> allowByDist(count);
 	for (int i = 0; i < count; ++i) {
-		allowByDist[i] = GetAllowedThreatAt(basePos + AIFloat3((i + 0.5f) * step, 0.f, 0.f), strength);
+		allowByDist[i] = GetRadialAllowedThreatAt(basePos + AIFloat3((i + 0.5f) * step, 0.f, 0.f), strength);
 	}
 	query->SetThreatAllowance(std::move(allowByDist), step, basePos, pathfinder->GetPathMapXSize(),
 			pathfinder->GetSquareSize(), isDynamic, maxWeight, margin, militaryMgr->GetDangerMarginMod());
