@@ -7,6 +7,7 @@
 
 #include "map/ThreatMap.h"
 #include "map/MapManager.h"
+#include "module/AllyCover.h"
 #include "setup/SetupManager.h"
 #include "task/UnitTask.h"
 #include "task/fighter/FighterTask.h"
@@ -46,6 +47,7 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 		, drawRaid({nullptr, nullptr, nullptr, nullptr})
 		, isUpdating(false)
 		, coverArray(nullptr)
+		, coverBox({0, 0, 0, 0})
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	areaData = circuit->GetTerrainManager()->GetAreaData();
@@ -96,6 +98,7 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 		data->raidAmph.resize(mapSize, THREAT_BASE);
 		// Allied cover: always there (an AI of the ally team may ask for it after this map is made), all 0 while off
 		data->cover.resize(mapSize, 0.f);
+		data->coverBox = {0, 0, 0, 0};
 		if (isCounting) {  // else no squad layers of their own (SetReadPointers)
 			data->airSquad.resize(mapSize, THREAT_BASE);
 			data->surfSquad.resize(mapSize, THREAT_BASE);
@@ -186,29 +189,12 @@ void CThreatMap::SetEnemyUnitRange(CEnemyUnit* e) const
 
 	// FIXME: DEBUG  comm's threat value is not based on proper weapons
 	if (edef->IsRoleComm() && !e->IsFake()) {
-		CCircuitAI* circuit = manager->GetCircuit();
-		// TODO: by weapons 1,2 descriptions set proper land/air/water ranges/threats
-		float maxRange = 0.f;
-		float maxAoe = 0.f;
-		for (int num = 1; num < 3; ++num) {
-			std::string str = utils::int_to_string(num, "comm_weapon_id_%i");
-			int weaponDefId = int(e->GetUnit()->GetRulesParamFloat(str.c_str(), -1));
-			if (weaponDefId < 0) {
-				continue;
-			}
-
-			CWeaponDef* weaponDef = circuit->GetWeaponDef(weaponDefId);
-			const float range = weaponDef->GetRange();
-			if (maxRange < range) {
-				maxRange = range;
-				maxAoe = weaponDef->GetAoe();
-			}
-		}
+		float maxRange, maxAoe;  // the fitted weapons' (x comm_range_mult)
+		CCircuitDef::GetCommWeaponRange(manager->GetCircuit(), e->GetUnit(), maxRange, maxAoe);
 		const float slack = squareSize - 1 + maxAoe / 2
 				+ DEFAULT_SLACK * slackMod.allMod
 				+ THREAT_UPDATE_RATE * edef->GetSpeed() / FRAMES_PER_SEC;
-		const float mult = e->GetUnit()->GetRulesParamFloat("comm_range_mult", 1.f);
-		const float range = int(maxRange * mult + slack) / squareSize + 1;
+		const float range = int(maxRange + slack) / squareSize + 1;
 		e->SetRange(CCircuitDef::ThreatType::AIR, range);
 		e->SetRange(CCircuitDef::ThreatType::LAND, range);
 		e->SetRange(CCircuitDef::ThreatType::WATER, range);
@@ -581,20 +567,18 @@ void CThreatMap::PrepareCover()
 	}
 }
 
-void CThreatMap::AddCover()
+void CThreatMap::AddCover(SThreatData& threatData)
 {
-	// Each static's power, full out to half its range, then linear to 0 at its range: w(u) = min(1, 2 x (1 - u)),
-	// u = distance / range. No cliff at the edge, so a group just inside it doesn't judge twice as boldly as one just
-	// outside. Water cells get none (IsWaterCell)
+	// Each static's power x CAllyCover::Falloff over its range. Water cells get none (IsWaterCell)
 	const std::vector<STerrainMapSector>& sector = areaData->sector;
 	for (const SCoverSource& s : coverSources) {
 		const float rangeSq = SQUARE(s.range);
-		const float invRange = 1.f / s.range;
 		const int reach = static_cast<int>(s.range);  // cells farther along x or z are out of range
 		const int beginX = std::max(s.x - reach, 0);
 		const int endX   = std::min(s.x + reach + 1, width);
 		const int beginZ = std::max(s.z - reach, 0);
 		const int endZ   = std::min(s.z + reach + 1, height);
+		threatData.coverBox.Add({beginX, beginZ, endX, endZ});
 		for (int z = beginZ; z < endZ; ++z) {
 			const int dzSq = SQUARE(s.z - z);
 			for (int x = beginX; x < endX; ++x) {
@@ -606,14 +590,13 @@ void CThreatMap::AddCover()
 				if (sector[index].isWater) {
 					continue;
 				}
-				const float u = sqrtf(sum) * invRange;
-				drawCover[index] += s.power * std::min(1.f, 2.f * (1.f - u));
+				drawCover[index] += s.power * CAllyCover::Falloff(sum, rangeSq);
 			}
 		}
 	}
 }
 
-float CThreatMap::GetCoverAt(const AIFloat3& position) const
+float CThreatMap::GetDefenceCoverAt(const AIFloat3& position) const
 {
 	return isCoverOn ? coverArray[GetClampedIndex(position)] : 0.f;
 }
@@ -825,6 +808,7 @@ void CThreatMap::Prepare(SThreatData& threatData)
 		std::fill(threatData.cover.begin(), threatData.cover.end(), 0.f);
 	}
 	drawCover = threatData.cover.data();
+	threatData.coverBox = {width, height, 0, 0};  // empty; AddCover widens it
 
 	if (isCounting) {
 		std::fill(threatData.airSquad.begin(), threatData.airSquad.end(), 0.f);
@@ -902,7 +886,7 @@ void CThreatMap::Update()
 	FinishLayers(*GetNextThreatData());
 
 	if (isCoverOn) {
-		AddCover();
+		AddCover(*GetNextThreatData());
 	}
 
 	const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - startTime).count();
@@ -986,6 +970,7 @@ void CThreatMap::SetReadPointers(SThreatData& threatData)
 	raidSurfSquad = isCounting ? threatData.raidSurfSquad.data() : raidSurf;
 	raidAmphSquad = isCounting ? threatData.raidAmphSquad.data() : raidAmph;
 	coverArray = threatData.cover.data();
+	coverBox = threatData.coverBox;
 	threatArray = surfThreat;
 }
 

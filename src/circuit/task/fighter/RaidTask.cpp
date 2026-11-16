@@ -176,7 +176,7 @@ bool CRaidTask::IsSafeMergeLine(const ISquadTask* host) const
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	const float safeThreat = GetSafeThreat();
 	return IsLineSafe(leader->GetPos(frame), host->GetLeaderPos(frame), std::numeric_limits<float>::max(),
-			[this, safeThreat](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat); });
+			[this, safeThreat](const AIFloat3& p, float) { return GetSafeThreatAt(p, safeThreat); });
 }
 
 float CRaidTask::GetPathThreatMod() const

@@ -11,6 +11,7 @@
 
 #include "unit/enemy/EnemyUnit.h"
 
+#include <algorithm>
 #include <map>
 #include <vector>
 
@@ -97,9 +98,22 @@ public:
 	// On the main thread before an update (CMapManager::PrepareUpdate, while none is in flight): the statics to draw,
 	// from the friendly units as the last influence map apply left them (no second refresh of the ally list)
 	void PrepareCover();
-	float GetCoverAt(const springai::AIFloat3& position) const;
+	// The defences layer at a position (CAllyCover::GetCoverAt adds the mobile cover)
+	float GetDefenceCoverAt(const springai::AIFloat3& position) const;
 	int GetCoverSourceCount() const { return static_cast<int>(coverSources.size()); }  // main thread (log)
 	const float* GetCoverArray() const { return coverArray; }
+	// Cells [x0, x1) x [z0, z1); empty: none. The layer's (GetCoverBox) holds all of its cover
+	struct SCoverBox {
+		int x0, z0, x1, z1;
+		bool IsEmpty() const { return (x0 >= x1) || (z0 >= z1); }
+		void Add(const SCoverBox& b) {
+			x0 = std::min(x0, b.x0);
+			z0 = std::min(z0, b.z0);
+			x1 = std::max(x1, b.x1);
+			z1 = std::max(z1, b.z1);
+		}
+	};
+	const SCoverBox& GetCoverBox() const { return coverBox; }
 	// Water cells get no cover (allied land defences don't guard them): the sector's water test
 	bool IsWaterCell(int index) const { return areaData->sector[index].isWater; }
 	bool IsWaterAt(const springai::AIFloat3& position) const;
@@ -130,7 +144,8 @@ private:
 		FloatVec raidAmph;
 		FloatVec raidSurfSquad;
 		FloatVec raidAmphSquad;
-		FloatVec cover;  // allied defences (GetCoverAt); all 0 while cover is off
+		FloatVec cover;  // allied defences (GetDefenceCoverAt); all 0 while cover is off
+		SCoverBox coverBox;  // ... the cells it covers
 	};
 	// Where an enemy's ground and water threat is drawn: one view's surf and amph layers, and their squad layers
 	// (the unit count; nullptr unless isCounting)
@@ -159,7 +174,7 @@ private:
 	void AddEnemyAmphGradient(const SEnemyData& e, const int slack, const float threat, const float count,
 			const SDrawLayers& layers);
 	void AddDecloaker(const SEnemyData& e);
-	void AddCover();  // the defences layer, from coverSources
+	void AddCover(SThreatData& threatData);  // the defences layer and its box, from coverSources
 	// Shields of hostile and peace enemies (Aspis is unarmed), each charge shared by the armed enemies inside it
 	void AddShields(const std::vector<SEnemyData>& hostiles, const std::vector<SEnemyData>& peaces);
 	// fedCells: cells of the shield-fed enemies, which may fire from the charge of linked shields (AddShieldAmmo)
@@ -256,6 +271,7 @@ private:
 	float* raidSurfSquad;  // the raid layers themselves unless isCounting
 	float* raidAmphSquad;
 	float* coverArray;
+	SCoverBox coverBox;  // of coverArray
 	float* threatArray;  // current threat array for multiple GetThreatAt() calls
 
 #ifdef DEBUG_VIS

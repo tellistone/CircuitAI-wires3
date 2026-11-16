@@ -92,8 +92,9 @@ protected:
 	// than ours (a smaller terrain area: it would take the lead (FindLeader) and drag the group back, or get stranded on
 	// routes only our leader takes), and the same movement type (amphibious may join landers and floaters)
 	bool IsMoveCompatible(CCircuitUnit* unit, float speedRatio) const;
-	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below allowedAt(spot) at each sampled spot
-	// (one threat square apart); allowances are above 0, so no threat is always safe
+	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below allowedAt(spot, threat there) at each
+	// sampled spot (one threat square apart); allowances are above 0, so no threat is always safe. The threat is
+	// passed for allowances that compare the same when they skip work there (IFighterTask::GetAllowedThreatFor)
 	template<typename AllowedAt>
 	bool IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
 			AllowedAt allowedAt) const;
@@ -327,7 +328,7 @@ bool ISquadTask::IsLineSafe(const springai::AIFloat3& from, const springai::AIFl
 	for (float d = step; d <= reach; d += step) {
 		springai::AIFloat3 p = from + dir * d;
 		const float threat = GetLineThreatAt(p);
-		if ((threat > 0.f) && (threat >= allowedAt(p))) {
+		if ((threat > 0.f) && (threat >= allowedAt(p, threat))) {
 			return false;
 		}
 	}

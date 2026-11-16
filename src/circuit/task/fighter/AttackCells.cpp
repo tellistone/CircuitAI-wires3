@@ -175,7 +175,7 @@ bool CAttackTask::FillFiringCells(const CEnemyInfo* enemy, const AIFloat3& ancho
 		}
 		isReachable = true;
 		const float threat = GetTaskThreatAt(leader, p);
-		if ((threat > 0.f) && (threat >= GetAllowedThreatAt(p, power, ref))) {  // the allowance is always above 0
+		if ((threat > 0.f) && (threat >= GetAllowedThreatAt(p, power, ref, threat))) {  // the allowance is always above 0
 			return false;
 		}
 		isThreatOk = true;
