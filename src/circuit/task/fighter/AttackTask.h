@@ -44,6 +44,11 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
+	bool IsFleeing(int frame) const { return frame < fleeFrame; }  // running along an escape path
+	// The cover this group lends our other attack groups (quota.attack_ally_cover, CMilitaryManager::GetCoverDiscs): its
+	// strength (GetSafeThreat) around its leader, out to its fire range past its units' spread. false: none (fleeing)
+	bool GetCoverDisc(int frame, springai::AIFloat3& outPos, float& outRange, float& outPower);
+
 protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
 	virtual bool GetFireArcBearing(float& outBearing) const override;
@@ -116,13 +121,42 @@ private:
 	float GetRaidFactor() const;
 	static bool IsRaidFactorTarget(const CCircuitDef* edef);  // a raider or scout in any of its listed roles
 	// The one threat allowance used everywhere (picking, approach line, escape, path ahead, firing spots,
-	// flee destination, route caps): strength x base_bonus(spot) / thr_mod.distance(spot) / scale(spot).
-	// refSqDist: the near-base scale's reference (0: none); the 2-argument form uses the current fight's
-	float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength, float refSqDist) const;
+	// flee destination): strength x cover(spot) x base_bonus(spot) / thr_mod.distance(spot) / scale(spot).
+	// refSqDist: the near-base scale's reference (0: none); the 2-argument form uses the current fight's.
+	// partner: a joint call (strength is both groups', GetJointSafeThreat): its cover is left out, it counts already
+	float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength, float refSqDist,
+			const CAttackTask* partner = nullptr) const;
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override;
-	// IFighterTask::IsDangerAt with the near-base reference refSqDist
+	// Without cover: it depends only on distance from our base. Routes sample it along one ray (SetRouteAllowance)
+	// and get cover from their threat layer instead (SetRouteCover); route caps (GetPathThreatCap) are the same
+	float GetBaseAllowedThreatAt(const springai::AIFloat3& pos, float strength, float refSqDist) const;
+	virtual float GetRadialAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override {
+		return GetBaseAllowedThreatAt(pos, strength, scaleRefSqDist);
+	}
+	/*
+	 * Allied cover (quota.attack_ally_cover): allies over a spot multiply our strength there by GetCoverMod, in every
+	 * check above and in routes (SetRouteCover), so the pick, the approach, the escape and the routes always agree
+	 */
+	// Cover at p: the allied defences layer (CThreatMap::GetCoverAt) and the discs of our other attack groups that
+	// aren't fleeing and of our commander (CMilitaryManager::GetCoverDiscs), each its power x w(distance / its range),
+	// w(u) = min(1, 2 x (1 - u)). Never this group's own disc, nor partner's. 0 for a flying group or on water.
+	// outBySource (optional, 3 entries): defences, groups, commander
+	float GetCoverAt(const springai::AIFloat3& p, const CAttackTask* partner, float* outBySource = nullptr) const;
+	// 1 + min(weight x GetCoverAt / our strength (joint with partner), 1): cover at most doubles our strength.
+	// 1 when off (quota.attack_ally_cover 0)
+	float GetCoverMod(const springai::AIFloat3& p, const CAttackTask* partner) const;
+	// The route's threat layer as the allowance sees it (threat / GetCoverMod at each cell, the discs drawn at cell
+	// centres), so its cap, cost, light-threat floor and straightening all match the danger checks. Only cells with
+	// both threat and cover change: routes outside enemy threat are as before. Not for a flying group, nor on the
+	// cloak route (its layer is a different scale)
+	void SetRouteCover(IPathQuery* query, const CAttackTask* partner) const;
+	// Cover log (CMilitaryManager::LogAttackCover): a new pick its own spot accepts only with cover, by its biggest
+	// source; such a target is remembered until the next new pick (coverTargetId, coverEngageFrame)
+	void NoteCoverPick(const CEnemyInfo* enemy, float strength, float refSqDist);
+	// IFighterTask::IsDangerAt with the near-base reference refSqDist (and a joint call's partner)
 	using IFighterTask::IsDangerAt;
-	bool IsDangerAt(CCircuitUnit* unit, const springai::AIFloat3& p, float strength, float refSqDist) const;
+	bool IsDangerAt(CCircuitUnit* unit, const springai::AIFloat3& p, float strength, float refSqDist,
+			const CAttackTask* partner = nullptr) const;
 	// Threat at spots nearer our base than refSqDist (squared distance to base) counts less, floored by
 	// quota.thr_mod.scale_min
 	float GetNearBaseScaleAt(const springai::AIFloat3& pos, float refSqDist) const;
@@ -141,28 +175,32 @@ private:
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
 	void AbsorbWeakerTasks();
 	CAttackTask* GetReinforceSquad();
-	// Walk to goal (the group's leader; rally host: PickRallyGoal) by a route capped for routeStrength
-	void Reinforce(const int frame, bool isReuse, const springai::AIFloat3& goal, float routeStrength);
+	// Walk to goal (the group's leader; rally host: PickRallyGoal) by a route capped for routeStrength (joint with
+	// routePartner, whose cover the route then leaves out)
+	void Reinforce(const int frame, bool isReuse, const springai::AIFloat3& goal, float routeStrength,
+			const CAttackTask* routePartner = nullptr);
 	// quota.attack_merge.idle_merge: an army outside the rally walks to the group GetReinforceSquad picks (ranked above
 	// us: CMilitaryManager::IsRankedAbove) and merges, when that group is nearer than its best target by the target
 	// ranking (sqTargetKey: FindTarget's key; no target: max). Once walking, only a target ranked under
 	// MERGE_BREAK_OFF_SHARE of the group's distance breaks the walk off. false: hunt, or no target and the front fallback
 	bool SeekMerge(int frame, bool isReuse, float sqTargetKey);
-	// Rally: where to walk when reinforcing the host, and the strength its route is capped for (in: ours); false:
-	// nowhere to stand near its fight and we are close already
-	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, float& inOutStrength) const;
+	// Rally: where to walk when reinforcing the host, and the strength its route is capped for (in: ours; outPartner:
+	// the host when that is both groups'); false: nowhere to stand near its fight and we are close already
+	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, float& inOutStrength,
+			const CAttackTask*& outPartner) const;
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, float slack);
 	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, float farDist, springai::AIFloat3& outPos,
-			float& outStrength) const;
+			float& outStrength, const CAttackTask*& outPartner) const;
 	// How far behind its line's front row our leader may stand (the line's depth; 0 with no line). A route's end is
 	// where the front row stands, but merging is judged at the leader
 	float GetLineDepth() const;
 	// How far behind its line's front row our leader stands (its row's offset; 0 in the front row, or with no line).
 	// A target route's end is where the front row stands, but the engage check is at the leader (EngageInRange)
 	float GetLeaderLineOffset() const;
-	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES
+	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES.
+	// partner: strength is joint with it (its cover left out of the route, SetRouteCover)
 	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range, float strength,
-			std::function<void (const CQueryPathSingle*)>&& onComplete);
+			const CAttackTask* partner, std::function<void (const CQueryPathSingle*)>&& onComplete);
 	bool ApplyGroupRoute(const CQueryPathSingle* query, ICoreUnit::Id routeId, const springai::AIFloat3& goal,
 			float slack);
 
@@ -309,8 +347,9 @@ private:
 	// Threat cap for capped routes (target, front, reinforce): never above what the escape tolerates
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	float GetPathThreatCap(const springai::AIFloat3& startPos, const F3Vec& goals, float strength) const;
-	// Threat cost of a route: quota.attack_path_dynamic_cost, and on capped routes quota.attack_path_ignore_threat
-	void SetRouteThreat(IPathQuery* query, AttackRoute route) const;
+	// Threat cost of a route: allied cover (SetRouteCover; partner: a joint route's), quota.attack_path_dynamic_cost,
+	// and on capped routes quota.attack_path_ignore_threat
+	void SetRouteThreat(IPathQuery* query, AttackRoute route, const CAttackTask* partner = nullptr) const;
 	void RunRoute(const std::shared_ptr<IPathQuery>& query, std::function<void (const IPathQuery*)>&& onComplete);
 	void KeepRoute(ICoreUnit::Id targetId, const springai::AIFloat3& goal, const springai::AIFloat3* cell = nullptr,
 			int sector = -1, int epoch = -1);
@@ -383,7 +422,7 @@ private:
 	int engageFrame;  // last Engage (IsRallyFighting)
 
 	// Escape
-	int fleeFrame;  // keep running until this frame
+	int fleeFrame;  // keep running until this frame (IsFleeing)
 	int fleePathFrame;  // last escape path request
 	int fleeQueryId;  // id of the escape path query still in flight, -1 = none
 	springai::AIFloat3 fleeDest;  // where the current escape runs to (straight-move fallback when no path)
@@ -409,6 +448,8 @@ private:
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget (0: on enemy-held ground)
 	float targetSqKey;  // the last FindTarget's pick: its ranking key (squared distance, scaled), for SeekMerge
+	ICoreUnit::Id coverTargetId;  // cover log: the last new pick its own spot accepted only with cover (-1: none)
+	int coverEngageFrame;  // ... when the group first engaged it (-1: not yet)
 	// Contact (UpdateContactUnits): our units within GetGroupRadius of the leader (where they stand, and whether
 	// their weapon arcs over terrain), their farthest distance from it, and the frame they were read at
 	struct SContactUnit {

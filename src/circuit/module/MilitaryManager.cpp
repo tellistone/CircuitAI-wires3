@@ -618,6 +618,11 @@ void CMilitaryManager::ReadConfig()
 		circuit->GetMetalManager()->SetWallThreat(std::max(num("wall", THREAT_MIN, 0.f), THREAT_MIN));
 	}
 	attackPathIgnoreThreat = readAttackNum("attack_path_ignore_threat", 0.25f, 0.f, 1.f);
+	allyCoverWeight = readAttackNum("attack_ally_cover", 0.f, 0.f, 1.f);  // 0 = off
+	if (allyCoverWeight > 0.f) {
+		// The defences layer of the threat map is shared by the ally team: on once any of its AIs uses cover
+		circuit->GetThreatMap()->EnableCover();
+	}
 	{
 		// Each route kind on or off (default on); a bare true/false sets them all
 		static const char* const kinds[] = {"target", "reinforce", "front", "flee", "cornered"};
@@ -1223,6 +1228,9 @@ void CMilitaryManager::Init()
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateEscalation, this), escalation.interval, offset + 2);
 		}
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogRaidStats, this), FRAMES_PER_SEC * 60, offset + 2);
+		if (allyCoverWeight > 0.f) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogAttackCover, this), FRAMES_PER_SEC * 60, offset + 3);
+		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
 								FRAMES_PER_SEC * 60,
@@ -2743,6 +2751,85 @@ void CMilitaryManager::LogRaidStats()
 			raidEscapes, (int)GetTasks(IFighterTask::FightType::RAID).size(), total, list.empty() ? "none" : list.c_str());
 	raidDamage.clear();
 	raidEscapes = 0;
+}
+
+const std::vector<CMilitaryManager::SCoverDisc>& CMilitaryManager::GetCoverDiscs()
+{
+	const int frame = circuit->GetLastFrame();
+	if (coverDiscFrame == frame) {
+		return coverDiscs;
+	}
+	coverDiscFrame = frame;
+	coverDiscs.clear();
+	if (allyCoverWeight <= 0.f) {
+		return coverDiscs;
+	}
+	// Our attack groups where they stand, whatever their goal; a fleeing one gives none (CAttackTask::GetCoverDisc)
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
+		CAttackTask* task = static_cast<CAttackTask*>(t);
+		AIFloat3 pos;
+		float range, power;
+		if (task->GetCoverDisc(frame, pos, range, power)) {
+			coverDiscs.push_back({task, pos, SQUARE(range), power});
+		}
+	}
+	// Our commander (a builder, in no attack task), while it isn't retreating (its flee and hide use retreat tasks)
+	CCircuitUnit* comm = circuit->GetSetupManager()->GetCommander();
+	if ((comm != nullptr) && (comm->GetTask() != nullptr) && (comm->GetTask()->GetType() != IUnitTask::Type::RETREAT)
+		&& !comm->GetCircuitDef()->IsAbleToFly() && !comm->GetUnit()->IsParalyzed())
+	{
+		const float range = GetCommCoverRange(comm);
+		const float power = comm->GetCircuitDef()->GetPower() * sqrtf(std::max(comm->GetHealthPercent(), 0.f));
+		const AIFloat3& pos = comm->GetPos(frame);
+		if ((range > 0.f) && (power > 0.f) && utils::is_valid(pos)) {
+			coverDiscs.push_back({nullptr, pos, SQUARE(range), power});
+		}
+	}
+	return coverDiscs;
+}
+
+float CMilitaryManager::GetCommCoverRange(CCircuitUnit* comm) const
+{
+	CCircuitDef* cdef = comm->GetCircuitDef();
+	if (cdef->IsRoleComm()) {
+		// Dynamic commanders: the def's weapons aren't the ones fitted (as CThreatMap::SetEnemyUnitRange)
+		float maxRange = 0.f;
+		for (int num = 1; num < 3; ++num) {
+			std::string str = utils::int_to_string(num, "comm_weapon_id_%i");
+			const int weaponDefId = int(comm->GetUnit()->GetRulesParamFloat(str.c_str(), -1));
+			if (weaponDefId >= 0) {
+				maxRange = std::max(maxRange, circuit->GetWeaponDef(weaponDefId)->GetRange());
+			}
+		}
+		if (maxRange > 0.f) {
+			return maxRange * comm->GetUnit()->GetRulesParamFloat("comm_range_mult", 1.f);
+		}
+	}
+	return cdef->GetThreatRange(CCircuitDef::ThreatType::LAND) * circuit->GetThreatMap()->GetSquareSize();
+}
+
+void CMilitaryManager::LogAttackCover()
+{
+	// For tuning quota.attack_ally_cover: the fights cover started, how many of them ended in a quick escape (a pick
+	// it licensed that the escape didn't hold), how strong it got, and its main-thread cost
+	SCoverStats& st = coverStats;
+	const int picks = st.picks[0] + st.picks[1] + st.picks[2];
+	int groups = 0;
+	bool isComm = false;
+	for (const SCoverDisc& d : GetCoverDiscs()) {
+		if (d.task == nullptr) {
+			isComm = true;
+		} else {
+			++groups;
+		}
+	}
+	circuit->LOG("ATTACK cover last 60 s: %i targets picked only with cover (defences %i, groups %i, commander %i),"
+			" %i escapes within 5 s of engaging one; strongest cover x%.2f; %i lookups %.2f ms, %i route layers"
+			" (%i changed) %.2f ms | now: %i defences, %i groups%s",
+			picks, st.picks[0], st.picks[1], st.picks[2], st.quickEscapes, st.maxMod, st.lookups, st.lookupMs,
+			st.routes, st.routeLayers, st.routeMs, circuit->GetThreatMap()->GetCoverSourceCount(), groups,
+			isComm ? " and the commander" : "");
+	st = SCoverStats();
 }
 
 float CMilitaryManager::GetBaseThrBonus(float sqDistToBase) const

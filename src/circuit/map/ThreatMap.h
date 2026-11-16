@@ -84,6 +84,27 @@ public:
 	int GetSquareSize() const { return squareSize; }
 	int GetMapSize() const { return mapSize; }
 
+	/*
+	 * Allied cover (quota.attack_ally_cover, CAttackTask::GetCoverAt): the defences layer. Built allied armed statics of
+	 * every allied team (allied AIs included), not paralyzed, each drawn as its power x sqrt(health share)
+	 * (IFighterTask::GetCoverPower) over its land threat range (half of it for a static over 1000 elmos of range, as
+	 * the influence map does), full out to half that range, then falling linearly to 0 at it. No cover on water cells
+	 * (IsWaterCell). Off (all 0, nothing collected or drawn) until an AI of the ally team asks for it (EnableCover)
+	 */
+	void EnableCover() { isCoverOn = true; }
+	bool IsCoverOn() const { return isCoverOn; }
+	// On the main thread before an update (CMapManager::PrepareUpdate, while none is in flight): the statics to draw,
+	// from the friendly units as the last influence map apply left them (no second refresh of the ally list)
+	void PrepareCover();
+	float GetCoverAt(const springai::AIFloat3& position) const;
+	int GetCoverSourceCount() const { return static_cast<int>(coverSources.size()); }  // main thread (log)
+	const float* GetCoverArray() const { return coverArray; }
+	// Water cells get no cover (allied land defences don't guard them): the sector's water test
+	bool IsWaterCell(int index) const { return areaData->sector[index].isWater; }
+	bool IsWaterAt(const springai::AIFloat3& position) const;
+	// The cell of a position, clamped onto the map
+	int GetClampedIndex(const springai::AIFloat3& position) const;
+
 private:
 	/*
 	 * http://stackoverflow.com/questions/872544/precision-of-floating-point
@@ -108,6 +129,7 @@ private:
 		FloatVec raidAmph;
 		FloatVec raidSurfSquad;
 		FloatVec raidAmphSquad;
+		FloatVec cover;  // allied defences (GetCoverAt); all 0 while cover is off
 	};
 	// Where an enemy's ground and water threat is drawn: one view's surf and amph layers, and their squad layers
 	// (the unit count; nullptr unless isCounting)
@@ -136,6 +158,7 @@ private:
 	void AddEnemyAmphGradient(const SEnemyData& e, const int slack, const float threat, const float count,
 			const SDrawLayers& layers);
 	void AddDecloaker(const SEnemyData& e);
+	void AddCover();  // the defences layer, from coverSources
 	// Shields of hostile and peace enemies (Aspis is unarmed), each charge shared by the armed enemies inside it
 	void AddShields(const std::vector<SEnemyData>& hostiles, const std::vector<SEnemyData>& peaces);
 	// fedCells: cells of the shield-fed enemies, which may fire from the charge of linked shields (AddShieldAmmo)
@@ -188,6 +211,15 @@ private:
 	int updateNum = 0;
 	void LogStats();
 
+	// A static that covers (PrepareCover): its cell, cover power and range in cells
+	struct SCoverSource {
+		int x, z;
+		float power;
+		int range;
+	};
+	std::vector<SCoverSource> coverSources;  // written only while no update is in flight, read by Update
+	std::atomic<bool> isCoverOn{false};  // set on the main thread (an AI's config), read by Update too
+
 	int rangeDefault;
 	int distCloak;
 	struct {
@@ -204,6 +236,7 @@ private:
 	float* drawShieldArray;
 	float* drawShieldAmmoArray;
 	float* drawAirSquad;  // nullptr unless isCounting
+	float* drawCover;
 	SDrawLayers drawPlain;  // surf and amph of the plain view
 	SDrawLayers drawRaid;  // ... and of the raid view (differences)
 	bool isUpdating;
@@ -221,6 +254,7 @@ private:
 	float* raidAmph;
 	float* raidSurfSquad;  // the raid layers themselves unless isCounting
 	float* raidAmphSquad;
+	float* coverArray;
 	float* threatArray;  // current threat array for multiple GetThreatAt() calls
 
 #ifdef DEBUG_VIS

@@ -42,6 +42,10 @@ public:
 	const float* GetThreatArray() const { return threatArray; }
 	const NSMicroPather::CostFunc& GetMoveFun() const { return moveFun; }
 	const NSMicroPather::CostFunc& GetThreatFun() const { return threatFun; }
+	// A threat layer of the query's own in place of the threat map's (same grid), kept alive with the query: cap,
+	// cost (the usual 2 x threat) and path straightening read it. Call before SetThreatAllowance and SetThreatFloor,
+	// which read the layer the query has then. Not for the cloak array (1 x threat cost)
+	void SetThreatArray(std::shared_ptr<const FloatVec>&& array);
 	// Threat at or below this counts as none: no route cost, and the path is straightened across it.
 	// Call after creating the query, before running it. The threat cap (maxThreat) is unchanged
 	void SetThreatFloor(float value);
@@ -74,6 +78,7 @@ protected:
 
 	const bool* canMoveArray;  // outdate after AREA_UPDATE_RATE
 	const float* threatArray;  // outdate after THREAT_UPDATE_RATE
+	std::shared_ptr<const FloatVec> threatArrayOwner;  // SetThreatArray: the layer threatArray points to
 	NSMicroPather::CostFunc moveFun;  // AREA_UPDATE_RATE
 	NSMicroPather::CostFunc threatFun;  // THREAT_UPDATE_RATE
 	float threatFloor = 0.f;

@@ -363,6 +363,33 @@ public:
 		return false;
 	}
 	float GetAttackPathIgnoreThreat() const { return attackPathIgnoreThreat; }
+	/*
+	 * quota.attack_ally_cover: allies over a spot multiply an attack group's strength there in every danger check and
+	 * in its routes, up to double (CAttackTask::GetCoverMod). 0 = off
+	 */
+	float GetAllyCoverWeight() const { return allyCoverWeight; }
+	// Mobile cover: one of our attack groups that isn't fleeing, or our commander while it isn't retreating
+	struct SCoverDisc {
+		const CAttackTask* task;  // only compared, never dereferenced; nullptr: the commander
+		springai::AIFloat3 pos;  // the group's leader, the commander
+		float sqRange;  // squared: the group's fire range + its units' spread; the commander's weapon range
+		float power;  // the group's GetSafeThreat; the commander's power x sqrt(health share)
+	};
+	// Built once per frame on first use, so no lookup walks another group's units. Empty while cover is off
+	const std::vector<SCoverDisc>& GetCoverDiscs();
+	// The ATTACK cover log (LogAttackCover), since the last one
+	struct SCoverStats {
+		int picks[3] = {0, 0, 0};  // new picks whose own spot passed only with cover, by its biggest source:
+		                           // defences, groups, commander
+		int quickEscapes = 0;  // escapes within 5 s of engaging such a pick
+		float maxMod = 1.f;  // the strongest cover multiplier any lookup gave
+		int lookups = 0;  // GetCoverMod calls, and their main-thread time
+		float lookupMs = 0.f;
+		int routes = 0;  // route layers worked out (SetRouteCover), those that changed a cell, and their time
+		int routeLayers = 0;
+		float routeMs = 0.f;
+	};
+	SCoverStats& GetCoverStats() { return coverStats; }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
@@ -474,6 +501,10 @@ private:
 	void UpdateResponseGates();
 	void UpdateEscalation();
 	void LogRaidStats();  // the RAID log, every minute
+	void LogAttackCover();  // the ATTACK cover log (quota.attack_ally_cover), every minute while it is on
+	// The commander's cover reach: its weapons' longest range (dynamic commanders: their modules', as the threat map
+	// reads an enemy commander's), else its def's land threat range
+	float GetCommCoverRange(CCircuitUnit* comm) const;
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
 	struct SRally {
 		SRallyCfg cfg;
@@ -673,6 +704,10 @@ private:
 	int attackThreatFloorLogFrame;  // next periodic THREAT FLOOR log line
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
+	float allyCoverWeight = 0.f;  // quota.attack_ally_cover
+	std::vector<SCoverDisc> coverDiscs;  // GetCoverDiscs, for coverDiscFrame
+	int coverDiscFrame = -1;
+	SCoverStats coverStats;
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
