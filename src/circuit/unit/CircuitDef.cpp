@@ -196,6 +196,8 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		jumpRange = (it != customParams.end()) ? utils::string_to_float(it->second) : 400.0f;
 	}
 
+	isMobileBuilding = customParams.find("mobilebuilding") != customParams.end();  // Zero-K tests it is there
+
 	it = customParams.find("is_drone");
 	if ((it != customParams.end()) && (utils::string_to_int(it->second) == 1)) {
 		category |= circuit->GetBadCategory();

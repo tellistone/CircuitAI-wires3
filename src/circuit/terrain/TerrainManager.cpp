@@ -439,6 +439,18 @@ AIFloat3 CTerrainManager::FindBuildSite(CCircuitDef* cdef, const AIFloat3& pos, 
 	return -RgtVector;
 }
 
+AIFloat3 CTerrainManager::FindSiteAt(CCircuitDef* cdef, const AIFloat3& pos, int facing)
+{
+	// Radius of one block square: the offsets tried are (0, 0) first, then one square back on x, z or both
+	return FindBuildSite(cdef, pos, SQUARE_SIZE * 2, facing);
+}
+
+bool CTerrainManager::IsDeepWaterAt(const AIFloat3& pos) const
+{
+	static_assert(SQUARE_SIZE * 5 == 40, "IsDeepWater's -40");
+	return IsDeepWater(circuit->GetMap()->GetElevationAt(pos.x, pos.z));
+}
+
 const SBlockingMap& CTerrainManager::GetBlockingMap()
 {
 	if (circuit->IsAllyAware()) {

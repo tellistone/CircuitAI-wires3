@@ -10,6 +10,7 @@
 #include "module/ChokeDefence.h"
 #include "module/Frontline.h"
 #include "module/SensorPlanner.h"
+#include "module/TurretPicker.h"
 #include "module/EconomyManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -103,6 +104,9 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		)
 	};
 	auto defenceDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
+		if (offPointsTowers.erase(unit->GetId()) > 0) {
+			return;  // no defence point counted it
+		}
 		int frame = this->circuit->GetLastFrame();
 		float defCost = unit->GetCircuitDef()->GetCostM();
 		CDefenceMatrix::SDefPoint* point = defence->GetDefPoint(unit->GetPos(frame), defCost);
@@ -328,6 +332,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 	spotScorer = std::make_unique<CSpotScorer>(circuit);
 	sensorPlanner = std::make_unique<CSensorPlanner>(circuit, radarDef);
 	frontline = std::make_unique<CFrontline>(circuit);
+	turretPicker = std::make_unique<CTurretPicker>(circuit);
 
 	fightTasks.resize(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_));
 }
@@ -1810,7 +1815,7 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	// NOTE: circuit->GetTerrainManager()->IsWaterSector(pos) checks whole sector
 	//       but water recognized as height < 0
-	bool isWater = circuit->GetMap()->GetElevationAt(pos.x, pos.z) < -SQUARE_SIZE * 5;
+	bool isWater = circuit->GetTerrainManager()->IsDeepWaterAt(pos);
 	std::vector<CCircuitDef*>& defenders = isWater ? waterDefenders : landDefenders;
 
 	// Front-line porc

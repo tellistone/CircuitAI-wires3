@@ -2,11 +2,13 @@
 
 CircuitAI can learn the shape of each map: which gaps in the terrain are chokes, which mex clusters sit behind which
 chokes, where the enemy is likely to walk, and how open the map is. Several features use that to place towers, radar
-and the army. Every feature is off by default, so with the shipped config the AI plays as it did before. The
-`choke_overlay` chat command draws what the AI found, so you can check a map before you turn anything on.
+and the army. Every choke feature is off by default, so with them off the AI places towers, radar and the army as
+it did before. The exception is the turret picker's two callers (`turret.after_flee`, `turret.near_enemy`), which are
+on: they add light turrets for constructors in the field, and read the analysis for it. The `choke_overlay` chat
+command draws what the AI found, so you can check a map before you turn anything on.
 
-The analysis is shared by allied AIs and runs on the area worker thread. It is built only when a feature reads it, or
-when `choke_overlay` asks for it.
+The analysis is shared by allied AIs and runs on the area worker thread. It is built only when a feature reads it,
+when `choke_overlay` asks for it, or when the turret picker's first order comes (which waits up to 10 s for it).
 
 ## The analysis
 
@@ -32,8 +34,12 @@ when `choke_overlay` asks for it.
   enemy must pass to walk in. Points with more than `choke.entrances` entrances are *open*. Points that share a cut
   form a *pocket*. A pocket is *qualified* when every entrance is defensible, within `choke.near` ranges of its
   points, and has no enemy territory right outside it.
-- **Lines.** The *current line* is the cut nearest our territory against enemy territory. The *forward line* is the
-  cut nearest our territory against the enemy's side of the map. A region both sides hold counts as ours.
+- **Lines.** The *current line* is the cut nearest our territory against enemy territory. The *enemy line* is the
+  same cut nearest enemy territory, its mirror. Where the narrowest gap between the sides is one set of chokes, the
+  two are the same; where there is ground between them that either side could hold as cheaply, they part. The *front
+  line* is the chokes they share, which every cheapest cut between the sides passes, and is empty while they don't
+  touch. The *forward line* is the cut nearest our territory against the enemy's side of the map. A region both sides
+  hold counts as ours. Nothing acts on the enemy or front lines yet; the overlay draws them.
 - **Traffic field.** On 64-elmo cells (crossable by the same rule over their four 32-elmo cells), one layer per enemy
   movement type: where its units are likely to walk from the
   enemy's factories (or start boxes) to our clusters and base. The layers are blended by the enemy's army mix, at most
@@ -54,12 +60,14 @@ on it.
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
 | `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored by covered traffic, height, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
 | `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
-| `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army near it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
+| `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army in the region outside it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
+| `turret.after_flee` | `true` | **Turret picker (G), after a flee.** A constructor whose flee from nearby enemies ends clear or covered orders a light turret where the flee started. |
+| `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. |
 
-The rankings of enemy-held chokes (E) feed D and the overlay. They are computed when C or D is on, or when the
-overlay is on.
+The rankings of enemy-held chokes and the enemy line's (E) feed D and the overlay. They are computed when C or D is
+on, or when the overlay is on.
 
 ## Tuning keys
 
@@ -93,6 +101,28 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.objective.power` | `1.3` | Our attack power must be at least this × the objective's defence. |
 | `choke.objective.retry` | `180` | Seconds before a failed objective may be tried again. |
 
+The turret picker has its own top-level `"turret"` block, so the two pickers are tuned apart. Sizes are in elmos.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `turret.radius` | `600` | Elmos from the order's centre a turret may stand. |
+| `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height) must reach this × the turret's cost. |
+| `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. |
+| `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
+| `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. |
+| `turret.enemy` | `1.0` | Weight of E, the enemies a turret could shoot. |
+| `turret.front` | `1.0` | The spot with the most enemy building influence, out of threat, ranks up to 1 + this × its value. 0 turns the lean off. |
+| `turret.height` | `0.5` | The most a spot's height adds to its value. |
+| `turret.choke` | `100` | Metal a choke of our current line or the enemy line in range adds (C). |
+| `turret.not_defence` | `["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"]` | Armed statics that defend nothing in the field: Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity and the Antinuke. They never cover a target, and the callers don't count them as a defence or as allied power. Claw mines and missiles are left out the same way, by their `mobilebuilding` mark. |
+| `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
+| `turret.defended_radius` | `600` | After a flee, a defence this near where it started means no turret. |
+| `turret.light` | `["turretlaser", "turretmissile"]` | The light turrets both callers may build: Lotus and Picket. |
+| `turret.enemy_reach` | `600` | Distance to a known enemy building that starts the near-enemy caller. |
+| `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
+| `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
+| `turret.share` | `0.15` | Share of the metal income picker turrets ordered in the last minute may cost. One light turret a minute is always allowed. |
+
 ## The `choke_overlay` command
 
 Type it in chat. Every allied CircuitAI gets the line, but the ally team handles it once. Commands from enemy
@@ -102,11 +132,12 @@ players are ignored. A spectator may use it only in games with no human opponent
 |---|---|
 | `choke_overlay` or `choke_overlay toggle` | Shows or hides the overlay. The first time, it builds the analysis if no feature asked for it. The answer gives the map's openness and band. |
 | `choke_overlay next` | Shows the next layer. |
-| `choke_overlay <layer>` | Shows that layer: `chokes`, `pockets`, `lines`, `ranks`, `traffic`, `spots`, `radar` or `regions`. |
+| `choke_overlay <layer>` | Shows that layer: `chokes`, `pockets`, `lines`, `ranks`, `traffic`, `spots`, `radar`, `regions` or `turrets`. |
 | `choke_overlay <movement class>` | Shows one movement class's own graph on the `chokes` and `regions` layers. Use a unit def name (`cloakraid`) or a class name. An unknown name lists the classes. |
 | `choke_overlay all` | Back to the threat graph. |
 | `choke_overlay labels` | Turns the text labels on or off. They are map markers, which human allies see too, so they start off when the AI has human allies. |
-| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. Only in games with no human opponents. |
+| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light` and `turret.not_defence` can't be set. Only in games with no human opponents. |
+| `choke_overlay turret <x> <z> [def]` | Our nearest free constructor orders a turret at (x, z), with no cooldown or budget, at HIGH priority. With no def the picker chooses from the porcupine list (AA left out). Shows the `turrets` layer. Only in games with no human opponents. |
 | `choke_overlay save` | Writes the chokes and point classes to `choke/<map>.json` in the AI's writeable data directory, for comparing maps by hand. Only in games with no human opponents. |
 
 The AI answers in ally chat and in its log, as `CHOKE overlay: ...`. While the overlay is on, it also says when the
@@ -119,14 +150,15 @@ enemy types: TANK3(gating 0.60) TKBOT3(promoted to gating 0.35)`.
 |---|---|
 | `chokes` | Each choke from end to end of its line: green when defensible, grey when not. Lanes are yellow rectangles. |
 | `pockets` | Each pocket's entrances by mode: green at chokes, white on cluster, grey not decided yet. Blue lines link its points to them. Points are red when open, green gated, grey unreached. Magenta marks the anchors of choke points. |
-| `lines` | The current line orange, the forward line yellow, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
-| `ranks` | Enemy-held chokes: red when defended, white when not. Labels give the defence, the unarmed value behind and the share seen in the last 3 minutes. |
+| `lines` | The current line orange, the forward line yellow, the enemy line red, the front line white, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
+| `ranks` | Enemy-held chokes and the enemy line's: red when defended, white when undefended, grey when not seen enough to say. Labels say which, and give the defence, the unarmed value behind and the share seen in the last 3 minutes. |
 | `traffic` | The busiest cells of the blended traffic field: bigger and redder the busier. |
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
 | `regions` | The graph itself: region centres linked to their chokes. On the threat graph, our side is green and the enemy's side red. |
+| `turrets` | The last turret order: its radius ring and centre white, the candidates that passed the hard rules grey, the best green, the next 4 cyan, and those outside our buildings' influence dark red. Tested spots are labelled with their value ÷ cost and F, the chosen one with its def and the four terms. |
 
-Layers that other modules feed (`lines`, `ranks`, `spots` and `radar`) redraw every 10 s. The others redraw when the
+Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`) redraw every 10 s. The others redraw when the
 analysis changes.
 
 ## How the features decide
@@ -241,18 +273,96 @@ is never built, the guard is dropped with it.
 Why not a queued job: a radar queued for any builder lost the pick to nearer work every time, waited out the stall
 rule, and was given up. Picking the spot for the builder at hand gets it built at once.
 
+### Turret picker (G)
+
+The turret picker finds the best spot for a turret within `turret.radius` of any centre, with no defence point,
+choke or cluster behind it, and the constructor builds it on that exact spot. The choke spot scorer (F) guards one
+thing; this one weighs everything a turret there would cover, each term in metal so it compares with the turret's
+cost:
+
+`base = (T + A + E + C) × (1 + turret.height × height)`, `value = base × (1 + turret.front × F) ÷ (1 + walk ÷ 1000)`
+
+- *T*, traffic: the traffic field carries each destination's income across every cross-section of its enemy routes.
+  The heaviest 64 cells within reach are summed over those in range and divided by the cell lengths the range spans
+  (2 × range ÷ 64), which gives the income whose routes pass under the turret, in metal/s; × `turret.horizon`.
+- *A*, our and allied unarmed buildings in range (mexes, energy, radar, factories, storage, nanoframes too), at cost.
+- *E*, known enemy buildings in range seen in radar or sight in the last 3 minutes (so the ghost of one that died
+  out of sight drops out), at cost; an enemy mex counts its income × `turret.horizon`, which is what killing it
+  takes from them. Mobiles don't count: they move on, and their routes are in T already.
+- *C*, `turret.choke` when a choke of our current line or the enemy line has its middle in range. One choke's worth
+  at most.
+- Each target counts only if the turret hits it (ground, and under deep water for one that hits there), in range
+  and in a clear line of fire (high-arc turrets skip that). It is halved for each tower of ours or an ally's,
+  queued ones included, that already covers it and hits it, so an AA tower doesn't cover a mex. Claw mines,
+  missiles and `turret.not_defence` never cover.
+- *height*: above the mean height of the targets it counts, up to 150 elmos.
+- *F*, the front: each known enemy building, armed or not, fakes, Claw mines and missiles left out, adds
+  2 × (1 − d ÷ 2048) (the influence map's enemy territory), over the highest among the candidates. The spot reaching furthest toward the enemy while
+  out of threat ranks up to (1 + `turret.front`) × its value. *walk* is the ordered constructor's distance.
+
+Only the base is tested against the cost: a spot is worth building when its base is at least `turret.min_value` ×
+the turret's cost, so the lean and the walk only rank spots that already pay. The def with the best value per metal
+wins, so the type follows the enemy buildings in range and the choke through E and C.
+
+A spot is skipped when it is outside the radius; more than `defence.infl_rad` (2048 elmos) from every building of
+ours or an ally's (constructors left out, so the ordering constructor can't make its own ground pass, and Claw
+mines and missiles, so a minefield doesn't stretch our ground); not buildable facing south or closed on the
+blocking map (lanes and queued jobs, picker jobs included, are on it); in the constructor's threat; out of its
+reach; not safe for a builder whose flee is on (`IsCommJobSafe`); or masked in the last 5 minutes, by a build the
+engine refused there or a picker job dropped there. Candidates are the 64-elmo cell centres within the radius, the
+same for every def, snapped to the build grid, tried best upper bound first; the best 5 are tried again 16 elmos to
+each corner.
+
+The job is a DEFENCE job at the spot with no shake, its footprint on the blocking map from the start. It is dropped
+30 s after its last builder leaves, and on arrival if threat (the builder's) has reached the spot or its base has
+fallen below 0.75 × `turret.min_value` × cost (the enemy building it was for died, say). The margin keeps a spot
+that only just paid from flipping on one new tower. A dropped job masks its spot, as a build the engine refuses
+does, so the next order looks elsewhere. Picker and cornered towers
+(`MakeCommDefence`) stay out of the defence points' counts, so a forward picker turret dying doesn't make the porc
+sweep rebuild a home tower.
+
+**Callers.** One update a second runs both, each turret from `turret.light` at NORMAL priority:
+
+1. After a flee that ends clear or covered, centred where the flee started, with only the light defs that hit what
+   it fled from (after gunships, only Picket). Not before `turret.after_flee_since` seconds of game time, and not
+   when a defence that hits what it fled from (ours or an ally's, finished, being built or queued; Claw mines,
+   missiles and `turret.not_defence` left out) stands within `turret.defended_radius` of where the flee started.
+   Only builders whose flee is on: the commander by default, other constructors with `retreat.builder_flee`. A
+   cornered flee keeps the cornered defence, a hurt one goes for repair.
+2. A mobile ground constructor with a known enemy building seen in the last 3 minutes (not a Claw mine or a
+   missile) within `turret.enemy_reach`, and no armed ally (a mobile or a finished tower, its own power, Claw mines,
+   missiles and `turret.not_defence` left out) within `turret.ally_radius`, centred on itself. A finished picker
+   turret counts as allied power, so it stops once its turret stands.
+
+Gates, in order: the caller's switch; the constructor isn't player-led, retreating, fighting, morphing, on a
+defence job or on a HIGH or NOW one; its `turret.cooldown`; metal isn't stalling; the trigger; a light def it can
+build whose water depths suit the centre (after a flee: that hits what it fled from). Then, if one of our turrets
+of a kind that hits it is being built, or a picker job is queued, within `turret.radius` of the centre, whoever
+queued it, the constructor helps build it instead (no budget, but the cooldown starts). Else, after a flee, the
+defence check; the choke analysis, asked for on the first order, which waits for it up to 10 s; the budget; and
+one order a second for the AI, so a group arriving together orders once and the rest help. An order starts the
+cooldown whatever the result.
+
+The budget is paid in as the metal comes: `turret.share` of the average income, held up to a minute's share (or
+the dearest light turret, whichever is more). An order needs the dearest light def's cost in it and takes the
+turret's cost out. So at 4 m/s a Lotus waits about 150 s for its share, and at 20 m/s two can go up at once, then
+one each 30 s.
+
 ### Holding the line (C), objectives (D) and rankings (E)
 
 - **Frontline.** The current line's chokes, ranked by our income behind each one × its traffic. Each of our points
   behind the line counts at its nearest line choke.
-- **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army seen near it in
-  the last 3 minutes. The first idle attack group to ask while that choke is short, and whose power makes up the
-  shortfall, claims it, walks to its scored hold spot, and keeps the claim while it keeps asking. Once claimed, the
-  slot keeps its choke until 30 s after it was last short, so an enemy army that steps out of range or dies doesn't
-  walk the group away at once, unless another short choke ranks 1.3× higher. Then it moves to the top-ranked short
-  choke, or ends if none is. A group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A
-  slot with nowhere to stand (no traffic near the choke) stays free and is tried again after 30 s. A group that runs
-  from a fight gives up its claim for 30 s.
+- **Enemy army at a choke.** An enemy mobile seen in the last 3 minutes counts at the line chokes that open into the
+  region it stands in: at the one nearest it in full, and at the others by half. One in a region no line choke opens
+  into, ours or further out, doesn't count.
+- **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army at it. The first
+  idle attack group to ask while that choke is short, and whose power makes up the shortfall, claims it, walks to its
+  scored hold spot, and keeps the claim while it keeps asking. Once claimed, the slot keeps its choke until 30 s
+  after it was last short, so an enemy army that steps out of its region or dies doesn't walk the group away at once,
+  unless another short choke ranks 1.3× higher. Then it moves to the top-ranked short choke, or ends if none is. A
+  group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A slot with nowhere to stand (no
+  traffic near the choke) stays free and is tried again after 30 s. A group that runs from a fight gives up its claim
+  for 30 s.
 - **Objectives.** When the forward line is shorter than the current line, or as long with more income behind it,
   its enemy-held chokes become an objective. That needs the gain to be `choke.objective.gain` × the cost, and our
   attack power to be `choke.objective.power` × their defence. Their defence is what we saw there, over the share of
@@ -263,8 +373,11 @@ rule, and was given up. Picking the spot for the builder at hand gets it built a
   - It lasts until taken, for at most 4 minutes in all (switches included), or until our attack power falls below its
     defence as it is now. A failed one waits `choke.objective.retry` seconds.
 - **Rankings.** A choke is enemy-held when its outer side from us is enemy territory, or known enemy towers cover its
-  line. Its defence is the threat of enemy towers reaching the line or our approach to it, plus enemy mobiles within a
-  main-tower range. Its value is the cost of unarmed enemy units directly behind it.
+  line. Every choke of the enemy line is ranked too, held or not. Its defence is the threat of enemy towers reaching
+  the line or our approach to it, plus enemy mobiles within a main-tower range. Its value is the cost of unarmed
+  enemy units directly behind it. A ranked choke is *undefended* when no armed enemy is in reach and we saw at least
+  a quarter of its line in the last 3 minutes; with less seen, no defence only means we don't know. Objectives (D)
+  still take only enemy-held chokes.
 
 ## Logs
 
@@ -280,6 +393,12 @@ Lines in the AI's infolog, for tuning:
 - `CHOKE artillery near choke`: towers called off.
 - `CHOKE hold` and `CHOKE objective`: slots and objectives starting, moving and ending.
 - `RADAR by`: each radar a builder is sent to build, with the coverage before it.
+- `TURRET <caller>, by <builder>`: each turret order (`after flee`, `near enemy` or `test`) with its def, spot, the
+  four terms, height, F, the nearest building of ours, the walk, base and value per cost, candidates tested and the
+  time; or why nothing (no def, no spot, nothing in range worth its cost, no buildable spot among the best, or the
+  best at less than its cost) with the hard-rule counts, which say how many spots were outside our influence,
+  threatened, out of reach, unbuildable, unsafe or masked. `helps the ...` when it assists a turret instead, and `dropped on arrival` when a job's
+  spot stopped paying or came under threat.
 
 ## Known limits
 
@@ -293,3 +412,6 @@ Lines in the AI's infolog, for tuning:
 - A tower's cost is counted on the nearest defence point with room for it, as before. A tower at a choke can
   occasionally be counted on a cluster point near that choke.
 - Viewsheds are cached while their cell stays a candidate, and aren't made again when terraform changes the ground.
+- The turret picker only answers the AI's own callers and the test command; human allies can't order from it. It
+  places no AA turrets. A centre with no building of ours within 2048 elmos (a constructor deep in enemy land) gets
+  nothing until something of ours stands near.
