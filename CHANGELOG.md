@@ -7,6 +7,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **The turret picker steps up to heavier turrets with map control** (`turret.tiers`). Once our ally team's
+  finished mexes hold 40% of the map's metal spots, Stardust and Gauss join Lotus and Picket; at 55%, HLT does. An
+  order builds from the heaviest unlocked tier that has a spot worth its cost, else drops a tier. The turret budget
+  holds the dearest unlocked def's price before it orders.
 - **Turret picker for constructors in the field** ([doc/chokepoints.md](doc/chokepoints.md), "Turret picker (G)").
   A new picker finds the best light turret spot within `turret.radius` (600) of a centre, valuing everything in
   range in metal: enemy traffic (the income whose routes pass under it, × `turret.horizon` 120 s), our and allied

@@ -74,6 +74,12 @@ public:
 		float defendedRadius = 600.f;  // after a flee, a defence this near where it started means no turret
 		bool isNearEnemy = true;
 		std::vector<CCircuitDef*> light;
+		// Heavier defs, each tier unlocked once our ally team holds mexShare of the map's metal spots; by mexShare up
+		struct STier {
+			float mexShare;
+			std::vector<CCircuitDef*> defs;
+		};
+		std::vector<STier> tiers;
 		float enemyReach = 600.f;
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
@@ -117,6 +123,11 @@ public:
 	// A known enemy building: not a fake, a Claw mine or a missile. isFresh: and in radar or sight in the last 3
 	// minutes, so the ghost of one that died out of sight drops out
 	bool IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const;
+
+	// Our ally team's share of the map's metal spots, finished mexes only
+	float GetMexShare() const;
+	// The turret.tiers entry def is in, from 1; 0 if none (turret.light)
+	int GetTier(const CCircuitDef* def) const;
 
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }

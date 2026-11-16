@@ -89,8 +89,7 @@ void CTurretPicker::ReadConfig()
 	c.cooldown = turret.get("cooldown", c.cooldown).asFloat();
 	c.share = turret.get("share", c.share).asFloat();
 	// A list of def names (the defaults when the key is missing); a name that isn't a unit, or a turret, is logged
-	auto readDefs = [&](const char* key, std::vector<std::string> names, bool isTurret) {
-		const Json::Value& list = turret[key];
+	auto readDefs = [&](const std::string& key, const Json::Value& list, std::vector<std::string> names, bool isTurret) {
 		if (list.isArray()) {
 			names.clear();
 			for (const Json::Value& name : list) {
@@ -103,16 +102,55 @@ void CTurretPicker::ReadConfig()
 			if ((cdef != nullptr) && (!isTurret || (cdef->IsAttacker() && !cdef->IsMobile()))) {
 				defs.push_back(cdef);
 			} else {
-				circuit->LOG("CONFIG %s: turret.%s '%s' is not a %s, ignored", cfgName.c_str(), key, name.c_str(),
+				circuit->LOG("CONFIG %s: turret.%s '%s' is not a %s, ignored", cfgName.c_str(), key.c_str(), name.c_str(),
 						isTurret ? "turret" : "unit");
 			}
 		}
 		return defs;
 	};
-	c.light = readDefs("light", {"turretlaser", "turretmissile"}, true);
-	c.notDefence = readDefs("not_defence", {"staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty",
-			"staticnuke", "staticantinuke"}, false);
+	c.light = readDefs("light", turret["light"], {"turretlaser", "turretmissile"}, true);
+	c.notDefence = readDefs("not_defence", turret["not_defence"], {"staticheavyarty", "zenith", "mahlazer",
+			"starlight_satellite", "raveparty", "staticnuke", "staticantinuke"}, false);
+	const Json::Value& tiers = turret["tiers"];
+	if (tiers.isArray()) {
+		c.tiers.clear();
+		for (unsigned i = 0; i < tiers.size(); ++i) {
+			const std::string key = "tiers[" + std::to_string(i) + "].defs";
+			SConfig::STier tier = {tiers[i].get("mex", 1.f).asFloat(), readDefs(key, tiers[i]["defs"], {}, true)};
+			if (!tier.defs.empty()) {
+				c.tiers.push_back(tier);
+			}
+		}
+	} else {
+		c.tiers = {{0.4f, readDefs("tiers", Json::Value(), {"turretriot", "turretgauss"}, true)},
+				{0.55f, readDefs("tiers", Json::Value(), {"turretheavylaser"}, true)}};
+	}
+	std::stable_sort(c.tiers.begin(), c.tiers.end(), [](const SConfig::STier& a, const SConfig::STier& b) {
+		return a.mexShare < b.mexShare;
+	});
 	inflRadius = DEFAULT_SLACK * 4 * root["defence"].get("infl_rad", 5.f).asFloat();  // CInfluenceMap::AddTerritory's
+}
+
+float CTurretPicker::GetMexShare() const
+{
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const int spotCount = metalMgr->GetSpots().size();
+	if (spotCount == 0) {
+		return 0.f;
+	}
+	metalMgr->MarkAllyMexes();  // once a frame at most
+	return float(metalMgr->GetMexCount()) / spotCount;
+}
+
+int CTurretPicker::GetTier(const CCircuitDef* def) const
+{
+	for (unsigned i = 0; i < config.tiers.size(); ++i) {
+		const std::vector<CCircuitDef*>& defs = config.tiers[i].defs;
+		if (std::find(defs.begin(), defs.end(), def) != defs.end()) {
+			return i + 1;
+		}
+	}
+	return 0;
 }
 
 bool CTurretPicker::IsDefence(const CCircuitDef* cdef) const
@@ -150,7 +188,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 		circuit->LOG("TURRET %s", last.line.c_str());
 	};
 
-	const std::vector<CCircuitDef*> defs = GetDefs(order, centre);
+	std::vector<CCircuitDef*> defs = GetDefs(order, centre);
 	if (defs.empty()) {
 		say(who + ": nothing, no def it can build");
 		return nullptr;
@@ -162,16 +200,28 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	const SGather gather = Gather(centre, radius, maxRange, -RgtVector);
 	last.grid = MakeGrid(builder, gather);
 
-	// The def whose best spot has the most value per metal; while none is found, the last tried
+	// The heaviest tier with a spot worth its cost, and in it the def whose best spot has the most value per metal;
+	// while none is found, the last tried. Heaviest first, so a lighter tier isn't searched once one is found. The
+	// porcupine list (no defs given: the overlay's test) is one tier
+	auto tierOf = [this, &order](const CCircuitDef* def) { return order.defs.empty() ? 0 : GetTier(def); };
+	std::stable_sort(defs.begin(), defs.end(), [&tierOf](const CCircuitDef* a, const CCircuitDef* b) {
+		return tierOf(a) > tierOf(b);
+	});
+	int bestTier = -1;
 	float bestPerCost = -1.f;
 	float bestBasePerCost = 0.f;  // for the log, worth or not
 	for (CCircuitDef* def : defs) {
+		const int tier = tierOf(def);
+		if (tier < bestTier) {
+			break;
+		}
 		SDefResult res = SearchDef(def, builder, gather, last.grid.passed);
 		const float cost = std::max(def->GetCostM(), 1.f);
 		bestBasePerCost = std::max(bestBasePerCost, res.search.bestBase / cost);
 		const float perCost = res.search.IsFound() ? res.search.scored.front().terms.value / cost : -1.f;
-		if (!last.isFound || (perCost > bestPerCost)) {
+		if (!last.isFound || (res.search.IsFound() && (perCost > bestPerCost))) {
 			last.isFound = res.search.IsFound();
+			bestTier = last.isFound ? tier : -1;
 			bestPerCost = perCost;
 			last.res = std::move(res);
 		}
@@ -218,10 +268,10 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	char buf[512];
 	snprintf(buf, sizeof(buf), ": %s at (%.0f, %.0f): T %.0f, A %.0f, E %.0f, C %.0f, height %.2f, front %.2f "
 			"(enemy %.1f of %.1f), our building at %.0f, walk %.0f, base %.2f x cost, value %.2f x cost, "
-			"%i of %i candidates", def->GetDef()->GetName(), spot.x, spot.z, t.traffic, t.ally, t.enemy, t.choke,
+			"%i of %i candidates, tier %i", def->GetDef()->GetName(), spot.x, spot.z, t.traffic, t.ally, t.enemy, t.choke,
 			1.f + config.height * t.height, t.front, pick.cand.enemyInfl, res.search.frontNorm,
 			GetNearestOurs(gather, spot), pick.cand.walk, t.base / cost, t.value / cost, res.search.tested,
-			(int)last.grid.passed.size());
+			(int)last.grid.passed.size(), GetTier(def));
 	say(who + buf);
 	return task;
 }

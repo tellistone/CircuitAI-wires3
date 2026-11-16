@@ -118,10 +118,11 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
 | `turret.defended_radius` | `600` | After a flee, a defence this near where it started means no turret. |
 | `turret.light` | `["turretlaser", "turretmissile"]` | The light turrets both callers may build: Lotus and Picket. |
+| `turret.tiers` | `[{"mex": 0.4, "defs": ["turretriot", "turretgauss"]}, {"mex": 0.55, "defs": ["turretheavylaser"]}]` | Heavier turrets, by map control. A tier is unlocked once our ally team's finished mexes hold `mex` of the map's metal spots: Stardust and Gauss at 40%, HLT at 55%. An order tries the heaviest unlocked tier first and builds from it if any of its defs has a spot worth its cost; otherwise it drops a tier, down to `turret.light`. Within a tier the most value per metal wins. |
 | `turret.enemy_reach` | `600` | Distance to a known enemy building that starts the near-enemy caller. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
-| `turret.share` | `0.15` | Share of the metal income picker turrets ordered in the last minute may cost. One light turret a minute is always allowed. |
+| `turret.share` | `0.15` | Share of the metal income paid into the turret budget, which holds up to a minute of it (or the dearest def in `turret.light` and `turret.tiers`, if more). An order waits until the budget holds the dearest def it may build, so an unlocked heavier tier makes every order wait for that price. |
 
 ## The `choke_overlay` command
 
@@ -136,7 +137,7 @@ players are ignored. A spectator may use it only in games with no human opponent
 | `choke_overlay <movement class>` | Shows one movement class's own graph on the `chokes` and `regions` layers. Use a unit def name (`cloakraid`) or a class name. An unknown name lists the classes. |
 | `choke_overlay all` | Back to the threat graph. |
 | `choke_overlay labels` | Turns the text labels on or off. They are map markers, which human allies see too, so they start off when the AI has human allies. |
-| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light` and `turret.not_defence` can't be set. Only in games with no human opponents. |
+| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light`, `turret.tiers` and `turret.not_defence` can't be set. Only in games with no human opponents. |
 | `choke_overlay turret <x> <z> [def]` | Our nearest free constructor orders a turret at (x, z), with no cooldown or budget, at HIGH priority. With no def the picker chooses from the porcupine list (AA left out). Shows the `turrets` layer. Only in games with no human opponents. |
 | `choke_overlay save` | Writes the chokes and point classes to `choke/<map>.json` in the AI's writeable data directory, for comparing maps by hand. Only in games with no human opponents. |
 
@@ -321,7 +322,8 @@ does, so the next order looks elsewhere. Picker and cornered towers
 (`MakeCommDefence`) stay out of the defence points' counts, so a forward picker turret dying doesn't make the porc
 sweep rebuild a home tower.
 
-**Callers.** One update a second runs both, each turret from `turret.light` at NORMAL priority:
+**Callers.** One update a second runs both, each turret from `turret.light`, or a heavier tier of `turret.tiers`
+once our share of the map's mexes unlocks it, at NORMAL priority:
 
 1. After a flee that ends clear or covered, centred where the flee started, with only the light defs that hit what
    it fled from (after gunships, only Picket). Not before `turret.after_flee_since` seconds of game time, and not

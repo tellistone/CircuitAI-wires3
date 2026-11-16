@@ -224,6 +224,13 @@
 	"defended_radius": 600,  // after a flee, a defence this near where it started means no turret
 	"near_enemy": true,  // a mobile ground constructor with a known enemy building (seen in the last 3 minutes) within enemy_reach and no armed ally within ally_radius orders one around itself
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
+	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots. An order
+	// tries the heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier,
+	// down to light. The budget then waits for the dearest unlocked def
+	"tiers": [
+		{"mex": 0.4, "defs": ["turretriot", "turretgauss"]},  // Stardust, Gauss
+		{"mex": 0.55, "defs": ["turretheavylaser"]}  // HLT
+	],
 	"enemy_reach": 600,
 	"ally_radius": 500,
 	"cooldown": 30,  // seconds between one constructor's orders, whatever the result

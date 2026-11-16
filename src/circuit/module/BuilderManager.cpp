@@ -2614,10 +2614,16 @@ void CBuilderManager::UpdateTurrets()
 	auto isCooling = [this](const CCircuitUnit* unit) {
 		return turretCooldowns.find(unit->GetId()) != turretCooldowns.end();
 	};
-	// The budget: no turret before its share has paid for it, so the opening's income isn't spent on towers
+	// The budget: no turret before its share has paid for it, so the opening's income isn't spent on towers. It holds
+	// the dearest def of any tier, so a heavier tier can still be paid for
 	float maxCost = 0.f;
 	for (const CCircuitDef* d : cfg.light) {
 		maxCost = std::max(maxCost, d->GetCostM());
+	}
+	for (const CTurretPicker::SConfig::STier& tier : cfg.tiers) {
+		for (const CCircuitDef* d : tier.defs) {
+			maxCost = std::max(maxCost, d->GetCostM());
+		}
 	}
 	const float rate = cfg.share * circuit->GetEconomyManager()->GetAvgMetalIncome();  // metal/s
 	const float dt = (turretBankFrame < 0) ? 0.f : float(frame - turretBankFrame) / FRAMES_PER_SEC;
@@ -2764,13 +2770,27 @@ std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, con
 	const int frame = circuit->GetLastFrame();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float elevation = circuit->GetMap()->GetElevationAt(centre.x, centre.z);
+	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
+	const CTurretPicker::SConfig& cfg = picker->GetConfig();
 	std::vector<CCircuitDef*> defs;
-	for (CCircuitDef* d : circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().light) {
-		UnitDef* ud = d->GetDef();
-		const bool isDepth = (elevation <= -ud->GetMinWaterDepth())
-				&& (ud->IsFloater() || ud->IsAbleToHover() || (elevation >= -ud->GetMaxWaterDepth()));
-		if (isDepth && d->IsAvailable(frame) && cdef->CanBuild(d) && (!canHit || canHit(d))) {
-			defs.push_back(d);
+	auto add = [&](const std::vector<CCircuitDef*>& list) {
+		for (CCircuitDef* d : list) {
+			UnitDef* ud = d->GetDef();
+			const bool isDepth = (elevation <= -ud->GetMinWaterDepth())
+					&& (ud->IsFloater() || ud->IsAbleToHover() || (elevation >= -ud->GetMaxWaterDepth()));
+			if (isDepth && d->IsAvailable(frame) && cdef->CanBuild(d) && (!canHit || canHit(d))
+				&& (std::find(defs.begin(), defs.end(), d) == defs.end()))
+			{
+				defs.push_back(d);
+			}
+		}
+	};
+	add(cfg.light);
+	// The tiers our share of the map's mexes has unlocked (the picker tries the heaviest first)
+	const float mexShare = cfg.tiers.empty() ? 0.f : picker->GetMexShare();
+	for (const CTurretPicker::SConfig::STier& tier : cfg.tiers) {
+		if (mexShare >= tier.mexShare) {
+			add(tier.defs);
 		}
 	}
 	return defs;
