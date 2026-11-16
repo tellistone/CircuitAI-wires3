@@ -1506,7 +1506,9 @@ void CMilitaryManager::CollectRallyGroups(const SRally& rally, std::vector<ISqua
 	outGroups.clear();
 	for (IFighterTask* t : GetTasks(rally.type)) {
 		ISquadTask* g = static_cast<ISquadTask*>(t);  // attack and raid tasks are squads
-		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()) {
+		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()
+			&& !((rally.type == IFighterTask::FightType::RAID) && static_cast<CRaidTask*>(g)->IsScoutStint()))
+		{  // not a scout's raid stint: it rallies with no one
 			outGroups.push_back(g);
 		}
 	}
@@ -2527,6 +2529,16 @@ static bool IsOnFightTask(const CCircuitUnit* unit, IFighterTask::FightType type
 		&& (static_cast<const IFighterTask*>(task)->GetFightType() == type);
 }
 
+// Scouting: on a scout task, or a scout's raid stint (CScoutTask: no safe route to its spot), which comes back to it
+static bool IsScouting(const CCircuitUnit* unit)
+{
+	if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
+		return true;
+	}
+	return IsOnFightTask(unit, IFighterTask::FightType::RAID)
+			&& static_cast<const CRaidTask*>(unit->GetTask())->IsScoutStint();
+}
+
 unsigned int CMilitaryManager::GetRaiderCount() const
 {
 	unsigned int count = 0;
@@ -2535,7 +2547,7 @@ unsigned int CMilitaryManager::GetRaiderCount() const
 			continue;
 		}
 		// Raiders taken as scouts (quota.scout) don't raid, so they don't fill the floor
-		if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
+		if (IsScouting(unit)) {
 			continue;
 		}
 		++count;
@@ -2568,7 +2580,7 @@ bool CMilitaryManager::IsScoutSlotFree(const CCircuitDef* cdef) const
 			continue;
 		}
 		++units;
-		if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
+		if (IsScouting(unit)) {
 			++scouting;
 		}
 	}

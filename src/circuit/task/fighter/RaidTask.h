@@ -36,6 +36,12 @@ public:
 	// The group led by unit (or the unit alone) and ours together keep all speeds within quota.attack_merge.speed_ratio
 	bool IsSpeedSpreadOk(CCircuitUnit* unit) const;
 
+	// Scout stint (CScoutTask: no safe route to its spot): a group of one scout that nobody joins, that merges, chases
+	// and rallies with no one, and that hands its unit back to a new scout task at danger (the scout's own flee, never
+	// home) or once endFrame is past and it isn't fighting
+	void SetScoutStint(int endFrame) { scoutStintEnd = endFrame; }
+	bool IsScoutStint() const { return scoutStintEnd >= 0; }
+
 private:
 	CMilitaryManager* GetMilitaryMgr() const;
 	// May take more units: up to maxPower, and during a raid rally until its strength (with the group size bonus)
@@ -113,6 +119,8 @@ private:
 	int roamPathFrame;  // when FallbackRaid last asked for a roam route
 	springai::AIFloat3 roamGoal;  // ...and to where: re-planned only every 3 s while walking it safely
 	std::shared_ptr<PathInfo> roamPath;  // the route to roamGoal once it arrived (kept only while the leader walks it)
+	int scoutStintEnd = -1;  // SetScoutStint; -1: a normal raid group
+	void EndScoutStint(bool isDanger);
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	void SendPendingFight(int frame);  // short roam path: the Fight order sent from Update() (not from the path callback)
 };

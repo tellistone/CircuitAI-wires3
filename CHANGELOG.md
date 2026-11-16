@@ -424,11 +424,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
-- **Scouts explore instead of standing still when cut off.** When a scout has no safe route to its picked spot (e.g.
-  it fled into a pocket and the danger sits between it and everything else), or nothing was picked, it now runs one
-  capped route query to every unseen safe spot around it (rings out to 3000 elmos) and our safe frontline spots, and
-  walks to the nearest one it can reach without crossing danger. Only when there is none does it wait (3 s) and look
-  again. This replaces the spot-by-spot retry, which ended in a hold every second while cut off.
+- **Scouts raid alone while cut off.** When a scout has no safe route to its picked spot (e.g. it fled into a pocket
+  and the danger sits between it and everything else), or nothing could be picked, an armed ground scout switches to a
+  raid group of one (a "stint": nobody joins it, it merges, chases and rallies with no one, guards never pull it, and
+  it still counts as a scout for the scout quota and the raider floor). After 10 s, once it isn't fighting, it goes back
+  to a scout task, which looks for a safe route again (the spot it gave up on is blocked for 10 s). At danger the stint
+  ends at once instead of the raid escape to a haven: the scout's own flee runs to the nearest safe spot, and no new
+  stint starts for 5 s. Air and unarmed scouts (and scouts in those 5 s) instead walk to the nearest unseen safe spot
+  they can reach without crossing danger (one capped route query to rings of spots around them and our safe frontline
+  spots), and wait 3 s only when there is none. This replaces the spot-by-spot retry, which ended in a hold every
+  second while cut off.
 - **Scouts flee instead of going home.** A scout standing in threat it can't take now drops its target and runs to
   the nearest spot well clear of the threat (least-threat route), and goes back to scouting once it has been out of
   threat for 2 seconds. The spot it was heading to is blocked for 10 s, so it doesn't walk straight back. The scout

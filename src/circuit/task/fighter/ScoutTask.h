@@ -32,6 +32,9 @@ public:
 
 	virtual void OnRearmStart(CCircuitUnit* unit) override;
 
+	// Fresh from a raid stint that ended at danger: no new stint for RAID_DELAY_FRAMES (the flee runs first)
+	void DelayRaidStint();
+
 private:
 	void Execute(CCircuitUnit* unit, bool isUpdating);
 	bool FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);
@@ -52,8 +55,11 @@ private:
 	const F3Vec& GetSafeFrontPos(CCircuitUnit* unit);  // FillFrontPos: safe ones, not where we stand (scratch)
 	// Reachable spots on rings around pos (250 to 3000 elmos, 16 directions, nearest ring first; scratch)
 	const F3Vec& GetRingSpots(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
-	// No safe route to the picked spot, or none picked: head for the nearest unseen safe spot (or safe frontline
-	// spot) reachable without crossing danger; hold if there is none
+	// No safe route to the picked spot, or none picked: an armed ground scout raids alone for a while (a raid stint,
+	// CRaidTask::SetScoutStint) and then looks again; others (and right after a stint ended at danger) explore
+	void OnNoSafeRoute(CCircuitUnit* unit);
+	void StartRaidStint(CCircuitUnit* unit);
+	// Head for the nearest unseen safe spot (or safe frontline spot) reachable without crossing danger; hold if none
 	void ExploreNear(CCircuitUnit* unit);
 
 	void ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath, ICoreUnit::Id pathTargetId, bool isCapped);
@@ -84,6 +90,10 @@ private:
 	int fleeUntil = -1;  // fleeing until this frame (pushed on while in danger); -1: not fleeing
 	int lastFleeFrame = -1;  // last flee path request
 	int holdUntil = -1;  // HoldScout: no new scouting pick until this frame
+	static constexpr int RAID_STINT_FRAMES = FRAMES_PER_SEC * 10;  // a raid stint lasts at least this long
+	static constexpr int RAID_DELAY_FRAMES = FRAMES_PER_SEC * 5;  // DelayRaidStint
+	bool isRaidPending = false;  // OnNoSafeRoute: StartRaidStint on the next Update (not inside its loop over units)
+	int raidAllowedFrame = -1;  // DelayRaidStint
 };
 
 } // namespace circuit

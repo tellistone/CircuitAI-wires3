@@ -6,6 +6,7 @@
  */
 
 #include "task/fighter/ScoutTask.h"
+#include "task/fighter/RaidTask.h"
 #include "task/TaskManager.h"
 #include "map/MapManager.h"
 #include "map/ThreatMap.h"
@@ -84,6 +85,14 @@ void CScoutTask::Update()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+
+	if (isRaidPending) {
+		isRaidPending = false;
+		if (!units.empty() && !IsFleeing(frame)) {
+			StartRaidStint(*units.begin());  // the unit leaves: this task aborts
+			return;
+		}
+	}
 
 	// Re-decide on every update (was every 2nd update and at most once per second).
 	// Floor at the threat map refresh rate: re-deciding faster would only reuse the same threat data.
@@ -375,7 +384,7 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 		}
 		position = PickScoutPosition(unit);
 		if (!utils::is_valid(position)) {
-			ExploreNear(unit);
+			OnNoSafeRoute(unit);
 			return;
 		}
 	}
@@ -438,7 +447,32 @@ void CScoutTask::ApplyScoutPath(const CQueryPathSingle* query)
 	if (utils::is_valid(position)) {
 		circuit->GetMilitaryManager()->BlockScoutSpot(position, FRAMES_PER_SEC * 10);
 	}
+	OnNoSafeRoute(unit);
+}
+
+void CScoutTask::DelayRaidStint()
+{
+	raidAllowedFrame = manager->GetCircuit()->GetLastFrame() + RAID_DELAY_FRAMES;
+}
+
+void CScoutTask::OnNoSafeRoute(CCircuitUnit* unit)
+{
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	if (!cdef->IsAbleToFly() && cdef->IsAttacker() && (manager->GetCircuit()->GetLastFrame() >= raidAllowedFrame)) {
+		isRaidPending = true;
+		return;
+	}
 	ExploreNear(unit);
+}
+
+void CScoutTask::StartRaidStint(CCircuitUnit* unit)
+{
+	// A raid group of one until it looks again: CRaidTask hands the unit back to a new scout task, which picks a spot
+	// (the one we just gave up on is blocked for a while)
+	CCircuitAI* circuit = manager->GetCircuit();
+	CRaidTask* task = static_cast<CRaidTask*>(circuit->GetMilitaryManager()->EnqueueTask(FightType::RAID));
+	task->SetScoutStint(circuit->GetLastFrame() + RAID_STINT_FRAMES);
+	manager->AssignTask(unit, task);
 }
 
 float CScoutTask::GetSafeThreat(CCircuitUnit* unit) const

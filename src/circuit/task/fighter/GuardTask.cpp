@@ -11,6 +11,7 @@
 #include "module/MilitaryManager.h"
 #include "task/builder/BuilderTask.h"
 #include "task/fighter/AttackTask.h"
+#include "task/fighter/RaidTask.h"
 #include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
 #include "unit/enemy/EnemyUnit.h"
@@ -322,6 +323,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		if (curTask->GetType() == IUnitTask::Type::FIGHTER) {
 			const FightType ft = static_cast<IFighterTask*>(curTask)->GetFightType();
 			if ((ft == FightType::GUARD) || (ft == FightType::SCOUT)
+				|| ((ft == FightType::RAID) && static_cast<CRaidTask*>(curTask)->IsScoutStint())
 				|| ((ft == FightType::ATTACK) && !static_cast<CAttackTask*>(curTask)->IsGuardPullable()))
 			{
 				continue;
