@@ -486,7 +486,7 @@ bool CRaidTask::FindTarget()
 	// quota.contested.bonus times closer as a route goal
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	militaryMgr->GetTakeableContested(leader, highestRange,
-			[this, maxPower](const AIFloat3& p) { return GetSafeThreatAt(p, maxPower); }, contested);
+			[this, maxPower](const AIFloat3& p, float) { return GetSafeThreatAt(p, maxPower); }, contested);
 	const float contestedBonus = militaryMgr->GetContested().bonus;
 	F3Vec contestedPositions;
 	float sqContestedDist = std::numeric_limits<float>::max();
@@ -659,7 +659,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	if (isContestedAllowed) {
 		const float cautionMod = IsCautious(frame) ? 0.75f : 1.f;  // same as FindTarget
 		militaryMgr->GetTakeableContested(leader, highestRange,
-				[this, safeThreat, cautionMod](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
+				[this, safeThreat, cautionMod](const AIFloat3& p, float) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
 				contested);
 	}
 	const CMilitaryManager::SContestedSpot* bestContested = nullptr;

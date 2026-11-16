@@ -55,7 +55,7 @@ public:
 	};
 
 	CAllyCover(CCircuitAI* circuit, float weight);
-	virtual ~CAllyCover();
+	~CAllyCover();
 
 	float GetWeight() const { return weight; }
 	bool IsOn() const { return weight > 0.f; }
@@ -65,6 +65,11 @@ public:
 	static float Falloff(float sqDist, float sqRange) {
 		return std::min(1.f, 2.f * (1.f - sqrtf(sqDist / sqRange)));
 	}
+	// The multiplier for cover > 0, factor = weight / base: 1 + min(factor x cover, 1). The danger checks' and the
+	// routes' alike
+	static float Multiplier(float cover, float factor) {
+		return 1.f + std::min(factor * cover, 1.f);
+	}
 
 	SParts GetCoverAt(const springai::AIFloat3& p, const SJudge& judge);
 	// 1 + min(weight x cover / judge.base, 1); outSource: the biggest source there
@@ -73,17 +78,23 @@ public:
 	// its cap, cost, light-threat floor and straightening match the danger checks. Only the box around the cover is
 	// scanned. nullptr: no cell changes (no cover, or none where there is threat)
 	std::shared_ptr<FloatVec> MakeRouteLayer(const float* threat, const SJudge& judge);
+	// Mobile cover changed within the frame (a merge, a group starting to run): the next lookup collects it again
+	void Invalidate() { discFrame = -1; }
 
 	/*
-	 * The ATTACK cover log, every minute while on, for tuning the weight: picks cover licensed and how they ended,
-	 * the strongest multiplier, and the main-thread time spent
+	 * The ATTACK cover log, every minute while on, for tuning the weight: fights cover licensed and how they ended,
+	 * losses where only cover kept a unit standing, the strongest multiplier, and the main-thread time spent
 	 */
-	// A new pick that passed only with cover (its own spot, its approach line or its route's approach)
-	void NotePick(Source source) { ++stats.picks[static_cast<int>(source)]; }
+	// A target that passed only with cover (its own spot, its approach line or its route's approach), engaged
+	void NoteEngagedPick(int source) { ++stats.picks[source]; }
 	// An escape within 5 s of engaging such a pick, by the source that licensed it
-	void NoteQuickEscape(Source source) { ++stats.quickEscapes[static_cast<int>(source)]; }
-	// An escape with the multiplier at the leader under 0.75x what it was when the fight was engaged
-	void NoteCoverLossEscape() { ++stats.coverLossEscapes; }
+	void NoteQuickEscape(int source) { ++stats.quickEscapes[source]; }
+	// An escape with the multiplier at the leader under 0.75x what it was when the fight was engaged: isCoverLeft,
+	// the cover at the spot we engaged from fell as well (it moved off, or died); else we walked out of it
+	void NoteCoverLossEscape(bool isCoverLeft) { ++(isCoverLeft ? stats.coverLeftEscapes : stats.walkedOutEscapes); }
+	// An attack group's unit died (metal: its cost); source >= 0: the threat where it stood was over its group's
+	// escape allowance without cover and under it with cover (only cover kept it there), by the biggest source
+	void NoteLoss(float metal, int source);
 	void Log();
 
 private:
@@ -107,9 +118,14 @@ private:
 	int discFrame;
 
 	struct SStats {
-		int picks[SOURCE_COUNT] = {0, 0, 0};  // NotePick, by source
+		int picks[SOURCE_COUNT] = {0, 0, 0};  // NoteEngagedPick, by source
 		int quickEscapes[SOURCE_COUNT] = {0, 0, 0};  // NoteQuickEscape, by source
-		int coverLossEscapes = 0;  // NoteCoverLossEscape
+		int coverLeftEscapes = 0;  // NoteCoverLossEscape
+		int walkedOutEscapes = 0;
+		int losses = 0;  // NoteLoss: all, and those only cover kept standing (by source), with their metal
+		float lossMetal = 0.f;
+		int coverLosses[SOURCE_COUNT] = {0, 0, 0};
+		float coverLossMetal = 0.f;
 		float maxMod = 1.f;  // the strongest multiplier any lookup gave
 		int lookups = 0;  // GetMod calls (spots where cover can decide) and their time, sampled
 		float lookupMs = 0.f;

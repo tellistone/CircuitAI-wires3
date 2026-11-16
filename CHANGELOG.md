@@ -19,15 +19,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   that aren't fleeing (their strength around their leader, out to their fire range past their units' spread, where
   they stand) and our commander while it isn't retreating. Never the group itself, and in a two-group check (merge
   line near the host, rally spot beside the host, fleeing to a stronger group) not the other group, whose strength is
-  in the joint strength already. None on water or for flying groups. Routes see enemy threat divided by the same
+  in the joint strength already. A group lends the strength it picks with, so less for a few seconds after an escape,
+  and its cover is gone in the same frame it starts running or merges. None on water or for flying groups. Routes see enemy threat divided by the same
   multiplier, so their cap, cost and light-threat floor match the danger checks (weighed against the group's own
   strength, as a route's allowance is, also on a joint rally route); outside enemy threat, and on the cloak route,
   they are unchanged. Cheap where it can't matter: cover is looked up only where it can change a decision (threat
   from the base allowance up to twice it), and a route scans only the box around the cover, or nothing when there
-  is none. An `ATTACK cover` line in the log every minute: targets picked only thanks to cover (at their own spot,
-  on their approach line or on their route's approach; by source), escapes within 5 s of engaging one (by source),
-  escapes on losing cover mid-fight (the multiplier at the leader under 0.75x its value when the fight was engaged),
-  the strongest multiplier and the main-thread time spent (lookups timed one in eight).
+  is none. Two `ATTACK cover` lines in the log every minute. The fights: targets picked only thanks to cover (at
+  their own spot, on their approach line or on their route's approach; by source) that were then engaged, escapes
+  within 5 s of engaging one (by source), escapes on losing cover mid-fight (the multiplier at the leader under 0.75x
+  its value when the fight was engaged; split into cover that left, and groups that walked out of it), and attack
+  units lost where only cover kept them standing (threat over the escape's allowance without cover, under it with;
+  by source, with their metal, beside all attack-unit losses). The cost: the strongest multiplier and the main-thread
+  time spent (lookups timed one in eight).
 
 - **Attack and raid groups stop fleeing and returning to the same fight.** The pick judges the target's own spot
   (attack: the fled-from target at the keep allowance), the escape each unit's spot, so a group could flee, be sent

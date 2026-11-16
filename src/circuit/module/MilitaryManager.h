@@ -351,9 +351,11 @@ public:
 		springai::AIFloat3 pos;
 		float sqRadius;
 	};
-	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below allowedAt(centre)
-	// (squad threat for a squad), reachable within 'reach'. Empty when quota.contested.bonus <= 1
-	void GetTakeableContested(CCircuitUnit* unit, float reach, const std::function<float (const springai::AIFloat3&)>& allowedAt,
+	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below
+	// allowedAt(centre, that threat) (squad threat for a squad), reachable within 'reach'. Empty when
+	// quota.contested.bonus <= 1. allowedAt gets the threat it is compared with (CAttackTask: allied cover's band)
+	void GetTakeableContested(CCircuitUnit* unit, float reach,
+			const std::function<float (const springai::AIFloat3&, float)>& allowedAt,
 			std::vector<SContestedSpot>& outSpots);
 	static bool IsInContested(const std::vector<SContestedSpot>& spots, const springai::AIFloat3& pos) {
 		for (const SContestedSpot& c : spots) {

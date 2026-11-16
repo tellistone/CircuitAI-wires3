@@ -124,7 +124,7 @@ float CAllyCover::GetMod(const AIFloat3& p, const SJudge& judge, Source& outSour
 
 	const SParts parts = GetCoverAt(p, judge);
 	const float cover = parts.GetSum();
-	const float mod = (cover > 0.f) ? (1.f + std::min(weight * cover / judge.base, 1.f)) : 1.f;
+	const float mod = (cover > 0.f) ? Multiplier(cover, weight / judge.base) : 1.f;
 	outSource = parts.GetBiggest();
 
 	if (isTimed) {
@@ -214,7 +214,7 @@ std::shared_ptr<FloatVec> CAllyCover::MakeRouteLayer(const float* threat, const 
 			if (result == nullptr) {
 				result = std::make_shared<FloatVec>(threat, threat + threatMap->GetMapSize());
 			}
-			(*result)[index] = THREAT_BASE + t / (1.f + std::min(factor * c, 1.f));
+			(*result)[index] = THREAT_BASE + t / Multiplier(c, factor);
 		}
 	}
 	if (result != nullptr) {
@@ -224,10 +224,21 @@ std::shared_ptr<FloatVec> CAllyCover::MakeRouteLayer(const float* threat, const 
 	return result;
 }
 
+void CAllyCover::NoteLoss(float metal, int source)
+{
+	++stats.losses;
+	stats.lossMetal += metal;
+	if (source >= 0) {
+		++stats.coverLosses[source];
+		stats.coverLossMetal += metal;
+	}
+}
+
 void CAllyCover::Log()
 {
-	// For tuning quota.attack_ally_cover: the fights cover licensed, how many of them ended in a quick escape (by
-	// source), escapes on losing cover mid-fight, how strong it got, and its main-thread cost
+	// For tuning quota.attack_ally_cover. The fights cover licensed and how they ended: a quick escape (by source),
+	// an escape on losing cover mid-fight (it left us, or we walked out of it), and the attack groups' losses where only
+	// cover kept the unit standing (by source; beside all their losses). Then how strong it got and its main-thread cost
 	SStats& st = stats;
 	int groups = 0;
 	bool isComm = false;
@@ -238,13 +249,18 @@ void CAllyCover::Log()
 			++groups;
 		}
 	}
-	circuit->LOG("ATTACK cover last 60 s: %i targets picked only with cover (defences %i, groups %i, commander %i),"
-			" %i escapes within 5 s of engaging one (%i, %i, %i), %i escapes on losing cover; strongest cover x%.2f;"
-			" %i lookups about %.2f ms, %i route layers (%i changed) %.2f ms | now: %i defences, %i groups%s",
+	circuit->LOG("ATTACK cover last 60 s: %i fights on targets picked only with cover (defences %i, groups %i,"
+			" commander %i), %i escapes within 5 s of engaging one (%i, %i, %i), %i escapes on losing cover (%i it left,"
+			" %i we walked out); %i of %i attack units lost (%.0f of %.0f metal) where only cover kept them (%i, %i, %i)",
 			st.picks[0] + st.picks[1] + st.picks[2], st.picks[0], st.picks[1], st.picks[2],
 			st.quickEscapes[0] + st.quickEscapes[1] + st.quickEscapes[2], st.quickEscapes[0], st.quickEscapes[1],
-			st.quickEscapes[2], st.coverLossEscapes, st.maxMod, st.lookups, st.lookupMs, st.routes, st.routeLayers,
-			st.routeMs, circuit->GetThreatMap()->GetCoverSourceCount(), groups, isComm ? " and the commander" : "");
+			st.quickEscapes[2], st.coverLeftEscapes + st.walkedOutEscapes, st.coverLeftEscapes, st.walkedOutEscapes,
+			st.coverLosses[0] + st.coverLosses[1] + st.coverLosses[2], st.losses, st.coverLossMetal, st.lossMetal,
+			st.coverLosses[0], st.coverLosses[1], st.coverLosses[2]);
+	circuit->LOG("ATTACK cover cost last 60 s: strongest cover x%.2f; %i lookups about %.2f ms, %i route layers"
+			" (%i changed) %.2f ms | now: %i defences, %i groups%s",
+			st.maxMod, st.lookups, st.lookupMs, st.routes, st.routeLayers, st.routeMs,
+			circuit->GetThreatMap()->GetCoverSourceCount(), groups, isComm ? " and the commander" : "");
 	st = SStats();
 }
 

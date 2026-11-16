@@ -9,6 +9,7 @@
 #include "task/TaskManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
+#include "module/AllyCover.h"
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
 #include "module/MilitaryManager.h"
@@ -250,6 +251,9 @@ void CAttackTask::Merge(ISquadTask* task)
 	ISquadTask::Merge(task);
 	UpdateHighestRange();
 	lastRoute.path = nullptr;  // the group changed: next decision plans anew (speed, strength)
+	// Both groups' cover discs are stale (the merged one's units are in our strength now): collect them again, or a
+	// decision later this update would count those units twice
+	GetAllyCover()->Invalidate();
 	// The newcomers don't count for a regroup for a while (ISquadTask::IsNewcomer), but one may still follow. A leader
 	// standing where the last regroup began counts as stuck (IsMustRegroup): start that check afresh
 	prevGroupPos = -RgtVector;
@@ -513,23 +517,23 @@ float CAttackTask::GetBaseAllowedThreatAt(const AIFloat3& pos, float strength, f
 }
 
 float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, const SStrength& strength, float refSqDist,
-		float threat) const
+		float threat, int* outCoverSource) const
 {
 	// Cover multiplies whatever strength the caller passes (pick, keep, cautious, raid factor, joint), so the keep
 	// and cautious margins scale with it. Linear in strength: the routes' threat / cover mod matches it exactly.
 	// At most 2x: under the base allowance a spot passes, at 2x it or more it fails, either way without cover
 	const float allowed = GetBaseAllowedThreatAt(pos, strength.value, refSqDist);
 	const bool isKnown = (threat >= 0.f);
-	if (!GetMilitaryMgr()->GetAllyCover()->IsOn() || (isKnown && ((threat < allowed) || (threat >= allowed * 2.f)))) {
+	if (!GetAllyCover()->IsOn() || (isKnown && ((threat < allowed) || (threat >= allowed * 2.f)))) {
 		return allowed;
 	}
-	CAllyCover::Source source;
-	const float mod = GetCoverMod(pos, strength.partner, source);
+	int source;
+	const float mod = GetCoverMod(pos, strength.partner, &source);
 	if (mod <= 1.f) {
 		return allowed;
 	}
-	if (isKnown && (threat < allowed * mod)) {
-		coverFlip = {true, source};  // the cover log: this spot passes only with cover
+	if ((outCoverSource != nullptr) && (*outCoverSource < 0) && isKnown && (threat < allowed * mod)) {
+		*outCoverSource = source;  // the cover log: this spot passes only with cover
 	}
 	return allowed * mod;
 }
@@ -539,69 +543,68 @@ float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) const
 	return GetAllowedThreatAt(pos, strength, scaleRefSqDist);
 }
 
-bool CAttackTask::IsDangerAt(CCircuitUnit* unit, const AIFloat3& p, const SStrength& strength, float refSqDist) const
+bool CAttackTask::IsDangerAt(CCircuitUnit* unit, const AIFloat3& p, const SStrength& strength, float refSqDist,
+		int* outCoverSource) const
 {
 	const float threat = GetTaskThreatAt(unit, p);
-	return (threat > 0.f) && (threat >= GetAllowedThreatAt(p, strength, refSqDist, threat));
+	return (threat > 0.f) && (threat >= GetAllowedThreatAt(p, strength, refSqDist, threat, outCoverSource));
 }
 
 /*
  * Allied cover (quota.attack_ally_cover)
  */
 
-float CAttackTask::GetCoverMod(const AIFloat3& p, const CAttackTask* partner, CAllyCover::Source& outSource) const
+CAllyCover* CAttackTask::GetAllyCover() const
+{
+	return GetMilitaryMgr()->GetAllyCover();
+}
+
+float CAttackTask::GetCoverMod(const AIFloat3& p, const CAttackTask* partner, int* outSource) const
 {
 	// A flying group: allied ground defences and groups don't guard it
-	outSource = CAllyCover::Source::DEFENCES;
+	if (outSource != nullptr) {
+		*outSource = static_cast<int>(CAllyCover::Source::DEFENCES);
+	}
 	if ((leader == nullptr) || leader->GetCircuitDef()->IsAbleToFly()) {
 		return 1.f;
 	}
 	const float base = (partner != nullptr) ? GetJointSafeThreat(partner) : GetSafeThreat();
-	return GetMilitaryMgr()->GetAllyCover()->GetMod(p, GetCoverJudge(partner, std::max(base, 1e-3f)), outSource);
-}
-
-float CAttackTask::GetLeaderCoverMod(int frame) const
-{
 	CAllyCover::Source source;
-	return (leader != nullptr) ? GetCoverMod(leader->GetPos(frame), nullptr, source) : 1.f;
-}
-
-int CAttackTask::TakeCoverFlip() const
-{
-	const int source = coverFlip.isSet ? static_cast<int>(coverFlip.source) : -1;
-	coverFlip.isSet = false;
-	return source;
+	const float mod = GetAllyCover()->GetMod(p, {this, partner, std::max(base, 1e-3f)}, source);
+	if (outSource != nullptr) {
+		*outSource = static_cast<int>(source);
+	}
+	return mod;
 }
 
 void CAttackTask::NoteCoverPick(ICoreUnit::Id targetId, int source)
 {
-	coverLog.pickId = -1;
+	coverLog.pickId = (source >= 0) ? targetId : -1;
+	coverLog.pickSource = source;
 	coverLog.pickEngageFrame = -1;
-	if (source >= 0) {
-		coverLog.pickId = targetId;
-		coverLog.pickSource = static_cast<CAllyCover::Source>(source);
-		GetMilitaryMgr()->GetAllyCover()->NotePick(coverLog.pickSource);
-	}
 }
 
 void CAttackTask::NoteCoverEngage(int frame)
 {
-	if (!GetMilitaryMgr()->GetAllyCover()->IsOn()) {
+	CAllyCover* allyCover = GetAllyCover();
+	if (!allyCover->IsOn()) {
 		return;
 	}
 	const ICoreUnit::Id id = target->GetId();
 	if ((id == coverLog.pickId) && (coverLog.pickEngageFrame < 0)) {
 		coverLog.pickEngageFrame = frame;
+		allyCover->NoteEngagedPick(coverLog.pickSource);  // a fight cover licensed, counted once it is fought
 	}
 	if (id != coverLog.engageId) {
 		coverLog.engageId = id;
-		coverLog.engageMod = GetLeaderCoverMod(frame);
+		coverLog.engagePos = leader->GetPos(frame);
+		coverLog.engageMod = GetCoverMod(coverLog.engagePos, nullptr);
 	}
 }
 
 void CAttackTask::NoteCoverEscape(int frame)
 {
-	CAllyCover* allyCover = GetMilitaryMgr()->GetAllyCover();
+	CAllyCover* allyCover = GetAllyCover();
 	if (!allyCover->IsOn() || (target == nullptr)) {
 		return;
 	}
@@ -611,12 +614,28 @@ void CAttackTask::NoteCoverEscape(int frame)
 	{
 		allyCover->NoteQuickEscape(coverLog.pickSource);
 	}
-	if ((id == coverLog.engageId) && (coverLog.engageMod > 1.f)
-		&& (GetLeaderCoverMod(frame) < COVER_LOSS_SHARE * coverLog.engageMod))
-	{
-		allyCover->NoteCoverLossEscape();
+	const float lostMod = COVER_LOSS_SHARE * coverLog.engageMod;
+	if ((id == coverLog.engageId) && (coverLog.engageMod > 1.f) && (GetCoverMod(leader->GetPos(frame), nullptr) < lostMod)) {
+		// Where we engaged from: cover fell there too (it left us), or it still stands and we walked out of it
+		allyCover->NoteCoverLossEscape(GetCoverMod(coverLog.engagePos, nullptr) < lostMod);
 	}
 	coverLog.engageId = -1;  // the next fight is a new one
+}
+
+void CAttackTask::NoteCoverLoss(CCircuitUnit* unit, int frame)
+{
+	// At or over the escape's allowance without cover, under it with: only cover kept the unit there (the escape's own
+	// check, IsInDanger). Not while holding ground near base, which has no escape
+	CAllyCover* allyCover = GetAllyCover();
+	if (!allyCover->IsOn()) {
+		return;
+	}
+	int source = -1;  // set only where the spot passes thanks to cover
+	if ((leader != nullptr) && !IsHoldingGround(frame)) {
+		const AIFloat3& pos = unit->GetPos(frame);
+		GetAllowedThreatAt(pos, GetEscapeSafeThreat(), scaleRefSqDist, GetTaskThreatAt(unit, pos), &source);
+	}
+	allyCover->NoteLoss(unit->GetCircuitDef()->GetCostM(), source);
 }
 
 bool CAttackTask::GetCoverDisc(int frame, AIFloat3& outPos, float& outRange, float& outPower)
@@ -627,14 +646,14 @@ bool CAttackTask::GetCoverDisc(int frame, AIFloat3& outPos, float& outRange, flo
 	UpdateContactUnits(frame);  // contactSpread: its units' spread around the leader (stragglers aside)
 	outPos = leader->GetPos(frame);
 	outRange = GetGroundFireRange() + contactSpread;
-	outPower = GetSafeThreat();
+	outPower = GetPickStrength(frame);  // what it would trust itself with: lower just after an escape
 	return (outRange > 0.f) && (outPower > 0.f);
 }
 
 void CAttackTask::SetRouteCover(IPathQuery* query, const CAttackTask* partner) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	CAllyCover* allyCover = GetMilitaryMgr()->GetAllyCover();
+	CAllyCover* allyCover = GetAllyCover();
 	if (!allyCover->IsOn() || leader->GetCircuitDef()->IsAbleToFly() || IsCloakRoute(leader)) {
 		return;
 	}
@@ -644,7 +663,7 @@ void CAttackTask::SetRouteCover(IPathQuery* query, const CAttackTask* partner) c
 	}
 	// Weighed against our own strength, as the route's allowance, floor and path-ahead check are (also on a joint
 	// route, whose cap alone is joint): the partner's disc is still left out
-	query->SetThreatArray(allyCover->MakeRouteLayer(threat, GetCoverJudge(partner, std::max(GetSafeThreat(), 1e-3f))));
+	query->SetThreatArray(allyCover->MakeRouteLayer(threat, {this, partner, std::max(GetSafeThreat(), 1e-3f)}));
 }
 
 float CAttackTask::GetNearBaseScaleAt(const AIFloat3& pos, float refSqDist) const
@@ -1143,6 +1162,9 @@ bool CAttackTask::Flee(int frame)
 	ClearScaleAnchor();  // running: judge danger at full value, also on the way home
 	GetMilitaryMgr()->GetFrontline()->ReleaseHold(this, FRAMES_PER_SEC * 30);  // quota.hold_choke: driven off it
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
+	if (!wasFleeing) {
+		GetAllyCover()->Invalidate();  // a running group covers no one: from this frame on, not the next
+	}
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {
 		return true;  // escape path is fresh
 	}
@@ -1499,7 +1521,8 @@ bool CAttackTask::FindTarget()
 	// quota.contested.bonus times closer. Judged at the full allowance from where we stand (no near-base anchor)
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	militaryMgr->GetTakeableContested(leader, highestRange,
-			[this, maxPower](const AIFloat3& p) { return GetAllowedThreatAt(p, maxPower, 0.f); }, contested);
+			[this, maxPower](const AIFloat3& p, float threat) { return GetAllowedThreatAt(p, maxPower, 0.f, threat); },
+			contested);
 	// Off while any candidate is already within range or in contact: don't walk off from a fight for a contested target
 	bool isContestedOn = !contested.empty();
 
@@ -1581,14 +1604,14 @@ bool CAttackTask::FindTarget()
 			continue;
 		}
 		const AIFloat3& ePos = enemy->GetPos();
-		ClearCoverFlip();
-		if (IsDangerAt(leader, ePos, powerFor(enemy, isContact), refFor(enemy))
+		int spotSource = -1;  // the cover log
+		if (IsDangerAt(leader, ePos, powerFor(enemy, isContact), refFor(enemy), &spotSource)
 			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange)
 			|| !isTargetableHeight(enemy))
 		{
 			continue;
 		}
-		SCandidate c = {0.f, 0.f, enemy, false, ePos, -1, ePos, isContact, false, TakeCoverFlip()};
+		SCandidate c = {0.f, 0.f, enemy, false, ePos, -1, ePos, isContact, false, spotSource};
 		c.hasAnchor = GetCellAnchor(enemy, frame, c.anchor, c.epoch);
 		if (c.hasAnchor && !enemy->IsInLOS()) {
 			c.rangePos = c.anchor;
@@ -1663,20 +1686,21 @@ bool CAttackTask::FindTarget()
 		if (isInRange) {
 			const float power = powerFor(c.enemy, c.isContact);
 			const float ref = refFor(c.enemy);
-			auto allowedAt = [&](const AIFloat3& p, float threat) { return GetAllowedThreatAt(p, power, ref, threat); };
+			int lineSource = -1;  // the cover log
+			auto allowedAt = [&](const AIFloat3& p, float threat) {
+				return GetAllowedThreatAt(p, power, ref, threat, &lineSource);
+			};
 			// The current target with a planned firing cell: judged on the side we plan to fight from, as its route
 			// was (the line from it to the cell, and our walk there). Else, or that side went hot: the line towards us
-			ClearCoverFlip();
 			const bool isPlannedSide = isPrev && hasPlanned
 					&& IsLineSafe(rangePos, plannedCell, highestRange, allowedAt)
 					&& IsLineSafe(pos, plannedCell, std::numeric_limits<float>::max(), allowedAt);
 			if (!isPlannedSide) {
-				ClearCoverFlip();  // the side that decides
+				lineSource = -1;  // the side that decides
 				if (!IsLineSafe(rangePos, pos, highestRange, allowedAt)) {
 					continue;
 				}
 			}
-			const int lineSource = TakeCoverFlip();
 			if (c.coverSource < 0) {
 				c.coverSource = lineSource;  // the cover log: its approach line passed only with cover
 			}
@@ -1883,8 +1907,8 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		const AIFloat3 rangePos = GetRangePos(reached, frame);  // a radar-only parked mobile's spot
 		const float ref = isAnchored ? scaleRefSqDist
 				: ((rangePos.SqDistance2D(basePos) < pickSqDist) ? pickSqDist : 0.f);
-		ClearCoverFlip();
-		if (!IsApproachSafe(path->posPath, rangePos, GetPickStrength(frame), ref, cell)) {
+		int approachSource = -1;  // the cover log
+		if (!IsApproachSafe(path->posPath, rangePos, GetPickStrength(frame), ref, cell, &approachSource)) {
 			RejectGoal(hit, frame);
 			// Not our target any more, while the next route runs (nor counted against its group limit)
 			SetTarget(nullptr);
@@ -1904,7 +1928,6 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 			FallbackFrontPos(isDecisionReuse);
 			return;
 		}
-		const int approachSource = TakeCoverFlip();
 		if ((approachSource >= 0) && (reached->GetId() != coverLog.pickId)) {
 			NoteCoverPick(reached->GetId(), approachSource);  // the cover log: its route's approach passed only with cover
 		}
@@ -1999,10 +2022,12 @@ bool CAttackTask::IsRejected(ICoreUnit::Id id, int sector, int epoch, int frame)
 }
 
 bool CAttackTask::IsApproachSafe(const F3Vec& path, const AIFloat3& targetPos, float strength, float refSqDist,
-		const AIFloat3* cell) const
+		const AIFloat3* cell, int* outCoverSource) const
 {
 	// The ground we'd fight from, judged spot by spot with the common allowance (no support)
-	auto allowedAt = [&](const AIFloat3& p, float threat) { return GetAllowedThreatAt(p, strength, refSqDist, threat); };
+	auto allowedAt = [&](const AIFloat3& p, float threat) {
+		return GetAllowedThreatAt(p, strength, refSqDist, threat, outCoverSource);
+	};
 	if (cell != nullptr) {
 		// 1. a firing cell (quota.attack_static_cells): the cell itself was judged when picked; the line from where the
 		//    route ends to it is the walk in (the route's last stretch below lies behind the end, not ahead of it)
@@ -2595,6 +2620,12 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 	{
 		Start(unit);  // NOTE: Not sure if it has effect
 	}
+}
+
+void CAttackTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
+{
+	NoteCoverLoss(unit, manager->GetCircuit()->GetLastFrame());  // the cover log, while the unit is still ours
+	ISquadTask::OnUnitDestroyed(unit, attacker);
 }
 
 void CAttackTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)

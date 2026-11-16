@@ -2772,7 +2772,7 @@ float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloa
 }
 
 void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,
-		const std::function<float (const AIFloat3&)>& allowedAt, std::vector<SContestedSpot>& outSpots)
+		const std::function<float (const AIFloat3&, float)>& allowedAt, std::vector<SContestedSpot>& outSpots)
 {
 	outSpots.clear();
 	if (contested.bonus <= 1.f) {
@@ -2790,7 +2790,7 @@ void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,
 		const float threat = threatMap->GetPlainThreatAt(unit, cPos);
 		const float taskThreat = IFighterTask::IsSquadThreat(unit) ? threatMap->GetSquadThreatAt(unit, cPos)
 				: threatMap->GetThreatAt(unit, cPos);
-		if ((threat <= metalMgr->GetWallThreat()) || (taskThreat >= allowedAt(cPos))
+		if ((threat <= metalMgr->GetWallThreat()) || (taskThreat >= allowedAt(cPos, taskThreat))
 			|| !terrainMgr->CanMobileReachAt(unit->GetArea(), cPos, reach))
 		{
 			continue;
