@@ -7,14 +7,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
-- **Attack groups count allied cover** (`quota.attack_ally_cover`, 0..1; code default 0 = off, shipped 0.5). A group
+- **Attack groups count allied cover** (`quota.attack_ally_cover`, 0..0.75; code default 0 = off, shipped 0.5). A group
   judged every spot by its own strength alone, so two armies beside each other each refused a fight they could take
   together, and a group fled past our own turrets as if they weren't there. Now allies over a spot multiply the group's
   strength there by `1 + min(weight x cover / own strength, 1)` (at most double) in every danger check: target choice,
   the approach line, firing cells, the path-ahead check, the escape, the merge line and flee destinations, so the pick
   and the escape always agree, and the keep and post-escape margins scale with it. Cover is built allied armed statics
-  of every allied team (a threat-map layer: power x sqrt(health share), full out to half the land threat range, then
-  falling to 0 at it; half range over 1000 elmos of range; not nanoframes or paralyzed ones), our other attack groups
+  of every allied team (a threat-map layer: power x sqrt(health share), full out to half the weapon's land range, then
+  falling to 0 at it; the real reach, not the threat range, whose slack would count ground the static can't shoot;
+  half range over 1000 elmos of range, none over 2000; not nanoframes or paralyzed ones), our other attack groups
   that aren't fleeing (their strength around their leader, out to their fire range past their units' spread, where
   they stand) and our commander while it isn't retreating. Never the group itself, and in a two-group check (merge
   line near the host, rally spot beside the host, fleeing to a stronger group) not the other group, whose strength is

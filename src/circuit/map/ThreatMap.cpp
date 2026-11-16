@@ -541,6 +541,9 @@ void CThreatMap::AddDecloaker(const SEnemyData& e)
 	}
 }
 
+// Allied statics with more land range give no cover: as the threat map leaves out enemy ones (allowedRange)
+static constexpr float COVER_MAX_RANGE = 2000.f;
+
 void CThreatMap::PrepareCover()
 {
 	// Values only, never CAllyUnit pointers: the ally list is rebuilt at every influence map apply
@@ -556,12 +559,14 @@ void CThreatMap::PrepareCover()
 		if ((adef == nullptr) || adef->IsMobile() || !adef->IsAttacker()) {
 			continue;
 		}
-		int range = adef->GetThreatRange(CCircuitDef::ThreatType::LAND);  // 0: anti-air only, or over 2000 elmos
+		// Its weapon's real reach, not its threat range: that carries the slack for keeping clear of an enemy static
+		// (DEFAULT_SLACK, AoE), which as cover would count ground the static can't shoot
+		float range = adef->GetMaxRange(CCircuitDef::RangeType::LAND);
+		if (!adef->HasAntiLand() || (range <= 0.f) || (range > COVER_MAX_RANGE)) {
+			continue;  // anti-air only, or as long-ranged as the threat map leaves out
+		}
 		if (adef->GetMaxRange() > 1000.f) {
 			range /= 2;  // as the influence map counts long-range units (CInfluenceMap::GetUnitRange)
-		}
-		if (range <= 0) {
-			continue;
 		}
 		const AIFloat3& pos = ally->GetPos(frame);
 		if (!utils::is_valid(pos) || ally->GetUnit()->IsParalyzed()) {
@@ -572,7 +577,7 @@ void CThreatMap::PrepareCover()
 			continue;
 		}
 		const int index = GetClampedIndex(pos);
-		coverSources.push_back({index % width, index / width, power, range});
+		coverSources.push_back({index % width, index / width, power, range / squareSize});
 	}
 }
 
@@ -583,12 +588,13 @@ void CThreatMap::AddCover()
 	// outside. Water cells get none (IsWaterCell)
 	const std::vector<STerrainMapSector>& sector = areaData->sector;
 	for (const SCoverSource& s : coverSources) {
-		const int rangeSq = SQUARE(s.range);
+		const float rangeSq = SQUARE(s.range);
 		const float invRange = 1.f / s.range;
-		const int beginX = std::max(s.x - s.range, 0);
-		const int endX   = std::min(s.x + s.range + 1, width);
-		const int beginZ = std::max(s.z - s.range, 0);
-		const int endZ   = std::min(s.z + s.range + 1, height);
+		const int reach = static_cast<int>(s.range);  // cells farther along x or z are out of range
+		const int beginX = std::max(s.x - reach, 0);
+		const int endX   = std::min(s.x + reach + 1, width);
+		const int beginZ = std::max(s.z - reach, 0);
+		const int endZ   = std::min(s.z + reach + 1, height);
 		for (int z = beginZ; z < endZ; ++z) {
 			const int dzSq = SQUARE(s.z - z);
 			for (int x = beginX; x < endX; ++x) {

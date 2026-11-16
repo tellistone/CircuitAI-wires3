@@ -618,7 +618,9 @@ void CMilitaryManager::ReadConfig()
 		circuit->GetMetalManager()->SetWallThreat(std::max(num("wall", THREAT_MIN, 0.f), THREAT_MIN));
 	}
 	attackPathIgnoreThreat = readAttackNum("attack_path_ignore_threat", 0.25f, 0.f, 1.f);
-	allyCoverWeight = readAttackNum("attack_ally_cover", 0.f, 0.f, 1.f);  // 0 = off
+	// 0 = off. At most 0.75: each group counts a neighbour's whole strength, so two groups facing separate threats
+	// could commit to (1 + this) x their joint strength; at 1 cover would leave no margin
+	allyCoverWeight = readAttackNum("attack_ally_cover", 0.f, 0.f, 0.75f);
 	if (allyCoverWeight > 0.f) {
 		// The defences layer of the threat map is shared by the ally team: on once any of its AIs uses cover
 		circuit->GetThreatMap()->EnableCover();
@@ -2805,7 +2807,7 @@ float CMilitaryManager::GetCommCoverRange(CCircuitUnit* comm) const
 			return maxRange * comm->GetUnit()->GetRulesParamFloat("comm_range_mult", 1.f);
 		}
 	}
-	return cdef->GetThreatRange(CCircuitDef::ThreatType::LAND) * circuit->GetThreatMap()->GetSquareSize();
+	return cdef->GetMaxRange(CCircuitDef::RangeType::LAND);  // its real reach, as the statics' (no threat-range slack)
 }
 
 void CMilitaryManager::LogAttackCover()

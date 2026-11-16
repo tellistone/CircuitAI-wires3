@@ -87,8 +87,9 @@ public:
 	/*
 	 * Allied cover (quota.attack_ally_cover, CAttackTask::GetCoverAt): the defences layer. Built allied armed statics of
 	 * every allied team (allied AIs included), not paralyzed, each drawn as its power x sqrt(health share)
-	 * (IFighterTask::GetCoverPower) over its land threat range (half of it for a static over 1000 elmos of range, as
-	 * the influence map does), full out to half that range, then falling linearly to 0 at it. No cover on water cells
+	 * (IFighterTask::GetCoverPower) over its weapon's land range, not its threat range (half of it for a static over
+	 * 1000 elmos of range, as the influence map does; none over 2000), full out to half that range, then falling
+	 * linearly to 0 at it. No cover on water cells
 	 * (IsWaterCell). Off (all 0, nothing collected or drawn) until an AI of the ally team asks for it (EnableCover)
 	 */
 	void EnableCover() { isCoverOn = true; }
@@ -215,7 +216,7 @@ private:
 	struct SCoverSource {
 		int x, z;
 		float power;
-		int range;
+		float range;
 	};
 	std::vector<SCoverSource> coverSources;  // written only while no update is in flight, read by Update
 	std::atomic<bool> isCoverOn{false};  // set on the main thread (an AI's config), read by Update too
