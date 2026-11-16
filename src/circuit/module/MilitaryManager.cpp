@@ -545,6 +545,19 @@ void CMilitaryManager::ReadConfig()
 	};
 	const float noMax = std::numeric_limits<float>::max();
 	attackFleeShare = readAttackNum("attack_flee_share", 0.5f, 0.f, 1.f);
+	// Seconds an engaged group re-spots before it flees, while its target still passes; 0 = off (flee at once)
+	attackFleeGrace = static_cast<int>(readAttackNum("attack_flee_grace", 2.f, 0.f, 10.f) * FRAMES_PER_SEC);
+	raidFleeGrace = static_cast<int>(readAttackNum("raid_flee_grace", 2.f, 0.f, 10.f) * FRAMES_PER_SEC);
+	{
+		const Json::Value& q = quotas["danger_margin"];
+		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
+				&& (q[0u].asFloat() > 0.f) && (q[0u].asFloat() <= 1.f) && (q[1u].asFloat() >= 1.f));
+		if (!isOk) {
+			circuit->LOG("CONFIG %s: quota.danger_margin must be [<share 0..1>, <cost x >= 1>], using [0.75, 3]", cfgName.c_str());
+		}
+		dangerMargin = (isOk && !q.isNull()) ? q[0u].asFloat() : 0.75f;
+		dangerMarginMod = (isOk && !q.isNull()) ? q[1u].asFloat() : 3.f;
+	}
 	attackKeepThreat = readAttackNum("attack_keep_threat", 1.34f, 1.f, noMax);  // below 1 = off
 	const Json::Value& qraidFactor = quotas.get("raid_attack_factor", true);
 	if (!qraidFactor.isBool()) {
@@ -3608,6 +3621,22 @@ void CMilitaryManager::MarkPointOfInterest(CEnemyInfo* enemy)
 	rp.lastFrame = circuit->GetLastFrame();
 	rp.units.insert(enemy);
 	rp.weight = rp.units.size();  // TODO
+}
+
+void CMilitaryManager::ReactSuddenThreat(CEnemyInfo* enemy)
+{
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	// Turrets only: they are sudden once (first seen). A mobile enemy is sudden again at each return to LOS out of
+	// radar, which at the edge of LOS can be several times a second
+	if ((edef == nullptr) || edef->IsMobile() || !enemy->IsAttacker()) {
+		return;
+	}
+	const int frame = circuit->GetLastFrame();
+	for (IFighterTask::FightType type : {IFighterTask::FightType::ATTACK, IFighterTask::FightType::RAID}) {
+		for (IFighterTask* task : GetTasks(type)) {
+			static_cast<ISquadTask*>(task)->OnSuddenThreat(edef, enemy->GetPos(), frame);
+		}
+	}
 }
 
 void CMilitaryManager::UnmarkPointOfInterest(CEnemyInfo* enemy)

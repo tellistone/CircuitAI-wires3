@@ -89,6 +89,9 @@ private:
 		return GetSafeThreatAt(pos, strength);
 	}
 	bool Flee(int frame);  // false: nowhere better to go (already home), fight instead
+	// Engaged on a target that stands still (firing spots), and it still passes FindTarget's own check at its spot:
+	// the flee grace (quota.raid_flee_grace) re-spots instead of fleeing
+	bool IsFightOn(int frame) const;
 	bool IsFleeQueryPending() const;  // our escape path request is still in flight
 	void ApplyFleePath(const CQueryPathSingle* query);
 

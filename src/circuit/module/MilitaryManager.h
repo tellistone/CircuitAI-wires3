@@ -307,6 +307,15 @@ public:
 
 	float GetRaidFleeShare() const { return raidFleeShare; }
 	float GetAttackFleeShare() const { return attackFleeShare; }
+	// quota.raid_flee_grace / quota.attack_flee_grace (frames; 0 = off): an engaged group whose target still passes its
+	// own check re-places its firing spots and pulls back endangered units this long before it flees (ISquadTask::IsInFleeGrace)
+	int GetRaidFleeGrace() const { return raidFleeGrace; }
+	int GetAttackFleeGrace() const { return attackFleeGrace; }
+	// quota.danger_margin [<share>, <cost x>] (share 1 = off): attack and raid routes cost more from share x the escape's
+	// allowance on, up to mod x at the allowance (cost 1 = routes off), and firing spots prefer spots under share x it
+	// (IFighterTask::FindFireSpot)
+	float GetDangerMargin() const { return dangerMargin; }
+	float GetDangerMarginMod() const { return dangerMarginMod; }
 	float GetAttackKeepThreat() const { return attackKeepThreat; }
 	// quota.raid_attack_factor (default true): attack groups judge enemy raiders and scouts outside the base
 	// defence radius and their fire range with their strength x their units' raid_thr_mod (CAttackTask::GetRaidFactor)
@@ -439,6 +448,9 @@ public:
 
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
+	// A turret seen for the first time (CCircuitAI::EnemyEnterLOS): attack and raid groups within its reach + their path
+	// look-ahead re-plan at the next threat-map update and get the flee grace for a while (ISquadTask::OnSuddenThreat)
+	void ReactSuddenThreat(CEnemyInfo* enemy);
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
@@ -641,6 +653,10 @@ private:
 	CCircuitDef::RoleM raidTargetRoles;
 	float raidFleeShare;
 	float attackFleeShare;  // quota.attack_flee_share
+	int raidFleeGrace;  // quota.raid_flee_grace (frames)
+	int attackFleeGrace;  // quota.attack_flee_grace (frames)
+	float dangerMargin = 1.f;  // quota.danger_margin[0]
+	float dangerMarginMod = 1.f;  // quota.danger_margin[1]
 	float attackKeepThreat;  // quota.attack_keep_threat
 	bool isRaidAttackFactor;  // quota.raid_attack_factor
 	std::map<CCircuitDef::Id, float> raidDamage;  // AddRaidDamage, by attacker def id (-1: unknown type) since the last log
