@@ -449,7 +449,8 @@ void CChokeOverlay::DrawPockets()
 }
 
 /*
- * Current line orange, forward line yellow, objective magenta; hold slots cyan, with their spots
+ * Current line orange, forward line yellow, enemy line red, front line white, objective magenta; hold slots cyan,
+ * with their spots
  */
 void CChokeOverlay::DrawLines()
 {
@@ -463,6 +464,12 @@ void CChokeOverlay::DrawLines()
 	}
 	for (int c : chokeMap->GetCurrentLine()) {
 		drawChoke(c, Colour::ORANGE, 96.f);
+	}
+	for (int c : chokeMap->GetEnemyLine()) {
+		drawChoke(c, Colour::RED, 64.f);
+	}
+	for (int c : chokeMap->GetFrontLine()) {
+		drawChoke(c, Colour::WHITE, 192.f);
 	}
 	const CFrontline* frontline = circuit->GetMilitaryManager()->GetFrontline();
 	for (int id : frontline->GetObjectiveChokes()) {
@@ -494,7 +501,7 @@ void CChokeOverlay::DrawLines()
 }
 
 /*
- * Enemy-held chokes: red when defended, white when not, with E's numbers
+ * E's chokes: red when defended, white when undefended, grey when not seen enough to say, with E's numbers
  */
 void CChokeOverlay::DrawRanks()
 {
@@ -505,8 +512,9 @@ void CChokeOverlay::DrawRanks()
 			continue;
 		}
 		const AIFloat3 centre = chokeMap->GetCellPos(graph.GetChokes()[c].centre);
-		AddCross(centre, (rank.defence > 0.f) ? Colour::RED : Colour::WHITE, 96.f);
-		AddLabel(centre, utils::float_to_string(rank.defence, "enemy-held: defence %.0f")
+		AddCross(centre, rank.isUndefended ? Colour::WHITE : (rank.defence > 0.f) ? Colour::RED : Colour::GREY, 96.f);
+		AddLabel(centre, std::string(rank.isHeld ? "enemy-held" : "enemy line")
+				+ (rank.isUndefended ? ", undefended" : "") + utils::float_to_string(rank.defence, ": defence %.0f")
 				+ utils::float_to_string(rank.value, ", value %.0f")
 				+ utils::float_to_string(rank.confidence * 100.f, ", seen %.0f%%"));
 	}

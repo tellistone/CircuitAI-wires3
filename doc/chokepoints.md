@@ -32,8 +32,12 @@ when `choke_overlay` asks for it.
   enemy must pass to walk in. Points with more than `choke.entrances` entrances are *open*. Points that share a cut
   form a *pocket*. A pocket is *qualified* when every entrance is defensible, within `choke.near` ranges of its
   points, and has no enemy territory right outside it.
-- **Lines.** The *current line* is the cut nearest our territory against enemy territory. The *forward line* is the
-  cut nearest our territory against the enemy's side of the map. A region both sides hold counts as ours.
+- **Lines.** The *current line* is the cut nearest our territory against enemy territory. The *enemy line* is the
+  same cut nearest enemy territory, its mirror. Where the narrowest gap between the sides is one set of chokes, the
+  two are the same; where there is ground between them that either side could hold as cheaply, they part. The *front
+  line* is the chokes they share, which every cheapest cut between the sides passes, and is empty while they don't
+  touch. The *forward line* is the cut nearest our territory against the enemy's side of the map. A region both sides
+  hold counts as ours. Nothing acts on the enemy or front lines yet; the overlay draws them.
 - **Traffic field.** On 64-elmo cells (crossable by the same rule over their four 32-elmo cells), one layer per enemy
   movement type: where its units are likely to walk from the
   enemy's factories (or start boxes) to our clusters and base. The layers are blended by the enemy's army mix, at most
@@ -54,12 +58,12 @@ on it.
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
 | `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored by covered traffic, height, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
 | `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
-| `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army near it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
+| `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army in the region outside it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
 
-The rankings of enemy-held chokes (E) feed D and the overlay. They are computed when C or D is on, or when the
-overlay is on.
+The rankings of enemy-held chokes and the enemy line's (E) feed D and the overlay. They are computed when C or D is
+on, or when the overlay is on.
 
 ## Tuning keys
 
@@ -119,8 +123,8 @@ enemy types: TANK3(gating 0.60) TKBOT3(promoted to gating 0.35)`.
 |---|---|
 | `chokes` | Each choke from end to end of its line: green when defensible, grey when not. Lanes are yellow rectangles. |
 | `pockets` | Each pocket's entrances by mode: green at chokes, white on cluster, grey not decided yet. Blue lines link its points to them. Points are red when open, green gated, grey unreached. Magenta marks the anchors of choke points. |
-| `lines` | The current line orange, the forward line yellow, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
-| `ranks` | Enemy-held chokes: red when defended, white when not. Labels give the defence, the unarmed value behind and the share seen in the last 3 minutes. |
+| `lines` | The current line orange, the forward line yellow, the enemy line red, the front line white, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
+| `ranks` | Enemy-held chokes and the enemy line's: red when defended, white when undefended, grey when not seen enough to say. Labels say which, and give the defence, the unarmed value behind and the share seen in the last 3 minutes. |
 | `traffic` | The busiest cells of the blended traffic field: bigger and redder the busier. |
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
@@ -245,14 +249,17 @@ rule, and was given up. Picking the spot for the builder at hand gets it built a
 
 - **Frontline.** The current line's chokes, ranked by our income behind each one × its traffic. Each of our points
   behind the line counts at its nearest line choke.
-- **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army seen near it in
-  the last 3 minutes. The first idle attack group to ask while that choke is short, and whose power makes up the
-  shortfall, claims it, walks to its scored hold spot, and keeps the claim while it keeps asking. Once claimed, the
-  slot keeps its choke until 30 s after it was last short, so an enemy army that steps out of range or dies doesn't
-  walk the group away at once, unless another short choke ranks 1.3× higher. Then it moves to the top-ranked short
-  choke, or ends if none is. A group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A
-  slot with nowhere to stand (no traffic near the choke) stays free and is tried again after 30 s. A group that runs
-  from a fight gives up its claim for 30 s.
+- **Enemy army at a choke.** An enemy mobile seen in the last 3 minutes counts at the line chokes that open into the
+  region it stands in: at the one nearest it in full, and at the others by half. One in a region no line choke opens
+  into, ours or further out, doesn't count.
+- **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army at it. The first
+  idle attack group to ask while that choke is short, and whose power makes up the shortfall, claims it, walks to its
+  scored hold spot, and keeps the claim while it keeps asking. Once claimed, the slot keeps its choke until 30 s
+  after it was last short, so an enemy army that steps out of its region or dies doesn't walk the group away at once,
+  unless another short choke ranks 1.3× higher. Then it moves to the top-ranked short choke, or ends if none is. A
+  group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A slot with nowhere to stand (no
+  traffic near the choke) stays free and is tried again after 30 s. A group that runs from a fight gives up its claim
+  for 30 s.
 - **Objectives.** When the forward line is shorter than the current line, or as long with more income behind it,
   its enemy-held chokes become an objective. That needs the gain to be `choke.objective.gain` × the cost, and our
   attack power to be `choke.objective.power` × their defence. Their defence is what we saw there, over the share of
@@ -263,8 +270,11 @@ rule, and was given up. Picking the spot for the builder at hand gets it built a
   - It lasts until taken, for at most 4 minutes in all (switches included), or until our attack power falls below its
     defence as it is now. A failed one waits `choke.objective.retry` seconds.
 - **Rankings.** A choke is enemy-held when its outer side from us is enemy territory, or known enemy towers cover its
-  line. Its defence is the threat of enemy towers reaching the line or our approach to it, plus enemy mobiles within a
-  main-tower range. Its value is the cost of unarmed enemy units directly behind it.
+  line. Every choke of the enemy line is ranked too, held or not. Its defence is the threat of enemy towers reaching
+  the line or our approach to it, plus enemy mobiles within a main-tower range. Its value is the cost of unarmed
+  enemy units directly behind it. A ranked choke is *undefended* when no armed enemy is in reach and we saw at least
+  a quarter of its line in the last 3 minutes; with less seen, no defence only means we don't know. Objectives (D)
+  still take only enemy-held chokes.
 
 ## Logs
 
