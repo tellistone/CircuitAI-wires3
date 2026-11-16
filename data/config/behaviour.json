@@ -195,6 +195,38 @@
 	"expand": false  // mex expansion favours clusters behind a defended cut (needs mex_front)
 },
 
+// Turret picker, see doc/chokepoints.md: the best spot for a light turret within a radius of a constructor in the
+// field, each term in metal so a spot must be worth the turret's cost. T: the enemy traffic the turret would cover
+// (the income whose routes pass under it, x horizon), A: our and allied unarmed buildings in range, E: known enemies
+// it could shoot (an enemy mex at its income x horizon), C: a choke of our line or the enemy line in range; each in a
+// clear line of fire and halved for every tower already covering it. The spot must be within 2048 elmos of one of our
+// buildings, out of threat, buildable and in the constructor's reach. It leans toward enemy buildings (front) and
+// prefers a short walk (travel). Reads the choke analysis (built for it when a caller is on)
+"turret": {
+	"radius": 600,  // elmos from the centre a turret may stand
+	"min_value": 1.0,  // a spot's value (T + A + E + C, x height) must reach this x the turret's cost
+	"traffic": 1.0,  // weight of T
+	"horizon": 120,  // seconds of threatened income that T counts (and an enemy mex in E)
+	"ally": 1.0,  // weight of A
+	"enemy": 1.0,  // weight of E
+	"front": 1.0,  // the spot with the most enemy building influence, out of threat, ranks up to 1 + this x its value; 0 = no lean
+	"height": 0.5,  // the most a spot's height adds to its value
+	"height_cap": 150,  // elmos above the targets that earn all of it
+	"travel": 1000,  // constructor walk, in elmos, that halves a spot's rank
+	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
+	// Callers, once a second, each turret at NORMAL priority. Both share the light list and the limits: a
+	// constructor helps a turret of ours being built (or a picker job) within radius instead of ordering one, orders
+	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and picker turrets ordered in the last
+	// minute cost up to share x the minute's metal income (one light turret a minute always)
+	"after_flee": true,  // a constructor whose flee ended clear or covered orders one where the flee started, of the light defs that hit what it fled from (the commander's flee is on by default; other builders' with retreat.builder_flee)
+	"near_enemy": true,  // a mobile ground constructor with a known enemy building within enemy_reach and no armed ally within ally_radius orders one around itself
+	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
+	"enemy_reach": 600,
+	"ally_radius": 500,
+	"cooldown": 30,  // seconds between one constructor's orders, whatever the result
+	"share": 0.15
+},
+
 "defence": {
 	"infl_rad": 8,  // influenece cell radius for defendAlly map
 	"base_rad": [1000.0, 2000.0],  // defend if enemy within clamp(distance(lane_pos, base_pos), 1000, 2000) radius

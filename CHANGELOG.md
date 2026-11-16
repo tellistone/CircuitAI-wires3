@@ -7,6 +7,20 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Turret picker for constructors in the field** ([doc/chokepoints.md](doc/chokepoints.md), "Turret picker (G)").
+  A new picker finds the best light turret spot within `turret.radius` (600) of a centre, valuing everything in
+  range in metal: enemy traffic (the income whose routes pass under it, × `turret.horizon` 120 s), our and allied
+  unarmed buildings, enemies it could shoot (an enemy mex at its income × the horizon) and a choke of our line or the
+  enemy line, each in a clear line of fire and halved per tower already covering it, × height. A spot must be worth
+  `turret.min_value` × the turret's cost, inside our buildings' influence, out of threat, buildable and reachable;
+  among those it leans toward enemy buildings (`turret.front`) and prefers a short walk. The turret is built on that
+  exact spot, or not at all. Two callers, on by default (`turret.after_flee`, `turret.near_enemy`): a constructor
+  whose flee ended clear or covered (centred where it started), and a mobile ground constructor near a known enemy
+  building with no armed ally around. They help a turret already being built nearby instead of ordering one, and are
+  held to a cooldown, a budget (`turret.share` of income a minute) and one order a second. Picker and cornered towers
+  no longer change the defence points' tower counts. New `turrets` overlay layer, `choke_overlay turret <x> <z>
+  [def]` test command and `TURRET` log lines; the `turret.*` keys can be set live.
+
 - **Attack and raid groups stop fleeing and returning to the same fight.** The pick judges the target's own spot
   (attack: the fled-from target at the keep allowance), the escape each unit's spot, so a group could flee, be sent
   straight back by the next pick, and flee again, taking hits both ways. Now a group that flees from a target standing
