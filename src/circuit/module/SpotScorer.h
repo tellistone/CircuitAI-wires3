@@ -70,7 +70,8 @@ public:
 		float emit;
 		bool isHighArc;
 	};
-	std::vector<STower> GetTowers() const;  // ours and allies', queued too
+	// Ours and allies', queued too; isMobileBuildings false: Claw mines and missiles left out (CTurretPicker)
+	std::vector<STower> GetTowers(bool isMobileBuildings = true) const;
 	bool IsClearLine(const springai::AIFloat3& from, float emit, const springai::AIFloat3& to) const;
 	bool IsMasked(const springai::AIFloat3& pos) const;  // MaskFailed's cell, still masked
 

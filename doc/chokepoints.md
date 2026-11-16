@@ -291,9 +291,9 @@ cost:
 - *C*, `turret.choke` when a choke of our current line or the enemy line has its middle in range. One choke's worth
   at most.
 - Each target counts only in range and in a clear line of fire (high-arc turrets skip that), and is halved for each
-  tower of ours or an ally's, queued ones included, that already covers it.
+  tower of ours or an ally's, queued ones included, that already covers it. A Claw minefield doesn't cover it.
 - *height*: above the mean height of the targets it counts, up to `turret.height_cap`.
-- *F*, the front: each known enemy building, armed or not and fakes left out, adds 2 × (1 − d ÷ 2048) (the influence
+- *F*, the front: each known enemy building, armed or not, fakes, Claw mines and missiles left out, adds 2 × (1 − d ÷ 2048) (the influence
   map's enemy territory), over the highest among the candidates. The spot reaching furthest toward the enemy while
   out of threat ranks up to (1 + `turret.front`) × its value. *walk* is the ordered constructor's distance.
 
@@ -302,10 +302,11 @@ the turret's cost, so the lean and the walk only rank spots that already pay. Th
 wins, so the type follows the enemy buildings in range and the choke through E and C.
 
 A spot is skipped when it is outside the radius; more than `defence.infl_rad` (2048 elmos) from every building of
-ours or an ally's (constructors left out, so the ordering constructor can't make its own ground pass); not
-buildable facing south or closed on the blocking map (lanes and queued jobs, picker jobs included, are on it); in
-the constructor's threat; out of its reach; not safe for a builder whose flee is on (`IsCommJobSafe`); or masked by
-a build the engine refused there in the last 5 minutes. Candidates are the 64-elmo cell centres within the radius,
+ours or an ally's (constructors left out, so the ordering constructor can't make its own ground pass, and Claw
+mines and missiles, so a minefield doesn't stretch our ground); not buildable facing south or closed on the
+blocking map (lanes and queued jobs, picker jobs included, are on it); in the constructor's threat; out of its
+reach; not safe for a builder whose flee is on (`IsCommJobSafe`); or masked by a build the engine refused there in
+the last 5 minutes. Candidates are the 64-elmo cell centres within the radius,
 snapped to the build grid, tried best upper bound first; the best 5 are tried again 16 elmos to each corner.
 
 The job is a DEFENCE job at the spot with no shake, its footprint on the blocking map from the start. It is dropped
@@ -318,12 +319,14 @@ sweep rebuild a home tower.
 
 1. After a flee that ends clear or covered, centred where the flee started, with only the light defs that hit what
    it fled from (after gunships, only Picket). Not before `turret.after_flee_since` seconds of game time, and not
-   when a defence that hits what it fled from (ours or an ally's, finished, being built or queued) stands within
-   `turret.radius` of where the flee started. Only builders whose flee is on: the commander by default, other
-   constructors with `retreat.builder_flee`. A cornered flee keeps the cornered defence, a hurt one goes for repair.
-2. A mobile ground constructor with a known enemy building within `turret.enemy_reach` and no armed ally (a mobile
-   or a finished tower, its own power left out) within `turret.ally_radius`, centred on itself. A finished picker
-   turret counts as allied power, so it stops once its turret stands.
+   when a defence that hits what it fled from (ours or an ally's, finished, being built or queued; Claw mines left
+   out) stands within `turret.radius` of where the flee started. Only builders whose flee is on: the commander by
+   default, other constructors with `retreat.builder_flee`. A cornered flee keeps the cornered defence, a hurt one
+   goes for repair.
+2. A mobile ground constructor with a known enemy building (not a Claw mine or a missile) within
+   `turret.enemy_reach` and no armed ally (a mobile or a finished tower, its own power and Claw mines left out)
+   within `turret.ally_radius`, centred on itself. A finished picker turret counts as allied power, so it stops once
+   its turret stands.
 
 Gates, in order: the caller's switch; the constructor isn't player-led, retreating, fighting, morphing, on a
 defence job or on a HIGH or NOW one, and a light def can be built at the centre; its `turret.cooldown`; metal isn't

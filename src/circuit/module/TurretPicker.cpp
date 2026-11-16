@@ -334,10 +334,11 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	};
 	keepBest(traffic, MAX_TRAFFIC * 4);  // the line-of-fire tests of the halving only for those that may make it
 
-	// A, and our buildings for the influence rule (armed or not, nanoframes too; constructors left out)
+	// A, and our buildings for the influence rule (armed or not, nanoframes too; constructors, Claw mines and missiles
+	// left out)
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
-		if ((cdef == nullptr) || cdef->IsMobile()) {
+		if ((cdef == nullptr) || cdef->IsMobile() || cdef->IsMobileBuilding()) {
 			continue;
 		}
 		const AIFloat3& pos = kv.second->GetPos(frame);
@@ -354,7 +355,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	}
 
 	// E, as choke.spot.enemy: buildings by their last known position, mobiles while in radar or sight; an enemy mex at
-	// its income x the horizon. And known enemy buildings (fakes left out) for F
+	// its income x the horizon. And known enemy buildings (fakes, Claw mines and missiles left out) for F
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	for (const auto& kv : circuit->GetEnemyInfos()) {
 		const CEnemyInfo* e = kv.second;
@@ -364,7 +365,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		}
 		const AIFloat3& pos = e->GetPos();
 		const float sqDist = pos.SqDistance2D(centre);
-		if (!edef->IsMobile() && !e->GetData()->IsFake() && (sqDist <= sqInflReach)) {
+		if (!edef->IsMobile() && !edef->IsMobileBuilding() && !e->GetData()->IsFake() && (sqDist <= sqInflReach)) {
 			g.enemyBuildings.push_back(pos);
 		}
 		if ((sqDist > sqReach) || (edef->IsMobile() && !e->IsInRadarOrLOS())) {
@@ -398,8 +399,8 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		}
 	}
 
-	// Halved for each tower that covers it already
-	std::vector<CSpotScorer::STower> towers = circuit->GetMilitaryManager()->GetSpotScorer()->GetTowers();
+	// Halved for each tower that covers it already (a Claw minefield doesn't)
+	std::vector<CSpotScorer::STower> towers = circuit->GetMilitaryManager()->GetSpotScorer()->GetTowers(false);
 	if (utils::is_valid(skipTower)) {
 		towers.erase(std::remove_if(towers.begin(), towers.end(), [&skipTower](const CSpotScorer::STower& t) {
 			return t.pos.SqDistance2D(skipTower) < SQUARE(SQUARE_SIZE * 2);

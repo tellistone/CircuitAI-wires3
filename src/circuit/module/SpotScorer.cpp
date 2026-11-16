@@ -433,12 +433,14 @@ std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, con
  * Every tower of our ally team (human allies' too), and our queued tower tasks not yet started, chained ones too (a
  * started one has its nanoframe in the list already), so each counts once from queue to death
  */
-std::vector<CSpotScorer::STower> CSpotScorer::GetTowers() const
+std::vector<CSpotScorer::STower> CSpotScorer::GetTowers(bool isMobileBuildings) const
 {
 	std::vector<STower> towers;
 	const int frame = circuit->GetLastFrame();
-	auto add = [&towers](CCircuitDef* cdef, const AIFloat3& p) {
-		if ((cdef != nullptr) && !cdef->IsMobile() && cdef->IsAttacker()) {
+	auto add = [&towers, isMobileBuildings](CCircuitDef* cdef, const AIFloat3& p) {
+		if ((cdef != nullptr) && !cdef->IsMobile() && cdef->IsAttacker()
+			&& (isMobileBuildings || !cdef->IsMobileBuilding()))
+		{
 			towers.push_back({p, cdef->GetMaxRange(), cdef->GetDef()->GetLosHeight(),
 					cdef->GetDef()->GetHighTrajectoryType() == 1});
 		}

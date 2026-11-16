@@ -48,7 +48,8 @@ struct STurretOrder {
  * enemy territory layer's), over the highest among the candidates. A spot must be within the radius, within
  * defence.infl_rad of a building of ours or an ally's (constructors left out), buildable and open on the blocking map,
  * out of the builder's threat, in its reach (and IsCommJobSafe for a builder whose flee is on), and not masked by a
- * build the engine refused. The def with the best value per metal wins; it is built on that exact spot or not at all
+ * build the engine refused. The def with the best value per metal wins; it is built on that exact spot or not at all.
+ * A Claw mine, a missile or anything else with customParams.mobilebuilding is no building or tower to any of these
  */
 class CTurretPicker {
 public:
