@@ -20,12 +20,26 @@ public:
 	virtual ~CBDefenceTask();
 
 	virtual void Update() override;
+	virtual void SetTarget(CCircuitUnit* unit) override;
+	virtual void OnUnitIdle(CCircuitUnit* unit) override;
+
+	// Picker (CTurretPicker) and cornered (MakeCommDefence) towers: no defence point counted them, so neither their
+	// abort nor their tower's death takes a cost off one
+	void SetOffPoints() { isOffPoints = true; }
+	bool IsOffPoints() const { return isOffPoints; }
+	// A picker job: built on its exact spot or not at all, and dropped (its spot masked) on arrival if the spot no
+	// longer pays
+	void SetPicker() { isPicker = isOffPoints = true; }
+	bool IsPicker() const { return isPicker; }
 
 protected:
 	virtual void Finish() override;
 	virtual void Cancel() override;
+	virtual void Execute(CCircuitUnit* unit) override;
 
 	bool isUrgent;
+	bool isOffPoints;
+	bool isPicker;
 	float normalCost;
 };
 

@@ -15,8 +15,10 @@
 #include "unit/CircuitUnit.h"
 
 #include <array>
+#include <functional>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -277,6 +279,50 @@ public:
 	bool IsReclaimed(CAllyUnit* unit) const { return reclaimedUnits.find(unit) != reclaimedUnits.end(); }
 
 	/*
+	 * turret.after_flee, turret.near_enemy: a light turret for a constructor in the field (CTurretPicker)
+	 */
+	// A turret job at pos for unit: IsCommJobSafe by its flee state (always, with its flee off)
+	bool IsTurretJobSafe(CCircuitUnit* unit, const springai::AIFloat3& pos);
+	// choke_overlay turret: our nearest constructor that is free (UpdateTurrets' tests) orders one at pos, def or the
+	// picker's choice (nullptr); what happened, for the chat
+	std::string OrderTurretAt(const springai::AIFloat3& pos, CCircuitDef* def);
+private:
+	// Once a second: a constructor whose flee ended clear or covered (centred where the flee started), then each
+	// mobile ground constructor with a known enemy building within turret.enemy_reach and no armed ally within
+	// turret.ally_radius (centred on itself). Gates in order: the caller's switch (after a flee: and
+	// turret.after_flee_since passed); the constructor is free; its cooldown (turret.cooldown); metal not stalling;
+	// the trigger; then TryTurret
+	void UpdateTurrets();
+	// Not player-led, retreating, morphing, on a defence job or on a HIGH or NOW one
+	bool IsTurretFree(CCircuitUnit* unit) const;
+	// A light def unit can build at centre (canHit: that can hit what it fled from); helping a turret of ours being
+	// built, or a picker job, within turret.radius instead; after a flee (isDefendedSkip), no other defence that hits it
+	// within turret.defended_radius; the choke analysis (asked for now, waited for while an after-flee ask lasts); the
+	// budget; one order a second. true: done (ordered, helped, or nothing to have), false: try again next second
+	bool TryTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
+			const std::function<bool (const CCircuitDef*)>& canHit, bool isDefendedSkip, const char* caller,
+			bool& isOrdered);
+	std::vector<CCircuitDef*> GetTurretDefs(CCircuitUnit* unit, const springai::AIFloat3& centre,
+			const std::function<bool (const CCircuitDef*)>& canHit) const;
+	bool AssistTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
+			const std::function<bool (const CCircuitDef*)>& canHit, const char* caller);
+	// A static defence of ours or an ally's (a nanoframe or a queued job of ours too) within radius of centre, of a
+	// kind canHit accepts; outPos its position
+	bool HasTurretDefence(const springai::AIFloat3& centre, float radius,
+			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos) const;
+	// Asks for a turret and starts the cooldown, whatever the result
+	IBuilderTask* OrderTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
+			const std::vector<CCircuitDef*>& defs, const char* caller);
+	// Can hit what a flee is from: a flier with anti-air, in deep water with anti-water, else with anti-land
+	static bool IsHitFor(const CCircuitDef* def, bool isAir, bool isWater);
+	// turret.share of the metal income, paid in as it comes, up to a minute's share (or the dearest light turret)
+	float turretBank = 0.f;
+	int turretBankFrame = -1;
+	int turretChokeFrame = -1;  // the first order's frame while the choke analysis isn't ready
+	std::map<ICoreUnit::Id, int> turretCooldowns;  // unit id -> frame it may order again
+public:
+
+	/*
 	 * Commander flee (always on) and hide (commander.json "hide")
 	 */
 	// DefaultMakeTask sends this armed builder to fight at home (IBuilderTask::Reevaluate re-plans on the same test)
@@ -345,6 +391,11 @@ private:
 		bool isEscape = false;
 		springai::AIFloat3 escapeGoal;
 		const IBuilderTask* cornerTask = nullptr;  // other builders: the defence it was cornered into (MakeCommDefence)
+		// turret.after_flee: where its last flee started and whether from a gunship; a turret request left when that
+		// flee ended clear or covered (its frame, -1 = none)
+		springai::AIFloat3 fleeFrom = -RgtVector;
+		bool isFleeAir = false;
+		int turretAskFrame = -1;
 		bool IsComm() const { return hide != nullptr; }
 		// Cover beats threat x mod by flee_ally_threat (< 0 = never covered)
 		bool IsCovered(float threat, float mod) const {
@@ -360,6 +411,7 @@ private:
 		ICoreUnit::Id id;
 		springai::AIFloat3 pos;
 		float power;
+		const CCircuitDef* def;
 	};
 	static float GetCommWideMargin(float margin) { return margin + std::max(0.25f * margin, 50.f); }
 	void AddComm(CCircuitUnit* unit);  // a state for a ground builder with the flee on
@@ -367,8 +419,10 @@ private:
 	// Outside every seen flee zone (range + margin)
 	bool IsCommSafe(const springai::AIFloat3& pos, float margin);
 	void UpdateCommCovers();
-	// Cover power within radius of pos, skipId left out; stops summing once it reaches enough
-	float GetCommCover(const springai::AIFloat3& pos, float radius, ICoreUnit::Id skipId, float enough);
+	// Cover power within radius of pos, skipId left out (and allies whose def fails isCounted); stops summing once it
+	// reaches enough
+	float GetCommCover(const springai::AIFloat3& pos, float radius, ICoreUnit::Id skipId, float enough,
+			const std::function<bool (const CCircuitDef*)>& isCounted = nullptr);
 	// nullptr: a flying builder, or its flee is off
 	SCommState* GetCommState(CCircuitUnit* unit);
 	// A safe flee spot not at its feet exists (state->escapeGoal)

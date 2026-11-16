@@ -13,6 +13,7 @@
 #include "AIFloat3.h"
 
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,7 @@ class CChokeMap;
  */
 class CChokeOverlay {
 public:
-	enum class Layer: char {CHOKES, POCKETS, LINES, RANKS, TRAFFIC, SPOTS, RADAR, REGIONS, COUNT};
+	enum class Layer: char {CHOKES, POCKETS, LINES, RANKS, TRAFFIC, SPOTS, RADAR, REGIONS, TURRETS, COUNT};
 
 	CChokeOverlay(CChokeMap* chokeMap);
 	virtual ~CChokeOverlay();
@@ -47,6 +48,8 @@ private:
 	void NextLayer();
 	void ShowType(const std::string& name);
 	void SetValue(const std::string& key, const std::string& value);
+	bool SetTurretValue(const std::string& key, const std::string& value);  // turret.*: no rebuild
+	void OrderTurret(std::istringstream& in);
 	void Save();
 	bool IsHumanIn(bool isAlly) const;  // a human player on our ally team, or on any other
 	void Say(const std::string& text) const;  // to the log, and to the sender's allies when it answers a command
@@ -63,9 +66,10 @@ private:
 	void DrawSpots();
 	void DrawRadar();
 	void DrawLanes();
+	void DrawTurrets();
 
 	// One figure group per colour
-	enum class Colour: char {GREEN, GREY, RED, ORANGE, YELLOW, BLUE, CYAN, WHITE, MAGENTA};
+	enum class Colour: char {GREEN, GREY, RED, ORANGE, YELLOW, BLUE, CYAN, WHITE, MAGENTA, DARK_RED};
 	void AddLine(const springai::AIFloat3& from, const springai::AIFloat3& to, Colour colour, float width = 16.f);
 	void AddCross(const springai::AIFloat3& pos, Colour colour, float size = 48.f);
 	void AddLabel(const springai::AIFloat3& pos, const std::string& text);

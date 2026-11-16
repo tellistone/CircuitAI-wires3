@@ -266,6 +266,9 @@ public:
 	bool IsTurnLarge()     const { return isTurnLarge; }
 	bool IsAbleToCloak()   const { return isAbleToCloak; }
 	bool IsAbleToJump()    const { return isAbleToJump; }
+	// customParams.mobilebuilding: static, but not a building to Zero-K (Claw mines, missiles, terraform points, the
+	// temporary shield)
+	bool IsMobileBuilding() const { return isMobileBuilding; }
 	bool IsAbleToRepair()  const { return isAbleToRepair; }
 	bool IsAbleToReclaim() const { return isAbleToReclaim; }
 	bool IsAbleToAssist()  const { return isAbleToAssist; }
@@ -416,6 +419,7 @@ private:
 	bool isAbleToFly : 1;
 	bool isAbleToCloak : 1;
 	bool isAbleToJump : 1;
+	bool isMobileBuilding : 1;
 	bool isAbleToRepair : 1;
 	bool isAbleToReclaim : 1;
 	bool isAbleToAssist : 1;
