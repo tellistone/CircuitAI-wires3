@@ -55,7 +55,7 @@ public:
 	// The best spot for def, -RgtVector if none passes: CHOKE, HOLD within choke.setback[1] + 0.3 ranges of the
 	// choke's centre, POSITION within radius of the asset
 	springai::AIFloat3 FindSpot(CCircuitDef* def, const SGoal& goal, float radius = 0.f);
-	// A build failed there: every search skips the spot's traffic cell for 5 minutes
+	// A build failed there (or a turret picker job was dropped): every search skips its 64-elmo cell for 5 minutes
 	void MaskFailed(const springai::AIFloat3& pos);
 	// Per position, the weight of its approach within radius + def's range that our towers don't cover yet (the porc
 	// sweep's order)
@@ -84,7 +84,8 @@ private:
 			const std::vector<STower>& towers) const;
 
 	CCircuitAI* circuit;
-	std::map<int, int> failedCells;  // traffic cell -> frame the mask ends
+	static int MaskKey(const springai::AIFloat3& pos);  // its MASK_CELL square
+	std::map<int, int> failedCells;  // MaskKey -> frame the mask ends
 	std::vector<SCandidate> lastCandidates;
 };
 

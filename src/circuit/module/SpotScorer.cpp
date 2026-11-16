@@ -31,6 +31,7 @@ namespace circuit {
 using namespace springai;
 
 #define MASK_FRAMES		(FRAMES_PER_SEC * 300)  // a failed build site is skipped for 5 minutes
+#define MASK_CELL		64.f  // elmos: the traffic field's cell, and the turret picker's candidate cell
 #define MAX_TARGETS		32
 #define TARGET_LIFT		20.f  // sight rays end this high above a target's ground
 #define REFINE_COUNT	5  // best coarse candidates that get the half-cell pass
@@ -325,10 +326,12 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 
 void CSpotScorer::MaskFailed(const AIFloat3& pos)
 {
-	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
-	if (!traffic.IsEmpty()) {
-		failedCells[traffic.IndexAt(pos.x, pos.z)] = circuit->GetLastFrame() + MASK_FRAMES;
-	}
+	failedCells[MaskKey(pos)] = circuit->GetLastFrame() + MASK_FRAMES;  // the traffic field may not be built yet
+}
+
+int CSpotScorer::MaskKey(const AIFloat3& pos)
+{
+	return int(pos.z / MASK_CELL) * 65536 + int(pos.x / MASK_CELL);
 }
 
 std::vector<float> CSpotScorer::GetUncovered(CCircuitDef* def, const std::vector<AIFloat3>& positions, float radius)
@@ -479,8 +482,7 @@ bool CSpotScorer::IsClearLine(const AIFloat3& from, float emit, const AIFloat3& 
 
 bool CSpotScorer::IsMasked(const AIFloat3& pos) const
 {
-	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
-	auto it = failedCells.find(traffic.IndexAt(pos.x, pos.z));
+	auto it = failedCells.find(MaskKey(pos));
 	return (it != failedCells.end()) && (circuit->GetLastFrame() < it->second);
 }
 

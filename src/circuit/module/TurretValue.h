@@ -16,9 +16,9 @@ namespace circuit {
 /*
  * CTurretPicker's value of a spot and its search, with no engine calls, so a harness can test them. In metal:
  *   base  = (T + A + E + C) x (1 + turret.height x height)
- *   value = base x (1 + turret.front x F) / (1 + walk / turret.travel)
+ *   value = base x (1 + turret.front x F) / (1 + walk / travel)
  * T, A and E sum the targets of their kind in range with a clear line of fire; C is the best choke target so; height
- * is how far the spot stands above the mean height of those targets, per turret.height_cap (up to 1); F the spot's
+ * is how far the spot stands above the mean height of those targets, per heightCap (up to 1); F the spot's
  * enemy building influence over the highest among the candidates. Only a spot whose base reaches minBase is worth
  * building; the most valuable of those wins
  */
@@ -53,9 +53,9 @@ public:
 	struct SParams {
 		float range;  // the def's
 		float heightBonus = 0.5f;  // turret.height
-		float heightCap = 150.f;  // turret.height_cap
+		float heightCap = 150.f;  // elmos above the targets that earn all of heightBonus
 		float front = 1.f;  // turret.front
-		float travel = 1000.f;  // turret.travel
+		float travel = 1000.f;  // constructor walk that halves a spot's rank
 		float minBase = 0.f;  // turret.min_value x the def's cost
 		float refineStep = 16.f;  // elmos to each corner of the best few
 	};

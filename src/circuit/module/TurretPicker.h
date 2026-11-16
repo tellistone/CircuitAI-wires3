@@ -23,6 +23,7 @@ class CCircuitAI;
 class CCircuitDef;
 class CCircuitUnit;
 class CBDefenceTask;
+class CEnemyInfo;
 
 // What a caller asks CTurretPicker for: who builds, where to look, what may be built
 struct STurretOrder {
@@ -41,15 +42,17 @@ struct STurretOrder {
  *   T, traffic: the traffic field over the cells in range, per cell length of its range across (2 x range / cell),
  *      is the income whose enemy routes pass under it in metal/s; x turret.horizon s
  *   A, our and allied unarmed buildings in range, at cost
- *   E, known enemies it could shoot (choke.spot.enemy's rules), at cost; an enemy mex at its income x turret.horizon
+ *   E, known enemy buildings in range seen in the last 3 minutes, at cost; an enemy mex at its income x
+ *      turret.horizon. Mobiles don't count: they move on, and their routes are in T already
  *   C, turret.choke when a choke of our current line or the enemy line has its middle in range
- * each in a clear line of fire (high-arc: any) and halved for every tower of ours or an ally's, queued too, that
- * covers it already and hits it (air or ground; turret.not_defence left out). F, the front, is the known enemy buildings' influence at the spot, 2 x (1 - d / 2048) each (the
- * enemy territory layer's), over the highest among the candidates. A spot must be within the radius, within
- * defence.infl_rad of a building of ours or an ally's (constructors left out), buildable and open on the blocking map,
- * out of the builder's threat, in its reach (and IsCommJobSafe for a builder whose flee is on), and not masked by a
- * build the engine refused. The def with the best value per metal wins; it is built on that exact spot or not at all.
- * A Claw mine, a missile or anything else with customParams.mobilebuilding is no building or tower to any of these
+ * each one the def hits, in a clear line of fire (high-arc: any), and halved for every tower of ours or an ally's,
+ * queued too, that covers it already and hits it. F, the front, is the known enemy buildings' influence at the spot,
+ * 2 x (1 - d / 2048) each (the enemy territory layer's), over the highest among the candidates. A spot must be
+ * within the radius, within defence.infl_rad of a building of ours or an ally's (constructors left out), buildable
+ * and open on the blocking map, out of the builder's threat, in its reach (and IsCommJobSafe for a builder whose
+ * flee is on), and not masked by a build the engine refused or a job dropped there. The def with the best value per
+ * metal wins; it is built on that exact spot or not at all. A Claw mine, a missile or anything else with
+ * customParams.mobilebuilding is no building or tower to any of these, nor is turret.not_defence a tower
  */
 class CTurretPicker {
 public:
@@ -62,14 +65,13 @@ public:
 		float enemy = 1.f;
 		float front = 1.f;
 		float height = 0.5f;
-		float heightCap = 150.f;
-		float travel = 1000.f;
 		float choke = 100.f;  // metal
 		// Armed statics that defend nothing in the field: no tower covering a target, nor a defence to the callers
 		std::vector<CCircuitDef*> notDefence;
 		// Callers (CBuilderManager::UpdateTurrets)
 		bool isAfterFlee = true;
 		float afterFleeSince = 0.f;  // seconds of game time before the after-flee caller starts
+		float defendedRadius = 600.f;  // after a flee, a defence this near where it started means no turret
 		bool isNearEnemy = true;
 		std::vector<CCircuitDef*> light;
 		float enemyReach = 600.f;
@@ -77,35 +79,47 @@ public:
 		float cooldown = 30.f;  // seconds
 		float share = 0.15f;
 	};
-	// The last order, for choke_overlay turrets
+	enum class Reject: char {NONE, RADIUS, MASK, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
+	// The cheap hard rules over the candidate grid of one order: the same for every def
+	struct SGrid {
+		std::vector<CTurretValue::SCandidate> passed;
+		std::vector<springai::AIFloat3> outside;  // rejected by the influence rule
+		int counts[static_cast<int>(Reject::_SIZE_)] = {0};
+	};
+	// One def's search over the grid
+	struct SDefResult {
+		CCircuitDef* def = nullptr;
+		CTurretValue::SResult search;
+		int counts[static_cast<int>(Reject::_SIZE_)] = {0};  // the costly rules (SITE, UNSAFE)
+	};
+	// The last order, for choke_overlay turrets: the def built, else the last tried
 	struct SLast {
 		int frame = -1;
 		springai::AIFloat3 centre;
 		float radius = 0.f;
-		CCircuitDef* def = nullptr;  // the def shown: the one built, else the last tried
 		bool isFound = false;
-		std::vector<CTurretValue::SScored> scored;
-		std::vector<springai::AIFloat3> passed;  // every candidate that passed the cheap hard rules
-		std::vector<springai::AIFloat3> outside;  // rejected by the influence rule
-		float frontNorm = 0.f;
+		SGrid grid;
+		SDefResult res;
 		std::string line;  // the log line
 	};
 
 	CTurretPicker(CCircuitAI* circuit);
 	virtual ~CTurretPicker();
 
-	// The best spot for def, -RgtVector if none passes or is worth its cost; outValue = its value in metal
-	springai::AIFloat3 FindSpot(CCircuitDef* def, const STurretOrder& order, float& outValue);
 	// Picks the def and spot and queues the DEFENCE job there for the builder; nullptr if nothing is worth its cost
 	IBuilderTask* Order(const STurretOrder& order);
-	// On arrival: the job's spot is still out of threat and worth its cost
-	bool IsStillWorth(const CBDefenceTask* task);
+	// On arrival of builder: the job's spot is still out of its threat, and worth KEEP_SHARE of the order's threshold
+	bool IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builder);
 
 	// A static that defends the ground around it: armed, not a Claw mine or a missile (customParams.mobilebuilding), not
 	// in turret.not_defence
 	bool IsDefence(const CCircuitDef* cdef) const;
+	// A known enemy building: not a fake, a Claw mine or a missile. isFresh: and in radar or sight in the last 3
+	// minutes, so the ghost of one that died out of sight drops out
+	bool IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const;
 
 	SConfig& GetConfig() { return config; }
+	const SConfig& GetConfig() const { return config; }
 	const SLast& GetLast() const { return last; }
 	bool IsAnyCaller() const { return config.isAfterFlee || config.isNearEnemy; }
 
@@ -115,7 +129,6 @@ private:
 		CTurretValue::SPos pos;
 		float amount;
 		CTurretValue::Kind kind;
-		bool isAir;  // an enemy flier: only for defs that hit air
 	};
 	// Gathered once per order
 	struct SGather {
@@ -125,21 +138,13 @@ private:
 		std::vector<springai::AIFloat3> ourBuildings;  // within radius + defence.infl_rad
 		std::vector<springai::AIFloat3> enemyBuildings;  // within radius + ENEMY_INFL_RADIUS
 	};
-	enum class Reject: char {NONE, RADIUS, MASK, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
-	struct SDefResult {
-		CCircuitDef* def = nullptr;
-		CTurretValue::SResult search;
-		std::vector<springai::AIFloat3> passed;  // the cheap rules
-		std::vector<springai::AIFloat3> outside;
-		int counts[static_cast<int>(Reject::_SIZE_)] = {0};
-		int candidates = 0;
-	};
 
 	void ReadConfig();
 	std::vector<CCircuitDef*> GetDefs(const STurretOrder& order, const springai::AIFloat3& centre) const;
 	SGather Gather(const springai::AIFloat3& centre, float radius, float maxRange,
 			const springai::AIFloat3& skipTower) const;
 	std::vector<CTurretValue::STarget> MakeTargets(CCircuitDef* def, const SGather& gather) const;
+	SGrid MakeGrid(CCircuitUnit* builder, const SGather& gather) const;
 	// The cheap hard rules at (x, z): NONE and out filled, or the first rule it fails
 	Reject MakeCandidate(CCircuitUnit* builder, const SGather& gather, float x, float z,
 			CTurretValue::SCandidate& out) const;
@@ -149,8 +154,10 @@ private:
 			CTurretValue::SCandidate& c) const;
 	void FillCandidate(CCircuitUnit* builder, const SGather& gather, const springai::AIFloat3& pos,
 			CTurretValue::SCandidate& out) const;
-	SDefResult SearchDef(CCircuitDef* def, CCircuitUnit* builder, const SGather& gather) const;
+	SDefResult SearchDef(CCircuitDef* def, CCircuitUnit* builder, const SGather& gather,
+			const std::vector<CTurretValue::SCandidate>& candidates) const;
 	CTurretValue::SParams MakeParams(CCircuitDef* def) const;
+	CTurretValue::ClearFn MakeClearFn(CCircuitDef* def) const;
 	float GetNearestOurs(const SGather& gather, const springai::AIFloat3& pos) const;
 
 	CCircuitAI* circuit;

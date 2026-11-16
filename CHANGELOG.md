@@ -10,18 +10,21 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Turret picker for constructors in the field** ([doc/chokepoints.md](doc/chokepoints.md), "Turret picker (G)").
   A new picker finds the best light turret spot within `turret.radius` (600) of a centre, valuing everything in
   range in metal: enemy traffic (the income whose routes pass under it, × `turret.horizon` 120 s), our and allied
-  unarmed buildings, enemies it could shoot (an enemy mex at its income × the horizon) and a choke of our line or the
-  enemy line, each in a clear line of fire and halved per tower already covering it that hits it, × height (Claw
-  mines, missiles and the `turret.not_defence` superweapons and Antinuke never count as towers). A spot must be worth
-  `turret.min_value` × the turret's cost, inside our buildings' influence, out of threat, buildable and reachable;
-  among those it leans toward enemy buildings (`turret.front`) and prefers a short walk. The turret is built on that
-  exact spot, or not at all. Two callers, on by default (`turret.after_flee`, `turret.near_enemy`): a constructor
-  whose flee ended clear or covered (centred where it started, after `turret.after_flee_since` and only with no
-  defence there yet), and a mobile ground constructor near a known enemy building with no armed ally around. They
-  help a turret already being built nearby instead of ordering one, and are held to a cooldown, a budget
-  (`turret.share` of income a minute) and one order a second. Picker and cornered towers no longer change the
-  defence points' tower counts. New `turrets` overlay layer, `choke_overlay turret <x> <z>
-  [def]` test command and `TURRET` log lines; the `turret.*` keys can be set live.
+  unarmed buildings, enemy buildings seen in the last 3 minutes (an enemy mex at its income × the horizon) and a choke
+  of our line or the enemy line. Each counts if the turret hits it, in a clear line of fire, halved per tower already
+  covering it that hits it, × height (Claw mines, missiles and the `turret.not_defence` superweapons and Antinuke
+  never count as towers). A spot must be worth `turret.min_value` × the turret's cost, inside our buildings'
+  influence, out of threat, buildable and reachable; among those it leans toward enemy buildings (`turret.front`)
+  and prefers a short walk. The turret is built on that exact spot, or not at all; a job dropped on arrival (under
+  0.75 × the threshold, or threatened) masks its spot for 5 minutes. Two callers, on by default
+  (`turret.after_flee`, `turret.near_enemy`): a constructor whose flee ended clear or covered (centred where it
+  started, after `turret.after_flee_since` and only with no defence within `turret.defended_radius`), and a mobile
+  ground constructor near a known enemy building with no armed ally around. They help a turret already being built
+  nearby instead of ordering one, and are held to a cooldown, a budget paid in from `turret.share` of the income (no
+  turret before its share has paid for one) and one order a second. The choke analysis they read is built on the
+  first order. Picker and cornered towers no longer change the defence points' tower counts. New `turrets` overlay
+  layer, `choke_overlay turret <x> <z> [def]` test command and `TURRET` log lines; the `turret.*` keys can be set
+  live.
 
 - **Attack and raid groups stop fleeing and returning to the same fight.** The pick judges the target's own spot
   (attack: the fled-from target at the keep allowance), the escape each unit's spot, so a group could flee, be sent

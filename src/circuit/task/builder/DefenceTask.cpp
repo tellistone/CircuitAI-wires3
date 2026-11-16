@@ -42,10 +42,13 @@ CBDefenceTask::~CBDefenceTask()
 void CBDefenceTask::Update()
 {
 	// A picker job whose builder got there: dropped if threat has reached the spot or it no longer pays (the enemy
-	// building it was for died, say), rather than slid to other ground by the site search. The next order picks again
+	// building it was for died, say), rather than slid to other ground by the site search. The spot is masked, so the
+	// next order looks elsewhere instead of walking back to it
+	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
 	if (isPicker && (target == nullptr) && !traveled.empty()
-		&& !manager->GetCircuit()->GetMilitaryManager()->GetTurretPicker()->IsStillWorth(this))
+		&& !militaryMgr->GetTurretPicker()->IsStillWorth(this, *traveled.begin()))
 	{
+		militaryMgr->GetSpotScorer()->MaskFailed(buildPos);
 		manager->AbortTask(this);
 		return;
 	}

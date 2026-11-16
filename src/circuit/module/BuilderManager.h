@@ -15,7 +15,6 @@
 #include "unit/CircuitUnit.h"
 
 #include <array>
-#include <deque>
 #include <functional>
 #include <map>
 #include <set>
@@ -292,29 +291,34 @@ private:
 	// mobile ground constructor with a known enemy building within turret.enemy_reach and no armed ally within
 	// turret.ally_radius (centred on itself). Gates in order: the caller's switch (after a flee: and
 	// turret.after_flee_since passed); the constructor is free; its cooldown (turret.cooldown); metal not stalling;
-	// the trigger; it helps a turret of ours being built, or a picker job, within turret.radius instead if there is
-	// one; after a flee, no other defence that hits what it fled from within turret.radius; the budget (turret.share
-	// of income over a minute, one light turret a minute always); one order a second
+	// the trigger; then TryTurret
 	void UpdateTurrets();
 	// Not player-led, retreating, morphing, on a defence job or on a HIGH or NOW one
 	bool IsTurretFree(CCircuitUnit* unit) const;
-	// The light defs unit can build at centre (canHit: those that can hit what it fled from)
+	// A light def unit can build at centre (canHit: that can hit what it fled from); helping a turret of ours being
+	// built, or a picker job, within turret.radius instead; after a flee (isDefendedSkip), no other defence that hits it
+	// within turret.defended_radius; the choke analysis (asked for now, waited for while an after-flee ask lasts); the
+	// budget; one order a second. true: done (ordered, helped, or nothing to have), false: try again next second
+	bool TryTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
+			const std::function<bool (const CCircuitDef*)>& canHit, bool isDefendedSkip, const char* caller,
+			bool& isOrdered);
 	std::vector<CCircuitDef*> GetTurretDefs(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit) const;
-	bool AssistTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, const char* caller);
+	bool AssistTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
+			const std::function<bool (const CCircuitDef*)>& canHit, const char* caller);
 	// A static defence of ours or an ally's (a nanoframe or a queued job of ours too) within radius of centre, of a
 	// kind canHit accepts; outPos its position
 	bool HasTurretDefence(const springai::AIFloat3& centre, float radius,
 			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos) const;
-	bool IsTurretBudget(float cost);
 	// Asks for a turret and starts the cooldown, whatever the result
 	IBuilderTask* OrderTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::vector<CCircuitDef*>& defs, const char* caller);
-	struct STurretSpend {
-		int frame;
-		float cost;
-	};
-	std::deque<STurretSpend> turretSpends;  // picker turrets ordered in the last minute
+	// Can hit what a flee is from: a flier with anti-air, in deep water with anti-water, else with anti-land
+	static bool IsHitFor(const CCircuitDef* def, bool isAir, bool isWater);
+	// turret.share of the metal income, paid in as it comes, up to a minute's share (or the dearest light turret)
+	float turretBank = 0.f;
+	int turretBankFrame = -1;
+	int turretChokeFrame = -1;  // the first order's frame while the choke analysis isn't ready
 	std::map<ICoreUnit::Id, int> turretCooldowns;  // unit id -> frame it may order again
 public:
 

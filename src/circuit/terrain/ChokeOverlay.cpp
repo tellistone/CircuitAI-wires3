@@ -302,17 +302,16 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 }
 
 /*
- * The turret picker's keys as in the "turret" config block, on the AI that answers; the light list isn't settable
+ * The turret picker's keys as in the "turret" config block, on the AI that answers; the def lists aren't settable
  */
 bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& value)
 {
 	CTurretPicker::SConfig& c = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
 	const std::map<std::string, float*> floats = {
 		{"radius", &c.radius}, {"min_value", &c.minValue}, {"traffic", &c.traffic}, {"horizon", &c.horizon},
-		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"height", &c.height},
-		{"height_cap", &c.heightCap}, {"travel", &c.travel}, {"choke", &c.choke}, {"enemy_reach", &c.enemyReach},
-		{"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown}, {"share", &c.share},
-		{"after_flee_since", &c.afterFleeSince},
+		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"height", &c.height}, {"choke", &c.choke},
+		{"enemy_reach", &c.enemyReach}, {"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown},
+		{"share", &c.share}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
 	};
 	const std::map<std::string, bool*> flags = {
 		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy},
@@ -675,15 +674,17 @@ void CChokeOverlay::DrawTurrets()
 				OnGround(c.x + last.radius * std::cos(a1), c.z + last.radius * std::sin(a1)), Colour::WHITE, 8.f);
 	}
 	AddCross(c, Colour::WHITE, 64.f);
-	for (const AIFloat3& pos : last.outside) {
+	for (const AIFloat3& pos : last.grid.outside) {
 		AddCross(pos, Colour::DARK_RED, 16.f);
 	}
-	for (const AIFloat3& pos : last.passed) {
-		AddCross(pos, Colour::GREY, 16.f);
+	for (const CTurretValue::SCandidate& p : last.grid.passed) {
+		AddCross(AIFloat3(p.pos.x, p.pos.y, p.pos.z), Colour::GREY, 16.f);
 	}
-	const float cost = (last.def != nullptr) ? std::max(last.def->GetCostM(), 1.f) : 1.f;
-	for (size_t i = 0; i < last.scored.size(); ++i) {
-		const CTurretValue::SScored& s = last.scored[i];
+	const CCircuitDef* def = last.res.def;
+	const float cost = (def != nullptr) ? std::max(def->GetCostM(), 1.f) : 1.f;
+	const std::vector<CTurretValue::SScored>& scored = last.res.search.scored;
+	for (size_t i = 0; i < scored.size(); ++i) {
+		const CTurretValue::SScored& s = scored[i];
 		const AIFloat3 pos(s.cand.pos.x, s.cand.pos.y, s.cand.pos.z);
 		const bool isBest = (i == 0) && last.isFound;
 		const Colour colour = isBest ? Colour::GREEN : ((i < 5) && s.isWorth) ? Colour::CYAN : Colour::GREY;
@@ -691,7 +692,7 @@ void CChokeOverlay::DrawTurrets()
 		if (isBest) {
 			char buf[256];
 			snprintf(buf, sizeof(buf), "%s %.2f x cost: T %.0f, A %.0f, E %.0f, C %.0f, F %.2f",
-					last.def->GetDef()->GetName(), s.terms.value / cost, s.terms.traffic, s.terms.ally, s.terms.enemy,
+					def->GetDef()->GetName(), s.terms.value / cost, s.terms.traffic, s.terms.ally, s.terms.enemy,
 					s.terms.choke, s.terms.front);
 			AddLabel(OnGround(pos.x, pos.z), buf);
 		} else if (i < 40) {

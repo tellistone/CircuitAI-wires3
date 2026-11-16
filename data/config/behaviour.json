@@ -210,20 +210,19 @@
 	"ally": 1.0,  // weight of A
 	"enemy": 1.0,  // weight of E
 	"front": 1.0,  // the spot with the most enemy building influence, out of threat, ranks up to 1 + this x its value; 0 = no lean
-	"height": 0.5,  // the most a spot's height adds to its value
-	"height_cap": 150,  // elmos above the targets that earn all of it
-	"travel": 1000,  // constructor walk, in elmos, that halves a spot's rank
+	"height": 0.5,  // the most a spot's height adds to its value (all of it 150 elmos above its targets)
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
 	// the callers. Claw mines and missiles are left out too, by customParams.mobilebuilding
 	"not_defence": ["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"],  // Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity, Antinuke
 	// Callers, once a second, each turret at NORMAL priority. Both share the light list and the limits: a
 	// constructor helps a turret of ours being built (or a picker job) within radius instead of ordering one, orders
-	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and picker turrets ordered in the last
-	// minute cost up to share x the minute's metal income (one light turret a minute always)
-	"after_flee": true,  // a constructor whose flee ended clear or covered orders one where the flee started, of the light defs that hit what it fled from, unless a defence that hits it (ours or an ally's, being built or queued too) stands within radius (the commander's flee is on by default; other builders' with retreat.builder_flee)
+	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and only once share of the metal income,
+	// paid in as it comes (up to a minute's share), covers the turret: none in the opening before it has
+	"after_flee": true,  // a constructor whose flee ended clear or covered orders one where the flee started, of the light defs that hit what it fled from, unless a defence that hits it (ours or an ally's, being built or queued too) stands within defended_radius (the commander's flee is on by default; other builders' with retreat.builder_flee)
 	"after_flee_since": 0,  // seconds of game time before after_flee starts
-	"near_enemy": true,  // a mobile ground constructor with a known enemy building within enemy_reach and no armed ally within ally_radius orders one around itself
+	"defended_radius": 600,  // after a flee, a defence this near where it started means no turret
+	"near_enemy": true,  // a mobile ground constructor with a known enemy building (seen in the last 3 minutes) within enemy_reach and no armed ally within ally_radius orders one around itself
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
 	"enemy_reach": 600,
 	"ally_radius": 500,

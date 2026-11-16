@@ -27,7 +27,8 @@ public:
 	// abort nor their tower's death takes a cost off one
 	void SetOffPoints() { isOffPoints = true; }
 	bool IsOffPoints() const { return isOffPoints; }
-	// A picker job: built on its exact spot or not at all, and dropped on arrival if the spot no longer pays
+	// A picker job: built on its exact spot or not at all, and dropped (its spot masked) on arrival if the spot no
+	// longer pays
 	void SetPicker() { isPicker = isOffPoints = true; }
 	bool IsPicker() const { return isPicker; }
 
