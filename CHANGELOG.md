@@ -424,6 +424,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Scouts explore instead of standing still when cut off.** When a scout has no safe route to its picked spot (e.g.
+  it fled into a pocket and the danger sits between it and everything else), or nothing was picked, it now runs one
+  capped route query to every unseen safe spot around it (rings out to 3000 elmos) and our safe frontline spots, and
+  walks to the nearest one it can reach without crossing danger. Only when there is none does it wait (3 s) and look
+  again. This replaces the spot-by-spot retry, which ended in a hold every second while cut off.
 - **Scouts flee instead of going home.** A scout standing in threat it can't take now drops its target and runs to
   the nearest spot well clear of the threat (least-threat route), and goes back to scouting once it has been out of
   threat for 2 seconds. The spot it was heading to is blocked for 10 s, so it doesn't walk straight back. The scout
