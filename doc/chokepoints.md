@@ -116,6 +116,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.height_cap` | `150` | Elmos above the targets that earn all of `turret.height`. |
 | `turret.travel` | `1000` | Constructor walk that halves a spot's rank. |
 | `turret.choke` | `100` | Metal a choke of our current line or the enemy line in range adds (C). |
+| `turret.not_defence` | `["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"]` | Armed statics that defend nothing in the field: Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity and the Antinuke. They never cover a target, and the callers don't count them as a defence or as allied power. Claw mines and missiles are left out the same way, by their `mobilebuilding` mark. |
 | `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
 | `turret.light` | `["turretlaser", "turretmissile"]` | The light turrets both callers may build: Lotus and Picket. |
 | `turret.enemy_reach` | `600` | Distance to a known enemy building that starts the near-enemy caller. |
@@ -136,7 +137,7 @@ players are ignored. A spectator may use it only in games with no human opponent
 | `choke_overlay <movement class>` | Shows one movement class's own graph on the `chokes` and `regions` layers. Use a unit def name (`cloakraid`) or a class name. An unknown name lists the classes. |
 | `choke_overlay all` | Back to the threat graph. |
 | `choke_overlay labels` | Turns the text labels on or off. They are map markers, which human allies see too, so they start off when the AI has human allies. |
-| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light` can't be set. Only in games with no human opponents. |
+| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light` and `turret.not_defence` can't be set. Only in games with no human opponents. |
 | `choke_overlay turret <x> <z> [def]` | Our nearest free constructor orders a turret at (x, z), with no cooldown or budget, at HIGH priority. With no def the picker chooses from the porcupine list (AA left out). Shows the `turrets` layer. Only in games with no human opponents. |
 | `choke_overlay save` | Writes the chokes and point classes to `choke/<map>.json` in the AI's writeable data directory, for comparing maps by hand. Only in games with no human opponents. |
 
@@ -291,7 +292,9 @@ cost:
 - *C*, `turret.choke` when a choke of our current line or the enemy line has its middle in range. One choke's worth
   at most.
 - Each target counts only in range and in a clear line of fire (high-arc turrets skip that), and is halved for each
-  tower of ours or an ally's, queued ones included, that already covers it. A Claw minefield doesn't cover it.
+  tower of ours or an ally's, queued ones included, that already covers it and hits it: a ground target only by a
+  tower that hits ground, an enemy flier only by one that hits air. Claw mines, missiles and `turret.not_defence`
+  never cover.
 - *height*: above the mean height of the targets it counts, up to `turret.height_cap`.
 - *F*, the front: each known enemy building, armed or not, fakes, Claw mines and missiles left out, adds 2 × (1 − d ÷ 2048) (the influence
   map's enemy territory), over the highest among the candidates. The spot reaching furthest toward the enemy while
@@ -319,13 +322,13 @@ sweep rebuild a home tower.
 
 1. After a flee that ends clear or covered, centred where the flee started, with only the light defs that hit what
    it fled from (after gunships, only Picket). Not before `turret.after_flee_since` seconds of game time, and not
-   when a defence that hits what it fled from (ours or an ally's, finished, being built or queued; Claw mines left
-   out) stands within `turret.radius` of where the flee started. Only builders whose flee is on: the commander by
+   when a defence that hits what it fled from (ours or an ally's, finished, being built or queued; Claw mines,
+   missiles and `turret.not_defence` left out) stands within `turret.radius` of where the flee started. Only builders whose flee is on: the commander by
    default, other constructors with `retreat.builder_flee`. A cornered flee keeps the cornered defence, a hurt one
    goes for repair.
 2. A mobile ground constructor with a known enemy building (not a Claw mine or a missile) within
-   `turret.enemy_reach` and no armed ally (a mobile or a finished tower, its own power and Claw mines left out)
-   within `turret.ally_radius`, centred on itself. A finished picker turret counts as allied power, so it stops once
+   `turret.enemy_reach` and no armed ally (a mobile or a finished tower, its own power, Claw mines, missiles and
+   `turret.not_defence` left out) within `turret.ally_radius`, centred on itself. A finished picker turret counts as allied power, so it stops once
    its turret stands.
 
 Gates, in order: the caller's switch; the constructor isn't player-led, retreating, fighting, morphing, on a

@@ -2234,21 +2234,19 @@ void CBuilderManager::UpdateCommCovers()
 		}
 		const float power = IFighterTask::GetCoverPower(ally);  // 0 for a nanoframe or a unit that died since
 		if (power > 0.f) {
-			commCovers.push_back({ally->GetId(), allyPos, power, adef->IsMobileBuilding()});
+			commCovers.push_back({ally->GetId(), allyPos, power, adef});
 		}
 	}
 }
 
 float CBuilderManager::GetCommCover(const AIFloat3& pos, float radius, ICoreUnit::Id skipId, float enough,
-		bool isMobileBuildings)
+		const std::function<bool (const CCircuitDef*)>& isCounted)
 {
 	UpdateCommCovers();
 	const float sqRadius = SQUARE(radius);
 	float cover = 0.f;
 	for (const SCommCover& ally : commCovers) {
-		if ((ally.id != skipId) && (isMobileBuildings || !ally.isMobileBuilding)
-			&& (ally.pos.SqDistance2D(pos) <= sqRadius))
-		{
+		if ((ally.id != skipId) && (ally.pos.SqDistance2D(pos) <= sqRadius) && (!isCounted || isCounted(ally.def))) {
 			cover += ally.power;
 			if (cover >= enough) {
 				break;
@@ -2694,6 +2692,9 @@ void CBuilderManager::UpdateTurrets()
 		return;
 	}
 	const float sqReach = SQUARE(cfg.enemyReach);
+	auto isCover = [picker](const CCircuitDef* d) {  // mobiles, and statics that defend the field
+		return d->IsMobile() || picker->IsDefence(d);
+	};
 	for (CCircuitUnit* unit : workers) {
 		const CCircuitDef* cdef = unit->GetCircuitDef();
 		if (!cdef->IsMobile() || cdef->IsAbleToFly() || !IsTurretFree(unit) || isCooling(unit)) {
@@ -2705,8 +2706,8 @@ void CBuilderManager::UpdateTurrets()
 		})) {
 			continue;
 		}
-		if (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, false) > 0.f) {
-			continue;  // allied power around (a finished picker turret counts; a Claw minefield doesn't)
+		if (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, isCover) > 0.f) {
+			continue;  // allied power around (a finished picker turret counts; a Claw minefield or an Antinuke doesn't)
 		}
 		const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, pos, nullptr);
 		if (defs.empty() || AssistTurret(unit, pos, "near enemy") || isOrdered || !IsTurretBudget(maxCost(defs))) {
@@ -2798,12 +2799,13 @@ bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre, c
 bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
 		const std::function<bool (const CCircuitDef*)>& canHit, AIFloat3& outPos) const
 {
-	// Finished or being built, ours or an ally's; and our jobs not started yet (the porc sweep's, say). Claw mines and
-	// missiles don't count
+	// Finished or being built, ours or an ally's; and our jobs not started yet (the porc sweep's, say). As
+	// CTurretPicker::IsDefence: Claw mines, missiles and turret.not_defence don't count
 	const int frame = circuit->GetLastFrame();
 	const float sqRadius = SQUARE(radius);
-	auto isDefence = [&canHit](const CCircuitDef* d) {
-		return (d != nullptr) && !d->IsMobile() && !d->IsMobileBuilding() && d->IsAttacker() && canHit(d);
+	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
+	auto isDefence = [picker, &canHit](const CCircuitDef* d) {
+		return picker->IsDefence(d) && canHit(d);
 	};
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const AIFloat3& pos = kv.second->GetPos(frame);

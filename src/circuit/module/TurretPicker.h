@@ -44,7 +44,7 @@ struct STurretOrder {
  *   E, known enemies it could shoot (choke.spot.enemy's rules), at cost; an enemy mex at its income x turret.horizon
  *   C, turret.choke when a choke of our current line or the enemy line has its middle in range
  * each in a clear line of fire (high-arc: any) and halved for every tower of ours or an ally's, queued too, that
- * covers it already. F, the front, is the known enemy buildings' influence at the spot, 2 x (1 - d / 2048) each (the
+ * covers it already and hits it (air or ground; turret.not_defence left out). F, the front, is the known enemy buildings' influence at the spot, 2 x (1 - d / 2048) each (the
  * enemy territory layer's), over the highest among the candidates. A spot must be within the radius, within
  * defence.infl_rad of a building of ours or an ally's (constructors left out), buildable and open on the blocking map,
  * out of the builder's threat, in its reach (and IsCommJobSafe for a builder whose flee is on), and not masked by a
@@ -65,6 +65,8 @@ public:
 		float heightCap = 150.f;
 		float travel = 1000.f;
 		float choke = 100.f;  // metal
+		// Armed statics that defend nothing in the field: no tower covering a target, nor a defence to the callers
+		std::vector<CCircuitDef*> notDefence;
 		// Callers (CBuilderManager::UpdateTurrets)
 		bool isAfterFlee = true;
 		float afterFleeSince = 0.f;  // seconds of game time before the after-flee caller starts
@@ -98,6 +100,10 @@ public:
 	IBuilderTask* Order(const STurretOrder& order);
 	// On arrival: the job's spot is still out of threat and worth its cost
 	bool IsStillWorth(const CBDefenceTask* task);
+
+	// A static that defends the ground around it: armed, not a Claw mine or a missile (customParams.mobilebuilding), not
+	// in turret.not_defence
+	bool IsDefence(const CCircuitDef* cdef) const;
 
 	SConfig& GetConfig() { return config; }
 	const SLast& GetLast() const { return last; }

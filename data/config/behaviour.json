@@ -214,6 +214,9 @@
 	"height_cap": 150,  // elmos above the targets that earn all of it
 	"travel": 1000,  // constructor walk, in elmos, that halves a spot's rank
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
+	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
+	// the callers. Claw mines and missiles are left out too, by customParams.mobilebuilding
+	"not_defence": ["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"],  // Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity, Antinuke
 	// Callers, once a second, each turret at NORMAL priority. Both share the light list and the limits: a
 	// constructor helps a turret of ours being built (or a picker job) within radius instead of ordering one, orders
 	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and picker turrets ordered in the last

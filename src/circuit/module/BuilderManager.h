@@ -407,7 +407,7 @@ private:
 		ICoreUnit::Id id;
 		springai::AIFloat3 pos;
 		float power;
-		bool isMobileBuilding;  // a Claw mine, say
+		const CCircuitDef* def;
 	};
 	static float GetCommWideMargin(float margin) { return margin + std::max(0.25f * margin, 50.f); }
 	void AddComm(CCircuitUnit* unit);  // a state for a ground builder with the flee on
@@ -415,10 +415,10 @@ private:
 	// Outside every seen flee zone (range + margin)
 	bool IsCommSafe(const springai::AIFloat3& pos, float margin);
 	void UpdateCommCovers();
-	// Cover power within radius of pos, skipId left out (and Claw mines, unless isMobileBuildings); stops summing once
-	// it reaches enough
+	// Cover power within radius of pos, skipId left out (and allies whose def fails isCounted); stops summing once it
+	// reaches enough
 	float GetCommCover(const springai::AIFloat3& pos, float radius, ICoreUnit::Id skipId, float enough,
-			bool isMobileBuildings = true);
+			const std::function<bool (const CCircuitDef*)>& isCounted = nullptr);
 	// nullptr: a flying builder, or its flee is off
 	SCommState* GetCommState(CCircuitUnit* unit);
 	// A safe flee spot not at its feet exists (state->escapeGoal)

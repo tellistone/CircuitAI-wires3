@@ -93,7 +93,29 @@ void CTurretPicker::ReadConfig()
 			circuit->LOG("CONFIG %s: turret.light '%s' is not a turret, ignored", cfgName.c_str(), name.c_str());
 		}
 	}
+	names = {"staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"};
+	const Json::Value& notDefence = turret["not_defence"];
+	if (notDefence.isArray()) {
+		names.clear();
+		for (const Json::Value& name : notDefence) {
+			names.push_back(name.asString());
+		}
+	}
+	for (const std::string& name : names) {
+		CCircuitDef* cdef = circuit->GetCircuitDef(name.c_str());
+		if (cdef != nullptr) {
+			c.notDefence.push_back(cdef);
+		} else {
+			circuit->LOG("CONFIG %s: turret.not_defence '%s' is not a unit, ignored", cfgName.c_str(), name.c_str());
+		}
+	}
 	inflRadius = DEFAULT_SLACK * 4 * root["defence"].get("infl_rad", 5.f).asFloat();  // CInfluenceMap::AddTerritory's
+}
+
+bool CTurretPicker::IsDefence(const CCircuitDef* cdef) const
+{
+	return (cdef != nullptr) && !cdef->IsMobile() && cdef->IsAttacker() && !cdef->IsMobileBuilding()
+		&& (std::find(config.notDefence.begin(), config.notDefence.end(), cdef) == config.notDefence.end());
 }
 
 AIFloat3 CTurretPicker::FindSpot(CCircuitDef* def, const STurretOrder& order, float& outValue)
@@ -399,21 +421,21 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		}
 	}
 
-	// Halved for each tower that covers it already (a Claw minefield doesn't)
-	std::vector<CSpotScorer::STower> towers = circuit->GetMilitaryManager()->GetSpotScorer()->GetTowers(false);
-	if (utils::is_valid(skipTower)) {
-		towers.erase(std::remove_if(towers.begin(), towers.end(), [&skipTower](const CSpotScorer::STower& t) {
-			return t.pos.SqDistance2D(skipTower) < SQUARE(SQUARE_SIZE * 2);
-		}), towers.end());
-	}
+	// Halved for each tower that covers it already and hits it: an AA tower doesn't cover a mex, nor a Claw minefield or
+	// a Big Bertha at home the field
+	std::vector<CSpotScorer::STower> towers = circuit->GetMilitaryManager()->GetSpotScorer()->GetTowers();
 	towers.erase(std::remove_if(towers.begin(), towers.end(), [&](const CSpotScorer::STower& t) {
-		return t.pos.SqDistance2D(centre) > SQUARE(reach + t.range);
+		return !IsDefence(t.def) || (t.pos.SqDistance2D(centre) > SQUARE(reach + t.range))
+			|| (utils::is_valid(skipTower) && (t.pos.SqDistance2D(skipTower) < SQUARE(SQUARE_SIZE * 2)));
 	}), towers.end());
 	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
 	auto halve = [&](SRaw& r) {
 		const AIFloat3 p(r.pos.x, r.pos.y, r.pos.z);
+		const bool isDeep = r.pos.y < -SQUARE_SIZE * 5;  // UpdateTurrets' water test
 		for (const CSpotScorer::STower& tower : towers) {
-			if ((tower.pos.SqDistance2D(p) <= SQUARE(tower.range))
+			const bool isHit = r.isAir ? tower.def->HasAntiAir()
+					: (tower.def->HasAntiLand() || (isDeep && tower.def->HasAntiWater()));
+			if (isHit && (tower.pos.SqDistance2D(p) <= SQUARE(tower.range))
 				&& (tower.isHighArc || spotScorer->IsClearLine(tower.pos, tower.emit, p)))
 			{
 				r.amount *= 0.5f;
