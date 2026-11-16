@@ -157,7 +157,13 @@ bool ISquadTask::IsClaimedByNearer(const CEnemyInfo* enemy, const AIFloat3& pos,
 	static constexpr float CLAIM_NEARER = 0.8f;  // the other group must be under 0.8x our distance to the enemy
 	const AIFloat3& ePos = enemy->GetPos();
 	const float sqDist = pos.SqDistance2D(ePos);
-	if (sqDist < sqFreeDist) {
+	if ((sqDist < sqFreeDist) || enemy->GetTasks().empty()) {
+		return false;
+	}
+	// Never inside the base defence radius: there every group in reach defends
+	CCircuitAI* circuit = manager->GetCircuit();
+	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();
+	if ((baseRange > 0.f) && (ePos.SqDistance2D(circuit->GetSetupManager()->GetBasePos()) < SQUARE(baseRange))) {
 		return false;
 	}
 	const float sqClaimDist = sqDist * SQUARE(CLAIM_NEARER);
