@@ -12,6 +12,8 @@
 #include "module/MilitaryManager.h"
 #include "module/SensorPlanner.h"
 #include "module/SpotScorer.h"
+#include "module/BuilderManager.h"
+#include "module/TurretPicker.h"
 #include "setup/DefenceMatrix.h"
 #include "setup/SetupData.h"
 #include "terrain/TerrainManager.h"
@@ -30,8 +32,10 @@
 #include "Figure.h"
 #include "Game.h"
 #include "Log.h"
+#include "UnitDef.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 
@@ -45,7 +49,7 @@ using namespace springai;
 
 namespace {
 
-const char* LAYER_NAMES[] = {"chokes", "pockets", "lines", "ranks", "traffic", "spots", "radar", "regions"};
+const char* LAYER_NAMES[] = {"chokes", "pockets", "lines", "ranks", "traffic", "spots", "radar", "regions", "turrets"};
 
 AIColor ColourOf(int colour)
 {
@@ -59,6 +63,7 @@ AIColor ColourOf(int colour)
 		AIColor(0.2f, 0.9f, 0.9f),  // CYAN
 		AIColor(1.0f, 1.0f, 1.0f),  // WHITE
 		AIColor(1.0f, 0.3f, 1.0f),  // MAGENTA
+		AIColor(0.5f, 0.05f, 0.05f),  // DARK_RED
 	};
 	return colours[colour];
 }
@@ -133,6 +138,8 @@ bool CChokeOverlay::OnChat(CCircuitAI* ai, int playerId, const char* message)
 		SetValue(key, value);
 	} else if (verb == "save") {
 		Save();
+	} else if (verb == "turret") {
+		OrderTurret(in);
 	} else {
 		ShowType(verb);
 	}
@@ -145,7 +152,7 @@ void CChokeOverlay::Update()
 		return;
 	}
 	const bool isLive = (layer == Layer::LINES) || (layer == Layer::RANKS) || (layer == Layer::SPOTS)
-			|| (layer == Layer::RADAR);
+			|| (layer == Layer::RADAR) || (layer == Layer::TURRETS);
 	const int frame = circuit->GetLastFrame();
 	if ((drawnVersion != chokeMap->GetVersion()) || (isLive && (frame >= drawnFrame + LIVE_FRAMES))) {
 		Draw();
@@ -233,6 +240,14 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 		Say("set is off in games with human opponents");
 		return;
 	}
+	if (key.compare(0, 7, "turret.") == 0) {
+		if (SetTurretValue(key.substr(7), value)) {
+			Say(key + " = " + value);
+		} else {
+			Say("can't set '" + key + "' to '" + value + "'");
+		}
+		return;
+	}
 	CChokeMap::SConfig& c = chokeMap->GetConfig();
 	const std::map<std::string, float*> floats = {
 		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"defensible", &c.defensible},
@@ -284,6 +299,73 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 	}
 	Say(key + " = " + value + ", rebuilding");
 	chokeMap->Rebuild();
+}
+
+/*
+ * The turret picker's keys as in the "turret" config block, on the AI that answers; the def lists aren't settable
+ */
+bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& value)
+{
+	CTurretPicker::SConfig& c = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
+	const std::map<std::string, float*> floats = {
+		{"radius", &c.radius}, {"min_value", &c.minValue}, {"traffic", &c.traffic}, {"horizon", &c.horizon},
+		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"height", &c.height}, {"choke", &c.choke},
+		{"enemy_reach", &c.enemyReach}, {"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown},
+		{"share", &c.share}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
+	};
+	const std::map<std::string, bool*> flags = {
+		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy},
+	};
+	std::istringstream in(value);
+	auto floatIt = floats.find(key);
+	auto flagIt = flags.find(key);
+	if (floatIt != floats.end()) {
+		float v;
+		if (in >> v) {
+			*floatIt->second = v;
+			return true;
+		}
+	} else if (flagIt != flags.end()) {
+		bool v;
+		if (in >> std::boolalpha >> v) {
+			*flagIt->second = v;
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+ * choke_overlay turret <x> <z> [def]: our nearest free constructor orders a turret there (the picker's choice of the
+ * porcupine list, or def), and the turrets layer shows the pick. Only in games with no human opponents
+ */
+void CChokeOverlay::OrderTurret(std::istringstream& in)
+{
+	if (IsHumanIn(false)) {
+		Say("turret is off in games with human opponents");
+		return;
+	}
+	float x, z;
+	if (!(in >> x >> z)) {
+		Say("usage: turret <x> <z> [def]");
+		return;
+	}
+	std::string name;
+	CCircuitDef* def = nullptr;
+	if (in >> name) {
+		def = circuit->GetCircuitDef(name.c_str());
+		if (def == nullptr) {
+			Say("unknown def '" + name + "'");
+			return;
+		}
+	}
+	AIFloat3 pos(x, 0.f, z);
+	CTerrainManager::CorrectPosition(pos);
+	Say("turret: " + circuit->GetBuilderManager()->OrderTurretAt(pos, def));
+	layer = Layer::TURRETS;
+	isOn = true;
+	chokeMap->Request();
+	Draw();
 }
 
 /*
@@ -353,6 +435,7 @@ void CChokeOverlay::Draw()
 		case Layer::SPOTS: DrawSpots(); break;
 		case Layer::RADAR: DrawRadar(); break;
 		case Layer::REGIONS: DrawRegions(graph); break;
+		case Layer::TURRETS: DrawTurrets(); break;
 		default: break;
 	}
 }
@@ -449,7 +532,8 @@ void CChokeOverlay::DrawPockets()
 }
 
 /*
- * Current line orange, forward line yellow, objective magenta; hold slots cyan, with their spots
+ * Current line orange, forward line yellow, enemy line red, front line white, objective magenta; hold slots cyan,
+ * with their spots
  */
 void CChokeOverlay::DrawLines()
 {
@@ -463,6 +547,12 @@ void CChokeOverlay::DrawLines()
 	}
 	for (int c : chokeMap->GetCurrentLine()) {
 		drawChoke(c, Colour::ORANGE, 96.f);
+	}
+	for (int c : chokeMap->GetEnemyLine()) {
+		drawChoke(c, Colour::RED, 64.f);
+	}
+	for (int c : chokeMap->GetFrontLine()) {
+		drawChoke(c, Colour::WHITE, 192.f);
 	}
 	const CFrontline* frontline = circuit->GetMilitaryManager()->GetFrontline();
 	for (int id : frontline->GetObjectiveChokes()) {
@@ -494,7 +584,7 @@ void CChokeOverlay::DrawLines()
 }
 
 /*
- * Enemy-held chokes: red when defended, white when not, with E's numbers
+ * E's chokes: red when defended, white when undefended, grey when not seen enough to say, with E's numbers
  */
 void CChokeOverlay::DrawRanks()
 {
@@ -505,8 +595,9 @@ void CChokeOverlay::DrawRanks()
 			continue;
 		}
 		const AIFloat3 centre = chokeMap->GetCellPos(graph.GetChokes()[c].centre);
-		AddCross(centre, (rank.defence > 0.f) ? Colour::RED : Colour::WHITE, 96.f);
-		AddLabel(centre, utils::float_to_string(rank.defence, "enemy-held: defence %.0f")
+		AddCross(centre, rank.isUndefended ? Colour::WHITE : (rank.defence > 0.f) ? Colour::RED : Colour::GREY, 96.f);
+		AddLabel(centre, std::string(rank.isHeld ? "enemy-held" : "enemy line")
+				+ (rank.isUndefended ? ", undefended" : "") + utils::float_to_string(rank.defence, ": defence %.0f")
 				+ utils::float_to_string(rank.value, ", value %.0f")
 				+ utils::float_to_string(rank.confidence * 100.f, ", seen %.0f%%"));
 	}
@@ -558,6 +649,59 @@ void CChokeOverlay::DrawSpots()
 	}
 	if (!candidates.empty()) {
 		AddLabel(candidates.front().pos, utils::float_to_string(candidates.front().score, "best spot, score %.2f"));
+	}
+}
+
+/*
+ * The last turret order: its radius ring and centre white; candidates that passed the hard rules grey, the best
+ * green, the next 4 cyan, and the ones outside our buildings' influence dark red. Tested spots are labelled with
+ * value per cost and F, the chosen one with its def and the four terms
+ */
+void CChokeOverlay::DrawTurrets()
+{
+	const CTurretPicker::SLast& last = circuit->GetMilitaryManager()->GetTurretPicker()->GetLast();
+	if (last.frame < 0) {
+		AddLabel(OnGround(CTerrainManager::GetTerrainWidth() * 0.5f, CTerrainManager::GetTerrainHeight() * 0.5f),
+				"no turret order yet ('" COMMAND " turret <x> <z> [def]')");
+		return;
+	}
+	const AIFloat3& c = last.centre;
+	const int segments = 48;
+	for (int i = 0; i < segments; ++i) {
+		const float a0 = 2.f * M_PI * i / segments;
+		const float a1 = 2.f * M_PI * (i + 1) / segments;
+		AddLine(OnGround(c.x + last.radius * std::cos(a0), c.z + last.radius * std::sin(a0)),
+				OnGround(c.x + last.radius * std::cos(a1), c.z + last.radius * std::sin(a1)), Colour::WHITE, 8.f);
+	}
+	AddCross(c, Colour::WHITE, 64.f);
+	for (const AIFloat3& pos : last.grid.outside) {
+		AddCross(pos, Colour::DARK_RED, 16.f);
+	}
+	for (const CTurretValue::SCandidate& p : last.grid.passed) {
+		AddCross(AIFloat3(p.pos.x, p.pos.y, p.pos.z), Colour::GREY, 16.f);
+	}
+	const CCircuitDef* def = last.res.def;
+	const float cost = (def != nullptr) ? std::max(def->GetCostM(), 1.f) : 1.f;
+	const std::vector<CTurretValue::SScored>& scored = last.res.search.scored;
+	for (size_t i = 0; i < scored.size(); ++i) {
+		const CTurretValue::SScored& s = scored[i];
+		const AIFloat3 pos(s.cand.pos.x, s.cand.pos.y, s.cand.pos.z);
+		const bool isBest = (i == 0) && last.isFound;
+		const Colour colour = isBest ? Colour::GREEN : ((i < 5) && s.isWorth) ? Colour::CYAN : Colour::GREY;
+		AddCross(pos, colour, isBest ? 64.f : 24.f);
+		if (isBest) {
+			char buf[256];
+			snprintf(buf, sizeof(buf), "%s %.2f x cost: T %.0f, A %.0f, E %.0f, C %.0f, F %.2f",
+					def->GetDef()->GetName(), s.terms.value / cost, s.terms.traffic, s.terms.ally, s.terms.enemy,
+					s.terms.choke, s.terms.front);
+			AddLabel(OnGround(pos.x, pos.z), buf);
+		} else if (i < 40) {
+			AddLabel(OnGround(pos.x, pos.z), utils::float_to_string(s.terms.value / cost, "%.2f")
+					+ utils::float_to_string(s.terms.front, ", F %.2f") + (s.isWorth ? "" : ", not worth it"));
+		}
+	}
+	if (!last.isFound) {
+		AddLabel(OnGround(c.x, c.z), last.line);
 	}
 }
 

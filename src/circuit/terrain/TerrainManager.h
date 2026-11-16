@@ -69,6 +69,12 @@ public:
 									 float searchRadius,
 									 int facing,
 									 TerrainPredicate& predicate);
+	// turret.*: the build site at pos (shifted one block square at most), open on the blocking map (lanes and queued
+	// jobs block it) and buildable there; -RgtVector if none
+	springai::AIFloat3 FindSiteAt(CCircuitDef* cdef, const springai::AIFloat3& pos, int facing);
+	// Below -SQUARE_SIZE * 5: water towers there (MakeDefence's test, the turret picker's)
+	static bool IsDeepWater(float elevation) { return elevation < -40.f; }
+	bool IsDeepWaterAt(const springai::AIFloat3& pos) const;
 
 	const SBlockingMap& GetBlockingMap();
 	bool IsZoneAlly(const springai::AIFloat3& pos) const;

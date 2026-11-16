@@ -39,6 +39,7 @@ class CChokeDefence;
 class CSensorPlanner;
 class CAllyCover;
 class CFrontline;
+class CTurretPicker;
 
 // Attack group route kinds (quota.attack_path_dynamic_cost)
 enum class AttackRoute: int { TARGET = 0, REINFORCE, FRONT, FLEE, CORNERED, _SIZE_ };
@@ -132,6 +133,9 @@ public:
 	CSpotScorer* GetSpotScorer() const { return spotScorer.get(); }
 	CSensorPlanner* GetSensorPlanner() const { return sensorPlanner.get(); }
 	CFrontline* GetFrontline() const { return frontline.get(); }
+	CTurretPicker* GetTurretPicker() const { return turretPicker.get(); }
+	// A picker or cornered tower (CBDefenceTask::IsOffPoints): its death takes no cost off a defence point
+	void AddOffPointsTower(int unitId) { offPointsTowers.insert(unitId); }
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	// Best spot by score (near the enemy, unseen for longest, not defended by known static enemies, not on our side);
 	// -RgtVector if none. Scouts (quota.scout_spot) and raid groups (quota.raider_spot) score the same spots but
@@ -547,6 +551,8 @@ private:
 	std::unique_ptr<CSpotScorer> spotScorer;
 	std::unique_ptr<CSensorPlanner> sensorPlanner;
 	std::unique_ptr<CFrontline> frontline;
+	std::unique_ptr<CTurretPicker> turretPicker;
+	std::set<int> offPointsTowers;  // unit ids
 
 	std::vector<unsigned int> scoutPath;  // list of spot ids
 	unsigned int scoutIdx;

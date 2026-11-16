@@ -13,7 +13,10 @@
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
+#include "module/TurretPicker.h"
 #include "spring/SpringCallback.h"
+#include "spring/SpringMap.h"
+#include "util/Defines.h"
 
 #include "Feature.h"
 
@@ -26,6 +29,8 @@ CBDefenceTask::CBDefenceTask(ITaskManager* mgr, Priority priority,
 							 float cost, float shake, int timeout)
 		: IBuilderTask(mgr, priority, buildDef, position, Type::BUILDER, BuildType::DEFENCE, cost, shake, timeout)
 		, isUrgent(false)
+		, isOffPoints(false)
+		, isPicker(false)
 		, normalCost(cost)
 {
 }
@@ -36,6 +41,17 @@ CBDefenceTask::~CBDefenceTask()
 
 void CBDefenceTask::Update()
 {
+	// A picker job whose builder got there: dropped if threat has reached the spot or it no longer pays (the enemy
+	// building it was for died, say), rather than slid to other ground by the site search. The spot is masked, so the
+	// next order looks elsewhere instead of walking back to it
+	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	if (isPicker && (target == nullptr) && !traveled.empty()
+		&& !militaryMgr->GetTurretPicker()->IsStillWorth(this, *traveled.begin()))
+	{
+		militaryMgr->GetSpotScorer()->MaskFailed(buildPos);
+		manager->AbortTask(this);
+		return;
+	}
 	IBuilderTask::Update();
 	if (units.empty() || (target == nullptr)) {
 		return;
@@ -69,9 +85,50 @@ void CBDefenceTask::Finish()
 
 void CBDefenceTask::Cancel()
 {
-	manager->GetCircuit()->GetMilitaryManager()->AbortDefence(this);
+	if (!isOffPoints) {
+		manager->GetCircuit()->GetMilitaryManager()->AbortDefence(this);
+	}
 
 	IBuilderTask::Cancel();
+}
+
+void CBDefenceTask::SetTarget(CCircuitUnit* unit)
+{
+	IBuilderTask::SetTarget(unit);
+	if (isOffPoints && (unit != nullptr)) {
+		manager->GetCircuit()->GetMilitaryManager()->AddOffPointsTower(unit->GetId());
+	}
+}
+
+void CBDefenceTask::OnUnitIdle(CCircuitUnit* unit)
+{
+	// The engine refused the build (IBuilderTask::OnUnitIdle aborts after TASK_RETRIES): a picker's spot is skipped
+	// for 5 minutes, so the next order looks elsewhere
+	if (isPicker && !IsDead() && (target == nullptr) && (buildFails + 1 > TASK_RETRIES) && utils::is_valid(buildPos)) {
+		manager->GetCircuit()->GetMilitaryManager()->GetSpotScorer()->MaskFailed(buildPos);
+	}
+	IBuilderTask::OnUnitIdle(unit);
+}
+
+void CBDefenceTask::Execute(CCircuitUnit* unit)
+{
+	// A picker job is built on its exact spot or not at all: the site search would move it up to 1600 elmos, onto
+	// ground nobody scored
+	if (IsDead()) {
+		return;
+	}
+	if (isPicker && (target == nullptr)
+		&& (!utils::is_valid(buildPos)
+			|| !manager->GetCircuit()->GetMap()->IsPossibleToBuildAt(buildDef->GetDef(), buildPos, facing)))
+	{
+		if (utils::is_valid(buildPos)) {
+			// The engine refuses the spot now (a wreck or a building on it): the next order looks elsewhere
+			manager->GetCircuit()->GetMilitaryManager()->GetSpotScorer()->MaskFailed(buildPos);
+		}
+		manager->AbortTask(this);
+		return;
+	}
+	IBuilderTask::Execute(unit);
 }
 
 } // namespace circuit

@@ -33,6 +33,25 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   by source, with their metal, beside all attack-unit losses). The cost: the strongest multiplier and the main-thread
   time spent (lookups timed one in eight).
 
+- **Turret picker for constructors in the field** ([doc/chokepoints.md](doc/chokepoints.md), "Turret picker (G)").
+  A new picker finds the best light turret spot within `turret.radius` (600) of a centre, valuing everything in
+  range in metal: enemy traffic (the income whose routes pass under it, × `turret.horizon` 120 s), our and allied
+  unarmed buildings, enemy buildings seen in the last 3 minutes (an enemy mex at its income × the horizon) and a choke
+  of our line or the enemy line. Each counts if the turret hits it, in a clear line of fire, halved per tower already
+  covering it that hits it, × height (Claw mines, missiles and the `turret.not_defence` superweapons and Antinuke
+  never count as towers). A spot must be worth `turret.min_value` × the turret's cost, inside our buildings'
+  influence, out of threat, buildable and reachable; among those it leans toward enemy buildings (`turret.front`)
+  and prefers a short walk. The turret is built on that exact spot, or not at all; a job dropped on arrival (under
+  0.75 × the threshold, or threatened) masks its spot for 5 minutes. Two callers, on by default
+  (`turret.after_flee`, `turret.near_enemy`): a constructor whose flee ended clear or covered (centred where it
+  started, after `turret.after_flee_since` and only with no defence within `turret.defended_radius`), and a mobile
+  ground constructor near a known enemy building with no armed ally around. They help a turret already being built
+  nearby instead of ordering one, and are held to a cooldown, a budget paid in from `turret.share` of the income (no
+  turret before its share has paid for one) and one order a second. The choke analysis they read is built on the
+  first order. Picker and cornered towers no longer change the defence points' tower counts. New `turrets` overlay
+  layer, `choke_overlay turret <x> <z> [def]` test command and `TURRET` log lines; the `turret.*` keys can be set
+  live.
+
 - **Attack and raid groups stop fleeing and returning to the same fight.** The pick judges the target's own spot
   (attack: the fled-from target at the keep allowance), the escape each unit's spot, so a group could flee, be sent
   straight back by the next pick, and flee again, taking hits both ways. Now a group that flees from a target standing
@@ -64,8 +83,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with
   all of them off the AI plays as before.
   - Each ally team learns the map's shape, shared by allied AIs and built on the area worker. It finds the chokes
-    between regions the enemy's walkers can cross, the pockets of clusters behind them, and the current and forward
-    lines. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
+    between regions the enemy's walkers can cross, the pockets of clusters behind them, the current and forward
+    lines, the enemy line (the current line's cut nearest the enemy) and the front line where the two touch. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
   - Choke defence (A): each cluster of a qualified pocket keeps its AA and its first tower, and the rest goes to the
     pocket's entrances, from a budget of what its held clusters would spend anyway. Modes switch at most every 3
     minutes. Narrow chokes keep a lane free of buildings.
@@ -84,7 +103,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     view must be new. So radar follows the builders as they expand. The first goes up once the first factory
     stands. Once a radar stands, a `choke.radar.guard` tower (turretmissile) goes at the best spot within
     `choke.radar.guard_radius` (300 elmos), unless a tower already reaches it.
-  - Holding the line (C), forward objectives (D) and enemy-held choke rankings (E).
+  - Holding the line (C), forward objectives (D) and rankings of enemy-held and enemy line chokes, with undefended
+    ones flagged (E).
   - Expansion bonus for clusters behind a defended cut.
   - `choke_overlay` chat command: draws chokes, pockets, lines, rankings, traffic, spots, radar and regions with map
     figures, and announces each threat-graph rebuild with the enemy types behind it. In games with no human
