@@ -231,9 +231,12 @@ Spots stay on the goal's side: a choke's inner region or the defended point's re
 into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). A tower's spot must also
 be within build range of ground that one of our builders able to build it can walk to from where it stands, on that
 builder's own movement mask; otherwise no builder would take the job, and it would wait 5 minutes, holding up the
-porc chain behind it, before being dropped. AA towers aren't scored, they go to the point as before. A build chain's `hub` tower that shoots the ground is scored
-the same way, guarding the building that started the chain (within `choke.spot.radius`); it keeps its configured offset
-when no spot passes or another tower of the same hub took that spot. Its shields, storages and AA keep their offsets. A point keeps
+porc chain behind it, before being dropped. AA towers aren't scored, they go to the point as before. A build chain's
+`hub` tower that shoots the ground is scored the same way, guarding the building that started the chain (within
+`choke.spot.radius`), and its site goes on the blocking map as soon as it is queued, as a turret picker job's does, so
+the hub's next tower takes another spot; it keeps its configured offset when no spot passes. Its shields, storages and
+AA keep their offsets. A tower queued in any chain counts as covering its approach, also one waiting behind a hub's
+radar. A point keeps
 its spots by tower type, and a new tower takes the first one of its type that no tower stands on or is queued at, so
 a lost tower is rebuilt at its old spot.
 

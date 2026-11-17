@@ -296,6 +296,16 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	return bestPos;
 }
 
+AIFloat3 CSpotScorer::FindGuardSpot(CCircuitDef* def, const AIFloat3& asset, float radius)
+{
+	if (def->IsRoleAA() || !circuit->GetMilitaryManager()->GetTurretPicker()->IsDefence(def)) {
+		return -RgtVector;
+	}
+	SGoal goal;
+	goal.asset = asset;
+	return FindSpot(def, goal, radius);
+}
+
 void CSpotScorer::MaskFailed(const AIFloat3& pos)
 {
 	failedCells[MaskKey(pos)] = circuit->GetLastFrame() + MASK_FRAMES;  // the traffic field may not be built yet
@@ -430,13 +440,9 @@ std::vector<CSpotScorer::STower> CSpotScorer::GetTowers() const
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		add(kv.second->GetCircuitDef(), kv.second->GetPos(frame));
 	}
-	for (IBuilderTask* task : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
-		for (IBuilderTask* t = task; t != nullptr; t = t->GetNextTask()) {  // a porc chain's waiting towers too
-			if (t->GetTarget() == nullptr) {
-				add(t->GetBuildDef(), t->GetPosition());
-			}
-		}
-	}
+	circuit->GetBuilderManager()->ForEachQueuedTower([&add](IBuilderTask* t) {
+		add(t->GetBuildDef(), t->GetPosition());
+	});
 	return towers;
 }
 

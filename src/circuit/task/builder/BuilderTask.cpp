@@ -15,7 +15,6 @@
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
 #include "module/SpotScorer.h"
-#include "module/TurretPicker.h"
 #include "resource/MetalManager.h"
 #include "resource/EnergyGrid.h"
 #include "setup/SetupManager.h"
@@ -33,8 +32,6 @@
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
-
-#include <algorithm>
 
 namespace circuit {
 
@@ -182,17 +179,19 @@ void IBuilderTask::Finish()
 
 void IBuilderTask::Cancel()
 {
-	// porcupine.budget: the turret account gets back what it paid for towers that never started, its own and those
-	// waiting in its chain (deleted with it)
+	// Its own job and those waiting in its chain (deleted with it), if not started: porcupine.budget's turret account
+	// gets back what it paid for towers, and a reserved site (a scored hub tower's) comes off the blocking map
 	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
-	for (IBuilderTask* t = this; (militaryMgr != nullptr) && (t != nullptr); t = t->GetNextTask()) {
-		if ((t->GetBuildType() == BuildType::DEFENCE) && (t->GetTarget() == nullptr)) {
+	for (IBuilderTask* t = this; t != nullptr; t = t->GetNextTask()) {
+		if (t->GetTarget() != nullptr) {
+			continue;
+		}
+		if ((militaryMgr != nullptr) && (t->GetBuildType() == BuildType::DEFENCE)) {
 			militaryMgr->RefundTurret(static_cast<CBDefenceTask*>(t));
 		}
-	}
-
-	if ((target == nullptr) && utils::is_valid(buildPos)) {
-		SetBuildPos(-RgtVector);
+		if (utils::is_valid(t->buildPos)) {
+			t->SetBuildPos(-RgtVector);
+		}
 	}
 
 	// Destructor will take care of the nextTask queue
@@ -723,27 +722,10 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 		CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 		CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::HUB);
 		// choke.spot.enable: an armed hub tower that shoots the ground goes to the spot scorer's best spot guarding the
-		// building (a POSITION goal within choke.spot.radius), as a defence point's towers do; its offset if no spot
-		// passes, or if another tower of this hub took that spot
-		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		// building, within choke.spot.radius, as a defence point's towers do; its offset if no spot passes
 		const CChokeMap* chokeMap = circuit->GetChokeMap();
-		const bool isSpot = chokeMap->GetConfig().isSpot && chokeMap->IsReady();
-		CSpotScorer::SGoal goal;
-		goal.asset = buildPos;
-		std::vector<AIFloat3> spots;
-		auto findSpot = [&](CCircuitDef* cdef) -> AIFloat3 {
-			if (!isSpot || !cdef->IsAttacker() || cdef->IsRoleAA() || !militaryMgr->GetTurretPicker()->IsDefence(cdef)) {
-				return -RgtVector;
-			}
-			const AIFloat3 spot = militaryMgr->GetSpotScorer()->FindSpot(cdef, goal, chokeMap->GetConfig().spotRadius);
-			if (!utils::is_valid(spot) || std::any_of(spots.begin(), spots.end(), [&spot](const AIFloat3& s) {
-				return s.SqDistance2D(spot) < SQUARE(SQUARE_SIZE * 8);
-			})) {
-				return -RgtVector;
-			}
-			spots.push_back(spot);
-			return spot;
-		};
+		const bool isSpot = chokeMap->GetConfig().isSpot;
+		CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
 
 		for (auto& queue : chain->hub) {
 			IBuilderTask* parent = nullptr;
@@ -787,19 +769,25 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 							break;
 					}
 				}
-				AIFloat3 pos = (bi.buildType == IBuilderTask::BuildType::DEFENCE) ? findSpot(bi.cdef) : -RgtVector;
-				if (!utils::is_valid(pos)) {
+				AIFloat3 pos = (isSpot && (bi.buildType == IBuilderTask::BuildType::DEFENCE))
+						? spotScorer->FindGuardSpot(bi.cdef, buildPos, chokeMap->GetConfig().spotRadius) : -RgtVector;
+				const bool isScored = utils::is_valid(pos);
+				if (!isScored) {
 					pos = buildPos + offset;
 					CTerrainManager::CorrectPosition(pos);
 					pos = terrainMgr->GetBuildPosition(bdef, pos);
 				}
 
-				if (parent == nullptr) {
-					parent = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, bi.cdef, pos, bi.buildType, 0.f, true, 0);
-				} else {
-					parent->SetNextTask(builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, bi.cdef, pos, bi.buildType, 0.f, false, 0));
-					parent = parent->GetNextTask();
+				IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, bi.cdef, pos, bi.buildType, 0.f,
+						parent == nullptr, 0);
+				if (isScored) {  // its site on the blocking map now, as the picker's: the next tower's spot moves on
+					task->SetFacing(UNIT_FACING_SOUTH);  // before SetBuildPos: the blocker uses it
+					task->SetBuildPos(pos);
 				}
+				if (parent != nullptr) {
+					parent->SetNextTask(task);
+				}
+				parent = task;
 			}
 		}
 	}

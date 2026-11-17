@@ -137,9 +137,8 @@ IBuilderTask* CSensorPlanner::MakeGuardTask(const AIFloat3& radarPos)
 		}
 	}
 	// The spot scorer's best spot covering its approaches, else beside it
-	CSpotScorer::SGoal goal;
-	goal.asset = radarPos;
-	AIFloat3 pos = circuit->GetMilitaryManager()->GetSpotScorer()->FindSpot(guardDef, goal, config.radarGuardRadius);
+	AIFloat3 pos = circuit->GetMilitaryManager()->GetSpotScorer()->FindGuardSpot(guardDef, radarPos,
+			config.radarGuardRadius);
 	if (!utils::is_valid(pos)) {
 		pos = radarPos;
 	}

@@ -9,7 +9,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
-  fixed offset; the offset stays the fallback, and for shields, storages and AA.
+  fixed offset; the offset stays the fallback, and for shields, storages and AA. A scored hub tower's site goes on the
+  blocking map when it is queued (cleared if its chain is cancelled), so the hub's next tower takes another spot.
+  Queued towers count as cover in any chain, also those waiting behind a hub's radar (they were invisible to the spot
+  scorer). Base towers, hub towers and the radar guard share `CSpotScorer::FindGuardSpot`, which skips AA and
+  non-defences.
 
 - **Big Bertha and Disco Rave Party aim by a priority list** (`target_tiers` in behaviour.json, new
   `CPriorityArtyTask`). They used `CSuperTask`, which shelled the enemy cluster with the most metal, and only where
