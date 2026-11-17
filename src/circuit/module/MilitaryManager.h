@@ -309,6 +309,14 @@ public:
 	// May a unit of cdef's movement type that scouts through the scout attribute take a scout slot: fewer of them are
 	// scouting than quota.scout + bonus, or than quota.scout_share of them (rounded down), both capped by scout_max
 	bool IsScoutSlotFree(const CCircuitDef* cdef) const;
+	// Raid stint: a scout with no safe route to its spot raids (any raid group, merges and rallies included) until
+	// endFrame, then its raid group hands it back to a new scout task (CRaidTask::UpdateScoutStints)
+	void SetScoutStint(const CCircuitUnit* unit, int endFrame);
+	void EndScoutStint(const CCircuitUnit* unit);
+	int GetScoutStintEnd(const CCircuitUnit* unit) const;  // -1: not on a stint
+	bool IsScoutStint(const CCircuitUnit* unit) const { return GetScoutStintEnd(unit) >= 0; }
+	bool HasScoutStints() const { return !scoutStints.empty(); }
+	bool IsScouting(const CCircuitUnit* unit) const;  // on a scout task or a raid stint
 	bool IsQuotaScout(const CCircuitDef* cdef) const;  // scouts through the scout attribute, not its own role
 	// quota.raider (+ bonus): factories build a raider while we have fewer raider units (main role raider or bound
 	// to it, not scouting; alive plus queued) than this. 0 = no floor
@@ -654,6 +662,7 @@ private:
 		int controllerId;  // our unit that captured it
 		float cost;
 	};
+	std::unordered_map<int, int> scoutStints;  // scout unit id -> frame its raid stint ends (SetScoutStint)
 	std::unordered_map<int, SCapturedUnit> capturedUnits;  // captured unit id -> who holds it, for "capture_hide"
 	SArtilleryCfg artillery;
 	SFormationCfg formation;

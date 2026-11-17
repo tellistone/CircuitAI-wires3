@@ -113,6 +113,10 @@ private:
 	int roamPathFrame;  // when FallbackRaid last asked for a roam route
 	springai::AIFloat3 roamGoal;  // ...and to where: re-planned only every 3 s while walking it safely
 	std::shared_ptr<PathInfo> roamPath;  // the route to roamGoal once it arrived (kept only while the leader walks it)
+	// Scouts on a raid stint (CMilitaryManager::SetScoutStint; CScoutTask: no safe route to its spot), whichever group
+	// they are in now: back to a new scout task at danger (the scout's own flee, never the escape home), or once the
+	// stint is over and we fight nothing. True: the last unit left, this task aborted
+	bool UpdateScoutStints(int frame, bool isInDanger);
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	void SendPendingFight(int frame);  // short roam path: the Fight order sent from Update() (not from the path callback)
 };

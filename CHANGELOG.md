@@ -482,6 +482,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Scouts raid while cut off.** When a scout has no safe route to its picked spot (e.g. it fled into a pocket and
+  the danger sits between it and everything else), or nothing could be picked, an armed ground scout goes raiding on a
+  "stint": a raid task of its own, which merges, rallies and takes joiners like any raid group. The stint belongs to
+  the unit (`CMilitaryManager::SetScoutStint`), so it follows the scout into whatever raid group it ends up in. Guards
+  never pull it, and it still counts as a scout for the scout quota and the raider floor. After 10 s, once its group
+  isn't fighting, the scout goes back to a scout task, which looks for a safe route again (the spot it gave up on is
+  blocked for 10 s). At danger the scout leaves its group at once instead of joining the raid escape to a haven: its
+  own flee runs to the nearest safe spot, and no new stint starts for 5 s. Air and unarmed scouts (and scouts in those
+  5 s) instead walk to the nearest unseen safe spot they can reach without crossing danger (one capped route query to
+  rings of spots around them and our safe frontline spots), and wait 3 s only when there is none. This replaces the
+  spot-by-spot retry, which ended in a hold every second while cut off.
 - **Scouts flee instead of going home.** A scout standing in threat it can't take now drops its target and runs to
   the nearest spot well clear of the threat (least-threat route), and goes back to scouting once it has been out of
   threat for 2 seconds. The spot it was heading to is blocked for 10 s, so it doesn't walk straight back. The scout
