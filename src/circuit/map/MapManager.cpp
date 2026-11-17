@@ -52,6 +52,7 @@ void CMapManager::PrepareUpdate()
 //	radarMap = std::move(circuit->GetMap()->GetRadarMap());
 	circuit->GetMap()->GetSonarMap(sonarMap);
 	circuit->GetMap()->GetLosMap(losMap);
+	threatMap->PrepareCover();  // allied defences for the cover layer (quota.attack_ally_cover); none while off
 }
 
 void CMapManager::EnqueueUpdate()

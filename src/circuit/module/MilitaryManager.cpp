@@ -6,6 +6,7 @@
  */
 
 #include "module/MilitaryManager.h"
+#include "module/AllyCover.h"
 #include "module/BuilderManager.h"
 #include "module/ChokeDefence.h"
 #include "module/Frontline.h"
@@ -623,6 +624,9 @@ void CMilitaryManager::ReadConfig()
 		circuit->GetMetalManager()->SetWallThreat(std::max(num("wall", THREAT_MIN, 0.f), THREAT_MIN));
 	}
 	attackPathIgnoreThreat = readAttackNum("attack_path_ignore_threat", 0.25f, 0.f, 1.f);
+	// 0 = off. At most 0.75: each group counts a neighbour's whole strength, so two groups facing separate threats
+	// could commit to (1 + this) x their joint strength; at 1 cover would leave no margin
+	allyCover = std::make_unique<CAllyCover>(circuit, readAttackNum("attack_ally_cover", 0.f, 0.f, 0.75f));
 	{
 		// Each route kind on or off (default on); a bare true/false sets them all
 		static const char* const kinds[] = {"target", "reinforce", "front", "flee", "cornered"};
@@ -1228,6 +1232,9 @@ void CMilitaryManager::Init()
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateEscalation, this), escalation.interval, offset + 2);
 		}
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogRaidStats, this), FRAMES_PER_SEC * 60, offset + 2);
+		if (allyCover->IsOn()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CAllyCover::Log, allyCover.get()), FRAMES_PER_SEC * 60, offset + 3);
+		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
 								FRAMES_PER_SEC * 60,
@@ -2783,7 +2790,7 @@ float CMilitaryManager::GetThrDistMod(IFighterTask::FightType type, const AIFloa
 }
 
 void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,
-		const std::function<float (const AIFloat3&)>& allowedAt, std::vector<SContestedSpot>& outSpots)
+		const std::function<float (const AIFloat3&, float)>& allowedAt, std::vector<SContestedSpot>& outSpots)
 {
 	outSpots.clear();
 	if (contested.bonus <= 1.f) {
@@ -2801,7 +2808,7 @@ void CMilitaryManager::GetTakeableContested(CCircuitUnit* unit, float reach,
 		const float threat = threatMap->GetPlainThreatAt(unit, cPos);
 		const float taskThreat = IFighterTask::IsSquadThreat(unit) ? threatMap->GetSquadThreatAt(unit, cPos)
 				: threatMap->GetThreatAt(unit, cPos);
-		if ((threat <= metalMgr->GetWallThreat()) || (taskThreat >= allowedAt(cPos))
+		if ((threat <= metalMgr->GetWallThreat()) || (taskThreat >= allowedAt(cPos, taskThreat))
 			|| !terrainMgr->CanMobileReachAt(unit->GetArea(), cPos, reach))
 		{
 			continue;

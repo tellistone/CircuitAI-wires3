@@ -12,6 +12,7 @@
 
 #include "spring/SpringCallback.h"
 
+#include "Unit.h"
 #include "WeaponMount.h"
 #include "WeaponDef.h"
 #include "Damage.h"
@@ -618,6 +619,29 @@ float CCircuitDef::GetHeight()
 		topOffset = height / 2 - def->GetWaterline();
 	}
 	return height;
+}
+
+void CCircuitDef::GetCommWeaponRange(CCircuitAI* circuit, springai::Unit* unit, float& outRange, float& outAoe)
+{
+	// TODO: by weapons 1,2 descriptions set proper land/air/water ranges/threats
+	float maxRange = 0.f;
+	float maxAoe = 0.f;
+	for (int num = 1; num < 3; ++num) {
+		std::string str = utils::int_to_string(num, "comm_weapon_id_%i");
+		int weaponDefId = int(unit->GetRulesParamFloat(str.c_str(), -1));
+		if (weaponDefId < 0) {
+			continue;
+		}
+
+		CWeaponDef* weaponDef = circuit->GetWeaponDef(weaponDefId);
+		const float range = weaponDef->GetRange();
+		if (maxRange < range) {
+			maxRange = range;
+			maxAoe = weaponDef->GetAoe();
+		}
+	}
+	outRange = maxRange * unit->GetRulesParamFloat("comm_range_mult", 1.f);
+	outAoe = maxAoe;
 }
 
 bool CCircuitDef::IsYTargetable(float elevation, float posY) {

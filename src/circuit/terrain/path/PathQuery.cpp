@@ -36,6 +36,19 @@ IPathQuery::~IPathQuery()
 	}
 }
 
+void IPathQuery::SetThreatArray(std::shared_ptr<const FloatVec>&& array)
+{
+	if (array == nullptr) {
+		return;
+	}
+	threatArrayOwner = std::move(array);
+	threatArray = threatArrayOwner->data();
+	const float* arr = threatArray;  // lives as long as the query, which outlives its runs
+	threatFun = [arr](int index) {
+		return 2.f * arr[index];
+	};
+}
+
 void IPathQuery::SetThreatAllowance(std::vector<float>&& allowByDist, float step, const springai::AIFloat3& basePos,
 		int pathMapXSize, int squareSize, bool isDynamic, float maxWeight, float margin, float marginMod)
 {
