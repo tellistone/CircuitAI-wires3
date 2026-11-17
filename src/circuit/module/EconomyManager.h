@@ -157,6 +157,14 @@ public:
 	IBuilderTask* UpdateFactoryTasks();
 	IBuilderTask* UpdateStorageTasks();
 	IBuilderTask* UpdatePylonTasks();
+	// economy.energy.fill: cdef is cheap energy put into the gaps of the planned grid instead of at a mex
+	bool IsFillDef(CCircuitDef* cdef) const { return fillDefs.find(cdef) != fillDefs.end(); }
+	// A job for fill def cdef in the open grid gap nearest pos (CEnergyGrid::FindGapToFill) within fill_dist,
+	// reachable by unit (with nullptr: by some builder); nullptr = no such gap
+	IBuilderTask* EnqueueGridFill(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
+			IUnitTask::Priority priority);
+	// Queued energy jobs: ENERGY jobs and gap fills (PYLON jobs of a fill def)
+	int GetEnergyTaskCount() const;
 
 	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
 	// that much energy. False before Init
@@ -217,6 +225,8 @@ private:
 	std::vector<SClusterInfo> clusterInfos;
 	float pylonRange;
 	float pylonLinkInc;
+	std::set<CCircuitDef*> fillDefs;  // economy.energy.fill.unit
+	float fillDist;  // economy.energy.fill.max_dist
 	CCircuitDef* pylonDef;  // TODO: Move into CEnergyGrid?
 
 	CCircuitDef* mexDef;

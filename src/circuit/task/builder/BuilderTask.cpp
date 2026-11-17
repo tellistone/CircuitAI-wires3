@@ -620,8 +620,14 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
 			}
 			if (isValid) {
-				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
-														  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
+				// Cheap energy into the nearest gap of the planned grid (economy.energy.fill), else at this mex
+				CEconomyManager* economyMgr = circuit->GetEconomyManager();
+				if (!economyMgr->IsFillDef(energyDef)
+					|| (economyMgr->EnqueueGridFill(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL) == nullptr))
+				{
+					circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
+															  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
+				}
 			}
 		}
 	}

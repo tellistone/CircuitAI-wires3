@@ -16,6 +16,7 @@
 #include "lemon/adaptors.h"
 #include "lemon/bfs.h"
 
+#include <functional>
 #include <set>
 #include <map>
 #include <unordered_map>
@@ -37,6 +38,12 @@ public:
 	void Update();
 	void SetForceRebuild(bool value) { isForceRebuild = value; }
 	IGridLink* GetLinkToBuild(CCircuitDef*& outDef, springai::AIFloat3& outPos);
+	// economy.energy.fill: an open gap of the grid plan (a planned link between two finished mex clusters, or between
+	// the mexes of one cluster), not being built, that one cdef (a building with pylonrange) narrows from an end that is
+	// already on the grid. The gap whose site is nearest pos within maxDist; the site passes predicate.
+	// nullptr = no such gap; outPos then invalid
+	IGridLink* FindGapToFill(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist,
+			std::function<bool (const springai::AIFloat3& p)> predicate, springai::AIFloat3& outPos);
 
 	float GetPylonRange(CCircuitDef::Id defId);
 	// Grid energy a structure needs to work (Zero-K customParams.neededlink), 0 = none

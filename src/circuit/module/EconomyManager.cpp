@@ -53,6 +53,7 @@ const char* RES_NAME_ENERGY = "Energy";
 CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		: IModule(circuit)
 		, energyGrid(nullptr)
+		, fillDist(0.f)
 		, pylonDef(nullptr)
 		, mexDef(nullptr)
 		, storeDef(nullptr)
@@ -371,6 +372,19 @@ void CEconomyManager::ReadConfig()
 	}
 
 	pylonLinkInc = energy.get("link_inc", 16.0f).asFloat();
+
+	{
+		const Json::Value& fill = energy["fill"];
+		for (const Json::Value& name : fill["unit"]) {
+			CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
+			if (cdef == nullptr) {
+				circuit->LOG("CONFIG %s: has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
+			} else {
+				fillDefs.insert(cdef);
+			}
+		}
+		fillDist = std::max(fill.get("max_dist", 1500.f).asFloat(), 0.f);
+	}
 
 	{
 		const Json::Value& gridLink = energy["grid_link"];
@@ -813,7 +827,8 @@ bool CEconomyManager::IsStallFix(const IBuilderTask* task) const
 	// it a stall that lasts (energy jobs keep the pull up) would leave it with none
 	const IBuilderTask::BuildType type = task->GetBuildType();
 	return (isMetalStall && ((type == IBuilderTask::BuildType::MEX) || (type == IBuilderTask::BuildType::PYLON)))
-		|| (isEnergyStall && (type == IBuilderTask::BuildType::ENERGY))
+		|| (isEnergyStall && ((type == IBuilderTask::BuildType::ENERGY)
+			|| ((type == IBuilderTask::BuildType::PYLON) && IsFillDef(task->GetBuildDef()))))  // gap fill
 		|| ((type == IBuilderTask::BuildType::FACTORY) && (task->GetPriority() == IBuilderTask::Priority::NOW));
 }
 
@@ -1250,7 +1265,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		metalIncome = std::max(metalIncome, GetAvgMetalIncome());
 	}
 	const float buildPower = std::min(builderMgr->GetBuildPower(), metalIncome);
-	const int taskSize = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
+	const int taskSize = GetEnergyTaskCount();
 	const float maxBuildTime = MAX_BUILD_SEC * (isEnergyStalling ? 0.25f : 1.f);
 	// Room for one more job of this def: about 8 jobs per buildPower/cost
 	auto canQueue = [taskSize, buildPower](CCircuitDef* cdef) {
@@ -1315,6 +1330,15 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 
 	if (bestDef == nullptr) {
 		return nullptr;
+	}
+
+	// Cheap energy goes into the nearest gap of the planned grid, so it links mexes up as it overdrives them;
+	// at the nearest mex only when there is no gap in reach
+	if (IsFillDef(bestDef) && !IsRearDef(bestDef)) {
+		IBuilderTask* task = EnqueueGridFill(bestDef, position, unit, priority);
+		if (task != nullptr) {
+			return task;
+		}
 	}
 
 	// Find place to build
@@ -1872,6 +1896,48 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 	}
 	return builderMgr->EnqueueTask(isReclaimStore ? IBuilderTask::Priority::NOW : IBuilderTask::Priority::HIGH,
 								   storeDef, buildPos, IBuilderTask::BuildType::STORE);
+}
+
+IBuilderTask* CEconomyManager::EnqueueGridFill(CCircuitDef* cdef, const AIFloat3& pos, CCircuitUnit* unit,
+		IUnitTask::Priority priority)
+{
+	if ((energyGrid == nullptr) || (fillDist <= 0.f) || !cdef->IsAvailable(circuit->GetLastFrame())) {
+		return nullptr;
+	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	std::function<bool (const AIFloat3& p)> predicate;
+	if (unit != nullptr) {
+		predicate = [terrainMgr, unit](const AIFloat3& p) {
+			return terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance());
+		};
+	} else {
+		predicate = [builderMgr, cdef](const AIFloat3& p) {
+			return builderMgr->IsBuilderInArea(cdef, p);
+		};
+	}
+	energyGrid->SetAuthority(circuit);
+	AIFloat3 buildPos;
+	IGridLink* link = energyGrid->FindGapToFill(cdef, pos, fillDist, predicate, buildPos);
+	if (link == nullptr) {
+		return nullptr;
+	}
+	// A PYLON job: it marks the gap as being built (one piece per gap at a time) and the grid plan sees it when done
+	IBuilderTask* task = builderMgr->EnqueuePylon(priority, cdef, buildPos, link, cdef->GetCostM());
+	task->SetBuildPos(buildPos);
+	return task;
+}
+
+int CEconomyManager::GetEnergyTaskCount() const
+{
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	int count = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
+	for (const IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::PYLON)) {
+		if (fillDefs.find(t->GetBuildDef()) != fillDefs.end()) {
+			++count;
+		}
+	}
+	return count;
 }
 
 IBuilderTask* CEconomyManager::UpdatePylonTasks()

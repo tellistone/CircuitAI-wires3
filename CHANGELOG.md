@@ -7,6 +7,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Solars and winds fill the gaps of the planned grid** (`economy.energy.fill`: `unit` = `energysolar`,
+  `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the builder (and the mex
+  build chain put one more at each new mex), so it clumped round mexes as many small grids, and the grid linker only
+  started at 16 income, one piece at a time. Now an energy job of a fill def, and the mex chain's energy, goes to the
+  nearest open gap within `max_dist` of the builder (of the mex for the chain): a planned link of the grid's spanning
+  tree between two finished mex clusters, or the gap between the mexes of one. The piece touches a gap end already on
+  the grid, so it still overdrives mexes, and it is a pylon job on that gap, so one piece per gap at a time and the
+  grid plan sees it when done. Gap fills count as energy jobs for the energy budget and as energy stall fixes. No gap
+  in reach: at the nearest mex as before. No `unit` list: off.
+
 - **Attack groups count allied cover** (`quota.attack_ally_cover`, 0..0.75; code default 0 = off, shipped 0.5). A group
   judged every spot by its own strength alone, so two armies beside each other each refused a fight they could take
   together, and a group fled past our own turrets as if they weren't there. Now allies over a spot multiply the group's

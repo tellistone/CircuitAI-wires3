@@ -65,6 +65,16 @@
 			"margin": 1.1  // grid capacity needed = margin x neededlink
 		},
 
+		// Cheap energy that fills the gaps of the planned grid instead of sitting at a mex: energy jobs (and the mex
+		// build_chain's energy) of these defs go to the nearest open gap within max_dist elmos of the builder (of the
+		// mex for the chain): a planned link between two finished mex clusters (CEnergyGrid's spanning tree), or
+		// between the mexes of one. The piece touches a gap end that is already on the grid, so it still overdrives
+		// mexes; one piece per gap at a time. No gap in reach: at the nearest mex as before. Missing unit = off
+		"fill": {
+			"unit": ["energysolar", "energywind"],
+			"max_dist": 1500
+		},
+
 		"link_inc": 16.0,  // minimum metal-income for energy linking
 		"pylon": ["energypylon", "energysolar", "energywind"]
 	},

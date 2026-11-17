@@ -17,6 +17,8 @@
 #include "json/json.h"
 #include "lemon/kruskal.h"
 
+#include <algorithm>
+
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
@@ -290,6 +292,94 @@ IGridLink* CEnergyGrid::GetLinkToBuild(CCircuitDef*& outDef, AIFloat3& outPos)
 	if (target.second != lemon::INVALID) {
 		CEnergyLink* link = &links[spanningGraph->id(target.second)];
 		return FindLinkDef(outDef, outPos, link);
+	}
+	return nullptr;
+}
+
+IGridLink* CEnergyGrid::FindGapToFill(CCircuitDef* cdef, const AIFloat3& pos, float maxDist,
+		std::function<bool (const AIFloat3& p)> predicate, AIFloat3& outPos)
+{
+	outPos = -RgtVector;
+	const float range = GetPylonRange(cdef->GetId());
+	if (range <= 0.f) {
+		return nullptr;
+	}
+	Update();
+
+	struct SGap {
+		IGridLink* link;
+		AIFloat3 site;  // ideal spot
+		float radius;  // search radius around it that keeps the piece linked to the head it grows from
+		float sqDist;  // site to pos
+	};
+	std::vector<SGap> gaps;
+	// Gap between head p0 (on the grid) and head p1. Two buildings link while closer than the sum of their ranges.
+	// One piece that touches both: the middle of the band where it does. Else a step from p0 towards p1, at 0.8 of
+	// the touching distance with 0.15 of slack, so that FindBuildSite's shift keeps it touching p0
+	auto addGap = [&](IGridLink* link, const AIFloat3& p0, float r0, const AIFloat3& p1, float r1) {
+		AIFloat3 dir = p1 - p0;
+		const float d = dir.Length2D();
+		if (d < 1.f) {
+			return;
+		}
+		dir /= d;
+		dir.y = 0.f;
+		const float slack = (r0 + r1 + 2.f * range - d) * 0.5f;  // > 0: one piece can touch both heads
+		SGap gap;
+		gap.link = link;
+		if (slack * 0.8f >= SQUARE_SIZE * 2) {
+			gap.site = p0 + dir * ((d + r0 - r1) * 0.5f);
+			gap.radius = slack * 0.8f;
+		} else {
+			gap.site = p0 + dir * ((r0 + range) * 0.8f);
+			gap.radius = (r0 + range) * 0.15f;
+		}
+		gap.sqDist = gap.site.SqDistance2D(pos);
+		if (gap.sqDist < SQUARE(maxDist)) {
+			gaps.push_back(gap);
+		}
+	};
+
+	// Between the mexes of one finished cluster
+	DetectNode goalNode(*spanningGraph, nodes, links, circuit);
+	for (SpanningGraph::NodeIt it(*spanningGraph); it != lemon::INVALID; ++it) {
+		if (!goalNode[it]) {
+			continue;
+		}
+		CEnergyNode* node = nodes[spanningGraph->id(it)];
+		if (!node->IsMexed()) {  // else only the pylon (FindNodeDef) is wanted there
+			const CEnergyNode::SPylon& h0 = node->GetSourceHead();
+			const CEnergyNode::SPylon& h1 = node->GetTargetHead();
+			addGap(node, h0.pos, h0.range, h1.pos, h1.range);
+		}
+	}
+	// Planned links between finished clusters, from both ends: each end's head is on its cluster's grid
+	DetectLink goalLink(links);
+	for (SpanningGraph::EdgeIt it(*spanningGraph); it != lemon::INVALID; ++it) {
+		if (!goalLink[it]) {
+			continue;
+		}
+		CEnergyLink* link = &links[spanningGraph->id(it)];
+		const CEnergyLink::SPylon* h0 = link->GetSourceHead();
+		const CEnergyLink::SPylon* h1 = link->GetTargetHead();
+		addGap(link, h0->pos, h0->range, h1->pos, h1->range);
+		addGap(link, h1->pos, h1->range, h0->pos, h0->range);
+	}
+
+	std::sort(gaps.begin(), gaps.end(), [](const SGap& a, const SGap& b) { return a.sqDist < b.sqDist; });
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CTerrainManager::TerrainPredicate isGood = [terrainMgr, cdef, &predicate](const AIFloat3& p) {
+		return !terrainMgr->IsZoneAlly(p) && terrainMgr->CanBeBuiltAtSafe(cdef, p) && predicate(p);
+	};
+	const int maxTries = 4;  // FindBuildSite is the costly part
+	for (int i = 0; (i < (int)gaps.size()) && (i < maxTries); ++i) {
+		AIFloat3 site = gaps[i].site;
+		CTerrainManager::CorrectPosition(site);
+		const AIFloat3 buildPos = terrainMgr->FindBuildSite(cdef, site, gaps[i].radius, UNIT_COMMAND_BUILD_NO_FACING, isGood);
+		if (utils::is_valid(buildPos)) {
+			outPos = buildPos;
+			return gaps[i].link;
+		}
 	}
 	return nullptr;
 }
