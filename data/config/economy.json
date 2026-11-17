@@ -92,7 +92,7 @@
 		// Where the game builds wind as tidal (ground at or below -10) anywhere, as any energy
 		"base_only": {
 			"unit": ["energywind"],
-			"radius": 800
+			"radius": 1500
 		},
 
 		"link_inc": 16.0,  // minimum metal-income for energy linking

@@ -27,7 +27,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   nearest metal spot as before. No `unit` list: off.
 
 - **Wind only within the base, and only on the grid** (`economy.energy.base_only`: `unit` = `energywind`, `radius`
-  800). Winds on land are built only within `radius` elmos of the base position (<= 0: the base defence radius,
+  1500). Winds on land are built only within `radius` elmos of the base position (<= 0: the base defence radius,
   behaviour.json `defence.base_rad`, which reaches 1,000 to 2,000 elmos out toward the front). The rule is on the
   site, at every placement: energy jobs (their spot, and the site their builder finally picks), the mex chain's energy,
   grid fills and the grid linker's link pieces; never on where the builder stands, so which energy the AI builds is
@@ -35,7 +35,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   plan (fill steps 1 and 2): not beside a mex of the poorest grid, and never by the fallbacks that queue energy at a
   mex (the mex chain's, the nearest metal spot's) or where the builder stands (the builder's last resort below
   `super` income, which now tries the fill first for solars too). Where the game builds it as tidal (ground at or below
-  its `tidalHeight`, -10) anywhere, as before. A plain list of names (the older form) still works, with radius 800.
+  its `tidalHeight`, -10) anywhere, as before. A plain list of names (the older form) still works, with radius 1500.
 
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own

@@ -390,7 +390,7 @@ void CEconomyManager::ReadConfig()
 	fillDist = std::max(energy["fill"].get("max_dist", 1500.f).asFloat(), 0.f);
 	const Json::Value& baseOnly = energy["base_only"];  // also the older plain list of names
 	readDefs(baseOnly.isObject() ? baseOnly["unit"] : baseOnly, baseOnlyDefs);
-	baseOnlyRadius = baseOnly.isObject() ? baseOnly.get("radius", 800.f).asFloat() : 800.f;
+	baseOnlyRadius = baseOnly.isObject() ? baseOnly.get("radius", 1500.f).asFloat() : 1500.f;
 
 	{
 		const Json::Value& gridLink = energy["grid_link"];
