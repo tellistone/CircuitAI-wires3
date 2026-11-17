@@ -14,7 +14,7 @@
 #include "module/TurretPicker.h"
 #include "resource/MetalManager.h"
 #include "spring/SpringMap.h"
-#include "task/static/ArtyMath.h"
+#include "task/static/PriorityArtyTask.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "unit/ally/AllyUnit.h"
@@ -28,13 +28,10 @@
 
 #include "Log.h"
 #include "UnitDef.h"
-#include "WeaponDef.h"
-#include "WeaponMount.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstring>
 
 namespace circuit {
 
@@ -51,14 +48,7 @@ using namespace springai;
 #define GUN_TARGETS		48  // the best by metal
 #define GUN_FREE_SPOT	0.5f  // a metal spot on the enemy's half with no mex: this x its income x turret.horizon
 #define GUN_SPOT_TAKEN	48.f  // an enemy building this near a metal spot is its mex
-#define GUN_MUZZLE		50.f  // a shell starts this high above the gun's ground (CPriorityArtyTask's MUZZLE_LIFT)
-#define GUN_RANGE_MOD	0.97f  // as CPriorityArtyTask aims
-#define GUN_ARC_STEP	32.f  // elmos between arc samples
-#define GUN_ARC_CLEAR	8.f  // blocked where the shell is less than this above the ground
-#define GUN_ARC_SHORT	44.f  // last sample this far short of the target
 #define GUN_HEIGHT_CAP	150.f  // elmos above the targets that earn all of spot.height
-#define GUN_VIEW_RAYS	16  // bearings V samples
-#define GUN_VIEW_RINGS	8  // points along each
 
 CSpotScorer::CSpotScorer(CCircuitAI* circuit)
 		: circuit(circuit)
@@ -266,66 +256,39 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 }
 
 /*
- * A big cannon's spot, on the turret picker's value model (CTurretValue) with no front term:
- *   value = E x (1 + spot.height x height) x (1 + spot.view x V) / (1 + distance from centre / spot.radius)
- * E sums its targets in reach (the height-adjusted Cannon range, as CPriorityArtyTask aims) with a clear shell arc
- * from its muzzle, 50 elmos over its ground: the enemy buildings we know of (seen in the last 3 minutes, a mex at its
- * income x turret.horizon), and the metal spots on the enemy's half with no mex we know of at half a mex's, the best
- * GUN_TARGETS of them by metal; height its height above them as a share of 150 elmos (up to 1); V the share of its
- * range circle's ground, by area, a clear arc reaches. Arc: the low one, or with a trajectory toggle either. Candidates
- * every GUN_CELL within spot.radius of centre: not enemy-held, out of threat, not masked, buildable (FindSiteAt),
- * where a builder of ours gets in range and (a grid consumer) in pylon reach of a grid with enough energy
+ * A big cannon's spot, on the turret picker's value model (CTurretValue) with no front or view term:
+ *   value = E x (1 + spot.height x height) / (1 + distance from centre / spot.radius)
+ * E sums its targets in reach (the height-adjusted Cannon range) with a clear low shell arc, simulated as
+ * CPriorityArtyTask aims: the enemy buildings we know of (seen in the last 3 minutes, a mex at its income x
+ * turret.horizon), and the metal spots on the enemy's half with no mex we know of at half a mex's, the best
+ * GUN_TARGETS of them by metal; height its height above them as a share of 150 elmos (up to 1). Candidates every
+ * GUN_CELL within spot.radius of centre: our territory, off the lanes, out of threat, not masked, buildable
+ * (FindSiteAt), where a builder of ours gets in range and (a grid consumer) in pylon reach of a grid with enough energy
  */
 AIFloat3 CSpotScorer::FindGunSpot(CCircuitDef* def, const AIFloat3& centre, const SGunConfig& cfg)
 {
-	const int highType = def->GetDef()->GetHighTrajectoryType();  // 0: low arc, 1: high, 2: a toggle
-	WeaponMount* mount = def->GetWeaponMount();
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
-	if ((cfg.radius <= 0.f) || (mount == nullptr) || (highType == 1) || !chokeMap->IsReady()) {
+	ballistics::SShell shell;
+	const float range = def->GetMaxRange(CCircuitDef::RangeType::LAND);
+	if ((cfg.radius <= 0.f) || (range <= 0.f) || !chokeMap->IsReady()
+		|| (def->GetDef()->GetHighTrajectoryType() == 1)  // high arc only: any spot clears
+		|| !CPriorityArtyTask::ReadShell(def, shell) || !shell.isCannon)
+	{
 		return -RgtVector;
 	}
 	const auto t0 = std::chrono::steady_clock::now();
-	// The arc: the main weapon's, as CPriorityArtyTask::ReadWeapons reads it
-	float speed = 0.f;
-	float gravity = 120.f;  // ZK's myGravity for every cannon
-	float heightMod = 0.8f;
-	{
-		WeaponDef* wd = mount->GetWeaponDef();
-		if (std::strcmp(wd->GetType(), "Cannon") == 0) {
-			speed = wd->GetProjectileSpeed() * FRAMES_PER_SEC;
-			const float myGravity = wd->GetMyGravity() * SQUARE(FRAMES_PER_SEC);
-			if (myGravity > 0.f) {
-				gravity = myGravity;
-			}
-			heightMod = wd->GetHeightMod();
-		}
-		delete wd;
-	}
-	const float range = def->GetMaxRange(CCircuitDef::RangeType::LAND);
-	if ((speed <= 0.f) || (range <= 0.f)) {
-		return -RgtVector;
-	}
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const bool isToggle = (highType == 2);
 	auto groundAt = [terrainMgr](float x, float z) {
 		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // shells fly over water, and burst on it
 	};
-	// In reach from the muzzle to 20 elmos over the target's ground (water: its surface), and a clear arc there
 	auto isClear = [&](const CTurretValue::SPos& from, const CTurretValue::SPos& to) {
-		return ballistics::IsShotClear(from.x, std::max(from.y, 0.f) + GUN_MUZZLE, from.z, to.x,
-				std::max(to.y, 0.f) + TARGET_LIFT, to.z, range, heightMod, speed, gravity, GUN_RANGE_MOD, GUN_ARC_STEP,
-				GUN_ARC_CLEAR, GUN_ARC_SHORT, groundAt, isToggle);
+		return ballistics::IsShotClear(from.x, std::max(from.y, 0.f) + ballistics::MUZZLE_HEIGHT, from.z, to.x,
+				std::max(to.y, 0.f) + ballistics::AIM_HEIGHT, to.z, range, shell, groundAt);
 	};
 	// The farthest any target can be: from the highest ground down to the water
 	const float rangeMax = ballistics::CannonRange(range,
-			-(std::max(circuit->GetMap()->GetMaxHeight(), 0.f) + GUN_MUZZLE) * heightMod, speed, gravity) * GUN_RANGE_MOD;
-	// V: GUN_VIEW_RINGS points out to the flat range along each of GUN_VIEW_RAYS bearings
-	const float maxX = CTerrainManager::GetTerrainWidth();
-	const float maxZ = CTerrainManager::GetTerrainHeight();
-	auto viewOf = [&](const CTurretValue::SPos& from) {
-		return ballistics::ShotView(from.x, from.z, range * GUN_RANGE_MOD, GUN_VIEW_RAYS, GUN_VIEW_RINGS, maxX, maxZ,
-				[&](float x, float z) { return isClear(from, {x, terrainMgr->GetHeightAt(x, z), z}); });
-	};
+			-(std::max(circuit->GetMap()->GetMaxHeight(), 0.f) + ballistics::MUZZLE_HEIGHT) * shell.heightMod,
+			shell.speed, shell.gravity) * ballistics::AIM_RANGE_MOD;
 
 	// Targets
 	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
@@ -369,18 +332,15 @@ AIFloat3 CSpotScorer::FindGunSpot(CCircuitDef* def, const AIFloat3& centre, cons
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	const bool isConsumer = economyMgr->IsGridConsumer(def);
 	auto isCandidate = [&](const AIFloat3& c) {
-		return (c.SqDistance2D(centre) <= SQUARE(cfg.radius)) && !IsMasked(c)
-			&& (inflMap->GetInfluenceAt(c) > -INFL_EPS) && (threatMap->GetAllThreatAt(c) <= THREAT_MIN);
+		return (c.SqDistance2D(centre) <= SQUARE(cfg.radius)) && !IsMasked(c) && !chokeMap->IsOnLane(c)
+			&& inflMap->IsAllyTerritory(c, INFL_EPS) && (threatMap->GetAllThreatAt(c) <= THREAT_MIN);
 	};
 	auto makeAt = [&](float x, float z, CTurretValue::SCandidate& out) {
 		const AIFloat3 c(x, terrainMgr->GetHeightAt(x, z), z);
 		if (!isCandidate(c)) {
 			return false;
 		}
-		out.pos = {c.x, c.y, c.z};
-		out.enemyInfl = 0.f;
-		out.walk = c.distance2D(centre);
-		out.factor = 1.f;
+		out = {{c.x, c.y, c.z}, 0.f, c.distance2D(centre)};
 		return true;
 	};
 	const std::function<bool (const AIFloat3&)> isInReach = MakeReachFn(def, false);
@@ -396,11 +356,10 @@ AIFloat3 CSpotScorer::FindGunSpot(CCircuitDef* def, const AIFloat3& centre, cons
 		vc.walk = c.distance2D(centre);
 		return true;
 	};
-	const int gridWidth = int(maxX / GUN_CELL);
-	const int gridHeight = int(maxZ / GUN_CELL);
 	std::vector<CTurretValue::SCandidate> candidates;
-	ForEachCellIn(gridWidth, gridHeight, GUN_CELL, centre.x - cfg.radius, centre.z - cfg.radius,
-			centre.x + cfg.radius, centre.z + cfg.radius, [&](int x, int z) {
+	ForEachCellIn(CTerrainManager::GetTerrainWidth() / GUN_CELL, CTerrainManager::GetTerrainHeight() / GUN_CELL,
+			GUN_CELL, centre.x - cfg.radius, centre.z - cfg.radius, centre.x + cfg.radius, centre.z + cfg.radius,
+			[&](int x, int z) {
 		CTurretValue::SCandidate c;
 		if (makeAt((x + 0.5f) * GUN_CELL, (z + 0.5f) * GUN_CELL, c)) {
 			candidates.push_back(c);
@@ -411,26 +370,21 @@ AIFloat3 CSpotScorer::FindGunSpot(CCircuitDef* def, const AIFloat3& centre, cons
 	params.heightBonus = cfg.height;
 	params.heightCap = GUN_HEIGHT_CAP;
 	params.front = 0.f;
-	params.view = cfg.view;
+	params.view = 0.f;
 	params.travel = cfg.radius;
-	params.minBase = 0.f;
 	params.refineStep = GUN_CELL * 0.25f;
 	const CTurretValue::SResult result = CTurretValue::Search(candidates, targets, params, isClear,
 			[&](float x, float z, CTurretValue::SCandidate& out) { return makeAt(x, z, out) && isFinished(out); },
-			isFinished, viewOf);
+			isFinished);
 
-	AIFloat3 bestPos = -RgtVector;
-	CTurretValue::STerms best;
-	if (result.IsFound()) {
-		const CTurretValue::SScored& sc = result.scored.front();
-		bestPos = AIFloat3(sc.cand.pos.x, sc.cand.pos.y, sc.cand.pos.z);
-		best = sc.terms;
-	}
+	const bool isFound = result.IsFound();
+	const CTurretValue::SScored* best = isFound ? &result.scored.front() : nullptr;
+	const AIFloat3 bestPos = isFound ? AIFloat3(best->cand.pos.x, best->cand.pos.y, best->cand.pos.z) : -RgtVector;
 	const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
-	circuit->LOG("BIG GUN spot %s: %i of %i candidates, %i targets (%i enemies), %s, E %.0f, height %.2f, view %.2f, "
-			"%.0f up on the old site, %.2f ms", def->GetDef()->GetName(), result.tested, (int)candidates.size(),
-			(int)targets.size(), (int)enemyCount, utils::is_valid(bestPos) ? "found" : "none", best.enemy, best.height,
-			best.view, utils::is_valid(bestPos) ? bestPos.y - terrainMgr->GetHeightAt(centre.x, centre.z) : 0.f, ms);
+	circuit->LOG("BIG GUN spot %s: %i of %i candidates, %i targets (%i enemies), %s, E %.0f, height %.2f, %.0f up on "
+			"the old site, %.2f ms", def->GetDef()->GetName(), result.tested, (int)candidates.size(), (int)targets.size(),
+			(int)enemyCount, isFound ? "found" : "none", isFound ? best->terms.enemy : 0.f,
+			isFound ? best->terms.height : 0.f, isFound ? bestPos.y - terrainMgr->GetHeightAt(centre.x, centre.z) : 0.f, ms);
 	return bestPos;
 }
 

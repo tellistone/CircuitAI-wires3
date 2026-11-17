@@ -26,6 +26,7 @@
 #include "WeaponMount.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cfloat>
 #include <climits>
 #include <cmath>
@@ -47,12 +48,6 @@ using namespace springai;
 #define BLIND_KILL_MOD	4
 #define FAR_TURN_SEC	10.f  // mobile units more than this many seconds of turning away rank last
 #define SWITCH_VALUE	3.f  // same tier and finish: switch only for this many times the value
-#define RANGE_MOD		0.97f  // aim within this much of the height-adjusted range
-#define MUZZLE_LIFT		50.f  // elmos above the base the shell starts at (the gun's aimposoffset)
-#define ARC_STEP		16.f  // elmos between arc samples
-#define ARC_CLEARANCE	8.f  // blocked where the shell is less than this above the ground
-#define ARC_STOP_SHORT	44.f  // last sample this far short of the target
-#define ARC_TARGET_LIFT	20.f  // the arc ends this high above the target's base (water: its surface)
 #define FLY_LIFT		100.f  // unknown radar blip this far above the ground: flying
 #define DIVE_DEPTH		(SQUARE_SIZE * 5.f)  // submerged deeper than this: out of reach without a water weapon
 // Beam
@@ -145,7 +140,7 @@ void CPriorityArtyTask::Start(CCircuitUnit* unit)
 	position = unit->GetPos(frame);
 	tp = unit->GetCircuitDef()->GetTargetPriority();
 	aimFrom = position;
-	aimFrom.y += MUZZLE_LIFT;
+	aimFrom.y += ballistics::MUZZLE_HEIGHT;
 	heading = 0.f;  // facing south (+z)
 	TRY_UNIT(circuit, unit,
 		ReadWeapons(unit);
@@ -182,20 +177,11 @@ void CPriorityArtyTask::ReadWeapons(CCircuitUnit* unit)
 	isAntiWater = cdef->HasAntiWater();
 
 	// Arc: the main weapon's
-	WeaponMount* mount = cdef->GetWeaponMount();
-	if (mount != nullptr) {
-		WeaponDef* wd = mount->GetWeaponDef();
-		const float projSpeed = wd->GetProjectileSpeed() * FRAMES_PER_SEC;  // elmo/frame
-		if (projSpeed > 0.f) {
-			speed = projSpeed;
-		}
-		const float myGravity = wd->GetMyGravity() * SQUARE(FRAMES_PER_SEC);  // elmo/frame^2; 0: map gravity
-		if (myGravity > 0.f) {
-			gravity = myGravity;
-		}
-		heightMod = wd->GetHeightMod();
-		delete wd;
-	}
+	ballistics::SShell shell;
+	ReadShell(cdef, shell);
+	speed = shell.speed;
+	gravity = shell.gravity;
+	heightMod = shell.heightMod;
 
 	// Shots: every real weapon that can target (a gun of several fires them in turn; the Starlight's relays can't)
 	for (SWeapon& w : weapons) {
@@ -235,6 +221,27 @@ void CPriorityArtyTask::ReadWeapons(CCircuitUnit* unit)
 	if ((tp != nullptr) && tp->IsBeam()) {  // the aimer's live range (it follows range upgrades), but no further than the beam's
 		range = (aimer != nullptr) ? std::min(aimer->GetRange(), tp->beamRange) : tp->beamRange;
 	}
+}
+
+bool CPriorityArtyTask::ReadShell(const CCircuitDef* cdef, ballistics::SShell& outShell)
+{
+	WeaponMount* mount = cdef->GetWeaponMount();
+	if (mount == nullptr) {
+		return false;
+	}
+	WeaponDef* wd = mount->GetWeaponDef();
+	outShell.isCannon = (std::strcmp(wd->GetType(), "Cannon") == 0);
+	const float projSpeed = wd->GetProjectileSpeed() * FRAMES_PER_SEC;  // elmo/frame
+	if (projSpeed > 0.f) {
+		outShell.speed = projSpeed;
+	}
+	const float myGravity = wd->GetMyGravity() * SQUARE(FRAMES_PER_SEC);  // elmo/frame^2; 0: map gravity
+	if (myGravity > 0.f) {
+		outShell.gravity = myGravity;
+	}
+	outShell.heightMod = wd->GetHeightMod();
+	delete wd;
+	return true;
 }
 
 // A shot: a weapon's reload frame jumped forward by half its reload or more
@@ -388,11 +395,11 @@ bool CPriorityArtyTask::IsTargetable(CEnemyInfo* enemy, bool& outIsMobile) const
 bool CPriorityArtyTask::IsInRange(const AIFloat3& enemyPos) const
 {
 	if (tp->IsBeam()) {  // from the satellite at its height
-		const float maxRange = beam::Reach(range, position.y + tp->beamHeight - enemyPos.y) * RANGE_MOD;
+		const float maxRange = beam::Reach(range, position.y + tp->beamHeight - enemyPos.y) * ballistics::AIM_RANGE_MOD;
 		return position.SqDistance2D(enemyPos) <= SQUARE(maxRange);
 	}
 	const float heightDiff = (enemyPos.y - aimFrom.y) * heightMod;
-	const float maxRange = ballistics::CannonRange(range, heightDiff, speed, gravity) * RANGE_MOD;
+	const float maxRange = ballistics::CannonRange(range, heightDiff, speed, gravity) * ballistics::AIM_RANGE_MOD;
 	return aimFrom.SqDistance2D(enemyPos) <= SQUARE(maxRange);
 }
 
@@ -445,11 +452,12 @@ bool CPriorityArtyTask::IsArcClear(const AIFloat3& aimPos, bool isHigh) const
 	auto heightAt = [terrainMgr](float x, float z) {
 		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // shells fly over water
 	};
-	// To the target's body, not its base: a shell aimed at the ground on its level runs under ARC_CLEARANCE before
-	// ARC_STOP_SHORT, so every flat shot closer than about 2500 elmos read as blocked
-	const float aimY = std::max(aimPos.y, 0.f) + ARC_TARGET_LIFT;
+	// To the target's body, not its base: aimed at the ground on its level, the shell runs under the clearance before
+	// the last sample, so flat shots read as blocked from about 400 to 2,000 elmos and often out to 2,800 (Rave Party:
+	// 3,250 and 4,300)
+	const float aimY = std::max(aimPos.y, 0.f) + ballistics::AIM_HEIGHT;
 	return ballistics::IsArcClear(aimFrom.x, aimFrom.y, aimFrom.z, aimPos.x, aimY, aimPos.z, speed, gravity,
-			ARC_STEP, ARC_CLEARANCE, ARC_STOP_SHORT, heightAt, isHigh);
+			ballistics::ARC_SAMPLE_STEP, ballistics::ARC_MIN_CLEARANCE, ballistics::ARC_END_SHORT, heightAt, isHigh);
 }
 
 int CPriorityArtyTask::GetBlindBudget(CEnemyInfo* enemy) const
@@ -1097,7 +1105,7 @@ bool CPriorityArtyTask::IsBeamClear(const SCandidate& c, int frame, float skipLe
 		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // the beam goes through water
 	};
 	if (!beam::IsLineClear(position.x, position.y + tp->beamHeight, position.z, ePos.x, ePos.y, ePos.z, LINE_STEP,
-		ARC_CLEARANCE, ARC_STOP_SHORT, circuit->GetMap()->GetMaxHeight(), heightAt))
+		ballistics::ARC_MIN_CLEARANCE, ballistics::ARC_END_SHORT, circuit->GetMap()->GetMaxHeight(), heightAt))
 	{
 		AddFailure(c.enemy, frame);  // not checked again within its skip window
 #ifdef DEBUG_LOG

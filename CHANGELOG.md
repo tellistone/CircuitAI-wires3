@@ -53,15 +53,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   (`porcupine.superweapon.spot` in build_chain.json, `CSpotScorer::FindGunSpot`). Their site was the mean of the base
   and our finished clusters, or (Bertha, as an escalation `front` super) the frontline cluster's centre, each shaken by
   up to 256 elmos, so they often went up in a hollow whose rim blocks the flat low arc (Bertha's tops out near 475
-  elmos at full range and 125 at 3,000). Now the spots every 128 elmos within `radius` (1,000) of that site are scored
-  on the turret picker's value model: E is the metal of the targets in reach (the height-adjusted cannon range) with a
-  clear simulated shell arc, over the enemy buildings we know of (a mex at its income x `turret.horizon`) and, at half
-  that, the metal spots on the enemy's half with no mex we know of, the best 48; it gains up to `height` (0.5) for
-  standing 150 elmos above them, up to `view` (1) for the share of its range circle's ground a clear arc reaches, and
-  halves at `radius` from the old site. A spot must be out of threat, not enemy-held, buildable, in reach of a builder
+  elmos at full range and 125 at 3,000). Now, when the job is queued, the spots every 128 elmos within `radius`
+  (1,000) of that site are scored on the turret picker's value model: E is the metal of the targets in reach (the
+  height-adjusted cannon range) with a clear simulated low arc, as the gun's task aims, over the enemy buildings we
+  know of (a mex at its income x `turret.horizon`) and, at half that, the metal spots on the enemy's half with no mex
+  we know of, the best 48; it gains up to `height` (0.5) for standing 150 elmos above them, and halves at `radius`
+  from the old site. A spot must be in our territory, off the lanes, out of threat, buildable, in reach of a builder
   of ours and (both are grid consumers) in pylon reach of a grid with enough energy. The gun is then built right
-  there, with no shake. Searched again every 30 s or when the old site moves 128 elmos; with no spot (no targets
-  known, nothing passes, `radius` 0) the old site stands. `BIG GUN spot` lines in the log
+  there, with no shake; with no spot (no targets known, nothing passes, `radius` 0) the old site stands. Whether a
+  gun can be powered is still judged at the old site. `BIG GUN spot` lines in the log
 
 - **One scorer for every scored turret spot.** `CSpotScorer::FindSpot` (cluster and base towers with
   `choke.spot.enable`, choke towers, radar guards, hold spots) now scores and searches on the turret picker's value
@@ -774,8 +774,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Fixed
 
 - **Big Bertha and the Disco Rave Party no longer skip near targets on flat ground as behind terrain.** The arc test
-  aimed at the target's base, where the shell's last stretch runs under the 8-elmo clearance before the 44-elmo stop,
-  so every flat shot closer than about 2,500 elmos read as blocked. It now aims 20 elmos up (water: from its surface).
+  aimed at the target's base, where the shell's last stretch runs under the 8-elmo clearance before the 44-elmo stop:
+  flat shots read as blocked from about 400 to 2,000 elmos and often out to 2,800 (the Rave Party: 3,250 and 4,300).
+  It now aims 20 elmos up (water: from its surface).
 
 - **Only one geothermal morphs at a time** (`economy.energy.geo.morph`). The AI used to give up waiting after 300 s
   and start the next geo, while a morph short of metal (it can run well past its 90 s) was still going. It now waits

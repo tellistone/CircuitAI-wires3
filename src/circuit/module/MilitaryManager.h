@@ -278,12 +278,11 @@ public:
 	// out of both the response roll and the factory's tier-weight roll. Updated every 2 s by UpdateResponseGates
 	bool IsRoleAllowed(const CCircuitDef* cdef) const;
 	bool IsNeedBigGun(const CCircuitDef* cdef) const;
-	// Where bigDef is built: the mean of the base and our finished clusters (the base for a gun that reaches across the
-	// map), or around it a cannon's best spot (FindGunSpot; outIsSpot true: build it right there)
-	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef, bool* outIsSpot = nullptr) const;
+	springai::AIFloat3 GetBigGunPos(CCircuitDef* bigDef) const;
 	// Not a grid consumer, or a grid with enough energy is in pylon reach of GetBigGunPos
 	bool IsBigGunPowerable(CCircuitDef* cdef) const;
 	void DiceBigGun();
+	const CSpotScorer::SGunConfig& GetGunSpotConfig() const { return gunSpotConfig; }  // porcupine.superweapon.spot
 
 	// Escalation mode (build_chain.json "escalation"): turns on when the allied team's mobile army is at least
 	// army_ratio[0] x the known enemy one, an enemy unit of escalation.enemy is known, and (terraform: true) a
@@ -302,9 +301,8 @@ public:
 	int RollEscalationDelay() const;  // frames, random within escalation.delay
 	// Where escalation builds superDef: escalation.front ones on our frontline cluster (finished, not enemy-held, the
 	// nearest to the lane), the rest (or with no such cluster) at GetBigGunPos
-	// isFrontOk false: the last front job of escalation went stale, place this one as the rest. Either way a cannon
-	// goes on its best spot around there (FindGunSpot; outIsSpot true: build it right there)
-	springai::AIFloat3 GetEscalationSuperPos(CCircuitDef* superDef, bool isFrontOk = true, bool* outIsSpot = nullptr) const;
+	// isFrontOk false: the last front job of escalation went stale, place this one as the rest
+	springai::AIFloat3 GetEscalationSuperPos(CCircuitDef* superDef, bool isFrontOk = true) const;
 	bool IsEscalationFront(const CCircuitDef* cdef) const;
 	int GetEscalationStaleFrames() const { return escalation.staleFrames; }
 	float GetEscalationSinguShare() const { return escalation.singuShare; }
@@ -813,16 +811,7 @@ private:
 		float weight;
 	};
 	std::vector<SSuperInfo> superInfos;
-	// A cannon's best spot around centre (CSpotScorer::FindGunSpot), searched again once GUN_SPOT_FRAMES old or when
-	// centre moves; -RgtVector: none. IsBigGunPowerable asks often. Kept per def, front and rest apart
-	springai::AIFloat3 FindGunSpot(CCircuitDef* def, const springai::AIFloat3& centre, bool isFront) const;
-	CSpotScorer::SGunConfig gunSpotConfig;  // porcupine.superweapon.spot
-	struct SGunSpot {
-		springai::AIFloat3 centre;
-		springai::AIFloat3 spot;
-		int frame;
-	};
-	mutable std::map<int, SGunSpot> gunSpots;  // def id x 2 + isFront
+	CSpotScorer::SGunConfig gunSpotConfig;
 
 	struct SEscalation {
 		bool isEnabled = false;

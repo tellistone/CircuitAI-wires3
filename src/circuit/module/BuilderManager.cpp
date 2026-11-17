@@ -724,6 +724,15 @@ IBuilderTask* CBuilderManager::EnqueueFactory(IBuilderTask::Priority priority,
 	return task;
 }
 
+IBuilderTask* CBuilderManager::EnqueueBigGun(IBuilderTask::Priority priority, CCircuitDef* buildDef, const AIFloat3& site)
+{
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const AIFloat3 spot = militaryMgr->GetSpotScorer()->FindGunSpot(buildDef, site, militaryMgr->GetGunSpotConfig());
+	return utils::is_valid(spot)
+			? EnqueueTask(priority, buildDef, spot, IBuilderTask::BuildType::BIG_GUN, buildDef->GetCostM(), 0.f)
+			: EnqueueTask(priority, buildDef, site, IBuilderTask::BuildType::BIG_GUN);
+}
+
 IBuilderTask* CBuilderManager::EnqueuePylon(IBuilderTask::Priority priority,
 											CCircuitDef* buildDef,
 											const AIFloat3& position,
@@ -1690,11 +1699,7 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 		if ((buildDef != nullptr) && (buildDef->GetCostM() < super.maxTime * metalIncome)) {
 			if (tasks.empty()) {
 				if (buildDef->IsAvailable(circuit->GetLastFrame()) && militaryMgr->IsNeedBigGun(buildDef)) {
-					bool isSpot;  // a cannon's chosen spot: no shake
-					AIFloat3 pos = militaryMgr->GetBigGunPos(buildDef, &isSpot);
-					return EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, pos,
-									   IBuilderTask::BuildType::BIG_GUN, buildDef->GetCostM(),
-									   isSpot ? 0.f : SQUARE_SIZE * 32);
+					return EnqueueBigGun(IBuilderTask::Priority::NORMAL, buildDef, militaryMgr->GetBigGunPos(buildDef));
 				}
 			} else {
 				return *tasks.begin();
@@ -1781,10 +1786,7 @@ IBuilderTask* CBuilderManager::StartEscalation(int kind)
 		if (militaryMgr->IsEscalationFront(superDef)) {
 			project.isFrontStale = false;  // retried once as the rest
 		}
-		bool isSpot;  // a cannon's chosen spot: no shake
-		const AIFloat3 pos = militaryMgr->GetEscalationSuperPos(superDef, isFrontOk, &isSpot);
-		return EnqueueTask(IBuilderTask::Priority::NOW, superDef, pos, IBuilderTask::BuildType::BIG_GUN,
-						   superDef->GetCostM(), isSpot ? 0.f : SQUARE_SIZE * 32);
+		return EnqueueBigGun(IBuilderTask::Priority::NOW, superDef, militaryMgr->GetEscalationSuperPos(superDef, isFrontOk));
 	}
 	CCircuitDef* singuDef = militaryMgr->GetEscalationSingu();
 	return ((singuDef == nullptr) || !singuDef->IsAvailable(circuit->GetLastFrame())) ? nullptr

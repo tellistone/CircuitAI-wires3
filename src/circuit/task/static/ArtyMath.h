@@ -15,6 +15,21 @@ namespace circuit {
 
 namespace ballistics {
 
+// CPriorityArtyTask's shell, which CSpotScorer::FindGunSpot simulates too
+constexpr float MUZZLE_HEIGHT = 50.f;  // elmos above the gun's base a shell starts at (the gun's aimposoffset)
+constexpr float AIM_HEIGHT = 20.f;  // ... and ends at above the target's base (water: its surface)
+constexpr float AIM_RANGE_MOD = 0.97f;  // aimed within this much of the height-adjusted range
+constexpr float ARC_SAMPLE_STEP = 16.f;  // elmos between arc samples
+constexpr float ARC_MIN_CLEARANCE = 8.f;  // blocked where the shell is less than this above the ground
+constexpr float ARC_END_SHORT = 44.f;  // last sample this far short of the target
+
+struct SShell {
+	float speed = 1050.f;  // elmo/s
+	float gravity = 120.f;  // elmo/s^2: its myGravity, else ZK's for every cannon
+	float heightMod = 0.8f;  // of its range
+	bool isCannon = false;
+};
+
 // Launch angle (as its tangent) for a shell at speed v under gravity g to a point d away and h higher, on the low
 // arc or (isHigh) the high one. false: out of reach
 inline bool ArcTan(float d, float h, float v, float g, bool isHigh, float& outTan)
@@ -76,46 +91,18 @@ bool IsArcClear(float x0, float y0, float z0, float x1, float y1, float z1, floa
 	return true;
 }
 
-// A shot from a muzzle at (x0, y0, z0) to the ground at (x1, y1, z1): in reach (the height-adjusted range, heightDiff x
-// heightMod, x rangeMod) and on a clear low arc, or (isToggle) on either arc; sampled as IsArcClear
+// A shot from a muzzle at (x0, y0, z0) to an aim point (x1, y1, z1): in reach (the height-adjusted range, heightDiff x
+// heightMod, x AIM_RANGE_MOD) and on a clear low arc
 template<typename HeightAt>
-bool IsShotClear(float x0, float y0, float z0, float x1, float y1, float z1, float range, float heightMod, float v,
-		float g, float rangeMod, float step, float clearance, float stopShort, HeightAt heightAt, bool isToggle)
+bool IsShotClear(float x0, float y0, float z0, float x1, float y1, float z1, float range, const SShell& shell,
+		HeightAt heightAt)
 {
-	const float reach = CannonRange(range, (y1 - y0) * heightMod, v, g) * rangeMod;
+	const float reach = CannonRange(range, (y1 - y0) * shell.heightMod, shell.speed, shell.gravity) * AIM_RANGE_MOD;
 	if ((x1 - x0) * (x1 - x0) + (z1 - z0) * (z1 - z0) > reach * reach) {
 		return false;
 	}
-	return IsArcClear(x0, y0, z0, x1, y1, z1, v, g, step, clearance, stopShort, heightAt)
-		|| (isToggle && IsArcClear(x0, y0, z0, x1, y1, z1, v, g, step, clearance, stopShort, heightAt, true));
-}
-
-// The share of the ground around (x, z), by area, that isShot(x1, z1) reaches: rings points out to dist along each of
-// rays bearings (ring k at (k + 0.5) / rings x dist), a point weighted by its distance; points off the map (outside
-// [0, maxX] x [0, maxZ]) don't count. 0 with none on it
-template<typename IsShot>
-float ShotView(float x, float z, float dist, int rays, int rings, float maxX, float maxZ, IsShot isShot)
-{
-	float seen = 0.f;
-	float total = 0.f;
-	for (int r = 0; r < rays; ++r) {
-		const float angle = 2.f * static_cast<float>(M_PI) * r / rays;
-		const float dx = std::cos(angle);
-		const float dz = std::sin(angle);
-		for (int k = 0; k < rings; ++k) {
-			const float d = dist * (k + 0.5f) / rings;
-			const float x1 = x + dx * d;
-			const float z1 = z + dz * d;
-			if ((x1 < 0.f) || (z1 < 0.f) || (x1 > maxX) || (z1 > maxZ)) {
-				break;
-			}
-			total += d;
-			if (isShot(x1, z1)) {
-				seen += d;
-			}
-		}
-	}
-	return (total > 0.f) ? seen / total : 0.f;
+	return IsArcClear(x0, y0, z0, x1, y1, z1, shell.speed, shell.gravity, ARC_SAMPLE_STEP, ARC_MIN_CLEARANCE,
+			ARC_END_SHORT, heightAt);
 }
 
 } // namespace ballistics

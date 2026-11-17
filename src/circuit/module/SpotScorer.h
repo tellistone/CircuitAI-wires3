@@ -62,10 +62,9 @@ public:
 	struct SGunConfig {
 		float radius = 1000.f;  // elmos around the old site that are searched; 0: off
 		float height = 0.5f;  // the most height above the targets adds (all of it at 150 elmos)
-		float view = 1.f;  // the most V adds
 	};
 	// A big cannon's spot (Big Bertha, the Disco Rave Party) within cfg.radius of centre, -RgtVector if none passes or
-	// def isn't a cannon that can fire its low arc (the .cpp has the rules)
+	// def isn't a cannon with a low arc (the .cpp has the rules)
 	springai::AIFloat3 FindGunSpot(CCircuitDef* def, const springai::AIFloat3& centre, const SGunConfig& cfg);
 	// A build failed there (or a turret picker job was dropped): every search skips its 64-elmo cell for 5 minutes
 	void MaskFailed(const springai::AIFloat3& pos);

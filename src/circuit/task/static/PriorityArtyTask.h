@@ -71,6 +71,9 @@ public:
 	// An enemy took damage from this task's gun (EnemyDamaged, in our LOS or radar)
 	void OnEnemyDamaged(CEnemyInfo* enemy);
 
+	// The main weapon's shell (outShell keeps its defaults for what the weapon doesn't set); false: no main weapon
+	static bool ReadShell(const CCircuitDef* cdef, ballistics::SShell& outShell);
+
 private:
 	struct SCandidate {
 		CEnemyInfo* enemy;
