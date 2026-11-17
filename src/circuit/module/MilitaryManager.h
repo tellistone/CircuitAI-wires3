@@ -286,8 +286,8 @@ public:
 	bool IsScoutSlotFree(const CCircuitDef* cdef) const;
 	// Raid stint: a scout with no safe route to its spot raids (any raid group, merges and rallies included) until
 	// endFrame, then its raid group hands it back to a new scout task (CRaidTask::UpdateScoutStints)
-	void SetScoutStint(const CCircuitUnit* unit, int endFrame) { scoutStints[unit->GetId()] = endFrame; }
-	void EndScoutStint(const CCircuitUnit* unit) { scoutStints.erase(unit->GetId()); }
+	void SetScoutStint(const CCircuitUnit* unit, int endFrame);
+	void EndScoutStint(const CCircuitUnit* unit);
 	int GetScoutStintEnd(const CCircuitUnit* unit) const;  // -1: not on a stint
 	bool IsScoutStint(const CCircuitUnit* unit) const { return GetScoutStintEnd(unit) >= 0; }
 	bool HasScoutStints() const { return !scoutStints.empty(); }

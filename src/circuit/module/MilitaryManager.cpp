@@ -2546,6 +2546,16 @@ bool CMilitaryManager::IsScouting(const CCircuitUnit* unit) const
 	return IsOnFightTask(unit, IFighterTask::FightType::SCOUT) || IsScoutStint(unit);
 }
 
+void CMilitaryManager::SetScoutStint(const CCircuitUnit* unit, int endFrame)
+{
+	scoutStints[unit->GetId()] = endFrame;
+}
+
+void CMilitaryManager::EndScoutStint(const CCircuitUnit* unit)
+{
+	scoutStints.erase(unit->GetId());
+}
+
 int CMilitaryManager::GetScoutStintEnd(const CCircuitUnit* unit) const
 {
 	auto it = scoutStints.find(unit->GetId());
