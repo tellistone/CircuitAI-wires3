@@ -368,6 +368,10 @@ void CBuilderManager::ReadConfig()
 			circuit->LOG("CONFIG economy.restore.priority: unknown value '%s', using 'high'", prio.c_str());
 		}
 	}
+	restore.cover = std::max(rest.get("cover", 2.f).asFloat(), 0.f);
+	restore.coverRadius = std::max(rest.get("cover_radius", 500.f).asFloat(), 0.f);
+	restore.grace = std::max(rest.get("grace", 2.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	restore.logInterval = std::max(rest.get("log", 0.f).asFloat(), 0.f) * FRAMES_PER_SEC;
 
 	const Json::Value& cond = root["porcupine"]["superweapon"]["condition"];
 	super.minIncome = cond.get((unsigned)0, 50.f).asFloat();
@@ -506,7 +510,7 @@ void CBuilderManager::Init()
 								COMM_FLEE_INTERVAL, offset + 5);
 		if (restore.range > 0.f) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CBuilderManager::UpdateRestore, this),
-									FRAMES_PER_SEC * 2, offset + 6);
+									SRestore::INTERVAL, offset + 6);
 		}
 		// turret.*: always scheduled, as choke_overlay set may switch a caller on
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CBuilderManager::UpdateTurrets, this),
@@ -3065,44 +3069,64 @@ void CBuilderManager::UpdateRestore()
 		const int cz = c / restore.cellsX;
 		for (int z = std::max(cz - 1, 0); z <= std::min(cz + 1, restore.cellsZ - 1); ++z) {
 			for (int x = std::max(cx - 1, 0); x <= std::min(cx + 1, restore.cellsX - 1); ++x) {
-				grid[z * restore.cellsX + x].enemyFrame = frame;
+				SRestore::SCell& cell = grid[z * restore.cellsX + x];
+				if (cell.enemyFrame < frame - SRestore::INTERVAL) {
+					cell.enemySince = frame;  // not seen on the last update: a new run
+				}
+				cell.enemyFrame = frame;
 			}
 		}
 	}
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	auto isUnsafe = [this, &grid, frame, threatMap](int c) {
-		return (grid[c].enemyFrame == frame) || (threatMap->GetAllThreatAt(restore.CellPos(c, 0.5f)) > THREAT_MIN);
-	};
 
 	// One pass over the cells. A job is kept while a builder is on it and its cell is safe. Otherwise it is dropped:
 	// one no builder took is chosen again right here, by where the builders are now; one whose cell turned unsafe
-	// stops its builders and its cell backs off (OnRestoreEnd). Then open cells by their nearest builder, within
-	// restore.range. While stalling no constructor takes a terraform job (IsStallSpend): don't make jobs only to drop them
+	// (a known enemy near for restore.grace, or threat our army doesn't cover) stops its builders and its cell backs
+	// off (OnRestoreEnd). Then open cells by their nearest builder, within restore.range. While stalling no
+	// constructor takes a terraform job (IsStallSpend): don't make jobs only to drop them
 	const bool isStalling = circuit->GetEconomyManager()->IsStalling();
 	const float sqRange = SQUARE(restore.range);
 	int jobCount = 0;
+	int skips[SRestore::SKIP_COUNT] = {};  // dug cells without a job, by the first rule that stopped them (the log)
 	std::vector<std::pair<float, int>> candidates;  // sqDist to the nearest builder, cell
 	for (int c = 0; c < (int)grid.size(); ++c) {
 		SRestore::SCell& cell = grid[c];
+		const bool isEnemy = (cell.enemyFrame == frame);
+		const AIFloat3 center = restore.CellPos(c, 0.5f);
 		if (cell.task != nullptr) {
-			if (!cell.task->GetAssignees().empty() && !isUnsafe(c)) {
+			CBRestoreTask* task = cell.task;
+			// A passing scout or radar dot doesn't drop a working job; ZK's 20x slowdown lasts only while it's there
+			const bool isEnemyStay = isEnemy && (frame - cell.enemySince >= restore.grace);
+			const bool isThreat = !isEnemyStay && !IsRestoreSafe(nullptr, center, task->IsStarted());
+			if (!task->GetAssignees().empty() && !isEnemyStay && !isThreat) {
 				++jobCount;
 				continue;
 			}
-			AbortTask(cell.task);  // OnRestoreEnd clears the cell's task and sets its hold; the grid stays as it is
+			task->SetDropCause(isEnemyStay ? SRestore::DROP_ENEMY
+					: isThreat ? SRestore::DROP_THREAT : SRestore::DROP_OTHER);
+			AbortTask(task);  // OnRestoreEnd clears the cell's task and sets its hold; the grid stays as it is
 		}
-		if (!cell.isDug || isStalling || (cell.until >= frame) || (cell.tries >= restore.maxTries)
-			|| (cell.buildingFrame == frame) || isUnsafe(c))
-		{
+		if (!cell.isDug) {
 			continue;
 		}
-		const AIFloat3 center = restore.CellPos(c, 0.5f);
+		const SRestore::Skip skip = (cell.until >= frame) ? SRestore::SKIP_HELD
+				: (cell.tries >= restore.maxTries) ? SRestore::SKIP_TRIES
+				: (cell.buildingFrame == frame) ? SRestore::SKIP_BUILDING
+				: isEnemy ? SRestore::SKIP_ENEMY
+				: !IsRestoreSafe(nullptr, center) ? SRestore::SKIP_THREAT
+				: isStalling ? SRestore::SKIP_STALL
+				: SRestore::SKIP_COUNT;
+		if (skip != SRestore::SKIP_COUNT) {
+			++skips[skip];
+			continue;
+		}
 		float minSqDist = std::numeric_limits<float>::max();
 		for (CCircuitUnit* worker : workers) {
 			minSqDist = std::min(minSqDist, worker->GetPos(frame).SqDistance2D(center));
 		}
 		if (minSqDist <= sqRange) {
 			candidates.emplace_back(minSqDist, c);
+		} else {
+			++skips[SRestore::SKIP_FAR];
 		}
 	}
 	const int count = utils::clamp<int>(restore.maxTasks - jobCount, 0, candidates.size());
@@ -3115,6 +3139,47 @@ void CBuilderManager::UpdateRestore()
 		buildUpdates.push_back(task);
 		grid[c].task = task;
 	}
+	skips[SRestore::SKIP_CAP] = candidates.size() - count;
+
+	if ((restore.logInterval <= 0) || (frame < restore.logFrame + restore.logInterval)) {
+		return;
+	}
+	const int* drops = restore.drops;
+	int dropCount = 0;
+	for (int i = 0; i < SRestore::DROP_COUNT; ++i) {
+		dropCount += drops[i];
+	}
+	if ((restore.dugCount > 0) || (restore.done > 0) || (dropCount > 0)) {
+		circuit->LOG("RESTORE: %i dug, %i working, %i open | no job: %i held, %i given up, %i building, %i enemy, %i threat,"
+				" %i stalling, %i far, %i over the cap | last %i s: %i done, dropped %i enemy, %i threat, %i path, %i hit,"
+				" %i other",
+				restore.dugCount, jobCount, count,
+				skips[SRestore::SKIP_HELD], skips[SRestore::SKIP_TRIES], skips[SRestore::SKIP_BUILDING],
+				skips[SRestore::SKIP_ENEMY], skips[SRestore::SKIP_THREAT], skips[SRestore::SKIP_STALL],
+				skips[SRestore::SKIP_FAR], skips[SRestore::SKIP_CAP],
+				(frame - restore.logFrame) / FRAMES_PER_SEC, restore.done,
+				drops[SRestore::DROP_ENEMY], drops[SRestore::DROP_THREAT], drops[SRestore::DROP_PATH],
+				drops[SRestore::DROP_HIT], drops[SRestore::DROP_OTHER]);
+	}
+	restore.logFrame = frame;
+	restore.done = 0;
+	std::fill(std::begin(restore.drops), std::end(restore.drops), 0);
+}
+
+bool CBuilderManager::IsRestoreSafe(CCircuitUnit* unit, const AIFloat3& pos, bool isKeep)
+{
+	const CThreatMap* threatMap = circuit->GetThreatMap();
+	const float threat = (unit != nullptr) ? threatMap->GetPlainThreatAt(unit, pos) : threatMap->GetAllThreatAt(pos);
+	if (threat <= THREAT_MIN) {
+		return true;
+	}
+	if (restore.cover <= 0.f) {
+		return false;
+	}
+	// Our armed units and static defences within restore.coverRadius, as builder flee counts cover (power and threat
+	// share a scale). Not the influence map: it spreads each unit about 4x its weapon reach, a territory measure
+	const float need = restore.cover * threat * (isKeep ? 0.5f : 1.f);
+	return GetCommCover(pos, restore.coverRadius, -1, need) >= need;
 }
 
 void CBuilderManager::OnRestoreEnd(CBRestoreTask* task, bool done)
@@ -3131,9 +3196,11 @@ void CBuilderManager::OnRestoreEnd(CBRestoreTask* task, bool done)
 	// A builder was on it: wait for the heightmap (10 s). A drop is danger or failure (enemy near, threat on the way,
 	// a builder hit or killed, unreachable): back off, 1x, 2x, 4x, 8x cooldown, until a job finishes
 	if (done) {
+		++restore.done;
 		++cell.tries;  // still dug after <tries> finished jobs: something (a building, the enemy) keeps it so
 		cell.backoff = 0;
 	} else {
+		++restore.drops[task->GetDropCause()];
 		cell.backoff = (cell.backoff > 0) ? std::min(cell.backoff * 2, restore.cooldown * 8) : restore.cooldown;
 	}
 	cell.until = std::max(cell.until, circuit->GetLastFrame() + (done ? restore.cooldown : cell.backoff));
