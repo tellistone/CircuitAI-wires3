@@ -157,18 +157,14 @@ public:
 	IBuilderTask* UpdateFactoryTasks();
 	IBuilderTask* UpdateStorageTasks();
 	IBuilderTask* UpdatePylonTasks();
-	// economy.energy.fill: cdef is cheap energy put into the gaps of the planned grid instead of at a mex
+	// economy.energy.fill: cheap energy placed to overdrive every mex and link up the grid
 	bool IsFillDef(CCircuitDef* cdef) const { return fillDefs.find(cdef) != fillDefs.end(); }
-	// A job for fill def cdef in the open grid gap nearest pos (CEnergyGrid::FindGapToFill) within fill_dist,
-	// reachable by unit (with nullptr: by some builder); nullptr = no such gap
-	IBuilderTask* EnqueueGridFill(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
+	// A job for fill def cdef near pos (the builder's, or a new mex's), within fill_dist, on a site that links
+	// (CEnergyGrid::FindLinkSite): beside the nearest mex of ours on no grid with energy; else in the nearest open gap of
+	// the grid plan; else beside a mex of the grid with the least energy per mex. Reachable by unit (nullptr: by some
+	// builder). nullptr = not a fill def, or none of these
+	IBuilderTask* EnqueueFillEnergy(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
 			IUnitTask::Priority priority);
-	// economy.energy.fill: the nearest finished mex of ours within fill_dist of pos with no energy building linked
-	// to it (an ally team's, finished or a nanoframe) and no energy job queued beside it, where fill def cdef can be
-	// built safely, reachable by unit (with nullptr: by some builder); -RgtVector if every one has energy
-	springai::AIFloat3 FindBareMex(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit);
-	// Queued energy jobs: ENERGY jobs and gap fills (PYLON jobs of a fill def)
-	int GetEnergyTaskCount() const;
 
 	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
 	// that much energy. False before Init

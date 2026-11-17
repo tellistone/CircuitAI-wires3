@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_BUILDER_ENERGYTASK_H_
 
 #include "task/builder/BuilderTask.h"
+#include "resource/EnergyGrid.h"
 
 namespace circuit {
 
@@ -20,9 +21,22 @@ public:
 	virtual ~CBEnergyTask();
 
 	virtual void Update() override;
+	virtual void Finish() override;
+	virtual void Cancel() override;
+
+	// economy.energy.fill: the site must keep these grid links, here and when searched again. With link (a gap of
+	// the grid plan), the gap is held as being built while the job lives
+	void SetLinkSite(const CEnergyGrid::SLinkSite& site, IGridLink* gap);
 
 protected:
 	virtual void Execute(CCircuitUnit* unit) override;
+
+private:
+	void ReleaseLink();
+
+	CEnergyGrid::SLinkSite linkSite;
+	bool isLinkSite;
+	IGridLink* link;
 };
 
 } // namespace circuit

@@ -18,6 +18,7 @@
 #include "map/ThreatMap.h"
 #include "map/InfluenceMap.h"
 #include "task/RetreatTask.h"
+#include "task/builder/EnergyTask.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
@@ -827,8 +828,7 @@ bool CEconomyManager::IsStallFix(const IBuilderTask* task) const
 	// it a stall that lasts (energy jobs keep the pull up) would leave it with none
 	const IBuilderTask::BuildType type = task->GetBuildType();
 	return (isMetalStall && ((type == IBuilderTask::BuildType::MEX) || (type == IBuilderTask::BuildType::PYLON)))
-		|| (isEnergyStall && ((type == IBuilderTask::BuildType::ENERGY)
-			|| ((type == IBuilderTask::BuildType::PYLON) && IsFillDef(task->GetBuildDef()))))  // gap fill
+		|| (isEnergyStall && (type == IBuilderTask::BuildType::ENERGY))
 		|| ((type == IBuilderTask::BuildType::FACTORY) && (task->GetPriority() == IBuilderTask::Priority::NOW));
 }
 
@@ -1265,7 +1265,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		metalIncome = std::max(metalIncome, GetAvgMetalIncome());
 	}
 	const float buildPower = std::min(builderMgr->GetBuildPower(), metalIncome);
-	const int taskSize = GetEnergyTaskCount();
+	const int taskSize = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
 	const float maxBuildTime = MAX_BUILD_SEC * (isEnergyStalling ? 0.25f : 1.f);
 	// Room for one more job of this def: about 8 jobs per buildPower/cost
 	auto canQueue = [taskSize, buildPower](CCircuitDef* cdef) {
@@ -1332,14 +1332,10 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		return nullptr;
 	}
 
-	// Cheap energy first goes right beside each nearby mex that has none, so every mex is overdriven; once they all
-	// have some, into the nearest gap of the planned grid, so it links them up; at the nearest mex when neither
-	if (IsFillDef(bestDef) && !IsRearDef(bestDef)) {
-		const AIFloat3 barePos = FindBareMex(bestDef, position, unit);
-		if (utils::is_valid(barePos)) {
-			return builderMgr->EnqueueTask(priority, bestDef, barePos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 2.0f, true);
-		}
-		IBuilderTask* task = EnqueueGridFill(bestDef, position, unit, priority);
+	// economy.energy.fill: beside a mex on no grid with energy, else into a gap of the grid plan, else on the grid
+	// with the least energy per mex; at the nearest metal spot only when none of these is in reach
+	if (!IsRearDef(bestDef)) {
+		IBuilderTask* task = EnqueueFillEnergy(bestDef, position, unit, priority);
 		if (task != nullptr) {
 			return task;
 		}
@@ -1902,111 +1898,38 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 								   storeDef, buildPos, IBuilderTask::BuildType::STORE);
 }
 
-IBuilderTask* CEconomyManager::EnqueueGridFill(CCircuitDef* cdef, const AIFloat3& pos, CCircuitUnit* unit,
+IBuilderTask* CEconomyManager::EnqueueFillEnergy(CCircuitDef* cdef, const AIFloat3& pos, CCircuitUnit* unit,
 		IUnitTask::Priority priority)
 {
-	if ((energyGrid == nullptr) || (fillDist <= 0.f) || !cdef->IsAvailable(circuit->GetLastFrame())) {
+	if (!IsFillDef(cdef) || (energyGrid == nullptr) || (fillDist <= 0.f)) {
 		return nullptr;
 	}
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	std::function<bool (const AIFloat3& p)> predicate;
-	if (unit != nullptr) {
-		predicate = [terrainMgr, unit](const AIFloat3& p) {
-			return terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance());
-		};
-	} else {
-		predicate = [builderMgr, cdef](const AIFloat3& p) {
-			return builderMgr->IsBuilderInArea(cdef, p);
-		};
-	}
+	CEnergyGrid::Predicate isGood = [terrainMgr, builderMgr, cdef, unit](const AIFloat3& p) {
+		return !terrainMgr->IsZoneAlly(p) && terrainMgr->CanBeBuiltAtSafe(cdef, p)
+			&& ((unit != nullptr) ? terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance())
+								  : builderMgr->IsBuilderInArea(cdef, p));
+	};
 	energyGrid->SetAuthority(circuit);
-	AIFloat3 buildPos;
-	IGridLink* link = energyGrid->FindGapToFill(cdef, pos, fillDist, predicate, buildPos);
-	if (link == nullptr) {
+
+	CEnergyGrid::SLinkSite site;
+	IGridLink* gap = nullptr;
+	AIFloat3 buildPos = energyGrid->FindMexToFill(cdef, pos, fillDist, true, isGood, site);
+	if (!utils::is_valid(buildPos)) {
+		gap = energyGrid->FindGapToFill(cdef, pos, fillDist, isGood, site, buildPos);
+	}
+	if (!utils::is_valid(buildPos)) {
+		buildPos = energyGrid->FindMexToFill(cdef, pos, fillDist, false, isGood, site);
+	}
+	if (!utils::is_valid(buildPos)) {
 		return nullptr;
 	}
-	// A PYLON job: it marks the gap as being built (one piece per gap at a time) and the grid plan sees it when done
-	IBuilderTask* task = builderMgr->EnqueuePylon(priority, cdef, buildPos, link, cdef->GetCostM());
+	// An energy job on that exact site, so every energy rule applies; it holds the gap (one piece per gap at a time)
+	IBuilderTask* task = builderMgr->EnqueueTask(priority, cdef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
 	task->SetBuildPos(buildPos);
+	static_cast<CBEnergyTask*>(task)->SetLinkSite(site, gap);
 	return task;
-}
-
-AIFloat3 CEconomyManager::FindBareMex(CCircuitDef* cdef, const AIFloat3& pos, CCircuitUnit* unit)
-{
-	if ((energyGrid == nullptr) || (fillDist <= 0.f)) {
-		return -RgtVector;
-	}
-	const int frame = circuit->GetLastFrame();
-	// Ours, finished, in reach, nearest first
-	std::vector<std::pair<float, AIFloat3>> mexes;
-	for (const auto& kv : circuit->GetTeamUnits()) {
-		CCircuitUnit* u = kv.second;
-		if (!u->GetCircuitDef()->IsMex() || u->GetUnit()->IsBeingBuilt()) {
-			continue;
-		}
-		const AIFloat3& p = u->GetPos(frame);
-		const float sqDist = p.SqDistance2D(pos);
-		if (sqDist < SQUARE(fillDist)) {
-			mexes.push_back(std::make_pair(sqDist, p));
-		}
-	}
-	if (mexes.empty()) {
-		return -RgtVector;
-	}
-	std::sort(mexes.begin(), mexes.end(), [](const std::pair<float, AIFloat3>& a, const std::pair<float, AIFloat3>& b) {
-		return a.first < b.first;
-	});
-
-	// Energy of the ally team (nanoframes too: they are on the way) and our queued energy jobs, with their link range
-	std::vector<std::pair<AIFloat3, float>> energies;
-	circuit->UpdateFriendlyUnits();
-	for (const auto& kv : circuit->GetFriendlyUnits()) {
-		const CCircuitDef* edef = kv.second->GetCircuitDef();
-		if ((edef != nullptr) && energyGrid->IsEnergyDef(edef->GetId())) {
-			energies.push_back(std::make_pair(kv.second->GetPos(frame), energyGrid->GetPylonRange(edef->GetId())));
-		}
-	}
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	const float shakeSlack = SQUARE_SIZE * 16.0f;  // an at-mex job is placed up to this far from its spot
-	for (const IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY)) {
-		energies.push_back(std::make_pair(t->GetPosition(), std::max(energyGrid->GetPylonRange(t->GetBuildDef()->GetId()), shakeSlack)));
-	}
-	for (const IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::PYLON)) {
-		const AIFloat3& p = utils::is_valid(t->GetBuildPos()) ? t->GetBuildPos() : t->GetPosition();
-		energies.push_back(std::make_pair(p, energyGrid->GetPylonRange(t->GetBuildDef()->GetId())));
-	}
-
-	const float mexRange = energyGrid->GetPylonRange(mexDef->GetId());
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	for (const auto& m : mexes) {
-		const AIFloat3& mexPos = m.second;
-		const bool hasEnergy = std::any_of(energies.begin(), energies.end(), [&mexPos, mexRange](const std::pair<AIFloat3, float>& e) {
-			return e.first.SqDistance2D(mexPos) < SQUARE(mexRange + e.second);
-		});
-		if (hasEnergy || terrainMgr->IsZoneAlly(mexPos) || !terrainMgr->CanBeBuiltAtSafe(cdef, mexPos)) {
-			continue;
-		}
-		if ((unit != nullptr) ? !terrainMgr->CanReachAtSafe(unit, mexPos, unit->GetCircuitDef()->GetBuildDistance())
-							  : !builderMgr->IsBuilderInArea(cdef, mexPos))
-		{
-			continue;
-		}
-		return mexPos;
-	}
-	return -RgtVector;
-}
-
-int CEconomyManager::GetEnergyTaskCount() const
-{
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	int count = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
-	for (const IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::PYLON)) {
-		if (fillDefs.find(t->GetBuildDef()) != fillDefs.end()) {
-			++count;
-		}
-	}
-	return count;
 }
 
 IBuilderTask* CEconomyManager::UpdatePylonTasks()
@@ -2207,28 +2130,10 @@ bool CEconomyManager::LinkToGrid(CCircuitUnit* unit, SGridLink& info)
 
 	// On the line to the target: the last pylon goes midway through the overlap of both reaches, any other as far
 	// out as still links to its grid. Each step starts from the grown grid, so it re-plans around blocked ground
-	const float dist = from->pos.distance2D(to->pos);
-	const float reachFrom = from->range + pylonLink;
-	const float reachTo = to->range + pylonLink;
-	const float step = (count <= 1) ? (dist + reachFrom - reachTo) * 0.5f : reachFrom * 0.9f;
-	AIFloat3 ideal = from->pos + (to->pos - from->pos) / dist * step;
-	CTerrainManager::CorrectPosition(ideal);
-
+	const CEnergyGrid::SLinkSite site = {from->pos, to->pos, from->range + pylonLink, to->range + pylonLink, count <= 1};
+	CEnergyGrid::Predicate isAny = [](const AIFloat3& p) { return true; };
+	const AIFloat3 buildPos = energyGrid->FindLinkSite(pylonDef, site, pylonLink * 0.5f, isAny);
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const float sqFrom = SQUARE(reachFrom - SQUARE_SIZE);
-	const float sqTo = SQUARE(reachTo - SQUARE_SIZE);
-	const AIFloat3 fromPos = from->pos;
-	const AIFloat3 toPos = to->pos;
-	CTerrainManager::TerrainPredicate isLinked = [fromPos, toPos, sqFrom, sqTo, count](const AIFloat3& p) {
-		return (p.SqDistance2D(fromPos) < sqFrom) && ((count > 1) || (p.SqDistance2D(toPos) < sqTo));
-	};
-	AIFloat3 buildPos = terrainMgr->FindBuildSite(pylonDef, ideal, pylonLink * 0.5f, UNIT_COMMAND_BUILD_NO_FACING, isLinked);
-	if (!utils::is_valid(buildPos) && (count <= 1)) {  // no site touching both: one more step it is
-		CTerrainManager::TerrainPredicate isFromLinked = [fromPos, sqFrom](const AIFloat3& p) {
-			return p.SqDistance2D(fromPos) < sqFrom;
-		};
-		buildPos = terrainMgr->FindBuildSite(pylonDef, ideal, pylonLink * 0.5f, UNIT_COMMAND_BUILD_NO_FACING, isFromLinked);
-	}
 	if (!utils::is_valid(buildPos) || !terrainMgr->CanBeBuiltAtSafe(pylonDef, buildPos)) {
 		return false;
 	}

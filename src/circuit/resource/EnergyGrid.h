@@ -38,12 +38,33 @@ public:
 	void Update();
 	void SetForceRebuild(bool value) { isForceRebuild = value; }
 	IGridLink* GetLinkToBuild(CCircuitDef*& outDef, springai::AIFloat3& outPos);
-	// economy.energy.fill: an open gap of the grid plan (a planned link between two finished mex clusters, or between
-	// the mexes of one cluster), not being built, that one cdef (a building with pylonrange) narrows from an end that is
-	// already on the grid. The gap whose site is nearest pos within maxDist; the site passes predicate.
-	// nullptr = no such gap; outPos then invalid
-	IGridLink* FindGapToFill(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist,
-			std::function<bool (const springai::AIFloat3& p)> predicate, springai::AIFloat3& outPos);
+	using Predicate = std::function<bool (const springai::AIFloat3& p)>;  // CTerrainManager::TerrainPredicate
+	// Where a building links to the grid building at from towards the one at to. Reach = the sum of both link ranges
+	struct SLinkSite {
+		springai::AIFloat3 from, to;
+		float fromReach, toReach;
+		bool isLast;  // one piece closes the gap: it touches both; else a step out from from
+	};
+	// For a piece of link range <range> between grid buildings: isLast while the gap is within one pylon span
+	// (0.85 x twice the range, as the grid-link watchdog plans). from == to: beside that one building
+	static SLinkSite MakeLinkSite(float range, const springai::AIFloat3& from, float fromRange,
+			const springai::AIFloat3& to, float toRange);
+	// The open site for cdef nearest the ideal spot (midway through the overlap of both reaches when isLast, else 0.9
+	// of from's reach out) that keeps those links (for the last piece, failing that, from's only) and passes
+	// predicate; -RgtVector if none
+	springai::AIFloat3 FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, float searchRadius, Predicate& predicate);
+	// economy.energy.fill: an open gap of the grid plan: a planned link between two finished mex clusters, not being
+	// built, or the mexes of one finished cluster that aren't linked yet, with no energy job queued at its end. The gap
+	// end nearest pos within maxDist whose link site for cdef (a building with pylonrange) passes predicate: outPos
+	// (-RgtVector if none) and outSite. Returns the planned link for the job to hold; nullptr within a cluster or none
+	IGridLink* FindGapToFill(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, Predicate& predicate,
+			SLinkSite& outSite, springai::AIFloat3& outPos);
+	// economy.energy.fill: a site for cdef beside one of our finished mexes within maxDist of pos, and its link.
+	// isBare: the nearest mex on no grid with energy (the game's grids; energy of the ally team beside it, nanoframes
+	// too, also counts, as the snapshot lags). Else the mex whose grid has the least energy per mex. Never a mex with
+	// an energy job queued beside it. -RgtVector if none
+	springai::AIFloat3 FindMexToFill(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, bool isBare,
+			Predicate& predicate, SLinkSite& outSite);
 
 	float GetPylonRange(CCircuitDef::Id defId);
 	// Makes energy (customParams.income_energy or windgen)

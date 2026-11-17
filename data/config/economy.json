@@ -65,13 +65,16 @@
 			"margin": 1.1  // grid capacity needed = margin x neededlink
 		},
 
-		// Cheap energy placement: energy jobs (and the mex build_chain's energy) of these defs first go right beside
-		// the nearest finished mex of ours within max_dist elmos of the builder (of the mex for the chain) that has no
-		// energy linked to it (an ally team's, built or being built) and no energy job queued beside it. Once every
-		// such mex has some, to the nearest open gap of the planned grid within max_dist: a planned link between two
-		// finished mex clusters (CEnergyGrid's spanning tree), or between the mexes of one. The piece touches a gap end
-		// already on the grid, so it still overdrives mexes; one piece per gap at a time. Neither: at the nearest mex
-		// as before. Missing unit = off
+		// Cheap energy placement: energy jobs (and the mex build_chain's energy) of these defs go, within max_dist elmos
+		// of the builder (of the mex for the chain), in this order:
+		//   1. beside the nearest finished mex of ours on no grid with energy (the game's grids; energy of the ally
+		//      team beside it, being built too, also counts)
+		//   2. into the nearest open gap of the planned grid: a planned link between two finished mex clusters
+		//      (CEnergyGrid's spanning tree), or between the mexes of one; from a gap end, one piece per gap at a time
+		//   3. beside a mex of the grid with the least energy per mex
+		// Always on a site that links (to the mex, or to the gap end and, when one piece closes it, the other end too),
+		// never beside a mex with an energy job queued there. None of these: at the nearest metal spot as before.
+		// Missing unit = off
 		"fill": {
 			"unit": ["energysolar", "energywind"],
 			"max_dist": 1500

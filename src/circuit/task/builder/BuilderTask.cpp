@@ -630,21 +630,10 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
 			}
 			if (isValid) {
-				// economy.energy.fill: beside the nearest mex with no energy (this one, usually); when they all have
-				// some, into the nearest grid gap; else at this mex
-				CEconomyManager* economyMgr = circuit->GetEconomyManager();
-				CBuilderManager* builderMgr = circuit->GetBuilderManager();
-				const AIFloat3 barePos = economyMgr->IsFillDef(energyDef)
-						? economyMgr->FindBareMex(energyDef, buildPos, nullptr)
-						: -RgtVector;
-				if (utils::is_valid(barePos)) {
-					builderMgr->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, barePos,
-											IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 2.0f, true);
-				} else if (!economyMgr->IsFillDef(energyDef)
-					|| (economyMgr->EnqueueGridFill(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL) == nullptr))
-				{
-					builderMgr->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
-											IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
+				// economy.energy.fill places it (beside this mex while it is on no grid with energy); else at this mex
+				if (circuit->GetEconomyManager()->EnqueueFillEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL) == nullptr) {
+					circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
+															  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
 				}
 			}
 		}

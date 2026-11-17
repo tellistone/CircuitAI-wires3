@@ -7,17 +7,20 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
-- **Solars and winds: one beside every mex, then into the gaps of the planned grid** (`economy.energy.fill`:
+- **Solars and winds: one for every mex off the grid, then into the gaps of the planned grid** (`economy.energy.fill`:
   `unit` = `energysolar`, `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the
   builder (and the mex build chain put one more at each new mex), so it clumped round mexes as many small grids, and
   the grid linker only started at 16 income, one piece at a time. Now an energy job of a fill def, and the mex
-  chain's energy, first goes right beside the nearest finished mex of ours within `max_dist` of the builder (of the
-  mex for the chain) that has no energy linked to it (the ally team's, built or being built) and no energy job
-  queued beside it. Once every mex in reach has some, it goes to the nearest open gap within `max_dist`: a planned
-  link of the grid's spanning tree between two finished mex clusters, or the gap between the mexes of one. The piece
-  touches a gap end already on the grid, so it still overdrives mexes, and it is a pylon job on that gap, so one
-  piece per gap at a time and the grid plan sees it when done. Gap fills count as energy jobs for the energy budget
-  and as energy stall fixes. Neither: at the nearest mex as before. No `unit` list: off.
+  chain's energy, goes within `max_dist` of the builder (of the mex for the chain): first beside the nearest
+  finished mex of ours on no grid with energy (the game's grids, from the grid snapshot; ally energy beside it,
+  being built too, also counts, as the snapshot lags); then into the nearest open gap of the grid plan (a planned
+  link of the spanning tree between two finished mex clusters, or the mexes of one cluster that aren't linked yet),
+  from a gap end; then beside a mex of the grid with the least energy per mex, where overdrive gains most. The site
+  always links: to the mex, or to the gap end and, when one piece closes the gap, the other end too (the grid-link
+  watchdog's site search, now shared). Never beside a mex with an energy job queued there. The job is an ordinary
+  energy job (budget, stall and pull rules, priority) that holds its gap while it lives, so one piece per gap at a
+  time; if its site is taken it looks again only where the piece still links, else it is dropped and planned afresh.
+  None of these in reach: at the nearest metal spot as before. No `unit` list: off.
 
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own

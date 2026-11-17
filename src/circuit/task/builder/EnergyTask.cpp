@@ -8,6 +8,8 @@
 #include "task/builder/EnergyTask.h"
 #include "task/TaskManager.h"
 #include "module/EconomyManager.h"
+#include "resource/GridLink.h"
+#include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
 #include "spring/SpringMap.h"
 #include "CircuitAI.h"
@@ -21,6 +23,8 @@ CBEnergyTask::CBEnergyTask(ITaskManager* mgr, Priority priority,
 						   CCircuitDef* buildDef, const AIFloat3& position,
 						   float cost, float shake, int timeout)
 		: IBuilderTask(mgr, priority, buildDef, position, Type::BUILDER, BuildType::ENERGY, cost, shake, timeout)
+		, isLinkSite(false)
+		, link(nullptr)
 {
 }
 
@@ -43,9 +47,60 @@ void CBEnergyTask::Update()
 	}
 }
 
+void CBEnergyTask::Finish()
+{
+	ReleaseLink();
+	IBuilderTask::Finish();
+}
+
+void CBEnergyTask::Cancel()
+{
+	ReleaseLink();
+	IBuilderTask::Cancel();
+}
+
+void CBEnergyTask::SetLinkSite(const CEnergyGrid::SLinkSite& site, IGridLink* gap)
+{
+	ReleaseLink();
+	linkSite = site;
+	isLinkSite = true;
+	link = gap;
+	if (link != nullptr) {
+		link->SetBeingBuilt(true);
+	}
+}
+
+void CBEnergyTask::ReleaseLink()
+{
+	if (link != nullptr) {
+		link->SetBeingBuilt(false);
+		link = nullptr;
+	}
+}
+
 void CBEnergyTask::Execute(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
+	if ((target == nullptr) && isLinkSite
+		&& (!utils::is_valid(buildPos) || !circuit->GetMap()->IsPossibleToBuildAt(buildDef->GetDef(), buildPos, facing)))
+	{
+		// Its site was taken: another one that keeps the links, never the wide search that could miss them
+		SetBuildPos(-RgtVector);
+		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+		CCircuitDef* cdef = buildDef;
+		CEnergyGrid::Predicate isGood = [terrainMgr, cdef, unit](const AIFloat3& p) {
+			return !terrainMgr->IsZoneAlly(p) && terrainMgr->CanBeBuiltAtSafe(cdef, p)
+				&& terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance());
+		};
+		CEnergyGrid* energyGrid = circuit->GetEconomyManager()->GetEnergyGrid();
+		energyGrid->SetAuthority(circuit);
+		const AIFloat3 pos = energyGrid->FindLinkSite(buildDef, linkSite, linkSite.fromReach * 0.5f, isGood);
+		if (!utils::is_valid(pos)) {
+			manager->FallbackTask(unit);  // drops the job (and the gap it held): it is planned afresh
+			return;
+		}
+		SetBuildPos(pos);
+	}
 	if ((target != nullptr) || !circuit->GetEconomyManager()->IsGeoDef(buildDef)) {
 		IBuilderTask::Execute(unit);
 		return;
