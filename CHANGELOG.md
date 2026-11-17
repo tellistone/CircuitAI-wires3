@@ -14,6 +14,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   not a multiplier per the tower's cost), height is measured above the targets a spot counts, and the new
   `choke.spot.view` (default 1) adds the view term. Targets are halved only by towers that defend and hit them. The
   line-of-fire, view and hit tests are shared. Build chain towers still go at their configured offsets.
+  After review: E is the picker's own enemy targets (enemy buildings seen in the last 3 minutes, a mex at its income x
+  `turret.horizon`, halved like T; no mobiles, so a frozen spot doesn't follow a passing raid); a spot moves onto its
+  build site (`FindSiteAt`, the blocking map), as the picker's does; `turret.traffic` no longer weighs FindSpot's T;
+  one halving helper (`CSpotScorer::HalveCovered`) and one target type (`CTurretValue::STarget`) serve both.
 - **The turret picker favours spots that see their range** (`turret.view`, default 1). A spot ranks up to twice as
   high by the share of its range circle's ground in a clear line of fire from it, so a cliff edge beats its foot.
   It only ranks spots that already pay for the turret.

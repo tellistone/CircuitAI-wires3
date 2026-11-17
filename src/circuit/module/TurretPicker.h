@@ -127,8 +127,11 @@ public:
 
 	// Our ally team's share of the map's metal spots, finished mexes only
 	float GetMexShare() const;
-	// Traffic of the field summed over a range's cells, in metal: x turret.horizon x turret.traffic, once per route
-	float TrafficMetal(float amount, float range) const;
+	// Traffic of the field summed over a range's cells, in metal: x turret.horizon x weight, once per route
+	float TrafficMetal(float amount, float range, float weight) const;
+	// E before its weight: known enemy buildings within reach of centre seen in the last 3 minutes, at cost, an enemy mex
+	// at its income x turret.horizon. Shared with CSpotScorer::FindSpot
+	std::vector<CTurretValue::STarget> GetEnemyTargets(const springai::AIFloat3& centre, float reach) const;
 	// The turret.tiers entry def is in, from 1; 0 if none (turret.light)
 	int GetTier(const CCircuitDef* def) const;
 
@@ -138,17 +141,13 @@ public:
 	bool IsAnyCaller() const { return config.isAfterFlee || config.isNearEnemy; }
 
 private:
-	// A target before it is weighed for a def: traffic in metal/s, the rest in metal; halved per covering tower
-	struct SRaw {
-		CTurretValue::SPos pos;
-		float amount;
-		CTurretValue::Kind kind;
-	};
 	// Gathered once per order
 	struct SGather {
 		springai::AIFloat3 centre;
 		float radius;
-		std::vector<SRaw> raws;  // within radius + the longest range
+		// Within radius + the longest range, before they are weighed for a def (metal: traffic in metal/s, the rest in
+		// metal), halved per covering tower
+		std::vector<CTurretValue::STarget> raws;
 		std::vector<springai::AIFloat3> ourBuildings;  // within radius + defence.infl_rad
 		std::vector<springai::AIFloat3> enemyBuildings;  // within radius + ENEMY_INFL_RADIUS
 	};

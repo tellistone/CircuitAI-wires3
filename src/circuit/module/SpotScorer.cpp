@@ -70,7 +70,8 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 		radius = (chokeMap->GetConfig().setback[1] + 0.3f) * range;
 	}
 
-	const std::vector<STarget> targets = MakeTargets(def, pos, radius, goal, GetTowers());
+	const std::vector<STower> towers = GetTowers();
+	const std::vector<CTurretValue::STarget> targets = MakeTargets(def, pos, radius, goal, towers);
 	if (targets.empty()) {
 		return -RgtVector;
 	}
@@ -82,32 +83,26 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	const float quarterDiag = CTerrainManager::GetTerrainDiagonal() * 0.25f;
 	const float ownThreat = std::max(def->GetThreat(), 1.f);
 	const CChokeMap::SConfig& cfg = chokeMap->GetConfig();
-	// The turret picker's value model (CTurretValue): the approach's traffic in metal, as the picker counts it, and
-	// choke.spot.enemy x the cost of known enemies a tower could shoot (E). Buildings by their last known position,
-	// mobiles while in radar or sight. As threatened spots are skipped, an armed one only counts where the tower
-	// outranges it
+	// The turret picker's value model (CTurretValue): the approach's traffic in metal (as the picker counts it, at
+	// weight 1), and E, choke.spot.enemy x the picker's enemy targets (known enemy buildings seen in the last 3
+	// minutes, a mex at its income x turret.horizon), halved as the traffic is. Mobiles don't count: their routes are
+	// the approach, and a spot that freezes once queued mustn't follow a passing raid
 	std::vector<CTurretValue::STarget> values;
-	for (const STarget& t : targets) {
-		const CTurretValue::SPos tp = {t.pos.x, t.pos.y, t.pos.z};
+	for (const CTurretValue::STarget& t : targets) {
 		if ((goal.type == GoalType::HOLD) || IsHit(def, t.pos)) {  // a hold's group guards the choke whatever it hits
-			values.push_back({tp, picker->TrafficMetal(t.weight, range), CTurretValue::Kind::TRAFFIC});
+			values.push_back({t.pos, picker->TrafficMetal(t.metal, range, 1.f), CTurretValue::Kind::TRAFFIC});
 		}
 	}
 	int enemyCount = 0;
 	if ((goal.type != GoalType::HOLD) && (cfg.spotEnemy > 0.f)) {
-		for (const auto& kv : circuit->GetEnemyInfos()) {
-			const CEnemyInfo* e = kv.second;
-			const CCircuitDef* edef = e->GetCircuitDef();
-			if (e->IsHidden() || (edef == nullptr) || (edef->IsMobile() ? !e->IsInRadarOrLOS() : !picker->IsEnemyBuilding(e, false))
-				|| !(edef->IsAbleToFly() ? def->HasAntiAir() : def->HasAntiLand())
-				|| (e->GetPos().SqDistance2D(pos) > SQUARE(radius + range)))
-			{
-				continue;
+		std::vector<CTurretValue::STarget> enemies = picker->GetEnemyTargets(pos, radius + range);
+		HalveCovered(enemies, towers);
+		for (CTurretValue::STarget& e : enemies) {
+			if (IsHit(def, e.pos)) {
+				e.metal *= cfg.spotEnemy;
+				values.push_back(e);
+				++enemyCount;
 			}
-			const AIFloat3& ep = e->GetPos();
-			values.push_back({{ep.x, terrainMgr->GetHeightAt(ep.x, ep.z), ep.z}, cfg.spotEnemy * e->GetCost(),
-					CTurretValue::Kind::ENEMY});
-			++enemyCount;
 		}
 	}
 	// choke.spot.forward: a position's towers lean the way its approach comes from. pull: the targets' weighted offsets
@@ -116,9 +111,10 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	const float spotForward = (goal.type == GoalType::POSITION) ? std::max(cfg.spotForward, 0.f) : 0.f;
 	AIFloat3 pull = ZeroVector;
 	float spread = 0.f;
-	for (const STarget& t : targets) {
-		pull += (t.pos - pos) * t.weight;
-		spread += t.pos.distance2D(pos) * t.weight;
+	for (const CTurretValue::STarget& t : targets) {
+		const AIFloat3 offset(t.pos.x - pos.x, 0.f, t.pos.z - pos.z);
+		pull += offset * t.metal;
+		spread += offset.Length2D() * t.metal;
 	}
 	const float aheadScale = ((spread > 0.f) && (radius > 0.f)) ? 1.f / (radius * spread) : 0.f;
 	auto leanAt = [&](const AIFloat3& c) {
@@ -216,20 +212,29 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	AIFloat3 assetGround = goal.asset;
 	assetGround.y = terrainMgr->GetHeightAt(goal.asset.x, goal.asset.z);
 	// The costly rules, only on a candidate about to be scored
-	auto isFinished = [&](const CTurretValue::SCandidate& vc) {
-		const AIFloat3 c(vc.pos.x, vc.pos.y, vc.pos.z);
+	// The costly rules, only on a candidate about to be scored. A tower's spot moves onto its build site: buildable
+	// facing south and open on the blocking map (lanes, queued jobs), as the turret picker's (FindSiteAt)
+	auto isFinished = [&](CTurretValue::SCandidate& vc) {
+		AIFloat3 c(vc.pos.x, vc.pos.y, vc.pos.z);
 		if (goal.type == GoalType::HOLD) {
-			if ((goal.area != nullptr) && !terrainMgr->CanMoveToPos(goal.area, c)) {
-				return false;
-			}
-		} else if ((circuit->GetThreatMap()->GetAllThreatAt(c) > THREAT_MIN) || !terrainMgr->CanBuildAt(def, c)
+			return (goal.area == nullptr) || terrainMgr->CanMoveToPos(goal.area, c);
+		}
+		c = terrainMgr->FindSiteAt(def, c, UNIT_FACING_SOUTH);
+		if (!utils::is_valid(c) || !isCandidate(c) || (circuit->GetThreatMap()->GetAllThreatAt(c) > THREAT_MIN)
 			|| !isInReach(c))
 		{
 			return false;  // a builder only builds out of threat (FindBuildSite), and only where it gets in range
 		}
 		// A position's asset itself must stay in reach and in sight
-		return (goal.type != GoalType::POSITION) || ((c.SqDistance2D(goal.asset) <= SQUARE(0.8f * range))
-			&& (isHighArc || IsClearLine(c, emit, assetGround)));
+		c.y = terrainMgr->GetHeightAt(c.x, c.z);
+		if ((goal.type == GoalType::POSITION) && ((c.SqDistance2D(goal.asset) > SQUARE(0.8f * range))
+			|| (!isHighArc && !IsClearLine(c, emit, assetGround))))
+		{
+			return false;
+		}
+		vc.pos = {c.x, c.y, c.z};
+		vc.factor = factorAt(c);
+		return true;
 	};
 	auto makeAt = [&](float x, float z, CTurretValue::SCandidate& out) {
 		const AIFloat3 c(x, terrainMgr->GetHeightAt(x, z), z);
@@ -311,8 +316,8 @@ std::vector<float> CSpotScorer::GetUncovered(CCircuitDef* def, const std::vector
 	SGoal goal;
 	for (size_t i = 0; i < positions.size(); ++i) {
 		goal.asset = positions[i];
-		for (const STarget& t : MakeTargets(def, positions[i], radius, goal, towers)) {
-			sums[i] += t.weight;
+		for (const CTurretValue::STarget& t : MakeTargets(def, positions[i], radius, goal, towers)) {
+			sums[i] += t.metal;
 		}
 	}
 	return sums;
@@ -325,7 +330,7 @@ std::vector<float> CSpotScorer::GetUncovered(CCircuitDef* def, const std::vector
  *   with a floor weight (the mean target weight, or 1 with no traffic), so a spot near it is picked on height and
  *   sight alone
  */
-std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, const AIFloat3& pos, float radius,
+std::vector<CTurretValue::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, const AIFloat3& pos, float radius,
 		const SGoal& goal, const std::vector<STower>& towers) const
 {
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
@@ -339,12 +344,12 @@ std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, con
 	const CRegionGraph::SChoke* choke = isChokeGoal ? &graph.GetChokes()[goal.choke] : nullptr;
 	const int outerRegion = isChokeGoal ? graph.OtherSide(*choke, goal.innerRegion) : -1;
 
-	std::vector<STarget> targets;
+	std::vector<CTurretValue::STarget> targets;  // metal: the raw traffic
 	auto add = [&](int x, int z, float weight) {
-		AIFloat3 c((x + 0.5f) * cellSize, 0.f, (z + 0.5f) * cellSize);
-		if ((weight > 0.f) && (c.SqDistance2D(pos) <= SQUARE(reach))) {
-			c.y = terrainMgr->GetHeightAt(c.x, c.z);
-			targets.push_back({c, weight});
+		const float cx = (x + 0.5f) * cellSize;
+		const float cz = (z + 0.5f) * cellSize;
+		if ((weight > 0.f) && (SQUARE(cx - pos.x) + SQUARE(cz - pos.z) <= SQUARE(reach))) {
+			targets.push_back({{cx, terrainMgr->GetHeightAt(cx, cz), cz}, weight, CTurretValue::Kind::TRAFFIC});
 		}
 	};
 	if (isChokeGoal) {
@@ -365,41 +370,47 @@ std::vector<CSpotScorer::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, con
 		}
 	}
 	auto keepBest = [&targets](size_t count) {
-		std::stable_sort(targets.begin(), targets.end(), [](const STarget& a, const STarget& b) {
-			return a.weight > b.weight;
-		});
+		std::stable_sort(targets.begin(), targets.end(),
+				[](const CTurretValue::STarget& a, const CTurretValue::STarget& b) { return a.metal > b.metal; });
 		if (targets.size() > count) {
 			targets.resize(count);
 		}
 	};
-	keepBest(MAX_TARGETS * 4);  // the line-of-fire tests below only for those that may make the best 32
-	// As the turret picker halves: only by a tower that defends (CTurretPicker::IsDefence) and hits the target
-	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
-	for (STarget& t : targets) {
-		for (const STower& tower : towers) {
-			if (picker->IsDefence(tower.def) && IsHit(tower.def, t.pos)
-				&& (tower.pos.SqDistance2D(t.pos) <= SQUARE(tower.range))
-				&& (tower.isHighArc || IsClearLine(tower.pos, tower.emit, t.pos)))
-			{
-				t.weight *= 0.5f;
-			}
-		}
-	}
+	keepBest(MAX_TARGETS * 4);  // the line-of-fire tests of the halving only for those that may make the best 32
+	HalveCovered(targets, towers);
 	keepBest(MAX_TARGETS);
 	if (!isChokeGoal) {
 		float floor = 1.f;
 		if (!targets.empty()) {
 			floor = 0.f;
-			for (const STarget& t : targets) {
-				floor += t.weight;
+			for (const CTurretValue::STarget& t : targets) {
+				floor += t.metal;
 			}
 			floor /= targets.size();
 		}
-		AIFloat3 asset = goal.asset;
-		asset.y = terrainMgr->GetHeightAt(asset.x, asset.z);
-		targets.push_back({asset, floor});
+		targets.push_back({{goal.asset.x, terrainMgr->GetHeightAt(goal.asset.x, goal.asset.z), goal.asset.z}, floor,
+				CTurretValue::Kind::TRAFFIC});
 	}
 	return targets;
+}
+
+/*
+ * Halved for each tower that covers it already, defends (CTurretPicker::IsDefence) and hits it: an AA tower doesn't
+ * cover a mex, nor a Claw minefield an approach
+ */
+void CSpotScorer::HalveCovered(std::vector<CTurretValue::STarget>& targets, const std::vector<STower>& towers) const
+{
+	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
+	for (CTurretValue::STarget& t : targets) {
+		const AIFloat3 p(t.pos.x, t.pos.y, t.pos.z);
+		for (const STower& tower : towers) {
+			if (picker->IsDefence(tower.def) && IsHit(tower.def, p) && (tower.pos.SqDistance2D(p) <= SQUARE(tower.range))
+				&& (tower.isHighArc || IsClearLine(tower.pos, tower.emit, p)))
+			{
+				t.metal *= 0.5f;
+			}
+		}
+	}
 }
 
 /*
@@ -450,9 +461,9 @@ bool CSpotScorer::IsClearLine(const AIFloat3& from, float emit, const AIFloat3& 
 	return true;
 }
 
-bool CSpotScorer::IsHit(const CCircuitDef* def, const AIFloat3& pos)
+bool CSpotScorer::IsHitAt(const CCircuitDef* def, float elevation)
 {
-	return def->HasAntiLand() || (CTerrainManager::IsDeepWater(pos.y) && def->HasAntiWater());
+	return def->HasAntiLand() || (CTerrainManager::IsDeepWater(elevation) && def->HasAntiWater());
 }
 
 CTurretValue::ClearFn CSpotScorer::MakeClearFn(const CCircuitDef* def) const

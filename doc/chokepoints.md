@@ -199,7 +199,7 @@ Scored spots use the turret picker's value model (see "Turret picker (G)"), with
 
 There is no cost threshold: a goal's tower goes on its best spot.
 
-- *T* is the traffic of the targets in range with a clear line of fire, in metal as the picker counts it (× `turret.horizon`, once per route). Each target is halved for each tower that already covers it, defends (not a Claw mine, a missile or `turret.not_defence`) and hits it. At a choke the targets are its line and the band in front of it. At a defence point, the
+- *T* is the traffic of the targets in range with a clear line of fire, in metal as the picker counts it (× `turret.horizon`, once per route; `turret.traffic` is the picker's alone). Each target is halved for each tower that already covers it, defends (not a Claw mine, a missile or `turret.not_defence`) and hits it. At a choke the targets are its line and the band in front of it. At a defence point, the
   base or a radar, they're the point's own approach: the cells on near-shortest routes from the enemy to it, by
   walking distance, each weighted by its traffic. Traffic piles up where routes narrow, so the ramp up to a plateau
   outweighs the open ground before it, and the ground below the plateau's cliffs, which leads elsewhere, counts
@@ -208,10 +208,11 @@ There is no cost threshold: a goal's tower goes on its best spot.
   So a spot that high or higher scores `1 + choke.spot.height` times as much (1.5× by default).
 - *V* is the share of the range circle's ground in a clear line of fire from the spot, as the picker's. A spot on a
   cliff edge sees the plateau and the ground below, and its foot only the open side.
-- *E* is `choke.spot.enemy` × the cost of the known enemies a tower there could shoot: in range, in a clear line of fire, and
-  of a kind it can hit (fliers need anti-air). Buildings count at their last known position, and mobile units only
-  while in radar or sight. As towers skip threatened spots, an armed enemy only counts where the tower outranges
-  it, so in practice this finds unarmed targets (mexes, energy, radar, constructors) and outranged ones.
+- *E* is `choke.spot.enemy` × the picker's enemy targets that a tower there could shoot, in range and in a clear
+  line of fire: known enemy buildings seen in the last 3 minutes (no fakes, Claw mines or missiles), at cost, an
+  enemy mex at its income × `turret.horizon`. They are halved for covering towers as T is. Mobile units don't count:
+  their routes are T already, and a spot frozen once its tower is queued mustn't follow a passing raid. As towers
+  skip threatened spots, an armed building only counts where the tower outranges it.
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.
 - *lean* pulls a defence point's, the base's and the radar guard's towers the way the enemy comes from. It is
   `1 + choke.spot.forward × (1 + ahead) ÷ 2`, where *ahead* (from −1 to 1) is how far the spot sits toward the
@@ -221,7 +222,8 @@ There is no cost threshold: a goal's tower goes on its best spot.
   and an approach from all sides leans nowhere.
 - Hold spots skip the builder term and E.
 
-A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the
+A tower's spot is moved onto its build site, buildable facing south and open on the blocking map (lanes, queued
+jobs), as the picker's are, so it never lands on another job's footprint. A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the
 nearest safe site, often down the slope of the ledge it was meant for. It's built where it was scored, without the
 usual random shake, and so are radars and their guards.
 

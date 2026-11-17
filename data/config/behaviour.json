@@ -175,7 +175,7 @@
 		"radius": 300,  // elmos from a defence point its towers may stand
 		"height": 0.5,  // the most height adds to a spot's score: 0.5 = up to +50%, 1 = up to double
 		"height_cap": 150,  // elmos above the ground it covers at which a spot earns all of "height"
-		"enemy": 1.0,  // weight of E, the cost of known enemies a tower could shoot from a spot, added to the covered traffic in metal (the turret picker's model); 0 = off
+		"enemy": 1.0,  // weight of E, the turret picker's enemy targets a tower could shoot from a spot (enemy buildings seen in the last 3 minutes at cost, a mex at its income x turret.horizon; no mobiles), added to the covered traffic in metal; 0 = off
 		"view": 1.0,  // a spot scores up to 1 + this x its score by the share of its range circle in a clear line of fire (as turret.view); 0 = off
 		"forward": 0.5  // lean of a cluster's, the base's and the radar guard's towers the way their approach comes from: 0.5 = a spot a radius toward an approach from one side scores up to +50% over one a radius away; 0 = off
 	},
