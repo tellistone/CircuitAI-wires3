@@ -55,8 +55,8 @@ private:
 	const F3Vec& GetSafeFrontPos(CCircuitUnit* unit);  // FillFrontPos: safe ones, not where we stand (scratch)
 	// Reachable spots on rings around pos (250 to 3000 elmos, 16 directions, nearest ring first; scratch)
 	const F3Vec& GetRingSpots(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
-	// No safe route to the picked spot, or none picked: an armed ground scout raids alone for a while (a raid stint,
-	// CRaidTask::SetScoutStint) and then looks again; others (and right after a stint ended at danger) explore
+	// No safe route to the picked spot, or none picked: an armed ground scout raids for a while (a raid stint,
+	// CMilitaryManager::SetScoutStint) and then looks again; others (and right after a stint ended at danger) explore
 	void OnNoSafeRoute(CCircuitUnit* unit);
 	void StartRaidStint(CCircuitUnit* unit);
 	// Head for the nearest unseen safe spot (or safe frontline spot) reachable without crossing danger; hold if none

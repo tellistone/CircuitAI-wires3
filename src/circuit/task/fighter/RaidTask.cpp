@@ -92,9 +92,6 @@ CMilitaryManager* CRaidTask::GetMilitaryMgr() const
 
 bool CRaidTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (IsScoutStint()) {
-		return false;  // a scout's stint stays a group of one
-	}
 	// Distance first: during a raid rally every group checks every other one every 2 updates, and most are far
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
@@ -117,9 +114,6 @@ bool CRaidTask::CanAssignTo(CCircuitUnit* unit) const
 
 bool CRaidTask::IsRallyCompatible(CCircuitUnit* unit) const
 {
-	if (IsScoutStint()) {
-		return false;
-	}
 	const CCircuitDef* udef = unit->GetCircuitDef();
 	const float speedRatio = GetMilitaryMgr()->GetAttackMerge().speedRatio;  // quota.attack_merge.speed_ratio
 	if (!udef->IsRoleRaider() || udef->IsAbleToFly() || !IsMoveCompatible(unit, speedRatio)) {
@@ -168,9 +162,6 @@ bool CRaidTask::IsInRally() const
 
 ISquadTask* CRaidTask::GetRaidMergeTask()
 {
-	if (IsScoutStint()) {
-		return nullptr;
-	}
 	// GetMergeTask runs on updates where updCount % 32 == 1, which are among these
 	if ((updCount % 2 == 1) && IsInRally()) {
 		return CheckMergeTask();
@@ -215,6 +206,7 @@ void CRaidTask::AssignTo(CCircuitUnit* unit)
 
 void CRaidTask::RemoveAssignee(CCircuitUnit* unit)
 {
+	GetMilitaryMgr()->EndScoutStint(unit);  // left raiding (a merge moves units without this: the stint goes along)
 	ISquadTask::RemoveAssignee(unit);
 	if (leader == nullptr) {
 		manager->AbortTask(this);
@@ -258,10 +250,7 @@ void CRaidTask::Update()
 	 */
 	const float fleeShare = GetMilitaryMgr()->GetRaidFleeShare();
 	const bool isInDanger = IsInDanger(frame, fleeShare);
-	// A scout's stint ends at danger (no raid escape to a haven: the scout runs to the nearest safe spot), or once it
-	// is over and we fight nothing: the scout task then looks for a safe route to a spot again
-	if (IsScoutStint() && (isInDanger || ((frame >= scoutStintEnd) && (target == nullptr) && (frame >= fleeFrame)))) {
-		EndScoutStint(isInDanger);
+	if (UpdateScoutStints(frame, isInDanger)) {
 		return;
 	}
 	// Fleeing from a fight the pick still accepts: for a turret just seen, the flee grace (quota.raid_flee_grace)
@@ -453,13 +442,29 @@ void CRaidTask::OnUnitIdle(CCircuitUnit* unit)
 	}
 }
 
-void CRaidTask::EndScoutStint(bool isDanger)
+bool CRaidTask::UpdateScoutStints(int frame, bool isInDanger)
 {
-	CScoutTask* task = static_cast<CScoutTask*>(GetMilitaryMgr()->EnqueueTask(FightType::SCOUT));
-	if (isDanger) {
-		task->DelayRaidStint();  // its flee runs first: no stint straight back into the danger
+	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	if (!militaryMgr->HasScoutStints()) {
+		return false;
 	}
-	manager->AssignTask(leader, task);  // our last unit leaves: this task aborts
+	static std::vector<CCircuitUnit*> leaving;  // NOTE: micro-opt
+	leaving.clear();
+	const bool isIdle = (target == nullptr) && (frame >= fleeFrame);
+	for (CCircuitUnit* unit : units) {
+		const int endFrame = militaryMgr->GetScoutStintEnd(unit);
+		if ((endFrame >= 0) && (isInDanger || (isIdle && (frame >= endFrame)))) {
+			leaving.push_back(unit);
+		}
+	}
+	for (CCircuitUnit* unit : leaving) {
+		CScoutTask* task = static_cast<CScoutTask*>(militaryMgr->EnqueueTask(FightType::SCOUT));
+		if (isInDanger) {
+			task->DelayRaidStint();  // its flee runs first: no stint straight back into the danger
+		}
+		manager->AssignTask(unit, task);  // RemoveAssignee ends the stint; the last unit leaving aborts us
+	}
+	return IsDead();
 }
 
 bool CRaidTask::FindTarget()
@@ -819,7 +824,7 @@ void CRaidTask::ApplyRaidPath(const CQueryPathSingle* query)
 CRaidTask* CRaidTask::UpdateChase(int frame)
 {
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	if (IsScoutStint() || !militaryMgr->IsRaidRallyJoiner(this)) {
+	if (!militaryMgr->IsRaidRallyJoiner(this)) {
 		chaseTask = nullptr;
 		chaseFails = 0;
 		return nullptr;

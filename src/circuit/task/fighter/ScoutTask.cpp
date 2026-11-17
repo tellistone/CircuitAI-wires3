@@ -6,7 +6,6 @@
  */
 
 #include "task/fighter/ScoutTask.h"
-#include "task/fighter/RaidTask.h"
 #include "task/TaskManager.h"
 #include "map/MapManager.h"
 #include "map/ThreatMap.h"
@@ -467,12 +466,13 @@ void CScoutTask::OnNoSafeRoute(CCircuitUnit* unit)
 
 void CScoutTask::StartRaidStint(CCircuitUnit* unit)
 {
-	// A raid group of one until it looks again: CRaidTask hands the unit back to a new scout task, which picks a spot
-	// (the one we just gave up on is blocked for a while)
+	// A raid group of its own (which may merge, rally and take joiners as any) until it looks again: its raid group
+	// hands the unit back to a new scout task, which picks a spot (the one we just gave up on is blocked for a while)
 	CCircuitAI* circuit = manager->GetCircuit();
-	CRaidTask* task = static_cast<CRaidTask*>(circuit->GetMilitaryManager()->EnqueueTask(FightType::RAID));
-	task->SetScoutStint(circuit->GetLastFrame() + RAID_STINT_FRAMES);
-	manager->AssignTask(unit, task);
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	IFighterTask* task = militaryMgr->EnqueueTask(FightType::RAID);
+	manager->AssignTask(unit, task);  // the unit leaves: this task aborts
+	militaryMgr->SetScoutStint(unit, circuit->GetLastFrame() + RAID_STINT_FRAMES);
 }
 
 float CScoutTask::GetSafeThreat(CCircuitUnit* unit) const

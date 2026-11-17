@@ -1296,6 +1296,7 @@ int CMilitaryManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
+	scoutStints.erase(unit->GetId());  // ids get reused
 
 	auto search = destroyedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != destroyedHandler.end()) {
@@ -1511,9 +1512,7 @@ void CMilitaryManager::CollectRallyGroups(const SRally& rally, std::vector<ISqua
 	outGroups.clear();
 	for (IFighterTask* t : GetTasks(rally.type)) {
 		ISquadTask* g = static_cast<ISquadTask*>(t);  // attack and raid tasks are squads
-		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()
-			&& !((rally.type == IFighterTask::FightType::RAID) && static_cast<CRaidTask*>(g)->IsScoutStint()))
-		{  // not a scout's raid stint: it rallies with no one
+		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()) {
 			outGroups.push_back(g);
 		}
 	}
@@ -2534,14 +2533,16 @@ static bool IsOnFightTask(const CCircuitUnit* unit, IFighterTask::FightType type
 		&& (static_cast<const IFighterTask*>(task)->GetFightType() == type);
 }
 
-// Scouting: on a scout task, or a scout's raid stint (CScoutTask: no safe route to its spot), which comes back to it
-static bool IsScouting(const CCircuitUnit* unit)
+bool CMilitaryManager::IsScouting(const CCircuitUnit* unit) const
 {
-	if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
-		return true;
-	}
-	return IsOnFightTask(unit, IFighterTask::FightType::RAID)
-			&& static_cast<const CRaidTask*>(unit->GetTask())->IsScoutStint();
+	// On a scout task, or on a raid stint (CScoutTask: no safe route to its spot), which comes back to scouting
+	return IsOnFightTask(unit, IFighterTask::FightType::SCOUT) || IsScoutStint(unit);
+}
+
+int CMilitaryManager::GetScoutStintEnd(const CCircuitUnit* unit) const
+{
+	auto it = scoutStints.find(unit->GetId());
+	return (it != scoutStints.end()) ? it->second : -1;
 }
 
 unsigned int CMilitaryManager::GetRaiderCount() const
