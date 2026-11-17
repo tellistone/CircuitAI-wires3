@@ -21,7 +21,7 @@ public:
 	CBRestoreTask(ITaskManager* mgr, Priority priority, int cell);
 	virtual ~CBRestoreTask();
 
-	// A builder within restore.range, no threat to it on the cell, up to restore.builders on it
+	// A builder within restore.range, the cell safe for it (IsRestoreSafe), up to restore.builders on it
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
@@ -31,7 +31,7 @@ protected:
 	// Dropped: the builders still on it stop, so none keeps restoring next to what made us drop it
 	virtual void Cancel() override;
 	virtual void Execute(CCircuitUnit* unit) override;
-	// The builder's threat-aware path there (asked again while it walks): any threat on it drops the job
+	// The builder's threat-aware path there (asked again while it walks): uncovered threat on it drops the job
 	virtual void ApplyPath(const CQueryPathSingle* query) override;
 
 public:
@@ -39,11 +39,14 @@ public:
 
 	int GetCell() const { return cell; }
 	bool IsAssigned() const { return isAssigned; }
+	int GetDropCause() const { return dropCause; }
+	void SetDropCause(int cause) { dropCause = cause; }  // CBuilderManager::SRestore::Drop, before AbortTask
 
 private:
 	int cell;
 	int tag;  // ZK's terraform command tag, -1 = no terraform made yet
 	bool isAssigned;  // a builder has taken the job: its end puts the cell on hold
+	int dropCause;
 	std::map<CCircuitUnit*, int> orderFrames;  // frame each builder got its own restore order
 };
 

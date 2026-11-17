@@ -7,7 +7,6 @@
 #include "task/builder/RestoreTask.h"
 #include "task/TaskManager.h"
 #include "module/BuilderManager.h"
-#include "map/ThreatMap.h"
 #include "terrain/path/QueryPathSingle.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -22,6 +21,7 @@ CBRestoreTask::CBRestoreTask(ITaskManager* mgr, Priority priority, int cell)
 		, cell(cell)
 		, tag(-1)
 		, isAssigned(false)
+		, dropCause(CBuilderManager::SRestore::DROP_OTHER)
 {
 }
 
@@ -40,7 +40,7 @@ bool CBRestoreTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	// The spot here; the way there is checked on the builder's path (ApplyPath)
-	return circuit->GetThreatMap()->GetPlainThreatAt(unit, position) <= THREAT_MIN;
+	return circuit->GetBuilderManager()->IsRestoreSafe(unit, position);
 }
 
 void CBRestoreTask::AssignTo(CCircuitUnit* unit)
@@ -106,12 +106,13 @@ void CBRestoreTask::Execute(CCircuitUnit* unit)
 
 void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
 {
-	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	const CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
 	CCircuitUnit* unit = query->GetUnit();
 	const F3Vec& path = query->GetPathInfo()->posPath;
 	for (size_t i = 1; i < path.size(); ++i) {  // not where the builder stands: it can't help that
-		if (threatMap->GetPlainThreatAt(unit, path[i]) > THREAT_MIN) {
+		if (!builderMgr->IsRestoreSafe(unit, path[i])) {
 			// One builder's unsafe way drops the job for all on it: the cell's back-off stops a re-take every update
+			dropCause = CBuilderManager::SRestore::DROP_PATH;
 			manager->AbortTask(this);
 			return;
 		}
