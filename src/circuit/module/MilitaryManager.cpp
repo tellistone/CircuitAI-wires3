@@ -1062,18 +1062,14 @@ void CMilitaryManager::ReadConfig()
 	amountFactor = (maxFactor - minFactor) / (SQUARE(maxMap) - SQUARE(minMap)) * (mapSize - SQUARE(minMap)) + minFactor + offset;
 //	amountFactor = std::max(amountFactor, 0.f);
 
-	// porcupine.budget, the turret account. Missing: the old behaviour.json turret.share, else 0.1
+	// porcupine.budget, the turret account (a missing key: STurretBudget's default)
 	const Json::Value& budget = porc["budget"];
-	const Json::Value& oldShare = root["turret"]["share"];
-	turretBudget.share = budget.isObject() ? budget.get("share", turretBudget.share).asFloat()
-			: (oldShare.isNumeric() ? oldShare.asFloat() : turretBudget.share);
-	turretBudget.bankSec = budget.isObject() ? budget.get("bank_sec", turretBudget.bankSec).asFloat() : turretBudget.bankSec;
-	turretBudget.lossRefund = std::max(budget.isObject() ? budget.get("loss_refund", turretBudget.lossRefund).asFloat()
-			: turretBudget.lossRefund, 0.f);
-	turretBudget.share = std::max(turretBudget.share, 0.f);
-	turretBudget.bankSec = std::max(turretBudget.bankSec, 1.f);
-	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1), bank %.0f s, loss refund x%.1f%s",
-			turretBudget.share, turretBudget.bankSec, turretBudget.lossRefund, budget.isObject() ? "" : (oldShare.isNumeric() ? " (turret.share)" : " (defaults)"));
+	STurretBudget& tb = turretBudget;
+	tb.share = std::max(budget.get("share", tb.share).asFloat(), 0.f);
+	tb.bankSec = std::max(budget.get("bank_sec", tb.bankSec).asFloat(), 1.f);
+	tb.lossRefund = std::max(budget.get("loss_refund", tb.lossRefund).asFloat(), 0.f);
+	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1), bank %.0f s, loss refund x%.1f",
+			tb.share, tb.bankSec, tb.lossRefund);
 
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
@@ -1285,7 +1281,7 @@ int CMilitaryManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 
 int CMilitaryManager::UnitFinished(CCircuitUnit* unit)
 {
-	if ((turretPicker != nullptr) && turretPicker->IsDefence(unit->GetCircuitDef())) {
+	if (turretPicker->IsDefence(unit->GetCircuitDef())) {
 		finishedTurrets.insert(unit->GetId());  // porcupine.budget.loss_refund
 	}
 	auto search = finishedHandler.find(unit->GetCircuitDef()->GetId());
@@ -1320,13 +1316,25 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
 	scoutStints.erase(unit->GetId());  // ids get reused
-	// porcupine.budget.loss_refund: a finished turret of ours lost (destroyed or captured) pays its rebuild back
+	// porcupine.budget.loss_refund: a finished turret of ours lost pays its rebuild back, if it could fight back: its
+	// killer seen within its reach of that kind of target (not artillery out of its range, nor a flier over a Lotus)
 	if (finishedTurrets.erase(unit->GetId()) > 0) {
 		UpdateTurretBudget();
 		const float cost = unit->GetCircuitDef()->GetCostM();
-		turretBudget.balance += turretBudget.lossRefund * cost;
 		turretBudget.lost += cost;
-		turretBudget.lossPaid += turretBudget.lossRefund * cost;
+		if (attacker != nullptr) {
+			const AIFloat3& aPos = attacker->GetPos();
+			const CCircuitDef* adef = attacker->GetCircuitDef();
+			const CCircuitDef::RangeType rt = ((adef != nullptr) && adef->IsAbleToFly()) ? CCircuitDef::RangeType::AIR
+					: (aPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
+			const float range = unit->GetCircuitDef()->GetMaxRange(rt);
+			if ((range > 0.f)
+				&& (aPos.SqDistance2D(unit->GetPos(circuit->GetLastFrame())) <= SQUARE(range + DEFAULT_SLACK)))
+			{
+				turretBudget.balance += turretBudget.lossRefund * cost;
+				turretBudget.lossPaid += turretBudget.lossRefund * cost;
+			}
+		}
 	}
 
 	auto search = destroyedHandler.find(unit->GetCircuitDef()->GetId());
@@ -2008,9 +2016,9 @@ void CMilitaryManager::UpdateTurretBudget()
 			}
 			b.spent[i] = 0.f;
 		}
-		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f), last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f): %s",
-				b.balance, rate, b.share, em->GetAvgMetalIncome(), pull, total, b.refunded, b.lost, b.lossPaid,
-				spent.empty() ? "nothing" : spent.c_str());
+		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f), last minute charged %.0f,"
+				" refunded %.0f, lost %.0f (paid back %.0f): %s", b.balance, rate, b.share, em->GetAvgMetalIncome(), pull,
+				total, b.refunded, b.lost, b.lossPaid, spent.empty() ? "nothing" : spent.c_str());
 		b.refunded = b.lost = b.lossPaid = 0.f;
 	}
 }

@@ -137,8 +137,8 @@ public:
 	 * called off before it starts. Porc (porc-mode towers of a cluster or its chokes) and the picker wait for the
 	 * balance to cover a tower (CanAffordTurret); the rest are charged but never refused and may take it below zero.
 	 * Preventive towers (a cluster outside porc mode) are free, and only logged. A finished armed defence of ours that
-	 * dies (or is captured) pays loss_refund x its cost back, past the cap if need be (the account then stops filling
-	 * until it is spent below the cap), so a lost position can be rebuilt
+	 * dies to a killer seen within its reach pays loss_refund x its cost back, past the cap if need be (the account
+	 * then stops filling until it is spent below the cap), so a lost position can be rebuilt
 	 */
 	enum class TurretSpend: int {OTHER = 0, PORC, PREVENT, PICKER, CORNERED, BASE, GUARD, ESCORT, HUB, _SIZE_};
 	class TurretScope {  // the spender of the DEFENCE jobs queued while it lives
