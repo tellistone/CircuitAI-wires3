@@ -59,9 +59,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   know of (a mex at its income x `turret.horizon`) and, at half that, the metal spots on the enemy's half with no mex
   we know of, the best 48; it gains up to `height` (0.5) for standing 150 elmos above them, and halves at `radius`
   from the old site. A spot must be in our territory, off the lanes, out of threat, buildable, in reach of a builder
-  of ours and (both are grid consumers) in pylon reach of a grid with enough energy. The gun is then built right
-  there, with no shake; with no spot (no targets known, nothing passes, `radius` 0) the old site stands. Whether a
-  gun can be powered is still judged at the old site. `BIG GUN spot` lines in the log
+  of ours and (both are grid consumers) in pylon reach of a grid with enough energy. The spot goes on the blocking map
+  then, as a turret picker job's does, and the gun is built right there, with no shake (an ally's superweapon frame in
+  reach is still helped first); with no spot (no targets known, nothing passes, `radius` 0) the old site stands.
+  Whether a gun can be powered is still judged at the old site. `BIG GUN spot` lines in the log
 
 - **One scorer for every scored turret spot.** `CSpotScorer::FindSpot` (cluster and base towers with
   `choke.spot.enable`, choke towers, radar guards, hold spots) now scores and searches on the turret picker's value
@@ -773,10 +774,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
-- **Big Bertha and the Disco Rave Party no longer skip near targets on flat ground as behind terrain.** The arc test
-  aimed at the target's base, where the shell's last stretch runs under the 8-elmo clearance before the 44-elmo stop:
-  flat shots read as blocked from about 400 to 2,000 elmos and often out to 2,800 (the Rave Party: 3,250 and 4,300).
-  It now aims 20 elmos up (water: from its surface).
+- **Big Bertha and the Disco Rave Party no longer skip targets they can hit as behind terrain.** Their arc test
+  started the shell 50 elmos above the gun's base (Bertha's `aimposoffset`, where enemies aim at it), checked the
+  ground to 44 elmos short of the target, and aimed at the target's base. The engine (`CCannon::HaveFreeLineOfFire`)
+  starts it at the aim-from piece (Bertha's is 113 elmos up, the Rave Party's 112) and skips the last 1/16 of the
+  distance. Over 101 shot distances from 400 to 5,400 elmos, the old test blocked 21 to 68 more than the engine past a
+  100- to 200-elmo ridge or a 40-elmo bump short of the target, and flat shots from about 400 to 2,000 elmos. It now
+  starts at 112, skips the larger of 44 elmos and 1/16, and aims 20 elmos up (water: from its surface), and agrees
+  with the engine on all but 0 to 5 of those distances.
 
 - **Only one geothermal morphs at a time** (`economy.energy.geo.morph`). The AI used to give up waiting after 300 s
   and start the next geo, while a morph short of metal (it can run well past its 90 s) was still going. It now waits

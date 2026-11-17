@@ -13,7 +13,6 @@
 #include "module/MilitaryManager.h"
 #include "module/TurretPicker.h"
 #include "resource/MetalManager.h"
-#include "spring/SpringMap.h"
 #include "task/static/PriorityArtyTask.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
@@ -282,12 +281,56 @@ AIFloat3 CSpotScorer::FindGunSpot(CCircuitDef* def, const AIFloat3& centre, cons
 		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // shells fly over water, and burst on it
 	};
 	auto isClear = [&](const CTurretValue::SPos& from, const CTurretValue::SPos& to) {
-		return ballistics::IsShotClear(from.x, std::max(from.y, 0.f) + ballistics::MUZZLE_HEIGHT, from.z, to.x,
+		return ballistics::IsShotClear(from.x, std::max(from.y, 0.f) + ballistics::AIM_FROM_HEIGHT, from.z, to.x,
 				std::max(to.y, 0.f) + ballistics::AIM_HEIGHT, to.z, range, shell, groundAt);
 	};
-	// The farthest any target can be: from the highest ground down to the water
-	const float rangeMax = ballistics::CannonRange(range,
-			-(std::max(circuit->GetMap()->GetMaxHeight(), 0.f) + ballistics::MUZZLE_HEIGHT) * shell.heightMod,
+
+	// Candidates
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const bool isConsumer = economyMgr->IsGridConsumer(def);
+	auto isCandidate = [&](const AIFloat3& c) {
+		return (c.SqDistance2D(centre) <= SQUARE(cfg.radius)) && !IsMasked(c) && !chokeMap->IsOnLane(c)
+			&& inflMap->IsAllyTerritory(c, INFL_EPS) && (threatMap->GetAllThreatAt(c) <= THREAT_MIN);
+	};
+	auto makeAt = [&](float x, float z, CTurretValue::SCandidate& out) {
+		const AIFloat3 c(x, terrainMgr->GetHeightAt(x, z), z);
+		if (!isCandidate(c)) {
+			return false;
+		}
+		out = {{c.x, c.y, c.z}, 0.f, c.distance2D(centre)};
+		return true;
+	};
+	const std::function<bool (const AIFloat3&)> isInReach = MakeReachFn(def, false);
+	// The costly rules: the spot moves onto its build site (buildable facing south, open on the blocking map)
+	auto isFinished = [&](CTurretValue::SCandidate& vc) {
+		const AIFloat3 c = terrainMgr->FindSiteAt(def, AIFloat3(vc.pos.x, vc.pos.y, vc.pos.z), UNIT_FACING_SOUTH);
+		if (!utils::is_valid(c) || !isCandidate(c) || !isInReach(c)
+			|| (isConsumer && !economyMgr->IsGridReachable(def, c)))
+		{
+			return false;
+		}
+		vc.pos = {c.x, terrainMgr->GetHeightAt(c.x, c.z), c.z};
+		vc.walk = c.distance2D(centre);
+		return true;
+	};
+	std::vector<CTurretValue::SCandidate> candidates;
+	float topY = 0.f;
+	ForEachCellIn(CTerrainManager::GetTerrainWidth() / GUN_CELL, CTerrainManager::GetTerrainHeight() / GUN_CELL,
+			GUN_CELL, centre.x - cfg.radius, centre.z - cfg.radius, centre.x + cfg.radius, centre.z + cfg.radius,
+			[&](int x, int z) {
+		CTurretValue::SCandidate c;
+		if (makeAt((x + 0.5f) * GUN_CELL, (z + 0.5f) * GUN_CELL, c)) {
+			candidates.push_back(c);
+			topY = std::max(topY, c.pos.y);
+		}
+	});
+	if (candidates.empty()) {
+		return -RgtVector;
+	}
+	// The farthest any target can be: from the highest candidate down to the water
+	const float rangeMax = ballistics::CannonRange(range, -(topY + ballistics::AIM_FROM_HEIGHT) * shell.heightMod,
 			shell.speed, shell.gravity) * ballistics::AIM_RANGE_MOD;
 
 	// Targets
@@ -326,45 +369,6 @@ AIFloat3 CSpotScorer::FindGunSpot(CCircuitDef* def, const AIFloat3& centre, cons
 		return -RgtVector;
 	}
 
-	// Candidates
-	CInfluenceMap* inflMap = circuit->GetInflMap();
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const bool isConsumer = economyMgr->IsGridConsumer(def);
-	auto isCandidate = [&](const AIFloat3& c) {
-		return (c.SqDistance2D(centre) <= SQUARE(cfg.radius)) && !IsMasked(c) && !chokeMap->IsOnLane(c)
-			&& inflMap->IsAllyTerritory(c, INFL_EPS) && (threatMap->GetAllThreatAt(c) <= THREAT_MIN);
-	};
-	auto makeAt = [&](float x, float z, CTurretValue::SCandidate& out) {
-		const AIFloat3 c(x, terrainMgr->GetHeightAt(x, z), z);
-		if (!isCandidate(c)) {
-			return false;
-		}
-		out = {{c.x, c.y, c.z}, 0.f, c.distance2D(centre)};
-		return true;
-	};
-	const std::function<bool (const AIFloat3&)> isInReach = MakeReachFn(def, false);
-	// The costly rules: the spot moves onto its build site (buildable facing south, open on the blocking map)
-	auto isFinished = [&](CTurretValue::SCandidate& vc) {
-		const AIFloat3 c = terrainMgr->FindSiteAt(def, AIFloat3(vc.pos.x, vc.pos.y, vc.pos.z), UNIT_FACING_SOUTH);
-		if (!utils::is_valid(c) || !isCandidate(c) || !isInReach(c)
-			|| (isConsumer && !economyMgr->IsGridReachable(def, c)))
-		{
-			return false;
-		}
-		vc.pos = {c.x, terrainMgr->GetHeightAt(c.x, c.z), c.z};
-		vc.walk = c.distance2D(centre);
-		return true;
-	};
-	std::vector<CTurretValue::SCandidate> candidates;
-	ForEachCellIn(CTerrainManager::GetTerrainWidth() / GUN_CELL, CTerrainManager::GetTerrainHeight() / GUN_CELL,
-			GUN_CELL, centre.x - cfg.radius, centre.z - cfg.radius, centre.x + cfg.radius, centre.z + cfg.radius,
-			[&](int x, int z) {
-		CTurretValue::SCandidate c;
-		if (makeAt((x + 0.5f) * GUN_CELL, (z + 0.5f) * GUN_CELL, c)) {
-			candidates.push_back(c);
-		}
-	});
 	CTurretValue::SParams params;
 	params.range = rangeMax;  // a bound: isClear tests the real reach
 	params.heightBonus = cfg.height;

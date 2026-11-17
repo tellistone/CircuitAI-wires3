@@ -728,9 +728,15 @@ IBuilderTask* CBuilderManager::EnqueueBigGun(IBuilderTask::Priority priority, CC
 {
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	const AIFloat3 spot = militaryMgr->GetSpotScorer()->FindGunSpot(buildDef, site, militaryMgr->GetGunSpotConfig());
-	return utils::is_valid(spot)
-			? EnqueueTask(priority, buildDef, spot, IBuilderTask::BuildType::BIG_GUN, buildDef->GetCostM(), 0.f)
-			: EnqueueTask(priority, buildDef, site, IBuilderTask::BuildType::BIG_GUN);
+	if (!utils::is_valid(spot)) {
+		return EnqueueTask(priority, buildDef, site, IBuilderTask::BuildType::BIG_GUN);
+	}
+	IBuilderTask* task = EnqueueTask(priority, buildDef, spot, IBuilderTask::BuildType::BIG_GUN, buildDef->GetCostM(),
+			0.f);
+	// Its footprint goes on the blocking map now, as a turret picker job's: no other job takes the spot meanwhile
+	task->SetFacing(UNIT_FACING_SOUTH);
+	task->SetBuildPos(spot);
+	return task;
 }
 
 IBuilderTask* CBuilderManager::EnqueuePylon(IBuilderTask::Priority priority,

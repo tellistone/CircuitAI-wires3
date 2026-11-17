@@ -140,7 +140,7 @@ void CPriorityArtyTask::Start(CCircuitUnit* unit)
 	position = unit->GetPos(frame);
 	tp = unit->GetCircuitDef()->GetTargetPriority();
 	aimFrom = position;
-	aimFrom.y += ballistics::MUZZLE_HEIGHT;
+	aimFrom.y += ballistics::AIM_FROM_HEIGHT;
 	heading = 0.f;  // facing south (+z)
 	TRY_UNIT(circuit, unit,
 		ReadWeapons(unit);
@@ -452,12 +452,10 @@ bool CPriorityArtyTask::IsArcClear(const AIFloat3& aimPos, bool isHigh) const
 	auto heightAt = [terrainMgr](float x, float z) {
 		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // shells fly over water
 	};
-	// To the target's body, not its base: aimed at the ground on its level, the shell runs under the clearance before
-	// the last sample, so flat shots read as blocked from about 400 to 2,000 elmos and often out to 2,800 (Rave Party:
-	// 3,250 and 4,300)
+	// To the target's body, as the engine aims, not its base
 	const float aimY = std::max(aimPos.y, 0.f) + ballistics::AIM_HEIGHT;
-	return ballistics::IsArcClear(aimFrom.x, aimFrom.y, aimFrom.z, aimPos.x, aimY, aimPos.z, speed, gravity,
-			ballistics::ARC_SAMPLE_STEP, ballistics::ARC_MIN_CLEARANCE, ballistics::ARC_END_SHORT, heightAt, isHigh);
+	return ballistics::IsArcClear(aimFrom.x, aimFrom.y, aimFrom.z, aimPos.x, aimY, aimPos.z, speed, gravity, heightAt,
+			isHigh);
 }
 
 int CPriorityArtyTask::GetBlindBudget(CEnemyInfo* enemy) const

@@ -15,13 +15,16 @@ namespace circuit {
 
 namespace ballistics {
 
-// CPriorityArtyTask's shell, which CSpotScorer::FindGunSpot simulates too
-constexpr float MUZZLE_HEIGHT = 50.f;  // elmos above the gun's base a shell starts at (the gun's aimposoffset)
+// CPriorityArtyTask's shell, which CSpotScorer::FindGunSpot simulates too. The engine tests a Cannon's line of fire
+// (CCannon::HaveFreeLineOfFire) from its aim-from piece, against the ground over the first 15/16 of the distance
+constexpr float AIM_FROM_HEIGHT = 112.f;  // elmos above the gun's base a shell starts at (its aim-from piece: Big
+                                          // Bertha's query is 113 up, the Disco Rave Party's spindle 112)
 constexpr float AIM_HEIGHT = 20.f;  // ... and ends at above the target's base (water: its surface)
 constexpr float AIM_RANGE_MOD = 0.97f;  // aimed within this much of the height-adjusted range
 constexpr float ARC_SAMPLE_STEP = 16.f;  // elmos between arc samples
 constexpr float ARC_MIN_CLEARANCE = 8.f;  // blocked where the shell is less than this above the ground
-constexpr float ARC_END_SHORT = 44.f;  // last sample this far short of the target
+constexpr float ARC_END_SHORT = 44.f;  // last sample at least this far short of the target
+constexpr float ARC_END_SHARE = 1.f / 16.f;  // ... and this share of the distance (the engine's skipped end)
 
 struct SShell {
 	float speed = 1050.f;  // elmo/s
@@ -61,12 +64,12 @@ inline float CannonRange(float range, float heightDiff, float v, float g)
 	return (k < 0.f) ? 0.f : range * 0.5f * (1.f + std::sqrt(k));
 }
 
-// Walk the low arc (isHigh: the high one) from (x0, y0, z0) to (x1, y1, z1) in steps along the ground, stopping
-// stopShort before the target. Blocked where the shell is less than clearance above heightAt(x, z) (water: pass the
-// surface, 0). false: blocked or out of reach
+// Walk the low arc (isHigh: the high one) from (x0, y0, z0) to (x1, y1, z1) every ARC_SAMPLE_STEP along the ground,
+// stopping ARC_END_SHORT or ARC_END_SHARE of the distance (the more) before the target. Blocked where the shell is
+// less than ARC_MIN_CLEARANCE above heightAt(x, z) (water: pass the surface, 0). false: blocked or out of reach
 template<typename HeightAt>
-bool IsArcClear(float x0, float y0, float z0, float x1, float y1, float z1, float v, float g,
-		float step, float clearance, float stopShort, HeightAt heightAt, bool isHigh = false)
+bool IsArcClear(float x0, float y0, float z0, float x1, float y1, float z1, float v, float g, HeightAt heightAt,
+		bool isHigh = false)
 {
 	const float dx = x1 - x0;
 	const float dz = z1 - z0;
@@ -75,24 +78,24 @@ bool IsArcClear(float x0, float y0, float z0, float x1, float y1, float z1, floa
 	if (!ArcTan(d, y1 - y0, v, g, isHigh, tanA)) {
 		return false;
 	}
-	const float end = d - stopShort;
-	if (end <= step) {
+	const float end = d - std::max(ARC_END_SHORT, d * ARC_END_SHARE);
+	if (end <= ARC_SAMPLE_STEP) {
 		return true;
 	}
 	const float ux = dx / d;
 	const float uz = dz / d;
 	const float drop = g * (1.f + tanA * tanA) / (2.f * v * v);  // y(x) = y0 + x tanA - drop x^2
-	for (float x = step; x < end; x += step) {
+	for (float x = ARC_SAMPLE_STEP; x < end; x += ARC_SAMPLE_STEP) {
 		const float y = y0 + x * (tanA - drop * x);
-		if (y - heightAt(x0 + ux * x, z0 + uz * x) < clearance) {
+		if (y - heightAt(x0 + ux * x, z0 + uz * x) < ARC_MIN_CLEARANCE) {
 			return false;
 		}
 	}
 	return true;
 }
 
-// A shot from a muzzle at (x0, y0, z0) to an aim point (x1, y1, z1): in reach (the height-adjusted range, heightDiff x
-// heightMod, x AIM_RANGE_MOD) and on a clear low arc
+// A shot from an aim-from point at (x0, y0, z0) to an aim point (x1, y1, z1): in reach (the height-adjusted range,
+// heightDiff x heightMod, x AIM_RANGE_MOD) and on a clear low arc
 template<typename HeightAt>
 bool IsShotClear(float x0, float y0, float z0, float x1, float y1, float z1, float range, const SShell& shell,
 		HeightAt heightAt)
@@ -101,8 +104,7 @@ bool IsShotClear(float x0, float y0, float z0, float x1, float y1, float z1, flo
 	if ((x1 - x0) * (x1 - x0) + (z1 - z0) * (z1 - z0) > reach * reach) {
 		return false;
 	}
-	return IsArcClear(x0, y0, z0, x1, y1, z1, shell.speed, shell.gravity, ARC_SAMPLE_STEP, ARC_MIN_CLEARANCE,
-			ARC_END_SHORT, heightAt);
+	return IsArcClear(x0, y0, z0, x1, y1, z1, shell.speed, shell.gravity, heightAt);
 }
 
 } // namespace ballistics
