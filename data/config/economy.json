@@ -80,6 +80,11 @@
 			"max_dist": 1500
 		},
 
+		// Built on land only within the base: behaviour.json defence.base_rad around the base position (the radius base
+		// defence uses). Applies to every placement of these defs: energy jobs (a builder away from the base builds
+		// cheaper energy instead), the mex chain's energy, fills and grid link pieces. In water (tidal) anywhere
+		"base_only": ["energywind"],
+
 		"link_inc": 16.0,  // minimum metal-income for energy linking
 		"pylon": ["energypylon", "energysolar", "energywind"]
 	},

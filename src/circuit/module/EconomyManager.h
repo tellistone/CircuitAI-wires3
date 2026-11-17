@@ -165,6 +165,9 @@ public:
 	// builder). nullptr = not a fill def, or none of these
 	IBuilderTask* EnqueueFillEnergy(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
 			IUnitTask::Priority priority);
+	// economy.energy.base_only: false for such a def on land outside the base (behaviour defence.base_rad around the
+	// base position, as base defence has it); in water (a tidal generator) and for other defs always true
+	bool IsAllowedAt(CCircuitDef* cdef, const springai::AIFloat3& pos) const;
 
 	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
 	// that much energy. False before Init
@@ -226,6 +229,7 @@ private:
 	float pylonRange;
 	float pylonLinkInc;
 	std::set<CCircuitDef*> fillDefs;  // economy.energy.fill.unit
+	std::set<CCircuitDef*> baseOnlyDefs;  // economy.energy.base_only
 	float fillDist;  // economy.energy.fill.max_dist
 	CCircuitDef* pylonDef;  // TODO: Move into CEnergyGrid?
 

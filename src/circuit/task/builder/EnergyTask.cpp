@@ -87,9 +87,10 @@ void CBEnergyTask::Execute(CCircuitUnit* unit)
 		// Its site was taken: another one that keeps the links, never the wide search that could miss them
 		SetBuildPos(-RgtVector);
 		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		CCircuitDef* cdef = buildDef;
-		CEnergyGrid::Predicate isGood = [terrainMgr, cdef, unit](const AIFloat3& p) {
-			return !terrainMgr->IsZoneAlly(p) && terrainMgr->CanBeBuiltAtSafe(cdef, p)
+		CEnergyGrid::Predicate isGood = [terrainMgr, economyMgr, cdef, unit](const AIFloat3& p) {
+			return !terrainMgr->IsZoneAlly(p) && terrainMgr->CanBeBuiltAtSafe(cdef, p) && economyMgr->IsAllowedAt(cdef, p)
 				&& terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance());
 		};
 		CEnergyGrid* energyGrid = circuit->GetEconomyManager()->GetEnergyGrid();

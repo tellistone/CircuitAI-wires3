@@ -682,7 +682,9 @@ CEnergyNode* CEnergyGrid::FindNodeDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 		}
 
 		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING);
-		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)) {
+		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)
+			&& economyMgr->IsAllowedAt(outDef, outPos))  // economy.energy.base_only: no wind away from the base
+		{
 			break;
 		} else {
 			outPos = -RgtVector;
@@ -745,7 +747,9 @@ CEnergyLink* CEnergyGrid::FindLinkDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 		}
 
 		outPos = terrainMgr->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING);
-		if (utils::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)) {
+		if (utils::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)
+			&& economyMgr->IsAllowedAt(outDef, outPos))  // economy.energy.base_only: no wind away from the base
+		{
 			break;
 		} else {
 			outPos = -RgtVector;

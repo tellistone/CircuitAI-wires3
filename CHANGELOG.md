@@ -22,6 +22,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   time; if its site is taken it looks again only where the piece still links, else it is dropped and planned afresh.
   None of these in reach: at the nearest metal spot as before. No `unit` list: off.
 
+- **Wind only within the base** (`economy.energy.base_only`: `energywind`). Winds on land are built only within the
+  base (behaviour.json `defence.base_rad` around the base position, the radius base defence uses), at every placement:
+  energy jobs (a builder away from the base builds cheaper energy instead), the mex chain's energy, grid fills and the
+  grid linker's link pieces. In water (tidal) anywhere, as before.
+
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own
   `turret.share` bank, and cornered, base timetable, radar guard, mex escort and build-chain hub towers were free. Now
