@@ -1690,9 +1690,11 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 		if ((buildDef != nullptr) && (buildDef->GetCostM() < super.maxTime * metalIncome)) {
 			if (tasks.empty()) {
 				if (buildDef->IsAvailable(circuit->GetLastFrame()) && militaryMgr->IsNeedBigGun(buildDef)) {
-					AIFloat3 pos = militaryMgr->GetBigGunPos(buildDef);
+					bool isSpot;  // a cannon's chosen spot: no shake
+					AIFloat3 pos = militaryMgr->GetBigGunPos(buildDef, &isSpot);
 					return EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, pos,
-									   IBuilderTask::BuildType::BIG_GUN);
+									   IBuilderTask::BuildType::BIG_GUN, buildDef->GetCostM(),
+									   isSpot ? 0.f : SQUARE_SIZE * 32);
 				}
 			} else {
 				return *tasks.begin();
@@ -1779,8 +1781,10 @@ IBuilderTask* CBuilderManager::StartEscalation(int kind)
 		if (militaryMgr->IsEscalationFront(superDef)) {
 			project.isFrontStale = false;  // retried once as the rest
 		}
-		return EnqueueTask(IBuilderTask::Priority::NOW, superDef, militaryMgr->GetEscalationSuperPos(superDef, isFrontOk),
-						   IBuilderTask::BuildType::BIG_GUN);
+		bool isSpot;  // a cannon's chosen spot: no shake
+		const AIFloat3 pos = militaryMgr->GetEscalationSuperPos(superDef, isFrontOk, &isSpot);
+		return EnqueueTask(IBuilderTask::Priority::NOW, superDef, pos, IBuilderTask::BuildType::BIG_GUN,
+						   superDef->GetCostM(), isSpot ? 0.f : SQUARE_SIZE * 32);
 	}
 	CCircuitDef* singuDef = militaryMgr->GetEscalationSingu();
 	return ((singuDef == nullptr) || !singuDef->IsAvailable(circuit->GetLastFrame())) ? nullptr

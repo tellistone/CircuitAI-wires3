@@ -34,7 +34,8 @@ struct STerrainMapArea;
  * range behind the line, lean (position goals) 1 + choke.spot.forward x (1 + ahead) / 2, where ahead (-1 to 1) is how
  * far the spot sits, per radius, toward where the asset's approach comes from. Hold spots skip the builder term and
  * E. Candidates stay on the goal's side: the home region (a choke's inner region, the asset's), a region the enemy
- * only walks into through it, or a wall cell no enemy walks. No cost threshold: a goal's tower goes on its best spot
+ * only walks into through it, or a wall cell no enemy walks. No cost threshold: a goal's tower goes on its best spot.
+ * Big cannons have their own targets and terms on the same model (FindGunSpot)
  */
 class CSpotScorer {
 public:
@@ -57,6 +58,15 @@ public:
 	// The best spot for def, -RgtVector if none passes: CHOKE, HOLD within choke.setback[1] + 0.3 ranges of the
 	// choke's centre, POSITION within radius of the asset
 	springai::AIFloat3 FindSpot(CCircuitDef* def, const SGoal& goal, float radius = 0.f);
+	// porcupine.superweapon.spot
+	struct SGunConfig {
+		float radius = 1000.f;  // elmos around the old site that are searched; 0: off
+		float height = 0.5f;  // the most height above the targets adds (all of it at 150 elmos)
+		float view = 1.f;  // the most V adds
+	};
+	// A big cannon's spot (Big Bertha, the Disco Rave Party) within cfg.radius of centre, -RgtVector if none passes or
+	// def isn't a cannon that can fire its low arc (the .cpp has the rules)
+	springai::AIFloat3 FindGunSpot(CCircuitDef* def, const springai::AIFloat3& centre, const SGunConfig& cfg);
 	// A build failed there (or a turret picker job was dropped): every search skips its 64-elmo cell for 5 minutes
 	void MaskFailed(const springai::AIFloat3& pos);
 	// Per position, the weight of its approach within radius + def's range that our towers don't cover yet (the porc
@@ -90,6 +100,9 @@ private:
 	// The goal's traffic targets (metal: the raw traffic), halved, best MAX_TARGETS
 	std::vector<CTurretValue::STarget> MakeTargets(CCircuitDef* def, const springai::AIFloat3& pos, float radius,
 			const SGoal& goal, const std::vector<STower>& towers) const;
+	// A builder of ours that can build def gets within build range of the spot, walking its own class's mask from
+	// where it stands. Always true with isAnyReach, a builder that can build def and flies, or no builder counted
+	std::function<bool (const springai::AIFloat3&)> MakeReachFn(CCircuitDef* def, bool isAnyReach) const;
 
 	CCircuitAI* circuit;
 	static int MaskKey(const springai::AIFloat3& pos);  // its MASK_CELL square

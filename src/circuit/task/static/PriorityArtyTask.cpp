@@ -52,6 +52,7 @@ using namespace springai;
 #define ARC_STEP		16.f  // elmos between arc samples
 #define ARC_CLEARANCE	8.f  // blocked where the shell is less than this above the ground
 #define ARC_STOP_SHORT	44.f  // last sample this far short of the target
+#define ARC_TARGET_LIFT	20.f  // the arc ends this high above the target's base (water: its surface)
 #define FLY_LIFT		100.f  // unknown radar blip this far above the ground: flying
 #define DIVE_DEPTH		(SQUARE_SIZE * 5.f)  // submerged deeper than this: out of reach without a water weapon
 // Beam
@@ -444,7 +445,10 @@ bool CPriorityArtyTask::IsArcClear(const AIFloat3& aimPos, bool isHigh) const
 	auto heightAt = [terrainMgr](float x, float z) {
 		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // shells fly over water
 	};
-	return ballistics::IsArcClear(aimFrom.x, aimFrom.y, aimFrom.z, aimPos.x, aimPos.y, aimPos.z, speed, gravity,
+	// To the target's body, not its base: a shell aimed at the ground on its level runs under ARC_CLEARANCE before
+	// ARC_STOP_SHORT, so every flat shot closer than about 2500 elmos read as blocked
+	const float aimY = std::max(aimPos.y, 0.f) + ARC_TARGET_LIFT;
+	return ballistics::IsArcClear(aimFrom.x, aimFrom.y, aimFrom.z, aimPos.x, aimY, aimPos.z, speed, gravity,
 			ARC_STEP, ARC_CLEARANCE, ARC_STOP_SHORT, heightAt, isHigh);
 }
 

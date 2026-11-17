@@ -69,6 +69,8 @@ using namespace springai;
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
 #define SPOT_GIVE_UP		(FRAMES_PER_SEC * 600)  // choke.spot.enable: two failures this close give a type up this long
+#define GUN_SPOT_FRAMES		(FRAMES_PER_SEC * 30)  // a big gun's spot is searched again this often
+#define GUN_SPOT_MOVE		128.f  // ... or when its centre moves this far
 
 CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
@@ -1104,6 +1106,10 @@ void CMilitaryManager::ReadConfig()
 		si.weight = probs.get(i, 1.f).asFloat();
 		superInfos.push_back(si);
 	}
+	const Json::Value& gunSpot = super["spot"];
+	gunSpotConfig.radius = std::max(gunSpot.get("radius", gunSpotConfig.radius).asFloat(), 0.f);
+	gunSpotConfig.height = std::max(gunSpot.get("height", gunSpotConfig.height).asFloat(), 0.f);
+	gunSpotConfig.view = std::max(gunSpot.get("view", gunSpotConfig.view).asFloat(), 0.f);
 	DiceBigGun();
 
 	const Json::Value& esc = root["escalation"];
@@ -3433,7 +3439,7 @@ bool CMilitaryManager::IsNeedBigGun(const CCircuitDef* cdef) const
 	return armyCost * circuit->GetEconomyManager()->GetEcoFactor() > cdef->GetCostM();
 }
 
-AIFloat3 CMilitaryManager::GetBigGunPos(CCircuitDef* bigDef) const
+AIFloat3 CMilitaryManager::GetBigGunPos(CCircuitDef* bigDef, bool* outIsSpot) const
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	AIFloat3 pos = circuit->GetSetupManager()->GetBasePos();
@@ -3449,7 +3455,28 @@ AIFloat3 CMilitaryManager::GetBigGunPos(CCircuitDef* bigDef) const
 		}
 		pos /= size;
 	}
-	return pos;
+	const AIFloat3 spot = FindGunSpot(bigDef, pos, false);
+	if (outIsSpot != nullptr) {
+		*outIsSpot = utils::is_valid(spot);
+	}
+	return utils::is_valid(spot) ? spot : pos;
+}
+
+AIFloat3 CMilitaryManager::FindGunSpot(CCircuitDef* def, const AIFloat3& centre, bool isFront) const
+{
+	if ((spotScorer == nullptr) || (turretPicker == nullptr)) {
+		return -RgtVector;  // ReadConfig's DiceBigGun runs before they're made
+	}
+	const int frame = circuit->GetLastFrame();
+	auto it = gunSpots.find(def->GetId() * 2 + (isFront ? 1 : 0));
+	if ((it != gunSpots.end()) && (frame < it->second.frame + GUN_SPOT_FRAMES)
+		&& (it->second.centre.SqDistance2D(centre) < SQUARE(GUN_SPOT_MOVE)))
+	{
+		return it->second.spot;
+	}
+	const AIFloat3 spot = spotScorer->FindGunSpot(def, centre, gunSpotConfig);
+	gunSpots[def->GetId() * 2 + (isFront ? 1 : 0)] = {centre, spot, frame};
+	return spot;
 }
 
 bool CMilitaryManager::IsBigGunPowerable(CCircuitDef* cdef) const
@@ -3552,10 +3579,13 @@ CCircuitDef* CMilitaryManager::DiceEscalationSuper(bool isFrontOk) const
 	return candidates.back()->cdef;
 }
 
-AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef, bool isFrontOk) const
+AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef, bool isFrontOk, bool* outIsSpot) const
 {
+	if (outIsSpot != nullptr) {
+		*outIsSpot = false;
+	}
 	if (!isFrontOk || !IsEscalationFront(superDef)) {
-		return GetBigGunPos(superDef);
+		return GetBigGunPos(superDef, outIsSpot);
 	}
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	CThreatMap* threatMap = circuit->GetThreatMap();
@@ -3569,7 +3599,14 @@ AIFloat3 CMilitaryManager::GetEscalationSuperPos(CCircuitDef* superDef, bool isF
 			&& (threatMap->GetAllThreatAt(pos) <= THREAT_MIN);
 	};
 	const int index = metalMgr->FindNearestCluster(circuit->GetSetupManager()->GetLanePos(), predicate);
-	return (index >= 0) ? clusters[index].position : GetBigGunPos(superDef);
+	if (index < 0) {
+		return GetBigGunPos(superDef, outIsSpot);
+	}
+	const AIFloat3 spot = FindGunSpot(superDef, clusters[index].position, true);
+	if (outIsSpot != nullptr) {
+		*outIsSpot = utils::is_valid(spot);
+	}
+	return utils::is_valid(spot) ? spot : clusters[index].position;
 }
 
 bool CMilitaryManager::IsEscalationFront(const CCircuitDef* cdef) const

@@ -64,7 +64,13 @@
 		"unit":   ["raveparty", "staticnuke", "staticheavyarty", "zenith", "mahlazer", "staticantinuke"],  // FIXME: last aren't superweapon
 		"weight": [ 0.10,         0.20,        0.20,              0.10,     0.10,    0.10],
 
-		"condition": [16, 20000]  // [<Minimum income>, <maximum seconds to build>]
+		"condition": [16, 20000],  // [<Minimum income>, <maximum seconds to build>]
+
+		// Cannons (Big Bertha, Disco Rave Party) go on the best spot within radius elmos of their old site: the most
+		// metal of known enemy buildings (and free metal spots on the enemy's half at half a mex's) in reach of a clear
+		// low arc, up to 1 + height for standing 150 elmos above them, up to 1 + view for the share of the range circle
+		// a clear arc reaches, halved at radius from the old site. radius 0 = off (the old site, shaken by 256)
+		"spot": {"radius": 1000, "height": 0.5, "view": 1.0}
 	},
 
 	// Fallback defence

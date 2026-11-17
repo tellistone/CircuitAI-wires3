@@ -7,9 +7,14 @@
 
 #include "module/SpotScorer.h"
 #include "map/ThreatMap.h"
+#include "map/InfluenceMap.h"
 #include "module/BuilderManager.h"
+#include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
 #include "module/TurretPicker.h"
+#include "resource/MetalManager.h"
+#include "spring/SpringMap.h"
+#include "task/static/ArtyMath.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "unit/ally/AllyUnit.h"
@@ -23,10 +28,13 @@
 
 #include "Log.h"
 #include "UnitDef.h"
+#include "WeaponDef.h"
+#include "WeaponMount.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 
 namespace circuit {
 
@@ -38,6 +46,19 @@ using namespace springai;
 #define TARGET_LIFT		20.f  // sight rays end this high above a target's ground
 #define VIEW_RAYS		24  // bearings V samples
 #define MAX_CANDIDATES_SHOWN	200
+// FindGunSpot
+#define GUN_CELL		128  // elmos between candidates
+#define GUN_TARGETS		48  // the best by metal
+#define GUN_FREE_SPOT	0.5f  // a metal spot on the enemy's half with no mex: this x its income x turret.horizon
+#define GUN_SPOT_TAKEN	48.f  // an enemy building this near a metal spot is its mex
+#define GUN_MUZZLE		50.f  // a shell starts this high above the gun's ground (CPriorityArtyTask's MUZZLE_LIFT)
+#define GUN_RANGE_MOD	0.97f  // as CPriorityArtyTask aims
+#define GUN_ARC_STEP	32.f  // elmos between arc samples
+#define GUN_ARC_CLEAR	8.f  // blocked where the shell is less than this above the ground
+#define GUN_ARC_SHORT	44.f  // last sample this far short of the target
+#define GUN_HEIGHT_CAP	150.f  // elmos above the targets that earn all of spot.height
+#define GUN_VIEW_RAYS	16  // bearings V samples
+#define GUN_VIEW_RINGS	8  // points along each
 
 CSpotScorer::CSpotScorer(CCircuitAI* circuit)
 		: circuit(circuit)
@@ -154,61 +175,9 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 				&& ((homeRegion < 0) || (region == CRegionGraph::NO_REGION) || isHomeSide[region])
 				&& ((goal.type == GoalType::HOLD) || !chokeMap->IsOnLane(c));
 	};
-	// A tower only where a builder of ours that can build it gets within build range, walking its own class's mask
-	// from where it stands: else no one takes the job, and it waits 5 minutes, holding up the porc chain behind it,
-	// before it is dropped. A builder that flies lifts the test; one of a class no factory builds isn't counted, and
-	// with none counted there's no test
-	struct SWalker {
-		int classIdx;
-		int part;
-		float range;
-	};
-	std::vector<SWalker> walkers;
-	bool isAnyReach = (goal.type == GoalType::HOLD);  // a hold's group checks its own way there
-	for (CCircuitUnit* w : workers) {
-		CCircuitDef* wdef = w->GetCircuitDef();
-		if (isAnyReach || !wdef->CanBuild(def)) {
-			continue;
-		}
-		if (wdef->IsAbleToFly()) {
-			isAnyReach = true;
-			continue;
-		}
-		const int classIdx = chokeMap->GetWalkClass(wdef);
-		if (classIdx < 0) {
-			continue;
-		}
-		const std::vector<int>& parts = chokeMap->GetClassParts(classIdx);
-		if (parts.empty()) {
-			continue;
-		}
-		const SCellMask& mask = chokeMap->GetClassMask(classIdx);
-		const AIFloat3 wpos = w->GetPos(frame);
-		const int cell = mask.NearestPassable(mask.IndexAt(wpos.x, wpos.z), 2);
-		const SWalker walker = {classIdx, (cell >= 0) ? parts[cell] : -1, wdef->GetBuildDistance() + SQUARE_SIZE * 2};
-		if ((walker.part >= 0) && std::none_of(walkers.begin(), walkers.end(), [&walker](const SWalker& o) {
-			return (o.classIdx == walker.classIdx) && (o.part == walker.part) && (o.range >= walker.range);
-		})) {
-			walkers.push_back(walker);
-		}
-	}
-	auto isInReach = [&](const AIFloat3& c) {
-		if (isAnyReach || walkers.empty()) {
-			return true;
-		}
-		return std::any_of(walkers.begin(), walkers.end(), [&](const SWalker& walker) {
-			const SCellMask& mask = chokeMap->GetClassMask(walker.classIdx);
-			const std::vector<int>& parts = chokeMap->GetClassParts(walker.classIdx);
-			bool isNear = false;
-			ForEachCellIn(mask.width, mask.height, mask.cellSize, c.x - walker.range, c.z - walker.range,
-					c.x + walker.range, c.z + walker.range, [&](int x, int z) {
-				const int i = z * mask.width + x;
-				isNear = isNear || ((parts[i] == walker.part)
-						&& (SQUARE(mask.CentreX(i) - c.x) + SQUARE(mask.CentreZ(i) - c.z) <= SQUARE(walker.range)));
-			});
-			return isNear;
-		});
-	};
+	// A tower only where a builder of ours that can build it gets within build range: else no one takes the job, and
+	// it waits 5 minutes, holding up the porc chain behind it, before it is dropped. A hold's group checks its own way
+	const std::function<bool (const AIFloat3&)> isInReach = MakeReachFn(def, goal.type == GoalType::HOLD);
 	AIFloat3 assetGround = goal.asset;
 	assetGround.y = terrainMgr->GetHeightAt(goal.asset.x, goal.asset.z);
 	// The costly rules, only on a candidate about to be scored
@@ -294,6 +263,235 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			def->GetDef()->GetName(), result.tested, (int)candidates.size(), (int)targets.size(), enemyCount, lean,
 			bestView, bestScore, ms);
 	return bestPos;
+}
+
+/*
+ * A big cannon's spot, on the turret picker's value model (CTurretValue) with no front term:
+ *   value = E x (1 + spot.height x height) x (1 + spot.view x V) / (1 + distance from centre / spot.radius)
+ * E sums its targets in reach (the height-adjusted Cannon range, as CPriorityArtyTask aims) with a clear shell arc
+ * from its muzzle, 50 elmos over its ground: the enemy buildings we know of (seen in the last 3 minutes, a mex at its
+ * income x turret.horizon), and the metal spots on the enemy's half with no mex we know of at half a mex's, the best
+ * GUN_TARGETS of them by metal; height its height above them as a share of 150 elmos (up to 1); V the share of its
+ * range circle's ground, by area, a clear arc reaches. Arc: the low one, or with a trajectory toggle either. Candidates
+ * every GUN_CELL within spot.radius of centre: not enemy-held, out of threat, not masked, buildable (FindSiteAt),
+ * where a builder of ours gets in range and (a grid consumer) in pylon reach of a grid with enough energy
+ */
+AIFloat3 CSpotScorer::FindGunSpot(CCircuitDef* def, const AIFloat3& centre, const SGunConfig& cfg)
+{
+	const int highType = def->GetDef()->GetHighTrajectoryType();  // 0: low arc, 1: high, 2: a toggle
+	WeaponMount* mount = def->GetWeaponMount();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	if ((cfg.radius <= 0.f) || (mount == nullptr) || (highType == 1) || !chokeMap->IsReady()) {
+		return -RgtVector;
+	}
+	const auto t0 = std::chrono::steady_clock::now();
+	// The arc: the main weapon's, as CPriorityArtyTask::ReadWeapons reads it
+	float speed = 0.f;
+	float gravity = 120.f;  // ZK's myGravity for every cannon
+	float heightMod = 0.8f;
+	{
+		WeaponDef* wd = mount->GetWeaponDef();
+		if (std::strcmp(wd->GetType(), "Cannon") == 0) {
+			speed = wd->GetProjectileSpeed() * FRAMES_PER_SEC;
+			const float myGravity = wd->GetMyGravity() * SQUARE(FRAMES_PER_SEC);
+			if (myGravity > 0.f) {
+				gravity = myGravity;
+			}
+			heightMod = wd->GetHeightMod();
+		}
+		delete wd;
+	}
+	const float range = def->GetMaxRange(CCircuitDef::RangeType::LAND);
+	if ((speed <= 0.f) || (range <= 0.f)) {
+		return -RgtVector;
+	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const bool isToggle = (highType == 2);
+	auto groundAt = [terrainMgr](float x, float z) {
+		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // shells fly over water, and burst on it
+	};
+	// In reach from the muzzle to 20 elmos over the target's ground (water: its surface), and a clear arc there
+	auto isClear = [&](const CTurretValue::SPos& from, const CTurretValue::SPos& to) {
+		return ballistics::IsShotClear(from.x, std::max(from.y, 0.f) + GUN_MUZZLE, from.z, to.x,
+				std::max(to.y, 0.f) + TARGET_LIFT, to.z, range, heightMod, speed, gravity, GUN_RANGE_MOD, GUN_ARC_STEP,
+				GUN_ARC_CLEAR, GUN_ARC_SHORT, groundAt, isToggle);
+	};
+	// The farthest any target can be: from the highest ground down to the water
+	const float rangeMax = ballistics::CannonRange(range,
+			-(std::max(circuit->GetMap()->GetMaxHeight(), 0.f) + GUN_MUZZLE) * heightMod, speed, gravity) * GUN_RANGE_MOD;
+	// V: GUN_VIEW_RINGS points out to the flat range along each of GUN_VIEW_RAYS bearings
+	const float maxX = CTerrainManager::GetTerrainWidth();
+	const float maxZ = CTerrainManager::GetTerrainHeight();
+	auto viewOf = [&](const CTurretValue::SPos& from) {
+		return ballistics::ShotView(from.x, from.z, range * GUN_RANGE_MOD, GUN_VIEW_RAYS, GUN_VIEW_RINGS, maxX, maxZ,
+				[&](float x, float z) { return isClear(from, {x, terrainMgr->GetHeightAt(x, z), z}); });
+	};
+
+	// Targets
+	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
+	const float reach = cfg.radius + rangeMax;
+	std::vector<CTurretValue::STarget> targets;
+	for (const CTurretValue::STarget& t : picker->GetEnemyTargets(centre, reach)) {
+		if (IsHit(def, t.pos)) {
+			targets.push_back(t);
+		}
+	}
+	const size_t enemyCount = targets.size();
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const CMetalData::Metals& spots = metalMgr->GetSpots();
+	const float spotMetal = picker->GetConfig().horizon * GUN_FREE_SPOT;
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		const AIFloat3& p = spots[i].position;
+		if (!metalMgr->IsOpenSpot(i) || (p.SqDistance2D(centre) > SQUARE(reach)) || chokeMap->IsOurHalf(p)
+			|| std::any_of(targets.begin(), targets.begin() + enemyCount, [&p](const CTurretValue::STarget& t) {
+				return SQUARE(t.pos.x - p.x) + SQUARE(t.pos.z - p.z) < SQUARE(GUN_SPOT_TAKEN);
+			}))
+		{
+			continue;  // ours, out of reach, on our half, or a mex we know of (counted)
+		}
+		const CTurretValue::SPos sp = {p.x, terrainMgr->GetHeightAt(p.x, p.z), p.z};
+		if (IsHit(def, sp)) {
+			targets.push_back({sp, spots[i].income * spotMetal, CTurretValue::Kind::ENEMY});
+		}
+	}
+	if (targets.size() > GUN_TARGETS) {
+		std::nth_element(targets.begin(), targets.begin() + GUN_TARGETS, targets.end(),
+				[](const CTurretValue::STarget& a, const CTurretValue::STarget& b) { return a.metal > b.metal; });
+		targets.resize(GUN_TARGETS);
+	}
+	if (targets.empty()) {
+		return -RgtVector;
+	}
+
+	// Candidates
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const bool isConsumer = economyMgr->IsGridConsumer(def);
+	auto isCandidate = [&](const AIFloat3& c) {
+		return (c.SqDistance2D(centre) <= SQUARE(cfg.radius)) && !IsMasked(c)
+			&& (inflMap->GetInfluenceAt(c) > -INFL_EPS) && (threatMap->GetAllThreatAt(c) <= THREAT_MIN);
+	};
+	auto makeAt = [&](float x, float z, CTurretValue::SCandidate& out) {
+		const AIFloat3 c(x, terrainMgr->GetHeightAt(x, z), z);
+		if (!isCandidate(c)) {
+			return false;
+		}
+		out.pos = {c.x, c.y, c.z};
+		out.enemyInfl = 0.f;
+		out.walk = c.distance2D(centre);
+		out.factor = 1.f;
+		return true;
+	};
+	const std::function<bool (const AIFloat3&)> isInReach = MakeReachFn(def, false);
+	// The costly rules: the spot moves onto its build site (buildable facing south, open on the blocking map)
+	auto isFinished = [&](CTurretValue::SCandidate& vc) {
+		const AIFloat3 c = terrainMgr->FindSiteAt(def, AIFloat3(vc.pos.x, vc.pos.y, vc.pos.z), UNIT_FACING_SOUTH);
+		if (!utils::is_valid(c) || !isCandidate(c) || !isInReach(c)
+			|| (isConsumer && !economyMgr->IsGridReachable(def, c)))
+		{
+			return false;
+		}
+		vc.pos = {c.x, terrainMgr->GetHeightAt(c.x, c.z), c.z};
+		vc.walk = c.distance2D(centre);
+		return true;
+	};
+	const int gridWidth = int(maxX / GUN_CELL);
+	const int gridHeight = int(maxZ / GUN_CELL);
+	std::vector<CTurretValue::SCandidate> candidates;
+	ForEachCellIn(gridWidth, gridHeight, GUN_CELL, centre.x - cfg.radius, centre.z - cfg.radius,
+			centre.x + cfg.radius, centre.z + cfg.radius, [&](int x, int z) {
+		CTurretValue::SCandidate c;
+		if (makeAt((x + 0.5f) * GUN_CELL, (z + 0.5f) * GUN_CELL, c)) {
+			candidates.push_back(c);
+		}
+	});
+	CTurretValue::SParams params;
+	params.range = rangeMax;  // a bound: isClear tests the real reach
+	params.heightBonus = cfg.height;
+	params.heightCap = GUN_HEIGHT_CAP;
+	params.front = 0.f;
+	params.view = cfg.view;
+	params.travel = cfg.radius;
+	params.minBase = 0.f;
+	params.refineStep = GUN_CELL * 0.25f;
+	const CTurretValue::SResult result = CTurretValue::Search(candidates, targets, params, isClear,
+			[&](float x, float z, CTurretValue::SCandidate& out) { return makeAt(x, z, out) && isFinished(out); },
+			isFinished, viewOf);
+
+	AIFloat3 bestPos = -RgtVector;
+	CTurretValue::STerms best;
+	if (result.IsFound()) {
+		const CTurretValue::SScored& sc = result.scored.front();
+		bestPos = AIFloat3(sc.cand.pos.x, sc.cand.pos.y, sc.cand.pos.z);
+		best = sc.terms;
+	}
+	const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+	circuit->LOG("BIG GUN spot %s: %i of %i candidates, %i targets (%i enemies), %s, E %.0f, height %.2f, view %.2f, "
+			"%.0f up on the old site, %.2f ms", def->GetDef()->GetName(), result.tested, (int)candidates.size(),
+			(int)targets.size(), (int)enemyCount, utils::is_valid(bestPos) ? "found" : "none", best.enemy, best.height,
+			best.view, utils::is_valid(bestPos) ? bestPos.y - terrainMgr->GetHeightAt(centre.x, centre.z) : 0.f, ms);
+	return bestPos;
+}
+
+/*
+ * A builder that flies lifts the test; one of a class no factory builds isn't counted, and with none counted there's
+ * no test
+ */
+std::function<bool (const AIFloat3&)> CSpotScorer::MakeReachFn(CCircuitDef* def, bool isAnyReach) const
+{
+	struct SWalker {
+		int classIdx;
+		int part;
+		float range;
+	};
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	const int frame = circuit->GetLastFrame();
+	std::vector<SWalker> walkers;
+	for (CCircuitUnit* w : circuit->GetBuilderManager()->GetWorkers()) {
+		CCircuitDef* wdef = w->GetCircuitDef();
+		if (isAnyReach || !wdef->CanBuild(def)) {
+			continue;
+		}
+		if (wdef->IsAbleToFly()) {
+			isAnyReach = true;
+			continue;
+		}
+		const int classIdx = chokeMap->GetWalkClass(wdef);
+		if (classIdx < 0) {
+			continue;
+		}
+		const std::vector<int>& parts = chokeMap->GetClassParts(classIdx);
+		if (parts.empty()) {
+			continue;
+		}
+		const SCellMask& mask = chokeMap->GetClassMask(classIdx);
+		const AIFloat3 wpos = w->GetPos(frame);
+		const int cell = mask.NearestPassable(mask.IndexAt(wpos.x, wpos.z), 2);
+		const SWalker walker = {classIdx, (cell >= 0) ? parts[cell] : -1, wdef->GetBuildDistance() + SQUARE_SIZE * 2};
+		if ((walker.part >= 0) && std::none_of(walkers.begin(), walkers.end(), [&walker](const SWalker& o) {
+			return (o.classIdx == walker.classIdx) && (o.part == walker.part) && (o.range >= walker.range);
+		})) {
+			walkers.push_back(walker);
+		}
+	}
+	if (isAnyReach || walkers.empty()) {
+		return [](const AIFloat3&) { return true; };
+	}
+	return [chokeMap, walkers](const AIFloat3& c) {
+		return std::any_of(walkers.begin(), walkers.end(), [&](const SWalker& walker) {
+			const SCellMask& mask = chokeMap->GetClassMask(walker.classIdx);
+			const std::vector<int>& parts = chokeMap->GetClassParts(walker.classIdx);
+			bool isNear = false;
+			ForEachCellIn(mask.width, mask.height, mask.cellSize, c.x - walker.range, c.z - walker.range,
+					c.x + walker.range, c.z + walker.range, [&](int x, int z) {
+				const int i = z * mask.width + x;
+				isNear = isNear || ((parts[i] == walker.part)
+						&& (SQUARE(mask.CentreX(i) - c.x) + SQUARE(mask.CentreZ(i) - c.z) <= SQUARE(walker.range)));
+			});
+			return isNear;
+		});
+	};
 }
 
 void CSpotScorer::MaskFailed(const AIFloat3& pos)
