@@ -150,6 +150,7 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.spotHeightCap = spot.get("height_cap", config.spotHeightCap).asFloat();
 	config.spotEnemy = spot.get("enemy", config.spotEnemy).asFloat();
 	config.spotForward = spot.get("forward", config.spotForward).asFloat();
+	config.spotView = spot.get("view", config.spotView).asFloat();
 	const Json::Value& radar = choke["radar"];
 	config.isRadar = radar.get("enable", false).asBool();
 	config.radarGain = radar.get("min_gain", config.radarGain).asFloat();

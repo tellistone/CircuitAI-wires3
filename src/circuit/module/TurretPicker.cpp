@@ -42,8 +42,6 @@ using namespace springai;
 #define JOB_TIMEOUT		(FRAMES_PER_SEC * 30)  // with no builder on it, as the cornered defence's
 #define MAX_SHOWN		300  // candidates kept for the overlay
 #define SEEN_FRAMES		(FRAMES_PER_SEC * 180)  // an enemy building out of radar and sight longer is no target
-#define VIEW_RAYS		24  // bearings V samples
-#define VIEW_LIFT		20.f  // V's rays end this high above the ground (as CSpotScorer's line of fire)
 #define KEEP_SHARE		0.75f  // of the order's threshold, that a job keeps on arrival
 
 namespace {
@@ -51,7 +49,7 @@ namespace {
 // A target on the ground (in deep water: under it too) that def's weapons reach
 inline bool IsHit(const CCircuitDef* def, const CTurretValue::SPos& pos)
 {
-	return def->HasAntiLand() || (CTerrainManager::IsDeepWater(pos.y) && def->HasAntiWater());
+	return CSpotScorer::IsHit(def, AIFloat3(pos.x, pos.y, pos.z));
 }
 
 }  // namespace
@@ -295,7 +293,8 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	const CTurretValue::SParams params = MakeParams(def);
 	const CTurretValue::SCandidate c = {{spot.x, circuit->GetTerrainManager()->GetHeightAt(spot.x, spot.z), spot.z},
 			0.f, 0.f};
-	const float base = CTurretValue::Evaluate(c, MakeTargets(def, gather), params, 0.f, MakeClearFn(def)).base;
+	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
+	const float base = CTurretValue::Evaluate(c, MakeTargets(def, gather), params, 0.f, spotScorer->MakeClearFn(def)).base;
 	if (base < KEEP_SHARE * params.minBase) {  // not at the order's line: a spot just over it doesn't flip
 		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), now at %.2f x cost", def->GetDef()->GetName(),
 				spot.x, spot.z, base / std::max(def->GetCostM(), 1.f));
@@ -467,14 +466,19 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	return g;
 }
 
+float CTurretPicker::TrafficMetal(float amount, float range) const
+{
+	// The traffic field carries the income across every cross-section of its routes: summed over the cells in range,
+	// it counts each route once per cell length its range spans
+	const float cellSize = std::max(circuit->GetChokeMap()->GetTraffic().GetCellSize(), 1);
+	const float cellLengths = std::max(2.f * std::max(range, 1.f) / cellSize, 1.f);
+	return amount * config.horizon / cellLengths * config.traffic;
+}
+
 std::vector<CTurretValue::STarget> CTurretPicker::MakeTargets(CCircuitDef* def, const SGather& gather) const
 {
 	const float range = std::max(def->GetMaxRange(), 1.f);
 	const float sqReach = SQUARE(gather.radius + range);
-	const CTrafficField& field = circuit->GetChokeMap()->GetTraffic();
-	// The traffic field carries the income across every cross-section of its routes: summed over the cells in range,
-	// it counts each route once per cell length its range spans
-	const float cellLengths = std::max(2.f * range / std::max(field.GetCellSize(), 1), 1.f);
 	std::vector<CTurretValue::STarget> targets;
 	for (const SRaw& r : gather.raws) {
 		if ((SQUARE(r.pos.x - gather.centre.x) + SQUARE(r.pos.z - gather.centre.z) > sqReach) || !IsHit(def, r.pos)) {
@@ -482,7 +486,7 @@ std::vector<CTurretValue::STarget> CTurretPicker::MakeTargets(CCircuitDef* def, 
 		}
 		float metal = 0.f;
 		switch (r.kind) {
-			case CTurretValue::Kind::TRAFFIC: metal = r.amount * config.horizon / cellLengths * config.traffic; break;
+			case CTurretValue::Kind::TRAFFIC: metal = TrafficMetal(r.amount, range); break;
 			case CTurretValue::Kind::ALLY: metal = r.amount * config.ally; break;
 			case CTurretValue::Kind::ENEMY: metal = r.amount * config.enemy; break;
 			case CTurretValue::Kind::CHOKE: metal = r.amount; break;
@@ -589,7 +593,8 @@ CTurretPicker::SDefResult CTurretPicker::SearchDef(CCircuitDef* def, CCircuitUni
 	if (candidates.empty()) {
 		return res;
 	}
-	res.search = CTurretValue::Search(candidates, MakeTargets(def, gather), MakeParams(def), MakeClearFn(def),
+	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
+	res.search = CTurretValue::Search(candidates, MakeTargets(def, gather), MakeParams(def), spotScorer->MakeClearFn(def),
 			[&](float x, float z, CTurretValue::SCandidate& out) {
 				return (MakeCandidate(builder, gather, x, z, out) == Reject::NONE)
 						&& (FinishCandidate(def, builder, gather, out) == Reject::NONE);
@@ -599,7 +604,7 @@ CTurretPicker::SDefResult CTurretPicker::SearchDef(CCircuitDef* def, CCircuitUni
 				++res.counts[static_cast<int>(reject)];
 				return reject == Reject::NONE;
 			},
-			MakeViewFn(def));
+			spotScorer->MakeViewFn(def));
 	return res;
 }
 
@@ -613,63 +618,6 @@ CTurretValue::SParams CTurretPicker::MakeParams(CCircuitDef* def) const
 	p.minBase = config.minValue * def->GetCostM();
 	p.refineStep = CELL * 0.25f;
 	return p;
-}
-
-CTurretValue::ClearFn CTurretPicker::MakeClearFn(CCircuitDef* def) const
-{
-	if (def->GetDef()->GetHighTrajectoryType() == 1) {
-		return [](const CTurretValue::SPos&, const CTurretValue::SPos&) { return true; };  // high-arc: any line
-	}
-	const float emit = def->GetDef()->GetLosHeight();
-	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
-	return [spotScorer, emit](const CTurretValue::SPos& from, const CTurretValue::SPos& to) {
-		return spotScorer->IsClearLine(AIFloat3(from.x, from.y, from.z), emit, AIFloat3(to.x, to.y, to.z));
-	};
-}
-
-/*
- * V: the share of the range circle's ground, by area, in a clear line of fire from the spot. Along each of VIEW_RAYS
- * bearings, out every 2 squares to the range, a point is in line while it rises above the steepest ground before it,
- * as CSpotScorer::IsClearLine tests one line; points off the map don't count. Water reads at its surface
- */
-CTurretValue::ViewFn CTurretPicker::MakeViewFn(CCircuitDef* def) const
-{
-	if (def->GetDef()->GetHighTrajectoryType() == 1) {
-		return nullptr;  // high-arc: any line
-	}
-	const float emit = def->GetDef()->GetLosHeight();
-	const float range = std::max(def->GetMaxRange(), 1.f);
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	std::vector<std::pair<float, float>> dirs;
-	for (int r = 0; r < VIEW_RAYS; ++r) {
-		const float angle = 2.f * static_cast<float>(M_PI) * r / VIEW_RAYS;
-		dirs.push_back({std::cos(angle), std::sin(angle)});
-	}
-	return [terrainMgr, emit, range, dirs](const CTurretValue::SPos& from) {
-		const float y0 = terrainMgr->GetHeightAt(from.x, from.z) + emit;
-		const float step = SQUARE_SIZE * 2;
-		const float maxX = CTerrainManager::GetTerrainWidth();
-		const float maxZ = CTerrainManager::GetTerrainHeight();
-		float seen = 0.f;
-		float total = 0.f;
-		for (const auto& [dx, dz] : dirs) {
-			float steepest = -std::numeric_limits<float>::max();
-			for (float d = step; d <= range; d += step) {
-				const float x = from.x + dx * d;
-				const float z = from.z + dz * d;
-				if ((x < 0.f) || (z < 0.f) || (x > maxX) || (z > maxZ)) {
-					break;
-				}
-				const float ground = terrainMgr->GetHeightAt(x, z);
-				total += d;  // area: a point's ring grows with d
-				if ((std::max(ground, 0.f) + VIEW_LIFT - y0) / d >= steepest) {
-					seen += d;
-				}
-				steepest = std::max(steepest, (ground - y0) / d);
-			}
-		}
-		return (total > 0.f) ? seen / total : 0.f;
-	};
 }
 
 float CTurretPicker::GetNearestOurs(const SGather& gather, const AIFloat3& pos) const

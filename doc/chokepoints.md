@@ -58,7 +58,7 @@ on it.
 | Key | Default | What it turns on |
 |---|---|---|
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
-| `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored by covered traffic, height, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
+| `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored on the turret picker's value model: covered traffic and enemies in metal, height, view, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
 | `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
 | `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army in the region outside it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
@@ -89,7 +89,8 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.spot.radius` | `300` | Elmos from a defence point its towers may stand. |
 | `choke.spot.height` | `0.5` | The most a spot's height adds to its score: 0.5 is up to +50%, 1 up to double. |
 | `choke.spot.height_cap` | `150` | Elmos above the ground it covers at which a spot earns all of `choke.spot.height`. |
-| `choke.spot.enemy` | `1.0` | Weight of the enemy value a tower can shoot from a spot, per the tower's own cost: at 1, enemies worth the tower double the score. 0 turns it off. |
+| `choke.spot.enemy` | `1.0` | Weight of E, the cost of the known enemies a tower can shoot from a spot, added to the covered traffic in metal. 0 turns it off. |
+| `choke.spot.view` | `1.0` | A spot scores up to 1 + this × its score by V, the share of its range circle in a clear line of fire, as `turret.view` does for the picker. 0 turns it off. |
 | `choke.spot.forward` | `0.5` | Lean of a defence point's, the base's and the radar guard's towers the way the enemy comes from: a spot a radius toward the point's approach scores up to this much more than one a radius away from it. 0 turns it off. |
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
@@ -192,17 +193,22 @@ started are called off.
 
 ### Scored spots (F)
 
-`score = cover × (1 + choke.spot.height × height) × (1 + choke.spot.enemy × enemy value ÷ own cost) × setback × lean ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
+Scored spots use the turret picker's value model (see "Turret picker (G)"), with each goal's own targets and terms:
 
-- *cover* is the traffic of the targets in range with a clear line of fire, halved for each of our towers that
-  already covers a target. At a choke the targets are its line and the band in front of it. At a defence point, the
+`score = (T + E) × (1 + choke.spot.height × height) × (1 + choke.spot.view × V) × setback × lean ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
+
+There is no cost threshold: a goal's tower goes on its best spot.
+
+- *T* is the traffic of the targets in range with a clear line of fire, in metal as the picker counts it (× `turret.horizon`, once per route). Each target is halved for each tower that already covers it, defends (not a Claw mine, a missile or `turret.not_defence`) and hits it. At a choke the targets are its line and the band in front of it. At a defence point, the
   base or a radar, they're the point's own approach: the cells on near-shortest routes from the enemy to it, by
   walking distance, each weighted by its traffic. Traffic piles up where routes narrow, so the ramp up to a plateau
   outweighs the open ground before it, and the ground below the plateau's cliffs, which leads elsewhere, counts
   for nothing.
-- *height* is the height above the targets as a share of `choke.spot.height_cap`, up to 1. So a spot that high
-  or higher scores `1 + choke.spot.height` times as much (1.5× by default).
-- *enemy value* is the cost of the known enemies a tower there could shoot: in range, in a clear line of fire, and
+- *height* is the height above the mean of the targets it counts, as a share of `choke.spot.height_cap`, up to 1.
+  So a spot that high or higher scores `1 + choke.spot.height` times as much (1.5× by default).
+- *V* is the share of the range circle's ground in a clear line of fire from the spot, as the picker's. A spot on a
+  cliff edge sees the plateau and the ground below, and its foot only the open side.
+- *E* is `choke.spot.enemy` × the cost of the known enemies a tower there could shoot: in range, in a clear line of fire, and
   of a kind it can hit (fliers need anti-air). Buildings count at their last known position, and mobile units only
   while in radar or sight. As towers skip threatened spots, an armed enemy only counts where the tower outranges
   it, so in practice this finds unarmed targets (mexes, energy, radar, constructors) and outranged ones.
@@ -213,7 +219,7 @@ started are called off.
   above, walked from the enemy, so on a plateau the lean points down its ramp, not at a cliff edge facing the
   enemy. By default a spot a radius toward an approach from one side scores 1.5×, one a radius away from it 1×,
   and an approach from all sides leans nowhere.
-- Hold spots skip the builder term.
+- Hold spots skip the builder term and E.
 
 A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the
 nearest safe site, often down the slope of the ledge it was meant for. It's built where it was scored, without the

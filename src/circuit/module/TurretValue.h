@@ -16,7 +16,7 @@ namespace circuit {
 /*
  * CTurretPicker's value of a spot and its search, with no engine calls, so a harness can test them. In metal:
  *   base  = (T + A + E + C) x (1 + turret.height x height)
- *   value = base x (1 + turret.front x F) x (1 + turret.view x V) / (1 + walk / travel)
+ *   value = base x (1 + turret.front x F) x (1 + turret.view x V) x factor / (1 + walk / travel)
  * T, A and E sum the targets of their kind in range with a clear line of fire; C is the best choke target so; height
  * is how far the spot stands above the mean height of those targets, per heightCap (up to 1); F the spot's
  * enemy building influence over the highest among the candidates; V the share of its range circle's ground, by area,
@@ -38,6 +38,7 @@ public:
 		SPos pos;
 		float enemyInfl;  // F before it is normalised
 		float walk;  // elmos from the ordered constructor
+		float factor = 1.f;  // the caller's own terms for the spot, > 0 (CSpotScorer: setback, lean, threat, builder)
 	};
 	struct STerms {
 		float traffic = 0.f, ally = 0.f, enemy = 0.f, choke = 0.f;  // T, A, E, C
@@ -84,8 +85,8 @@ public:
 	// viewOf: V, read only for a spot with a base (nullptr: V = 1 everywhere)
 	static STerms Evaluate(const SCandidate& c, const std::vector<STarget>& targets, const SParams& p, float frontNorm,
 			const ClearFn& isClear, const ViewFn& viewOf = nullptr);
-	// Best upper bound first: the targets in range with no line test, x the full height bonus, x the spot's own front
-	// and walk terms, x the full view bonus; stops once no bound beats the best worth value. A spot whose base can't reach minBase isn't
+	// Best upper bound first: the targets in range with no line test, x the full height bonus, x the spot's own front,
+	// walk and factor terms, x the full view bonus; stops once no bound beats the best worth value. A spot whose base can't reach minBase isn't
 	// tested, nor finished. Then the best 5 are tried refineStep to each corner
 	static SResult Search(const std::vector<SCandidate>& candidates, const std::vector<STarget>& targets,
 			const SParams& p, const ClearFn& isClear, const MakeFn& makeAt, const FinishFn& finish = nullptr,
