@@ -528,6 +528,15 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	threat = power = dmg * sqrtf(def->GetHealth() + maxShield * SHIELD_MOD);
 }
 
+int STargetPriority::GetTier(const CCircuitDef* edef, bool isInLos) const
+{
+	if (edef == nullptr) {
+		return unknownTier[isInLos ? 1 : 0];
+	}
+	const size_t id = static_cast<size_t>(edef->GetId());
+	return (id < tierOf.size()) ? tierOf[id][isInLos ? 1 : 0] : NO_TIER;
+}
+
 CCircuitDef::~CCircuitDef()
 {
 	delete def;

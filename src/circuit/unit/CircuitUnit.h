@@ -108,6 +108,7 @@ public:
 	// No weapon: false. Planes: IsWeaponReady (ammo)
 	bool IsWeaponReloaded(int frame, float fraction);
 	int GetWeaponReloadLeft(int frame);  // frames until the main weapon is ready; 0 if ready or none (planes: 0)
+	int GetWeaponReloadFrame(int frame) { return (weapon == nullptr) ? 0 : GetReloadFrame(frame); }  // main weapon's; 0 if none
 	bool IsDGunReady(int frame, float energy);
 	bool IsShieldCharged(float percent);
 	bool IsJumpReady();

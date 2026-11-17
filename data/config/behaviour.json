@@ -1383,7 +1383,32 @@
 		"limit": 5,
 	        "target_dist_mod": 0.25,
 		"thr_mod": 0.0,
-		"pwr_mod": 10.00
+		"pwr_mod": 10.00,
+		// Only our orders aim it (CPriorityArtyTask); explicit attack orders still fire under hold fire
+		"fire_state": "hold",
+		// Priority list, top first (CPriorityArtyTask). An enemy type takes the first tier it matches by "unit" names,
+		// enemy "role" or "attribute", or "any": true. "los": true only in LOS now, false only out of it (remembered),
+		// left out either. Inside a tier: finished, then in LOS, then value (highest), then turning time (least).
+		// "splash": value is the cost of known enemy buildings within the shell's splash, plus the target's own
+		"target_tiers": [
+			{"unit": ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty", "staticantinuke"], "los": true},
+			{"unit": ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty", "staticantinuke"], "los": false},
+			{"unit": ["energysingu"], "los": true},
+			{"unit": ["energyheavygeo"], "los": true},
+			{"unit": ["energysingu"], "los": false},
+			{"unit": ["energyheavygeo"], "los": false},
+			{"unit": ["energyfusion"], "los": true},
+			{"unit": ["energyfusion"], "los": false},
+			{"role": ["artillery", "anti_heavy"]},
+			{"role": ["commander"]},
+			{"attribute": ["raid_target"], "splash": true},
+			{"any": true, "splash": true}
+		],
+		// No shot where a friendly unit (not a plane) is in a box around the aim point: aoe + side x distance across
+		// the line of fire, aoe + along along it (the shell scatters mostly along it)
+		"target_guard": {"side": 0.035, "along": 300},
+		// Turret turn rate, degrees a second: [heading, pitch]
+		"turn_rate": [4, 2]
 	},
 	"turretheavy": {
 		// threat 121 at full health (raw, before pwr_mod/thr_mod)

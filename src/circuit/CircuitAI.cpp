@@ -354,7 +354,7 @@ int CCircuitAI::HandleGameEvent(int topic, const void* data)
 			SCOPED_TIME(this, "EVENT_ENEMY_DAMAGED");
 			struct SEnemyDamagedEvent* evt = (struct SEnemyDamagedEvent*)data;
 			CEnemyInfo* enemy = GetEnemyInfo(evt->enemy);
-			ret = (enemy != nullptr) ? this->EnemyDamaged(enemy) : ERROR_ENEMY_DAMAGED;
+			ret = (enemy != nullptr) ? this->EnemyDamaged(enemy, evt->attacker) : ERROR_ENEMY_DAMAGED;
 			break;
 		}
 		case EVENT_ENEMY_DESTROYED: {
@@ -1103,6 +1103,7 @@ int CCircuitAI::EnemyEnterLOS(CEnemyInfo* enemy)
 	bool isSuddenThreat = mapManager->IsSuddenThreat(enemy->GetData());
 
 	allyTeam->EnemyEnterLOS(enemy->GetData(), this);
+	militaryManager->OnEnemySeen(enemy);
 
 	if (!isSuddenThreat) {
 		return 0;  // signaling: OK
@@ -1139,6 +1140,7 @@ int CCircuitAI::EnemyLeaveLOS(CEnemyInfo* enemy)
 int CCircuitAI::EnemyEnterRadar(CEnemyInfo* enemy)
 {
 	allyTeam->EnemyEnterRadar(enemy->GetData(), this);
+	militaryManager->OnEnemySeen(enemy);
 
 	return 0;  // signaling: OK
 }
@@ -1150,9 +1152,10 @@ int CCircuitAI::EnemyLeaveRadar(CEnemyInfo* enemy)
 	return 0;  // signaling: OK
 }
 
-int CCircuitAI::EnemyDamaged(CEnemyInfo* enemy)
+int CCircuitAI::EnemyDamaged(CEnemyInfo* enemy, int attackerId)
 {
 	// NOTE: Whole threat map updates in a fraction of a second, through polling
+	militaryManager->OnEnemyDamaged(enemy, attackerId);  // priority artillery's progress
 	return 0;  // signaling: OK
 }
 
@@ -1161,6 +1164,7 @@ int CCircuitAI::EnemyDestroyed(CEnemyInfo* enemy)
 	allyTeam->EnemyDestroyed(enemy->GetData(), this);
 
 	militaryManager->UnmarkPointOfInterest(enemy);
+	militaryManager->OnEnemyGone(enemy);
 
 	return 0;  // signaling: OK
 }

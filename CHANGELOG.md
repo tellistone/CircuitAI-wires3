@@ -7,6 +7,22 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Big Bertha aims by a priority list** (`target_tiers` in behaviour.json, new `CPriorityArtyTask`). It used
+  `CSuperTask`, which shelled the enemy cluster with the most metal, and only where enemy influence dominated, so it
+  ignored undefended economy and re-ranked every 10 s. Now each known enemy goes into the first of 12 tiers it matches:
+  superweapons and the antinuke (in LOS, then remembered), singu, heavy geo (in LOS, then both remembered), fusion (in
+  LOS, then remembered), artillery and anti-heavy, commanders, raid targets, then anything. Inside a tier: finished
+  before nanoframes, in LOS first, then value (cost; the last two tiers count the cost of enemy buildings within the
+  shell's splash), then the least turret turning (4 deg/s heading, 2 deg/s pitch; `turn_rate`). It keeps a target
+  until it's lost (re-picks at once) or, at a 10 s check, a higher tier than the one it was picked at shows up, a
+  finished unit over a nanoframe, or 3x the value in the same tier. A simulated low arc over the heightmap skips
+  targets behind terrain, and no shot goes where a friendly unit (not a plane) is in a box around the aim point along
+  the line of fire (`target_guard`). A target fails after 5 shots in LOS or radar that damaged nothing, after
+  max(5, 4 x shots to kill) shots at it out of both (shared by our guns, until it's seen again), or with no shot for
+  turning + 1 reload + 10 s, and is then skipped for 60 s, doubling each time. The gun runs at hold fire, so only
+  these orders aim it. Mobile units get attack-unit orders and are ranked last when more than 10 s of turning away;
+  flying units are never targets. The other superweapons keep `CSuperTask`. `ARTY` lines in the debug log
+
 - **Solars and winds: one for every mex off the grid, then into the gaps of the planned grid** (`economy.energy.fill`:
   `unit` = `energysolar`, `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the
   builder (and the mex build chain put one more at each new mex), so it clumped round mexes as many small grids, and

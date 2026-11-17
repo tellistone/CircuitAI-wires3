@@ -13,6 +13,7 @@
 #include "setup/DefenceMatrix.h"
 #include "task/fighter/FighterTask.h"
 #include "unit/CircuitDef.h"
+#include "unit/CoreUnit.h"
 
 #include <algorithm>
 #include <vector>
@@ -104,6 +105,19 @@ public:
 	static constexpr int AH_KEEP_FRAMES = FRAMES_PER_SEC * 60;
 	bool IsEnemyHeavySeen(int frames);
 	CRetreatTask* EnqueueRetreat();
+	// Static artillery with behaviour.json "target_tiers" (CPriorityArtyTask)
+	IFighterTask* EnqueuePriorityArty();
+	// EnemyDamaged with the attacker: progress for that attacker's priority artillery
+	void OnEnemyDamaged(CEnemyInfo* enemy, int attackerId);
+	// Shots our priority artillery fired at an enemy while it was out of LOS and radar, shared by our guns; cleared
+	// when it's seen again (OnEnemySeen) or gone
+	void AddBlindShot(ICoreUnit::Id enemyId) { ++blindShots[enemyId]; }
+	int GetBlindShots(ICoreUnit::Id enemyId) const {
+		auto it = blindShots.find(enemyId);
+		return (it != blindShots.end()) ? it->second : 0;
+	}
+	void OnEnemySeen(CEnemyInfo* enemy);  // entered LOS or radar
+	void OnEnemyGone(CEnemyInfo* enemy);  // destroyed or forgotten
 private:
 	void DequeueTask(IUnitTask* task, bool done = false);
 
@@ -561,6 +575,8 @@ private:
 	std::vector<std::set<IFighterTask*>> fightTasks;
 	std::vector<IUnitTask*> fightUpdates;  // owner
 	unsigned int fightIterator;
+	std::set<IUnitTask*> priorityArtyTasks;  // CPriorityArtyTask, in fightTasks[SUPER]
+	std::unordered_map<ICoreUnit::Id, int> blindShots;  // AddBlindShot
 
 	CDefenceMatrix* defence;
 	unsigned int defenceIdx;

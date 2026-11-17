@@ -35,6 +35,7 @@
 #include "task/fighter/AntiHeavyTask.h"
 #include "task/fighter/SupportTask.h"
 #include "task/static/SuperTask.h"
+#include "task/static/PriorityArtyTask.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -197,7 +198,8 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		idleTask->AssignTo(unit);
 
 		TRY_UNIT(this->circuit, unit,
-			unit->GetUnit()->SetTrajectory(1);
+			// CPriorityArtyTask aims by the low arc (no effect without a trajectory toggle)
+			unit->GetUnit()->SetTrajectory((unit->GetCircuitDef()->GetTargetPriority() != nullptr) ? 0 : 1);
 			if (unit->GetCircuitDef()->IsAttrStock()) {
 				unit->GetUnit()->Stockpile(UNIT_COMMAND_OPTION_SHIFT_KEY | UNIT_COMMAND_OPTION_CONTROL_KEY);
 				unit->CmdMiscPriority(2);
@@ -1419,6 +1421,41 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 	return task;
 }
 
+IFighterTask* CMilitaryManager::EnqueuePriorityArty()
+{
+	IFighterTask* task = new CPriorityArtyTask(this);
+	fightTasks[static_cast<IFighterTask::FT>(IFighterTask::FightType::SUPER)].insert(task);
+	fightUpdates.push_back(task);
+	priorityArtyTasks.insert(task);
+	return task;
+}
+
+void CMilitaryManager::OnEnemyDamaged(CEnemyInfo* enemy, int attackerId)
+{
+	if (priorityArtyTasks.empty() || (attackerId < 0)) {
+		return;
+	}
+	CCircuitUnit* unit = circuit->GetTeamUnit(attackerId);
+	if ((unit == nullptr) || (priorityArtyTasks.find(unit->GetTask()) == priorityArtyTasks.end())) {
+		return;
+	}
+	static_cast<CPriorityArtyTask*>(unit->GetTask())->OnEnemyDamaged(enemy);
+}
+
+void CMilitaryManager::OnEnemySeen(CEnemyInfo* enemy)
+{
+	if (!blindShots.empty()) {
+		blindShots.erase(enemy->GetId());
+	}
+}
+
+void CMilitaryManager::OnEnemyGone(CEnemyInfo* enemy)
+{
+	if (!blindShots.empty()) {
+		blindShots.erase(enemy->GetId());
+	}
+}
+
 IFighterTask* CMilitaryManager::EnqueueDefend(IFighterTask::FightType promote, float power)
 {
 	const float mod = (float)rand() / RAND_MAX * defenceMod.len + defenceMod.min;
@@ -1766,6 +1803,7 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 		case IUnitTask::Type::FIGHTER: {
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
+			priorityArtyTasks.erase(taskF);
 			frontline->ReleaseHold(taskF, 0);
 			OnRallyTaskEnd(attackRally, taskF);
 			OnRallyTaskEnd(raidRally, taskF);
@@ -3832,6 +3870,9 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	};
 	IFighterTask* task = nullptr;
 	CCircuitDef* cdef = unit->GetCircuitDef();
+	if ((cdef->GetTargetPriority() != nullptr) && !cdef->IsMobile()) {
+		return EnqueuePriorityArty();  // behaviour.json "target_tiers"
+	}
 	auto it = types.find(circuit->GetBindedRole(cdef->GetMainRole()));
 	// Any main role with the scout attribute (scout as a secondary role) fills the scout quota first.
 	// Units whose main role already leads to scouting keep their own path below and take no slot.
