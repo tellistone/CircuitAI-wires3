@@ -32,12 +32,15 @@ public:
 
 	virtual void OnRearmStart(CCircuitUnit* unit) override;
 
+	// Fresh from a raid stint that ended at danger: no new stint for RAID_DELAY_FRAMES (the flee runs first)
+	void DelayRaidStint();
+
 private:
 	void Execute(CCircuitUnit* unit, bool isUpdating);
 	bool FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);
 	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackScout(CCircuitUnit* unit, bool isUpdating);
-	void ApplyScoutPath(const CQueryPathSingle* query, int attempt);
+	void ApplyScoutPath(const CQueryPathSingle* query);
 
 	// Threat-awareness helpers
 	float GetSafeThreat(CCircuitUnit* unit) const;  // threat above this is too dangerous for the scout
@@ -48,7 +51,16 @@ private:
 	void ApplyApproachPath(const CQueryPathSingle* query, ICoreUnit::Id targetId, bool isUpdating);
 	// Scout spot, else a random safe spot no nearer our base than the scout, else our frontline cluster; -RgtVector if none
 	springai::AIFloat3 PickScoutPosition(CCircuitUnit* unit);
-	void RunScoutQuery(CCircuitUnit* unit, int attempt);
+	void RunScoutQuery(CCircuitUnit* unit);
+	const F3Vec& GetSafeFrontPos(CCircuitUnit* unit);  // FillFrontPos: safe ones, not where we stand (scratch)
+	// Reachable spots on rings around pos (250 to 3000 elmos, 16 directions, nearest ring first; scratch)
+	const F3Vec& GetRingSpots(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
+	// No safe route to the picked spot, or none picked: an armed ground scout raids for a while (a raid stint,
+	// CMilitaryManager::SetScoutStint) and then looks again; others (and right after a stint ended at danger) explore
+	void OnNoSafeRoute(CCircuitUnit* unit);
+	void StartRaidStint(CCircuitUnit* unit);
+	// Head for the nearest unseen safe spot (or safe frontline spot) reachable without crossing danger; hold if none
+	void ExploreNear(CCircuitUnit* unit);
 
 	void ActivatePath(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath, ICoreUnit::Id pathTargetId, bool isCapped);
 	bool NeedRepath(CCircuitUnit* unit, ICoreUnit::Id targetId) const;
@@ -62,7 +74,7 @@ private:
 	bool CheckFlee(CCircuitUnit* unit, const springai::AIFloat3& pos, int frame);  // true: fleeing, skip scouting
 	void Flee(CCircuitUnit* unit, const springai::AIFloat3& pos, int frame);
 	bool IsFleeing(int frame) const { return frame < fleeUntil; }
-	void HoldScout(CCircuitUnit* unit);  // nowhere safe to scout right now: stop, pick again in a second
+	void HoldScout(CCircuitUnit* unit, int frames = FRAMES_PER_SEC);  // nowhere safe to scout right now: stop, wait
 
 	std::unordered_map<ICoreUnit::Id, int> badTargets;
 	int lastPathFrame = -1;  // when the current travel path was applied
@@ -74,9 +86,14 @@ private:
 
 	static constexpr int FLEE_CLEAR_FRAMES = FRAMES_PER_SEC * 2;  // out of danger this long ends the flee
 	static constexpr float FRONT_ARRIVE_DIST = 200.f;  // last-resort front spot: not one we already stand at
+	static constexpr int EXPLORE_HOLD_FRAMES = FRAMES_PER_SEC * 3;  // boxed in: wait this long before looking again
 	int fleeUntil = -1;  // fleeing until this frame (pushed on while in danger); -1: not fleeing
 	int lastFleeFrame = -1;  // last flee path request
 	int holdUntil = -1;  // HoldScout: no new scouting pick until this frame
+	static constexpr int RAID_STINT_FRAMES = FRAMES_PER_SEC * 10;  // a raid stint lasts at least this long
+	static constexpr int RAID_DELAY_FRAMES = FRAMES_PER_SEC * 5;  // DelayRaidStint
+	bool isRaidPending = false;  // OnNoSafeRoute: StartRaidStint on the next Update (not inside its loop over units)
+	int raidAllowedFrame = -1;  // DelayRaidStint
 };
 
 } // namespace circuit

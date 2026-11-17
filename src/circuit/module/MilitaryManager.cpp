@@ -1303,6 +1303,7 @@ int CMilitaryManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
+	scoutStints.erase(unit->GetId());  // ids get reused
 
 	auto search = destroyedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != destroyedHandler.end()) {
@@ -2539,6 +2540,28 @@ static bool IsOnFightTask(const CCircuitUnit* unit, IFighterTask::FightType type
 		&& (static_cast<const IFighterTask*>(task)->GetFightType() == type);
 }
 
+bool CMilitaryManager::IsScouting(const CCircuitUnit* unit) const
+{
+	// On a scout task, or on a raid stint (CScoutTask: no safe route to its spot), which comes back to scouting
+	return IsOnFightTask(unit, IFighterTask::FightType::SCOUT) || IsScoutStint(unit);
+}
+
+void CMilitaryManager::SetScoutStint(const CCircuitUnit* unit, int endFrame)
+{
+	scoutStints[unit->GetId()] = endFrame;
+}
+
+void CMilitaryManager::EndScoutStint(const CCircuitUnit* unit)
+{
+	scoutStints.erase(unit->GetId());
+}
+
+int CMilitaryManager::GetScoutStintEnd(const CCircuitUnit* unit) const
+{
+	auto it = scoutStints.find(unit->GetId());
+	return (it != scoutStints.end()) ? it->second : -1;
+}
+
 unsigned int CMilitaryManager::GetRaiderCount() const
 {
 	unsigned int count = 0;
@@ -2547,7 +2570,7 @@ unsigned int CMilitaryManager::GetRaiderCount() const
 			continue;
 		}
 		// Raiders taken as scouts (quota.scout) don't raid, so they don't fill the floor
-		if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
+		if (IsScouting(unit)) {
 			continue;
 		}
 		++count;
@@ -2580,7 +2603,7 @@ bool CMilitaryManager::IsScoutSlotFree(const CCircuitDef* cdef) const
 			continue;
 		}
 		++units;
-		if (IsOnFightTask(unit, IFighterTask::FightType::SCOUT)) {
+		if (IsScouting(unit)) {
 			++scouting;
 		}
 	}
