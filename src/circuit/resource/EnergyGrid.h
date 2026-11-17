@@ -46,6 +46,8 @@ public:
 			std::function<bool (const springai::AIFloat3& p)> predicate, springai::AIFloat3& outPos);
 
 	float GetPylonRange(CCircuitDef::Id defId);
+	// Makes energy (customParams.income_energy or windgen)
+	bool IsEnergyDef(CCircuitDef::Id defId) const { return energyIncomes.find(defId) != energyIncomes.end(); }
 	// Grid energy a structure needs to work (Zero-K customParams.neededlink), 0 = none
 	float GetNeededLink(CCircuitDef::Id defId) const;
 

@@ -163,6 +163,10 @@ public:
 	// reachable by unit (with nullptr: by some builder); nullptr = no such gap
 	IBuilderTask* EnqueueGridFill(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
 			IUnitTask::Priority priority);
+	// economy.energy.fill: the nearest finished mex of ours within fill_dist of pos with no energy building linked
+	// to it (an ally team's, finished or a nanoframe) and no energy job queued beside it, where fill def cdef can be
+	// built safely, reachable by unit (with nullptr: by some builder); -RgtVector if every one has energy
+	springai::AIFloat3 FindBareMex(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit);
 	// Queued energy jobs: ENERGY jobs and gap fills (PYLON jobs of a fill def)
 	int GetEnergyTaskCount() const;
 

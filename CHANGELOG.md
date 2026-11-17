@@ -7,15 +7,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
-- **Solars and winds fill the gaps of the planned grid** (`economy.energy.fill`: `unit` = `energysolar`,
-  `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the builder (and the mex
-  build chain put one more at each new mex), so it clumped round mexes as many small grids, and the grid linker only
-  started at 16 income, one piece at a time. Now an energy job of a fill def, and the mex chain's energy, goes to the
-  nearest open gap within `max_dist` of the builder (of the mex for the chain): a planned link of the grid's spanning
-  tree between two finished mex clusters, or the gap between the mexes of one. The piece touches a gap end already on
-  the grid, so it still overdrives mexes, and it is a pylon job on that gap, so one piece per gap at a time and the
-  grid plan sees it when done. Gap fills count as energy jobs for the energy budget and as energy stall fixes. No gap
-  in reach: at the nearest mex as before. No `unit` list: off.
+- **Solars and winds: one beside every mex, then into the gaps of the planned grid** (`economy.energy.fill`:
+  `unit` = `energysolar`, `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the
+  builder (and the mex build chain put one more at each new mex), so it clumped round mexes as many small grids, and
+  the grid linker only started at 16 income, one piece at a time. Now an energy job of a fill def, and the mex
+  chain's energy, first goes right beside the nearest finished mex of ours within `max_dist` of the builder (of the
+  mex for the chain) that has no energy linked to it (the ally team's, built or being built) and no energy job
+  queued beside it. Once every mex in reach has some, it goes to the nearest open gap within `max_dist`: a planned
+  link of the grid's spanning tree between two finished mex clusters, or the gap between the mexes of one. The piece
+  touches a gap end already on the grid, so it still overdrives mexes, and it is a pylon job on that gap, so one
+  piece per gap at a time and the grid plan sees it when done. Gap fills count as energy jobs for the energy budget
+  and as energy stall fixes. Neither: at the nearest mex as before. No `unit` list: off.
 
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own

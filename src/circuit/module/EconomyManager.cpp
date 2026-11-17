@@ -1332,9 +1332,13 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		return nullptr;
 	}
 
-	// Cheap energy goes into the nearest gap of the planned grid, so it links mexes up as it overdrives them;
-	// at the nearest mex only when there is no gap in reach
+	// Cheap energy first goes right beside each nearby mex that has none, so every mex is overdriven; once they all
+	// have some, into the nearest gap of the planned grid, so it links them up; at the nearest mex when neither
 	if (IsFillDef(bestDef) && !IsRearDef(bestDef)) {
+		const AIFloat3 barePos = FindBareMex(bestDef, position, unit);
+		if (utils::is_valid(barePos)) {
+			return builderMgr->EnqueueTask(priority, bestDef, barePos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 2.0f, true);
+		}
 		IBuilderTask* task = EnqueueGridFill(bestDef, position, unit, priority);
 		if (task != nullptr) {
 			return task;
@@ -1926,6 +1930,71 @@ IBuilderTask* CEconomyManager::EnqueueGridFill(CCircuitDef* cdef, const AIFloat3
 	IBuilderTask* task = builderMgr->EnqueuePylon(priority, cdef, buildPos, link, cdef->GetCostM());
 	task->SetBuildPos(buildPos);
 	return task;
+}
+
+AIFloat3 CEconomyManager::FindBareMex(CCircuitDef* cdef, const AIFloat3& pos, CCircuitUnit* unit)
+{
+	if ((energyGrid == nullptr) || (fillDist <= 0.f)) {
+		return -RgtVector;
+	}
+	const int frame = circuit->GetLastFrame();
+	// Ours, finished, in reach, nearest first
+	std::vector<std::pair<float, AIFloat3>> mexes;
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		CCircuitUnit* u = kv.second;
+		if (!u->GetCircuitDef()->IsMex() || u->GetUnit()->IsBeingBuilt()) {
+			continue;
+		}
+		const AIFloat3& p = u->GetPos(frame);
+		const float sqDist = p.SqDistance2D(pos);
+		if (sqDist < SQUARE(fillDist)) {
+			mexes.push_back(std::make_pair(sqDist, p));
+		}
+	}
+	if (mexes.empty()) {
+		return -RgtVector;
+	}
+	std::sort(mexes.begin(), mexes.end(), [](const std::pair<float, AIFloat3>& a, const std::pair<float, AIFloat3>& b) {
+		return a.first < b.first;
+	});
+
+	// Energy of the ally team (nanoframes too: they are on the way) and our queued energy jobs, with their link range
+	std::vector<std::pair<AIFloat3, float>> energies;
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if ((edef != nullptr) && energyGrid->IsEnergyDef(edef->GetId())) {
+			energies.push_back(std::make_pair(kv.second->GetPos(frame), energyGrid->GetPylonRange(edef->GetId())));
+		}
+	}
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const float shakeSlack = SQUARE_SIZE * 16.0f;  // an at-mex job is placed up to this far from its spot
+	for (const IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY)) {
+		energies.push_back(std::make_pair(t->GetPosition(), std::max(energyGrid->GetPylonRange(t->GetBuildDef()->GetId()), shakeSlack)));
+	}
+	for (const IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::PYLON)) {
+		const AIFloat3& p = utils::is_valid(t->GetBuildPos()) ? t->GetBuildPos() : t->GetPosition();
+		energies.push_back(std::make_pair(p, energyGrid->GetPylonRange(t->GetBuildDef()->GetId())));
+	}
+
+	const float mexRange = energyGrid->GetPylonRange(mexDef->GetId());
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	for (const auto& m : mexes) {
+		const AIFloat3& mexPos = m.second;
+		const bool hasEnergy = std::any_of(energies.begin(), energies.end(), [&mexPos, mexRange](const std::pair<AIFloat3, float>& e) {
+			return e.first.SqDistance2D(mexPos) < SQUARE(mexRange + e.second);
+		});
+		if (hasEnergy || terrainMgr->IsZoneAlly(mexPos) || !terrainMgr->CanBeBuiltAtSafe(cdef, mexPos)) {
+			continue;
+		}
+		if ((unit != nullptr) ? !terrainMgr->CanReachAtSafe(unit, mexPos, unit->GetCircuitDef()->GetBuildDistance())
+							  : !builderMgr->IsBuilderInArea(cdef, mexPos))
+		{
+			continue;
+		}
+		return mexPos;
+	}
+	return -RgtVector;
 }
 
 int CEconomyManager::GetEnergyTaskCount() const
