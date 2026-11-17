@@ -118,6 +118,7 @@ void CEnemyUnit::UpdateInRadarData(const AIFloat3& p)
 	data.pos = p;
 	CTerrainData::CorrectPosition(data.pos);
 	data.vel = unit->GetVel();
+	blindShots = 0;  // seen
 }
 
 void CEnemyUnit::TrackStill(int frame)

@@ -1372,7 +1372,40 @@
 	        "target_dist_mod": 0.25,
 		"limit": 1,
 		"since": 1200,
-		"thr_mod": 0.01
+		"thr_mod": 0.01,
+		// Aimed by a priority list like the Big Bertha (CPriorityArtyTask; the keys are explained there)
+		"fire_state": "hold",
+		"target_tiers": [
+			{"unit": ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty", "staticantinuke"], "los": true},
+			{"unit": ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty", "staticantinuke"], "los": false},
+			{"unit": ["energysingu"], "los": true},
+			{"unit": ["energyheavygeo"], "los": true},
+			{"unit": ["energysingu"], "los": false},
+			{"unit": ["energyheavygeo"], "los": false},
+			{"unit": ["energyfusion"], "los": true},
+			{"unit": ["energyfusion"], "los": false},
+			{"role": ["artillery", "anti_heavy"]},
+			{"role": ["commander"]},
+			{"attribute": ["raid_target"], "splash": true},
+			{"any": true, "splash": true}
+		],
+		// Its widest splash is the napalm's 400 (the guard adds it), accuracy 600 scatters ~0.042 x distance across
+		// and up to ~790 along the line at its 9600 range
+		"target_guard": {"side": 0.042, "along": 450},
+		// It fires backwards (never turns more than 90), the spinning barrels line up the pitch, and its heading turns
+		// at ~4 deg/s from rest, ~1.6-2.3 in a turn, ~0.9 fully spun. Turning also bleeds spin (fire rate), so 30 s
+		// of turning halves a target's value
+		"turn_rate": [1.5, 0],
+		"turn_flip": true,
+		"turn_half_value": 30,
+		// Splash value counts buildings within the yellow and green shells' 192, not the napalm's 400
+		"splash_radius": 192,
+		// From rest the barrels take a while to spin up to the first shot
+		"shot_grace": 20,
+		// A shell flies ~9.5 s at full range: a mobile unit moving more than this during turning and flight ranks last
+		"mobile_move": 250,
+		// It has a trajectory toggle: low arc by default, the high one (~22 s flight) for a building behind terrain
+		"high_arc": true
 	},
 	"zenith": {
 		// threat 171 at full health (raw, before pwr_mod/thr_mod)
@@ -1385,6 +1418,33 @@
 		"since": 900,
 		"thr_mod": 0.01
 	},
+	"mahlazer": {
+		"role": ["static", "heavy"],
+		// Starlight: aimed by a priority list like the Big Bertha (CPriorityArtyTask; the keys are explained there).
+		// Its satellite's beam is always on while undocked and burns wherever it points, so it's steered along paths
+		// clear of friendly units ("beam")
+		"fire_state": "hold",
+		"target_tiers": [
+			{"unit": ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty"]},
+			{"unit": ["energysingu"]},
+			{"unit": ["energyheavygeo"]},
+			{"unit": ["energyfusion", "staticantinuke"]},
+			{"role": ["artillery", "anti_heavy"]},
+			{"role": ["commander"]},
+			{"attribute": ["raid_target"], "splash": true},
+			{"any": true, "splash": true}
+		],
+		// The satellite turns its heading at 2.5 deg/s and its pitch (from straight down) at 0.75. The beam does no
+		// damage while it turns between targets, so 5 s of turning halves a target's value
+		"turn_rate": [2.5, 0.75],
+		"turn_half_value": 5,
+		// The beam sweeps on through a base: count buildings within 400 of the target
+		"splash_radius": 400,
+		// The beam must reach the target within turning + this many seconds
+		"shot_grace": 10,
+		// The satellite's height above the base, the beam's reach from it and its steady damage a second
+		"beam": {"height": 2190, "range": 10500, "dps": 4500}
+	},
 	"staticheavyarty": {
 		// threat 57.28 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "turtle", "heavy"],
@@ -1392,7 +1452,40 @@
 		"limit": 5,
 	        "target_dist_mod": 0.25,
 		"thr_mod": 0.0,
-		"pwr_mod": 10.00
+		"pwr_mod": 10.00,
+		// Only our orders aim it (CPriorityArtyTask); explicit attack orders still fire under hold fire
+		"fire_state": "hold",
+		// Priority list, top first (CPriorityArtyTask). An enemy type takes the first tier it matches by "unit" names,
+		// enemy "role" or "attribute", or "any": true. "los": true only in LOS now, false only out of it (remembered),
+		// left out either. Inside a tier: finished, then in LOS, then value (highest), then turning time (least).
+		// "splash": value is the cost of known enemy buildings within the shell's splash, plus the target's own
+		"target_tiers": [
+			{"unit": ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty", "staticantinuke"], "los": true},
+			{"unit": ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty", "staticantinuke"], "los": false},
+			{"unit": ["energysingu"], "los": true},
+			{"unit": ["energyheavygeo"], "los": true},
+			{"unit": ["energysingu"], "los": false},
+			{"unit": ["energyheavygeo"], "los": false},
+			{"unit": ["energyfusion"], "los": true},
+			{"unit": ["energyfusion"], "los": false},
+			{"role": ["artillery", "anti_heavy"]},
+			{"role": ["commander"]},
+			{"attribute": ["raid_target"], "splash": true},
+			{"any": true, "splash": true}
+		],
+		// No shot where a friendly unit (not a plane) is in a box around the aim point: aoe + side x distance across
+		// the line of fire, aoe + along along it (the shell scatters mostly along it)
+		"target_guard": {"side": 0.035, "along": 300},
+		// Turret turn rate, degrees a second: [heading, pitch] (pitch 0: free). Also, all optional:
+		// "turn_flip": true (fires backwards: never turns more than 90), "turn_half_value": <s> (that much turning
+		// halves a target's value), "splash_radius": <elmos> (default: the weapon's AoE), "shot_grace": <s> (a shot
+		// is due within turning + 1 reload + this, default 10), "mobile_move": <elmos> (a mobile unit moving more
+		// than this during turning and flight ranks last), "high_arc": true (trajectory toggle: the high arc for a
+		// building behind terrain)
+		"turn_rate": [4, 2],
+		// A shell flies ~5.6 s at full range: a mobile unit moving more than this during turning and flight (~27
+		// elmo/s, as the Rave Party's 250 over ~9.5 s) ranks last, so walking commanders and raiders don't soak shells
+		"mobile_move": 150
 	},
 	"turretheavy": {
 		// threat 121 at full health (raw, before pwr_mod/thr_mod)

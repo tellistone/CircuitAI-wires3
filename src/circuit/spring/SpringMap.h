@@ -30,6 +30,7 @@ public:
 	float GetElevationAt(float x, float z) const { return map->GetElevationAt(x, z); }
 	int GetWidth() const { return map->GetWidth(); }
 	int GetHeight() const { return map->GetHeight(); }
+	float GetMaxHeight() const { return map->GetMaxHeight(); }  // the highest ground now
 	const char* GetName() const { return map->GetName(); }
 
 	bool IsPossibleToBuildAt(springai::UnitDef* unitDef, const springai::AIFloat3& pos, int facing) const {

@@ -104,6 +104,10 @@ public:
 	static constexpr int AH_KEEP_FRAMES = FRAMES_PER_SEC * 60;
 	bool IsEnemyHeavySeen(int frames);
 	CRetreatTask* EnqueueRetreat();
+	// Static artillery with behaviour.json "target_tiers" (CPriorityArtyTask)
+	IFighterTask* EnqueuePriorityArty();
+	// EnemyDamaged with the attacker: progress for that attacker's priority artillery
+	void OnEnemyDamaged(CEnemyInfo* enemy, int attackerId);
 private:
 	void DequeueTask(IUnitTask* task, bool done = false);
 
@@ -561,6 +565,7 @@ private:
 	std::vector<std::set<IFighterTask*>> fightTasks;
 	std::vector<IUnitTask*> fightUpdates;  // owner
 	unsigned int fightIterator;
+	std::set<IUnitTask*> priorityArtyTasks;  // CPriorityArtyTask, in fightTasks[SUPER]
 
 	CDefenceMatrix* defence;
 	unsigned int defenceIdx;

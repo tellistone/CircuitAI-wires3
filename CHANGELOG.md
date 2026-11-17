@@ -10,6 +10,49 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
   fixed offset; the offset stays the fallback, and for shields, storages and AA.
+
+- **Big Bertha and Disco Rave Party aim by a priority list** (`target_tiers` in behaviour.json, new
+  `CPriorityArtyTask`). They used `CSuperTask`, which shelled the enemy cluster with the most metal, and only where
+  enemy influence dominated, so it ignored undefended economy and re-ranked every 10 s. Now each known enemy goes into the first of 12 tiers it matches:
+  superweapons and the antinuke (in LOS, then remembered), singu, heavy geo (in LOS, then both remembered), fusion (in
+  LOS, then remembered), artillery and anti-heavy, commanders, raid targets, then anything. Inside a tier: finished
+  before nanoframes, in LOS first, then value (cost; the last two tiers count the cost of enemy buildings within the
+  shell's splash), then the least turret turning (4 deg/s heading, 2 deg/s pitch; `turn_rate`). It keeps a target
+  until it's lost (re-picks at once) or, at a 10 s check, a higher tier than the one it was picked at shows up, a
+  finished unit over a nanoframe, or 3x the value in the same tier. A simulated low arc over the heightmap skips
+  targets behind terrain, and no shot goes where a friendly unit (not a plane) is in a box around the aim point along
+  the line of fire (`target_guard`, checked every second on the current target). Submerged units are skipped (the
+  engine won't aim these cannons at them). A target fails after 5 shells landed in LOS or radar that damaged nothing, after
+  max(5, 4 x shots to kill) shots at it out of both (shared by the ally team's guns, until it's seen again), or with no shot for
+  turning + 1 reload + 10 s (`shot_grace`), and is then skipped for 60 s, doubling each time. The gun runs at hold fire, so only
+  these orders aim it; an order is sent again only once the gun goes idle (a static unit's orders never time out).
+  Mobile units get attack-unit orders and are ranked last when more than 10 s of turning away, or (Bertha 150, Rave
+  Party 250, `mobile_move`) when they'd move further than that before the shell lands; flying units are never
+  targets. Shots are counted on every weapon, and a shell only counts as a miss once its
+  flight time has passed. The Disco Rave Party adds, by config: firing backwards (it never turns more than 90 deg,
+  pitch is free), turning that halves a target's value per 30 s (turning bleeds its spin), a 192 splash radius for
+  value, a bigger friendly guard (napalm 400), a 20 s grace for its spin-up, and the high arc (its trajectory toggle) for a building the low arc can't
+  reach over terrain; the low arc otherwise (CSuperTask's high arc took ~22 s per shell). Its kill estimate averages
+  its six shells (EMP: none). The other superweapons keep `CSuperTask`. `ARTY` lines in the debug log.
+  The checks run every half second (they waited up to 2 s: the military manager comes round to each fight task at most
+  once a second, and the task skipped calls less than a second apart). Shots count only weapons that can target.
+
+- **Starlight aims by a priority list too, steering its beam clear of friendly units** (`beam` in behaviour.json,
+  `CPriorityArtyTask`). Its satellite's beam is on whenever it's undocked and burns wherever it points (4,500 a second),
+  also while it turns between targets and after a Stop, which freezes it. The task tracks where the beam points: the
+  heading turns at 2.5 deg/s and the pitch at 0.75 deg/s, both at once; once disabled it docks (the heading turning to
+  the nearest 90, the pitch to straight down) and once back on it undocks and rises again. 8 tiers: superweapons;
+  singu; heavy geo; fusion and antinuke; artillery and anti-heavy; commanders; raid targets and anything (by splash
+  value within 400). 5 s of turning halves a target's value. A target is picked only when the way there crosses no
+  friendly unit (a box along the beam: its radius + 50 across, + where the slanted beam meets a 60-tall unit along),
+  none is at the target and terrain doesn't block the beam. From straight down (the beam lands on the Starlight, which
+  it can't hurt) it turns the heading first, then crawls out along one ray, which may cross up to 2,000 metal of
+  friendly units under 1,000 each. Friendly units at the beam now: it re-picks without testing the first 300 elmos of
+  the way, else moves the beam sideways the short way. A target dropped for friends is skipped for 10 s with no
+  failure. Once the beam is on a target it gets its health / 4,500 + 3 s; still there after that it's a failure (out of
+  LOS and radar: skipped until seen). While it turns, it switches only to a target no further away unless that's in the
+  top tier. `BEAM` lines in the debug log
+
 - **One scorer for every scored turret spot.** `CSpotScorer::FindSpot` (cluster and base towers with
   `choke.spot.enable`, choke towers, radar guards, hold spots) now scores and searches on the turret picker's value
   model, `CTurretValue`, with each goal's own targets and terms (setback, lean, threat, builder distance) as a factor.
