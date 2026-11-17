@@ -77,7 +77,6 @@ public:
 		float enemyReach = 600.f;
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
-		float share = 0.15f;
 	};
 	enum class Reject: char {NONE, RADIUS, MASK, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
 	// The cheap hard rules over the candidate grid of one order: the same for every def
