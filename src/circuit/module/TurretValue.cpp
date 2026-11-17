@@ -24,7 +24,7 @@ inline float LeanAndWalk(const CTurretValue::SCandidate& c, const CTurretValue::
 		float& outFront)
 {
 	outFront = (frontNorm > 0.f) ? std::min(c.enemyInfl / frontNorm, 1.f) : 0.f;
-	return (1.f + std::max(p.front, 0.f) * outFront) / (1.f + c.walk / std::max(p.travel, 1.f));
+	return (1.f + std::max(p.front, 0.f) * outFront) * c.factor / (1.f + c.walk / std::max(p.travel, 1.f));
 }
 
 }  // namespace

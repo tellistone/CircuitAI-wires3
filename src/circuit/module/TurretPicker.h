@@ -127,6 +127,8 @@ public:
 
 	// Our ally team's share of the map's metal spots, finished mexes only
 	float GetMexShare() const;
+	// Traffic of the field summed over a range's cells, in metal: x turret.horizon x turret.traffic, once per route
+	float TrafficMetal(float amount, float range) const;
 	// The turret.tiers entry def is in, from 1; 0 if none (turret.light)
 	int GetTier(const CCircuitDef* def) const;
 
@@ -169,8 +171,6 @@ private:
 	SDefResult SearchDef(CCircuitDef* def, CCircuitUnit* builder, const SGather& gather,
 			const std::vector<CTurretValue::SCandidate>& candidates) const;
 	CTurretValue::SParams MakeParams(CCircuitDef* def) const;
-	CTurretValue::ClearFn MakeClearFn(CCircuitDef* def) const;
-	CTurretValue::ViewFn MakeViewFn(CCircuitDef* def) const;
 	float GetNearestOurs(const SGather& gather, const springai::AIFloat3& pos) const;
 
 	CCircuitAI* circuit;

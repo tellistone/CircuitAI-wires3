@@ -93,6 +93,7 @@ public:
 		float spotHeight = 0.5f;  // choke.spot.height: the most height adds to a spot's score (0.5 = +50%)
 		float spotHeightCap = 150.f;  // choke.spot.height_cap: elmos above the targets that earn all of it
 		float spotEnemy = 1.f;  // choke.spot.enemy: weight of the enemy value a tower can shoot, per its own cost
+		float spotView = 1.f;  // choke.spot.view: the most a spot gains for seeing all of its range (turret.view's)
 		float spotForward = 0.5f;  // choke.spot.forward: the most a position's spot gains for leaning toward the enemy
 		float radarGain = 0.02f;  // choke.radar.min_gain
 		float radarShare = 0.05f;  // choke.radar.share

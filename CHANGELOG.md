@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **One scorer for every scored turret spot.** `CSpotScorer::FindSpot` (cluster and base towers with
+  `choke.spot.enable`, choke towers, radar guards, hold spots) now scores and searches on the turret picker's value
+  model, `CTurretValue`, with each goal's own targets and terms (setback, lean, threat, builder distance) as a factor.
+  Covered traffic is in metal as the picker counts it, enemies add at cost (`choke.spot.enemy` is now a weight on E,
+  not a multiplier per the tower's cost), height is measured above the targets a spot counts, and the new
+  `choke.spot.view` (default 1) adds the view term. Targets are halved only by towers that defend and hit them. The
+  line-of-fire, view and hit tests are shared. Build chain towers still go at their configured offsets.
 - **The turret picker favours spots that see their range** (`turret.view`, default 1). A spot ranks up to twice as
   high by the share of its range circle's ground in a clear line of fire from it, so a cliff edge beats its foot.
   It only ranks spots that already pay for the turret.
