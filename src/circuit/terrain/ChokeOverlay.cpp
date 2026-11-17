@@ -302,7 +302,8 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 }
 
 /*
- * The turret picker's keys as in the "turret" config block, on the AI that answers; the def lists aren't settable
+ * The turret picker's keys as in the "turret" config block, on the AI that answers; the def lists aren't settable.
+ * share sets the turret account's share (porcupine.budget.share), which porc spends from too
  */
 bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& value)
 {
@@ -311,7 +312,7 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 		{"radius", &c.radius}, {"min_value", &c.minValue}, {"traffic", &c.traffic}, {"horizon", &c.horizon},
 		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"height", &c.height}, {"choke", &c.choke},
 		{"enemy_reach", &c.enemyReach}, {"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown},
-		{"share", &c.share}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
+		{"share", circuit->GetMilitaryManager()->GetTurretShare()}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
 	};
 	const std::map<std::string, bool*> flags = {
 		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy},

@@ -121,7 +121,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.enemy_reach` | `600` | Distance to a known enemy building that starts the near-enemy caller. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
-| `turret.share` | `0.15` | Share of the metal income picker turrets ordered in the last minute may cost. One light turret a minute is always allowed. |
+| `turret.share` | — | Removed: the picker spends from the turret account, `porcupine.budget` in build_chain.json (still read as its share when `budget` is missing). `choke_overlay set turret.share` sets the account's share. |
 
 ## The `choke_overlay` command
 
@@ -343,10 +343,12 @@ defence check; the choke analysis, asked for on the first order, which waits for
 one order a second for the AI, so a group arriving together orders once and the rest help. An order starts the
 cooldown whatever the result.
 
-The budget is paid in as the metal comes: `turret.share` of the average income, held up to a minute's share (or
-the dearest light turret, whichever is more). An order needs the dearest light def's cost in it and takes the
-turret's cost out. So at 4 m/s a Lotus waits about 150 s for its share, and at 20 m/s two can go up at once, then
-one each 30 s.
+The budget is the AI's turret account (`porcupine.budget` in build_chain.json), which porc-mode towers spend from
+too. It is paid in as the metal comes: `share` x the average income x min(ms_pull, 1), held up to `bank_sec` seconds
+of that (or the dearest tower a waiting spender asked for, whichever is more). An order needs the dearest light def's
+cost in it and takes the turret's cost out. Cornered, base timetable, radar guard, mex escort and hub towers are
+charged too, but never wait, so they can take it below zero; preventive towers are free. So at 0.1, ms_pull 1 and
+10 m/s it fills at 1 m/s: a Lotus about every 90 s if nothing else spends.
 
 ### Holding the line (C), objectives (D) and rankings (E)
 
