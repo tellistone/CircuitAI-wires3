@@ -55,6 +55,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		: IModule(circuit)
 		, energyGrid(nullptr)
 		, fillDist(0.f)
+		, tidalHeight(-10.f)
 		, pylonDef(nullptr)
 		, mexDef(nullptr)
 		, storeDef(nullptr)
@@ -465,6 +466,7 @@ void CEconomyManager::ReadConfig()
 void CEconomyManager::Init()
 {
 	energyGrid = circuit->GetAllyTeam()->GetEnergyGrid().get();
+	tidalHeight = circuit->GetGame()->GetRulesParamFloat("tidalHeight", -10.f);  // unit_windmill_control
 
 	const size_t clSize = circuit->GetMetalManager()->GetClusters().size();
 	clusterInfos.resize(clSize, {nullptr, -FRAMES_PER_SEC});
@@ -1303,9 +1305,8 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		// Geothermal is handled above; skipping it here means its limit or a missing vent never blocks other energy
 		// Rear energy is built behind the base, so the builder's own spot doesn't matter: it needs a free rear spot
 		const bool isRear = IsRearDef(engy.cdef);
-		// A base-only def (wind) away from the base: cheaper energy instead
 		if (!engy.cdef->IsAvailable(frame) || IsGeoDef(engy.cdef)
-			|| (!isRear && (!terrainMgr->CanBeBuiltAtSafe(engy.cdef, position) || !IsAllowedAt(engy.cdef, position))))
+			|| (!isRear && !terrainMgr->CanBeBuiltAtSafe(engy.cdef, position)))
 		{
 			continue;
 		}
@@ -1913,13 +1914,7 @@ IBuilderTask* CEconomyManager::EnqueueFillEnergy(CCircuitDef* cdef, const AIFloa
 	if (!IsFillDef(cdef) || (energyGrid == nullptr) || (fillDist <= 0.f)) {
 		return nullptr;
 	}
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	CEnergyGrid::Predicate isGood = [this, terrainMgr, builderMgr, cdef, unit](const AIFloat3& p) {
-		return !terrainMgr->IsZoneAlly(p) && terrainMgr->CanBeBuiltAtSafe(cdef, p) && IsAllowedAt(cdef, p)
-			&& ((unit != nullptr) ? terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance())
-								  : builderMgr->IsBuilderInArea(cdef, p));
-	};
+	CEnergyGrid::Predicate isGood = GetFillPredicate(cdef, unit);
 	energyGrid->SetAuthority(circuit);
 
 	CEnergyGrid::SLinkSite site;
@@ -1935,15 +1930,26 @@ IBuilderTask* CEconomyManager::EnqueueFillEnergy(CCircuitDef* cdef, const AIFloa
 		return nullptr;
 	}
 	// An energy job on that exact site, so every energy rule applies; it holds the gap (one piece per gap at a time)
-	IBuilderTask* task = builderMgr->EnqueueTask(priority, cdef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(priority, cdef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
 	task->SetBuildPos(buildPos);
 	static_cast<CBEnergyTask*>(task)->SetLinkSite(site, gap);
 	return task;
 }
 
+CEnergyGrid::Predicate CEconomyManager::GetFillPredicate(CCircuitDef* cdef, CCircuitUnit* unit)
+{
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	return [this, terrainMgr, builderMgr, cdef, unit](const AIFloat3& p) {
+		return !terrainMgr->IsZoneAlly(p) && terrainMgr->CanBeBuiltAtSafe(cdef, p) && IsAllowedAt(cdef, p)
+			&& ((unit != nullptr) ? terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance())
+								  : builderMgr->IsBuilderInArea(cdef, p));
+	};
+}
+
 bool CEconomyManager::IsAllowedAt(CCircuitDef* cdef, const AIFloat3& pos) const
 {
-	if ((baseOnlyDefs.find(cdef) == baseOnlyDefs.end()) || (circuit->GetMap()->GetElevationAt(pos.x, pos.z) < 0.f)) {
+	if ((baseOnlyDefs.find(cdef) == baseOnlyDefs.end()) || (circuit->GetMap()->GetElevationAt(pos.x, pos.z) <= tidalHeight)) {
 		return true;
 	}
 	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();

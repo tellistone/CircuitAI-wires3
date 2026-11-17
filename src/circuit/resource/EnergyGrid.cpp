@@ -330,6 +330,41 @@ AIFloat3 CEnergyGrid::FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, flo
 	return buildPos;
 }
 
+// The first of cands (sorted; each with a site) that has an open site for cdef passing predicate (outPos), trying at
+// most 4: FindBuildSite is the costly part. nullptr if none
+template<typename T>
+static const T* FindFirstSite(CEnergyGrid* grid, CCircuitDef* cdef, const std::vector<T>& cands,
+		CEnergyGrid::Predicate& predicate, AIFloat3& outPos)
+{
+	for (unsigned i = 0; (i < cands.size()) && (i < 4); ++i) {
+		outPos = grid->FindLinkSite(cdef, cands[i].site, cands[i].site.fromReach * 0.5f, predicate);
+		if (utils::is_valid(outPos)) {
+			return &cands[i];
+		}
+	}
+	outPos = -RgtVector;
+	return nullptr;
+}
+
+std::vector<CEnergyGrid::SPiece> CEnergyGrid::GetQueuedEnergy()
+{
+	std::vector<SPiece> pieces;
+	for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY)) {
+		const float range = GetPylonRange(t->GetBuildDef()->GetId());
+		pieces.push_back(utils::is_valid(t->GetBuildPos())
+				? SPiece{t->GetBuildPos(), range}
+				: SPiece{t->GetPosition(), range + SQUARE_SIZE * 16});  // not placed yet: up to its shake off
+	}
+	return pieces;
+}
+
+int CEnergyGrid::CountLinked(const std::vector<SPiece>& pieces, const AIFloat3& pos, float range)
+{
+	return std::count_if(pieces.begin(), pieces.end(), [&pos, range](const SPiece& c) {
+		return c.pos.SqDistance2D(pos) < SQUARE(range + c.range);
+	});
+}
+
 IGridLink* CEnergyGrid::FindGapToFill(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, Predicate& predicate,
 		SLinkSite& outSite, AIFloat3& outPos)
 {
@@ -355,12 +390,7 @@ IGridLink* CEnergyGrid::FindGapToFill(CCircuitDef* cdef, const AIFloat3& pos, fl
 	};
 	// Within a finished cluster. Not held as being built: that hides the cluster, and all its links, from the plan's
 	// own linker (GetLinkToBuild); a queued energy job that links to the head holds it instead
-	std::vector<std::pair<AIFloat3, float>> queued;
-	for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY)) {
-		if (utils::is_valid(t->GetBuildPos())) {
-			queued.push_back(std::make_pair(t->GetBuildPos(), GetPylonRange(t->GetBuildDef()->GetId())));
-		}
-	}
+	const std::vector<SPiece> queued = GetQueuedEnergy();
 	for (unsigned i = 0; i < nodes.size(); ++i) {
 		CEnergyNode* node = nodes[i];
 		if (!linkedClusters[i] || node->IsBeingBuilt() || !node->IsValid() || node->IsMexed()) {
@@ -368,10 +398,7 @@ IGridLink* CEnergyGrid::FindGapToFill(CCircuitDef* cdef, const AIFloat3& pos, fl
 		}
 		const CEnergyNode::SPylon& h0 = node->GetSourceHead();
 		const CEnergyNode::SPylon& h1 = node->GetTargetHead();
-		if (std::none_of(queued.begin(), queued.end(), [&h0](const std::pair<AIFloat3, float>& q) {
-				return q.first.SqDistance2D(h0.pos) < SQUARE(h0.range + q.second);
-			}))
-		{
+		if (CountLinked(queued, h0.pos, h0.range) == 0) {
 			addGap(nullptr, h0.pos, h0.range, h1.pos, h1.range);
 		}
 	}
@@ -387,15 +414,12 @@ IGridLink* CEnergyGrid::FindGapToFill(CCircuitDef* cdef, const AIFloat3& pos, fl
 	}
 
 	std::sort(gaps.begin(), gaps.end(), [](const SGap& a, const SGap& b) { return a.sqDist < b.sqDist; });
-	const int maxTries = 4;  // FindBuildSite is the costly part
-	for (int i = 0; (i < (int)gaps.size()) && (i < maxTries); ++i) {
-		outPos = FindLinkSite(cdef, gaps[i].site, gaps[i].site.fromReach * 0.5f, predicate);
-		if (utils::is_valid(outPos)) {
-			outSite = gaps[i].site;
-			return gaps[i].link;
-		}
+	const SGap* gap = FindFirstSite(this, cdef, gaps, predicate, outPos);
+	if (gap == nullptr) {
+		return nullptr;
 	}
-	return nullptr;
+	outSite = gap->site;
+	return gap->link;
 }
 
 AIFloat3 CEnergyGrid::FindMexToFill(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, bool isBare,
@@ -406,40 +430,23 @@ AIFloat3 CEnergyGrid::FindMexToFill(CCircuitDef* cdef, const AIFloat3& pos, floa
 		return -RgtVector;
 	}
 	const int frame = circuit->GetLastFrame();
+	GetGridNodes();  // fresh gridNodeIndex
 
-	// The game's grids: each building's grid capacity, and the mexes of each grid
-	std::unordered_map<ICoreUnit::Id, const SGridNode*> nodeOf;
-	std::unordered_map<int, int> mexCounts;
-	for (const SGridNode& n : GetGridNodes()) {
-		nodeOf[n.id] = &n;
-		CAllyUnit* au = circuit->GetFriendlyUnit(n.id);
-		if ((au != nullptr) && (au->GetCircuitDef() != nullptr) && au->GetCircuitDef()->IsMex()) {
-			++mexCounts[n.grid];
+	// Energy of the ally team, being built too (the grids' snapshot lags), and our queued energy jobs
+	std::vector<SPiece> pieces;
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if ((edef != nullptr) && IsEnergyDef(edef->GetId()) && (GetPylonRange(edef->GetId()) > 0.f)) {
+			pieces.push_back({kv.second->GetPos(frame), GetPylonRange(edef->GetId())});
 		}
 	}
-
-	// What already gives a mex energy, or soon will: link position and range
-	std::vector<std::pair<AIFloat3, float>> covers;
-	if (isBare) {
-		circuit->UpdateFriendlyUnits();
-		for (const auto& kv : circuit->GetFriendlyUnits()) {
-			const CCircuitDef* edef = kv.second->GetCircuitDef();
-			if ((edef != nullptr) && IsEnergyDef(edef->GetId()) && (GetPylonRange(edef->GetId()) > 0.f)) {
-				covers.push_back(std::make_pair(kv.second->GetPos(frame), GetPylonRange(edef->GetId())));
-			}
-		}
-	}
-	for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY)) {
-		const float r = GetPylonRange(t->GetBuildDef()->GetId());
-		covers.push_back(utils::is_valid(t->GetBuildPos())
-				? std::make_pair(t->GetBuildPos(), r)
-				: std::make_pair(t->GetPosition(), r + SQUARE_SIZE * 16));  // not placed yet: up to its shake off
-	}
+	const std::vector<SPiece> queued = GetQueuedEnergy();
 
 	struct SMex {
-		AIFloat3 pos;
-		float range;
-		float score;  // lowest first
+		SLinkSite site;
+		float score;  // isBare: 0; else its grid's energy per mex
+		int pieces;  // energy in reach
 		float sqDist;
 	};
 	std::vector<SMex> mexes;
@@ -453,36 +460,33 @@ AIFloat3 CEnergyGrid::FindMexToFill(CCircuitDef* cdef, const AIFloat3& pos, floa
 		if (sqDist >= SQUARE(maxDist)) {
 			continue;
 		}
-		auto it = nodeOf.find(kv.first);
-		const SGridNode* node = (it != nodeOf.end()) ? it->second : nullptr;
+		auto it = gridNodeIndex.find(kv.first);
+		const SGridNode* node = (it != gridNodeIndex.end()) ? &gridNodes[it->second] : nullptr;
 		// Bare: on no grid with energy. Else only mexes on a grid (a bare one with no site had its turn)
 		if (isBare ? ((node != nullptr) && (node->capacity > 0.f)) : (node == nullptr)) {
 			continue;
 		}
 		const float mexRange = GetPylonRange(unit->GetCircuitDef()->GetId());
-		if (std::any_of(covers.begin(), covers.end(), [&p, mexRange](const std::pair<AIFloat3, float>& c) {
-				return c.first.SqDistance2D(p) < SQUARE(mexRange + c.second);
-			}))
-		{
+		const int count = CountLinked(pieces, p, mexRange);
+		if ((isBare && (count > 0)) || (CountLinked(queued, p, mexRange) > 0)) {
 			continue;
 		}
-		const float score = isBare ? sqDist : node->capacity / std::max(mexCounts[node->grid], 1);
-		mexes.push_back({p, mexRange, score, sqDist});
+		const float score = isBare ? 0.f : node->capacity / std::max(node->mexCount, 1);
+		mexes.push_back({MakeLinkSite(range, p, mexRange, p, mexRange), score, count, sqDist});
 	}
+	// Least energy per mex first; on that grid the mex with the least energy beside it, so energy spreads, not rings
 	std::sort(mexes.begin(), mexes.end(), [](const SMex& a, const SMex& b) {
-		return (a.score != b.score) ? (a.score < b.score) : (a.sqDist < b.sqDist);
+		return (a.score != b.score) ? (a.score < b.score)
+			: (a.pieces != b.pieces) ? (a.pieces < b.pieces)
+			: (a.sqDist < b.sqDist);
 	});
 
-	const int maxTries = 4;  // FindBuildSite is the costly part
-	for (int i = 0; (i < (int)mexes.size()) && (i < maxTries); ++i) {
-		const SLinkSite site = MakeLinkSite(range, mexes[i].pos, mexes[i].range, mexes[i].pos, mexes[i].range);
-		const AIFloat3 buildPos = FindLinkSite(cdef, site, site.fromReach * 0.5f, predicate);
-		if (utils::is_valid(buildPos)) {
-			outSite = site;
-			return buildPos;
-		}
+	AIFloat3 buildPos;
+	const SMex* mex = FindFirstSite(this, cdef, mexes, predicate, buildPos);
+	if (mex != nullptr) {
+		outSite = mex->site;
 	}
-	return -RgtVector;
+	return buildPos;
 }
 
 float CEnergyGrid::GetPylonRange(CCircuitDef::Id defId)
@@ -511,6 +515,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 	}
 	gridNodesFrame = frame;
 	gridNodes.clear();
+	gridNodeIndex.clear();
 
 	// The overdrive gadget puts gridNumber on every grid building, and the grid's capacity (OD_gridMaximum) on its
 	// energy buildings and pylons, not on mexes or consumers. All of a grid carry the same value: read it once per grid.
@@ -520,6 +525,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 	struct SRaw {
 		float income;  // off ones: their energy when back on
 		int gameGrid;  // 0 = off
+		bool isMex;
 	};
 	std::vector<SRaw> raws;
 	std::vector<int> offs;  // indices of off ones
@@ -537,7 +543,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 		}
 		Unit* u = unit->GetUnit();
 		const bool isConsumer = GetNeededLink(cdef->GetId()) > 0.f;
-		SRaw raw = {0.f, 0};
+		SRaw raw = {0.f, 0, cdef->IsMex()};
 		if (IsOffGrid(u, isConsumer)) {
 			if (u->IsBeingBuilt()) {
 				continue;
@@ -559,7 +565,8 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 				}
 			}
 		}
-		gridNodes.push_back({unit->GetId(), unit->GetPos(frame), range, raw.gameGrid, 0.f});
+		gridNodeIndex[unit->GetId()] = gridNodes.size();
+		gridNodes.push_back({unit->GetId(), unit->GetPos(frame), range, raw.gameGrid, 0.f, 0});
 		raws.push_back(raw);
 	}
 
@@ -600,12 +607,14 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 	struct SSet {
 		int id;
 		float capacity;
+		int mexCount;
 		std::set<int> gameGrids;
 	};
 	std::unordered_map<int, SSet> sets;
 	for (unsigned i = 0; i < raws.size(); ++i) {
-		SSet& set = sets.emplace(find(i), SSet{0, 0.f, {}}).first->second;
+		SSet& set = sets.emplace(find(i), SSet{0, 0.f, 0, {}}).first->second;
 		set.capacity += raws[i].income;
+		set.mexCount += raws[i].isMex ? 1 : 0;
 		if (raws[i].gameGrid > 0) {
 			set.gameGrids.insert(raws[i].gameGrid);
 		}
@@ -624,6 +633,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 		const SSet& set = sets.find(find(i))->second;
 		gridNodes[i].grid = set.id;
 		gridNodes[i].capacity = set.capacity;
+		gridNodes[i].mexCount = set.mexCount;
 	}
 	return gridNodes;
 }

@@ -165,8 +165,12 @@ public:
 	// builder). nullptr = not a fill def, or none of these
 	IBuilderTask* EnqueueFillEnergy(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
 			IUnitTask::Priority priority);
+	// A fill site for cdef: off allied buildings, safe, allowed (IsAllowedAt) and in reach of unit (nullptr: of some
+	// builder in its area)
+	std::function<bool (const springai::AIFloat3& p)> GetFillPredicate(CCircuitDef* cdef, CCircuitUnit* unit);
 	// economy.energy.base_only: false for such a def on land outside the base (behaviour defence.base_rad around the
-	// base position, as base defence has it); in water (a tidal generator) and for other defs always true
+	// base position, as base defence has it); where the game builds it as tidal (ground at or below the game's
+	// tidalHeight) and for other defs always true. Checked on sites only, never on where the builder stands
 	bool IsAllowedAt(CCircuitDef* cdef, const springai::AIFloat3& pos) const;
 
 	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
@@ -231,6 +235,7 @@ private:
 	std::set<CCircuitDef*> fillDefs;  // economy.energy.fill.unit
 	std::set<CCircuitDef*> baseOnlyDefs;  // economy.energy.base_only
 	float fillDist;  // economy.energy.fill.max_dist
+	float tidalHeight;  // the game's: wind on ground at or below it is tidal
 	CCircuitDef* pylonDef;  // TODO: Move into CEnergyGrid?
 
 	CCircuitDef* mexDef;

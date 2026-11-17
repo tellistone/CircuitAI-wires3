@@ -30,6 +30,9 @@ public:
 
 protected:
 	virtual void Execute(CCircuitUnit* unit) override;
+	// A link site: one that keeps its links (never the wide search that could miss them). Else the usual search,
+	// kept where the def is allowed (economy.energy.base_only)
+	virtual void FindBuildSite(CCircuitUnit* builder, const springai::AIFloat3& pos, float searchRadius) override;
 
 private:
 	void ReleaseLink();

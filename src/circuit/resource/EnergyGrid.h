@@ -61,8 +61,8 @@ public:
 			SLinkSite& outSite, springai::AIFloat3& outPos);
 	// economy.energy.fill: a site for cdef beside one of our finished mexes within maxDist of pos, and its link.
 	// isBare: the nearest mex on no grid with energy (the game's grids; energy of the ally team beside it, nanoframes
-	// too, also counts, as the snapshot lags). Else the mex whose grid has the least energy per mex. Never a mex with
-	// an energy job queued beside it. -RgtVector if none
+	// too, also counts, as the snapshot lags). Else a mex of the grid with the least energy per mex: the one with the
+	// least energy beside it, then the nearest. Never a mex with an energy job queued beside it. -RgtVector if none
 	springai::AIFloat3 FindMexToFill(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, bool isBare,
 			Predicate& predicate, SLinkSite& outSite);
 
@@ -78,6 +78,7 @@ public:
 		float range;  // link range: two buildings link when closer than the sum of theirs
 		int grid;  // its grid: the game's lowest gridNumber in it (off ones joined by overlap), < 0 = off ones only
 		float capacity;  // that grid's energy capacity: OD_gridMaximum + its off ones' energy, 0 = none
+		int mexCount;  // that grid's mexes
 	};
 	// Out of the game's grid for now, as unit_mex_overdrive's status check has it: paralysed, disarmed, morphing,
 	// or not active (a solar closes for 4 s when hit; nanoframes aren't active). Consumers count as active.
@@ -93,6 +94,14 @@ public:
 private:
 	CEnergyNode* FindNodeDef(CCircuitDef*& outDef, springai::AIFloat3& outPos, CEnergyNode* node);
 	CEnergyLink* FindLinkDef(CCircuitDef*& outDef, springai::AIFloat3& outPos, CEnergyLink* link);
+	struct SPiece {  // a grid building, or one to be: where, and its link range
+		springai::AIFloat3 pos;
+		float range;
+	};
+	// Our energy jobs: at their site, or (not placed yet) at their position, reaching on up to their shake
+	std::vector<SPiece> GetQueuedEnergy();
+	// How many of pieces link to a building of link range <range> at pos
+	static int CountLinked(const std::vector<SPiece>& pieces, const springai::AIFloat3& pos, float range);
 
 	CCircuitAI* circuit;
 
@@ -104,6 +113,7 @@ private:
 	std::unordered_map<CCircuitDef::Id, float> energyIncomes;  // customParams.income_energy; wind: < 0
 
 	std::vector<SGridNode> gridNodes;
+	std::unordered_map<ICoreUnit::Id, unsigned> gridNodeIndex;  // into gridNodes, by unit id
 	int gridNodesFrame;
 
 	std::vector<bool> linkedClusters;

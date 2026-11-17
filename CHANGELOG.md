@@ -15,7 +15,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   finished mex of ours on no grid with energy (the game's grids, from the grid snapshot; ally energy beside it,
   being built too, also counts, as the snapshot lags); then into the nearest open gap of the grid plan (a planned
   link of the spanning tree between two finished mex clusters, or the mexes of one cluster that aren't linked yet),
-  from a gap end; then beside a mex of the grid with the least energy per mex, where overdrive gains most. The site
+  from a gap end; then beside a mex of the grid with the least energy per mex, where overdrive gains most (on that
+  grid, the mex with the least energy beside it, so the energy spreads instead of ringing one mex). The site
   always links: to the mex, or to the gap end and, when one piece closes the gap, the other end too (the grid-link
   watchdog's site search, now shared). Never beside a mex with an energy job queued there. The job is an ordinary
   energy job (budget, stall and pull rules, priority) that holds its gap while it lives, so one piece per gap at a
@@ -23,9 +24,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   None of these in reach: at the nearest metal spot as before. No `unit` list: off.
 
 - **Wind only within the base** (`economy.energy.base_only`: `energywind`). Winds on land are built only within the
-  base (behaviour.json `defence.base_rad` around the base position, the radius base defence uses), at every placement:
-  energy jobs (a builder away from the base builds cheaper energy instead), the mex chain's energy, grid fills and the
-  grid linker's link pieces. In water (tidal) anywhere, as before.
+  base (behaviour.json `defence.base_rad` around the base position, the radius base defence uses). The rule is on the
+  site, at every placement: energy jobs (their spot, and the site their builder finally picks), the mex chain's energy,
+  grid fills and the grid linker's link pieces; never on where the builder stands, so which energy the AI builds is
+  unchanged. Where the game builds it as tidal (ground at or below its `tidalHeight`, -10) anywhere, as before.
 
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own
