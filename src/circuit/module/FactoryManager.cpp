@@ -561,6 +561,16 @@ void CFactoryManager::ReadConfig()
 		tp->shotGrace = std::max(behaviour.get("shot_grace", tp->shotGrace).asFloat(), 1.f);
 		tp->mobileMove = behaviour.get("mobile_move", tp->mobileMove).asFloat();
 		tp->isHighArc = behaviour.get("high_arc", tp->isHighArc).asBool();
+		const Json::Value& beam = behaviour["beam"];  // {"height": <elmos>, "range": <elmos>, "dps": <damage/s>}
+		if (beam.isObject()) {
+			tp->beamHeight = std::max(beam.get("height", 0.f).asFloat(), 0.f);
+			tp->beamRange = std::max(beam.get("range", 0.f).asFloat(), 0.f);
+			tp->beamDps = std::max(beam.get("dps", tp->beamDps).asFloat(), 1.f);
+			if (tp->beamRange <= tp->beamHeight) {
+				circuit->LOG("CONFIG %s: %s beam needs a range above its height, ignored", cfgName.c_str(), defName.c_str());
+				tp->beamHeight = 0.f;
+			}
+		}
 		cdef->SetTargetPriority(tp);
 	}
 

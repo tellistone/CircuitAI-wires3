@@ -29,7 +29,25 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   pitch is free), turning that halves a target's value per 30 s (turning bleeds its spin), a 192 splash radius for
   value, a bigger friendly guard (napalm 400), a 20 s grace for its spin-up, and the high arc (its trajectory toggle) for a building the low arc can't
   reach over terrain; the low arc otherwise (CSuperTask's high arc took ~22 s per shell). Its kill estimate averages
-  its six shells (EMP: none). The other superweapons keep `CSuperTask`. `ARTY` lines in the debug log
+  its six shells (EMP: none). The other superweapons keep `CSuperTask`. `ARTY` lines in the debug log.
+  The checks run every half second (they waited up to 2 s: the military manager comes round to each fight task at most
+  once a second, and the task skipped calls less than a second apart). Shots count only weapons that can target.
+
+- **Starlight aims by a priority list too, steering its beam clear of friendly units** (`beam` in behaviour.json,
+  `CPriorityArtyTask`). Its satellite's beam is on whenever it's undocked and burns wherever it points (4,500 a second),
+  also while it turns between targets and after a Stop, which freezes it. The task tracks where the beam points: the
+  heading turns at 2.5 deg/s and the pitch at 0.75 deg/s, both at once; once disabled it docks (the heading turning to
+  the nearest 90, the pitch to straight down) and once back on it undocks and rises again. 8 tiers: superweapons;
+  singu; heavy geo; fusion and antinuke; artillery and anti-heavy; commanders; raid targets and anything (by splash
+  value within 400). 5 s of turning halves a target's value. A target is picked only when the way there crosses no
+  friendly unit (a box along the beam: its radius + 50 across, + where the slanted beam meets a 60-tall unit along),
+  none is at the target and terrain doesn't block the beam. From straight down (the beam lands on the Starlight, which
+  it can't hurt) it turns the heading first, then crawls out along one ray, which may cross up to 2,000 metal of
+  friendly units under 1,000 each. Friendly units at the beam now: it re-picks without testing the first 300 elmos of
+  the way, else moves the beam sideways the short way. A target dropped for friends is skipped for 10 s with no
+  failure. Once the beam is on a target it gets its health / 4,500 + 3 s; still there after that it's a failure (out of
+  LOS and radar: skipped until seen). While it turns, it switches only to a target no further away unless that's in the
+  top tier. `BEAM` lines in the debug log
 
 - **Solars and winds: one for every mex off the grid, then into the gaps of the planned grid** (`economy.energy.fill`:
   `unit` = `energysolar`, `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the

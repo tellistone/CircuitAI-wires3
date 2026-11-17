@@ -154,6 +154,128 @@ inline int FailSkipFrames(int count, int skip, int maxShift)
 
 } // namespace arty
 
+/*
+ * Satellite beam (Starlight): the satellite hangs over the base and turns its heading (0 = +z, 90 = +x) and its pitch
+ * (from straight down) at fixed rates. The beam lands drop x tan(pitch) from the base, drop being the satellite's
+ * height above the ground there. Degrees, elmos and seconds
+ */
+namespace beam {
+
+constexpr float DEG_TO_RAD = M_PI / 180.f;
+constexpr float RAD_TO_DEG = 180.f / M_PI;
+
+// Ground reach of a beam with 3D range from a satellite drop above the ground
+inline float Reach(float range, float drop)
+{
+	return std::sqrt(std::max(range * range - drop * drop, 0.f));
+}
+
+// Pitch from straight down to a point dist away on the ground and drop below the satellite
+inline float Pitch(float dist, float drop)
+{
+	return std::atan2(dist, std::max(drop, 1.f)) * RAD_TO_DEG;
+}
+
+// to - from the short way round, in [-180, 180)
+inline float HeadingDiff(float from, float to)
+{
+	const float d = std::fmod(to - from + 180.f, 360.f);
+	return ((d < 0.f) ? d + 360.f : d) - 180.f;
+}
+
+// One step of at most maxStep towards to (a heading: the short way round); at to once within a step
+inline float StepHeading(float from, float to, float maxStep)
+{
+	const float d = HeadingDiff(from, to);
+	return (std::fabs(d) <= maxStep) ? to : from + ((d < 0.f) ? -maxStep : maxStep);
+}
+inline float StepToward(float from, float to, float maxStep)
+{
+	return (std::fabs(to - from) <= maxStep) ? to : from + ((to < from) ? -maxStep : maxStep);
+}
+
+// The multiple of 90 nearest a heading (a docking satellite turns to it)
+inline float NearestCardinal(float heading)
+{
+	return std::round(heading / 90.f) * 90.f;
+}
+
+/*
+ * The beam's spots on the ground (dx, dz from the base) as the satellite turns from (h0, p0) to (h1, p1), both axes at
+ * once at yawRate and pitchRate, with the satellite drop above the ground. Spots are at most spacing apart (with at
+ * most maxSpots of them), the first at (h0, p0) and the last at (h1, p1). visit(dx, dz, pitch, along): along is how
+ * far the spot has moved so far
+ */
+template<typename Visit>
+void WalkPath(float h0, float p0, float h1, float p1, float yawRate, float pitchRate, float drop, float spacing,
+		int maxSpots, Visit visit)
+{
+	const float dh = HeadingDiff(h0, h1);
+	const float dp = p1 - p0;
+	const float tH = std::fabs(dh) / yawRate;
+	const float tP = (pitchRate > 0.f) ? std::fabs(dp) / pitchRate : 0.f;
+	const float tEnd = std::max(tH, tP);
+	const float minDt = tEnd / std::max(maxSpots - 1, 1);
+	const float wH = yawRate * DEG_TO_RAD;
+	const float wP = pitchRate * DEG_TO_RAD;
+	float t = 0.f;
+	float along = 0.f;
+	float lastX = 0.f, lastZ = 0.f;
+	for (int i = 0; i < maxSpots; ++i) {
+		const float h = (t >= tH) ? h0 + dh : h0 + std::copysign(yawRate * t, dh);
+		const float p = (t >= tP) ? p1 : p0 + std::copysign(pitchRate * t, dp);
+		const float tanP = std::tan(p * DEG_TO_RAD);
+		const float r = drop * tanP;
+		const float x = r * std::sin(h * DEG_TO_RAD);
+		const float z = r * std::cos(h * DEG_TO_RAD);
+		if (i > 0) {
+			along += std::sqrt((x - lastX) * (x - lastX) + (z - lastZ) * (z - lastZ));
+		}
+		lastX = x;
+		lastZ = z;
+		visit(x, z, p, along);
+		if (t >= tEnd) {
+			break;
+		}
+		// The spot moves r x heading rate across and drop x sec^2 x pitch rate along (a little faster further out)
+		const float v = ((t < tH) ? r * wH : 0.f) + ((t < tP) ? drop * (1.f + tanP * tanP) * wP : 0.f);
+		t = std::min(t + std::max(0.9f * spacing / std::max(v, 1e-3f), minDt), tEnd);
+		if (i == maxSpots - 2) {
+			t = tEnd;  // the last spot is the end
+		}
+	}
+}
+
+// Is the straight line from a point (x1, y1, z1) up to the satellite (x0, y0, z0) clear of the ground? Walked back from
+// the point in steps along the ground, from stopShort away, until the line is above maxHeight. Blocked where it's less
+// than clearance above heightAt(x, z)
+template<typename HeightAt>
+bool IsLineClear(float x0, float y0, float z0, float x1, float y1, float z1, float step, float clearance,
+		float stopShort, float maxHeight, HeightAt heightAt)
+{
+	const float dx = x0 - x1;
+	const float dz = z0 - z1;
+	const float d = std::sqrt(dx * dx + dz * dz);
+	if (d < 1.f) {
+		return true;
+	}
+	const float ux = dx / d;
+	const float uz = dz / d;
+	const float rise = (y0 - y1) / d;
+	for (float s = stopShort; s < d; s += step) {
+		const float y = y1 + s * rise;
+		if (y > maxHeight + clearance) {
+			break;
+		}
+		if (y - heightAt(x1 + ux * s, z1 + uz * s) < clearance) {
+			return false;
+		}
+	}
+	return true;
+}
+
+} // namespace beam
+
 } // namespace circuit
 
 #endif // SRC_CIRCUIT_TASK_STATIC_ARTYMATH_H_

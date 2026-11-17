@@ -1409,6 +1409,33 @@
 		"since": 900,
 		"thr_mod": 0.01
 	},
+	"mahlazer": {
+		"role": ["static", "heavy"],
+		// Starlight: aimed by a priority list like the Big Bertha (CPriorityArtyTask; the keys are explained there).
+		// Its satellite's beam is always on while undocked and burns wherever it points, so it's steered along paths
+		// clear of friendly units ("beam")
+		"fire_state": "hold",
+		"target_tiers": [
+			{"unit": ["raveparty", "staticnuke", "zenith", "mahlazer", "staticheavyarty"]},
+			{"unit": ["energysingu"]},
+			{"unit": ["energyheavygeo"]},
+			{"unit": ["energyfusion", "staticantinuke"]},
+			{"role": ["artillery", "anti_heavy"]},
+			{"role": ["commander"]},
+			{"attribute": ["raid_target"], "splash": true},
+			{"any": true, "splash": true}
+		],
+		// The satellite turns its heading at 2.5 deg/s and its pitch (from straight down) at 0.75. The beam does no
+		// damage while it turns between targets, so 5 s of turning halves a target's value
+		"turn_rate": [2.5, 0.75],
+		"turn_half_value": 5,
+		// The beam sweeps on through a base: count buildings within 400 of the target
+		"splash_radius": 400,
+		// The beam must reach the target within turning + this many seconds
+		"shot_grace": 10,
+		// The satellite's height above the base, the beam's reach from it and its steady damage a second
+		"beam": {"height": 2190, "range": 10500, "dps": 4500}
+	},
 	"staticheavyarty": {
 		// threat 57.28 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["artillery", "turtle", "heavy"],

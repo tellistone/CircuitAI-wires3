@@ -56,9 +56,14 @@ struct STargetPriority {
 	float shotGrace = 10.f;  // seconds: a shot is due within turning + 1 reload + this
 	float mobileMove = -1.f;  // >= 0: a mobile unit that would move further during the shell's flight ranks last
 	bool isHighArc = false;  // trajectory toggle: the high arc for a building the low arc can't reach over terrain
+	// "beam" (Starlight): a satellite beam, always on while undocked, burns wherever it points
+	float beamHeight = 0.f;  // > 0: beam mode; the satellite's height above the base
+	float beamRange = 0.f;  // the beam's reach from the satellite (3D)
+	float beamDps = 4500.f;  // steady beam damage a second
 
 	int GetTier(const CCircuitDef* edef, bool isInLos) const;
 	bool IsSplash(int tier) const { return (tier >= 0) && (tier < (int)isSplash.size()) && isSplash[tier]; }
+	bool IsBeam() const { return beamHeight > 0.f; }
 };
 
 class CCircuitDef {

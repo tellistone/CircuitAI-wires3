@@ -1,7 +1,7 @@
 /*
  * PriorityArtyTask.cpp
  *
- *  Long-range static artillery (Big Bertha, Disco Rave Party) aimed by a fixed priority list,
+ *  Long-range static guns (Big Bertha, Disco Rave Party, Starlight) aimed by a fixed priority list,
  *  @see PriorityArtyTask.h
  */
 
@@ -13,9 +13,11 @@
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "unit/CircuitDef.h"
+#include "util/Point.h"
 #include "CircuitAI.h"
 
 #include "spring/SpringCallback.h"
+#include "spring/SpringMap.h"
 
 #include "AISCommands.h"
 #include "Unit.h"
@@ -24,6 +26,7 @@
 #include "WeaponMount.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <climits>
 #include <cmath>
 
@@ -31,7 +34,9 @@ namespace circuit {
 
 using namespace springai;
 
-#define UPDATE_INTERVAL	FRAMES_PER_SEC  // at most this often (shots, the lost checks)
+// At most this often (shots, the lost checks). The military manager comes round to each fight task at most every
+// FRAMES_PER_SEC frames, so this keeps the checks within a second
+#define UPDATE_INTERVAL	(FRAMES_PER_SEC / 2)
 #define CHECK_INTERVAL	(FRAMES_PER_SEC * 10)  // look for a better target this often
 #define IDLE_INTERVAL	(FRAMES_PER_SEC * 3)  // no target: look again this often
 #define FAIL_SKIP		(FRAMES_PER_SEC * 60)  // a failed target is skipped this long x 2^(failures - 1)
@@ -49,6 +54,27 @@ using namespace springai;
 #define ARC_STOP_SHORT	44.f  // last sample this far short of the target
 #define FLY_LIFT		100.f  // unknown radar blip this far above the ground: flying
 #define DIVE_DEPTH		(SQUARE_SIZE * 5.f)  // submerged deeper than this: out of reach without a water weapon
+// Beam
+#define SAT_SPEED		120.f  // elmo/s the satellite rises once undocked and falls once disabled
+#define UNDOCK_FRAMES	(FRAMES_PER_SEC * 22 / 10)  // from docked to the beam on
+#define DOWN_DIST		75.f  // the beam lands this close to the base: on the Starlight itself (it can't hurt it)
+#define DOWN_PITCH		2.f  // degrees: as near straight down as that once the satellite is up
+#define ALIGN_HEADING	2.f  // degrees: from near straight down, turn the heading first when it's more than this off
+#define ALIGN_DIST		40.f  // ... by aiming at the ground this far from the base (under DOWN_DIST)
+#define BEAM_CLEAR		50.f  // friendly guard: the beam's radius + this across
+#define UNIT_HEIGHT		60.f  // ... and along, + where the slanted beam meets a unit this tall
+#define LEAD_SEC		2.f  // ... a mobile target's box grows by its speed x this
+#define BIG_COST		1000.f  // a friendly unit worth this much (or unknown) blocks a beam path
+#define CRAWL_COST		2000.f  // out from the base along one ray: may cross this much of smaller friendly units
+#define EXIT_LEN		300.f  // friends at the beam: the way out isn't tested for this long
+#define PATH_SPACING	120.f  // elmos between a beam path's spots
+#define PATH_SPOTS		200  // ... at most
+#define PATH_TESTS		8  // per pick
+#define DWELL_SEC		3.f  // on a target: its health / dps + this long
+#define SOFT_SKIP		(FRAMES_PER_SEC * 10)  // dropped for friends: skipped this long, no failure
+#define LINE_STEP		32.f  // elmos between beam line samples (terrain)
+#define TAN_MAX			10.f  // the guard's slant: at most this x UNIT_HEIGHT
+#define BLOCKED			FLT_MAX  // friendly cost
 
 CPriorityArtyTask::CPriorityArtyTask(ITaskManager* mgr)
 		: IFighterTask(mgr, IFighterTask::FightType::SUPER, 1.f)
@@ -75,6 +101,19 @@ CPriorityArtyTask::CPriorityArtyTask(ITaskManager* mgr)
 		, heading(0.f)
 		, pitch(0.f)
 		, isReorder(false)
+		, aimer(nullptr)
+		, satHeight(0.f)
+		, aimHeading(0.f)
+		, aimPitch(0.f)
+		, aimPoint(-RgtVector)
+		, readyFrame(INT_MAX)
+		, arriveFrame(-1)
+		, dwellFrames(0)
+		, crawlCost(0.f)
+		, isAligning(false)
+		, isDodging(false)
+		, exitSpot(-RgtVector)
+		, satId(-1)
 {
 }
 
@@ -118,6 +157,16 @@ void CPriorityArtyTask::Start(CCircuitUnit* unit)
 	lastUpdateFrame = frame - UPDATE_INTERVAL;
 	dryShots = 0;
 	isReorder = false;
+	// Beam: just built, docked (it undocks once switched on); the heading is the satellite's, the facing's
+	satHeight = 0.f;
+	aimHeading = heading;
+	aimPitch = 0.f;
+	aimPoint = -RgtVector;
+	readyFrame = INT_MAX;
+	arriveFrame = -1;
+	crawlCost = 0.f;
+	isAligning = isDodging = false;
+	exitSpot = -RgtVector;
 }
 
 void CPriorityArtyTask::ReadWeapons(CCircuitUnit* unit)
@@ -147,22 +196,43 @@ void CPriorityArtyTask::ReadWeapons(CCircuitUnit* unit)
 		delete wd;
 	}
 
-	// Shots: every real weapon (a gun of several fires them in turn)
+	// Shots: every real weapon that can target (a gun of several fires them in turn; the Starlight's relays can't)
 	for (SWeapon& w : weapons) {
 		delete w.weapon;
 	}
 	weapons.clear();
-	for (Weapon* weapon : unit->GetUnit()->GetWeapons()) {
+	aimer = nullptr;
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int anyCategory = circuit->GetAirCategory() | circuit->GetLandCategory() | circuit->GetWaterCategory();
+	std::vector<WeaponMount*> mounts = cdef->GetDef()->GetWeaponMounts();  // in the unit's weapons' order
+	std::vector<Weapon*> unitWeapons = unit->GetUnit()->GetWeapons();
+	int minReload = INT_MAX;
+	for (unsigned i = 0; i < unitWeapons.size(); ++i) {
+		Weapon* weapon = unitWeapons[i];
 		WeaponDef* wd = weapon->GetDef();
 		const std::map<std::string, std::string>& customParams = wd->GetCustomParams();
 		const bool isReal = (customParams.find("fake_weapon") == customParams.end()) && !wd->IsShield()
-				&& !wd->IsManualFire();
+				&& !wd->IsManualFire() && ((i >= mounts.size()) || ((mounts[i]->GetOnlyTargetCategory() & anyCategory) != 0));
 		delete wd;
 		if (isReal) {
-			weapons.push_back({weapon, std::max(weapon->GetReloadTime(), 1), weapon->GetReloadFrame()});
+			const int reload = std::max(weapon->GetReloadTime(), 1);
+			weapons.push_back({weapon, reload, weapon->GetReloadFrame()});
+			minReload = std::min(minReload, reload);
+			if (aimer == nullptr) {
+				aimer = weapon;
+			}
 		} else {
 			delete weapon;
 		}
+	}
+	for (WeaponMount* m : mounts) {
+		delete m;
+	}
+	if (minReload != INT_MAX) {
+		reloadFrames = minReload;
+	}
+	if ((tp != nullptr) && tp->IsBeam()) {  // the aimer's live range (it follows range upgrades), but no further than the beam's
+		range = (aimer != nullptr) ? std::min(aimer->GetRange(), tp->beamRange) : tp->beamRange;
 	}
 }
 
@@ -193,6 +263,10 @@ void CPriorityArtyTask::Update()
 	}
 	lastUpdateFrame = frame;
 	CCircuitUnit* unit = *units.begin();
+	if (tp->IsBeam()) {
+		UpdateBeam(unit, frame, elapsed, IsDisabled(unit, frame));
+		return;
+	}
 
 	int shots = 0;
 	TRY_UNIT(circuit, unit,
@@ -227,8 +301,8 @@ void CPriorityArtyTask::Update()
 		SetTarget(nullptr);
 		checkFrame = frame;
 	}
-	if (frame >= checkFrame) {
-		Pick(unit, frame);
+	if ((frame >= checkFrame) && !Pick(unit, frame)) {
+		Drop(unit, frame);
 	}
 	if ((target != nullptr) && isReorder) {
 		Order(unit);
@@ -312,6 +386,10 @@ bool CPriorityArtyTask::IsTargetable(CEnemyInfo* enemy, bool& outIsMobile) const
 
 bool CPriorityArtyTask::IsInRange(const AIFloat3& enemyPos) const
 {
+	if (tp->IsBeam()) {  // from the satellite at its height
+		const float maxRange = beam::Reach(range, position.y + tp->beamHeight - enemyPos.y) * RANGE_MOD;
+		return position.SqDistance2D(enemyPos) <= SQUARE(maxRange);
+	}
 	const float heightDiff = (enemyPos.y - aimFrom.y) * heightMod;
 	const float maxRange = ballistics::CannonRange(range, heightDiff, speed, gravity) * RANGE_MOD;
 	return aimFrom.SqDistance2D(enemyPos) <= SQUARE(maxRange);
@@ -372,6 +450,9 @@ bool CPriorityArtyTask::IsArcClear(const AIFloat3& aimPos, bool isHigh) const
 
 int CPriorityArtyTask::GetBlindBudget(CEnemyInfo* enemy) const
 {
+	if (tp->IsBeam()) {
+		return 1;  // one dwell
+	}
 	float health = enemy->GetHealth();
 	if ((health <= 0.f) && (enemy->GetCircuitDef() != nullptr)) {
 		health = enemy->GetCircuitDef()->GetHealth();
@@ -404,15 +485,27 @@ bool CPriorityArtyTask::MakeCandidate(CEnemyInfo* enemy, bool isHigh, SCandidate
 	const float dx = ePos.x - aimFrom.x;
 	const float dz = ePos.z - aimFrom.z;
 	const float dist = std::sqrt(dx * dx + dz * dz);
-	float tanA;
-	if (!ballistics::ArcTan(dist, ePos.y - aimFrom.y, speed, gravity, isHigh, tanA)) {
-		return false;
-	}
 	constexpr float RAD_TO_DEG = 180.f / M_PI;
 	const float eHeading = std::atan2(dx, dz) * RAD_TO_DEG;  // 0 = south (+z), 90 = east (+x)
-	const float ePitch = std::atan(tanA) * RAD_TO_DEG;
-	const float turnSec = arty::TurnTime(heading, pitch, eHeading, ePitch, tp->turnYaw, tp->turnPitch, tp->isTurnFlip);
-	const float flightSec = ballistics::FlightTime(dist, tanA, speed);
+	float ePitch;
+	float turnSec;
+	float flightSec;
+	if (tp->IsBeam()) {  // pitch from straight down, from the satellite at its height
+		ePitch = beam::Pitch(dist, position.y + tp->beamHeight - ePos.y);
+		turnSec = IsFromDown()  // the heading first, then out along the ray
+				? arty::TurnTime(heading, 0.f, eHeading, 0.f, tp->turnYaw, 0.f, false)
+					+ ((tp->turnPitch > 0.f) ? std::fabs(ePitch - pitch) / tp->turnPitch : 0.f)
+				: arty::TurnTime(heading, pitch, eHeading, ePitch, tp->turnYaw, tp->turnPitch, false);
+		flightSec = 0.f;
+	} else {
+		float tanA;
+		if (!ballistics::ArcTan(dist, ePos.y - aimFrom.y, speed, gravity, isHigh, tanA)) {
+			return false;
+		}
+		ePitch = std::atan(tanA) * RAD_TO_DEG;
+		turnSec = arty::TurnTime(heading, pitch, eHeading, ePitch, tp->turnYaw, tp->turnPitch, tp->isTurnFlip);
+		flightSec = ballistics::FlightTime(dist, tanA, speed);
+	}
 	bool isFar = false;
 	if (isMobile) {
 		isFar = (turnSec > FAR_TURN_SEC);
@@ -459,10 +552,19 @@ void CPriorityArtyTask::AddFailure(CEnemyInfo* enemy, int frame)
 	f.skipUntil = frame + arty::FailSkipFrames(f.count, FAIL_SKIP, FAIL_SKIP_MAX_SHIFT);
 }
 
-void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
+bool CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame, float skipLen)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	checkFrame = frame + CHECK_INTERVAL;
+	const bool isBeam = tp->IsBeam();
+	if (isBeam) {
+		if (aimer != nullptr) {
+			TRY_UNIT(circuit, unit,
+				range = std::min(aimer->GetRange(), tp->beamRange);
+			)
+		}
+		circuit->UpdateFriendlyUnits();  // for the path tests
+	}
 
 	for (auto it = failures.begin(); it != failures.end();) {  // forget the gone
 		it = (circuit->GetEnemyInfo(it->first) == nullptr) ? failures.erase(it) : std::next(it);
@@ -522,8 +624,9 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 	});
 
 	// The first that ranks above the current target and is worth switching to (with none: the first), with no
-	// friendly unit near and a clear arc
+	// friendly unit near and a clear arc (beam: a clear way there)
 	SCandidate* best = nullptr;
+	int pathTests = 0;
 	for (SCandidate& c : candidates) {
 		if (hasCur) {
 			if (!arty::IsRankedHigher(c.rank, cur.rank)) {
@@ -532,6 +635,22 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 			if (!arty::IsSwitchWorth(c.rank, cur.rank, pickTier, SWITCH_VALUE)) {
 				continue;
 			}
+			if (isBeam && (arriveFrame < 0) && (c.rank.tier != 0) && (c.rank.turnSec > cur.rank.turnSec)) {
+				continue;  // still turning to the current one: only to one no further, unless it's in the top tier
+			}
+		}
+		if (isBeam) {
+			if (pathTests >= PATH_TESTS) {
+				break;
+			}
+			bool isTested = false;
+			const bool isClear = IsBeamClear(c, frame, skipLen, isTested);
+			pathTests += isTested ? 1 : 0;
+			if (!isClear) {
+				continue;
+			}
+			best = &c;
+			break;
 		}
 		const AIFloat3& ePos = c.enemy->GetPos();
 		if (IsFriendNear(ePos, frame)) {
@@ -555,10 +674,7 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 	}
 
 	if (best == nullptr) {
-		if (!hasCur) {
-			Drop(unit, frame);
-		}
-		return;
+		return hasCur;
 	}
 #ifdef DEBUG_LOG
 	circuit->LOG("ARTY %i picks %i tier %i value %.0f turn %.1fs flight %.1fs%s (was %i)", unit->GetId(),
@@ -567,6 +683,7 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 #endif
 	SetNewTarget(*best, frame);
 	Order(unit);
+	return true;
 }
 
 void CPriorityArtyTask::SetNewTarget(const SCandidate& cand, int frame)
@@ -578,13 +695,36 @@ void CPriorityArtyTask::SetNewTarget(const SCandidate& cand, int frame)
 	flightFrames = static_cast<int>(cand.flightSec * FRAMES_PER_SEC);
 	dryShots = 0;
 	landFrames.clear();
-	noShotFrame = frame + static_cast<int>((cand.rank.turnSec + tp->shotGrace) * FRAMES_PER_SEC) + reloadFrames;
-	heading = cand.heading;
-	pitch = cand.pitch;
+	noShotFrame = frame + static_cast<int>((cand.rank.turnSec + tp->shotGrace) * FRAMES_PER_SEC);
+	if (tp->IsBeam()) {  // heading and pitch are tracked: turn to it (and get there by noShotFrame)
+		arriveFrame = -1;
+		crawlCost = IsFromDown() ? CRAWL_COST : 0.f;
+		aimPoint = cand.enemy->GetPos();
+	} else {
+		noShotFrame += reloadFrames;
+		heading = cand.heading;
+		pitch = cand.pitch;
+	}
 }
 
 void CPriorityArtyTask::Order(CCircuitUnit* unit)
 {
+	if (tp->IsBeam()) {
+		isDodging = false;
+		aimPoint = target->GetPos();
+		const float h = std::atan2(aimPoint.x - position.x, aimPoint.z - position.z) * beam::RAD_TO_DEG;
+		isAligning = IsFromDown() && (std::fabs(beam::HeadingDiff(heading, h)) > ALIGN_HEADING);
+		if (isAligning) {  // near straight down: turn the heading on the Starlight itself, then crawl out along the ray
+			aimPoint = position + AIFloat3(std::sin(h * beam::DEG_TO_RAD), 0.f, std::cos(h * beam::DEG_TO_RAD)) * ALIGN_DIST;
+			aimPoint.y = std::max(manager->GetCircuit()->GetTerrainManager()->GetHeightAt(aimPoint.x, aimPoint.z), 0.f);
+			TRY_UNIT(manager->GetCircuit(), unit,
+				unit->CmdAttackGround(aimPoint, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY);
+			)
+			isReorder = false;
+			state = State::ENGAGE;
+			return;
+		}
+	}
 	TRY_UNIT(manager->GetCircuit(), unit,
 		const int wantTrajectory = isTargetHigh ? 1 : 0;
 		if (tp->isHighArc && (trajectory != wantTrajectory)) {  // a gun with a trajectory toggle
@@ -604,17 +744,420 @@ void CPriorityArtyTask::Order(CCircuitUnit* unit)
 
 void CPriorityArtyTask::Drop(CCircuitUnit* unit, int frame)
 {
-	if (State::ENGAGE == state) {
+	if ((State::ENGAGE == state) && !isDodging) {  // a dodge goes on to its spot
 		TRY_UNIT(manager->GetCircuit(), unit,
 			unit->GetUnit()->Stop();
 		)
 		state = State::ROAM;
+		// Beam: a Stop freezes it where it points (unit_starlight_handler.lua, StopAim)
+		aimPoint = -RgtVector;
+		aimHeading = heading;
+		aimPitch = pitch;
 	}
+	isAligning = false;
 	SetTarget(nullptr);
 	pickTier = STargetPriority::NO_TIER;
 	noShotFrame = INT_MAX;
 	landFrames.clear();
 	checkFrame = frame + IDLE_INTERVAL;
+}
+
+/*
+ * Beam
+ */
+void CPriorityArtyTask::UpdateBeam(CCircuitUnit* unit, int frame, int elapsed, bool isDisabled)
+{
+	if (satId < 0) {  // made once the Starlight is up (mahlazer.lua)
+		TRY_UNIT(manager->GetCircuit(), unit,
+			satId = static_cast<int>(unit->GetUnit()->GetRulesParamFloat("has_satellite", -1.f));
+		)
+	}
+	if ((target != nullptr) && isTargetMobile && !isAligning) {
+		aimPoint = target->GetPos();  // the engine follows it
+	}
+	if (StepAim(frame, elapsed, isDisabled) && (target != nullptr)) {  // undocked: it turns back from where it docked
+		isReorder = true;  // near straight down again: align first
+		arriveFrame = -1;
+		crawlCost = IsFromDown() ? CRAWL_COST : 0.f;
+		SCandidate c;
+		noShotFrame = MakeCandidate(target, false, c)
+				? frame + static_cast<int>((c.rank.turnSec + tp->shotGrace) * FRAMES_PER_SEC) : frame;
+	}
+	if (isDisabled || (frame < readyFrame) || (unit->Blocker() != nullptr)) {  // docked or undocking: the timers pause
+		if (noShotFrame != INT_MAX) {
+			noShotFrame += elapsed;
+		}
+		if (arriveFrame >= 0) {
+			arriveFrame += elapsed;
+		}
+		return;
+	}
+
+	const bool isAimDone = IsAimDone();
+	const AIFloat3 spot = GetSpot(heading, pitch);
+	if (utils::is_valid(exitSpot) && (isAimDone || (spot.SqDistance2D(exitSpot) >= SQUARE(EXIT_LEN)))) {
+		exitSpot = -RgtVector;  // off the friendly units it found
+	}
+	if (isDodging && isAimDone) {
+		isDodging = false;
+	}
+	if ((target != nullptr) && !isAligning && (arriveFrame < 0) && isAimDone) {  // on it: it should die within its dwell
+		float health = target->GetHealth();
+		if ((health <= 0.f) && (target->GetCircuitDef() != nullptr)) {
+			health = target->GetCircuitDef()->GetHealth();
+		}
+		arriveFrame = frame;
+		dwellFrames = static_cast<int>((std::max(health, 0.f) / tp->beamDps + DWELL_SEC) * FRAMES_PER_SEC);
+		noShotFrame = INT_MAX;
+		crawlCost = 0.f;
+	}
+
+	// Friendly units at the beam now: off them the short way (not checked again until it's EXIT_LEN away or there)
+	if (!isDodging && !utils::is_valid(exitSpot) && (position.SqDistance2D(spot) >= SQUARE(DOWN_DIST))) {
+		const float allowed = ((target != nullptr) && (arriveFrame < 0)) ? crawlCost : 0.f;
+		if (GetFriendCost(spot, std::tan(pitch * beam::DEG_TO_RAD), 0.f, frame) > allowed) {
+#ifdef DEBUG_LOG
+			manager->GetCircuit()->LOG("BEAM %i friends at the beam (target %i)", unit->GetId(),
+					(target != nullptr) ? target->GetId() : -1);
+#endif
+			if (target != nullptr) {
+				SoftSkip(target, frame);
+				SetTarget(nullptr);
+			}
+			exitSpot = spot;
+			if (!Pick(unit, frame, EXIT_LEN)) {
+				Dodge(unit, frame);
+			}
+			return;
+		}
+	}
+
+	// Still on the way out: the rest of it isn't tested
+	const float exitLeft = utils::is_valid(exitSpot) ? std::max(EXIT_LEN - spot.distance2D(exitSpot), 0.f) : 0.f;
+	if ((target != nullptr) && IsBeamLost(frame, exitLeft)) {  // re-pick at once
+#ifdef DEBUG_LOG
+		manager->GetCircuit()->LOG("BEAM %i lost target %i", unit->GetId(), target->GetId());
+#endif
+		SetTarget(nullptr);
+		checkFrame = frame;
+	}
+	if ((frame >= checkFrame) && !Pick(unit, frame, exitLeft)) {
+		if (exitLeft > 0.f) {
+			Dodge(unit, frame);  // a Stop would leave it on them
+		} else {
+			Drop(unit, frame);
+		}
+	}
+	if ((target != nullptr)
+		&& (isReorder || (isAligning && (std::fabs(beam::HeadingDiff(heading, aimHeading)) < 0.01f))))
+	{
+		Order(unit);  // aligned: now the target itself
+	}
+}
+
+/*
+ * Where the satellite points (mahlazer.lua): undocked, it turns towards its aim at "turn_rate". Once disabled the beam
+ * goes off, the aim stops (StopAim) and the satellite falls at SAT_SPEED, its heading turning to the nearest 90 on the
+ * way down and its pitch to straight down (that turn goes on once docked). Once back on it's ready at once while still
+ * falling, else after UNDOCK_FRAMES, and rises at SAT_SPEED while it turns
+ */
+bool CPriorityArtyTask::StepAim(int frame, int elapsed, bool isDisabled)
+{
+	const float sec = static_cast<float>(elapsed) / FRAMES_PER_SEC;
+	const float yawStep = tp->turnYaw * sec;
+	const float pitchStep = (tp->turnPitch > 0.f) ? tp->turnPitch * sec : 180.f;
+	if (isDisabled) {
+		if (readyFrame != INT_MAX) {  // docking
+			readyFrame = INT_MAX;
+			aimHeading = heading;
+			aimPitch = 0.f;
+		}
+		if (satHeight > 0.f) {
+			heading = beam::StepHeading(heading, beam::NearestCardinal(heading), yawStep);
+			satHeight = std::max(satHeight - SAT_SPEED * sec, 0.f);
+		}
+		pitch = beam::StepToward(pitch, aimPitch, pitchStep);
+		return false;
+	}
+	bool isJustReady = false;
+	if (readyFrame == INT_MAX) {
+		readyFrame = (satHeight > 0.f) ? frame : frame + UNDOCK_FRAMES;
+	}
+	if (frame < readyFrame) {
+		pitch = beam::StepToward(pitch, aimPitch, pitchStep);
+		return false;
+	}
+	if (frame - elapsed < readyFrame) {
+		isJustReady = true;
+	}
+	satHeight = std::min(satHeight + SAT_SPEED * sec, tp->beamHeight);
+	if (utils::is_valid(aimPoint)) {  // the engine aims it from where the satellite is now
+		const float dx = aimPoint.x - position.x;
+		const float dz = aimPoint.z - position.z;
+		aimHeading = std::atan2(dx, dz) * beam::RAD_TO_DEG;
+		aimPitch = beam::Pitch(std::sqrt(dx * dx + dz * dz), GetSatY() - aimPoint.y);
+	}
+	heading = beam::StepHeading(heading, aimHeading, yawStep);
+	pitch = beam::StepToward(pitch, aimPitch, pitchStep);
+	return isJustReady;
+}
+
+bool CPriorityArtyTask::IsFromDown() const
+{
+	return isAligning || (pitch < DOWN_PITCH);
+}
+
+bool CPriorityArtyTask::IsAimDone() const
+{
+	return (std::fabs(beam::HeadingDiff(heading, aimHeading)) < 0.01f) && (std::fabs(pitch - aimPitch) < 0.01f);
+}
+
+float CPriorityArtyTask::GetSatY() const
+{
+	return position.y + satHeight;
+}
+
+AIFloat3 CPriorityArtyTask::GetSpot(float h, float p) const
+{
+	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
+	const float tanP = std::tan(p * beam::DEG_TO_RAD);
+	const AIFloat3 dir(std::sin(h * beam::DEG_TO_RAD), 0.f, std::cos(h * beam::DEG_TO_RAD));
+	AIFloat3 spot = position + dir * (std::max(satHeight, 1.f) * tanP);  // on the base's level, then on the ground there
+	CTerrainManager::CorrectPosition(spot);
+	spot = position + dir * (std::max(GetSatY() - std::max(terrainMgr->GetHeightAt(spot.x, spot.z), 0.f), 1.f) * tanP);
+	CTerrainManager::CorrectPosition(spot);
+	spot.y = std::max(terrainMgr->GetHeightAt(spot.x, spot.z), 0.f);
+	return spot;
+}
+
+/*
+ * Friendly units (ours and allies', not planes, not the Starlight itself) in a box at the spot along the beam's
+ * heading. Half-sizes: the beam's radius + BEAM_CLEAR across, and as much + UNIT_HEIGHT x tan(pitch) along (the slanted
+ * beam meets a unit before the spot), both + lead. BLOCKED: one worth BIG_COST or more, or one not listed yet
+ */
+float CPriorityArtyTask::GetFriendCost(const AIFloat3& spot, float tanP, float lead, int frame) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const float dx = spot.x - position.x;
+	const float dz = spot.z - position.z;
+	const float dist = std::sqrt(dx * dx + dz * dz);
+	const float ux = (dist > 1.f) ? dx / dist : 0.f;
+	const float uz = (dist > 1.f) ? dz / dist : 1.f;
+	const float side = aoe + BEAM_CLEAR + lead;
+	const float along = side + UNIT_HEIGHT * std::min(tanP, TAN_MAX);
+	const float radius = std::sqrt(SQUARE(side) + SQUARE(along));
+	COOAICallback* clb = circuit->GetCallback();
+	if (!clb->IsFriendlyUnitsIn(spot, radius, false)) {
+		return 0.f;
+	}
+	const ICoreUnit::Id ownId = units.empty() ? -1 : (*units.begin())->GetId();
+	float cost = 0.f;
+	for (int fId : clb->GetFriendlyUnitIdsIn(spot, radius, false)) {
+		if ((fId == -1) || (fId == ownId) || (fId == satId)) {
+			continue;  // the beam can't hurt the Starlight, nor its satellite
+		}
+		CAllyUnit* ally = circuit->GetFriendlyUnit(fId);
+		if (ally == nullptr) {
+			return BLOCKED;  // not listed yet: assume it's in the way
+		}
+		CCircuitDef* fdef = ally->GetCircuitDef();
+		if ((fdef != nullptr) && fdef->IsPlane()) {
+			continue;
+		}
+		const AIFloat3& p = ally->GetPos(frame);
+		const float px = p.x - spot.x;
+		const float pz = p.z - spot.z;
+		if ((std::fabs(px * ux + pz * uz) < along) && (std::fabs(px * uz - pz * ux) < side)) {
+			const float c = (fdef != nullptr) ? fdef->GetCostM() : BIG_COST;
+			if (c >= BIG_COST) {
+				return BLOCKED;
+			}
+			cost += c;
+		}
+	}
+	return cost;
+}
+
+/*
+ * The spots the beam passes on its way (with the satellite at its height), each guarded by a circle of the beam's
+ * radius + BEAM_CLEAR + UNIT_HEIGHT x tan(pitch); friendly units in any of them count once. A unit not listed yet is
+ * left out (Pick updates the list first). BLOCKED: one worth BIG_COST or more
+ */
+float CPriorityArtyTask::GetPathCost(float toHeading, float toPitch, float y, float skipLen, int frame)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const float drop = std::max(position.y + tp->beamHeight - y, 1.f);
+	const float fromHeading = IsFromDown() ? toHeading : heading;  // near straight down: the heading first
+	float minX = FLT_MAX, maxX = -FLT_MAX, minZ = FLT_MAX, maxZ = -FLT_MAX;
+	spots.clear();
+	beam::WalkPath(fromHeading, pitch, toHeading, toPitch, tp->turnYaw, tp->turnPitch, drop, PATH_SPACING, PATH_SPOTS,
+		[&](float dx, float dz, float p, float along) {
+			if ((SQUARE(dx) + SQUARE(dz) < SQUARE(DOWN_DIST)) || (along < skipLen)) {
+				return;  // on the Starlight itself, or the way out
+			}
+			const float r = aoe + BEAM_CLEAR + UNIT_HEIGHT * std::min(std::tan(p * beam::DEG_TO_RAD), TAN_MAX);
+			const float x = position.x + dx;
+			const float z = position.z + dz;
+			spots.push_back({x, z, r});
+			minX = std::min(minX, x - r);
+			maxX = std::max(maxX, x + r);
+			minZ = std::min(minZ, z - r);
+			maxZ = std::max(maxZ, z + r);
+		});
+	if (spots.empty()) {
+		return 0.f;
+	}
+	const AIFloat3 center((minX + maxX) * 0.5f, position.y, (minZ + maxZ) * 0.5f);
+	const float radius = 0.5f * std::sqrt(SQUARE(maxX - minX) + SQUARE(maxZ - minZ));
+	COOAICallback* clb = circuit->GetCallback();
+	if (!clb->IsFriendlyUnitsIn(center, radius, false)) {
+		return 0.f;
+	}
+	const ICoreUnit::Id ownId = units.empty() ? -1 : (*units.begin())->GetId();
+	float cost = 0.f;
+	for (int fId : clb->GetFriendlyUnitIdsIn(center, radius, false)) {
+		if ((fId == -1) || (fId == ownId) || (fId == satId)) {
+			continue;
+		}
+		CAllyUnit* ally = circuit->GetFriendlyUnit(fId);
+		if (ally == nullptr) {
+			continue;
+		}
+		CCircuitDef* fdef = ally->GetCircuitDef();
+		if ((fdef != nullptr) && fdef->IsPlane()) {
+			continue;
+		}
+		const AIFloat3& p = ally->GetPos(frame);
+		if ((p.x < minX) || (p.x > maxX) || (p.z < minZ) || (p.z > maxZ)) {
+			continue;
+		}
+		for (const SSpot& s : spots) {
+			if (SQUARE(p.x - s.x) + SQUARE(p.z - s.z) < SQUARE(s.radius)) {
+				const float c = (fdef != nullptr) ? fdef->GetCostM() : BIG_COST;
+				if (c >= BIG_COST) {
+					return BLOCKED;
+				}
+				cost += c;
+				break;
+			}
+		}
+	}
+	return cost;
+}
+
+bool CPriorityArtyTask::IsBeamLost(int frame, float skipLen)
+{
+	bool isMobile;
+	if (!IsTargetable(target, isMobile) || IsBlindSpent(target)) {  // dead, hidden, out of range or sight, submerged
+		return true;
+	}
+	if ((arriveFrame >= 0) && (frame >= arriveFrame + dwellFrames)) {  // still there after its dwell
+		if (target->IsInRadarOrLOS()) {
+			AddFailure(target, frame);
+		} else {
+			target->GetData()->AddBlindShot();  // skipped until it's seen again
+		}
+		return true;
+	}
+	if (frame > noShotFrame) {  // never got there
+		AddFailure(target, frame);
+		return true;
+	}
+	// Friendly units at the target, or (still turning) on the rest of the way there
+	const AIFloat3& ePos = target->GetPos();
+	const float dx = ePos.x - position.x;
+	const float dz = ePos.z - position.z;
+	const float ePitch = beam::Pitch(std::sqrt(dx * dx + dz * dz), position.y + tp->beamHeight - ePos.y);
+	const float lead = isTargetMobile ? std::sqrt(target->GetVel().SqLength2D()) * FRAMES_PER_SEC * LEAD_SEC : 0.f;
+	if ((GetFriendCost(ePos, std::tan(ePitch * beam::DEG_TO_RAD), lead, frame) > 0.f)
+		|| ((arriveFrame < 0) && (GetPathCost(std::atan2(dx, dz) * beam::RAD_TO_DEG, ePitch, ePos.y, skipLen, frame) > crawlCost)))
+	{
+		SoftSkip(target, frame);
+		return true;
+	}
+	return false;
+}
+
+bool CPriorityArtyTask::IsBeamClear(const SCandidate& c, int frame, float skipLen, bool& outTested)
+{
+	outTested = false;
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& ePos = c.enemy->GetPos();
+	const float lead = c.isMobile ? std::sqrt(c.enemy->GetVel().SqLength2D()) * FRAMES_PER_SEC * LEAD_SEC : 0.f;
+	if (GetFriendCost(ePos, std::tan(c.pitch * beam::DEG_TO_RAD), lead, frame) > 0.f) {
+		SoftSkip(c.enemy, frame);
+		return false;
+	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	auto heightAt = [terrainMgr](float x, float z) {
+		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // the beam goes through water
+	};
+	if (!beam::IsLineClear(position.x, position.y + tp->beamHeight, position.z, ePos.x, ePos.y, ePos.z, LINE_STEP,
+		ARC_CLEARANCE, ARC_STOP_SHORT, circuit->GetMap()->GetMaxHeight(), heightAt))
+	{
+		AddFailure(c.enemy, frame);  // not checked again within its skip window
+#ifdef DEBUG_LOG
+		circuit->LOG("BEAM %i line blocked to %i", (*units.begin())->GetId(), c.enemy->GetId());
+#endif
+		return false;
+	}
+	outTested = true;
+	const float allowed = IsFromDown() ? CRAWL_COST : 0.f;  // out from the base along one ray
+	if (GetPathCost(c.heading, c.pitch, ePos.y, skipLen, frame) > allowed) {
+		SoftSkip(c.enemy, frame);
+		return false;
+	}
+	return true;
+}
+
+// Friendly units at the beam, and no target with a clear way: turn the heading (the faster move) a step to the side
+// with less friendly cost first, out to 90 degrees, until the spot and the way there (but its first EXIT_LEN) are clear
+void CPriorityArtyTask::Dodge(CCircuitUnit* unit, int frame)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3 spot = GetSpot(heading, pitch);
+	const float tanP = std::tan(pitch * beam::DEG_TO_RAD);
+	const float r = std::max(position.distance2D(spot), 1.f);
+	const float box = 2.f * (aoe + BEAM_CLEAR) + UNIT_HEIGHT * std::min(tanP, TAN_MAX);
+	const float step = std::clamp(box / r * beam::RAD_TO_DEG, 2.f, 10.f);
+	const float sign = (GetPathCost(heading + step, pitch, spot.y, 0.f, frame)
+			<= GetPathCost(heading - step, pitch, spot.y, 0.f, frame)) ? 1.f : -1.f;
+	float toHeading = heading + sign * step;  // none clear: a step to the better side
+	for (float mod : {1.f, 2.f, 3.f, 5.f, 8.f, 12.f, 18.f, 27.f, 40.f}) {
+		const float off = std::min(mod * step, 90.f);
+		bool isFound = false;
+		for (float side : {sign, -sign}) {
+			const float h = heading + side * off;
+			if ((GetFriendCost(GetSpot(h, pitch), tanP, 0.f, frame) <= 0.f)
+				&& (GetPathCost(h, pitch, spot.y, EXIT_LEN, frame) <= 0.f))
+			{
+				toHeading = h;
+				isFound = true;
+				break;
+			}
+		}
+		if (isFound || (off >= 90.f)) {
+			break;
+		}
+	}
+#ifdef DEBUG_LOG
+	circuit->LOG("BEAM %i dodges %.1f deg", unit->GetId(), beam::HeadingDiff(heading, toHeading));
+#endif
+	aimPoint = GetSpot(toHeading, pitch);
+	TRY_UNIT(circuit, unit,
+		unit->CmdAttackGround(aimPoint, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY);
+	)
+	isDodging = true;
+	isAligning = false;
+	isReorder = false;
+	state = State::ENGAGE;
+	checkFrame = frame + IDLE_INTERVAL;
+}
+
+void CPriorityArtyTask::SoftSkip(CEnemyInfo* enemy, int frame)
+{
+	SFailure& f = failures[enemy->GetId()];
+	f.skipUntil = std::max(f.skipUntil, frame + SOFT_SKIP);
 }
 
 } // namespace circuit
