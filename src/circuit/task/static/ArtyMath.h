@@ -32,11 +32,6 @@ inline bool ArcTan(float d, float h, float v, float g, bool isHigh, float& outTa
 	return true;
 }
 
-inline bool LowArcTan(float d, float h, float v, float g, float& outTan)
-{
-	return ArcTan(d, h, v, g, false, outTan);
-}
-
 // Seconds in flight over ground distance d at launch angle tan
 inline float FlightTime(float d, float tanA, float v)
 {

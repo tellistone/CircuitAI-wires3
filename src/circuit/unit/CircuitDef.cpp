@@ -114,6 +114,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, thrMod(1.f)
 		, aoe(.0f)
 		, fireAoe(.0f)
+		, shotDmg(.0f)
 		, power(.0f)
 		, threat(.0f)
 		, minRange(.0f)
@@ -287,6 +288,8 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	// GetFireAoe sums; double, so that weapons of one radius average to exactly that radius (group_count_aoe edge)
 	double fireDps = .0;
 	double fireAoeDps = .0;
+	float shotDmgSum = .0f;  // GetShotDamage
+	int shotWeapons = 0;
 	CWeaponDef* bestDGunDef = nullptr;
 	WeaponMount* bestDGunMnt = nullptr;
 	WeaponMount* bestWpMnt = nullptr;
@@ -383,6 +386,8 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 			const double wpDps = dps - prevDps;
 			fireDps += wpDps;
 			fireAoeDps += wpDps * wd->GetAreaOfEffect();
+			shotDmgSum += wd->IsParalyzer() ? 0.f : ldmg;
+			++shotWeapons;
 		}
 
 		std::string wt(wd->GetType());  // @see https://springrts.com/wiki/Gamedev:WeaponDefs
@@ -478,6 +483,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	}
 
 	fireAoe = (fireDps > 0.) ? static_cast<float>(fireAoeDps / fireDps) : 0.f;
+	shotDmg = (shotWeapons > 0) ? shotDmgSum / shotWeapons : 0.f;
 
 	isAttacker = dps > .1f;
 	if (IsMobile() && !IsAttacker()) {  // mobile bomb?

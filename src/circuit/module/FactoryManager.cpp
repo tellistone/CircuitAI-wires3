@@ -520,6 +520,7 @@ void CFactoryManager::ReadConfig()
 			}
 			sels.push_back(sel);
 			tp->isSplash.push_back(tier.get("splash", false).asBool());
+			tp->hasSplash |= tp->isSplash.back();
 		}
 		if (sels.empty()) {
 			continue;

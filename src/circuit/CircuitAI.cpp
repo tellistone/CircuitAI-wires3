@@ -1103,7 +1103,6 @@ int CCircuitAI::EnemyEnterLOS(CEnemyInfo* enemy)
 	bool isSuddenThreat = mapManager->IsSuddenThreat(enemy->GetData());
 
 	allyTeam->EnemyEnterLOS(enemy->GetData(), this);
-	militaryManager->OnEnemySeen(enemy);
 
 	if (!isSuddenThreat) {
 		return 0;  // signaling: OK
@@ -1140,7 +1139,6 @@ int CCircuitAI::EnemyLeaveLOS(CEnemyInfo* enemy)
 int CCircuitAI::EnemyEnterRadar(CEnemyInfo* enemy)
 {
 	allyTeam->EnemyEnterRadar(enemy->GetData(), this);
-	militaryManager->OnEnemySeen(enemy);
 
 	return 0;  // signaling: OK
 }
@@ -1164,7 +1162,6 @@ int CCircuitAI::EnemyDestroyed(CEnemyInfo* enemy)
 	allyTeam->EnemyDestroyed(enemy->GetData(), this);
 
 	militaryManager->UnmarkPointOfInterest(enemy);
-	militaryManager->OnEnemyGone(enemy);
 
 	return 0;  // signaling: OK
 }

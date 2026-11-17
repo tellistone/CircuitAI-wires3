@@ -43,6 +43,7 @@ struct STargetPriority {
 	std::vector<Tiers> tierOf;  // by enemy CCircuitDef::Id; NO_TIER: not a target
 	Tiers unknownTier = {NO_TIER, NO_TIER};  // enemies of unknown type (radar dots)
 	std::vector<bool> isSplash;  // per tier: value is the cost of enemy buildings within splash of the aim point
+	bool hasSplash = false;  // any tier is
 	// Friendly guard (a box along the line of fire around the aim point): AoE + guardSide x distance sideways,
 	// AoE + guardAlong along the line. Shells scatter mostly along the line (accuracy changes the launch pitch)
 	float guardSide = 0.035f;
@@ -57,6 +58,7 @@ struct STargetPriority {
 	bool isHighArc = false;  // trajectory toggle: the high arc for a building the low arc can't reach over terrain
 
 	int GetTier(const CCircuitDef* edef, bool isInLos) const;
+	bool IsSplash(int tier) const { return (tier >= 0) && (tier < (int)isSplash.size()) && isSplash[tier]; }
 };
 
 class CCircuitDef {
@@ -247,6 +249,8 @@ public:
 	// (D-gun) and shields left out, so one big splash weapon it seldom fires (a strider's manual-fire or landing
 	// weapon) doesn't make it area damage. A mobile bomb: its explosion's
 	float GetFireAoe() const { return fireAoe; }
+	// A shot's damage averaged over its weapons, manual fire (D-gun) and shields left out, paralyzers 0
+	float GetShotDamage() const { return shotDmg; }
 	float GetPower() const { return power; }
 	float GetThreat() const { return threat; }
 	// How much one enemy of this type counts in the threat map's enemy unit count (CThreatMap squad layers):
@@ -415,6 +419,7 @@ private:
 	float thrMod;  // product of the threat multipliers (thr_mod)
 	float aoe;  // radius
 	float fireAoe;  // radius: GetFireAoe
+	float shotDmg;  // GetShotDamage
 	float power;  // ally max threat
 	float threat;  // enemy max threat
 	float minRange;

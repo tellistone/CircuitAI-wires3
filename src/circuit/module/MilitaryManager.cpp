@@ -198,8 +198,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		idleTask->AssignTo(unit);
 
 		TRY_UNIT(this->circuit, unit,
-			// CPriorityArtyTask aims by the low arc (no effect without a trajectory toggle)
-			unit->GetUnit()->SetTrajectory((unit->GetCircuitDef()->GetTargetPriority() != nullptr) ? 0 : 1);
+			unit->GetUnit()->SetTrajectory(1);
 			if (unit->GetCircuitDef()->IsAttrStock()) {
 				unit->GetUnit()->Stockpile(UNIT_COMMAND_OPTION_SHIFT_KEY | UNIT_COMMAND_OPTION_CONTROL_KEY);
 				unit->CmdMiscPriority(2);
@@ -1440,20 +1439,6 @@ void CMilitaryManager::OnEnemyDamaged(CEnemyInfo* enemy, int attackerId)
 		return;
 	}
 	static_cast<CPriorityArtyTask*>(unit->GetTask())->OnEnemyDamaged(enemy);
-}
-
-void CMilitaryManager::OnEnemySeen(CEnemyInfo* enemy)
-{
-	if (!blindShots.empty()) {
-		blindShots.erase(enemy->GetId());
-	}
-}
-
-void CMilitaryManager::OnEnemyGone(CEnemyInfo* enemy)
-{
-	if (!blindShots.empty()) {
-		blindShots.erase(enemy->GetId());
-	}
 }
 
 IFighterTask* CMilitaryManager::EnqueueDefend(IFighterTask::FightType promote, float power)

@@ -1446,7 +1446,10 @@
 		// is due within turning + 1 reload + this, default 10), "mobile_move": <elmos> (a mobile unit moving more
 		// than this during turning and flight ranks last), "high_arc": true (trajectory toggle: the high arc for a
 		// building behind terrain)
-		"turn_rate": [4, 2]
+		"turn_rate": [4, 2],
+		// A shell flies ~5.6 s at full range: a mobile unit moving more than this during turning and flight (~27
+		// elmo/s, as the Rave Party's 250 over ~9.5 s) ranks last, so walking commanders and raiders don't soak shells
+		"mobile_move": 150
 	},
 	"turretheavy": {
 		// threat 121 at full health (raw, before pwr_mod/thr_mod)

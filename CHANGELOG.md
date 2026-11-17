@@ -17,15 +17,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   until it's lost (re-picks at once) or, at a 10 s check, a higher tier than the one it was picked at shows up, a
   finished unit over a nanoframe, or 3x the value in the same tier. A simulated low arc over the heightmap skips
   targets behind terrain, and no shot goes where a friendly unit (not a plane) is in a box around the aim point along
-  the line of fire (`target_guard`). A target fails after 5 shells landed in LOS or radar that damaged nothing, after
-  max(5, 4 x shots to kill) shots at it out of both (shared by our guns, until it's seen again), or with no shot for
+  the line of fire (`target_guard`, checked every second on the current target). Submerged units are skipped (the
+  engine won't aim these cannons at them). A target fails after 5 shells landed in LOS or radar that damaged nothing, after
+  max(5, 4 x shots to kill) shots at it out of both (shared by the ally team's guns, until it's seen again), or with no shot for
   turning + 1 reload + 10 s (`shot_grace`), and is then skipped for 60 s, doubling each time. The gun runs at hold fire, so only
-  these orders aim it. Mobile units get attack-unit orders and are ranked last when more than 10 s of turning away;
-  flying units are never targets. Shots are counted on every weapon, and a shell only counts as a miss once its
+  these orders aim it; an order is sent again only once the gun goes idle (a static unit's orders never time out).
+  Mobile units get attack-unit orders and are ranked last when more than 10 s of turning away, or (Bertha 150, Rave
+  Party 250, `mobile_move`) when they'd move further than that before the shell lands; flying units are never
+  targets. Shots are counted on every weapon, and a shell only counts as a miss once its
   flight time has passed. The Disco Rave Party adds, by config: firing backwards (it never turns more than 90 deg,
   pitch is free), turning that halves a target's value per 30 s (turning bleeds its spin), a 192 splash radius for
-  value, a bigger friendly guard (napalm 400), a 20 s grace for its spin-up, mobile units that would move over 250
-  elmos before the shell lands ranked last, and the high arc (its trajectory toggle) for a building the low arc can't
+  value, a bigger friendly guard (napalm 400), a 20 s grace for its spin-up, and the high arc (its trajectory toggle) for a building the low arc can't
   reach over terrain; the low arc otherwise (CSuperTask's high arc took ~22 s per shell). Its kill estimate averages
   its six shells (EMP: none). The other superweapons keep `CSuperTask`. `ARTY` lines in the debug log
 
