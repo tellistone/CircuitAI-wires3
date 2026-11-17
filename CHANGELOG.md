@@ -7,6 +7,31 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Solars and winds: one for every mex off the grid, then into the gaps of the planned grid** (`economy.energy.fill`:
+  `unit` = `energysolar`, `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the
+  builder (and the mex build chain put one more at each new mex), so it clumped round mexes as many small grids, and
+  the grid linker only started at 16 income, one piece at a time. Now an energy job of a fill def, and the mex chain's
+  energy, goes within `max_dist` of the builder (of the mex for the chain; a third of that while short of energy, as
+  the walk would outlast the build): first beside the nearest finished mex of ours on no grid with energy (the game's
+  grids, from the grid snapshot; ally energy beside it, being built too, also counts, as the snapshot lags, and a mex
+  the game hasn't put on a grid yet is on the one it overlaps); then into the nearest open gap of the grid plan (a
+  planned link of the spanning tree between two finished mex clusters, or the mexes of one cluster that aren't linked
+  yet), from a gap end; then beside a mex of the grid with the least energy per mex, where overdrive gains most (on
+  that grid, the mex with the least energy beside it, so the energy spreads instead of ringing one mex). The site
+  always links: to the mex, or to the gap end and, when one piece closes the gap, the other end too (the grid-link
+  watchdog's site search, now shared), and a step into a gap must get closer to its other end, so a gap across water
+  or a cliff is skipped rather than clumped at; a spot with no site is skipped for 30 s. Never beside a mex with an
+  energy job (or a grid link solar or wind) queued there. The job is an ordinary energy job (budget, stall and pull
+  rules, priority) that holds its gap while it lives, so one piece per gap at a time; if its site is taken it looks
+  again only where the piece still links, else it is dropped and planned afresh. None of these in reach: at the
+  nearest metal spot as before. No `unit` list: off.
+
+- **Wind only within the base** (`economy.energy.base_only`: `energywind`). Winds on land are built only within the
+  base (behaviour.json `defence.base_rad` around the base position, the radius base defence uses). The rule is on the
+  site, at every placement: energy jobs (their spot, and the site their builder finally picks), the mex chain's energy,
+  grid fills and the grid linker's link pieces; never on where the builder stands, so which energy the AI builds is
+  unchanged. Where the game builds it as tidal (ground at or below its `tidalHeight`, -10) anywhere, as before.
+
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own
   `turret.share` bank, and cornered, base timetable, radar guard, mex escort and build-chain hub towers were free. Now

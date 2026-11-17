@@ -17,6 +17,9 @@
 #include "json/json.h"
 #include "lemon/kruskal.h"
 
+#include <algorithm>
+#include <unordered_map>
+
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
@@ -294,6 +297,206 @@ IGridLink* CEnergyGrid::GetLinkToBuild(CCircuitDef*& outDef, AIFloat3& outPos)
 	return nullptr;
 }
 
+CEnergyGrid::SLinkSite CEnergyGrid::MakeLinkSite(float range, const AIFloat3& from, float fromRange,
+		const AIFloat3& to, float toRange)
+{
+	const float gap = from.distance2D(to) - fromRange - toRange;
+	return {from, to, fromRange + range, toRange + range, gap <= range * 2.f * 0.85f};
+}
+
+AIFloat3 CEnergyGrid::FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, float searchRadius, const Predicate& predicate)
+{
+	const float dist = link.from.distance2D(link.to);
+	AIFloat3 ideal = link.from;
+	if (dist >= 1.f) {
+		const float step = link.isLast ? (dist + link.fromReach - link.toReach) * 0.5f : link.fromReach * 0.9f;
+		ideal += (link.to - link.from) / dist * step;
+	}
+	CTerrainManager::CorrectPosition(ideal);
+
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float sqFrom = SQUARE(link.fromReach - SQUARE_SIZE);
+	const float sqTo = SQUARE(link.toReach - SQUARE_SIZE);
+	// A step out gets a quarter of the reach closer to to: one that can't (water, a cliff) fails, never piles up at from
+	const float sqAhead = SQUARE(std::max(dist - link.fromReach * 0.25f, 0.f));
+	CTerrainManager::TerrainPredicate isLinked = [&link, sqFrom, sqTo, sqAhead, &predicate](const AIFloat3& p) {
+		return (p.SqDistance2D(link.from) < sqFrom) && (p.SqDistance2D(link.to) < (link.isLast ? sqTo : sqAhead))
+			&& predicate(p);
+	};
+	AIFloat3 buildPos = terrainMgr->FindBuildSite(cdef, ideal, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isLinked);
+	if (!utils::is_valid(buildPos) && link.isLast && (dist >= 1.f)) {  // no site touching both: one more step it is
+		CTerrainManager::TerrainPredicate isFromLinked = [&link, sqFrom, sqAhead, &predicate](const AIFloat3& p) {
+			return (p.SqDistance2D(link.from) < sqFrom) && (p.SqDistance2D(link.to) < sqAhead) && predicate(p);
+		};
+		buildPos = terrainMgr->FindBuildSite(cdef, ideal, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isFromLinked);
+	}
+	return buildPos;
+}
+
+IGridLink* CEnergyGrid::FindFillSite(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, const Predicate& predicate,
+		SLinkSite& outSite, AIFloat3& outPos)
+{
+	outPos = -RgtVector;
+	const float range = GetPylonRange(cdef->GetId());
+	if (range <= 0.f) {
+		return nullptr;
+	}
+	Update();
+
+	const std::vector<SPiece> queued = GetQueuedEnergy();
+	unsigned bareCount;
+	const std::vector<SFill> mexes = GetMexFills(range, pos, maxDist, queued, bareCount);
+	const std::vector<SFill> gaps = GetGapFills(range, pos, maxDist, queued);
+	const SFill* fill = TryFills(cdef, mexes.data(), mexes.data() + bareCount, predicate, outPos);  // 1. bare mexes
+	if (fill == nullptr) {
+		fill = TryFills(cdef, gaps.data(), gaps.data() + gaps.size(), predicate, outPos);  // 2. the plan's gaps
+	}
+	if (fill == nullptr) {
+		fill = TryFills(cdef, mexes.data() + bareCount, mexes.data() + mexes.size(), predicate, outPos);  // 3. poor grids
+	}
+	if (fill == nullptr) {
+		return nullptr;
+	}
+	outSite = fill->site;
+	return fill->link;
+}
+
+const CEnergyGrid::SFill* CEnergyGrid::TryFills(CCircuitDef* cdef, const SFill* first, const SFill* last,
+		const Predicate& predicate, AIFloat3& outPos)
+{
+	const int frame = circuit->GetLastFrame();
+	for (int tries = 0; (first < last) && (tries < 4); ++first) {  // FindBuildSite is the costly part
+		const int key = (cdef->GetId() << 20) | ((int(first->site.from.z) / 64) << 10) | (int(first->site.from.x) / 64);
+		auto it = fillRetryFrames.find(key);
+		if ((it != fillRetryFrames.end()) && (frame < it->second)) {
+			continue;  // failed lately: skipped, without using up a try
+		}
+		++tries;
+		outPos = FindLinkSite(cdef, first->site, first->site.fromReach * 0.5f, predicate);
+		if (utils::is_valid(outPos)) {
+			return first;
+		}
+		fillRetryFrames[key] = frame + FRAMES_PER_SEC * 30;
+	}
+	outPos = -RgtVector;
+	return nullptr;
+}
+
+std::vector<CEnergyGrid::SPiece> CEnergyGrid::GetQueuedEnergy()
+{
+	std::vector<SPiece> pieces;
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	for (IBuilderTask::BuildType type : {IBuilderTask::BuildType::ENERGY, IBuilderTask::BuildType::PYLON}) {
+		for (const IBuilderTask* t : builderMgr->GetTasks(type)) {
+			const CCircuitDef::Id defId = t->GetBuildDef()->GetId();
+			if (!IsEnergyDef(defId)) {
+				continue;  // an energypylon's reach would cover everything around it
+			}
+			pieces.push_back(utils::is_valid(t->GetBuildPos())
+					? SPiece{t->GetBuildPos(), GetPylonRange(defId)}
+					: SPiece{t->GetPosition(), GetPylonRange(defId) + SQUARE_SIZE * 16});  // not placed yet: up to its shake off
+		}
+	}
+	return pieces;
+}
+
+int CEnergyGrid::CountLinked(const std::vector<SPiece>& pieces, const AIFloat3& pos, float range)
+{
+	return std::count_if(pieces.begin(), pieces.end(), [&pos, range](const SPiece& c) {
+		return c.pos.SqDistance2D(pos) < SQUARE(range + c.range);
+	});
+}
+
+std::vector<CEnergyGrid::SFill> CEnergyGrid::GetMexFills(float range, const AIFloat3& pos, float maxDist,
+		const std::vector<SPiece>& queued, unsigned& outBareCount)
+{
+	const int frame = circuit->GetLastFrame();
+	const std::vector<SGridNode>& grid = GetGridNodes();
+
+	// Energy of the ally team, being built too: the grids' snapshot lags
+	std::vector<SPiece> pieces;
+	for (const auto& kv : circuit->GetFriendlyUnits()) {  // fresh: Update
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if ((edef != nullptr) && IsEnergyDef(edef->GetId()) && (GetPylonRange(edef->GetId()) > 0.f)) {
+			pieces.push_back({kv.second->GetPos(frame), GetPylonRange(edef->GetId())});
+		}
+	}
+
+	std::vector<SFill> mexes;
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		CCircuitUnit* unit = kv.second;
+		if (!unit->GetCircuitDef()->IsMex() || unit->GetUnit()->IsBeingBuilt()) {
+			continue;
+		}
+		const AIFloat3& p = unit->GetPos(frame);
+		const float sqDist = p.SqDistance2D(pos);
+		const float mexRange = GetPylonRange(unit->GetCircuitDef()->GetId());
+		if ((sqDist >= SQUARE(maxDist)) || (CountLinked(queued, p, mexRange) > 0)) {
+			continue;
+		}
+		auto it = gridNodeIndex.find(kv.first);
+		const SGridNode* node = (it != gridNodeIndex.end()) ? &grid[it->second] : nullptr;
+		if (node == nullptr) {  // not in the snapshot yet (just built, or no gridNumber yet): the grid it overlaps
+			for (const SGridNode& n : grid) {
+				if ((n.pos.SqDistance2D(p) < SQUARE(n.range + mexRange)) && ((node == nullptr) || (n.capacity > node->capacity))) {
+					node = &n;
+				}
+			}
+		}
+		const int count = CountLinked(pieces, p, mexRange);
+		if ((node == nullptr) && (count > 0)) {
+			continue;  // energy beside it, of a grid the snapshot doesn't have yet
+		}
+		const float perMex = (node != nullptr) ? node->capacity / std::max(node->mexCount, 1) : 0.f;
+		mexes.push_back({MakeLinkSite(range, p, mexRange, p, mexRange), nullptr, perMex, count, sqDist});
+	}
+	std::sort(mexes.begin(), mexes.end());  // so the bare ones (on no grid with energy, none beside) first, nearest first
+	outBareCount = std::count_if(mexes.begin(), mexes.end(), [](const SFill& f) {
+		return (f.perMex <= 0.f) && (f.pieces == 0);
+	});
+	return mexes;
+}
+
+std::vector<CEnergyGrid::SFill> CEnergyGrid::GetGapFills(float range, const AIFloat3& pos, float maxDist,
+		const std::vector<SPiece>& queued)
+{
+	// Gap ends: a head (the building of the linked part nearest the other part) that grows towards the other head
+	std::vector<SFill> gaps;
+	auto addGap = [&gaps, &pos, maxDist, range](IGridLink* link, const AIFloat3& p0, float r0, const AIFloat3& p1, float r1) {
+		const float sqDist = p0.SqDistance2D(pos);
+		if ((sqDist < SQUARE(maxDist)) && (p0.SqDistance2D(p1) > SQUARE(r0 + r1))) {
+			gaps.push_back({MakeLinkSite(range, p0, r0, p1, r1), link, 0.f, 0, sqDist});
+		}
+	};
+	// Within a finished cluster. Not held as being built: that hides the cluster, and all its links, from the plan's
+	// own linker (GetLinkToBuild); a queued energy job that links to the head holds it instead
+	for (unsigned i = 0; i < nodes.size(); ++i) {
+		CEnergyNode* node = nodes[i];
+		if (!linkedClusters[i] || node->IsBeingBuilt() || !node->IsValid() || node->IsMexed()) {
+			continue;
+		}
+		const CEnergyNode::SPylon& h0 = node->GetSourceHead();
+		const CEnergyNode::SPylon& h1 = node->GetTargetHead();
+		if (CountLinked(queued, h0.pos, h0.range) == 0) {
+			addGap(nullptr, h0.pos, h0.range, h1.pos, h1.range);
+		}
+	}
+	// The plan: links between finished clusters, held as being built by the job
+	const CMetalData::ClusterGraph& clusterGraph = circuit->GetMetalManager()->GetClusterGraph();
+	for (const CMetalData::ClusterGraph::Edge edge : spanningTree) {
+		CEnergyLink& link = links[clusterGraph.id(edge)];
+		if (!link.IsFinished() && !link.IsBeingBuilt() && link.IsValid()) {
+			const CEnergyLink::SPylon* h0 = link.GetSourceHead();
+			const CEnergyLink::SPylon* h1 = link.GetTargetHead();
+			addGap(&link, h0->pos, h0->range, h1->pos, h1->range);
+			addGap(&link, h1->pos, h1->range, h0->pos, h0->range);  // each end is on its own cluster's grid
+		}
+	}
+
+	std::sort(gaps.begin(), gaps.end());  // nearest first
+	return gaps;
+}
+
 float CEnergyGrid::GetPylonRange(CCircuitDef::Id defId)
 {
 	auto it = pylonRanges.find(defId);
@@ -320,6 +523,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 	}
 	gridNodesFrame = frame;
 	gridNodes.clear();
+	gridNodeIndex.clear();
 
 	// The overdrive gadget puts gridNumber on every grid building, and the grid's capacity (OD_gridMaximum) on its
 	// energy buildings and pylons, not on mexes or consumers. All of a grid carry the same value: read it once per grid.
@@ -329,6 +533,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 	struct SRaw {
 		float income;  // off ones: their energy when back on
 		int gameGrid;  // 0 = off
+		bool isMex;
 	};
 	std::vector<SRaw> raws;
 	std::vector<int> offs;  // indices of off ones
@@ -346,7 +551,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 		}
 		Unit* u = unit->GetUnit();
 		const bool isConsumer = GetNeededLink(cdef->GetId()) > 0.f;
-		SRaw raw = {0.f, 0};
+		SRaw raw = {0.f, 0, cdef->IsMex()};
 		if (IsOffGrid(u, isConsumer)) {
 			if (u->IsBeingBuilt()) {
 				continue;
@@ -368,7 +573,8 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 				}
 			}
 		}
-		gridNodes.push_back({unit->GetId(), unit->GetPos(frame), range, raw.gameGrid, 0.f});
+		gridNodeIndex[unit->GetId()] = gridNodes.size();
+		gridNodes.push_back({unit->GetId(), unit->GetPos(frame), range, raw.gameGrid, 0.f, 0});
 		raws.push_back(raw);
 	}
 
@@ -409,12 +615,14 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 	struct SSet {
 		int id;
 		float capacity;
+		int mexCount;
 		std::set<int> gameGrids;
 	};
 	std::unordered_map<int, SSet> sets;
 	for (unsigned i = 0; i < raws.size(); ++i) {
-		SSet& set = sets.emplace(find(i), SSet{0, 0.f, {}}).first->second;
+		SSet& set = sets.emplace(find(i), SSet{0, 0.f, 0, {}}).first->second;
 		set.capacity += raws[i].income;
+		set.mexCount += raws[i].isMex ? 1 : 0;
 		if (raws[i].gameGrid > 0) {
 			set.gameGrids.insert(raws[i].gameGrid);
 		}
@@ -433,6 +641,7 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 		const SSet& set = sets.find(find(i))->second;
 		gridNodes[i].grid = set.id;
 		gridNodes[i].capacity = set.capacity;
+		gridNodes[i].mexCount = set.mexCount;
 	}
 	return gridNodes;
 }
@@ -490,7 +699,10 @@ CEnergyNode* CEnergyGrid::FindNodeDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 			sweetPos = pylon0.pos + dir.Normalize2D() * (pylon0.range + range) * 0.95f;
 		}
 
-		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING);
+		CTerrainManager::TerrainPredicate isAllowed = [economyMgr, outDef](const AIFloat3& p) {
+			return economyMgr->IsAllowedAt(outDef, p);  // economy.energy.base_only: no wind away from the base
+		};
+		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isAllowed);
 		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)) {
 			break;
 		} else {
@@ -553,7 +765,10 @@ CEnergyLink* CEnergyGrid::FindLinkDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 			continue;
 		}
 
-		outPos = terrainMgr->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING);
+		CTerrainManager::TerrainPredicate isAllowed = [economyMgr, outDef](const AIFloat3& p) {
+			return economyMgr->IsAllowedAt(outDef, p);  // economy.energy.base_only: no wind away from the base
+		};
+		outPos = terrainMgr->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isAllowed);
 		if (utils::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)) {
 			break;
 		} else {

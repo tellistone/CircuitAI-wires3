@@ -604,8 +604,11 @@ void IBuilderTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, flo
 		facing = (2 * pos.z > terHeight) ? UNIT_FACING_NORTH : UNIT_FACING_SOUTH;
 	}
 
-	CTerrainManager::TerrainPredicate predicate = [terrainMgr, builder](const AIFloat3& p) {
-		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance());
+	CEconomyManager* economyMgr = manager->GetCircuit()->GetEconomyManager();
+	CCircuitDef* cdef = buildDef;
+	CTerrainManager::TerrainPredicate predicate = [terrainMgr, economyMgr, cdef, builder](const AIFloat3& p) {
+		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance())
+			&& economyMgr->IsAllowedAt(cdef, p);  // economy.energy.base_only
 	};
 	SetBuildPos(terrainMgr->FindBuildSite(buildDef, pos, searchRadius, facing, predicate));
 }
@@ -630,8 +633,11 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
 			}
 			if (isValid) {
-				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
-														  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
+				// economy.energy.fill places it (beside this mex while it is on no grid with energy); else at this mex
+				if (circuit->GetEconomyManager()->EnqueueFillEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL) == nullptr) {
+					circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
+															  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
+				}
 			}
 		}
 	}
