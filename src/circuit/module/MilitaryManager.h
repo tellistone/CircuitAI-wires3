@@ -128,6 +128,31 @@ public:
 	// MakeDefence's cap on a point's towers: MIN_BUILD_SEC x porcupine.amount x income
 	float GetDefenceCap() const;
 
+	/*
+	 * porcupine.budget: one turret account for every armed defence the AI queues (CTurretPicker::IsDefence: no
+	 * shields, storages, caretakers, radars, Claw mines, missiles or turret.not_defence statics), but preventive ones.
+	 * It fills at share x avg metal income x min(economy ms_pull, 1), up to bank_sec seconds of that (or the dearest
+	 * tower a waiting spender asked for in the last 2 minutes). Every armed DEFENCE job is charged as it is queued
+	 * (CBuilderManager::AddTask), by the spender a TurretScope names (OTHER when none does), and refunded if it is
+	 * called off before it starts. Porc (porc-mode towers of a cluster or its chokes) and the picker wait for the
+	 * balance to cover a tower (CanAffordTurret); the rest are charged but never refused and may take it below zero.
+	 * Preventive towers (a cluster outside porc mode) are free, and only logged
+	 */
+	enum class TurretSpend: int {OTHER = 0, PORC, PREVENT, PICKER, CORNERED, BASE, GUARD, ESCORT, HUB, _SIZE_};
+	class TurretScope {  // the spender of the DEFENCE jobs queued while it lives
+	public:
+		TurretScope(CMilitaryManager* mgr, TurretSpend spend) : mgr(mgr), prev(mgr->turretSpend) { mgr->turretSpend = spend; }
+		~TurretScope() { mgr->turretSpend = prev; }
+	private:
+		CMilitaryManager* mgr;
+		TurretSpend prev;
+	};
+	bool CanAffordTurret(float cost);
+	void ChargeTurret(CBDefenceTask* task);
+	void RefundTurret(CBDefenceTask* task);
+	void UpdateTurretBudget();  // accrues; logs the spend once a minute
+	float* GetTurretShare() { return &turretBudget.share; }  // choke_overlay set turret.share
+
 	// Chokepoint features (CChokeMap::SConfig), each off by default
 	CChokeDefence* GetChokeDefence() const { return chokeDefence.get(); }
 	CSpotScorer* GetSpotScorer() const { return spotScorer.get(); }
@@ -752,6 +777,18 @@ private:
 	unsigned GetPreventCount(int cluster, CCircuitDef* sightDef, bool& outIsAir);
 	void UpdatePreventSight();
 	float amountFactor;
+	struct STurretBudget {
+		float share = 0.1f;
+		float bankSec = 60.f;
+		float balance = 0.f;
+		int frame = -1;
+		float askCost = 0.f;  // the dearest tower a gated spender asked for and couldn't afford
+		int askFrame = -1;
+		int logFrame = -1;
+		float spent[static_cast<int>(TurretSpend::_SIZE_)] = {};  // since the last log line
+		float refunded = 0.f;
+	} turretBudget;
+	TurretSpend turretSpend = TurretSpend::OTHER;
 	CCircuitDef* radarDef;
 	CCircuitDef* sonarDef;
 	CCircuitDef* bigGunDef;

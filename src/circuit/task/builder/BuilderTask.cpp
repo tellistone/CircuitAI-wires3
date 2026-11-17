@@ -7,6 +7,7 @@
 
 #include "task/builder/BuilderTask.h"
 #include "task/builder/BuildChain.h"
+#include "task/builder/DefenceTask.h"
 #include "task/RetreatTask.h"
 #include "map/ThreatMap.h"
 #include "map/InfluenceMap.h"
@@ -176,6 +177,15 @@ void IBuilderTask::Finish()
 
 void IBuilderTask::Cancel()
 {
+	// porcupine.budget: the turret account gets back what it paid for towers that never started, its own and those
+	// waiting in its chain (deleted with it)
+	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	for (IBuilderTask* t = this; (militaryMgr != nullptr) && (t != nullptr); t = t->GetNextTask()) {
+		if ((t->GetBuildType() == BuildType::DEFENCE) && (t->GetTarget() == nullptr)) {
+			militaryMgr->RefundTurret(static_cast<CBDefenceTask*>(t));
+		}
+	}
+
 	if ((target == nullptr) && utils::is_valid(buildPos)) {
 		SetBuildPos(-RgtVector);
 	}
@@ -704,6 +714,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 		CCircuitDef* bdef = units.empty() ? circuit->GetSetupManager()->GetCommChoice() : (*this->units.begin())->GetCircuitDef();
 		CBuilderManager* builderMgr = circuit->GetBuilderManager();
 		CEnemyManager* enemyMgr = circuit->GetEnemyManager();
+		CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::HUB);
 
 		for (auto& queue : chain->hub) {
 			IBuilderTask* parent = nullptr;

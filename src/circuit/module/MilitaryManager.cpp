@@ -1062,6 +1062,17 @@ void CMilitaryManager::ReadConfig()
 	amountFactor = (maxFactor - minFactor) / (SQUARE(maxMap) - SQUARE(minMap)) * (mapSize - SQUARE(minMap)) + minFactor + offset;
 //	amountFactor = std::max(amountFactor, 0.f);
 
+	// porcupine.budget, the turret account. Missing: the old behaviour.json turret.share, else 0.1
+	const Json::Value& budget = porc["budget"];
+	const Json::Value& oldShare = root["turret"]["share"];
+	turretBudget.share = budget.isObject() ? budget.get("share", turretBudget.share).asFloat()
+			: (oldShare.isNumeric() ? oldShare.asFloat() : turretBudget.share);
+	turretBudget.bankSec = budget.isObject() ? budget.get("bank_sec", turretBudget.bankSec).asFloat() : turretBudget.bankSec;
+	turretBudget.share = std::max(turretBudget.share, 0.f);
+	turretBudget.bankSec = std::max(turretBudget.bankSec, 1.f);
+	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1), bank %.0f s%s", turretBudget.share,
+			turretBudget.bankSec, budget.isObject() ? "" : (oldShare.isNumeric() ? " (turret.share)" : " (defaults)"));
+
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
 	for (const Json::Value& pair : base) {
@@ -1951,6 +1962,91 @@ float CMilitaryManager::GetDefenceCap() const
 	return MIN_BUILD_SEC * amountFactor * metalIncome;
 }
 
+void CMilitaryManager::UpdateTurretBudget()
+{
+	STurretBudget& b = turretBudget;
+	const int frame = circuit->GetLastFrame();
+	CEconomyManager* em = circuit->GetEconomyManager();
+	const float pull = std::min(em->GetPullMtoS(), 1.f);
+	const float rate = b.share * em->GetAvgMetalIncome() * pull;  // metal/s
+	if ((b.askFrame >= 0) && (frame - b.askFrame > FRAMES_PER_SEC * 120)) {
+		b.askCost = 0.f;  // nobody waiting asked lately
+		b.askFrame = -1;
+	}
+	if (b.frame >= 0) {
+		const float cap = std::max(rate * b.bankSec, b.askCost);
+		if (b.balance < cap) {
+			b.balance = std::min(b.balance + rate * float(frame - b.frame) / FRAMES_PER_SEC, cap);
+		}
+	}
+	b.frame = frame;
+	if (b.logFrame < 0) {
+		b.logFrame = frame + FRAMES_PER_SEC * 60;
+	} else if (frame >= b.logFrame) {
+		b.logFrame = frame + FRAMES_PER_SEC * 60;
+		static const char* names[] = {"other", "porc", "prevent (free)", "picker", "cornered", "base", "guard",
+				"escort", "hub"};
+		std::string spent;
+		float total = 0.f;
+		for (int i = 0; i < static_cast<int>(TurretSpend::_SIZE_); ++i) {
+			if (b.spent[i] > 0.f) {
+				spent += std::string(spent.empty() ? "" : ", ") + names[i] + " " + utils::int_to_string(int(b.spent[i]));
+				total += (i == static_cast<int>(TurretSpend::PREVENT)) ? 0.f : b.spent[i];
+			}
+			b.spent[i] = 0.f;
+		}
+		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f), last minute charged %.0f, refunded %.0f: %s",
+				b.balance, rate, b.share, em->GetAvgMetalIncome(), pull, total, b.refunded,
+				spent.empty() ? "nothing" : spent.c_str());
+		b.refunded = 0.f;
+	}
+}
+
+bool CMilitaryManager::CanAffordTurret(float cost)
+{
+	UpdateTurretBudget();
+	STurretBudget& b = turretBudget;
+	if (b.balance >= cost) {
+		return true;
+	}
+	b.askCost = std::max(b.askCost, cost);
+	b.askFrame = circuit->GetLastFrame();
+	return false;
+}
+
+void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
+{
+	CCircuitDef* def = task->GetBuildDef();
+	if ((turretPicker == nullptr) || !turretPicker->IsDefence(def)) {
+		return;  // not a turret: a shield, storage, caretaker, radar, Claw mine, missile or turret.not_defence
+	}
+	UpdateTurretBudget();
+	STurretBudget& b = turretBudget;
+	const float cost = def->GetCostM();
+	b.spent[static_cast<int>(turretSpend)] += cost;
+	if (turretSpend == TurretSpend::PREVENT) {
+		return;
+	}
+	b.balance -= cost;
+	task->SetCharge(cost, static_cast<int>(turretSpend));
+	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER)) {
+		b.askCost = 0.f;  // a waiting spender got its tower
+		b.askFrame = -1;
+	}
+}
+
+void CMilitaryManager::RefundTurret(CBDefenceTask* task)
+{
+	const float charged = task->GetCharged();
+	if (charged <= 0.f) {
+		return;
+	}
+	STurretBudget& b = turretBudget;
+	b.balance += charged;
+	b.refunded += charged;
+	task->SetCharge(0.f, task->GetSpend());
+}
+
 AIFloat3 CMilitaryManager::GetBackPos(const AIFloat3& pos) const
 {
 	AIFloat3 backPos = pos + (circuit->GetSetupManager()->GetBasePos() - pos).Normalize2D() * SQUARE_SIZE * 16;
@@ -1971,6 +2067,9 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 	// that brings the total exactly to the cap still goes, so the one-tower floor of a choke's share is met
 	const bool isPooled = (point->chokeId >= 0);
 	const int copies = isPooled ? POOL_COPIES : 1;
+	// porcupine.budget: porc-mode towers wait for the turret account (the sweep comes back for the rest); preventive
+	// ones are free
+	TurretScope scope(this, isPorc ? TurretSpend::PORC : TurretSpend::PREVENT);
 	for (int copy = 0; copy < copies; ++copy) {
 		const float copyStart = totalCost;
 		for (CCircuitDef* defDef : towers) {
@@ -1985,6 +2084,9 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 			}
 			if (isPooled ? (totalCost > cap) : (totalCost >= cap)) {
 				// TODO: Auto-sort defenders by cost OR remove break?
+				return;
+			}
+			if (isPorc && turretPicker->IsDefence(defDef) && !CanAffordTurret(defCost)) {
 				return;
 			}
 			point->cost += defCost;
@@ -3617,6 +3719,7 @@ void CMilitaryManager::UpdateDefence()
 						buildPos = spot;
 					}
 				}
+				TurretScope scope(this, TurretSpend::BASE);
 				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, buildPos,
 														  IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
 			}

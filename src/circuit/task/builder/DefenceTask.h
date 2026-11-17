@@ -31,6 +31,10 @@ public:
 	// longer pays
 	void SetPicker() { isPicker = isOffPoints = true; }
 	bool IsPicker() const { return isPicker; }
+	// porcupine.budget: what the turret account charged for it (0 = free), and the spender
+	void SetCharge(float value, int by) { charged = value; spend = by; }
+	float GetCharged() const { return charged; }
+	int GetSpend() const { return spend; }
 
 protected:
 	virtual void Finish() override;
@@ -41,6 +45,8 @@ protected:
 	bool isOffPoints;
 	bool isPicker;
 	float normalCost;
+	float charged;
+	int spend;
 };
 
 } // namespace circuit

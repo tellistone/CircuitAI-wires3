@@ -143,6 +143,7 @@ IBuilderTask* CSensorPlanner::MakeGuardTask(const AIFloat3& radarPos)
 	if (!utils::is_valid(pos)) {
 		pos = radarPos;
 	}
+	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::GUARD);
 	return circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::HIGH, guardDef, pos,
 			IBuilderTask::BuildType::DEFENCE, guardDef->GetCostM(), 0.f, false);
 }

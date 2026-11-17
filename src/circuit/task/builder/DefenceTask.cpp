@@ -32,6 +32,8 @@ CBDefenceTask::CBDefenceTask(ITaskManager* mgr, Priority priority,
 		, isOffPoints(false)
 		, isPicker(false)
 		, normalCost(cost)
+		, charged(0.f)
+		, spend(0)
 {
 }
 

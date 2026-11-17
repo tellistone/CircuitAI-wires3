@@ -17,6 +17,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   grid plan sees it when done. Gap fills count as energy jobs for the energy budget and as energy stall fixes. No gap
   in reach: at the nearest mex as before. No `unit` list: off.
 
+- **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
+  defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own
+  `turret.share` bank, and cornered, base timetable, radar guard, mex escort and build-chain hub towers were free. Now
+  every armed defence the AI queues (not shields, storages, caretakers, radars, Claw mines, missiles or
+  `turret.not_defence`) is charged to one account per AI as it is queued, refunded if called off before it starts.
+  It fills at `share` x avg metal income x min(economy ms_pull, 1), so a strong enemy army or high income (which
+  lower ms_pull) cut turret spending as they shift metal to factories. Porc-mode towers (a cluster's and its chokes')
+  and the picker wait for the balance to cover a tower; the others are charged but never refused and may take it
+  below zero; preventive towers are free. The per-point cap still spreads towers across points. `turret.share` is
+  gone (read as the share when `budget` is missing). `TURRET BUDGET` in the log once a minute: balance, rate, and
+  the spend by spender
+
 - **Attack groups count allied cover** (`quota.attack_ally_cover`, 0..0.75; code default 0 = off, shipped 0.5). A group
   judged every spot by its own strength alone, so two armies beside each other each refused a fight they could take
   together, and a group fled past our own turrets as if they weren't there. Now allies over a spot multiply the group's
