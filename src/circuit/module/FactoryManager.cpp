@@ -455,6 +455,126 @@ void CFactoryManager::ReadConfig()
 	}
 
 	/*
+	 * Priority targeting, behaviour.json "target_tiers" (CPriorityArtyTask). Read after the loop above, because a tier
+	 * matches other types' roles and attributes. Each tier: "unit" (names), "role" (enemy roles), "attribute" and/or
+	 * "any": true; optional "los" (true: only in LOS, false: only out of it, absent: both) and "splash" (value is the
+	 * cost of enemy buildings within splash of the aim point). An enemy type takes the first tier it matches
+	 */
+	for (const std::string& defName : behaviours.getMemberNames()) {
+		CCircuitDef* cdef = circuit->GetCircuitDef(defName.c_str());
+		const Json::Value& behaviour = behaviours[defName];
+		if ((cdef == nullptr) || !behaviour.isObject()) {
+			continue;  // an unknown name is logged above
+		}
+		const Json::Value& tiers = behaviour["target_tiers"];
+		if (tiers.isNull()) {
+			continue;
+		}
+		if (!tiers.isArray() || tiers.empty()) {
+			circuit->LOG("CONFIG %s: %s target_tiers must be a list of tiers, ignored", cfgName.c_str(), defName.c_str());
+			continue;
+		}
+		struct STierSel {
+			std::unordered_set<CCircuitDef::Id> units;
+			CCircuitDef::RoleM roles = 0;
+			CCircuitDef::AttrM attrs = 0;
+			bool isAny = false;
+			int los = -1;  // -1: both, 0: only out of LOS, 1: only in LOS
+		};
+		std::vector<STierSel> sels;
+		auto tp = std::make_shared<STargetPriority>();
+		for (const Json::Value& tier : tiers) {
+			if (!tier.isObject()) {
+				circuit->LOG("CONFIG %s: %s target_tiers has a tier that isn't an object, ignored", cfgName.c_str(), defName.c_str());
+				continue;
+			}
+			STierSel sel;
+			for (const Json::Value& name : tier["unit"]) {
+				CCircuitDef* edef = circuit->GetCircuitDef(name.asCString());
+				if (edef == nullptr) {
+					circuit->LOG("CONFIG %s: %s target_tiers has unknown UnitDef '%s'", cfgName.c_str(), defName.c_str(), name.asCString());
+				} else {
+					sel.units.insert(edef->GetId());
+				}
+			}
+			for (const Json::Value& name : tier["role"]) {
+				auto it = roleNames.find(name.asString());
+				if (it == roleNames.end()) {
+					circuit->LOG("CONFIG %s: %s target_tiers has unknown role '%s'", cfgName.c_str(), defName.c_str(), name.asCString());
+				} else {
+					sel.roles |= it->second.mask;
+				}
+			}
+			for (const Json::Value& name : tier["attribute"]) {
+				auto it = attrNames.find(name.asString());
+				if (it == attrNames.end()) {
+					circuit->LOG("CONFIG %s: %s target_tiers has unknown attribute '%s'", cfgName.c_str(), defName.c_str(), name.asCString());
+				} else {
+					sel.attrs |= CCircuitDef::GetMask(static_cast<CCircuitDef::AttrT>(it->second));
+				}
+			}
+			sel.isAny = tier.get("any", false).asBool();
+			const Json::Value& los = tier["los"];
+			if (los.isBool()) {
+				sel.los = los.asBool() ? 1 : 0;
+			}
+			sels.push_back(sel);
+			tp->isSplash.push_back(tier.get("splash", false).asBool());
+			tp->hasSplash |= tp->isSplash.back();
+		}
+		if (sels.empty()) {
+			continue;
+		}
+		const int tierCount = static_cast<int>(sels.size());
+		auto firstTier = [&](const CCircuitDef* edef, int los) {
+			for (int i = 0; i < tierCount; ++i) {
+				const STierSel& sel = sels[i];
+				if ((sel.los >= 0) && (sel.los != los)) {
+					continue;
+				}
+				if (sel.isAny || ((edef != nullptr) && ((sel.units.find(edef->GetId()) != sel.units.end())
+					|| edef->IsEnemyRoleAny(sel.roles) || edef->IsAttrAny(sel.attrs))))
+				{
+					return i;
+				}
+			}
+			return static_cast<int>(STargetPriority::NO_TIER);
+		};
+		CCircuitAI::CircuitDefs& defs = circuit->GetCircuitDefs();
+		tp->tierOf.assign(defs.size() + 1, {STargetPriority::NO_TIER, STargetPriority::NO_TIER});
+		for (const CCircuitDef& edef : defs) {
+			tp->tierOf[edef.GetId()] = {firstTier(&edef, 0), firstTier(&edef, 1)};
+		}
+		tp->unknownTier = {firstTier(nullptr, 0), firstTier(nullptr, 1)};
+
+		const Json::Value& guard = behaviour["target_guard"];  // {"side": <x distance>, "along": <elmos>}
+		tp->guardSide = std::max(guard.get("side", tp->guardSide).asFloat(), 0.f);
+		tp->guardAlong = std::max(guard.get("along", tp->guardAlong).asFloat(), 0.f);
+		const Json::Value& turn = behaviour["turn_rate"];  // [<heading>, <pitch>] degrees a second; pitch 0: free
+		if (turn.isArray() && (turn.size() == 2)) {
+			tp->turnYaw = std::max(turn[0].asFloat(), 0.1f);
+			tp->turnPitch = std::max(turn[1].asFloat(), 0.f);
+		}
+		tp->isTurnFlip = behaviour.get("turn_flip", tp->isTurnFlip).asBool();
+		tp->turnHalfValue = std::max(behaviour.get("turn_half_value", tp->turnHalfValue).asFloat(), 0.f);
+		tp->splashRadius = behaviour.get("splash_radius", tp->splashRadius).asFloat();
+		tp->shotGrace = std::max(behaviour.get("shot_grace", tp->shotGrace).asFloat(), 1.f);
+		tp->mobileMove = behaviour.get("mobile_move", tp->mobileMove).asFloat();
+		tp->isHighArc = behaviour.get("high_arc", tp->isHighArc).asBool();
+		const Json::Value& beam = behaviour["beam"];  // {"height": <elmos>, "range": <elmos>, "dps": <damage/s>}
+		if (beam.isObject()) {
+			tp->beamHeight = std::max(beam.get("height", 0.f).asFloat(), 0.f);
+			tp->beamRange = std::max(beam.get("range", 0.f).asFloat(), 0.f);
+			tp->beamDps = std::max(beam.get("dps", tp->beamDps).asFloat(), 1.f);
+			if (tp->beamRange <= tp->beamHeight) {
+				circuit->LOG("CONFIG %s: %s beam needs a range above its height, ignored", cfgName.c_str(), defName.c_str());
+				tp->beamHeight = 0.f;
+			}
+		}
+		cdef->SetTargetPriority(tp);
+	}
+
+	/*
 	 * Factories
 	 */
 	const bool warnProb = root.get("warn_probability", true).asBool();

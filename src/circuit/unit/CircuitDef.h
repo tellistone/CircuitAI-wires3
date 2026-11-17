@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <unordered_set>
 #include <array>
+#include <memory>
+#include <vector>
 
 namespace springai {
 	class Unit;
@@ -29,6 +31,40 @@ class CCircuitAI;
 #define ROLE_TYPE(x)	static_cast<CCircuitDef::RoleT>(CCircuitDef::RoleType::x)
 
 class CWeaponDef;
+class CCircuitDef;
+
+/*
+ * behaviour.json "target_tiers" (CPriorityArtyTask): a gun's priority list. Each enemy type gets the first tier
+ * it matches, once for "in LOS" and once for "not in LOS", when the config is read (CFactoryManager::ReadConfig)
+ */
+struct STargetPriority {
+	static constexpr int NO_TIER = -1;
+	using Tiers = std::array<int, 2>;  // [0]: not in LOS, [1]: in LOS
+	std::vector<Tiers> tierOf;  // by enemy CCircuitDef::Id; NO_TIER: not a target
+	Tiers unknownTier = {NO_TIER, NO_TIER};  // enemies of unknown type (radar dots)
+	std::vector<bool> isSplash;  // per tier: value is the cost of enemy buildings within splash of the aim point
+	bool hasSplash = false;  // any tier is
+	// Friendly guard (a box along the line of fire around the aim point): AoE + guardSide x distance sideways,
+	// AoE + guardAlong along the line. Shells scatter mostly along the line (accuracy changes the launch pitch)
+	float guardSide = 0.035f;
+	float guardAlong = 300.f;
+	float turnYaw = 4.f;  // turret turn rates, degrees a second
+	float turnPitch = 2.f;  // 0: pitch is free (a spinning barrel lines up by itself)
+	bool isTurnFlip = false;  // fires backwards: never turns its heading more than 90 degrees
+	float turnHalfValue = 0.f;  // > 0: this many seconds of turning halve a target's value (turning costs fire rate)
+	float splashRadius = -1.f;  // radius for splash value; < 0: the weapon's AoE
+	float shotGrace = 10.f;  // seconds: a shot is due within turning + 1 reload + this
+	float mobileMove = -1.f;  // >= 0: a mobile unit that would move further during the shell's flight ranks last
+	bool isHighArc = false;  // trajectory toggle: the high arc for a building the low arc can't reach over terrain
+	// "beam" (Starlight): a satellite beam, always on while undocked, burns wherever it points
+	float beamHeight = 0.f;  // > 0: beam mode; the satellite's height above the base
+	float beamRange = 0.f;  // the beam's reach from the satellite (3D)
+	float beamDps = 4500.f;  // steady beam damage a second
+
+	int GetTier(const CCircuitDef* edef, bool isInLos) const;
+	bool IsSplash(int tier) const { return (tier >= 0) && (tier < (int)isSplash.size()) && isSplash[tier]; }
+	bool IsBeam() const { return beamHeight > 0.f; }
+};
 
 class CCircuitDef {
 public:
@@ -171,6 +207,7 @@ public:
 	bool IsAttrRaidTarget() const { return attr & AttrMask::RAID_TARGET; }
 	bool IsAttrNoForm()     const { return attr & AttrMask::NO_FORM; }
 	bool IsAttrCloakRoute() const { return attr & AttrMask::CLOAK_ROUTE; }
+	bool IsAttrAny(AttrM value) const { return (attr & value) != 0; }
 
 	bool IsHoldFire()   const { return fireState == FireType::HOLD; }
 	bool IsReturnFire() const { return fireState == FireType::RETURN; }
@@ -217,6 +254,8 @@ public:
 	// (D-gun) and shields left out, so one big splash weapon it seldom fires (a strider's manual-fire or landing
 	// weapon) doesn't make it area damage. A mobile bomb: its explosion's
 	float GetFireAoe() const { return fireAoe; }
+	// A shot's damage averaged over its weapons, manual fire (D-gun) and shields left out, paralyzers 0
+	float GetShotDamage() const { return shotDmg; }
 	float GetPower() const { return power; }
 	float GetThreat() const { return threat; }
 	// How much one enemy of this type counts in the threat map's enemy unit count (CThreatMap squad layers):
@@ -328,6 +367,9 @@ public:
 	// Attack target choice: this enemy type's distance counts as this many times its real distance
 	void SetTargetDistMod(float value) { targetDistMod = value; }
 	float GetTargetDistMod() const { return targetDistMod; }
+	// behaviour.json "target_tiers": its targets come from a priority list (CPriorityArtyTask); nullptr: none
+	void SetTargetPriority(std::shared_ptr<STargetPriority> value) { targetPriority = value; }
+	const STargetPriority* GetTargetPriority() const { return targetPriority.get(); }
 	// How good this type is against raiders, 0.1..4: behaviour.json per unit "raid_thr_mod", else quota.raid_thr_role
 	// for its main role (the first in its role list), else 1. As an enemy: its threat on the raid view (CThreatMap
 	// raid layers, read by raid and scout tasks) is its threat (thr_mod included) x this. As ours: an attack group
@@ -382,6 +424,7 @@ private:
 	float thrMod;  // product of the threat multipliers (thr_mod)
 	float aoe;  // radius
 	float fireAoe;  // radius: GetFireAoe
+	float shotDmg;  // GetShotDamage
 	float power;  // ally max threat
 	float threat;  // enemy max threat
 	float minRange;
@@ -458,6 +501,7 @@ private:
 	bool isReloadScootMarginSet = false;
 	float captureHide = 0.f;
 	float targetDistMod = 1.f;
+	std::shared_ptr<STargetPriority> targetPriority;  // GetTargetPriority
 	float raidThrMod = 1.f;  // GetRaidThrMod
 	int formationRow = -1;
 

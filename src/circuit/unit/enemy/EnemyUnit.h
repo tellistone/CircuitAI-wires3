@@ -162,6 +162,11 @@ public:
 	// new epoch)
 	bool GetParkedSpot(int frame, int parkedFrames, springai::AIFloat3& outPos, int& outEpoch) const;
 
+	// Shots priority artillery (CPriorityArtyTask) fired at it while it was out of LOS and radar, by all of the
+	// ally team's guns; back to 0 once it's seen again (UpdateInRadarData)
+	void AddBlindShot() { ++blindShots; }
+	int GetBlindShots() const { return blindShots; }
+
 private:
 	void Init();
 
@@ -175,6 +180,7 @@ private:
 	// TrackStill: not in SEnemyData, which the threat map copies on every update and doesn't need these
 	springai::AIFloat3 stillPos = springai::AIFloat3(-1.f, 0.f, -1.f);
 	int stillSince = -1;  // -1: no spot (moving, or not seen in LOS on it yet)
+	int blindShots = 0;  // AddBlindShot
 
 public:
 	void SetInLOS()     { data.SetInLOS(); }
