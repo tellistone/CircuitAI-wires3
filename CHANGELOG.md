@@ -26,11 +26,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   again only where the piece still links, else it is dropped and planned afresh. None of these in reach: at the
   nearest metal spot as before. No `unit` list: off.
 
-- **Wind only within the base** (`economy.energy.base_only`: `energywind`). Winds on land are built only within the
-  base (behaviour.json `defence.base_rad` around the base position, the radius base defence uses). The rule is on the
+- **Wind only within the base, and only on the grid** (`economy.energy.base_only`: `unit` = `energywind`, `radius`
+  1500). Winds on land are built only within `radius` elmos of the base position, at most the base defence radius
+  (0.3 of the map diagonal clamped to behaviour.json `defence.base_rad` [1000, 2000], set once at start; `radius` <= 0:
+  that radius). So big maps keep winds within 1,500 and small maps within their tighter base radius. The rule is on the
   site, at every placement: energy jobs (their spot, and the site their builder finally picks), the mex chain's energy,
   grid fills and the grid linker's link pieces; never on where the builder stands, so which energy the AI builds is
-  unchanged. Where the game builds it as tidal (ground at or below its `tidalHeight`, -10) anywhere, as before.
+  unchanged. On land a wind goes only beside a mex on no grid with energy (its first piece) or into a gap of the grid
+  plan (fill steps 1 and 2): not beside a mex of the poorest grid, and never by the fallbacks that queue energy at a
+  mex (the mex chain's, the nearest metal spot's) or where the builder stands (the builder's last resort below
+  `super` income, which now tries the fill first for solars too). Where the game builds it as tidal (ground at or below
+  its `tidalHeight`, -10) anywhere, as before. A plain list of names (the older form) still works, with radius 1500.
+  The mex chain on ground too steep for any energy at the mex (and no threat there) now asks the fill for a solar,
+  which finds a flatter site beside the mex; before, a steep mex outside the base got no energy.
 
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own
