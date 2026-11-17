@@ -7,6 +7,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
+  to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
+  fixed offset; the offset stays the fallback, and for shields, storages and AA.
 - **One scorer for every scored turret spot.** `CSpotScorer::FindSpot` (cluster and base towers with
   `choke.spot.enable`, choke towers, radar guards, hold spots) now scores and searches on the turret picker's value
   model, `CTurretValue`, with each goal's own targets and terms (setback, lean, threat, builder distance) as a factor.

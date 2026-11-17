@@ -58,7 +58,7 @@ on it.
 | Key | Default | What it turns on |
 |---|---|---|
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
-| `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored on the turret picker's value model: covered traffic and enemies in metal, height, view, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
+| `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers, the armed hub towers of build chains and the hold spots get the best spot within reach, scored on the turret picker's value model: covered traffic and enemies in metal, height, view, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
 | `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
 | `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army in the region outside it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
@@ -231,7 +231,9 @@ Spots stay on the goal's side: a choke's inner region or the defended point's re
 into through it (high ground or a dead end off it), or a wall cell no enemy walks (a ledge). A tower's spot must also
 be within build range of ground that one of our builders able to build it can walk to from where it stands, on that
 builder's own movement mask; otherwise no builder would take the job, and it would wait 5 minutes, holding up the
-porc chain behind it, before being dropped. AA towers aren't scored, they go to the point as before. A point keeps
+porc chain behind it, before being dropped. AA towers aren't scored, they go to the point as before. A build chain's `hub` tower that shoots the ground is scored
+the same way, guarding the building that started the chain (within `choke.spot.radius`); it keeps its configured offset
+when no spot passes or another tower of the same hub took that spot. Its shields, storages and AA keep their offsets. A point keeps
 its spots by tower type, and a new tower takes the first one of its type that no tower stands on or is queued at, so
 a lost tower is rebuilt at its old spot.
 

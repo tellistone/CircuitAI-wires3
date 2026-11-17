@@ -14,9 +14,12 @@
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
+#include "module/SpotScorer.h"
+#include "module/TurretPicker.h"
 #include "resource/MetalManager.h"
 #include "resource/EnergyGrid.h"
 #include "setup/SetupManager.h"
+#include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathSingle.h"
@@ -30,6 +33,8 @@
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
+
+#include <algorithm>
 
 namespace circuit {
 
@@ -717,6 +722,28 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 		CBuilderManager* builderMgr = circuit->GetBuilderManager();
 		CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 		CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::HUB);
+		// choke.spot.enable: an armed hub tower that shoots the ground goes to the spot scorer's best spot guarding the
+		// building (a POSITION goal within choke.spot.radius), as a defence point's towers do; its offset if no spot
+		// passes, or if another tower of this hub took that spot
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		const CChokeMap* chokeMap = circuit->GetChokeMap();
+		const bool isSpot = chokeMap->GetConfig().isSpot && chokeMap->IsReady();
+		CSpotScorer::SGoal goal;
+		goal.asset = buildPos;
+		std::vector<AIFloat3> spots;
+		auto findSpot = [&](CCircuitDef* cdef) -> AIFloat3 {
+			if (!isSpot || !cdef->IsAttacker() || cdef->IsRoleAA() || !militaryMgr->GetTurretPicker()->IsDefence(cdef)) {
+				return -RgtVector;
+			}
+			const AIFloat3 spot = militaryMgr->GetSpotScorer()->FindSpot(cdef, goal, chokeMap->GetConfig().spotRadius);
+			if (!utils::is_valid(spot) || std::any_of(spots.begin(), spots.end(), [&spot](const AIFloat3& s) {
+				return s.SqDistance2D(spot) < SQUARE(SQUARE_SIZE * 8);
+			})) {
+				return -RgtVector;
+			}
+			spots.push_back(spot);
+			return spot;
+		};
 
 		for (auto& queue : chain->hub) {
 			IBuilderTask* parent = nullptr;
@@ -760,9 +787,12 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 							break;
 					}
 				}
-				AIFloat3 pos = buildPos + offset;
-				CTerrainManager::CorrectPosition(pos);
-				pos = terrainMgr->GetBuildPosition(bdef, pos);
+				AIFloat3 pos = (bi.buildType == IBuilderTask::BuildType::DEFENCE) ? findSpot(bi.cdef) : -RgtVector;
+				if (!utils::is_valid(pos)) {
+					pos = buildPos + offset;
+					CTerrainManager::CorrectPosition(pos);
+					pos = terrainMgr->GetBuildPosition(bdef, pos);
+				}
 
 				if (parent == nullptr) {
 					parent = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, bi.cdef, pos, bi.buildType, 0.f, true, 0);
