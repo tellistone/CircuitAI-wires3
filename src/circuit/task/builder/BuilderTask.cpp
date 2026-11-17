@@ -496,19 +496,7 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	// TODO: Check IsForceUpdate, shield charge and retreat
 
 	const AIFloat3& endPos = GetPosition();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	// Priority repair targets are usually in combat, and wrecks often lie where we just fought:
-	// both keep the same safety rule as task selection
-	bool isReachable;
-	if ((priority == Priority::NOW) && (buildType == BuildType::REPAIR)) {
-		isReachable = terrainMgr->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
-				&& !circuit->GetBuilderManager()->IsUnsafePrioRepair(this, unit, endPos);
-	} else if ((buildType == BuildType::RECLAIM) && (target == nullptr)) {
-		isReachable = circuit->GetEconomyManager()->IsReclaimSafe(unit, endPos);
-	} else {
-		isReachable = terrainMgr->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
-	}
-	if (!isReachable) {
+	if (!IsReachable(unit, endPos)) {
 		manager->AbortTask(this);
 		return;
 	}
@@ -539,6 +527,22 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 			this->ApplyPath(static_cast<const CQueryPathSingle*>(query));
 		}
 	});
+}
+
+bool IBuilderTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	// Priority repair targets are usually in combat, and wrecks often lie where we just fought:
+	// both keep the same safety rule as task selection
+	if ((priority == Priority::NOW) && (buildType == BuildType::REPAIR)) {
+		return terrainMgr->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
+				&& !circuit->GetBuilderManager()->IsUnsafePrioRepair(this, unit, endPos);
+	}
+	if ((buildType == BuildType::RECLAIM) && (target == nullptr)) {
+		return circuit->GetEconomyManager()->IsReclaimSafe(unit, endPos);
+	}
+	return terrainMgr->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
 }
 
 void IBuilderTask::ApplyPath(const CQueryPathSingle* query)
@@ -624,20 +628,18 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 	}
 
 	if (chain->energy > 0.f) {
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		float energyMake;
-		CCircuitDef* energyDef = circuit->GetEconomyManager()->GetLowEnergy(buildPos, energyMake);
+		// isOrFill: on ground too steep for any energy at this mex, the fill can still find a site beside it
+		CCircuitDef* energyDef = economyMgr->GetLowEnergy(buildPos, energyMake, true);
 		if (energyDef != nullptr) {
-			bool isValid = (circuit->GetEconomyManager()->GetAvgEnergyIncome() < chain->energy);
+			bool isValid = (economyMgr->GetAvgEnergyIncome() < chain->energy);
 			if (isValid && chain->isMexEngy) {
 				int index = circuit->GetMetalManager()->FindNearestSpot(buildPos);
 				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
 			}
-			if (isValid) {
-				// economy.energy.fill places it (beside this mex while it is on no grid with energy); else at this mex
-				if (circuit->GetEconomyManager()->EnqueueFillEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL) == nullptr) {
-					circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
-															  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
-				}
+			if (isValid) {  // economy.energy.fill places it (beside this mex while it is on no grid with energy)
+				economyMgr->EnqueueCheapEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL, SQUARE_SIZE * 8.0f);
 			}
 		}
 	}

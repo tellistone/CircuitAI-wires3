@@ -44,16 +44,6 @@ using namespace springai;
 #define SEEN_FRAMES		(FRAMES_PER_SEC * 180)  // an enemy building out of radar and sight longer is no target
 #define KEEP_SHARE		0.75f  // of the order's threshold, that a job keeps on arrival
 
-namespace {
-
-// A target on the ground (in deep water: under it too) that def's weapons reach
-inline bool IsHit(const CCircuitDef* def, const CTurretValue::SPos& pos)
-{
-	return def->HasAntiLand() || (CTerrainManager::IsDeepWater(pos.y) && def->HasAntiWater());
-}
-
-}  // namespace
-
 CTurretPicker::CTurretPicker(CCircuitAI* circuit)
 		: circuit(circuit)
 		, inflRadius(2048.f)
@@ -78,6 +68,7 @@ void CTurretPicker::ReadConfig()
 	c.ally = turret.get("ally", c.ally).asFloat();
 	c.enemy = turret.get("enemy", c.enemy).asFloat();
 	c.front = turret.get("front", c.front).asFloat();
+	c.view = turret.get("view", c.view).asFloat();
 	c.height = turret.get("height", c.height).asFloat();
 	c.choke = turret.get("choke", c.choke).asFloat();
 	c.isAfterFlee = turret.get("after_flee", c.isAfterFlee).asBool();
@@ -88,8 +79,7 @@ void CTurretPicker::ReadConfig()
 	c.allyRadius = turret.get("ally_radius", c.allyRadius).asFloat();
 	c.cooldown = turret.get("cooldown", c.cooldown).asFloat();
 	// A list of def names (the defaults when the key is missing); a name that isn't a unit, or a turret, is logged
-	auto readDefs = [&](const char* key, std::vector<std::string> names, bool isTurret) {
-		const Json::Value& list = turret[key];
+	auto readDefs = [&](const std::string& key, const Json::Value& list, std::vector<std::string> names, bool isTurret) {
 		if (list.isArray()) {
 			names.clear();
 			for (const Json::Value& name : list) {
@@ -102,16 +92,55 @@ void CTurretPicker::ReadConfig()
 			if ((cdef != nullptr) && (!isTurret || (cdef->IsAttacker() && !cdef->IsMobile()))) {
 				defs.push_back(cdef);
 			} else {
-				circuit->LOG("CONFIG %s: turret.%s '%s' is not a %s, ignored", cfgName.c_str(), key, name.c_str(),
+				circuit->LOG("CONFIG %s: turret.%s '%s' is not a %s, ignored", cfgName.c_str(), key.c_str(), name.c_str(),
 						isTurret ? "turret" : "unit");
 			}
 		}
 		return defs;
 	};
-	c.light = readDefs("light", {"turretlaser", "turretmissile"}, true);
-	c.notDefence = readDefs("not_defence", {"staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty",
-			"staticnuke", "staticantinuke"}, false);
+	c.light = readDefs("light", turret["light"], {"turretlaser", "turretmissile"}, true);
+	c.notDefence = readDefs("not_defence", turret["not_defence"], {"staticheavyarty", "zenith", "mahlazer",
+			"starlight_satellite", "raveparty", "staticnuke", "staticantinuke"}, false);
+	const Json::Value& tiers = turret["tiers"];
+	if (tiers.isArray()) {
+		c.tiers.clear();
+		for (unsigned i = 0; i < tiers.size(); ++i) {
+			const std::string key = "tiers[" + std::to_string(i) + "].defs";
+			SConfig::STier tier = {tiers[i].get("mex", 1.f).asFloat(), readDefs(key, tiers[i]["defs"], {}, true)};
+			if (!tier.defs.empty()) {
+				c.tiers.push_back(tier);
+			}
+		}
+	} else {
+		c.tiers = {{0.4f, readDefs("tiers", Json::Value(), {"turretriot", "turretgauss"}, true)},
+				{0.55f, readDefs("tiers", Json::Value(), {"turretheavylaser"}, true)}};
+	}
+	std::stable_sort(c.tiers.begin(), c.tiers.end(), [](const SConfig::STier& a, const SConfig::STier& b) {
+		return a.mexShare < b.mexShare;
+	});
 	inflRadius = DEFAULT_SLACK * 4 * root["defence"].get("infl_rad", 5.f).asFloat();  // CInfluenceMap::AddTerritory's
+}
+
+float CTurretPicker::GetMexShare() const
+{
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const int spotCount = metalMgr->GetSpots().size();
+	if (spotCount == 0) {
+		return 0.f;
+	}
+	metalMgr->MarkAllyMexes();  // once a frame at most
+	return float(metalMgr->GetMexCount()) / spotCount;
+}
+
+int CTurretPicker::GetTier(const CCircuitDef* def) const
+{
+	for (unsigned i = 0; i < config.tiers.size(); ++i) {
+		const std::vector<CCircuitDef*>& defs = config.tiers[i].defs;
+		if (std::find(defs.begin(), defs.end(), def) != defs.end()) {
+			return i + 1;
+		}
+	}
+	return 0;
 }
 
 bool CTurretPicker::IsDefence(const CCircuitDef* cdef) const
@@ -149,7 +178,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 		circuit->LOG("TURRET %s", last.line.c_str());
 	};
 
-	const std::vector<CCircuitDef*> defs = GetDefs(order, centre);
+	std::vector<CCircuitDef*> defs = GetDefs(order, centre);
 	if (defs.empty()) {
 		say(who + ": nothing, no def it can build");
 		return nullptr;
@@ -161,16 +190,28 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	const SGather gather = Gather(centre, radius, maxRange, -RgtVector);
 	last.grid = MakeGrid(builder, gather);
 
-	// The def whose best spot has the most value per metal; while none is found, the last tried
+	// The heaviest tier with a spot worth its cost, and in it the def whose best spot has the most value per metal;
+	// while none is found, the last tried. Heaviest first, so a lighter tier isn't searched once one is found. The
+	// porcupine list (no defs given: the overlay's test) is one tier
+	auto tierOf = [this, &order](const CCircuitDef* def) { return order.defs.empty() ? 0 : GetTier(def); };
+	std::stable_sort(defs.begin(), defs.end(), [&tierOf](const CCircuitDef* a, const CCircuitDef* b) {
+		return tierOf(a) > tierOf(b);
+	});
+	int bestTier = -1;
 	float bestPerCost = -1.f;
 	float bestBasePerCost = 0.f;  // for the log, worth or not
 	for (CCircuitDef* def : defs) {
+		const int tier = tierOf(def);
+		if (tier < bestTier) {
+			break;
+		}
 		SDefResult res = SearchDef(def, builder, gather, last.grid.passed);
 		const float cost = std::max(def->GetCostM(), 1.f);
 		bestBasePerCost = std::max(bestBasePerCost, res.search.bestBase / cost);
 		const float perCost = res.search.IsFound() ? res.search.scored.front().terms.value / cost : -1.f;
-		if (!last.isFound || (perCost > bestPerCost)) {
+		if (!last.isFound || (res.search.IsFound() && (perCost > bestPerCost))) {
 			last.isFound = res.search.IsFound();
+			bestTier = last.isFound ? tier : -1;
 			bestPerCost = perCost;
 			last.res = std::move(res);
 		}
@@ -217,10 +258,10 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	char buf[512];
 	snprintf(buf, sizeof(buf), ": %s at (%.0f, %.0f): T %.0f, A %.0f, E %.0f, C %.0f, height %.2f, front %.2f "
 			"(enemy %.1f of %.1f), our building at %.0f, walk %.0f, base %.2f x cost, value %.2f x cost, "
-			"%i of %i candidates", def->GetDef()->GetName(), spot.x, spot.z, t.traffic, t.ally, t.enemy, t.choke,
-			1.f + config.height * t.height, t.front, pick.cand.enemyInfl, res.search.frontNorm,
-			GetNearestOurs(gather, spot), pick.cand.walk, t.base / cost, t.value / cost, res.search.tested,
-			(int)last.grid.passed.size());
+			"view %.2f, %i of %i candidates, tier %i", def->GetDef()->GetName(), spot.x, spot.z, t.traffic, t.ally,
+			t.enemy, t.choke, 1.f + config.height * t.height, t.front, pick.cand.enemyInfl, res.search.frontNorm,
+			GetNearestOurs(gather, spot), pick.cand.walk, t.base / cost, t.value / cost, t.view, res.search.tested,
+			(int)last.grid.passed.size(), GetTier(def));
 	say(who + buf);
 	return task;
 }
@@ -242,7 +283,8 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	const CTurretValue::SParams params = MakeParams(def);
 	const CTurretValue::SCandidate c = {{spot.x, circuit->GetTerrainManager()->GetHeightAt(spot.x, spot.z), spot.z},
 			0.f, 0.f};
-	const float base = CTurretValue::Evaluate(c, MakeTargets(def, gather), params, 0.f, MakeClearFn(def)).base;
+	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
+	const float base = CTurretValue::Evaluate(c, MakeTargets(def, gather), params, 0.f, spotScorer->MakeClearFn(def)).base;
 	if (base < KEEP_SHARE * params.minBase) {  // not at the order's line: a spot just over it doesn't flip
 		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), now at %.2f x cost", def->GetDef()->GetName(),
 				spot.x, spot.z, base / std::max(def->GetCostM(), 1.f));
@@ -298,7 +340,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	};
 
 	// T: the heaviest traffic cells within reach
-	std::vector<SRaw> traffic;
+	std::vector<CTurretValue::STarget> traffic;
 	const CTrafficField& field = chokeMap->GetTraffic();
 	if (isChokeReady && !field.IsEmpty()) {
 		const int cellSize = field.GetCellSize();
@@ -311,9 +353,9 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 			}
 		});
 	}
-	auto keepBest = [](std::vector<SRaw>& raws, size_t count) {
-		std::stable_sort(raws.begin(), raws.end(), [](const SRaw& a, const SRaw& b) {
-			return a.amount > b.amount;
+	auto keepBest = [](std::vector<CTurretValue::STarget>& raws, size_t count) {
+		std::stable_sort(raws.begin(), raws.end(), [](const CTurretValue::STarget& a, const CTurretValue::STarget& b) {
+			return a.metal > b.metal;
 		});
 		if (raws.size() > count) {
 			raws.resize(count);
@@ -341,31 +383,14 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		}
 	}
 
-	// E: known enemy buildings seen lately, by their last known position, at cost; an enemy mex at its income x the
-	// horizon. F reads every known enemy building
-	CMetalManager* metalMgr = circuit->GetMetalManager();
+	// E: known enemy buildings seen lately. F reads every known enemy building
 	for (const auto& kv : circuit->GetEnemyInfos()) {
-		const CEnemyInfo* e = kv.second;
-		if (!IsEnemyBuilding(e, false)) {
-			continue;
+		if (IsEnemyBuilding(kv.second, false) && (kv.second->GetPos().SqDistance2D(centre) <= sqInflReach)) {
+			g.enemyBuildings.push_back(kv.second->GetPos());
 		}
-		const AIFloat3& pos = e->GetPos();
-		const float sqDist = pos.SqDistance2D(centre);
-		if (sqDist <= sqInflReach) {
-			g.enemyBuildings.push_back(pos);
-		}
-		if ((sqDist > sqReach) || !e->IsRecentlySeen(frame, SEEN_FRAMES)) {
-			continue;
-		}
-		float amount = e->GetCost();
-		if (e->GetCircuitDef()->IsMex()) {
-			const int spot = metalMgr->FindNearestSpot(pos);
-			if (spot >= 0) {
-				amount = metalMgr->GetSpots()[spot].income * config.horizon;
-			}
-		}
-		g.raws.push_back({ground(pos), amount, CTurretValue::Kind::ENEMY});
 	}
+	const std::vector<CTurretValue::STarget> enemies = GetEnemyTargets(centre, reach);
+	g.raws.insert(g.raws.end(), enemies.begin(), enemies.end());
 
 	// C: the middles of the chokes on our current line and the enemy line
 	if (isChokeReady) {
@@ -389,50 +414,66 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	// a Big Bertha at home the field
 	std::vector<CSpotScorer::STower> towers = circuit->GetMilitaryManager()->GetSpotScorer()->GetTowers();
 	towers.erase(std::remove_if(towers.begin(), towers.end(), [&](const CSpotScorer::STower& t) {
-		return !IsDefence(t.def) || (t.pos.SqDistance2D(centre) > SQUARE(reach + t.range))
+		return (t.pos.SqDistance2D(centre) > SQUARE(reach + t.range))
 			|| (utils::is_valid(skipTower) && (t.pos.SqDistance2D(skipTower) < SQUARE(SQUARE_SIZE * 2)));
 	}), towers.end());
 	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
-	auto halve = [&](SRaw& r) {
-		const AIFloat3 p(r.pos.x, r.pos.y, r.pos.z);
-		for (const CSpotScorer::STower& tower : towers) {
-			if (IsHit(tower.def, r.pos) && (tower.pos.SqDistance2D(p) <= SQUARE(tower.range))
-				&& (tower.isHighArc || spotScorer->IsClearLine(tower.pos, tower.emit, p)))
-			{
-				r.amount *= 0.5f;
-			}
-		}
-	};
-	for (SRaw& r : traffic) {
-		halve(r);
-	}
+	spotScorer->HalveCovered(traffic, towers);
 	keepBest(traffic, MAX_TRAFFIC);
-	for (SRaw& r : g.raws) {
-		halve(r);
-	}
+	spotScorer->HalveCovered(g.raws, towers);
 	g.raws.insert(g.raws.end(), traffic.begin(), traffic.end());
 	return g;
+}
+
+std::vector<CTurretValue::STarget> CTurretPicker::GetEnemyTargets(const AIFloat3& centre, float reach) const
+{
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	std::vector<CTurretValue::STarget> targets;
+	for (const auto& kv : circuit->GetEnemyInfos()) {
+		const CEnemyInfo* e = kv.second;
+		const AIFloat3& pos = e->GetPos();
+		if (!IsEnemyBuilding(e, true) || (pos.SqDistance2D(centre) > SQUARE(reach))) {
+			continue;
+		}
+		float amount = e->GetCost();
+		if (e->GetCircuitDef()->IsMex()) {
+			const int spot = metalMgr->FindNearestSpot(pos);
+			if (spot >= 0) {
+				amount = metalMgr->GetSpots()[spot].income * config.horizon;
+			}
+		}
+		targets.push_back({{pos.x, terrainMgr->GetHeightAt(pos.x, pos.z), pos.z}, amount, CTurretValue::Kind::ENEMY});
+	}
+	return targets;
+}
+
+float CTurretPicker::TrafficMetal(float amount, float range, float weight) const
+{
+	// The traffic field carries the income across every cross-section of its routes: summed over the cells in range,
+	// it counts each route once per cell length its range spans
+	const float cellSize = std::max(circuit->GetChokeMap()->GetTraffic().GetCellSize(), 1);
+	const float cellLengths = std::max(2.f * std::max(range, 1.f) / cellSize, 1.f);
+	return amount * config.horizon / cellLengths * weight;
 }
 
 std::vector<CTurretValue::STarget> CTurretPicker::MakeTargets(CCircuitDef* def, const SGather& gather) const
 {
 	const float range = std::max(def->GetMaxRange(), 1.f);
 	const float sqReach = SQUARE(gather.radius + range);
-	const CTrafficField& field = circuit->GetChokeMap()->GetTraffic();
-	// The traffic field carries the income across every cross-section of its routes: summed over the cells in range,
-	// it counts each route once per cell length its range spans
-	const float cellLengths = std::max(2.f * range / std::max(field.GetCellSize(), 1), 1.f);
 	std::vector<CTurretValue::STarget> targets;
-	for (const SRaw& r : gather.raws) {
-		if ((SQUARE(r.pos.x - gather.centre.x) + SQUARE(r.pos.z - gather.centre.z) > sqReach) || !IsHit(def, r.pos)) {
+	for (const CTurretValue::STarget& r : gather.raws) {
+		if ((SQUARE(r.pos.x - gather.centre.x) + SQUARE(r.pos.z - gather.centre.z) > sqReach)
+			|| !CSpotScorer::IsHit(def, r.pos))
+		{
 			continue;
 		}
 		float metal = 0.f;
 		switch (r.kind) {
-			case CTurretValue::Kind::TRAFFIC: metal = r.amount * config.horizon / cellLengths * config.traffic; break;
-			case CTurretValue::Kind::ALLY: metal = r.amount * config.ally; break;
-			case CTurretValue::Kind::ENEMY: metal = r.amount * config.enemy; break;
-			case CTurretValue::Kind::CHOKE: metal = r.amount; break;
+			case CTurretValue::Kind::TRAFFIC: metal = TrafficMetal(r.metal, range, config.traffic); break;
+			case CTurretValue::Kind::ALLY: metal = r.metal * config.ally; break;
+			case CTurretValue::Kind::ENEMY: metal = r.metal * config.enemy; break;
+			case CTurretValue::Kind::CHOKE: metal = r.metal; break;
 		}
 		if (metal > 0.f) {
 			targets.push_back({r.pos, metal, r.kind});
@@ -536,7 +577,8 @@ CTurretPicker::SDefResult CTurretPicker::SearchDef(CCircuitDef* def, CCircuitUni
 	if (candidates.empty()) {
 		return res;
 	}
-	res.search = CTurretValue::Search(candidates, MakeTargets(def, gather), MakeParams(def), MakeClearFn(def),
+	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
+	res.search = CTurretValue::Search(candidates, MakeTargets(def, gather), MakeParams(def), spotScorer->MakeClearFn(def),
 			[&](float x, float z, CTurretValue::SCandidate& out) {
 				return (MakeCandidate(builder, gather, x, z, out) == Reject::NONE)
 						&& (FinishCandidate(def, builder, gather, out) == Reject::NONE);
@@ -545,7 +587,8 @@ CTurretPicker::SDefResult CTurretPicker::SearchDef(CCircuitDef* def, CCircuitUni
 				const Reject reject = FinishCandidate(def, builder, gather, c);
 				++res.counts[static_cast<int>(reject)];
 				return reject == Reject::NONE;
-			});
+			},
+			spotScorer->MakeViewFn(def));
 	return res;
 }
 
@@ -555,21 +598,10 @@ CTurretValue::SParams CTurretPicker::MakeParams(CCircuitDef* def) const
 	p.range = std::max(def->GetMaxRange(), 1.f);
 	p.heightBonus = config.height;
 	p.front = config.front;
+	p.view = config.view;
 	p.minBase = config.minValue * def->GetCostM();
 	p.refineStep = CELL * 0.25f;
 	return p;
-}
-
-CTurretValue::ClearFn CTurretPicker::MakeClearFn(CCircuitDef* def) const
-{
-	if (def->GetDef()->GetHighTrajectoryType() == 1) {
-		return [](const CTurretValue::SPos&, const CTurretValue::SPos&) { return true; };  // high-arc: any line
-	}
-	const float emit = def->GetDef()->GetLosHeight();
-	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
-	return [spotScorer, emit](const CTurretValue::SPos& from, const CTurretValue::SPos& to) {
-		return spotScorer->IsClearLine(AIFloat3(from.x, from.y, from.z), emit, AIFloat3(to.x, to.y, to.z));
-	};
 }
 
 float CTurretPicker::GetNearestOurs(const SGather& gather, const AIFloat3& pos) const

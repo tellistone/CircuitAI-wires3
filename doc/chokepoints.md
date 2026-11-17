@@ -58,7 +58,7 @@ on it.
 | Key | Default | What it turns on |
 |---|---|---|
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
-| `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored by covered traffic, height, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
+| `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers and the hold spots get the best spot within reach, scored on the turret picker's value model: covered traffic and enemies in metal, height, view, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
 | `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
 | `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army in the region outside it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
 | `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
@@ -89,7 +89,8 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.spot.radius` | `300` | Elmos from a defence point its towers may stand. |
 | `choke.spot.height` | `0.5` | The most a spot's height adds to its score: 0.5 is up to +50%, 1 up to double. |
 | `choke.spot.height_cap` | `150` | Elmos above the ground it covers at which a spot earns all of `choke.spot.height`. |
-| `choke.spot.enemy` | `1.0` | Weight of the enemy value a tower can shoot from a spot, per the tower's own cost: at 1, enemies worth the tower double the score. 0 turns it off. |
+| `choke.spot.enemy` | `1.0` | Weight of E, the cost of the known enemies a tower can shoot from a spot, added to the covered traffic in metal. 0 turns it off. |
+| `choke.spot.view` | `1.0` | A spot scores up to 1 + this × its score by V, the share of its range circle in a clear line of fire, as `turret.view` does for the picker. 0 turns it off. |
 | `choke.spot.forward` | `0.5` | Lean of a defence point's, the base's and the radar guard's towers the way the enemy comes from: a spot a radius toward the point's approach scores up to this much more than one a radius away from it. 0 turns it off. |
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
@@ -112,12 +113,14 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. |
 | `turret.enemy` | `1.0` | Weight of E, the enemies a turret could shoot. |
 | `turret.front` | `1.0` | The spot with the most enemy building influence, out of threat, ranks up to 1 + this × its value. 0 turns the lean off. |
+| `turret.view` | `1.0` | A spot ranks up to 1 + this × its value by *V*, the share of its range circle's ground in a clear line of fire from it. A cliff top over the ground below scores high and its foot low; flat open ground scores 1. Like the lean, it ranks spots and never decides whether one is worth its cost. 0 turns it off. |
 | `turret.height` | `0.5` | The most a spot's height adds to its value. |
 | `turret.choke` | `100` | Metal a choke of our current line or the enemy line in range adds (C). |
 | `turret.not_defence` | `["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"]` | Armed statics that defend nothing in the field: Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity and the Antinuke. They never cover a target, and the callers don't count them as a defence or as allied power. Claw mines and missiles are left out the same way, by their `mobilebuilding` mark. |
 | `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
 | `turret.defended_radius` | `600` | After a flee, a defence this near where it started means no turret. |
 | `turret.light` | `["turretlaser", "turretmissile"]` | The light turrets both callers may build: Lotus and Picket. |
+| `turret.tiers` | `[{"mex": 0.4, "defs": ["turretriot", "turretgauss"]}, {"mex": 0.55, "defs": ["turretheavylaser"]}]` | Heavier turrets, by map control. A tier is unlocked once our ally team's finished mexes hold `mex` of the map's metal spots: Stardust and Gauss at 40%, HLT at 55%. An order tries the heaviest unlocked tier first and builds from it if any of its defs has a spot worth its cost; otherwise it drops a tier, down to `turret.light`. Within a tier the most value per metal wins. |
 | `turret.enemy_reach` | `600` | Distance to a known enemy building that starts the near-enemy caller. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
@@ -136,7 +139,7 @@ players are ignored. A spectator may use it only in games with no human opponent
 | `choke_overlay <movement class>` | Shows one movement class's own graph on the `chokes` and `regions` layers. Use a unit def name (`cloakraid`) or a class name. An unknown name lists the classes. |
 | `choke_overlay all` | Back to the threat graph. |
 | `choke_overlay labels` | Turns the text labels on or off. They are map markers, which human allies see too, so they start off when the AI has human allies. |
-| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light` and `turret.not_defence` can't be set. Only in games with no human opponents. |
+| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light`, `turret.tiers` and `turret.not_defence` can't be set. Only in games with no human opponents. |
 | `choke_overlay turret <x> <z> [def]` | Our nearest free constructor orders a turret at (x, z), with no cooldown or budget, at HIGH priority. With no def the picker chooses from the porcupine list (AA left out). Shows the `turrets` layer. Only in games with no human opponents. |
 | `choke_overlay save` | Writes the chokes and point classes to `choke/<map>.json` in the AI's writeable data directory, for comparing maps by hand. Only in games with no human opponents. |
 
@@ -190,20 +193,26 @@ started are called off.
 
 ### Scored spots (F)
 
-`score = cover × (1 + choke.spot.height × height) × (1 + choke.spot.enemy × enemy value ÷ own cost) × setback × lean ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
+Scored spots use the turret picker's value model (see "Turret picker (G)"), with each goal's own targets and terms:
 
-- *cover* is the traffic of the targets in range with a clear line of fire, halved for each of our towers that
-  already covers a target. At a choke the targets are its line and the band in front of it. At a defence point, the
+`score = (T + E) × (1 + choke.spot.height × height) × (1 + choke.spot.view × V) × setback × lean ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
+
+There is no cost threshold: a goal's tower goes on its best spot.
+
+- *T* is the traffic of the targets in range with a clear line of fire, in metal as the picker counts it (× `turret.horizon`, once per route; `turret.traffic` is the picker's alone). Each target is halved for each tower that already covers it, defends (not a Claw mine, a missile or `turret.not_defence`) and hits it. At a choke the targets are its line and the band in front of it. At a defence point, the
   base or a radar, they're the point's own approach: the cells on near-shortest routes from the enemy to it, by
   walking distance, each weighted by its traffic. Traffic piles up where routes narrow, so the ramp up to a plateau
   outweighs the open ground before it, and the ground below the plateau's cliffs, which leads elsewhere, counts
   for nothing.
-- *height* is the height above the targets as a share of `choke.spot.height_cap`, up to 1. So a spot that high
-  or higher scores `1 + choke.spot.height` times as much (1.5× by default).
-- *enemy value* is the cost of the known enemies a tower there could shoot: in range, in a clear line of fire, and
-  of a kind it can hit (fliers need anti-air). Buildings count at their last known position, and mobile units only
-  while in radar or sight. As towers skip threatened spots, an armed enemy only counts where the tower outranges
-  it, so in practice this finds unarmed targets (mexes, energy, radar, constructors) and outranged ones.
+- *height* is the height above the mean of the targets it counts, as a share of `choke.spot.height_cap`, up to 1.
+  So a spot that high or higher scores `1 + choke.spot.height` times as much (1.5× by default).
+- *V* is the share of the range circle's ground in a clear line of fire from the spot, as the picker's. A spot on a
+  cliff edge sees the plateau and the ground below, and its foot only the open side.
+- *E* is `choke.spot.enemy` × the picker's enemy targets that a tower there could shoot, in range and in a clear
+  line of fire: known enemy buildings seen in the last 3 minutes (no fakes, Claw mines or missiles), at cost, an
+  enemy mex at its income × `turret.horizon`. They are halved for covering towers as T is. Mobile units don't count:
+  their routes are T already, and a spot frozen once its tower is queued mustn't follow a passing raid. As towers
+  skip threatened spots, an armed building only counts where the tower outranges it.
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.
 - *lean* pulls a defence point's, the base's and the radar guard's towers the way the enemy comes from. It is
   `1 + choke.spot.forward × (1 + ahead) ÷ 2`, where *ahead* (from −1 to 1) is how far the spot sits toward the
@@ -211,9 +220,10 @@ started are called off.
   above, walked from the enemy, so on a plateau the lean points down its ramp, not at a cliff edge facing the
   enemy. By default a spot a radius toward an approach from one side scores 1.5×, one a radius away from it 1×,
   and an approach from all sides leans nowhere.
-- Hold spots skip the builder term.
+- Hold spots skip the builder term and E.
 
-A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the
+A tower's spot is moved onto its build site, buildable facing south and open on the blocking map (lanes, queued
+jobs), as the picker's are, so it never lands on another job's footprint. A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the
 nearest safe site, often down the slope of the ledge it was meant for. It's built where it was scored, without the
 usual random shake, and so are radars and their guards.
 
@@ -280,7 +290,7 @@ choke or cluster behind it, and the constructor builds it on that exact spot. Th
 thing; this one weighs everything a turret there would cover, each term in metal so it compares with the turret's
 cost:
 
-`base = (T + A + E + C) × (1 + turret.height × height)`, `value = base × (1 + turret.front × F) ÷ (1 + walk ÷ 1000)`
+`base = (T + A + E + C) × (1 + turret.height × height)`, `value = base × (1 + turret.front × F) × (1 + turret.view × V) ÷ (1 + walk ÷ 1000)`
 
 - *T*, traffic: the traffic field carries each destination's income across every cross-section of its enemy routes.
   The heaviest 64 cells within reach are summed over those in range and divided by the cell lengths the range spans
@@ -299,9 +309,12 @@ cost:
 - *F*, the front: each known enemy building, armed or not, fakes, Claw mines and missiles left out, adds
   2 × (1 − d ÷ 2048) (the influence map's enemy territory), over the highest among the candidates. The spot reaching furthest toward the enemy while
   out of threat ranks up to (1 + `turret.front`) × its value. *walk* is the ordered constructor's distance.
+- *V*, the view: the share of the range circle's ground, by area, in a clear line of fire from the spot, sampled
+  along 24 bearings every 16 elmos (high-arc turrets: 1). A spot on a cliff edge sees the plateau and the ground
+  below; its foot sees only the open side.
 
 Only the base is tested against the cost: a spot is worth building when its base is at least `turret.min_value` ×
-the turret's cost, so the lean and the walk only rank spots that already pay. The def with the best value per metal
+the turret's cost, so the lean, the view and the walk only rank spots that already pay. The def with the best value per metal
 wins, so the type follows the enemy buildings in range and the choke through E and C.
 
 A spot is skipped when it is outside the radius; more than `defence.infl_rad` (2048 elmos) from every building of
@@ -321,7 +334,8 @@ does, so the next order looks elsewhere. Picker and cornered towers
 (`MakeCommDefence`) stay out of the defence points' counts, so a forward picker turret dying doesn't make the porc
 sweep rebuild a home tower.
 
-**Callers.** One update a second runs both, each turret from `turret.light` at NORMAL priority:
+**Callers.** One update a second runs both, each turret from `turret.light`, or a heavier tier of `turret.tiers`
+once our share of the map's mexes unlocks it, at NORMAL priority:
 
 1. After a flee that ends clear or covered, centred where the flee started, with only the light defs that hit what
    it fled from (after gunships, only Picket). Not before `turret.after_flee_since` seconds of game time, and not

@@ -8,6 +8,8 @@
 #ifndef SRC_CIRCUIT_MODULE_SPOTSCORER_H_
 #define SRC_CIRCUIT_MODULE_SPOTSCORER_H_
 
+#include "module/TurretValue.h"
+
 #include "AIFloat3.h"
 
 #include <map>
@@ -20,19 +22,19 @@ class CCircuitDef;
 struct STerrainMapArea;
 
 /*
- * choke.spot.enable: one scorer for towers at a cluster, towers at a choke, base towers and army hold spots, with
- * KAIK's GetDefensePos terms on CChokeMap's traffic field:
- *   score = cover x (1 + choke.spot.height x height) x (1 + choke.spot.enemy x enemy value / the def's cost)
- *           x setback x lean / (1 + threat at the spot / the def's own threat)
- *           / (1 + distance to our nearest builder / a quarter of the map's diagonal)
- * cover is the traffic of the targets in range with a clear line (halved for each of our towers already covering
- * one), height is the height above the targets as a share of choke.spot.height_cap (up to 1), setback (choke goals)
- * the closeness to choke.setback x range behind the line, enemy value the cost of known enemies in range and in a
- * clear line that it can hit, lean (position goals) 1 + choke.spot.forward x (1 + ahead) / 2, where ahead (-1 to 1)
- * is how far the spot sits, per radius, toward where the asset's approach comes from. Hold spots skip the builder
- * term. Candidates stay on the goal's side: the home region (a choke's inner region, the asset's), a region the enemy
- * only walks into through it, or a wall cell no enemy walks. They are tried best upper bound first (the traffic in
- * range times the terms that need no line of sight) and the search stops when no bound can beat the best score
+ * One scorer for towers at a cluster (choke.spot.enable), towers at a choke, base towers, radar guards and army hold
+ * spots, on the turret picker's value model (CTurretValue) with each goal's own targets and factor:
+ *   score = (T + E) x (1 + choke.spot.height x height) x (1 + choke.spot.view x V) x factor
+ *   factor = setback x lean / (1 + threat at the spot / the def's own threat)
+ *            / (1 + distance to our nearest builder / a quarter of the map's diagonal)
+ * T is the goal's approach traffic in range with a clear line, in metal as the picker counts it (halved for each
+ * tower already covering it that defends and hits it), E choke.spot.enemy x the picker's enemy targets (buildings seen
+ * in the last 3 minutes; CTurretPicker::GetEnemyTargets) in range and in a clear line that it can hit, halved so, height the height above those targets as a share of choke.spot.height_cap (up to 1),
+ * V the share of the range circle in a clear line of fire, setback (choke goals) the closeness to choke.setback x
+ * range behind the line, lean (position goals) 1 + choke.spot.forward x (1 + ahead) / 2, where ahead (-1 to 1) is how
+ * far the spot sits, per radius, toward where the asset's approach comes from. Hold spots skip the builder term and
+ * E. Candidates stay on the goal's side: the home region (a choke's inner region, the asset's), a region the enemy
+ * only walks into through it, or a wall cell no enemy walks. No cost threshold: a goal's tower goes on its best spot
  */
 class CSpotScorer {
 public:
@@ -73,15 +75,21 @@ public:
 	};
 	std::vector<STower> GetTowers() const;  // ours and allies', queued too
 	bool IsClearLine(const springai::AIFloat3& from, float emit, const springai::AIFloat3& to) const;
+	// A target on the ground (in deep water: under it too) that def's weapons reach
+	static bool IsHit(const CCircuitDef* def, const springai::AIFloat3& pos) { return IsHitAt(def, pos.y); }
+	static bool IsHitAt(const CCircuitDef* def, float elevation);
+	static bool IsHit(const CCircuitDef* def, const CTurretValue::SPos& pos) { return IsHitAt(def, pos.y); }
+	// CTurretValue's line of fire and V for def (high-arc: any line, V 1)
+	CTurretValue::ClearFn MakeClearFn(const CCircuitDef* def) const;
+	CTurretValue::ViewFn MakeViewFn(const CCircuitDef* def) const;
 	bool IsMasked(const springai::AIFloat3& pos) const;  // MaskFailed's cell, still masked
+	// Halves each target once per tower already covering it that defends and hits it (CTurretPicker's rule too)
+	void HalveCovered(std::vector<CTurretValue::STarget>& targets, const std::vector<STower>& towers) const;
 
 private:
-	struct STarget {
-		springai::AIFloat3 pos;  // on the ground
-		float weight;
-	};
-	std::vector<STarget> MakeTargets(CCircuitDef* def, const springai::AIFloat3& pos, float radius, const SGoal& goal,
-			const std::vector<STower>& towers) const;
+	// The goal's traffic targets (metal: the raw traffic), halved, best MAX_TARGETS
+	std::vector<CTurretValue::STarget> MakeTargets(CCircuitDef* def, const springai::AIFloat3& pos, float radius,
+			const SGoal& goal, const std::vector<STower>& towers) const;
 
 	CCircuitAI* circuit;
 	static int MaskKey(const springai::AIFloat3& pos);  // its MASK_CELL square

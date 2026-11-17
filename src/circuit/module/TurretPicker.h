@@ -47,7 +47,8 @@ struct STurretOrder {
  *   C, turret.choke when a choke of our current line or the enemy line has its middle in range
  * each one the def hits, in a clear line of fire (high-arc: any), and halved for every tower of ours or an ally's,
  * queued too, that covers it already and hits it. F, the front, is the known enemy buildings' influence at the spot,
- * 2 x (1 - d / 2048) each (the enemy territory layer's), over the highest among the candidates. A spot must be
+ * 2 x (1 - d / 2048) each (the enemy territory layer's), over the highest among the candidates. V, the view
+ * (turret.view), is the share of its range circle's ground in a clear line of fire from it. A spot must be
  * within the radius, within defence.infl_rad of a building of ours or an ally's (constructors left out), buildable
  * and open on the blocking map, out of the builder's threat, in its reach (and IsCommJobSafe for a builder whose
  * flee is on), and not masked by a build the engine refused or a job dropped there. The def with the best value per
@@ -64,6 +65,7 @@ public:
 		float ally = 1.f;
 		float enemy = 1.f;
 		float front = 1.f;
+		float view = 1.f;
 		float height = 0.5f;
 		float choke = 100.f;  // metal
 		// Armed statics that defend nothing in the field: no tower covering a target, nor a defence to the callers
@@ -74,6 +76,12 @@ public:
 		float defendedRadius = 600.f;  // after a flee, a defence this near where it started means no turret
 		bool isNearEnemy = true;
 		std::vector<CCircuitDef*> light;
+		// Heavier defs, each tier unlocked once our ally team holds mexShare of the map's metal spots; by mexShare up
+		struct STier {
+			float mexShare;
+			std::vector<CCircuitDef*> defs;
+		};
+		std::vector<STier> tiers;
 		float enemyReach = 600.f;
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
@@ -117,23 +125,29 @@ public:
 	// minutes, so the ghost of one that died out of sight drops out
 	bool IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const;
 
+	// Our ally team's share of the map's metal spots, finished mexes only
+	float GetMexShare() const;
+	// Traffic of the field summed over a range's cells, in metal: x turret.horizon x weight, once per route
+	float TrafficMetal(float amount, float range, float weight) const;
+	// E before its weight: known enemy buildings within reach of centre seen in the last 3 minutes, at cost, an enemy mex
+	// at its income x turret.horizon. Shared with CSpotScorer::FindSpot
+	std::vector<CTurretValue::STarget> GetEnemyTargets(const springai::AIFloat3& centre, float reach) const;
+	// The turret.tiers entry def is in, from 1; 0 if none (turret.light)
+	int GetTier(const CCircuitDef* def) const;
+
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }
 	const SLast& GetLast() const { return last; }
 	bool IsAnyCaller() const { return config.isAfterFlee || config.isNearEnemy; }
 
 private:
-	// A target before it is weighed for a def: traffic in metal/s, the rest in metal; halved per covering tower
-	struct SRaw {
-		CTurretValue::SPos pos;
-		float amount;
-		CTurretValue::Kind kind;
-	};
 	// Gathered once per order
 	struct SGather {
 		springai::AIFloat3 centre;
 		float radius;
-		std::vector<SRaw> raws;  // within radius + the longest range
+		// Within radius + the longest range, before they are weighed for a def (metal: traffic in metal/s, the rest in
+		// metal), halved per covering tower
+		std::vector<CTurretValue::STarget> raws;
 		std::vector<springai::AIFloat3> ourBuildings;  // within radius + defence.infl_rad
 		std::vector<springai::AIFloat3> enemyBuildings;  // within radius + ENEMY_INFL_RADIUS
 	};
@@ -156,7 +170,6 @@ private:
 	SDefResult SearchDef(CCircuitDef* def, CCircuitUnit* builder, const SGather& gather,
 			const std::vector<CTurretValue::SCandidate>& candidates) const;
 	CTurretValue::SParams MakeParams(CCircuitDef* def) const;
-	CTurretValue::ClearFn MakeClearFn(CCircuitDef* def) const;
 	float GetNearestOurs(const SGather& gather, const springai::AIFloat3& pos) const;
 
 	CCircuitAI* circuit;

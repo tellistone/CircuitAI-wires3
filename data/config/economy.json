@@ -72,22 +72,28 @@
 		//      it overlaps)
 		//   2. into the nearest open gap of the planned grid: a planned link between two finished mex clusters
 		//      (CEnergyGrid's spanning tree), or between the mexes of one; from a gap end, one piece per gap at a time
-		//   3. beside a mex of the grid with the least energy per mex: the one with the least energy beside it
+		//   3. beside a mex of the grid with the least energy per mex: the one with the least energy beside it (not a
+		//      base_only piece on land: after a mex's first piece, those only go into gaps)
 		// Always on a site that links (to the mex, or to the gap end and, when one piece closes it, the other end too),
 		// and a step into a gap gets closer to its other end (a gap across water or a cliff is skipped, not clumped at);
 		// never beside a mex with an energy job (or a grid link solar or wind) queued there. A spot with no site is
-		// skipped for 30 s. None of these: at the nearest metal spot as before.
+		// skipped for 30 s. None of these: at the nearest metal spot as before (never a base_only piece on land).
 		// Missing unit = off
 		"fill": {
 			"unit": ["energysolar", "energywind"],
 			"max_dist": 1500
 		},
 
-		// Built on land only within the base: behaviour.json defence.base_rad around the base position (the radius base
-		// defence uses). A rule on the site, at every placement of these defs: energy jobs, the mex chain's energy,
+		// Built on land only within radius elmos of the base position, at most the base defence radius (0.3 of the map
+		// diagonal clamped to behaviour.json defence.base_rad, so 1000 on small maps; <= 0: that radius). A rule on the site, at every placement of these defs: energy jobs, the mex chain's energy,
 		// fills and grid link pieces (not on where the builder stands: which energy is built doesn't change).
-		// Where the game builds wind as tidal (ground at or below -10) anywhere
-		"base_only": ["energywind"],
+		// On land they go only beside a mex on no grid with energy or into a gap of the grid plan (fill steps 1 and 2),
+		// never by the fallbacks that build at a mex or where the builder stands.
+		// Where the game builds wind as tidal (ground at or below -10) anywhere, as any energy
+		"base_only": {
+			"unit": ["energywind"],
+			"radius": 1500
+		},
 
 		"link_inc": 16.0,  // minimum metal-income for energy linking
 		"pylon": ["energypylon", "energysolar", "energywind"]
@@ -154,16 +160,23 @@
 	// <priority> ("low", "normal" or "high"; it also sets ZK's build priority, so "high" takes metal before factories).
 	// Every 2 s, on 128-elmo cells: a cell is "dug" when at least <share> of its samples (one per 16 elmos) are
 	// <depth> elmos or more off the height the map had when the AI started. A dug cell gets a job when a constructor
-	// is within <range> and the cell is safe: no threat on it and no known enemy on it or the cells next to it (ZK
-	// makes terraform 20x slower near enemies). Only a constructor within <range> with no threat to it on the cell
-	// takes it, <builders> at most per job, <jobs> jobs at once (nearest first).
-	// A job is dropped when its cell stops being safe (an enemy comes near) or a builder's threat-aware path there
-	// crosses threat, and its builders stop. After any drop of a job a builder took (also a builder hit or killed)
-	// the cell waits <cooldown> s, doubling on each drop up to 8x until a job finishes.
-	// After a finished job the cell waits <cooldown> s, and after <tries> finished jobs that left it dug it is given
-	// up until it is back at the start height. Cells with an allied building are skipped (levelled pads); an ally's
-	// terraform gives its cell up the same way. range 0 disables.
-	"restore": {"range": 1000, "depth": 24, "share": 0.12, "jobs": 2, "builders": 2, "tries": 3, "cooldown": 30, "priority": "high"},
+	// is within <range> and the cell is safe: no known enemy on it or the cells next to it (ZK makes terraform 20x
+	// slower near enemies), and no threat on it unless our army covers it: our armed units and static defences
+	// within <cover_radius> have at least <cover> x the threat's power (0 = any threat blocks). Only a constructor
+	// within <range> for which the cell is safe takes it, <builders> at most per job, <jobs> jobs at once (nearest
+	// first). A job is dropped when its cell stops being safe (a known enemy stays near it for <grace> s, or threat
+	// our army doesn't cover), a builder's threat-aware path there crosses uncovered threat, or a builder on it is
+	// hit, and its builders stop. Once its terraform is made, a job keeps going with half the cover.
+	// <grace> rounds up to whole 2 s updates (2 = an enemy seen on two updates in a row).
+	// After any drop of a job a builder took (also a builder hit or killed) the cell waits <cooldown> s, doubling on
+	// each drop up to 8x until a job finishes. After a finished job the cell waits <cooldown> s, and after <tries>
+	// finished jobs that left it dug it is given up until it is back at the start height. Cells with an allied
+	// building are skipped (levelled pads); an ally's terraform gives its cell up the same way. range 0 disables.
+	// log: every <log> s while any cell is dug, an infolog line "RESTORE: ..." counts why dug cells have no job (the
+	// first rule that stopped each) and how jobs ended since the last line ("other": a builder killed or switched to
+	// a nearer job, or the cell unreachable). 0 = off.
+	"restore": {"range": 1000, "depth": 24, "share": 0.12, "jobs": 2, "builders": 2, "tries": 3, "cooldown": 30, "priority": "high",
+		"cover": 2, "cover_radius": 500, "grace": 2, "log": 30},
 
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,

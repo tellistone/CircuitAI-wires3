@@ -16,11 +16,12 @@ namespace circuit {
 /*
  * CTurretPicker's value of a spot and its search, with no engine calls, so a harness can test them. In metal:
  *   base  = (T + A + E + C) x (1 + turret.height x height)
- *   value = base x (1 + turret.front x F) / (1 + walk / travel)
+ *   value = base x (1 + turret.front x F) x (1 + turret.view x V) x factor / (1 + walk / travel)
  * T, A and E sum the targets of their kind in range with a clear line of fire; C is the best choke target so; height
  * is how far the spot stands above the mean height of those targets, per heightCap (up to 1); F the spot's
- * enemy building influence over the highest among the candidates. Only a spot whose base reaches minBase is worth
- * building; the most valuable of those wins
+ * enemy building influence over the highest among the candidates; V the share of its range circle's ground, by area,
+ * in a clear line of fire from it (a cliff top over the ground below scores high, its foot low). Only a spot whose
+ * base reaches minBase is worth building; the most valuable of those wins
  */
 class CTurretValue {
 public:
@@ -37,11 +38,13 @@ public:
 		SPos pos;
 		float enemyInfl;  // F before it is normalised
 		float walk;  // elmos from the ordered constructor
+		float factor = 1.f;  // the caller's own terms for the spot, > 0 (CSpotScorer: setback, lean, threat, builder)
 	};
 	struct STerms {
 		float traffic = 0.f, ally = 0.f, enemy = 0.f, choke = 0.f;  // T, A, E, C
 		float height = 0.f;  // 0 to 1
 		float front = 0.f;  // F, 0 to 1
+		float view = 1.f;  // V, 0 to 1 (1 with no ViewFn)
 		float base = 0.f;
 		float value = 0.f;
 	};
@@ -55,12 +58,15 @@ public:
 		float heightBonus = 0.5f;  // turret.height
 		float heightCap = 150.f;  // elmos above the targets that earn all of heightBonus
 		float front = 1.f;  // turret.front
+		float view = 1.f;  // turret.view
 		float travel = 1000.f;  // constructor walk that halves a spot's rank
 		float minBase = 0.f;  // turret.min_value x the def's cost
 		float refineStep = 16.f;  // elmos to each corner of the best few
 	};
 	// A clear line of fire from a spot to a target (always true for a high-arc def)
 	using ClearFn = std::function<bool (const SPos& from, const SPos& to)>;
+	// V of a spot, 0 to 1
+	using ViewFn = std::function<float (const SPos& from)>;
 	// A refined spot: false if it fails the hard rules, else out filled
 	using MakeFn = std::function<bool (float x, float z, SCandidate& out)>;
 	// The costly hard rules, run only on a candidate about to be tested: false if it fails them; may move it a little
@@ -76,13 +82,15 @@ public:
 		bool IsFound() const { return !scored.empty() && scored.front().isWorth; }
 	};
 
+	// viewOf: V, read only for a spot with a base (nullptr: V = 1 everywhere)
 	static STerms Evaluate(const SCandidate& c, const std::vector<STarget>& targets, const SParams& p, float frontNorm,
-			const ClearFn& isClear);
-	// Best upper bound first: the targets in range with no line test, x the full height bonus, x the spot's own front
-	// and walk terms; stops once no bound beats the best worth value. A spot whose base can't reach minBase isn't
+			const ClearFn& isClear, const ViewFn& viewOf = nullptr);
+	// Best upper bound first: the targets in range with no line test, x the full height bonus, x the spot's own front,
+	// walk and factor terms, x the full view bonus; stops once no bound beats the best worth value. A spot whose base can't reach minBase isn't
 	// tested, nor finished. Then the best 5 are tried refineStep to each corner
 	static SResult Search(const std::vector<SCandidate>& candidates, const std::vector<STarget>& targets,
-			const SParams& p, const ClearFn& isClear, const MakeFn& makeAt, const FinishFn& finish = nullptr);
+			const SParams& p, const ClearFn& isClear, const MakeFn& makeAt, const FinishFn& finish = nullptr,
+			const ViewFn& viewOf = nullptr);
 	static float FrontNorm(const std::vector<SCandidate>& candidates);
 };
 

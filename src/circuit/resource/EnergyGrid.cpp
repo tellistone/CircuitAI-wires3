@@ -351,8 +351,11 @@ IGridLink* CEnergyGrid::FindFillSite(CCircuitDef* cdef, const AIFloat3& pos, flo
 	if (fill == nullptr) {
 		fill = TryFills(cdef, gaps.data(), gaps.data() + gaps.size(), predicate, outPos);  // 2. the plan's gaps
 	}
-	if (fill == nullptr) {
-		fill = TryFills(cdef, mexes.data() + bareCount, mexes.data() + mexes.size(), predicate, outPos);  // 3. poor grids
+	if (fill == nullptr) {  // 3. poor grids; not a base_only piece on land: after a mex's first, those only fill gaps
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
+		fill = TryFills(cdef, mexes.data() + bareCount, mexes.data() + mexes.size(), [&predicate, economyMgr, cdef](const AIFloat3& p) {
+			return !economyMgr->IsBaseOnlyAt(cdef, p) && predicate(p);
+		}, outPos);
 	}
 	if (fill == nullptr) {
 		return nullptr;
