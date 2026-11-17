@@ -670,6 +670,20 @@ const std::set<IBuilderTask*>& CBuilderManager::GetTasks(IBuilderTask::BuildType
 	return buildTasks[static_cast<IBuilderTask::BT>(type)];
 }
 
+void CBuilderManager::ForEachQueuedTower(const std::function<void (IBuilderTask*)>& fn) const
+{
+	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
+		for (IBuilderTask* task : tasks) {
+			for (IBuilderTask* t = task; t != nullptr; t = t->GetNextTask()) {
+				const CCircuitDef* cdef = t->GetBuildDef();
+				if ((t->GetTarget() == nullptr) && (cdef != nullptr) && !cdef->IsMobile() && cdef->IsAttacker()) {
+					fn(t);
+				}
+			}
+		}
+	}
+}
+
 void CBuilderManager::ActivateTask(IBuilderTask* task)
 {
 	if ((task->GetType() == IUnitTask::Type::BUILDER) && (task->GetBuildType() < IBuilderTask::BuildType::_SIZE_)) {
