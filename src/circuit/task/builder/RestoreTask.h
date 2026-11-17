@@ -31,6 +31,8 @@ protected:
 	// Dropped: the builders still on it stop, so none keeps restoring next to what made us drop it
 	virtual void Cancel() override;
 	virtual void Execute(CCircuitUnit* unit) override;
+	// Reachable, and safe by the restore rule (IsRestoreSafe: army cover), not the plain no-threat rule
+	virtual bool IsReachable(CCircuitUnit* unit, const springai::AIFloat3& endPos) override;
 	// The builder's threat-aware path there (asked again while it walks): uncovered threat on it drops the job
 	virtual void ApplyPath(const CQueryPathSingle* query) override;
 

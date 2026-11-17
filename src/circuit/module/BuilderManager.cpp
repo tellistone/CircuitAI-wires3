@@ -3025,15 +3025,19 @@ void CBuilderManager::UpdateRestore()
 	// An ally's terraform (its terraunit; ours are our restores) gives its cell up while it stays dug: no tug-of-war
 	// over its walls and ramps. An allied building skips its cell (its levelled pad is off the start height too):
 	// looked up only while some cell is dug
+	// Commanders are kept for IsRestoreSafe: their influence reaches about 4x their weapon range
 	const CCircuitDef::Id terraId = terraDef->GetId();
 	circuit->UpdateFriendlyUnits();
+	restore.commIds.clear();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* au = kv.second;
 		const CCircuitDef* cdef = au->GetCircuitDef();
 		if (cdef == nullptr) {
 			continue;
 		}
-		if (cdef->GetId() == terraId) {
+		if (cdef->IsRoleComm()) {
+			restore.commIds.push_back(au->GetId());
+		} else if (cdef->GetId() == terraId) {
 			if (circuit->GetTeamUnit(au->GetId()) == nullptr) {
 				SRestore::SCell& cell = grid[restore.CellOf(au->GetPos(frame))];
 				cell.tries = restore.maxTries;
@@ -3135,7 +3139,7 @@ void CBuilderManager::UpdateRestore()
 		dropCount += drops[i];
 	}
 	if ((restore.dugCount > 0) || (restore.done > 0) || (dropCount > 0)) {
-		circuit->LOG("RESTORE: %i dug, %i jobs, %i new | no job: %i held, %i given up, %i building, %i enemy, %i threat,"
+		circuit->LOG("RESTORE: %i dug, %i working, %i open | no job: %i held, %i given up, %i building, %i enemy, %i threat,"
 				" %i stalling, %i far, %i over the cap | last %i s: %i done, dropped %i enemy, %i threat, %i path, %i other",
 				restore.dugCount, jobCount + count, count,
 				skips[SRestore::SKIP_HELD], skips[SRestore::SKIP_TRIES], skips[SRestore::SKIP_BUILDING],
@@ -3160,10 +3164,19 @@ bool CBuilderManager::IsRestoreSafe(CCircuitUnit* unit, const AIFloat3& pos) con
 	if (restore.cover <= 0.f) {
 		return false;
 	}
-	// Armed units only: constructors and buildings go to another layer, so a builder never covers itself
+	// Against the threat itself: enemy influence reaches only half a defence's range and fades to 0 at a unit's
+	// edge, while its threat holds to the full range. Power and threat are on one scale (damage x sqrt(health)).
+	// Armed units only (constructors and buildings go to another layer), and no commanders: their influence spreads
+	// about 4x their weapon range (as IsCommTerritory), so one at base would cover a far trench
 	const CInfluenceMap* inflMap = circuit->GetInflMap();
-	const float ally = inflMap->GetAllyInflAt(pos);
-	return (ally > INFL_EPS) && (ally >= restore.cover * inflMap->GetEnemyInflAt(pos));
+	float ally = inflMap->GetAllyInflAt(pos);
+	for (int commId : restore.commIds) {
+		CAllyUnit* comm = circuit->GetFriendlyUnit(commId);
+		if (comm != nullptr) {
+			ally -= inflMap->GetMobileArmedInflAt(comm, pos);
+		}
+	}
+	return (ally > INFL_EPS) && (ally >= restore.cover * threat);
 }
 
 void CBuilderManager::OnRestoreEnd(CBRestoreTask* task, bool done)

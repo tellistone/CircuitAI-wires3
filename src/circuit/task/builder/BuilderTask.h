@@ -115,6 +115,8 @@ protected:
 	void Update(CCircuitUnit* unit);
 	virtual bool Reevaluate(CCircuitUnit* unit);
 	void UpdatePath(CCircuitUnit* unit);
+	// UpdatePath's reach and safety test of the job's position; false aborts the job
+	virtual bool IsReachable(CCircuitUnit* unit, const springai::AIFloat3& endPos);
 	virtual void ApplyPath(const CQueryPathSingle* query);
 	void HideAssignee(CCircuitUnit* unit);
 	void ShowAssignee(CCircuitUnit* unit);

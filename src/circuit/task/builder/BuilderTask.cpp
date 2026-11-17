@@ -496,19 +496,7 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	// TODO: Check IsForceUpdate, shield charge and retreat
 
 	const AIFloat3& endPos = GetPosition();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	// Priority repair targets are usually in combat, and wrecks often lie where we just fought:
-	// both keep the same safety rule as task selection
-	bool isReachable;
-	if ((priority == Priority::NOW) && (buildType == BuildType::REPAIR)) {
-		isReachable = terrainMgr->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
-				&& !circuit->GetBuilderManager()->IsUnsafePrioRepair(this, unit, endPos);
-	} else if ((buildType == BuildType::RECLAIM) && (target == nullptr)) {
-		isReachable = circuit->GetEconomyManager()->IsReclaimSafe(unit, endPos);
-	} else {
-		isReachable = terrainMgr->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
-	}
-	if (!isReachable) {
+	if (!IsReachable(unit, endPos)) {
 		manager->AbortTask(this);
 		return;
 	}
@@ -539,6 +527,22 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 			this->ApplyPath(static_cast<const CQueryPathSingle*>(query));
 		}
 	});
+}
+
+bool IBuilderTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	// Priority repair targets are usually in combat, and wrecks often lie where we just fought:
+	// both keep the same safety rule as task selection
+	if ((priority == Priority::NOW) && (buildType == BuildType::REPAIR)) {
+		return terrainMgr->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
+				&& !circuit->GetBuilderManager()->IsUnsafePrioRepair(this, unit, endPos);
+	}
+	if ((buildType == BuildType::RECLAIM) && (target == nullptr)) {
+		return circuit->GetEconomyManager()->IsReclaimSafe(unit, endPos);
+	}
+	return terrainMgr->CanReachAtSafe(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
 }
 
 void IBuilderTask::ApplyPath(const CQueryPathSingle* query)

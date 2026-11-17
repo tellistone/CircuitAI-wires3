@@ -8,6 +8,7 @@
 #include "task/TaskManager.h"
 #include "module/BuilderManager.h"
 #include "terrain/path/QueryPathSingle.h"
+#include "terrain/TerrainManager.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
@@ -102,6 +103,13 @@ void CBRestoreTask::Execute(CCircuitUnit* unit)
 		unit->GetUnit()->ExecuteCustomCommand(CMD_RESTORE_GROUND, {position.x, position.y, position.z, static_cast<float>(tag)});
 	)
 	orderFrames.emplace(unit, circuit->GetLastFrame());  // the first order's frame: a re-send doesn't move it
+}
+
+bool CBRestoreTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	return circuit->GetTerrainManager()->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
+			&& circuit->GetBuilderManager()->IsRestoreSafe(unit, endPos);
 }
 
 void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
