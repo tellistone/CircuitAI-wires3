@@ -1281,9 +1281,6 @@ int CMilitaryManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 
 int CMilitaryManager::UnitFinished(CCircuitUnit* unit)
 {
-	if (turretPicker->IsDefence(unit->GetCircuitDef())) {
-		finishedTurrets.insert(unit->GetId());  // porcupine.budget.loss_refund
-	}
 	auto search = finishedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != finishedHandler.end()) {
 		search->second(unit);
@@ -1316,21 +1313,19 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
 	scoutStints.erase(unit->GetId());  // ids get reused
-	// porcupine.budget.loss_refund: a finished turret of ours lost pays its rebuild back, if it could fight back: its
-	// killer seen within its reach of that kind of target (not artillery out of its range, nor a flier over a Lotus)
-	if (finishedTurrets.erase(unit->GetId()) > 0) {
-		UpdateTurretBudget();
-		const float cost = unit->GetCircuitDef()->GetCostM();
+	// porcupine.budget.loss_refund: a finished turret of ours killed by an enemy it could fight back pays its rebuild
+	// back. Could: the killer is known and doesn't outrange it against its kind (not artillery or skirmishers out of
+	// its reach, nor a flier over a ground-only turret). Captures and the garbage path have no attacker
+	const CCircuitDef* tdef = unit->GetCircuitDef();
+	if (turretPicker->IsDefence(tdef) && !unit->GetUnit()->IsBeingBuilt()) {
+		const float cost = tdef->GetCostM();
 		turretBudget.lost += cost;
-		if (attacker != nullptr) {
-			const AIFloat3& aPos = attacker->GetPos();
-			const CCircuitDef* adef = attacker->GetCircuitDef();
-			const CCircuitDef::RangeType rt = ((adef != nullptr) && adef->IsAbleToFly()) ? CCircuitDef::RangeType::AIR
-					: (aPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-			const float range = unit->GetCircuitDef()->GetMaxRange(rt);
-			if ((range > 0.f)
-				&& (aPos.SqDistance2D(unit->GetPos(circuit->GetLastFrame())) <= SQUARE(range + DEFAULT_SLACK)))
-			{
+		const CCircuitDef* adef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
+		if (adef != nullptr) {
+			const CCircuitDef::RangeType rt = adef->IsAbleToFly() ? CCircuitDef::RangeType::AIR
+					: (adef->IsSubmarine() ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND);
+			const float range = tdef->GetMaxRange(rt);
+			if ((range > 0.f) && (adef->GetMaxRange(CCircuitDef::RangeType::LAND) <= range)) {
 				turretBudget.balance += turretBudget.lossRefund * cost;
 				turretBudget.lossPaid += turretBudget.lossRefund * cost;
 			}
