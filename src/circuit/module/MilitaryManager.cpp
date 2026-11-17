@@ -1309,26 +1309,35 @@ int CMilitaryManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	return 0; //signaling: OK
 }
 
+// porcupine.budget.loss_refund: could a turret of tdef fight back the kdef that killed it? Not when kdef outranges it
+// against its kind (artillery, skirmishers, a flier over a ground-only turret), nor when kdef is a static: it stays,
+// and a tower rebuilt in its reach dies again. CircuitDef gives a torpedo no LAND range, so a ship, hover or amphibian
+// (on the surface: either kind of weapon may reach it) takes the turret's longer of LAND and WATER, and the killer
+// its longest range of any kind (a sub's torpedo)
+static bool CanFightBack(const CCircuitDef* tdef, const CCircuitDef* kdef)
+{
+	using RT = CCircuitDef::RangeType;
+	const float range = kdef->IsAbleToFly() ? tdef->GetMaxRange(RT::AIR)
+			: kdef->IsSubmarine() ? tdef->GetMaxRange(RT::WATER)
+			: kdef->IsLander() ? tdef->GetMaxRange(RT::LAND)
+			: std::max(tdef->GetMaxRange(RT::LAND), tdef->GetMaxRange(RT::WATER));
+	return kdef->IsMobile() && (range > 0.f) && (kdef->GetMaxRange() <= range);
+}
+
 int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
 	scoutStints.erase(unit->GetId());  // ids get reused
-	// porcupine.budget.loss_refund: a finished turret of ours killed by an enemy it could fight back pays its rebuild
-	// back. Could: the killer is known and doesn't outrange it against its kind (not artillery or skirmishers out of
-	// its reach, nor a flier over a ground-only turret). Captures and the garbage path have no attacker
+	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays its
+	// rebuild back. Captures and the garbage path have no attacker
 	const CCircuitDef* tdef = unit->GetCircuitDef();
 	if (turretPicker->IsDefence(tdef) && !unit->GetUnit()->IsBeingBuilt()) {
 		const float cost = tdef->GetCostM();
 		turretBudget.lost += cost;
-		const CCircuitDef* adef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
-		if (adef != nullptr) {
-			const CCircuitDef::RangeType rt = adef->IsAbleToFly() ? CCircuitDef::RangeType::AIR
-					: (adef->IsSubmarine() ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND);
-			const float range = tdef->GetMaxRange(rt);
-			if ((range > 0.f) && (adef->GetMaxRange(CCircuitDef::RangeType::LAND) <= range)) {
-				turretBudget.balance += turretBudget.lossRefund * cost;
-				turretBudget.lossPaid += turretBudget.lossRefund * cost;
-			}
+		const CCircuitDef* kdef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
+		if ((kdef != nullptr) && CanFightBack(tdef, kdef)) {
+			turretBudget.balance += turretBudget.lossRefund * cost;
+			turretBudget.lossPaid += turretBudget.lossRefund * cost;
 		}
 	}
 

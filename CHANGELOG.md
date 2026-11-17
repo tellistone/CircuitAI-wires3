@@ -16,9 +16,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   lower ms_pull) cut turret spending as they shift metal to factories. Porc-mode towers (a cluster's and its chokes')
   and the picker wait for the balance to cover a tower; the others are charged but never refused and may take it
   below zero; preventive towers are free. The per-point cap still spreads towers across points. `turret.share` is
-  gone. A finished turret of ours that dies to a known killer that doesn't outrange it (its range against ground no
-  longer than the turret's against the killer's kind: not artillery or skirmishers that outrange it, nor a flier over
-  a ground-only turret, nor an unseen killer or a capture) pays `loss_refund` (2) x its cost back, past the cap if
+  gone. A finished turret of ours that dies to a known mobile killer that doesn't outrange it (its longest range no
+  longer than the turret's against the killer's kind, ships taking the turret's longer of land and water range: not
+  artillery or skirmishers that outrange it, an enemy turret, a flier over a ground-only turret, an unseen killer or
+  a capture) pays `loss_refund` (2) x its cost back, past the cap if
   need be, so a lost position can be rebuilt. `TURRET BUDGET` in the log once a minute: balance, rate, the spend by spender, and turrets lost
 
 - **Attack groups count allied cover** (`quota.attack_ally_cover`, 0..0.75; code default 0 = off, shipped 0.5). A group

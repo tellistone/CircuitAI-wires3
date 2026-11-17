@@ -348,8 +348,8 @@ too. It is paid in as the metal comes: `share` x the average income x min(ms_pul
 of that (or the dearest tower a waiting spender asked for, whichever is more). An order needs the dearest light def's
 cost in it and takes the turret's cost out. Cornered, base timetable, radar guard, mex escort and hub towers are
 charged too, but never wait, so they can take it below zero; preventive towers are free. A finished turret of ours
-that dies to a known killer that doesn't outrange it pays `loss_refund` (2) x its cost back, past the cap if need be. So at 0.1, ms_pull 1 and
-10 m/s it fills at 1 m/s: a Lotus about every 90 s if nothing else spends.
+that dies to a known mobile killer that doesn't outrange it pays `loss_refund` (2) x its cost back, past the cap if
+need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 90 s if nothing else spends.
 
 ### Holding the line (C), objectives (D) and rankings (E)
 

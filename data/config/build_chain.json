@@ -47,12 +47,13 @@
 	//   - charged but never refused, the balance may go below zero: a cornered builder's tower, the base timetable
 	//     below, choke.radar.guard, a mex job's tower against an enemy mex, build_chain hubs, anything else
 	//   - free: preventive towers (a cluster outside porc mode, as many as the prevent roll gives)
-	// A finished armed defence of ours that dies pays <loss_refund> x its cost back if it could fight back (its killer
-	// known, and its range against ground no longer than the turret's against the killer's kind: not artillery or
-	// skirmishers that outrange it, nor a flier over a Lotus, nor an unseen killer or a capture), past the cap if need
-	// be (the account then stops filling until spending brings it below), so a lost position can be rebuilt. The
-	// per-point cap (amount x income) still bounds each defence point. Missing keys: 0.1, 60 s and 2.
-	// Logged once a minute as TURRET BUDGET, with the spend by spender and the turrets lost
+	// A finished armed defence of ours that dies pays <loss_refund> x its cost back if it could fight back: its killer
+	// known and mobile (an enemy turret stays, and a rebuild in its reach dies again), and its longest range no longer
+	// than the turret's against the killer's kind (a ship, hover or amphibian: the turret's longer of land and water
+	// range, so an Urchin counts against ships). Not artillery or skirmishers that outrange it, a flier over a Lotus,
+	// an unseen killer or a capture. Past the cap if need be (the account then stops filling until spending brings it
+	// below), so a lost position can be rebuilt. The per-point cap (amount x income) still bounds each defence point.
+	// Missing keys: 0.1, 60 s and 2. Logged once a minute as TURRET BUDGET, with the spend by spender and turrets lost
 	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2},
 
 
