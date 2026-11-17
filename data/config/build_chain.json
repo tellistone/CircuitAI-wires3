@@ -47,9 +47,11 @@
 	//   - charged but never refused, the balance may go below zero: a cornered builder's tower, the base timetable
 	//     below, choke.radar.guard, a mex job's tower against an enemy mex, build_chain hubs, anything else
 	//   - free: preventive towers (a cluster outside porc mode, as many as the prevent roll gives)
+	// A finished armed defence of ours that dies (or is captured) pays <loss_refund> x its cost back, past the cap if
+	// need be (the account then stops filling until spending brings it below), so a lost position can be rebuilt.
 	// The per-point cap (amount x income) still bounds each defence point. Missing: behaviour.json turret.share, else
-	// 0.1, and 60 s. Logged once a minute as TURRET BUDGET, with the spend by spender
-	"budget": {"share": 0.1, "bank_sec": 60},
+	// 0.1, 60 s and 2. Logged once a minute as TURRET BUDGET, with the spend by spender
+	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2},
 
 
 	// Base defence and time to build it, in seconds

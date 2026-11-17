@@ -136,7 +136,9 @@ public:
 	 * (CBuilderManager::AddTask), by the spender a TurretScope names (OTHER when none does), and refunded if it is
 	 * called off before it starts. Porc (porc-mode towers of a cluster or its chokes) and the picker wait for the
 	 * balance to cover a tower (CanAffordTurret); the rest are charged but never refused and may take it below zero.
-	 * Preventive towers (a cluster outside porc mode) are free, and only logged
+	 * Preventive towers (a cluster outside porc mode) are free, and only logged. A finished armed defence of ours that
+	 * dies (or is captured) pays loss_refund x its cost back, past the cap if need be (the account then stops filling
+	 * until it is spent below the cap), so a lost position can be rebuilt
 	 */
 	enum class TurretSpend: int {OTHER = 0, PORC, PREVENT, PICKER, CORNERED, BASE, GUARD, ESCORT, HUB, _SIZE_};
 	class TurretScope {  // the spender of the DEFENCE jobs queued while it lives
@@ -780,6 +782,9 @@ private:
 	struct STurretBudget {
 		float share = 0.1f;
 		float bankSec = 60.f;
+		float lossRefund = 2.f;  // x the cost of a finished turret of ours that dies
+		float lost = 0.f;  // since the last log line: what the lost turrets cost, and what they paid back
+		float lossPaid = 0.f;
 		float balance = 0.f;
 		int frame = -1;
 		float askCost = 0.f;  // the dearest tower a gated spender asked for and couldn't afford
@@ -789,6 +794,7 @@ private:
 		float refunded = 0.f;
 	} turretBudget;
 	TurretSpend turretSpend = TurretSpend::OTHER;
+	std::set<int> finishedTurrets;  // unit ids of our finished armed defences (porcupine.budget.loss_refund)
 	CCircuitDef* radarDef;
 	CCircuitDef* sonarDef;
 	CCircuitDef* bigGunDef;
