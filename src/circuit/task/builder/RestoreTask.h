@@ -38,9 +38,12 @@ protected:
 
 public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
+	// Optional work: any hit drops it for all its builders (below retreat health the builder also retreats)
+	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 	int GetCell() const { return cell; }
 	bool IsAssigned() const { return isAssigned; }
+	bool IsStarted() const { return tag >= 0; }  // the terraform is made: it keeps going at half the cover
 	int GetDropCause() const { return dropCause; }
 	void SetDropCause(int cause) { dropCause = cause; }  // CBuilderManager::SRestore::Drop, before AbortTask
 

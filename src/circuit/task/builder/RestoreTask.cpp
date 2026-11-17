@@ -41,7 +41,7 @@ bool CBRestoreTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	// The spot here; the way there is checked on the builder's path (ApplyPath)
-	return circuit->GetBuilderManager()->IsRestoreSafe(unit, position);
+	return circuit->GetBuilderManager()->IsRestoreSafe(unit, position, IsStarted());
 }
 
 void CBRestoreTask::AssignTo(CCircuitUnit* unit)
@@ -109,16 +109,16 @@ bool CBRestoreTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	return circuit->GetTerrainManager()->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
-			&& circuit->GetBuilderManager()->IsRestoreSafe(unit, endPos);
+			&& circuit->GetBuilderManager()->IsRestoreSafe(unit, endPos, IsStarted());
 }
 
 void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
 {
-	const CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
+	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
 	CCircuitUnit* unit = query->GetUnit();
 	const F3Vec& path = query->GetPathInfo()->posPath;
 	for (size_t i = 1; i < path.size(); ++i) {  // not where the builder stands: it can't help that
-		if (!builderMgr->IsRestoreSafe(unit, path[i])) {
+		if (!builderMgr->IsRestoreSafe(unit, path[i], IsStarted())) {
 			// One builder's unsafe way drops the job for all on it: the cell's back-off stops a re-take every update
 			dropCause = CBuilderManager::SRestore::DROP_PATH;
 			manager->AbortTask(this);
@@ -126,6 +126,15 @@ void CBRestoreTask::ApplyPath(const CQueryPathSingle* query)
 		}
 	}
 	IBuilderTask::ApplyPath(query);
+}
+
+void CBRestoreTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
+{
+	dropCause = CBuilderManager::SRestore::DROP_HIT;
+	IBuilderTask::OnUnitDamaged(unit, attacker);  // low health: the builder retreats and the job drops there
+	if (!IsDead()) {
+		manager->AbortTask(this);
+	}
 }
 
 void CBRestoreTask::OnUnitIdle(CCircuitUnit* unit)

@@ -142,7 +142,8 @@ public:
 	// <depth> or more on <share> of its samples gets a CBRestoreTask at <priority>, nearest builder first, while a
 	// builder is within <range> and the cell is safe: no known enemy on it or next to it, and no threat on it unless
 	// our army covers it (IsRestoreSafe). A job whose cell turns unsafe (an enemy staying near for <grace> s, or
-	// uncovered threat), or whose builder's path there crosses uncovered threat, is dropped and its builders stop.
+	// uncovered threat), whose builder's path there crosses uncovered threat, or whose builder is hit, is dropped and
+	// its builders stop. A started job keeps going at half the cover.
 	// Any drop of a job a builder took (also a builder hit or killed) backs its cell off (cooldown, doubling).
 	// Cells with an allied building are skipped (levelled pads); an ally's terraform gives its cell up.
 	// Every <log> s while anything is dug, a line counts why dug cells have no job and how jobs ended
@@ -152,7 +153,8 @@ public:
 		// Why a dug cell has no job (the first rule that stopped it), and why a job a builder took was dropped
 		enum Skip: int {SKIP_HELD, SKIP_TRIES, SKIP_BUILDING, SKIP_ENEMY, SKIP_THREAT, SKIP_STALL, SKIP_FAR, SKIP_CAP,
 			SKIP_COUNT};
-		enum Drop: int {DROP_ENEMY, DROP_THREAT, DROP_PATH, DROP_OTHER, DROP_COUNT};  // other: hit, killed, unreachable
+		enum Drop: int {DROP_ENEMY, DROP_THREAT, DROP_PATH, DROP_HIT, DROP_OTHER, DROP_COUNT};  // other: killed,
+		// switched to a nearer job, unreachable
 		struct SCell {
 			CBRestoreTask* task = nullptr;
 			int until = -1;  // frame the cell is held off until
@@ -171,13 +173,13 @@ public:
 		int maxTries;
 		int cooldown;  // frames
 		IBuilderTask::Priority priority;  // of the jobs (and ZK's build priority they send)
-		float cover;  // our armed influence (no commanders) over the threat that makes it acceptable, 0 = any blocks
+		float cover;  // our armed power within coverRadius over the threat that makes it acceptable, 0 = any blocks
+		float coverRadius;
 		int grace;  // frames a known enemy may stay near a working job before it's dropped
 		int logInterval;  // frames, 0 = no log
 		int logFrame = 0;
 		int done = 0;  // since the last log line
 		int drops[DROP_COUNT] = {};
-		std::vector<int> commIds;  // friendly commanders at the last update: their influence isn't cover
 		int cellsX = 0;
 		int cellsZ = 0;
 		std::vector<SCell> grid;  // cellsX * cellsZ
@@ -190,9 +192,9 @@ public:
 	const SRestore& GetRestore() const { return restore; }
 	int NextRestoreTag() { return restore.nextTag++; }
 	void OnRestoreEnd(CBRestoreTask* task, bool done);
-	// No threat at pos (the unit's own layer, or surface threat for nullptr), or our armed influence there, commanders
-	// left out, is at least restore.cover x that threat: our army holds the ground
-	bool IsRestoreSafe(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
+	// No threat at pos (the unit's own layer, or surface threat for nullptr), or our armed units and static defences
+	// within restore.coverRadius have at least restore.cover x that threat (half that to keep a started job: isKeep)
+	bool IsRestoreSafe(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isKeep = false);
 private:
 	void UpdateRestore();
 	void ScanRestore();

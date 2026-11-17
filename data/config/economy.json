@@ -161,21 +161,22 @@
 	// Every 2 s, on 128-elmo cells: a cell is "dug" when at least <share> of its samples (one per 16 elmos) are
 	// <depth> elmos or more off the height the map had when the AI started. A dug cell gets a job when a constructor
 	// is within <range> and the cell is safe: no known enemy on it or the cells next to it (ZK makes terraform 20x
-	// slower near enemies), and no threat on it unless our army covers it: our armed units' influence there
-	// (commanders not counted) is at least <cover> x the threat there (0 = any threat blocks). Only a constructor
+	// slower near enemies), and no threat on it unless our army covers it: our armed units and static defences
+	// within <cover_radius> have at least <cover> x the threat's power (0 = any threat blocks). Only a constructor
 	// within <range> for which the cell is safe takes it, <builders> at most per job, <jobs> jobs at once (nearest
 	// first). A job is dropped when its cell stops being safe (a known enemy stays near it for <grace> s, or threat
-	// our army doesn't cover) or a builder's threat-aware path there crosses uncovered threat, and its builders stop.
+	// our army doesn't cover), a builder's threat-aware path there crosses uncovered threat, or a builder on it is
+	// hit, and its builders stop. Once its terraform is made, a job keeps going with half the cover.
 	// <grace> rounds up to whole 2 s updates (2 = an enemy seen on two updates in a row).
 	// After any drop of a job a builder took (also a builder hit or killed) the cell waits <cooldown> s, doubling on
 	// each drop up to 8x until a job finishes. After a finished job the cell waits <cooldown> s, and after <tries>
 	// finished jobs that left it dug it is given up until it is back at the start height. Cells with an allied
 	// building are skipped (levelled pads); an ally's terraform gives its cell up the same way. range 0 disables.
 	// log: every <log> s while any cell is dug, an infolog line "RESTORE: ..." counts why dug cells have no job (the
-	// first rule that stopped each) and how jobs ended since the last line ("other": a builder hit, killed or
-	// switched to a nearer job, or the cell unreachable). 0 = off.
+	// first rule that stopped each) and how jobs ended since the last line ("other": a builder killed or switched to
+	// a nearer job, or the cell unreachable). 0 = off.
 	"restore": {"range": 1000, "depth": 24, "share": 0.12, "jobs": 2, "builders": 2, "tries": 3, "cooldown": 30, "priority": "high",
-		"cover": 2, "grace": 2, "log": 30},
+		"cover": 2, "cover_radius": 500, "grace": 2, "log": 30},
 
 	// Metal excess to income ratio, -1 to disable
 	"excess": -1.0,
