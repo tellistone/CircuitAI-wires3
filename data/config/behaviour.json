@@ -78,6 +78,7 @@
 	"attack_path_dynamic_cost": {"target": true, "reinforce": true, "front": true, "flee": true, "cornered": true},  // attack group routes, per kind (target = route to a target, reinforce = to a group it joins, front = to the front, flee = escape, cornered = to a quieter spot): true = a cell's threat cost is threat x (1 + threat / the threat the group tolerates there, i.e. its strength x thr_mod base bonus / distance curve / near-base scale, as the escape uses), i.e. about half the usual for light threat, the same at the escape's danger line, steeper above; false = the flat 2 x threat; true/false alone sets all
 	"attack_flee_path_max_weight": 3.0,  // flee and cornered routes with attack_path_dynamic_cost on: the threat weight (1 + threat / tolerated threat) is at most this (the flat weight is 2); >= 1
 	"attack_path_ignore_threat": 0.25,  // attack group routes to a target, the front or a group to reinforce count threat at or below this x the group's current strength as none (no detour around it); 0 = off; max 0.5 / the highest value of thr_mod.distance.attack (0.25 with the attack curve below, which peaks at 2.0), also x thr_mod.base_bonus if that is below 1; higher acts as that max
+	"attack_ally_cover": 0.5,  // attack groups count allied cover over a spot as extra strength there, in every danger check (target choice, approach line, firing cells, path ahead, escape, merge line, flee destination) and in their routes: strength x (1 + min(this x cover / own strength, 1)), i.e. at most double. Cover: built allied armed statics (every allied team; power x sqrt(health share), full out to half their weapon's land range, then falling to 0 at it: the real reach, not the threat range, whose slack would count ground they can't shoot; half that range for statics over 1000 elmos of range, none over 2000), our other attack groups that aren't fleeing (their strength out to their fire range past their units' spread, where they stand) and our commander while it isn't retreating (its power x sqrt(health share) out to its weapon range); never the group itself, nor the other group in a two-group check; none for flying groups, nor on water (a sector at most half land: hovers, amphibious units and ships never get it, even beside a turret on the shore). A group lends the strength it picks with (less just after an escape). Routes outside enemy threat are unchanged. Two ATTACK cover lines in the log every minute (fights cover licensed and how they ended, units lost where only cover kept them, and the cost); 0 = off; 0..0.75 (each group counts a neighbour's whole strength, so at 1 two groups facing separate threats could each commit as if they were both)
 
 
 	"attack_merge": {  // how attack groups join (the smaller walks to the bigger), absorb (an army pulls in small groups) and reinforce (a small group walks to the nearest stronger group)
@@ -218,8 +219,9 @@
 	"not_defence": ["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"],  // Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity, Antinuke
 	// Callers, once a second, each turret at NORMAL priority. Both share the light list and the limits: a
 	// constructor helps a turret of ours being built (or a picker job) within radius instead of ordering one, orders
-	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and only once share of the metal income,
-	// paid in as it comes (up to a minute's share), covers the turret: none in the opening before it has
+	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and only once the turret account
+	// (build_chain.json porcupine.budget, shared with porc) covers the dearest light def it might pick: none in the
+	// opening before it has
 	"after_flee": true,  // a constructor whose flee ended clear or covered orders one where the flee started, of the light defs that hit what it fled from, unless a defence that hits it (ours or an ally's, being built or queued too) stands within defended_radius (the commander's flee is on by default; other builders' with retreat.builder_flee)
 	"after_flee_since": 0,  // seconds of game time before after_flee starts
 	"defended_radius": 600,  // after a flee, a defence this near where it started means no turret
@@ -227,15 +229,14 @@
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
 	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots. An order
 	// tries the heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier,
-	// down to light. The budget then waits for the dearest unlocked def
+	// down to light. The turret account must then cover the dearest unlocked def
 	"tiers": [
 		{"mex": 0.4, "defs": ["turretriot", "turretgauss"]},  // Stardust, Gauss
 		{"mex": 0.55, "defs": ["turretheavylaser"]}  // HLT
 	],
 	"enemy_reach": 600,
 	"ally_radius": 500,
-	"cooldown": 30,  // seconds between one constructor's orders, whatever the result
-	"share": 0.15
+	"cooldown": 30  // seconds between one constructor's orders, whatever the result
 },
 
 "defence": {

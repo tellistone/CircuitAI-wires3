@@ -62,7 +62,8 @@ public:
 	springai::Resource* GetEnergyRes() const { return energyRes; }
 	CEnergyGrid* GetEnergyGrid() const { return energyGrid; }
 	CCircuitDef* GetMexDef() const { return mexDef; }
-	CCircuitDef* GetLowEnergy(const springai::AIFloat3& pos, float& outMake) const;
+	// The cheapest energy that can stand at pos; isOrFill: else the cheapest fill def, which the fill places itself
+	CCircuitDef* GetLowEnergy(const springai::AIFloat3& pos, float& outMake, bool isOrFill = false) const;
 	CCircuitDef* GetPylonDef() const { return pylonDef; }
 	float GetPylonRange() const { return pylonRange; }
 	void AddEnergyDefs(const std::set<CCircuitDef*>& buildDefs);  // add available energy defs
@@ -157,6 +158,28 @@ public:
 	IBuilderTask* UpdateFactoryTasks();
 	IBuilderTask* UpdateStorageTasks();
 	IBuilderTask* UpdatePylonTasks();
+	// economy.energy.fill: cheap energy placed to overdrive every mex and link up the grid
+	bool IsFillDef(CCircuitDef* cdef) const { return fillDefs.find(cdef) != fillDefs.end(); }
+	// A job for fill def cdef near pos (the builder's, or a new mex's), within fill_dist (a third of it while short of
+	// energy), on a site that links (CEnergyGrid::FindFillSite): beside the nearest mex of ours on no grid with energy;
+	// else in the nearest open gap of the grid plan; else beside a mex of the grid with the least energy per mex.
+	// Reachable by unit (nullptr: by some builder). nullptr = not a fill def, or none of these
+	IBuilderTask* EnqueueFillEnergy(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
+			IUnitTask::Priority priority);
+	// A fill site for cdef: off allied buildings, safe, allowed (IsAllowedAt) and in reach of unit (nullptr: of some
+	// builder in its area)
+	std::function<bool (const springai::AIFloat3& p)> GetFillPredicate(CCircuitDef* cdef, CCircuitUnit* unit);
+	// EnqueueFillEnergy; else a job at pos (shake), if cdef can stand there and isn't a base_only piece on land
+	// (IsBaseOnlyAt: it would clump there). nullptr = none
+	IBuilderTask* EnqueueCheapEnergy(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
+			IUnitTask::Priority priority, float shake);
+	// economy.energy.base_only: cdef is such a def and the game wouldn't build it as tidal at pos (ground above the
+	// game's tidalHeight). Such a piece goes only beside a bare mex or into a gap of the grid plan, never by a fallback
+	bool IsBaseOnlyAt(CCircuitDef* cdef, const springai::AIFloat3& pos) const;
+	// False when IsBaseOnlyAt and pos is outside the base: base_only.radius around the base position, at most the
+	// base defence radius (0.3 of the map diagonal, clamped to defence.base_rad). Checked on sites only, never on where
+	// the builder stands
+	bool IsAllowedAt(CCircuitDef* cdef, const springai::AIFloat3& pos) const;
 
 	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
 	// that much energy. False before Init
@@ -217,6 +240,11 @@ private:
 	std::vector<SClusterInfo> clusterInfos;
 	float pylonRange;
 	float pylonLinkInc;
+	std::set<CCircuitDef*> fillDefs;  // economy.energy.fill.unit
+	std::set<CCircuitDef*> baseOnlyDefs;  // economy.energy.base_only.unit
+	float baseOnlyRadius;  // economy.energy.base_only.radius, capped by the base defence radius; <= 0: that radius
+	float fillDist;  // economy.energy.fill.max_dist
+	float tidalHeight;  // the game's: wind on ground at or below it is tidal
 	CCircuitDef* pylonDef;  // TODO: Move into CEnergyGrid?
 
 	CCircuitDef* mexDef;

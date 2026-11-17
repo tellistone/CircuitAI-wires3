@@ -92,8 +92,9 @@ protected:
 	// than ours (a smaller terrain area: it would take the lead (FindLeader) and drag the group back, or get stranded on
 	// routes only our leader takes), and the same movement type (amphibious may join landers and floaters)
 	bool IsMoveCompatible(CCircuitUnit* unit, float speedRatio) const;
-	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below allowedAt(spot) at each sampled spot
-	// (one threat square apart); allowances are above 0, so no threat is always safe
+	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below allowedAt(spot, threat there) at each
+	// sampled spot (one threat square apart); allowances are above 0, so no threat is always safe. The threat is
+	// passed for allowances that compare the same when they skip work there (IFighterTask::GetAllowedThreatFor)
 	template<typename AllowedAt>
 	bool IsLineSafe(const springai::AIFloat3& from, const springai::AIFloat3& to, float maxReach,
 			AllowedAt allowedAt) const;
@@ -168,10 +169,16 @@ protected:
 	// fleeShare of our strength (IsRespotHopeless). true: in grace
 	bool IsInFleeGrace(int frame, bool isMismatch, int graceFrames, float fleeShare);
 	bool IsRespotHopeless(int frame, float fleeShare) const;
-	// Threat cost against this task's allowance for strength (GetAllowedThreatAt) at each cell of a route
+	// Threat cost against this task's allowance for strength (GetRadialAllowedThreatAt) at each cell of a route
 	// (IPathQuery::SetThreatAllowance). isDynamic: weighed against it; isMargin: clear of ground just under the escape's
 	// line where it can (quota.danger_margin; not for a cloak-routed leader, on another threat scale)
 	void SetRouteAllowance(IPathQuery* query, float strength, bool isDynamic, bool isMargin, float maxWeight = 0.f) const;
+	// The allowance as SetRouteAllowance samples it: along one ray from our base, so only its part that depends on
+	// distance from the base. GetAllowedThreatAt, unless that has per-spot terms (CAttackTask: allied cover, which its
+	// routes carry in their threat layer instead)
+	virtual float GetRadialAllowedThreatAt(const springai::AIFloat3& pos, float strength) const {
+		return GetAllowedThreatAt(pos, strength);
+	}
 	int suddenFrame = -FRAMES_PER_SEC * 60;  // last turret first seen within our reach (OnSuddenThreat), until a grace
 	int graceFrame = -FRAMES_PER_SEC * 60;  // start of the last grace
 	std::vector<CCircuitUnit*> endangered;  // from the last IsInDanger
@@ -321,7 +328,7 @@ bool ISquadTask::IsLineSafe(const springai::AIFloat3& from, const springai::AIFl
 	for (float d = step; d <= reach; d += step) {
 		springai::AIFloat3 p = from + dir * d;
 		const float threat = GetLineThreatAt(p);
-		if ((threat > 0.f) && (threat >= allowedAt(p))) {
+		if ((threat > 0.f) && (threat >= allowedAt(p, threat))) {
 			return false;
 		}
 	}

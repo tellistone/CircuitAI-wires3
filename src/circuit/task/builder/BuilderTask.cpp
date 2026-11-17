@@ -7,6 +7,7 @@
 
 #include "task/builder/BuilderTask.h"
 #include "task/builder/BuildChain.h"
+#include "task/builder/DefenceTask.h"
 #include "task/RetreatTask.h"
 #include "map/ThreatMap.h"
 #include "map/InfluenceMap.h"
@@ -176,6 +177,15 @@ void IBuilderTask::Finish()
 
 void IBuilderTask::Cancel()
 {
+	// porcupine.budget: the turret account gets back what it paid for towers that never started, its own and those
+	// waiting in its chain (deleted with it)
+	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	for (IBuilderTask* t = this; (militaryMgr != nullptr) && (t != nullptr); t = t->GetNextTask()) {
+		if ((t->GetBuildType() == BuildType::DEFENCE) && (t->GetTarget() == nullptr)) {
+			militaryMgr->RefundTurret(static_cast<CBDefenceTask*>(t));
+		}
+	}
+
 	if ((target == nullptr) && utils::is_valid(buildPos)) {
 		SetBuildPos(-RgtVector);
 	}
@@ -594,8 +604,11 @@ void IBuilderTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, flo
 		facing = (2 * pos.z > terHeight) ? UNIT_FACING_NORTH : UNIT_FACING_SOUTH;
 	}
 
-	CTerrainManager::TerrainPredicate predicate = [terrainMgr, builder](const AIFloat3& p) {
-		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance());
+	CEconomyManager* economyMgr = manager->GetCircuit()->GetEconomyManager();
+	CCircuitDef* cdef = buildDef;
+	CTerrainManager::TerrainPredicate predicate = [terrainMgr, economyMgr, cdef, builder](const AIFloat3& p) {
+		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance())
+			&& economyMgr->IsAllowedAt(cdef, p);  // economy.energy.base_only
 	};
 	SetBuildPos(terrainMgr->FindBuildSite(buildDef, pos, searchRadius, facing, predicate));
 }
@@ -611,17 +624,18 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 	}
 
 	if (chain->energy > 0.f) {
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		float energyMake;
-		CCircuitDef* energyDef = circuit->GetEconomyManager()->GetLowEnergy(buildPos, energyMake);
+		// isOrFill: on ground too steep for any energy at this mex, the fill can still find a site beside it
+		CCircuitDef* energyDef = economyMgr->GetLowEnergy(buildPos, energyMake, true);
 		if (energyDef != nullptr) {
-			bool isValid = (circuit->GetEconomyManager()->GetAvgEnergyIncome() < chain->energy);
+			bool isValid = (economyMgr->GetAvgEnergyIncome() < chain->energy);
 			if (isValid && chain->isMexEngy) {
 				int index = circuit->GetMetalManager()->FindNearestSpot(buildPos);
 				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
 			}
-			if (isValid) {
-				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
-														  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
+			if (isValid) {  // economy.energy.fill places it (beside this mex while it is on no grid with energy)
+				economyMgr->EnqueueCheapEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL, SQUARE_SIZE * 8.0f);
 			}
 		}
 	}
@@ -698,6 +712,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 		CCircuitDef* bdef = units.empty() ? circuit->GetSetupManager()->GetCommChoice() : (*this->units.begin())->GetCircuitDef();
 		CBuilderManager* builderMgr = circuit->GetBuilderManager();
 		CEnemyManager* enemyMgr = circuit->GetEnemyManager();
+		CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::HUB);
 
 		for (auto& queue : chain->hub) {
 			IBuilderTask* parent = nullptr;

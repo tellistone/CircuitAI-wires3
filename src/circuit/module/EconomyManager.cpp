@@ -18,6 +18,7 @@
 #include "map/ThreatMap.h"
 #include "map/InfluenceMap.h"
 #include "task/RetreatTask.h"
+#include "task/builder/EnergyTask.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
@@ -53,6 +54,9 @@ const char* RES_NAME_ENERGY = "Energy";
 CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		: IModule(circuit)
 		, energyGrid(nullptr)
+		, baseOnlyRadius(0.f)
+		, fillDist(0.f)
+		, tidalHeight(-10.f)
 		, pylonDef(nullptr)
 		, mexDef(nullptr)
 		, storeDef(nullptr)
@@ -372,6 +376,22 @@ void CEconomyManager::ReadConfig()
 
 	pylonLinkInc = energy.get("link_inc", 16.0f).asFloat();
 
+	auto readDefs = [this, &cfgName](const Json::Value& names, std::set<CCircuitDef*>& outDefs) {
+		for (const Json::Value& name : names) {
+			CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
+			if (cdef == nullptr) {
+				circuit->LOG("CONFIG %s: has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
+			} else {
+				outDefs.insert(cdef);
+			}
+		}
+	};
+	readDefs(energy["fill"]["unit"], fillDefs);
+	fillDist = std::max(energy["fill"].get("max_dist", 1500.f).asFloat(), 0.f);
+	const Json::Value& baseOnly = energy["base_only"];  // also the older plain list of names
+	readDefs(baseOnly.isObject() ? baseOnly["unit"] : baseOnly, baseOnlyDefs);
+	baseOnlyRadius = baseOnly.isObject() ? baseOnly.get("radius", 1500.f).asFloat() : 1500.f;
+
 	{
 		const Json::Value& gridLink = energy["grid_link"];
 		gridLinkMaxPylons = std::max(gridLink.get("max_pylons", 6).asInt(), 0);
@@ -442,6 +462,7 @@ void CEconomyManager::ReadConfig()
 void CEconomyManager::Init()
 {
 	energyGrid = circuit->GetAllyTeam()->GetEnergyGrid().get();
+	tidalHeight = circuit->GetGame()->GetRulesParamFloat("tidalHeight", -10.f);  // unit_windmill_control
 
 	const size_t clSize = circuit->GetMetalManager()->GetClusters().size();
 	clusterInfos.resize(clSize, {nullptr, -FRAMES_PER_SEC});
@@ -661,17 +682,27 @@ int CEconomyManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	return 0; //signaling: OK
 }
 
-CCircuitDef* CEconomyManager::GetLowEnergy(const AIFloat3& pos, float& outMake) const
+CCircuitDef* CEconomyManager::GetLowEnergy(const AIFloat3& pos, float& outMake, bool isOrFill) const
 {
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
-	return energyDefs.GetWorstDef([this, frame, terrainMgr, &pos, &outMake](CCircuitDef* cdef, const SEnergyExt& data) {
-		if (cdef->IsAvailable(frame) && !IsGeoDef(cdef) && terrainMgr->CanBeBuiltAtSafe(cdef, pos)) {
-			outMake = data.make;
-			return true;
-		}
-		return false;
+	auto getWorst = [this, frame, &outMake](auto isGood) {
+		return energyDefs.GetWorstDef([frame, &outMake, &isGood](CCircuitDef* cdef, const SEnergyExt& data) {
+			if (cdef->IsAvailable(frame) && isGood(cdef)) {
+				outMake = data.make;
+				return true;
+			}
+			return false;
+		});
+	};
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CCircuitDef* cdef = getWorst([this, terrainMgr, &pos](CCircuitDef* cdef) {
+		return !IsGeoDef(cdef) && terrainMgr->CanBeBuiltAtSafe(cdef, pos) && IsAllowedAt(cdef, pos);
 	});
+	// None for its ground (not for threat): a fill def finds its own site
+	if ((cdef == nullptr) && isOrFill && (circuit->GetThreatMap()->GetAllThreatAt(pos) <= THREAT_MIN)) {
+		cdef = getWorst([this](CCircuitDef* cdef) { return IsFillDef(cdef); });
+	}
+	return cdef;
 }
 
 void CEconomyManager::AddEnergyDefs(const std::set<CCircuitDef*>& buildDefs)
@@ -1317,6 +1348,16 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		return nullptr;
 	}
 
+	// economy.energy.fill: beside a mex on no grid with energy, else into a gap of the grid plan, else on the grid
+	// with the least energy per mex; at the nearest metal spot only when none of these is in reach, and never a
+	// base_only piece on land (it would clump at that mex)
+	if (!IsRearDef(bestDef)) {
+		IBuilderTask* task = EnqueueFillEnergy(bestDef, position, unit, priority);
+		if (task != nullptr) {
+			return task;
+		}
+	}
+
 	// Find place to build
 	AIFloat3 buildPos = -RgtVector;
 	CMetalManager* metalMgr = circuit->GetMetalManager();
@@ -1324,8 +1365,8 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		buildPos = GetRearPos(bestDef, unit);  // checked in the loop, so valid
 	} else if (!bestDef->IsRoleSupport()) {
 		const CMetalData::Metals& spots = metalMgr->GetSpots();
-		CMetalData::PointPredicate predicate = [&spots, terrainMgr](int index) {
-			return !terrainMgr->IsZoneAlly(spots[index].position);
+		CMetalData::PointPredicate predicate = [this, &spots, terrainMgr, bestDef](int index) {
+			return !terrainMgr->IsZoneAlly(spots[index].position) && !IsBaseOnlyAt(bestDef, spots[index].position);
 		};
 		int index = metalMgr->FindNearestSpot(position, predicate);
 		if (index != -1) {
@@ -1874,6 +1915,64 @@ IBuilderTask* CEconomyManager::UpdateStorageTasks()
 								   storeDef, buildPos, IBuilderTask::BuildType::STORE);
 }
 
+IBuilderTask* CEconomyManager::EnqueueFillEnergy(CCircuitDef* cdef, const AIFloat3& pos, CCircuitUnit* unit,
+		IUnitTask::Priority priority)
+{
+	if (!IsFillDef(cdef) || (energyGrid == nullptr) || (fillDist <= 0.f)) {
+		return nullptr;
+	}
+	// Short of energy: only a third as far, as the walk would outlast the build (the nearest metal spot instead)
+	const float maxDist = IsEnergyShort() ? fillDist / 3.f : fillDist;
+	energyGrid->SetAuthority(circuit);
+	CEnergyGrid::SLinkSite site;
+	AIFloat3 buildPos;
+	IGridLink* gap = energyGrid->FindFillSite(cdef, pos, maxDist, GetFillPredicate(cdef, unit), site, buildPos);
+	if (!utils::is_valid(buildPos)) {
+		return nullptr;
+	}
+	// An energy job on that exact site, so every energy rule applies; it holds the gap (one piece per gap at a time)
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(priority, cdef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
+	task->SetBuildPos(buildPos);
+	static_cast<CBEnergyTask*>(task)->SetLinkSite(site, gap);
+	return task;
+}
+
+CEnergyGrid::Predicate CEconomyManager::GetFillPredicate(CCircuitDef* cdef, CCircuitUnit* unit)
+{
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	return [this, terrainMgr, builderMgr, cdef, unit](const AIFloat3& p) {
+		return !terrainMgr->IsZoneAlly(p) && terrainMgr->CanBeBuiltAtSafe(cdef, p) && IsAllowedAt(cdef, p)
+			&& ((unit != nullptr) ? terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance())
+								  : builderMgr->IsBuilderInArea(cdef, p));
+	};
+}
+
+IBuilderTask* CEconomyManager::EnqueueCheapEnergy(CCircuitDef* cdef, const AIFloat3& pos, CCircuitUnit* unit,
+		IUnitTask::Priority priority, float shake)
+{
+	IBuilderTask* task = EnqueueFillEnergy(cdef, pos, unit, priority);
+	if ((task == nullptr) && !IsBaseOnlyAt(cdef, pos) && circuit->GetTerrainManager()->CanBeBuiltAt(cdef, pos)) {
+		task = circuit->GetBuilderManager()->EnqueueTask(priority, cdef, pos, IBuilderTask::BuildType::ENERGY, shake, true);
+	}
+	return task;
+}
+
+bool CEconomyManager::IsBaseOnlyAt(CCircuitDef* cdef, const AIFloat3& pos) const
+{
+	return (baseOnlyDefs.find(cdef) != baseOnlyDefs.end()) && (circuit->GetMap()->GetElevationAt(pos.x, pos.z) > tidalHeight);
+}
+
+bool CEconomyManager::IsAllowedAt(CCircuitDef* cdef, const AIFloat3& pos) const
+{
+	if (!IsBaseOnlyAt(cdef, pos)) {
+		return true;
+	}
+	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();
+	const float radius = (baseOnlyRadius > 0.f) ? std::min(baseOnlyRadius, baseRange) : baseRange;
+	return pos.SqDistance2D(circuit->GetSetupManager()->GetBasePos()) < SQUARE(radius);
+}
+
 IBuilderTask* CEconomyManager::UpdatePylonTasks()
 {
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
@@ -2072,28 +2171,9 @@ bool CEconomyManager::LinkToGrid(CCircuitUnit* unit, SGridLink& info)
 
 	// On the line to the target: the last pylon goes midway through the overlap of both reaches, any other as far
 	// out as still links to its grid. Each step starts from the grown grid, so it re-plans around blocked ground
-	const float dist = from->pos.distance2D(to->pos);
-	const float reachFrom = from->range + pylonLink;
-	const float reachTo = to->range + pylonLink;
-	const float step = (count <= 1) ? (dist + reachFrom - reachTo) * 0.5f : reachFrom * 0.9f;
-	AIFloat3 ideal = from->pos + (to->pos - from->pos) / dist * step;
-	CTerrainManager::CorrectPosition(ideal);
-
+	const CEnergyGrid::SLinkSite site = {from->pos, to->pos, from->range + pylonLink, to->range + pylonLink, count <= 1};
+	const AIFloat3 buildPos = energyGrid->FindLinkSite(pylonDef, site, pylonLink * 0.5f, [](const AIFloat3&) { return true; });
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const float sqFrom = SQUARE(reachFrom - SQUARE_SIZE);
-	const float sqTo = SQUARE(reachTo - SQUARE_SIZE);
-	const AIFloat3 fromPos = from->pos;
-	const AIFloat3 toPos = to->pos;
-	CTerrainManager::TerrainPredicate isLinked = [fromPos, toPos, sqFrom, sqTo, count](const AIFloat3& p) {
-		return (p.SqDistance2D(fromPos) < sqFrom) && ((count > 1) || (p.SqDistance2D(toPos) < sqTo));
-	};
-	AIFloat3 buildPos = terrainMgr->FindBuildSite(pylonDef, ideal, pylonLink * 0.5f, UNIT_COMMAND_BUILD_NO_FACING, isLinked);
-	if (!utils::is_valid(buildPos) && (count <= 1)) {  // no site touching both: one more step it is
-		CTerrainManager::TerrainPredicate isFromLinked = [fromPos, sqFrom](const AIFloat3& p) {
-			return p.SqDistance2D(fromPos) < sqFrom;
-		};
-		buildPos = terrainMgr->FindBuildSite(pylonDef, ideal, pylonLink * 0.5f, UNIT_COMMAND_BUILD_NO_FACING, isFromLinked);
-	}
 	if (!utils::is_valid(buildPos) || !terrainMgr->CanBeBuiltAtSafe(pylonDef, buildPos)) {
 		return false;
 	}

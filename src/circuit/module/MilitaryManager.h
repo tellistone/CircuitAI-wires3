@@ -37,6 +37,7 @@ class CRaidTask;
 class ISquadTask;
 class CChokeDefence;
 class CSensorPlanner;
+class CAllyCover;
 class CFrontline;
 class CTurretPicker;
 
@@ -126,6 +127,34 @@ public:
 	bool HasDefence(int cluster);
 	// MakeDefence's cap on a point's towers: MIN_BUILD_SEC x porcupine.amount x income
 	float GetDefenceCap() const;
+
+	/*
+	 * porcupine.budget: one turret account for every armed defence the AI queues (CTurretPicker::IsDefence: no
+	 * shields, storages, caretakers, radars, Claw mines, missiles or turret.not_defence statics), but preventive ones.
+	 * It fills at share x avg metal income x min(economy ms_pull, 1), up to bank_sec seconds of that (or the dearest
+	 * tower a waiting spender asked for in the last 2 minutes). Every armed DEFENCE job is charged as it is queued
+	 * (CBuilderManager::AddTask), by the spender a TurretScope names (OTHER when none does), and refunded if it is
+	 * called off before it starts. Porc (porc-mode towers of a cluster or its chokes) and the picker wait for the
+	 * balance to cover a tower (CanAffordTurret); the rest are charged but never refused and may take it below zero.
+	 * Preventive towers (a cluster outside porc mode) are free, and only logged. A finished armed defence of ours that
+	 * dies to a known mobile killer that doesn't outrange it (CanFightBack) pays loss_refund x its cost back, past the
+	 * cap if need be (the account then stops filling until it is spent below the cap), so a lost position can be
+	 * rebuilt
+	 */
+	enum class TurretSpend: int {OTHER = 0, PORC, PREVENT, PICKER, CORNERED, BASE, GUARD, ESCORT, HUB, _SIZE_};
+	class TurretScope {  // the spender of the DEFENCE jobs queued while it lives
+	public:
+		TurretScope(CMilitaryManager* mgr, TurretSpend spend) : mgr(mgr), prev(mgr->turretSpend) { mgr->turretSpend = spend; }
+		~TurretScope() { mgr->turretSpend = prev; }
+	private:
+		CMilitaryManager* mgr;
+		TurretSpend prev;
+	};
+	bool CanAffordTurret(float cost);
+	void ChargeTurret(CBDefenceTask* task);
+	void RefundTurret(CBDefenceTask* task);
+	void UpdateTurretBudget();  // accrues; logs the spend once a minute
+	float* GetTurretShare() { return &turretBudget.share; }  // choke_overlay set turret.share
 
 	// Chokepoint features (CChokeMap::SConfig), each off by default
 	CChokeDefence* GetChokeDefence() const { return chokeDefence.get(); }
@@ -283,6 +312,14 @@ public:
 	// May a unit of cdef's movement type that scouts through the scout attribute take a scout slot: fewer of them are
 	// scouting than quota.scout + bonus, or than quota.scout_share of them (rounded down), both capped by scout_max
 	bool IsScoutSlotFree(const CCircuitDef* cdef) const;
+	// Raid stint: a scout with no safe route to its spot raids (any raid group, merges and rallies included) until
+	// endFrame, then its raid group hands it back to a new scout task (CRaidTask::UpdateScoutStints)
+	void SetScoutStint(const CCircuitUnit* unit, int endFrame);
+	void EndScoutStint(const CCircuitUnit* unit);
+	int GetScoutStintEnd(const CCircuitUnit* unit) const;  // -1: not on a stint
+	bool IsScoutStint(const CCircuitUnit* unit) const { return GetScoutStintEnd(unit) >= 0; }
+	bool HasScoutStints() const { return !scoutStints.empty(); }
+	bool IsScouting(const CCircuitUnit* unit) const;  // on a scout task or a raid stint
 	bool IsQuotaScout(const CCircuitDef* cdef) const;  // scouts through the scout attribute, not its own role
 	// quota.raider (+ bonus): factories build a raider while we have fewer raider units (main role raider or bound
 	// to it, not scouting; alive plus queued) than this. 0 = no floor
@@ -354,9 +391,11 @@ public:
 		springai::AIFloat3 pos;
 		float sqRadius;
 	};
-	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below allowedAt(centre)
-	// (squad threat for a squad), reachable within 'reach'. Empty when quota.contested.bonus <= 1
-	void GetTakeableContested(CCircuitUnit* unit, float reach, const std::function<float (const springai::AIFloat3&)>& allowedAt,
+	// Contested clusters the unit's group can take: threat at the centre above quota.contested.wall but below
+	// allowedAt(centre, that threat) (squad threat for a squad), reachable within 'reach'. Empty when
+	// quota.contested.bonus <= 1. allowedAt gets the threat it is compared with (CAttackTask: allied cover's band)
+	void GetTakeableContested(CCircuitUnit* unit, float reach,
+			const std::function<float (const springai::AIFloat3&, float)>& allowedAt,
 			std::vector<SContestedSpot>& outSpots);
 	static bool IsInContested(const std::vector<SContestedSpot>& spots, const springai::AIFloat3& pos) {
 		for (const SContestedSpot& c : spots) {
@@ -367,6 +406,8 @@ public:
 		return false;
 	}
 	float GetAttackPathIgnoreThreat() const { return attackPathIgnoreThreat; }
+	// quota.attack_ally_cover: allies over a spot multiply an attack group's strength there (CAllyCover)
+	CAllyCover* GetAllyCover() const { return allyCover.get(); }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
@@ -624,6 +665,7 @@ private:
 		int controllerId;  // our unit that captured it
 		float cost;
 	};
+	std::unordered_map<int, int> scoutStints;  // scout unit id -> frame its raid stint ends (SetScoutStint)
 	std::unordered_map<int, SCapturedUnit> capturedUnits;  // captured unit id -> who holds it, for "capture_hide"
 	SArtilleryCfg artillery;
 	SFormationCfg formation;
@@ -679,6 +721,7 @@ private:
 	int attackThreatFloorLogFrame;  // next periodic THREAT FLOOR log line
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
+	std::unique_ptr<CAllyCover> allyCover;  // quota.attack_ally_cover
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
@@ -737,6 +780,21 @@ private:
 	unsigned GetPreventCount(int cluster, CCircuitDef* sightDef, bool& outIsAir);
 	void UpdatePreventSight();
 	float amountFactor;
+	struct STurretBudget {
+		float share = 0.1f;
+		float bankSec = 60.f;
+		float lossRefund = 2.f;  // x the cost of a finished turret of ours that dies
+		float lost = 0.f;  // since the last log line: what the lost turrets cost, and what they paid back
+		float lossPaid = 0.f;
+		float balance = 0.f;
+		int frame = -1;
+		float askCost = 0.f;  // the dearest tower a gated spender asked for and couldn't afford
+		int askFrame = -1;
+		int logFrame = -1;
+		float spent[static_cast<int>(TurretSpend::_SIZE_)] = {};  // since the last log line
+		float refunded = 0.f;
+	} turretBudget;
+	TurretSpend turretSpend = TurretSpend::OTHER;
 	CCircuitDef* radarDef;
 	CCircuitDef* sonarDef;
 	CCircuitDef* bigGunDef;

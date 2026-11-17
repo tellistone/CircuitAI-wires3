@@ -315,9 +315,6 @@ private:
 			const std::vector<CCircuitDef*>& defs, const char* caller);
 	// Can hit what a flee is from: a flier with anti-air, in deep water with anti-water, else with anti-land
 	static bool IsHitFor(const CCircuitDef* def, bool isAir, bool isWater);
-	// turret.share of the metal income, paid in as it comes, up to a minute's share (or the dearest light turret)
-	float turretBank = 0.f;
-	int turretBankFrame = -1;
 	int turretChokeFrame = -1;  // the first order's frame while the choke analysis isn't ready
 	std::map<ICoreUnit::Id, int> turretCooldowns;  // unit id -> frame it may order again
 public:

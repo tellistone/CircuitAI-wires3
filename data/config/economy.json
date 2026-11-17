@@ -65,6 +65,36 @@
 			"margin": 1.1  // grid capacity needed = margin x neededlink
 		},
 
+		// Cheap energy placement: energy jobs (and the mex build_chain's energy) of these defs go, within max_dist elmos
+		// of the builder (of the mex for the chain; a third of that while short of energy), in this order:
+		//   1. beside the nearest finished mex of ours on no grid with energy (the game's grids; energy of the ally
+		//      team beside it, being built too, also counts; a mex the game hasn't put on a grid yet is on the one
+		//      it overlaps)
+		//   2. into the nearest open gap of the planned grid: a planned link between two finished mex clusters
+		//      (CEnergyGrid's spanning tree), or between the mexes of one; from a gap end, one piece per gap at a time
+		//   3. beside a mex of the grid with the least energy per mex: the one with the least energy beside it (not a
+		//      base_only piece on land: after a mex's first piece, those only go into gaps)
+		// Always on a site that links (to the mex, or to the gap end and, when one piece closes it, the other end too),
+		// and a step into a gap gets closer to its other end (a gap across water or a cliff is skipped, not clumped at);
+		// never beside a mex with an energy job (or a grid link solar or wind) queued there. A spot with no site is
+		// skipped for 30 s. None of these: at the nearest metal spot as before (never a base_only piece on land).
+		// Missing unit = off
+		"fill": {
+			"unit": ["energysolar", "energywind"],
+			"max_dist": 1500
+		},
+
+		// Built on land only within radius elmos of the base position, at most the base defence radius (0.3 of the map
+		// diagonal clamped to behaviour.json defence.base_rad, so 1000 on small maps; <= 0: that radius). A rule on the site, at every placement of these defs: energy jobs, the mex chain's energy,
+		// fills and grid link pieces (not on where the builder stands: which energy is built doesn't change).
+		// On land they go only beside a mex on no grid with energy or into a gap of the grid plan (fill steps 1 and 2),
+		// never by the fallbacks that build at a mex or where the builder stands.
+		// Where the game builds wind as tidal (ground at or below -10) anywhere, as any energy
+		"base_only": {
+			"unit": ["energywind"],
+			"radius": 1500
+		},
+
 		"link_inc": 16.0,  // minimum metal-income for energy linking
 		"pylon": ["energypylon", "energysolar", "energywind"]
 	},

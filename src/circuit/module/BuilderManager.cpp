@@ -70,7 +70,6 @@ static constexpr int BUILDER_SCAR_FRAMES = FRAMES_PER_SEC * 5;  // other builder
 static constexpr int BUILDER_CORNER_TIMEOUT = FRAMES_PER_SEC * 30;  // an unstarted cornered defence nobody builds is dropped after this
 static constexpr int BUILDER_IDLE_WAIT = FRAMES_PER_SEC * 3;  // other builders idle in a flee zone with no safe job look again after this
 static constexpr int TURRET_ASK_FRAMES = FRAMES_PER_SEC * 10;  // an after-flee turret request lasts this long
-static constexpr float TURRET_BANK_SECONDS = 60.f;  // the turret budget holds at most this much of its share
 
 CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
@@ -1117,6 +1116,9 @@ IBuilderTask* CBuilderManager::AddTask(IBuilderTask::Priority priority,
 		} break;
 	}
 
+	if ((type == IBuilderTask::BuildType::DEFENCE) && (circuit->GetMilitaryManager() != nullptr)) {
+		circuit->GetMilitaryManager()->ChargeTurret(static_cast<CBDefenceTask*>(task));  // porcupine.budget
+	}
 	if (isActive) {
 		buildTasks[static_cast<IBuilderTask::BT>(type)].insert(task);
 		buildTasksCount++;
@@ -1663,7 +1665,10 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 			buildDef = ecoMgr->GetDefaultDef();
 		}
 		if ((buildDef != nullptr) && (buildDef->GetCount() < 10) && buildDef->IsAvailable(circuit->GetLastFrame())) {
-			return EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, position, IBuilderTask::BuildType::ENERGY);
+			task = ecoMgr->EnqueueCheapEnergy(buildDef, position, unit, IBuilderTask::Priority::NORMAL, SQUARE_SIZE * 32.0f);
+			if (task != nullptr) {
+				return task;
+			}
 		}
 	} else {
 		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
@@ -2444,6 +2449,7 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 		CTerrainManager::CorrectPosition(buildPos);
 		// Other builders: an unstarted one is dropped soon after the last builder leaves it, not left as a job
 		const int timeout = isBuilder ? BUILDER_CORNER_TIMEOUT : ASSIGN_TIMEOUT;
+		CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::CORNERED);
 		task = EnqueueTask(IBuilderTask::Priority::HIGH, buildDef, buildPos, IBuilderTask::BuildType::DEFENCE,
 						   buildDef->GetCostM(), SQUARE_SIZE * 8.f, true, timeout);
 		static_cast<CBDefenceTask*>(task)->SetOffPoints();  // no defence point counts it
@@ -2602,6 +2608,7 @@ bool CBuilderManager::IsTurretJobSafe(CCircuitUnit* unit, const AIFloat3& pos)
 void CBuilderManager::UpdateTurrets()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	circuit->GetMilitaryManager()->UpdateTurretBudget();  // porcupine.budget: accrues, and logs once a minute
 	CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const CTurretPicker::SConfig& cfg = picker->GetConfig();
 	if (!picker->IsAnyCaller()) {
@@ -2614,21 +2621,6 @@ void CBuilderManager::UpdateTurrets()
 	auto isCooling = [this](const CCircuitUnit* unit) {
 		return turretCooldowns.find(unit->GetId()) != turretCooldowns.end();
 	};
-	// The budget: no turret before its share has paid for it, so the opening's income isn't spent on towers. It holds
-	// the dearest def of any tier, so a heavier tier can still be paid for
-	float maxCost = 0.f;
-	for (const CCircuitDef* d : cfg.light) {
-		maxCost = std::max(maxCost, d->GetCostM());
-	}
-	for (const CTurretPicker::SConfig::STier& tier : cfg.tiers) {
-		for (const CCircuitDef* d : tier.defs) {
-			maxCost = std::max(maxCost, d->GetCostM());
-		}
-	}
-	const float rate = cfg.share * circuit->GetEconomyManager()->GetAvgMetalIncome();  // metal/s
-	const float dt = (turretBankFrame < 0) ? 0.f : float(frame - turretBankFrame) / FRAMES_PER_SEC;
-	turretBank = std::min(turretBank + rate * dt, std::max(rate * TURRET_BANK_SECONDS, maxCost));
-	turretBankFrame = frame;
 	const bool isStalling = IsMetalStalling();
 	bool isOrdered = false;  // one order a second: a group arriving together orders once, the rest help
 
@@ -2727,7 +2719,9 @@ bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
 	for (const CCircuitDef* d : defs) {
 		maxCost = std::max(maxCost, d->GetCostM());
 	}
-	if (isOrdered || (turretBank < maxCost)) {
+	// porcupine.budget: the turret account covers the dearest it might pick, so the opening's income isn't spent on
+	// towers before the account has filled
+	if (isOrdered || !circuit->GetMilitaryManager()->CanAffordTurret(maxCost)) {
 		return false;
 	}
 	isOrdered = true;
@@ -2879,16 +2873,14 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	order.centre = centre;
 	order.defs = defs;
 	order.caller = caller;
-	IBuilderTask* task = picker->Order(order);
-	if (task != nullptr) {
-		turretBank -= task->GetBuildDef()->GetCostM();
-	}
-	return task;
+	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::PICKER);
+	return picker->Order(order);
 }
 
 std::string CBuilderManager::OrderTurretAt(const AIFloat3& pos, CCircuitDef* def)
 {
-	// The nearest free mobile ground constructor; no cooldown or budget
+	// The nearest free mobile ground constructor; no cooldown, and the turret account (porcupine.budget) charges it
+	// but never refuses it
 	const int frame = circuit->GetLastFrame();
 	CCircuitUnit* builder = nullptr;
 	float bestSqDist = std::numeric_limits<float>::max();

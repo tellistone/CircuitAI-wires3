@@ -6,6 +6,7 @@
  */
 
 #include "task/fighter/RaidTask.h"
+#include "task/fighter/ScoutTask.h"
 #include "task/TaskManager.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -176,7 +177,7 @@ bool CRaidTask::IsSafeMergeLine(const ISquadTask* host) const
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	const float safeThreat = GetSafeThreat();
 	return IsLineSafe(leader->GetPos(frame), host->GetLeaderPos(frame), std::numeric_limits<float>::max(),
-			[this, safeThreat](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat); });
+			[this, safeThreat](const AIFloat3& p, float) { return GetSafeThreatAt(p, safeThreat); });
 }
 
 float CRaidTask::GetPathThreatMod() const
@@ -205,6 +206,7 @@ void CRaidTask::AssignTo(CCircuitUnit* unit)
 
 void CRaidTask::RemoveAssignee(CCircuitUnit* unit)
 {
+	GetMilitaryMgr()->EndScoutStint(unit);  // left raiding (a merge moves units without this: the stint goes along)
 	ISquadTask::RemoveAssignee(unit);
 	if (leader == nullptr) {
 		manager->AbortTask(this);
@@ -248,6 +250,9 @@ void CRaidTask::Update()
 	 */
 	const float fleeShare = GetMilitaryMgr()->GetRaidFleeShare();
 	const bool isInDanger = IsInDanger(frame, fleeShare);
+	if (UpdateScoutStints(frame, isInDanger)) {
+		return;
+	}
 	// Fleeing from a fight the pick still accepts: for a turret just seen, the flee grace (quota.raid_flee_grace)
 	// re-spots first; if the group flees anyway, it passes on the target for 10 s, or the next pick sends it straight back
 	const bool isMismatch = isInDanger && (frame >= fleeFrame) && IsFightOn(frame);
@@ -437,6 +442,31 @@ void CRaidTask::OnUnitIdle(CCircuitUnit* unit)
 	}
 }
 
+bool CRaidTask::UpdateScoutStints(int frame, bool isInDanger)
+{
+	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	if (!militaryMgr->HasScoutStints()) {
+		return false;
+	}
+	static std::vector<CCircuitUnit*> leaving;  // NOTE: micro-opt
+	leaving.clear();
+	const bool isIdle = (target == nullptr) && (frame >= fleeFrame);
+	for (CCircuitUnit* unit : units) {
+		const int endFrame = militaryMgr->GetScoutStintEnd(unit);
+		if ((endFrame >= 0) && (isInDanger || (isIdle && (frame >= endFrame)))) {
+			leaving.push_back(unit);
+		}
+	}
+	for (CCircuitUnit* unit : leaving) {
+		CScoutTask* task = static_cast<CScoutTask*>(militaryMgr->EnqueueTask(FightType::SCOUT));
+		if (isInDanger) {
+			task->DelayRaidStint();  // its flee runs first: no stint straight back into the danger
+		}
+		manager->AssignTask(unit, task);  // RemoveAssignee ends the stint; the last unit leaving aborts us
+	}
+	return IsDead();
+}
+
 bool CRaidTask::FindTarget()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -486,7 +516,7 @@ bool CRaidTask::FindTarget()
 	// quota.contested.bonus times closer as a route goal
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	militaryMgr->GetTakeableContested(leader, highestRange,
-			[this, maxPower](const AIFloat3& p) { return GetSafeThreatAt(p, maxPower); }, contested);
+			[this, maxPower](const AIFloat3& p, float) { return GetSafeThreatAt(p, maxPower); }, contested);
 	const float contestedBonus = militaryMgr->GetContested().bonus;
 	F3Vec contestedPositions;
 	float sqContestedDist = std::numeric_limits<float>::max();
@@ -659,7 +689,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	if (isContestedAllowed) {
 		const float cautionMod = IsCautious(frame) ? 0.75f : 1.f;  // same as FindTarget
 		militaryMgr->GetTakeableContested(leader, highestRange,
-				[this, safeThreat, cautionMod](const AIFloat3& p) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
+				[this, safeThreat, cautionMod](const AIFloat3& p, float) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
 				contested);
 	}
 	const CMilitaryManager::SContestedSpot* bestContested = nullptr;

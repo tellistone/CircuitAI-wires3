@@ -159,6 +159,12 @@ protected:
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const {
 		return std::numeric_limits<float>::max();
 	}
+	// The same, for a caller that compares it with threat (threat at or above it is danger): a task may skip work at
+	// spots where that work can't change the comparison (CAttackTask: allied cover), so the result there may differ
+	// from GetAllowedThreatAt but compares the same
+	virtual float GetAllowedThreatFor(const springai::AIFloat3& pos, float strength, float threat) const {
+		return GetAllowedThreatAt(pos, strength);
+	}
 	// Threat at p (GetTaskThreatAt) reaches what this strength allows there. No threat is never danger (allowances
 	// are above 0), and the allowance is only worked out where there is threat
 	bool IsDangerAt(CCircuitUnit* unit, const springai::AIFloat3& p, float strength) const;

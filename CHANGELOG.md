@@ -12,8 +12,82 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   It only ranks spots that already pay for the turret.
 - **The turret picker steps up to heavier turrets with map control** (`turret.tiers`). Once our ally team's
   finished mexes hold 40% of the map's metal spots, Stardust and Gauss join Lotus and Picket; at 55%, HLT does. An
-  order builds from the heaviest unlocked tier that has a spot worth its cost, else drops a tier. The turret budget
-  holds the dearest unlocked def's price before it orders.
+  order builds from the heaviest unlocked tier that has a spot worth its cost, else drops a tier. An order waits
+  for the turret account to cover the dearest unlocked def.
+- **Solars and winds: one for every mex off the grid, then into the gaps of the planned grid** (`economy.energy.fill`:
+  `unit` = `energysolar`, `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the
+  builder (and the mex build chain put one more at each new mex), so it clumped round mexes as many small grids, and
+  the grid linker only started at 16 income, one piece at a time. Now an energy job of a fill def, and the mex chain's
+  energy, goes within `max_dist` of the builder (of the mex for the chain; a third of that while short of energy, as
+  the walk would outlast the build): first beside the nearest finished mex of ours on no grid with energy (the game's
+  grids, from the grid snapshot; ally energy beside it, being built too, also counts, as the snapshot lags, and a mex
+  the game hasn't put on a grid yet is on the one it overlaps); then into the nearest open gap of the grid plan (a
+  planned link of the spanning tree between two finished mex clusters, or the mexes of one cluster that aren't linked
+  yet), from a gap end; then beside a mex of the grid with the least energy per mex, where overdrive gains most (on
+  that grid, the mex with the least energy beside it, so the energy spreads instead of ringing one mex). The site
+  always links: to the mex, or to the gap end and, when one piece closes the gap, the other end too (the grid-link
+  watchdog's site search, now shared), and a step into a gap must get closer to its other end, so a gap across water
+  or a cliff is skipped rather than clumped at; a spot with no site is skipped for 30 s. Never beside a mex with an
+  energy job (or a grid link solar or wind) queued there. The job is an ordinary energy job (budget, stall and pull
+  rules, priority) that holds its gap while it lives, so one piece per gap at a time; if its site is taken it looks
+  again only where the piece still links, else it is dropped and planned afresh. None of these in reach: at the
+  nearest metal spot as before. No `unit` list: off.
+
+- **Wind only within the base, and only on the grid** (`economy.energy.base_only`: `unit` = `energywind`, `radius`
+  1500). Winds on land are built only within `radius` elmos of the base position, at most the base defence radius
+  (0.3 of the map diagonal clamped to behaviour.json `defence.base_rad` [1000, 2000], set once at start; `radius` <= 0:
+  that radius). So big maps keep winds within 1,500 and small maps within their tighter base radius. The rule is on the
+  site, at every placement: energy jobs (their spot, and the site their builder finally picks), the mex chain's energy,
+  grid fills and the grid linker's link pieces; never on where the builder stands, so which energy the AI builds is
+  unchanged. On land a wind goes only beside a mex on no grid with energy (its first piece) or into a gap of the grid
+  plan (fill steps 1 and 2): not beside a mex of the poorest grid, and never by the fallbacks that queue energy at a
+  mex (the mex chain's, the nearest metal spot's) or where the builder stands (the builder's last resort below
+  `super` income, which now tries the fill first for solars too). Where the game builds it as tidal (ground at or below
+  its `tidalHeight`, -10) anywhere, as before. A plain list of names (the older form) still works, with radius 1500.
+  The mex chain on ground too steep for any energy at the mex (and no threat there) now asks the fill for a solar,
+  which finds a flatter site beside the mex; before, a steep mex outside the base got no energy.
+
+- **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
+  defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own
+  `turret.share` bank, and cornered, base timetable, radar guard, mex escort and build-chain hub towers were free. Now
+  every armed defence the AI queues (not shields, storages, caretakers, radars, Claw mines, missiles or
+  `turret.not_defence`) is charged to one account per AI as it is queued, refunded if called off before it starts.
+  It fills at `share` x avg metal income x min(economy ms_pull, 1), so a strong enemy army or high income (which
+  lower ms_pull) cut turret spending as they shift metal to factories. Porc-mode towers (a cluster's and its chokes')
+  and the picker wait for the balance to cover a tower; the others are charged but never refused and may take it
+  below zero; preventive towers are free. The per-point cap still spreads towers across points. `turret.share` is
+  gone. A finished turret of ours that dies to a known mobile killer that doesn't outrange it (its longest range no
+  longer than the turret's against the killer's kind, ships taking the turret's longer of land and water range: not
+  artillery or skirmishers that outrange it, an enemy turret, a flier over a ground-only turret, an unseen killer or
+  a capture) pays `loss_refund` (2) x its cost back, past the cap if
+  need be, so a lost position can be rebuilt. `TURRET BUDGET` in the log once a minute: balance, rate, the spend by spender, and turrets lost
+
+- **Attack groups count allied cover** (`quota.attack_ally_cover`, 0..0.75; code default 0 = off, shipped 0.5). A group
+  judged every spot by its own strength alone, so two armies beside each other each refused a fight they could take
+  together, and a group fled past our own turrets as if they weren't there. Now allies over a spot multiply the group's
+  strength there by `1 + min(weight x cover / own strength, 1)` (at most double) in every danger check: target choice,
+  the approach line, firing cells, the path-ahead check, the escape, the merge line and flee destinations, so the pick
+  and the escape always agree, and the keep and post-escape margins scale with it. Cover is built allied armed statics
+  of every allied team (a threat-map layer: power x sqrt(health share), full out to half the weapon's land range, then
+  falling to 0 at it; the real reach, not the threat range, whose slack would count ground the static can't shoot;
+  half range over 1000 elmos of range, none over 2000; not nanoframes or paralyzed ones), our other attack groups
+  that aren't fleeing (their strength around their leader, out to their fire range past their units' spread, where
+  they stand) and our commander while it isn't retreating. Never the group itself, and in a two-group check (merge
+  line near the host, rally spot beside the host, fleeing to a stronger group) not the other group, whose strength is
+  in the joint strength already. A group lends the strength it picks with, so less for a few seconds after an escape,
+  and its cover is gone in the same frame it starts running or merges. None on water or for flying groups. Routes see enemy threat divided by the same
+  multiplier, so their cap, cost and light-threat floor match the danger checks (weighed against the group's own
+  strength, as a route's allowance is, also on a joint rally route); outside enemy threat, and on the cloak route,
+  they are unchanged. Cheap where it can't matter: cover is looked up only where it can change a decision (threat
+  from the base allowance up to twice it), and a route scans only the box around the cover, or nothing when there
+  is none. Two `ATTACK cover` lines in the log every minute. The fights: targets picked only thanks to cover (at
+  their own spot, on their approach line or on their route's approach; by source) that were then engaged, escapes
+  within 5 s of engaging one (by source), escapes on losing cover mid-fight (the multiplier at the leader under 0.75x
+  its value when the fight was engaged; split into cover that left, and groups that walked out of it), and attack
+  units lost where only cover kept them standing (threat over the escape's allowance without cover, under it with;
+  by source, with their metal, beside all attack-unit losses). The cost: the strongest multiplier and the main-thread
+  time spent (lookups timed one in eight).
+
 - **Turret picker for constructors in the field** ([doc/chokepoints.md](doc/chokepoints.md), "Turret picker (G)").
   A new picker finds the best light turret spot within `turret.radius` (600) of a centre, valuing everything in
   range in metal: enemy traffic (the income whose routes pass under it, × `turret.horizon` 120 s), our and allied
@@ -451,6 +525,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Scouts raid while cut off.** When a scout has no safe route to its picked spot (e.g. it fled into a pocket and
+  the danger sits between it and everything else), or nothing could be picked, an armed ground scout goes raiding on a
+  "stint": a raid task of its own, which merges, rallies and takes joiners like any raid group. The stint belongs to
+  the unit (`CMilitaryManager::SetScoutStint`), so it follows the scout into whatever raid group it ends up in. Guards
+  never pull it, and it still counts as a scout for the scout quota and the raider floor. After 10 s, once its group
+  isn't fighting, the scout goes back to a scout task, which looks for a safe route again (the spot it gave up on is
+  blocked for 10 s). At danger the scout leaves its group at once instead of joining the raid escape to a haven: its
+  own flee runs to the nearest safe spot, and no new stint starts for 5 s. Air and unarmed scouts (and scouts in those
+  5 s) instead walk to the nearest unseen safe spot they can reach without crossing danger (one capped route query to
+  rings of spots around them and our safe frontline spots), and wait 3 s only when there is none. This replaces the
+  spot-by-spot retry, which ended in a hold every second while cut off.
 - **Scouts flee instead of going home.** A scout standing in threat it can't take now drops its target and runs to
   the nearest spot well clear of the threat (least-threat route), and goes back to scouting once it has been out of
   threat for 2 seconds. The spot it was heading to is blocked for 10 s, so it doesn't walk straight back. The scout

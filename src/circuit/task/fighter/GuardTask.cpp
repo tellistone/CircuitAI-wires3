@@ -322,6 +322,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		if (curTask->GetType() == IUnitTask::Type::FIGHTER) {
 			const FightType ft = static_cast<IFighterTask*>(curTask)->GetFightType();
 			if ((ft == FightType::GUARD) || (ft == FightType::SCOUT)
+				|| militaryMgr->IsScoutStint(unit)
 				|| ((ft == FightType::ATTACK) && !static_cast<CAttackTask*>(curTask)->IsGuardPullable()))
 			{
 				continue;
