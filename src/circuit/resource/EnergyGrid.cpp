@@ -330,16 +330,41 @@ AIFloat3 CEnergyGrid::FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, flo
 	return buildPos;
 }
 
-// The first of cands (sorted; each with a site) that has an open site for cdef passing predicate (outPos), trying at
-// most 4: FindBuildSite is the costly part. nullptr if none
-template<typename T>
-static const T* FindFirstSite(CEnergyGrid* grid, CCircuitDef* cdef, const std::vector<T>& cands,
-		CEnergyGrid::Predicate& predicate, AIFloat3& outPos)
+IGridLink* CEnergyGrid::FindFillSite(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, Predicate& predicate,
+		SLinkSite& outSite, AIFloat3& outPos)
 {
-	for (unsigned i = 0; (i < cands.size()) && (i < 4); ++i) {
-		outPos = grid->FindLinkSite(cdef, cands[i].site, cands[i].site.fromReach * 0.5f, predicate);
+	outPos = -RgtVector;
+	const float range = GetPylonRange(cdef->GetId());
+	if (range <= 0.f) {
+		return nullptr;
+	}
+	Update();
+
+	const std::vector<SPiece> queued = GetQueuedEnergy();
+	unsigned bareCount;
+	const std::vector<SFill> mexes = GetMexFills(range, pos, maxDist, queued, bareCount);
+	const std::vector<SFill> gaps = GetGapFills(range, pos, maxDist, queued);
+	const SFill* fill = TryFills(cdef, mexes.data(), mexes.data() + bareCount, predicate, outPos);  // 1. bare mexes
+	if (fill == nullptr) {
+		fill = TryFills(cdef, gaps.data(), gaps.data() + gaps.size(), predicate, outPos);  // 2. the plan's gaps
+	}
+	if (fill == nullptr) {
+		fill = TryFills(cdef, mexes.data() + bareCount, mexes.data() + mexes.size(), predicate, outPos);  // 3. poor grids
+	}
+	if (fill == nullptr) {
+		return nullptr;
+	}
+	outSite = fill->site;
+	return fill->link;
+}
+
+const CEnergyGrid::SFill* CEnergyGrid::TryFills(CCircuitDef* cdef, const SFill* first, const SFill* last,
+		Predicate& predicate, AIFloat3& outPos)
+{
+	for (int tries = 0; (first < last) && (tries < 4); ++first, ++tries) {  // FindBuildSite is the costly part
+		outPos = FindLinkSite(cdef, first->site, first->site.fromReach * 0.5f, predicate);
 		if (utils::is_valid(outPos)) {
-			return &cands[i];
+			return first;
 		}
 	}
 	outPos = -RgtVector;
@@ -349,11 +374,17 @@ static const T* FindFirstSite(CEnergyGrid* grid, CCircuitDef* cdef, const std::v
 std::vector<CEnergyGrid::SPiece> CEnergyGrid::GetQueuedEnergy()
 {
 	std::vector<SPiece> pieces;
-	for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::ENERGY)) {
-		const float range = GetPylonRange(t->GetBuildDef()->GetId());
-		pieces.push_back(utils::is_valid(t->GetBuildPos())
-				? SPiece{t->GetBuildPos(), range}
-				: SPiece{t->GetPosition(), range + SQUARE_SIZE * 16});  // not placed yet: up to its shake off
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	for (IBuilderTask::BuildType type : {IBuilderTask::BuildType::ENERGY, IBuilderTask::BuildType::PYLON}) {
+		for (const IBuilderTask* t : builderMgr->GetTasks(type)) {
+			const CCircuitDef::Id defId = t->GetBuildDef()->GetId();
+			if (!IsEnergyDef(defId)) {
+				continue;  // an energypylon's reach would cover everything around it
+			}
+			pieces.push_back(utils::is_valid(t->GetBuildPos())
+					? SPiece{t->GetBuildPos(), GetPylonRange(defId)}
+					: SPiece{t->GetPosition(), GetPylonRange(defId) + SQUARE_SIZE * 16});  // not placed yet: up to its shake off
+		}
 	}
 	return pieces;
 }
@@ -365,32 +396,69 @@ int CEnergyGrid::CountLinked(const std::vector<SPiece>& pieces, const AIFloat3& 
 	});
 }
 
-IGridLink* CEnergyGrid::FindGapToFill(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, Predicate& predicate,
-		SLinkSite& outSite, AIFloat3& outPos)
+std::vector<CEnergyGrid::SFill> CEnergyGrid::GetMexFills(float range, const AIFloat3& pos, float maxDist,
+		const std::vector<SPiece>& queued, unsigned& outBareCount)
 {
-	outPos = -RgtVector;
-	const float range = GetPylonRange(cdef->GetId());
-	if (range <= 0.f) {
-		return nullptr;
-	}
-	Update();
+	const int frame = circuit->GetLastFrame();
+	const std::vector<SGridNode>& grid = GetGridNodes();
 
+	// Energy of the ally team, being built too: the grids' snapshot lags
+	std::vector<SPiece> pieces;
+	for (const auto& kv : circuit->GetFriendlyUnits()) {  // fresh: Update
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if ((edef != nullptr) && IsEnergyDef(edef->GetId()) && (GetPylonRange(edef->GetId()) > 0.f)) {
+			pieces.push_back({kv.second->GetPos(frame), GetPylonRange(edef->GetId())});
+		}
+	}
+
+	std::vector<SFill> mexes;
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		CCircuitUnit* unit = kv.second;
+		if (!unit->GetCircuitDef()->IsMex() || unit->GetUnit()->IsBeingBuilt()) {
+			continue;
+		}
+		const AIFloat3& p = unit->GetPos(frame);
+		const float sqDist = p.SqDistance2D(pos);
+		const float mexRange = GetPylonRange(unit->GetCircuitDef()->GetId());
+		if ((sqDist >= SQUARE(maxDist)) || (CountLinked(queued, p, mexRange) > 0)) {
+			continue;
+		}
+		auto it = gridNodeIndex.find(kv.first);
+		const SGridNode* node = (it != gridNodeIndex.end()) ? &grid[it->second] : nullptr;
+		if (node == nullptr) {  // not in the snapshot yet (just built, or no gridNumber yet): the grid it overlaps
+			for (const SGridNode& n : grid) {
+				if ((n.pos.SqDistance2D(p) < SQUARE(n.range + mexRange)) && ((node == nullptr) || (n.capacity > node->capacity))) {
+					node = &n;
+				}
+			}
+		}
+		const int count = CountLinked(pieces, p, mexRange);
+		if ((node == nullptr) && (count > 0)) {
+			continue;  // energy beside it, of a grid the snapshot doesn't have yet
+		}
+		const float perMex = (node != nullptr) ? node->capacity / std::max(node->mexCount, 1) : 0.f;
+		mexes.push_back({MakeLinkSite(range, p, mexRange, p, mexRange), nullptr, perMex, count, sqDist});
+	}
+	std::sort(mexes.begin(), mexes.end());  // so the bare ones (on no grid with energy, none beside) first, nearest first
+	outBareCount = std::count_if(mexes.begin(), mexes.end(), [](const SFill& f) {
+		return (f.perMex <= 0.f) && (f.pieces == 0);
+	});
+	return mexes;
+}
+
+std::vector<CEnergyGrid::SFill> CEnergyGrid::GetGapFills(float range, const AIFloat3& pos, float maxDist,
+		const std::vector<SPiece>& queued)
+{
 	// Gap ends: a head (the building of the linked part nearest the other part) that grows towards the other head
-	struct SGap {
-		IGridLink* link;  // a planned link, held as being built by the job; nullptr within a cluster
-		SLinkSite site;
-		float sqDist;  // from pos to the head it grows from
-	};
-	std::vector<SGap> gaps;
+	std::vector<SFill> gaps;
 	auto addGap = [&gaps, &pos, maxDist, range](IGridLink* link, const AIFloat3& p0, float r0, const AIFloat3& p1, float r1) {
 		const float sqDist = p0.SqDistance2D(pos);
 		if ((sqDist < SQUARE(maxDist)) && (p0.SqDistance2D(p1) > SQUARE(r0 + r1))) {
-			gaps.push_back({link, MakeLinkSite(range, p0, r0, p1, r1), sqDist});
+			gaps.push_back({MakeLinkSite(range, p0, r0, p1, r1), link, 0.f, 0, sqDist});
 		}
 	};
 	// Within a finished cluster. Not held as being built: that hides the cluster, and all its links, from the plan's
 	// own linker (GetLinkToBuild); a queued energy job that links to the head holds it instead
-	const std::vector<SPiece> queued = GetQueuedEnergy();
 	for (unsigned i = 0; i < nodes.size(); ++i) {
 		CEnergyNode* node = nodes[i];
 		if (!linkedClusters[i] || node->IsBeingBuilt() || !node->IsValid() || node->IsMexed()) {
@@ -402,8 +470,9 @@ IGridLink* CEnergyGrid::FindGapToFill(CCircuitDef* cdef, const AIFloat3& pos, fl
 			addGap(nullptr, h0.pos, h0.range, h1.pos, h1.range);
 		}
 	}
+	// The plan: links between finished clusters, held as being built by the job
 	const CMetalData::ClusterGraph& clusterGraph = circuit->GetMetalManager()->GetClusterGraph();
-	for (const CMetalData::ClusterGraph::Edge edge : spanningTree) {  // the plan: links between finished clusters
+	for (const CMetalData::ClusterGraph::Edge edge : spanningTree) {
 		CEnergyLink& link = links[clusterGraph.id(edge)];
 		if (!link.IsFinished() && !link.IsBeingBuilt() && link.IsValid()) {
 			const CEnergyLink::SPylon* h0 = link.GetSourceHead();
@@ -413,80 +482,8 @@ IGridLink* CEnergyGrid::FindGapToFill(CCircuitDef* cdef, const AIFloat3& pos, fl
 		}
 	}
 
-	std::sort(gaps.begin(), gaps.end(), [](const SGap& a, const SGap& b) { return a.sqDist < b.sqDist; });
-	const SGap* gap = FindFirstSite(this, cdef, gaps, predicate, outPos);
-	if (gap == nullptr) {
-		return nullptr;
-	}
-	outSite = gap->site;
-	return gap->link;
-}
-
-AIFloat3 CEnergyGrid::FindMexToFill(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, bool isBare,
-		Predicate& predicate, SLinkSite& outSite)
-{
-	const float range = GetPylonRange(cdef->GetId());
-	if (range <= 0.f) {
-		return -RgtVector;
-	}
-	const int frame = circuit->GetLastFrame();
-	GetGridNodes();  // fresh gridNodeIndex
-
-	// Energy of the ally team, being built too (the grids' snapshot lags), and our queued energy jobs
-	std::vector<SPiece> pieces;
-	circuit->UpdateFriendlyUnits();
-	for (const auto& kv : circuit->GetFriendlyUnits()) {
-		const CCircuitDef* edef = kv.second->GetCircuitDef();
-		if ((edef != nullptr) && IsEnergyDef(edef->GetId()) && (GetPylonRange(edef->GetId()) > 0.f)) {
-			pieces.push_back({kv.second->GetPos(frame), GetPylonRange(edef->GetId())});
-		}
-	}
-	const std::vector<SPiece> queued = GetQueuedEnergy();
-
-	struct SMex {
-		SLinkSite site;
-		float score;  // isBare: 0; else its grid's energy per mex
-		int pieces;  // energy in reach
-		float sqDist;
-	};
-	std::vector<SMex> mexes;
-	for (const auto& kv : circuit->GetTeamUnits()) {
-		CCircuitUnit* unit = kv.second;
-		if (!unit->GetCircuitDef()->IsMex() || unit->GetUnit()->IsBeingBuilt()) {
-			continue;
-		}
-		const AIFloat3& p = unit->GetPos(frame);
-		const float sqDist = p.SqDistance2D(pos);
-		if (sqDist >= SQUARE(maxDist)) {
-			continue;
-		}
-		auto it = gridNodeIndex.find(kv.first);
-		const SGridNode* node = (it != gridNodeIndex.end()) ? &gridNodes[it->second] : nullptr;
-		// Bare: on no grid with energy. Else only mexes on a grid (a bare one with no site had its turn)
-		if (isBare ? ((node != nullptr) && (node->capacity > 0.f)) : (node == nullptr)) {
-			continue;
-		}
-		const float mexRange = GetPylonRange(unit->GetCircuitDef()->GetId());
-		const int count = CountLinked(pieces, p, mexRange);
-		if ((isBare && (count > 0)) || (CountLinked(queued, p, mexRange) > 0)) {
-			continue;
-		}
-		const float score = isBare ? 0.f : node->capacity / std::max(node->mexCount, 1);
-		mexes.push_back({MakeLinkSite(range, p, mexRange, p, mexRange), score, count, sqDist});
-	}
-	// Least energy per mex first; on that grid the mex with the least energy beside it, so energy spreads, not rings
-	std::sort(mexes.begin(), mexes.end(), [](const SMex& a, const SMex& b) {
-		return (a.score != b.score) ? (a.score < b.score)
-			: (a.pieces != b.pieces) ? (a.pieces < b.pieces)
-			: (a.sqDist < b.sqDist);
-	});
-
-	AIFloat3 buildPos;
-	const SMex* mex = FindFirstSite(this, cdef, mexes, predicate, buildPos);
-	if (mex != nullptr) {
-		outSite = mex->site;
-	}
-	return buildPos;
+	std::sort(gaps.begin(), gaps.end());  // nearest first
+	return gaps;
 }
 
 float CEnergyGrid::GetPylonRange(CCircuitDef::Id defId)
@@ -691,10 +688,11 @@ CEnergyNode* CEnergyGrid::FindNodeDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 			sweetPos = pylon0.pos + dir.Normalize2D() * (pylon0.range + range) * 0.95f;
 		}
 
-		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING);
-		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)
-			&& economyMgr->IsAllowedAt(outDef, outPos))  // economy.energy.base_only: no wind away from the base
-		{
+		CTerrainManager::TerrainPredicate isAllowed = [economyMgr, outDef](const AIFloat3& p) {
+			return economyMgr->IsAllowedAt(outDef, p);  // economy.energy.base_only: no wind away from the base
+		};
+		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isAllowed);
+		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)) {
 			break;
 		} else {
 			outPos = -RgtVector;
@@ -756,10 +754,11 @@ CEnergyLink* CEnergyGrid::FindLinkDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 			continue;
 		}
 
-		outPos = terrainMgr->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING);
-		if (utils::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)
-			&& economyMgr->IsAllowedAt(outDef, outPos))  // economy.energy.base_only: no wind away from the base
-		{
+		CTerrainManager::TerrainPredicate isAllowed = [economyMgr, outDef](const AIFloat3& p) {
+			return economyMgr->IsAllowedAt(outDef, p);  // economy.energy.base_only: no wind away from the base
+		};
+		outPos = terrainMgr->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isAllowed);
+		if (utils::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)) {
 			break;
 		} else {
 			outPos = -RgtVector;

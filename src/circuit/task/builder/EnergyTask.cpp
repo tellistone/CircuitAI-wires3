@@ -111,27 +111,17 @@ void CBEnergyTask::Execute(CCircuitUnit* unit)
 
 void CBEnergyTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, float searchRadius)
 {
-	CCircuitAI* circuit = manager->GetCircuit();
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	if (isLinkSite) {
-		SetBuildPos(-RgtVector);  // its old site's blocker off
-		CEnergyGrid* energyGrid = economyMgr->GetEnergyGrid();
-		energyGrid->SetAuthority(circuit);
-		CEnergyGrid::Predicate isGood = economyMgr->GetFillPredicate(buildDef, builder);
-		SetBuildPos(energyGrid->FindLinkSite(buildDef, linkSite, linkSite.fromReach * 0.5f, isGood));
+	if (!isLinkSite) {
+		IBuilderTask::FindBuildSite(builder, pos, searchRadius);
 		return;
 	}
-
-	IBuilderTask::FindBuildSite(builder, pos, searchRadius);
-	if (utils::is_valid(buildPos) && !economyMgr->IsAllowedAt(buildDef, buildPos)) {
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		CCircuitDef* cdef = buildDef;
-		CTerrainManager::TerrainPredicate isGood = [terrainMgr, economyMgr, cdef, builder](const AIFloat3& p) {
-			return economyMgr->IsAllowedAt(cdef, p)
-				&& terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance());
-		};
-		SetBuildPos(terrainMgr->FindBuildSite(buildDef, pos, searchRadius, facing, isGood));
-	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	CEnergyGrid* energyGrid = economyMgr->GetEnergyGrid();
+	energyGrid->SetAuthority(circuit);
+	CEnergyGrid::Predicate isGood = economyMgr->GetFillPredicate(buildDef, builder);
+	SetBuildPos(-RgtVector);  // its old site's blocker off
+	SetBuildPos(energyGrid->FindLinkSite(buildDef, linkSite, linkSite.fromReach * 0.5f, isGood));
 }
 
 } // namespace circuit

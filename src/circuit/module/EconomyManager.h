@@ -159,10 +159,10 @@ public:
 	IBuilderTask* UpdatePylonTasks();
 	// economy.energy.fill: cheap energy placed to overdrive every mex and link up the grid
 	bool IsFillDef(CCircuitDef* cdef) const { return fillDefs.find(cdef) != fillDefs.end(); }
-	// A job for fill def cdef near pos (the builder's, or a new mex's), within fill_dist, on a site that links
-	// (CEnergyGrid::FindLinkSite): beside the nearest mex of ours on no grid with energy; else in the nearest open gap of
-	// the grid plan; else beside a mex of the grid with the least energy per mex. Reachable by unit (nullptr: by some
-	// builder). nullptr = not a fill def, or none of these
+	// A job for fill def cdef near pos (the builder's, or a new mex's), within fill_dist (a third of it while short of
+	// energy), on a site that links (CEnergyGrid::FindFillSite): beside the nearest mex of ours on no grid with energy;
+	// else in the nearest open gap of the grid plan; else beside a mex of the grid with the least energy per mex.
+	// Reachable by unit (nullptr: by some builder). nullptr = not a fill def, or none of these
 	IBuilderTask* EnqueueFillEnergy(CCircuitDef* cdef, const springai::AIFloat3& pos, CCircuitUnit* unit,
 			IUnitTask::Priority priority);
 	// A fill site for cdef: off allied buildings, safe, allowed (IsAllowedAt) and in reach of unit (nullptr: of some

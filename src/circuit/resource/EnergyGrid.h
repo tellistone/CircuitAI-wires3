@@ -53,18 +53,18 @@ public:
 	// of from's reach out) that keeps those links (for the last piece, failing that, from's only) and passes
 	// predicate; -RgtVector if none
 	springai::AIFloat3 FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, float searchRadius, Predicate& predicate);
-	// economy.energy.fill: an open gap of the grid plan: a planned link between two finished mex clusters, not being
-	// built, or the mexes of one finished cluster that aren't linked yet, with no energy job queued at its end. The gap
-	// end nearest pos within maxDist whose link site for cdef (a building with pylonrange) passes predicate: outPos
-	// (-RgtVector if none) and outSite. Returns the planned link for the job to hold; nullptr within a cluster or none
-	IGridLink* FindGapToFill(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, Predicate& predicate,
+	// economy.energy.fill: a site for cdef (a building with pylonrange) within maxDist of pos that links and passes
+	// predicate (outPos, -RgtVector if none; outSite), in this order:
+	//   1. beside the nearest of our finished mexes on no grid with energy (the game's grids; energy of the ally
+	//      team beside it, nanoframes too, also counts, as the snapshot lags)
+	//   2. in the nearest open gap of the grid plan: a planned link between two finished mex clusters, not being
+	//      built, or the mexes of one finished cluster that aren't linked yet, from a gap end
+	//   3. beside a mex of the grid with the least energy per mex: the one with the least energy beside it, then the
+	//      nearest
+	// Never beside a mex or at a gap end with an energy job queued there. Returns the planned link for the job to
+	// hold; nullptr within a cluster, beside a mex or none
+	IGridLink* FindFillSite(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, Predicate& predicate,
 			SLinkSite& outSite, springai::AIFloat3& outPos);
-	// economy.energy.fill: a site for cdef beside one of our finished mexes within maxDist of pos, and its link.
-	// isBare: the nearest mex on no grid with energy (the game's grids; energy of the ally team beside it, nanoframes
-	// too, also counts, as the snapshot lags). Else a mex of the grid with the least energy per mex: the one with the
-	// least energy beside it, then the nearest. Never a mex with an energy job queued beside it. -RgtVector if none
-	springai::AIFloat3 FindMexToFill(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, bool isBare,
-			Predicate& predicate, SLinkSite& outSite);
 
 	float GetPylonRange(CCircuitDef::Id defId);
 	// Makes energy (customParams.income_energy or windgen)
@@ -98,7 +98,30 @@ private:
 		springai::AIFloat3 pos;
 		float range;
 	};
-	// Our energy jobs: at their site, or (not placed yet) at their position, reaching on up to their shake
+	struct SFill {  // a place for a fill piece
+		SLinkSite site;
+		IGridLink* link;  // a gap of the plan, held by the job; nullptr: beside a mex or within a cluster
+		float perMex;  // beside a mex: energy per mex of its grid, 0 = on no grid with energy; else 0
+		int pieces;  // beside a mex: energy in reach; else 0
+		float sqDist;  // from the search's pos to the mex, or to the gap end it grows from
+		// The least energy per mex, then the least energy beside it (spreads, not rings), then the nearest
+		bool operator<(const SFill& o) const {
+			return (perMex != o.perMex) ? (perMex < o.perMex) : (pieces != o.pieces) ? (pieces < o.pieces) : (sqDist < o.sqDist);
+		}
+	};
+	// The first of [first, last) with an open site for cdef that passes predicate (outPos), trying at most 4: nullptr if none
+	const SFill* TryFills(CCircuitDef* cdef, const SFill* first, const SFill* last, Predicate& predicate,
+			springai::AIFloat3& outPos);
+	// For a piece of link range <range>: our finished mexes within maxDist of pos, none beside queued: the bare ones
+	// first (outBareCount), then by FindFillSite's step 3
+	std::vector<SFill> GetMexFills(float range, const springai::AIFloat3& pos, float maxDist,
+			const std::vector<SPiece>& queued, unsigned& outBareCount);
+	// For a piece of link range <range>: the open gaps of the plan within maxDist of pos, none at a head beside
+	// queued, nearest first
+	std::vector<SFill> GetGapFills(float range, const springai::AIFloat3& pos, float maxDist,
+			const std::vector<SPiece>& queued);
+	// Our energy jobs, and the grid linker's energy pieces: at their site, or (not placed yet) at their position,
+	// reaching on up to their shake
 	std::vector<SPiece> GetQueuedEnergy();
 	// How many of pieces link to a building of link range <range> at pos
 	static int CountLinked(const std::vector<SPiece>& pieces, const springai::AIFloat3& pos, float range);

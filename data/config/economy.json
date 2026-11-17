@@ -66,14 +66,16 @@
 		},
 
 		// Cheap energy placement: energy jobs (and the mex build_chain's energy) of these defs go, within max_dist elmos
-		// of the builder (of the mex for the chain), in this order:
+		// of the builder (of the mex for the chain; a third of that while short of energy), in this order:
 		//   1. beside the nearest finished mex of ours on no grid with energy (the game's grids; energy of the ally
-		//      team beside it, being built too, also counts)
+		//      team beside it, being built too, also counts; a mex the game hasn't put on a grid yet is on the one
+		//      it overlaps)
 		//   2. into the nearest open gap of the planned grid: a planned link between two finished mex clusters
 		//      (CEnergyGrid's spanning tree), or between the mexes of one; from a gap end, one piece per gap at a time
 		//   3. beside a mex of the grid with the least energy per mex: the one with the least energy beside it
 		// Always on a site that links (to the mex, or to the gap end and, when one piece closes it, the other end too),
-		// never beside a mex with an energy job queued there. None of these: at the nearest metal spot as before.
+		// never beside a mex with an energy job (or a grid link solar or wind) queued there. None of these: at the
+		// nearest metal spot as before.
 		// Missing unit = off
 		"fill": {
 			"unit": ["energysolar", "energywind"],

@@ -1914,18 +1914,13 @@ IBuilderTask* CEconomyManager::EnqueueFillEnergy(CCircuitDef* cdef, const AIFloa
 	if (!IsFillDef(cdef) || (energyGrid == nullptr) || (fillDist <= 0.f)) {
 		return nullptr;
 	}
+	// Short of energy: only a third as far, as the walk would outlast the build (the nearest metal spot instead)
+	const float maxDist = IsEnergyShort() ? fillDist / 3.f : fillDist;
 	CEnergyGrid::Predicate isGood = GetFillPredicate(cdef, unit);
 	energyGrid->SetAuthority(circuit);
-
 	CEnergyGrid::SLinkSite site;
-	IGridLink* gap = nullptr;
-	AIFloat3 buildPos = energyGrid->FindMexToFill(cdef, pos, fillDist, true, isGood, site);
-	if (!utils::is_valid(buildPos)) {
-		gap = energyGrid->FindGapToFill(cdef, pos, fillDist, isGood, site, buildPos);
-	}
-	if (!utils::is_valid(buildPos)) {
-		buildPos = energyGrid->FindMexToFill(cdef, pos, fillDist, false, isGood, site);
-	}
+	AIFloat3 buildPos;
+	IGridLink* gap = energyGrid->FindFillSite(cdef, pos, maxDist, isGood, site, buildPos);
 	if (!utils::is_valid(buildPos)) {
 		return nullptr;
 	}

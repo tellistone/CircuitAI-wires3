@@ -604,8 +604,11 @@ void IBuilderTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, flo
 		facing = (2 * pos.z > terHeight) ? UNIT_FACING_NORTH : UNIT_FACING_SOUTH;
 	}
 
-	CTerrainManager::TerrainPredicate predicate = [terrainMgr, builder](const AIFloat3& p) {
-		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance());
+	CEconomyManager* economyMgr = manager->GetCircuit()->GetEconomyManager();
+	CCircuitDef* cdef = buildDef;
+	CTerrainManager::TerrainPredicate predicate = [terrainMgr, economyMgr, cdef, builder](const AIFloat3& p) {
+		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance())
+			&& economyMgr->IsAllowedAt(cdef, p);  // economy.energy.base_only
 	};
 	SetBuildPos(terrainMgr->FindBuildSite(buildDef, pos, searchRadius, facing, predicate));
 }
