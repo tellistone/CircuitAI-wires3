@@ -48,7 +48,13 @@ struct STargetPriority {
 	float guardSide = 0.035f;
 	float guardAlong = 300.f;
 	float turnYaw = 4.f;  // turret turn rates, degrees a second
-	float turnPitch = 2.f;
+	float turnPitch = 2.f;  // 0: pitch is free (a spinning barrel lines up by itself)
+	bool isTurnFlip = false;  // fires backwards: never turns its heading more than 90 degrees
+	float turnHalfValue = 0.f;  // > 0: this many seconds of turning halve a target's value (turning costs fire rate)
+	float splashRadius = -1.f;  // radius for splash value; < 0: the weapon's AoE
+	float shotGrace = 10.f;  // seconds: a shot is due within turning + 1 reload + this
+	float mobileMove = -1.f;  // >= 0: a mobile unit that would move further during the shell's flight ranks last
+	bool isHighArc = false;  // trajectory toggle: the high arc for a building the low arc can't reach over terrain
 
 	int GetTier(const CCircuitDef* edef, bool isInLos) const;
 };

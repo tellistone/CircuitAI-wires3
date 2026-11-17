@@ -549,11 +549,17 @@ void CFactoryManager::ReadConfig()
 		const Json::Value& guard = behaviour["target_guard"];  // {"side": <x distance>, "along": <elmos>}
 		tp->guardSide = std::max(guard.get("side", tp->guardSide).asFloat(), 0.f);
 		tp->guardAlong = std::max(guard.get("along", tp->guardAlong).asFloat(), 0.f);
-		const Json::Value& turn = behaviour["turn_rate"];  // [<heading>, <pitch>] degrees a second
+		const Json::Value& turn = behaviour["turn_rate"];  // [<heading>, <pitch>] degrees a second; pitch 0: free
 		if (turn.isArray() && (turn.size() == 2)) {
 			tp->turnYaw = std::max(turn[0].asFloat(), 0.1f);
-			tp->turnPitch = std::max(turn[1].asFloat(), 0.1f);
+			tp->turnPitch = std::max(turn[1].asFloat(), 0.f);
 		}
+		tp->isTurnFlip = behaviour.get("turn_flip", tp->isTurnFlip).asBool();
+		tp->turnHalfValue = std::max(behaviour.get("turn_half_value", tp->turnHalfValue).asFloat(), 0.f);
+		tp->splashRadius = behaviour.get("splash_radius", tp->splashRadius).asFloat();
+		tp->shotGrace = std::max(behaviour.get("shot_grace", tp->shotGrace).asFloat(), 1.f);
+		tp->mobileMove = behaviour.get("mobile_move", tp->mobileMove).asFloat();
+		tp->isHighArc = behaviour.get("high_arc", tp->isHighArc).asBool();
 		cdef->SetTargetPriority(tp);
 	}
 

@@ -1,7 +1,8 @@
 /*
  * PriorityArtyTask.cpp
  *
- *  Long-range static artillery (Big Bertha) aimed by a fixed priority list, @see PriorityArtyTask.h
+ *  Long-range static artillery (Big Bertha, Disco Rave Party) aimed by a fixed priority list,
+ *  @see PriorityArtyTask.h
  */
 
 #include "task/static/PriorityArtyTask.h"
@@ -20,6 +21,8 @@
 #include "AISCommands.h"
 #include "Damage.h"
 #include "Lua.h"
+#include "Unit.h"
+#include "Weapon.h"
 #include "WeaponDef.h"
 #include "WeaponMount.h"
 
@@ -35,10 +38,10 @@ using namespace springai;
 #define IDLE_INTERVAL	(FRAMES_PER_SEC * 3)  // no target: look again this often
 #define ORDER_TIMEOUT	(FRAMES_PER_SEC * 60)
 #define ORDER_REPEAT	(FRAMES_PER_SEC * 30)  // re-send the order before it times out
-#define NO_SHOT_GRACE	(FRAMES_PER_SEC * 10)  // a shot is due within turning + 1 reload + this
 #define FAIL_SKIP		(FRAMES_PER_SEC * 60)  // a failed target is skipped this long x 2^(failures - 1)
 #define FAIL_SKIP_MAX_SHIFT	5  // ... up to 32 minutes
-#define DRY_SHOTS		5  // shots at a target in LOS or radar that damaged nothing
+#define DRY_SHOTS		5  // shells landed at a target in LOS or radar since this gun last damaged anything
+#define LAND_MARGIN		FRAMES_PER_SEC  // slack on a shell's estimated landing
 #define BLIND_SHOTS_MIN	5  // shots at a target out of both: max(this, BLIND_KILL_MOD x shots to kill)
 #define BLIND_KILL_MOD	4
 #define FAR_TURN_SEC	10.f  // mobile units more than this many seconds of turning away rank last
@@ -59,15 +62,18 @@ CPriorityArtyTask::CPriorityArtyTask(ITaskManager* mgr)
 		, gravity(120.f)
 		, heightMod(0.8f)
 		, aoe(0.f)
+		, splashRadius(0.f)
 		, shellDamage(2000.f)
 		, reloadFrames(1)
 		, pickTier(STargetPriority::NO_TIER)
 		, isTargetMobile(false)
+		, isTargetHigh(false)
+		, trajectory(-1)
+		, flightFrames(0)
 		, checkFrame(0)
 		, orderFrame(0)
 		, noShotFrame(INT_MAX)
 		, lastUpdateFrame(0)
-		, lastReloadFrame(0)
 		, dryShots(0)
 		, heading(0.f)
 		, pitch(0.f)
@@ -77,6 +83,9 @@ CPriorityArtyTask::CPriorityArtyTask(ITaskManager* mgr)
 
 CPriorityArtyTask::~CPriorityArtyTask()
 {
+	for (SWeapon& w : weapons) {
+		delete w.weapon;
+	}
 }
 
 bool CPriorityArtyTask::CanAssignTo(CCircuitUnit* unit) const
@@ -94,59 +103,94 @@ void CPriorityArtyTask::RemoveAssignee(CCircuitUnit* unit)
 
 void CPriorityArtyTask::Start(CCircuitUnit* unit)
 {
-	const int frame = manager->GetCircuit()->GetLastFrame();
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
 	position = unit->GetPos(frame);
 	tp = unit->GetCircuitDef()->GetTargetPriority();
-	ReadWeapon(unit);
 	aimFrom = position;
 	aimFrom.y += MUZZLE_LIFT;
 	heading = 0.f;  // facing south (+z)
-	TRY_UNIT(manager->GetCircuit(), unit,
+	TRY_UNIT(circuit, unit,
+		ReadWeapons(unit);
 		heading = 90.f * unit->GetUnit()->GetBuildingFacing();  // S, E, N, W
 	)
+	splashRadius = ((tp != nullptr) && (tp->splashRadius >= 0.f)) ? tp->splashRadius : aoe;
 	pitch = 0.f;
 	checkFrame = frame;
 	orderFrame = frame;
 	noShotFrame = INT_MAX;
 	lastUpdateFrame = frame;
-	lastReloadFrame = unit->GetWeaponReloadFrame(frame);
 	dryShots = 0;
 	isReorder = false;
 }
 
-void CPriorityArtyTask::ReadWeapon(CCircuitUnit* unit)
+void CPriorityArtyTask::ReadWeapons(CCircuitUnit* unit)
 {
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	range = cdef->GetMaxRange(CCircuitDef::RangeType::LAND);
 	aoe = cdef->GetAoe();
 	reloadFrames = std::max(cdef->GetReloadTime(), 1);
+
+	// Arc: the main weapon's
 	WeaponMount* mount = cdef->GetWeaponMount();
-	if (mount == nullptr) {
-		return;
-	}
-	WeaponDef* wd = mount->GetWeaponDef();
-	const float projSpeed = wd->GetProjectileSpeed() * FRAMES_PER_SEC;  // elmo/frame
-	if (projSpeed > 0.f) {
-		speed = projSpeed;
-	}
-	const float myGravity = wd->GetMyGravity() * SQUARE(FRAMES_PER_SEC);  // elmo/frame^2; 0: map gravity
-	if (myGravity > 0.f) {
-		gravity = myGravity;
-	}
-	heightMod = wd->GetHeightMod();
-	Damage* damage = wd->GetDamage();
-	const std::vector<float> damages = damage->GetTypes();
-	delete damage;
-	if (!damages.empty()) {
-		float sum = 0.f;
-		for (float d : damages) {
-			sum += d;
+	if (mount != nullptr) {
+		WeaponDef* wd = mount->GetWeaponDef();
+		const float projSpeed = wd->GetProjectileSpeed() * FRAMES_PER_SEC;  // elmo/frame
+		if (projSpeed > 0.f) {
+			speed = projSpeed;
 		}
-		if (sum > 0.f) {
-			shellDamage = sum / damages.size();
+		const float myGravity = wd->GetMyGravity() * SQUARE(FRAMES_PER_SEC);  // elmo/frame^2; 0: map gravity
+		if (myGravity > 0.f) {
+			gravity = myGravity;
 		}
+		heightMod = wd->GetHeightMod();
+		delete wd;
 	}
-	delete wd;
+
+	// Shots and damage: every real weapon (a gun of several fires them in turn)
+	for (SWeapon& w : weapons) {
+		delete w.weapon;
+	}
+	weapons.clear();
+	float damageSum = 0.f;
+	for (Weapon* weapon : unit->GetUnit()->GetWeapons()) {
+		WeaponDef* wd = weapon->GetDef();
+		const std::map<std::string, std::string>& customParams = wd->GetCustomParams();
+		if ((customParams.find("fake_weapon") != customParams.end()) || wd->IsShield() || wd->IsManualFire()) {
+			delete wd;
+			delete weapon;
+			continue;
+		}
+		if (!wd->IsParalyzer()) {  // a paralyzer kills nothing
+			Damage* damage = wd->GetDamage();
+			const std::vector<float> damages = damage->GetTypes();
+			delete damage;
+			float sum = 0.f;
+			for (float d : damages) {
+				sum += d;
+			}
+			damageSum += damages.empty() ? 0.f : sum / damages.size();
+		}
+		delete wd;
+		weapons.push_back({weapon, std::max(weapon->GetReloadTime(), 1), weapon->GetReloadFrame()});
+	}
+	if (!weapons.empty() && (damageSum > 0.f)) {
+		shellDamage = damageSum / weapons.size();
+	}
+}
+
+// A shot: a weapon's reload frame jumped forward by half its reload or more
+int CPriorityArtyTask::CountShots()
+{
+	int shots = 0;
+	for (SWeapon& w : weapons) {
+		const int reloadFrame = w.weapon->GetReloadFrame();
+		if (reloadFrame - w.lastReloadFrame >= std::max(w.reloadFrames / 2, 1)) {
+			++shots;
+		}
+		w.lastReloadFrame = reloadFrame;
+	}
+	return shots;
 }
 
 void CPriorityArtyTask::Update()
@@ -160,25 +204,33 @@ void CPriorityArtyTask::Update()
 	lastUpdateFrame = frame;
 	CCircuitUnit* unit = *units.begin();
 
-	const int reloadFrame = unit->GetWeaponReloadFrame(frame);
+	int shots = 0;
+	TRY_UNIT(circuit, unit,
+		shots = CountShots();
+	)
 	if ((unit->Blocker() != nullptr) || IsDisabled(unit, frame)) {
 		if (noShotFrame != INT_MAX) {
 			noShotFrame += elapsed;  // the no-shot timer pauses
 		}
-		lastReloadFrame = reloadFrame;  // a stun may hold the reload back: not a shot
-		return;
+		return;  // a stun may hold the reload back: not a shot
 	}
 
-	// A shot: the reload frame jumped forward by half a reload or more
-	if ((reloadFrame - lastReloadFrame >= std::max(reloadFrames / 2, 1)) && (target != nullptr)) {
+	if ((shots > 0) && (target != nullptr)) {
 		if (target->IsInRadarOrLOS()) {
-			++dryShots;  // reset by damage (OnEnemyDamaged)
+			for (int i = 0; i < shots; ++i) {
+				landFrames.push_back(frame + flightFrames);  // dry once landed with no damage (OnEnemyDamaged)
+			}
 		} else {
-			circuit->GetMilitaryManager()->AddBlindShot(target->GetId());  // no damage events out of both
+			for (int i = 0; i < shots; ++i) {
+				circuit->GetMilitaryManager()->AddBlindShot(target->GetId());  // no damage events out of both
+			}
 		}
-		noShotFrame = frame + reloadFrames + NO_SHOT_GRACE;
+		noShotFrame = frame + reloadFrames + static_cast<int>(tp->shotGrace * FRAMES_PER_SEC);
 	}
-	lastReloadFrame = reloadFrame;
+	while (!landFrames.empty() && (landFrames.front() + LAND_MARGIN <= frame)) {
+		landFrames.pop_front();
+		++dryShots;
+	}
 
 	// Lost target: re-pick at once
 	if (target != nullptr) {
@@ -230,6 +282,11 @@ void CPriorityArtyTask::OnEnemyDamaged(CEnemyInfo* enemy)
 {
 	dryShots = 0;
 	failures.erase(enemy->GetId());
+	// The shells due by now hit something
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	while (!landFrames.empty() && (landFrames.front() <= frame + LAND_MARGIN)) {
+		landFrames.pop_front();
+	}
 }
 
 bool CPriorityArtyTask::IsDisabled(CCircuitUnit* unit, int frame) const
@@ -314,14 +371,14 @@ bool CPriorityArtyTask::IsFriendNear(const AIFloat3& aimPos, int frame) const
 	return false;
 }
 
-bool CPriorityArtyTask::IsArcClear(const AIFloat3& aimPos) const
+bool CPriorityArtyTask::IsArcClear(const AIFloat3& aimPos, bool isHigh) const
 {
 	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
 	auto heightAt = [terrainMgr](float x, float z) {
 		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // shells fly over water
 	};
 	return ballistics::IsArcClear(aimFrom.x, aimFrom.y, aimFrom.z, aimPos.x, aimPos.y, aimPos.z, speed, gravity,
-			ARC_STEP, ARC_CLEARANCE, ARC_STOP_SHORT, heightAt);
+			ARC_STEP, ARC_CLEARANCE, ARC_STOP_SHORT, heightAt, isHigh);
 }
 
 int CPriorityArtyTask::GetBlindBudget(CEnemyInfo* enemy) const
@@ -343,7 +400,7 @@ bool CPriorityArtyTask::IsBlindSpent(CEnemyInfo* enemy) const
 	return (shots > 0) && (shots >= GetBlindBudget(enemy));
 }
 
-bool CPriorityArtyTask::MakeCandidate(CEnemyInfo* enemy, SCandidate& outCand) const
+bool CPriorityArtyTask::MakeCandidate(CEnemyInfo* enemy, bool isHigh, SCandidate& outCand) const
 {
 	bool isMobile;
 	if (!IsTargetable(enemy, isMobile)) {
@@ -357,29 +414,37 @@ bool CPriorityArtyTask::MakeCandidate(CEnemyInfo* enemy, SCandidate& outCand) co
 	const AIFloat3& ePos = enemy->GetPos();
 	const float dx = ePos.x - aimFrom.x;
 	const float dz = ePos.z - aimFrom.z;
+	const float dist = std::sqrt(dx * dx + dz * dz);
 	float tanA;
-	if (!ballistics::LowArcTan(std::sqrt(dx * dx + dz * dz), ePos.y - aimFrom.y, speed, gravity, tanA)) {
+	if (!ballistics::ArcTan(dist, ePos.y - aimFrom.y, speed, gravity, isHigh, tanA)) {
 		return false;
 	}
 	constexpr float RAD_TO_DEG = 180.f / M_PI;
 	const float eHeading = std::atan2(dx, dz) * RAD_TO_DEG;  // 0 = south (+z), 90 = east (+x)
 	const float ePitch = std::atan(tanA) * RAD_TO_DEG;
-	float dHeading = std::fmod(std::fabs(eHeading - heading), 360.f);
-	if (dHeading > 180.f) {
-		dHeading = 360.f - dHeading;
+	const float turnSec = arty::TurnTime(heading, pitch, eHeading, ePitch, tp->turnYaw, tp->turnPitch, tp->isTurnFlip);
+	const float flightSec = ballistics::FlightTime(dist, tanA, speed);
+	bool isFar = false;
+	if (isMobile) {
+		isFar = (turnSec > FAR_TURN_SEC);
+		if ((tp->mobileMove >= 0.f) && !isFar) {  // it would be gone before the shell lands
+			const float moveDist = std::sqrt(enemy->GetVel().SqLength2D()) * FRAMES_PER_SEC * (turnSec + flightSec);
+			isFar = (moveDist > tp->mobileMove);
+		}
 	}
-	const float turnSec = std::max(dHeading / tp->turnYaw, std::fabs(ePitch - pitch) / tp->turnPitch);
 
 	outCand.enemy = enemy;
 	outCand.rank.tier = tier;
 	outCand.rank.value = enemy->GetCost();  // splash tiers: GetSplashValue, set once all buildings are known
 	outCand.rank.turnSec = turnSec;
-	outCand.rank.isFar = isMobile && (turnSec > FAR_TURN_SEC);
+	outCand.rank.isFar = isFar;
 	outCand.rank.isFinished = !enemy->IsBeingBuilt();
 	outCand.rank.isVisible = isVisible;
 	outCand.heading = eHeading;
 	outCand.pitch = ePitch;
+	outCand.flightSec = flightSec;
 	outCand.isMobile = isMobile;
+	outCand.isHigh = isHigh;
 	return true;
 }
 
@@ -388,10 +453,10 @@ float CPriorityArtyTask::GetSplashValue(CEnemyInfo* enemy) const
 {
 	const AIFloat3& ePos = enemy->GetPos();
 	const ICoreUnit::Id eId = enemy->GetId();
-	const float sqAoe = SQUARE(aoe);
+	const float sqRadius = SQUARE(splashRadius);
 	float value = enemy->GetCost();
 	for (const SBuilding& b : buildings) {
-		if ((b.id != eId) && (b.pos.SqDistance2D(ePos) <= sqAoe)) {
+		if ((b.id != eId) && (b.pos.SqDistance2D(ePos) <= sqRadius)) {
 			value += b.cost;
 		}
 	}
@@ -415,7 +480,7 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 	}
 
 	SCandidate cur;
-	if ((target != nullptr) && !MakeCandidate(target, cur)) {
+	if ((target != nullptr) && !MakeCandidate(target, isTargetHigh, cur)) {
 		SetTarget(nullptr);
 	}
 	const bool hasCur = (target != nullptr);
@@ -424,7 +489,7 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 	}
 
 	const bool isSplash = std::find(tp->isSplash.begin(), tp->isSplash.end(), true) != tp->isSplash.end();
-	const float sqBuildingRange = SQUARE(range + aoe);
+	const float sqBuildingRange = SQUARE(range + splashRadius);
 	buildings.clear();
 	candidates.clear();
 	for (const auto& kv : circuit->GetEnemyInfos()) {
@@ -448,7 +513,7 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 			continue;  // until it's seen again
 		}
 		SCandidate cand;
-		if (MakeCandidate(enemy, cand)) {
+		if (MakeCandidate(enemy, false, cand)) {
 			candidates.push_back(cand);
 		}
 	}
@@ -459,6 +524,7 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 		if ((c.rank.tier < (int)tp->isSplash.size()) && tp->isSplash[c.rank.tier]) {
 			c.rank.value = GetSplashValue(c.enemy);
 		}
+		c.rank.value = arty::TurnWeighted(c.rank.value, c.rank.turnSec, tp->turnHalfValue);
 	}
 	std::sort(candidates.begin(), candidates.end(), [](const SCandidate& a, const SCandidate& b) {
 		return arty::IsRankedHigher(a.rank, b.rank);
@@ -467,6 +533,7 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 	// The first with no friendly unit near and a clear arc. The current target passed both already
 	const SCandidate* best = nullptr;
 	const SCandidate* curCand = nullptr;
+	SCandidate highCand;
 	for (const SCandidate& c : candidates) {
 		if (c.enemy == target) {
 			curCand = &c;
@@ -477,7 +544,13 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 		if (IsFriendNear(ePos, frame)) {
 			continue;
 		}
-		if (!IsArcClear(ePos)) {
+		if (!IsArcClear(ePos, false)) {
+			// A building may take the high arc over the terrain (a gun with a trajectory toggle)
+			if (tp->isHighArc && !c.isMobile && IsArcClear(ePos, true) && MakeCandidate(c.enemy, true, highCand)) {
+				highCand.rank = c.rank;  // ranked as it was
+				best = &highCand;
+				break;
+			}
 			AddFailure(c.enemy, frame);  // not checked again within its skip window
 #ifdef DEBUG_LOG
 			circuit->LOG("ARTY %i arc blocked to %i", unit->GetId(), c.enemy->GetId());
@@ -516,17 +589,26 @@ void CPriorityArtyTask::Pick(CCircuitUnit* unit, int frame)
 	}
 
 #ifdef DEBUG_LOG
-	circuit->LOG("ARTY %i picks %i tier %i value %.0f turn %.1fs (was %i)", unit->GetId(), best->enemy->GetId(),
-			best->rank.tier + 1, best->rank.value, best->rank.turnSec, hasCur ? target->GetId() : -1);
+	circuit->LOG("ARTY %i picks %i tier %i value %.0f turn %.1fs flight %.1fs%s (was %i)", unit->GetId(),
+			best->enemy->GetId(), best->rank.tier + 1, best->rank.value, best->rank.turnSec, best->flightSec,
+			best->isHigh ? " high" : "", hasCur ? target->GetId() : -1);
 #endif
-	SetTarget(best->enemy);
-	pickTier = best->rank.tier;
-	isTargetMobile = best->isMobile;
-	dryShots = 0;
-	noShotFrame = frame + static_cast<int>(best->rank.turnSec * FRAMES_PER_SEC) + reloadFrames + NO_SHOT_GRACE;
-	heading = best->heading;
-	pitch = best->pitch;
+	SetNewTarget(*best, frame);
 	Order(unit, frame);
+}
+
+void CPriorityArtyTask::SetNewTarget(const SCandidate& cand, int frame)
+{
+	SetTarget(cand.enemy);
+	pickTier = cand.rank.tier;
+	isTargetMobile = cand.isMobile;
+	isTargetHigh = cand.isHigh;
+	flightFrames = static_cast<int>(cand.flightSec * FRAMES_PER_SEC);
+	dryShots = 0;
+	landFrames.clear();
+	noShotFrame = frame + static_cast<int>((cand.rank.turnSec + tp->shotGrace) * FRAMES_PER_SEC) + reloadFrames;
+	heading = cand.heading;
+	pitch = cand.pitch;
 }
 
 void CPriorityArtyTask::Order(CCircuitUnit* unit, int frame)
@@ -539,9 +621,14 @@ void CPriorityArtyTask::Order(CCircuitUnit* unit, int frame)
 	circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
 
 	TRY_UNIT(circuit, unit,
+		const int wantTrajectory = isTargetHigh ? 1 : 0;
+		if (tp->isHighArc && (trajectory != wantTrajectory)) {  // a gun with a trajectory toggle
+			unit->GetUnit()->SetTrajectory(wantTrajectory);
+			trajectory = wantTrajectory;
+		}
 		if (isTargetMobile) {  // the engine leads it
 			unit->GetUnit()->Attack(target->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + ORDER_TIMEOUT);
-		} else {  // no engine ground test on attack-ground for this weapon (unit_target_features.lua)
+		} else {  // no engine ground test on attack-ground for these weapons (unit_target_features.lua, avoidGround)
 			unit->CmdAttackGround(tPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + ORDER_TIMEOUT);
 		}
 	)
@@ -561,6 +648,7 @@ void CPriorityArtyTask::Drop(CCircuitUnit* unit, int frame)
 	SetTarget(nullptr);
 	pickTier = STargetPriority::NO_TIER;
 	noShotFrame = INT_MAX;
+	landFrames.clear();
 	checkFrame = frame + IDLE_INTERVAL;
 }
 
