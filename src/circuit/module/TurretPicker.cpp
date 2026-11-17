@@ -42,6 +42,8 @@ using namespace springai;
 #define JOB_TIMEOUT		(FRAMES_PER_SEC * 30)  // with no builder on it, as the cornered defence's
 #define MAX_SHOWN		300  // candidates kept for the overlay
 #define SEEN_FRAMES		(FRAMES_PER_SEC * 180)  // an enemy building out of radar and sight longer is no target
+#define VIEW_RAYS		24  // bearings V samples
+#define VIEW_LIFT		20.f  // V's rays end this high above the ground (as CSpotScorer's line of fire)
 #define KEEP_SHARE		0.75f  // of the order's threshold, that a job keeps on arrival
 
 namespace {
@@ -78,6 +80,7 @@ void CTurretPicker::ReadConfig()
 	c.ally = turret.get("ally", c.ally).asFloat();
 	c.enemy = turret.get("enemy", c.enemy).asFloat();
 	c.front = turret.get("front", c.front).asFloat();
+	c.view = turret.get("view", c.view).asFloat();
 	c.height = turret.get("height", c.height).asFloat();
 	c.choke = turret.get("choke", c.choke).asFloat();
 	c.isAfterFlee = turret.get("after_flee", c.isAfterFlee).asBool();
@@ -268,9 +271,9 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	char buf[512];
 	snprintf(buf, sizeof(buf), ": %s at (%.0f, %.0f): T %.0f, A %.0f, E %.0f, C %.0f, height %.2f, front %.2f "
 			"(enemy %.1f of %.1f), our building at %.0f, walk %.0f, base %.2f x cost, value %.2f x cost, "
-			"%i of %i candidates, tier %i", def->GetDef()->GetName(), spot.x, spot.z, t.traffic, t.ally, t.enemy, t.choke,
-			1.f + config.height * t.height, t.front, pick.cand.enemyInfl, res.search.frontNorm,
-			GetNearestOurs(gather, spot), pick.cand.walk, t.base / cost, t.value / cost, res.search.tested,
+			"view %.2f, %i of %i candidates, tier %i", def->GetDef()->GetName(), spot.x, spot.z, t.traffic, t.ally,
+			t.enemy, t.choke, 1.f + config.height * t.height, t.front, pick.cand.enemyInfl, res.search.frontNorm,
+			GetNearestOurs(gather, spot), pick.cand.walk, t.base / cost, t.value / cost, t.view, res.search.tested,
 			(int)last.grid.passed.size(), GetTier(def));
 	say(who + buf);
 	return task;
@@ -596,7 +599,8 @@ CTurretPicker::SDefResult CTurretPicker::SearchDef(CCircuitDef* def, CCircuitUni
 				const Reject reject = FinishCandidate(def, builder, gather, c);
 				++res.counts[static_cast<int>(reject)];
 				return reject == Reject::NONE;
-			});
+			},
+			MakeViewFn(def));
 	return res;
 }
 
@@ -606,6 +610,7 @@ CTurretValue::SParams CTurretPicker::MakeParams(CCircuitDef* def) const
 	p.range = std::max(def->GetMaxRange(), 1.f);
 	p.heightBonus = config.height;
 	p.front = config.front;
+	p.view = config.view;
 	p.minBase = config.minValue * def->GetCostM();
 	p.refineStep = CELL * 0.25f;
 	return p;
@@ -620,6 +625,51 @@ CTurretValue::ClearFn CTurretPicker::MakeClearFn(CCircuitDef* def) const
 	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
 	return [spotScorer, emit](const CTurretValue::SPos& from, const CTurretValue::SPos& to) {
 		return spotScorer->IsClearLine(AIFloat3(from.x, from.y, from.z), emit, AIFloat3(to.x, to.y, to.z));
+	};
+}
+
+/*
+ * V: the share of the range circle's ground, by area, in a clear line of fire from the spot. Along each of VIEW_RAYS
+ * bearings, out every 2 squares to the range, a point is in line while it rises above the steepest ground before it,
+ * as CSpotScorer::IsClearLine tests one line; points off the map don't count. Water reads at its surface
+ */
+CTurretValue::ViewFn CTurretPicker::MakeViewFn(CCircuitDef* def) const
+{
+	if (def->GetDef()->GetHighTrajectoryType() == 1) {
+		return nullptr;  // high-arc: any line
+	}
+	const float emit = def->GetDef()->GetLosHeight();
+	const float range = std::max(def->GetMaxRange(), 1.f);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	std::vector<std::pair<float, float>> dirs;
+	for (int r = 0; r < VIEW_RAYS; ++r) {
+		const float angle = 2.f * static_cast<float>(M_PI) * r / VIEW_RAYS;
+		dirs.push_back({std::cos(angle), std::sin(angle)});
+	}
+	return [terrainMgr, emit, range, dirs](const CTurretValue::SPos& from) {
+		const float y0 = terrainMgr->GetHeightAt(from.x, from.z) + emit;
+		const float step = SQUARE_SIZE * 2;
+		const float maxX = CTerrainManager::GetTerrainWidth();
+		const float maxZ = CTerrainManager::GetTerrainHeight();
+		float seen = 0.f;
+		float total = 0.f;
+		for (const auto& [dx, dz] : dirs) {
+			float steepest = -std::numeric_limits<float>::max();
+			for (float d = step; d <= range; d += step) {
+				const float x = from.x + dx * d;
+				const float z = from.z + dz * d;
+				if ((x < 0.f) || (z < 0.f) || (x > maxX) || (z > maxZ)) {
+					break;
+				}
+				const float ground = terrainMgr->GetHeightAt(x, z);
+				total += d;  // area: a point's ring grows with d
+				if ((std::max(ground, 0.f) + VIEW_LIFT - y0) / d >= steepest) {
+					seen += d;
+				}
+				steepest = std::max(steepest, (ground - y0) / d);
+			}
+		}
+		return (total > 0.f) ? seen / total : 0.f;
 	};
 }
 

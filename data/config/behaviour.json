@@ -210,6 +210,7 @@
 	"ally": 1.0,  // weight of A
 	"enemy": 1.0,  // weight of E
 	"front": 1.0,  // the spot with the most enemy building influence, out of threat, ranks up to 1 + this x its value; 0 = no lean
+	"view": 1.0,  // a spot ranks up to 1 + this x its value by the share of its range circle's ground in a clear line of fire (V), so a cliff top over the ground below beats its foot; ranks only, never decides worth; 0 = off
 	"height": 0.5,  // the most a spot's height adds to its value (all of it 150 elmos above its targets)
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to

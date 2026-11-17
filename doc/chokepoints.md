@@ -112,6 +112,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. |
 | `turret.enemy` | `1.0` | Weight of E, the enemies a turret could shoot. |
 | `turret.front` | `1.0` | The spot with the most enemy building influence, out of threat, ranks up to 1 + this × its value. 0 turns the lean off. |
+| `turret.view` | `1.0` | A spot ranks up to 1 + this × its value by *V*, the share of its range circle's ground in a clear line of fire from it. A cliff top over the ground below scores high and its foot low; flat open ground scores 1. Like the lean, it ranks spots and never decides whether one is worth its cost. 0 turns it off. |
 | `turret.height` | `0.5` | The most a spot's height adds to its value. |
 | `turret.choke` | `100` | Metal a choke of our current line or the enemy line in range adds (C). |
 | `turret.not_defence` | `["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"]` | Armed statics that defend nothing in the field: Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity and the Antinuke. They never cover a target, and the callers don't count them as a defence or as allied power. Claw mines and missiles are left out the same way, by their `mobilebuilding` mark. |
@@ -281,7 +282,7 @@ choke or cluster behind it, and the constructor builds it on that exact spot. Th
 thing; this one weighs everything a turret there would cover, each term in metal so it compares with the turret's
 cost:
 
-`base = (T + A + E + C) × (1 + turret.height × height)`, `value = base × (1 + turret.front × F) ÷ (1 + walk ÷ 1000)`
+`base = (T + A + E + C) × (1 + turret.height × height)`, `value = base × (1 + turret.front × F) × (1 + turret.view × V) ÷ (1 + walk ÷ 1000)`
 
 - *T*, traffic: the traffic field carries each destination's income across every cross-section of its enemy routes.
   The heaviest 64 cells within reach are summed over those in range and divided by the cell lengths the range spans
@@ -300,9 +301,12 @@ cost:
 - *F*, the front: each known enemy building, armed or not, fakes, Claw mines and missiles left out, adds
   2 × (1 − d ÷ 2048) (the influence map's enemy territory), over the highest among the candidates. The spot reaching furthest toward the enemy while
   out of threat ranks up to (1 + `turret.front`) × its value. *walk* is the ordered constructor's distance.
+- *V*, the view: the share of the range circle's ground, by area, in a clear line of fire from the spot, sampled
+  along 24 bearings every 16 elmos (high-arc turrets: 1). A spot on a cliff edge sees the plateau and the ground
+  below; its foot sees only the open side.
 
 Only the base is tested against the cost: a spot is worth building when its base is at least `turret.min_value` ×
-the turret's cost, so the lean and the walk only rank spots that already pay. The def with the best value per metal
+the turret's cost, so the lean, the view and the walk only rank spots that already pay. The def with the best value per metal
 wins, so the type follows the enemy buildings in range and the choke through E and C.
 
 A spot is skipped when it is outside the radius; more than `defence.infl_rad` (2048 elmos) from every building of
