@@ -84,8 +84,8 @@
 			"max_dist": 1500
 		},
 
-		// Built on land only within radius elmos of the base position (<= 0: the base defence radius, behaviour.json
-		// defence.base_rad). A rule on the site, at every placement of these defs: energy jobs, the mex chain's energy,
+		// Built on land only within radius elmos of the base position, at most the base defence radius (0.3 of the map
+		// diagonal clamped to behaviour.json defence.base_rad, so 1000 on small maps; <= 0: that radius). A rule on the site, at every placement of these defs: energy jobs, the mex chain's energy,
 		// fills and grid link pieces (not on where the builder stands: which energy is built doesn't change).
 		// On land they go only beside a mex on no grid with energy or into a gap of the grid plan (fill steps 1 and 2),
 		// never by the fallbacks that build at a mex or where the builder stands.

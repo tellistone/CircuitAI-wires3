@@ -624,24 +624,18 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 	}
 
 	if (chain->energy > 0.f) {
+		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		float energyMake;
-		CCircuitDef* energyDef = circuit->GetEconomyManager()->GetLowEnergy(buildPos, energyMake);
+		// isOrFill: on ground too steep for any energy at this mex, the fill can still find a site beside it
+		CCircuitDef* energyDef = economyMgr->GetLowEnergy(buildPos, energyMake, true);
 		if (energyDef != nullptr) {
-			bool isValid = (circuit->GetEconomyManager()->GetAvgEnergyIncome() < chain->energy);
+			bool isValid = (economyMgr->GetAvgEnergyIncome() < chain->energy);
 			if (isValid && chain->isMexEngy) {
 				int index = circuit->GetMetalManager()->FindNearestSpot(buildPos);
 				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
 			}
-			if (isValid) {
-				// economy.energy.fill places it (beside this mex while it is on no grid with energy); else at this mex,
-				// though not a base_only piece on land (economy.energy.base_only): it would clump there
-				CEconomyManager* economyMgr = circuit->GetEconomyManager();
-				if ((economyMgr->EnqueueFillEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL) == nullptr)
-					&& !economyMgr->IsBaseOnlyAt(energyDef, buildPos))
-				{
-					circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
-															  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
-				}
+			if (isValid) {  // economy.energy.fill places it (beside this mex while it is on no grid with energy)
+				economyMgr->EnqueueCheapEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL, SQUARE_SIZE * 8.0f);
 			}
 		}
 	}

@@ -682,17 +682,27 @@ int CEconomyManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	return 0; //signaling: OK
 }
 
-CCircuitDef* CEconomyManager::GetLowEnergy(const AIFloat3& pos, float& outMake) const
+CCircuitDef* CEconomyManager::GetLowEnergy(const AIFloat3& pos, float& outMake, bool isOrFill) const
 {
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
-	return energyDefs.GetWorstDef([this, frame, terrainMgr, &pos, &outMake](CCircuitDef* cdef, const SEnergyExt& data) {
-		if (cdef->IsAvailable(frame) && !IsGeoDef(cdef) && terrainMgr->CanBeBuiltAtSafe(cdef, pos) && IsAllowedAt(cdef, pos)) {
-			outMake = data.make;
-			return true;
-		}
-		return false;
+	auto getWorst = [this, frame, &outMake](auto isGood) {
+		return energyDefs.GetWorstDef([frame, &outMake, &isGood](CCircuitDef* cdef, const SEnergyExt& data) {
+			if (cdef->IsAvailable(frame) && isGood(cdef)) {
+				outMake = data.make;
+				return true;
+			}
+			return false;
+		});
+	};
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CCircuitDef* cdef = getWorst([this, terrainMgr, &pos](CCircuitDef* cdef) {
+		return !IsGeoDef(cdef) && terrainMgr->CanBeBuiltAtSafe(cdef, pos) && IsAllowedAt(cdef, pos);
 	});
+	// None for its ground (not for threat): a fill def finds its own site
+	if ((cdef == nullptr) && isOrFill && (circuit->GetThreatMap()->GetAllThreatAt(pos) <= THREAT_MIN)) {
+		cdef = getWorst([this](CCircuitDef* cdef) { return IsFillDef(cdef); });
+	}
+	return cdef;
 }
 
 void CEconomyManager::AddEnergyDefs(const std::set<CCircuitDef*>& buildDefs)
@@ -1938,6 +1948,16 @@ CEnergyGrid::Predicate CEconomyManager::GetFillPredicate(CCircuitDef* cdef, CCir
 	};
 }
 
+IBuilderTask* CEconomyManager::EnqueueCheapEnergy(CCircuitDef* cdef, const AIFloat3& pos, CCircuitUnit* unit,
+		IUnitTask::Priority priority, float shake)
+{
+	IBuilderTask* task = EnqueueFillEnergy(cdef, pos, unit, priority);
+	if ((task == nullptr) && !IsBaseOnlyAt(cdef, pos) && circuit->GetTerrainManager()->CanBeBuiltAt(cdef, pos)) {
+		task = circuit->GetBuilderManager()->EnqueueTask(priority, cdef, pos, IBuilderTask::BuildType::ENERGY, shake, true);
+	}
+	return task;
+}
+
 bool CEconomyManager::IsBaseOnlyAt(CCircuitDef* cdef, const AIFloat3& pos) const
 {
 	return (baseOnlyDefs.find(cdef) != baseOnlyDefs.end()) && (circuit->GetMap()->GetElevationAt(pos.x, pos.z) > tidalHeight);
@@ -1948,7 +1968,8 @@ bool CEconomyManager::IsAllowedAt(CCircuitDef* cdef, const AIFloat3& pos) const
 	if (!IsBaseOnlyAt(cdef, pos)) {
 		return true;
 	}
-	const float radius = (baseOnlyRadius > 0.f) ? baseOnlyRadius : circuit->GetMilitaryManager()->GetBaseDefRange();
+	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();
+	const float radius = (baseOnlyRadius > 0.f) ? std::min(baseOnlyRadius, baseRange) : baseRange;
 	return pos.SqDistance2D(circuit->GetSetupManager()->GetBasePos()) < SQUARE(radius);
 }
 
