@@ -304,7 +304,7 @@ CEnergyGrid::SLinkSite CEnergyGrid::MakeLinkSite(float range, const AIFloat3& fr
 	return {from, to, fromRange + range, toRange + range, gap <= range * 2.f * 0.85f};
 }
 
-AIFloat3 CEnergyGrid::FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, float searchRadius, Predicate& predicate)
+AIFloat3 CEnergyGrid::FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, float searchRadius, const Predicate& predicate)
 {
 	const float dist = link.from.distance2D(link.to);
 	AIFloat3 ideal = link.from;
@@ -317,20 +317,23 @@ AIFloat3 CEnergyGrid::FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, flo
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const float sqFrom = SQUARE(link.fromReach - SQUARE_SIZE);
 	const float sqTo = SQUARE(link.toReach - SQUARE_SIZE);
-	CTerrainManager::TerrainPredicate isLinked = [&link, sqFrom, sqTo, &predicate](const AIFloat3& p) {
-		return (p.SqDistance2D(link.from) < sqFrom) && (!link.isLast || (p.SqDistance2D(link.to) < sqTo)) && predicate(p);
+	// A step out gets a quarter of the reach closer to to: one that can't (water, a cliff) fails, never piles up at from
+	const float sqAhead = SQUARE(std::max(dist - link.fromReach * 0.25f, 0.f));
+	CTerrainManager::TerrainPredicate isLinked = [&link, sqFrom, sqTo, sqAhead, &predicate](const AIFloat3& p) {
+		return (p.SqDistance2D(link.from) < sqFrom) && (p.SqDistance2D(link.to) < (link.isLast ? sqTo : sqAhead))
+			&& predicate(p);
 	};
 	AIFloat3 buildPos = terrainMgr->FindBuildSite(cdef, ideal, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isLinked);
 	if (!utils::is_valid(buildPos) && link.isLast && (dist >= 1.f)) {  // no site touching both: one more step it is
-		CTerrainManager::TerrainPredicate isFromLinked = [&link, sqFrom, &predicate](const AIFloat3& p) {
-			return (p.SqDistance2D(link.from) < sqFrom) && predicate(p);
+		CTerrainManager::TerrainPredicate isFromLinked = [&link, sqFrom, sqAhead, &predicate](const AIFloat3& p) {
+			return (p.SqDistance2D(link.from) < sqFrom) && (p.SqDistance2D(link.to) < sqAhead) && predicate(p);
 		};
 		buildPos = terrainMgr->FindBuildSite(cdef, ideal, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isFromLinked);
 	}
 	return buildPos;
 }
 
-IGridLink* CEnergyGrid::FindFillSite(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, Predicate& predicate,
+IGridLink* CEnergyGrid::FindFillSite(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, const Predicate& predicate,
 		SLinkSite& outSite, AIFloat3& outPos)
 {
 	outPos = -RgtVector;
@@ -359,13 +362,21 @@ IGridLink* CEnergyGrid::FindFillSite(CCircuitDef* cdef, const AIFloat3& pos, flo
 }
 
 const CEnergyGrid::SFill* CEnergyGrid::TryFills(CCircuitDef* cdef, const SFill* first, const SFill* last,
-		Predicate& predicate, AIFloat3& outPos)
+		const Predicate& predicate, AIFloat3& outPos)
 {
-	for (int tries = 0; (first < last) && (tries < 4); ++first, ++tries) {  // FindBuildSite is the costly part
+	const int frame = circuit->GetLastFrame();
+	for (int tries = 0; (first < last) && (tries < 4); ++first) {  // FindBuildSite is the costly part
+		const int key = (cdef->GetId() << 20) | ((int(first->site.from.z) / 64) << 10) | (int(first->site.from.x) / 64);
+		auto it = fillRetryFrames.find(key);
+		if ((it != fillRetryFrames.end()) && (frame < it->second)) {
+			continue;  // failed lately: skipped, without using up a try
+		}
+		++tries;
 		outPos = FindLinkSite(cdef, first->site, first->site.fromReach * 0.5f, predicate);
 		if (utils::is_valid(outPos)) {
 			return first;
 		}
+		fillRetryFrames[key] = frame + FRAMES_PER_SEC * 30;
 	}
 	outPos = -RgtVector;
 	return nullptr;

@@ -375,26 +375,19 @@ void CEconomyManager::ReadConfig()
 
 	pylonLinkInc = energy.get("link_inc", 16.0f).asFloat();
 
-	{
-		const Json::Value& fill = energy["fill"];
-		for (const Json::Value& name : fill["unit"]) {
+	auto readDefs = [this, &cfgName](const Json::Value& names, std::set<CCircuitDef*>& outDefs) {
+		for (const Json::Value& name : names) {
 			CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
 			if (cdef == nullptr) {
 				circuit->LOG("CONFIG %s: has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
 			} else {
-				fillDefs.insert(cdef);
+				outDefs.insert(cdef);
 			}
 		}
-		fillDist = std::max(fill.get("max_dist", 1500.f).asFloat(), 0.f);
-	}
-	for (const Json::Value& name : energy["base_only"]) {
-		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
-		if (cdef == nullptr) {
-			circuit->LOG("CONFIG %s: has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
-		} else {
-			baseOnlyDefs.insert(cdef);
-		}
-	}
+	};
+	readDefs(energy["fill"]["unit"], fillDefs);
+	fillDist = std::max(energy["fill"].get("max_dist", 1500.f).asFloat(), 0.f);
+	readDefs(energy["base_only"], baseOnlyDefs);
 
 	{
 		const Json::Value& gridLink = energy["grid_link"];
@@ -1916,11 +1909,10 @@ IBuilderTask* CEconomyManager::EnqueueFillEnergy(CCircuitDef* cdef, const AIFloa
 	}
 	// Short of energy: only a third as far, as the walk would outlast the build (the nearest metal spot instead)
 	const float maxDist = IsEnergyShort() ? fillDist / 3.f : fillDist;
-	CEnergyGrid::Predicate isGood = GetFillPredicate(cdef, unit);
 	energyGrid->SetAuthority(circuit);
 	CEnergyGrid::SLinkSite site;
 	AIFloat3 buildPos;
-	IGridLink* gap = energyGrid->FindFillSite(cdef, pos, maxDist, isGood, site, buildPos);
+	IGridLink* gap = energyGrid->FindFillSite(cdef, pos, maxDist, GetFillPredicate(cdef, unit), site, buildPos);
 	if (!utils::is_valid(buildPos)) {
 		return nullptr;
 	}
@@ -2150,8 +2142,7 @@ bool CEconomyManager::LinkToGrid(CCircuitUnit* unit, SGridLink& info)
 	// On the line to the target: the last pylon goes midway through the overlap of both reaches, any other as far
 	// out as still links to its grid. Each step starts from the grown grid, so it re-plans around blocked ground
 	const CEnergyGrid::SLinkSite site = {from->pos, to->pos, from->range + pylonLink, to->range + pylonLink, count <= 1};
-	CEnergyGrid::Predicate isAny = [](const AIFloat3& p) { return true; };
-	const AIFloat3 buildPos = energyGrid->FindLinkSite(pylonDef, site, pylonLink * 0.5f, isAny);
+	const AIFloat3 buildPos = energyGrid->FindLinkSite(pylonDef, site, pylonLink * 0.5f, [](const AIFloat3&) { return true; });
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	if (!utils::is_valid(buildPos) || !terrainMgr->CanBeBuiltAtSafe(pylonDef, buildPos)) {
 		return false;

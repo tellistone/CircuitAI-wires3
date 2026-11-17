@@ -74,8 +74,9 @@
 		//      (CEnergyGrid's spanning tree), or between the mexes of one; from a gap end, one piece per gap at a time
 		//   3. beside a mex of the grid with the least energy per mex: the one with the least energy beside it
 		// Always on a site that links (to the mex, or to the gap end and, when one piece closes it, the other end too),
-		// never beside a mex with an energy job (or a grid link solar or wind) queued there. None of these: at the
-		// nearest metal spot as before.
+		// and a step into a gap gets closer to its other end (a gap across water or a cliff is skipped, not clumped at);
+		// never beside a mex with an energy job (or a grid link solar or wind) queued there. A spot with no site is
+		// skipped for 30 s. None of these: at the nearest metal spot as before.
 		// Missing unit = off
 		"fill": {
 			"unit": ["energysolar", "energywind"],

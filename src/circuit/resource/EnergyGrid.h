@@ -51,8 +51,9 @@ public:
 			const springai::AIFloat3& to, float toRange);
 	// The open site for cdef nearest the ideal spot (midway through the overlap of both reaches when isLast, else 0.9
 	// of from's reach out) that keeps those links (for the last piece, failing that, from's only) and passes
-	// predicate; -RgtVector if none
-	springai::AIFloat3 FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, float searchRadius, Predicate& predicate);
+	// predicate. A step out (from's link only) must get a quarter of from's reach closer to to, so a gap that can't
+	// go on (water, a cliff) fails instead of piling up at from. -RgtVector if none
+	springai::AIFloat3 FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, float searchRadius, const Predicate& predicate);
 	// economy.energy.fill: a site for cdef (a building with pylonrange) within maxDist of pos that links and passes
 	// predicate (outPos, -RgtVector if none; outSite), in this order:
 	//   1. beside the nearest of our finished mexes on no grid with energy (the game's grids; energy of the ally
@@ -63,7 +64,7 @@ public:
 	//      nearest
 	// Never beside a mex or at a gap end with an energy job queued there. Returns the planned link for the job to
 	// hold; nullptr within a cluster, beside a mex or none
-	IGridLink* FindFillSite(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, Predicate& predicate,
+	IGridLink* FindFillSite(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, const Predicate& predicate,
 			SLinkSite& outSite, springai::AIFloat3& outPos);
 
 	float GetPylonRange(CCircuitDef::Id defId);
@@ -109,8 +110,9 @@ private:
 			return (perMex != o.perMex) ? (perMex < o.perMex) : (pieces != o.pieces) ? (pieces < o.pieces) : (sqDist < o.sqDist);
 		}
 	};
-	// The first of [first, last) with an open site for cdef that passes predicate (outPos), trying at most 4: nullptr if none
-	const SFill* TryFills(CCircuitDef* cdef, const SFill* first, const SFill* last, Predicate& predicate,
+	// The first of [first, last) with an open site for cdef that passes predicate (outPos), trying at most 4; one that
+	// failed within 30 s (fillRetryFrames) is skipped without using up a try. nullptr if none
+	const SFill* TryFills(CCircuitDef* cdef, const SFill* first, const SFill* last, const Predicate& predicate,
 			springai::AIFloat3& outPos);
 	// For a piece of link range <range>: our finished mexes within maxDist of pos, none beside queued: the bare ones
 	// first (outBareCount), then by FindFillSite's step 3
@@ -137,6 +139,7 @@ private:
 
 	std::vector<SGridNode> gridNodes;
 	std::unordered_map<ICoreUnit::Id, unsigned> gridNodeIndex;  // into gridNodes, by unit id
+	std::unordered_map<int, int> fillRetryFrames;  // by def and the 64-elmo cell a fill grows from: frame to try again
 	int gridNodesFrame;
 
 	std::vector<bool> linkedClusters;

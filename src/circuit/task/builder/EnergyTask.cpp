@@ -119,9 +119,9 @@ void CBEnergyTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, flo
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	CEnergyGrid* energyGrid = economyMgr->GetEnergyGrid();
 	energyGrid->SetAuthority(circuit);
-	CEnergyGrid::Predicate isGood = economyMgr->GetFillPredicate(buildDef, builder);
 	SetBuildPos(-RgtVector);  // its old site's blocker off
-	SetBuildPos(energyGrid->FindLinkSite(buildDef, linkSite, linkSite.fromReach * 0.5f, isGood));
+	SetBuildPos(energyGrid->FindLinkSite(buildDef, linkSite, linkSite.fromReach * 0.5f,
+										 economyMgr->GetFillPredicate(buildDef, builder)));
 }
 
 } // namespace circuit

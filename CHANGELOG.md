@@ -19,10 +19,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   yet), from a gap end; then beside a mex of the grid with the least energy per mex, where overdrive gains most (on
   that grid, the mex with the least energy beside it, so the energy spreads instead of ringing one mex). The site
   always links: to the mex, or to the gap end and, when one piece closes the gap, the other end too (the grid-link
-  watchdog's site search, now shared). Never beside a mex with an energy job (or a grid link solar or wind) queued
-  there. The job is an ordinary energy job (budget, stall and pull rules, priority) that holds its gap while it lives,
-  so one piece per gap at a time; if its site is taken it looks again only where the piece still links, else it is
-  dropped and planned afresh. None of these in reach: at the nearest metal spot as before. No `unit` list: off.
+  watchdog's site search, now shared), and a step into a gap must get closer to its other end, so a gap across water
+  or a cliff is skipped rather than clumped at; a spot with no site is skipped for 30 s. Never beside a mex with an
+  energy job (or a grid link solar or wind) queued there. The job is an ordinary energy job (budget, stall and pull
+  rules, priority) that holds its gap while it lives, so one piece per gap at a time; if its site is taken it looks
+  again only where the piece still links, else it is dropped and planned afresh. None of these in reach: at the
+  nearest metal spot as before. No `unit` list: off.
 
 - **Wind only within the base** (`economy.energy.base_only`: `energywind`). Winds on land are built only within the
   base (behaviour.json `defence.base_rad` around the base position, the radius base defence uses). The rule is on the
