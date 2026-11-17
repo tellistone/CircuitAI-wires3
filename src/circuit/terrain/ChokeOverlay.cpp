@@ -253,7 +253,7 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"defensible", &c.defensible},
 		{"near", &c.nearRanges}, {"lane", &c.lane}, {"gate_share", &c.gateShare}, {"traffic.spread", &c.spread},
 		{"spot.radius", &c.spotRadius}, {"spot.height", &c.spotHeight}, {"spot.height_cap", &c.spotHeightCap},
-		{"spot.enemy", &c.spotEnemy}, {"spot.forward", &c.spotForward},
+		{"spot.enemy", &c.spotEnemy}, {"spot.forward", &c.spotForward}, {"spot.view", &c.spotView},
 		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare}, {"radar.enemy", &c.radarEnemy},
 		{"radar.inside", &c.radarInside}, {"radar.guard_radius", &c.radarGuardRadius},
 		{"objective.gain", &c.objGain}, {"objective.power", &c.objPower},
@@ -310,7 +310,8 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 	CTurretPicker::SConfig& c = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
 	const std::map<std::string, float*> floats = {
 		{"radius", &c.radius}, {"min_value", &c.minValue}, {"traffic", &c.traffic}, {"horizon", &c.horizon},
-		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"height", &c.height}, {"choke", &c.choke},
+		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"view", &c.view},
+		{"height", &c.height}, {"choke", &c.choke},
 		{"enemy_reach", &c.enemyReach}, {"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown},
 		{"share", circuit->GetMilitaryManager()->GetTurretShare()}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
 	};

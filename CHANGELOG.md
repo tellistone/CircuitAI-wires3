@@ -7,6 +7,24 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **One scorer for every scored turret spot.** `CSpotScorer::FindSpot` (cluster and base towers with
+  `choke.spot.enable`, choke towers, radar guards, hold spots) now scores and searches on the turret picker's value
+  model, `CTurretValue`, with each goal's own targets and terms (setback, lean, threat, builder distance) as a factor.
+  Covered traffic is in metal as the picker counts it, enemies add at cost (`choke.spot.enemy` is now a weight on E,
+  not a multiplier per the tower's cost), height is measured above the targets a spot counts, and the new
+  `choke.spot.view` (default 1) adds the view term. Targets are halved only by towers that defend and hit them. The
+  line-of-fire, view and hit tests are shared. Build chain towers still go at their configured offsets.
+  After review: E is the picker's own enemy targets (enemy buildings seen in the last 3 minutes, a mex at its income x
+  `turret.horizon`, halved like T; no mobiles, so a frozen spot doesn't follow a passing raid); a spot moves onto its
+  build site (`FindSiteAt`, the blocking map), as the picker's does; `turret.traffic` no longer weighs FindSpot's T;
+  one halving helper (`CSpotScorer::HalveCovered`) and one target type (`CTurretValue::STarget`) serve both.
+- **The turret picker favours spots that see their range** (`turret.view`, default 1). A spot ranks up to twice as
+  high by the share of its range circle's ground in a clear line of fire from it, so a cliff edge beats its foot.
+  It only ranks spots that already pay for the turret.
+- **The turret picker steps up to heavier turrets with map control** (`turret.tiers`). Once our ally team's
+  finished mexes hold 40% of the map's metal spots, Stardust and Gauss join Lotus and Picket; at 55%, HLT does. An
+  order builds from the heaviest unlocked tier that has a spot worth its cost, else drops a tier. An order waits
+  for the turret account to cover the dearest unlocked def.
 - **Solars and winds: one for every mex off the grid, then into the gaps of the planned grid** (`economy.energy.fill`:
   `unit` = `energysolar`, `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the
   builder (and the mex build chain put one more at each new mex), so it clumped round mexes as many small grids, and

@@ -24,13 +24,13 @@ inline float LeanAndWalk(const CTurretValue::SCandidate& c, const CTurretValue::
 		float& outFront)
 {
 	outFront = (frontNorm > 0.f) ? std::min(c.enemyInfl / frontNorm, 1.f) : 0.f;
-	return (1.f + std::max(p.front, 0.f) * outFront) / (1.f + c.walk / std::max(p.travel, 1.f));
+	return (1.f + std::max(p.front, 0.f) * outFront) * c.factor / (1.f + c.walk / std::max(p.travel, 1.f));
 }
 
 }  // namespace
 
 CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vector<STarget>& targets, const SParams& p,
-		float frontNorm, const ClearFn& isClear)
+		float frontNorm, const ClearFn& isClear, const ViewFn& viewOf)
 {
 	STerms t;
 	const float sqRange = p.range * p.range;
@@ -54,7 +54,9 @@ CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vect
 		t.height = std::min(std::max(above / std::max(p.heightCap, 1.f), 0.f), 1.f);
 	}
 	t.base = (t.traffic + t.ally + t.enemy + t.choke) * (1.f + std::max(p.heightBonus, 0.f) * t.height);
-	t.value = t.base * LeanAndWalk(c, p, frontNorm, t.front);
+	// V ranks a spot, as F does, and never decides its worth; read only where there is a base to rank
+	t.view = (viewOf && (t.base > 0.f)) ? std::min(std::max(viewOf(c.pos), 0.f), 1.f) : 1.f;
+	t.value = t.base * LeanAndWalk(c, p, frontNorm, t.front) * (1.f + std::max(p.view, 0.f) * t.view);
 	return t;
 }
 
@@ -69,12 +71,13 @@ float CTurretValue::FrontNorm(const std::vector<SCandidate>& candidates)
 
 CTurretValue::SResult CTurretValue::Search(const std::vector<SCandidate>& candidates,
 		const std::vector<STarget>& targets, const SParams& p, const ClearFn& isClear, const MakeFn& makeAt,
-		const FinishFn& finish)
+		const FinishFn& finish, const ViewFn& viewOf)
 {
 	SResult result;
 	result.frontNorm = FrontNorm(candidates);
 	const float sqRange = p.range * p.range;
 	const float heightMax = 1.f + std::max(p.heightBonus, 0.f);
+	const float viewMax = 1.f + std::max(p.view, 0.f);
 	struct SBound {
 		size_t idx;
 		float bound;
@@ -99,7 +102,7 @@ CTurretValue::SResult CTurretValue::Search(const std::vector<SCandidate>& candid
 			continue;  // never worth it, nor shown as tested
 		}
 		float front;
-		bounds.push_back({i, baseBound * LeanAndWalk(c, p, result.frontNorm, front)});
+		bounds.push_back({i, baseBound * LeanAndWalk(c, p, result.frontNorm, front) * viewMax});
 	}
 	std::stable_sort(bounds.begin(), bounds.end(), [](const SBound& a, const SBound& b) {
 		return a.bound > b.bound;
@@ -108,7 +111,7 @@ CTurretValue::SResult CTurretValue::Search(const std::vector<SCandidate>& candid
 	float bestValue = -1.f;
 	auto test = [&](const SCandidate& c) {
 		++result.tested;
-		const STerms terms = Evaluate(c, targets, p, result.frontNorm, isClear);
+		const STerms terms = Evaluate(c, targets, p, result.frontNorm, isClear, viewOf);
 		const bool isWorth = (terms.base > 0.f) && (terms.base >= p.minBase);
 		result.scored.push_back({c, terms, isWorth});
 		result.bestBase = std::max(result.bestBase, terms.base);

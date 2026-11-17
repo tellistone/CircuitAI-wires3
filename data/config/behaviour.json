@@ -171,11 +171,12 @@
 	"traffic": {"spread": 0.15},  // width of the enemy's traffic corridors, as a share of the route's length
 	"openness": {"bands": [0.35, 0.65, 0.05]},  // [<chokepointed below>, <open above>, <margin around them>]
 	"spot": {
-		"enable": false,  // scored spots for every tower, base towers and hold spots; the porc sweep by need
+		"enable": false,  // scored spots for every tower, base towers and hold spots, on the turret picker's value model; the porc sweep by need
 		"radius": 300,  // elmos from a defence point its towers may stand
 		"height": 0.5,  // the most height adds to a spot's score: 0.5 = up to +50%, 1 = up to double
 		"height_cap": 150,  // elmos above the ground it covers at which a spot earns all of "height"
-		"enemy": 1.0,  // weight of the known enemies a tower could shoot from a spot, per its own cost: 1 = enemies worth the tower double the score; 0 = off
+		"enemy": 1.0,  // weight of E, the turret picker's enemy targets a tower could shoot from a spot (enemy buildings seen in the last 3 minutes at cost, a mex at its income x turret.horizon; no mobiles), added to the covered traffic in metal; 0 = off
+		"view": 1.0,  // a spot scores up to 1 + this x its score by the share of its range circle in a clear line of fire (as turret.view); 0 = off
 		"forward": 0.5  // lean of a cluster's, the base's and the radar guard's towers the way their approach comes from: 0.5 = a spot a radius toward an approach from one side scores up to +50% over one a radius away; 0 = off
 	},
 	"radar": {
@@ -211,6 +212,7 @@
 	"ally": 1.0,  // weight of A
 	"enemy": 1.0,  // weight of E
 	"front": 1.0,  // the spot with the most enemy building influence, out of threat, ranks up to 1 + this x its value; 0 = no lean
+	"view": 1.0,  // a spot ranks up to 1 + this x its value by the share of its range circle's ground in a clear line of fire (V), so a cliff top over the ground below beats its foot; ranks only, never decides worth; 0 = off
 	"height": 0.5,  // the most a spot's height adds to its value (all of it 150 elmos above its targets)
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
@@ -226,6 +228,13 @@
 	"defended_radius": 600,  // after a flee, a defence this near where it started means no turret
 	"near_enemy": true,  // a mobile ground constructor with a known enemy building (seen in the last 3 minutes) within enemy_reach and no armed ally within ally_radius orders one around itself
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
+	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots. An order
+	// tries the heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier,
+	// down to light. The turret account must then cover the dearest unlocked def
+	"tiers": [
+		{"mex": 0.4, "defs": ["turretriot", "turretgauss"]},  // Stardust, Gauss
+		{"mex": 0.55, "defs": ["turretheavylaser"]}  // HLT
+	],
 	"enemy_reach": 600,
 	"ally_radius": 500,
 	"cooldown": 30  // seconds between one constructor's orders, whatever the result
