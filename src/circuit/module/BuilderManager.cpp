@@ -1665,7 +1665,14 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 			buildDef = ecoMgr->GetDefaultDef();
 		}
 		if ((buildDef != nullptr) && (buildDef->GetCount() < 10) && buildDef->IsAvailable(circuit->GetLastFrame())) {
-			return EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, position, IBuilderTask::BuildType::ENERGY);
+			// economy.energy.fill places it; else here, though not a base_only piece on land (it would clump here)
+			IBuilderTask* task = ecoMgr->EnqueueFillEnergy(buildDef, position, unit, IBuilderTask::Priority::NORMAL);
+			if ((task == nullptr) && !ecoMgr->IsBaseOnlyAt(buildDef, position)) {
+				task = EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, position, IBuilderTask::BuildType::ENERGY);
+			}
+			if (task != nullptr) {
+				return task;
+			}
 		}
 	} else {
 		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();

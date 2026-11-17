@@ -168,9 +168,11 @@ public:
 	// A fill site for cdef: off allied buildings, safe, allowed (IsAllowedAt) and in reach of unit (nullptr: of some
 	// builder in its area)
 	std::function<bool (const springai::AIFloat3& p)> GetFillPredicate(CCircuitDef* cdef, CCircuitUnit* unit);
-	// economy.energy.base_only: false for such a def on land outside the base (behaviour defence.base_rad around the
-	// base position, as base defence has it); where the game builds it as tidal (ground at or below the game's
-	// tidalHeight) and for other defs always true. Checked on sites only, never on where the builder stands
+	// economy.energy.base_only: cdef is such a def and the game wouldn't build it as tidal at pos (ground above the
+	// game's tidalHeight). Such a piece goes only beside a bare mex or into a gap of the grid plan, never by a fallback
+	bool IsBaseOnlyAt(CCircuitDef* cdef, const springai::AIFloat3& pos) const;
+	// False when IsBaseOnlyAt and pos is outside the base (base_only.radius around the base position). Checked on
+	// sites only, never on where the builder stands
 	bool IsAllowedAt(CCircuitDef* cdef, const springai::AIFloat3& pos) const;
 
 	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
@@ -233,7 +235,8 @@ private:
 	float pylonRange;
 	float pylonLinkInc;
 	std::set<CCircuitDef*> fillDefs;  // economy.energy.fill.unit
-	std::set<CCircuitDef*> baseOnlyDefs;  // economy.energy.base_only
+	std::set<CCircuitDef*> baseOnlyDefs;  // economy.energy.base_only.unit
+	float baseOnlyRadius;  // economy.energy.base_only.radius; <= 0: the base defence radius
 	float fillDist;  // economy.energy.fill.max_dist
 	float tidalHeight;  // the game's: wind on ground at or below it is tidal
 	CCircuitDef* pylonDef;  // TODO: Move into CEnergyGrid?

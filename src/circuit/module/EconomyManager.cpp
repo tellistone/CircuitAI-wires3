@@ -54,6 +54,7 @@ const char* RES_NAME_ENERGY = "Energy";
 CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		: IModule(circuit)
 		, energyGrid(nullptr)
+		, baseOnlyRadius(0.f)
 		, fillDist(0.f)
 		, tidalHeight(-10.f)
 		, pylonDef(nullptr)
@@ -387,7 +388,9 @@ void CEconomyManager::ReadConfig()
 	};
 	readDefs(energy["fill"]["unit"], fillDefs);
 	fillDist = std::max(energy["fill"].get("max_dist", 1500.f).asFloat(), 0.f);
-	readDefs(energy["base_only"], baseOnlyDefs);
+	const Json::Value& baseOnly = energy["base_only"];  // also the older plain list of names
+	readDefs(baseOnly.isObject() ? baseOnly["unit"] : baseOnly, baseOnlyDefs);
+	baseOnlyRadius = baseOnly.isObject() ? baseOnly.get("radius", 800.f).asFloat() : 800.f;
 
 	{
 		const Json::Value& gridLink = energy["grid_link"];
@@ -1336,7 +1339,8 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	}
 
 	// economy.energy.fill: beside a mex on no grid with energy, else into a gap of the grid plan, else on the grid
-	// with the least energy per mex; at the nearest metal spot only when none of these is in reach
+	// with the least energy per mex; at the nearest metal spot only when none of these is in reach, and never a
+	// base_only piece on land (it would clump at that mex)
 	if (!IsRearDef(bestDef)) {
 		IBuilderTask* task = EnqueueFillEnergy(bestDef, position, unit, priority);
 		if (task != nullptr) {
@@ -1352,7 +1356,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	} else if (!bestDef->IsRoleSupport()) {
 		const CMetalData::Metals& spots = metalMgr->GetSpots();
 		CMetalData::PointPredicate predicate = [this, &spots, terrainMgr, bestDef](int index) {
-			return !terrainMgr->IsZoneAlly(spots[index].position) && IsAllowedAt(bestDef, spots[index].position);
+			return !terrainMgr->IsZoneAlly(spots[index].position) && !IsBaseOnlyAt(bestDef, spots[index].position);
 		};
 		int index = metalMgr->FindNearestSpot(position, predicate);
 		if (index != -1) {
@@ -1934,13 +1938,18 @@ CEnergyGrid::Predicate CEconomyManager::GetFillPredicate(CCircuitDef* cdef, CCir
 	};
 }
 
+bool CEconomyManager::IsBaseOnlyAt(CCircuitDef* cdef, const AIFloat3& pos) const
+{
+	return (baseOnlyDefs.find(cdef) != baseOnlyDefs.end()) && (circuit->GetMap()->GetElevationAt(pos.x, pos.z) > tidalHeight);
+}
+
 bool CEconomyManager::IsAllowedAt(CCircuitDef* cdef, const AIFloat3& pos) const
 {
-	if ((baseOnlyDefs.find(cdef) == baseOnlyDefs.end()) || (circuit->GetMap()->GetElevationAt(pos.x, pos.z) <= tidalHeight)) {
+	if (!IsBaseOnlyAt(cdef, pos)) {
 		return true;
 	}
-	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();
-	return pos.SqDistance2D(circuit->GetSetupManager()->GetBasePos()) < SQUARE(baseRange);
+	const float radius = (baseOnlyRadius > 0.f) ? baseOnlyRadius : circuit->GetMilitaryManager()->GetBaseDefRange();
+	return pos.SqDistance2D(circuit->GetSetupManager()->GetBasePos()) < SQUARE(radius);
 }
 
 IBuilderTask* CEconomyManager::UpdatePylonTasks()

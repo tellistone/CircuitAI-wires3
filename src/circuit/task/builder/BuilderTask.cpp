@@ -633,8 +633,12 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
 			}
 			if (isValid) {
-				// economy.energy.fill places it (beside this mex while it is on no grid with energy); else at this mex
-				if (circuit->GetEconomyManager()->EnqueueFillEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL) == nullptr) {
+				// economy.energy.fill places it (beside this mex while it is on no grid with energy); else at this mex,
+				// though not a base_only piece on land (economy.energy.base_only): it would clump there
+				CEconomyManager* economyMgr = circuit->GetEconomyManager();
+				if ((economyMgr->EnqueueFillEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL) == nullptr)
+					&& !economyMgr->IsBaseOnlyAt(energyDef, buildPos))
+				{
 					circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, energyDef, buildPos,
 															  IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 8.0f, true);
 				}
