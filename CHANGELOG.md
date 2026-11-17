@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **The turret picker favours spots that see their range** (`turret.view`, default 1). A spot ranks up to twice as
+  high by the share of its range circle's ground in a clear line of fire from it, so a cliff edge beats its foot.
+  It only ranks spots that already pay for the turret.
+- **The turret picker steps up to heavier turrets with map control** (`turret.tiers`). Once our ally team's
+  finished mexes hold 40% of the map's metal spots, Stardust and Gauss join Lotus and Picket; at 55%, HLT does. An
+  order builds from the heaviest unlocked tier that has a spot worth its cost, else drops a tier. An order waits
+  for the turret account to cover the dearest unlocked def.
 - **Solars and winds: one for every mex off the grid, then into the gaps of the planned grid** (`economy.energy.fill`:
   `unit` = `energysolar`, `energywind`; `max_dist` 1500). Cheap energy was always put at the metal spot nearest the
   builder (and the mex build chain put one more at each new mex), so it clumped round mexes as many small grids, and

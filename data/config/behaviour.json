@@ -211,6 +211,7 @@
 	"ally": 1.0,  // weight of A
 	"enemy": 1.0,  // weight of E
 	"front": 1.0,  // the spot with the most enemy building influence, out of threat, ranks up to 1 + this x its value; 0 = no lean
+	"view": 1.0,  // a spot ranks up to 1 + this x its value by the share of its range circle's ground in a clear line of fire (V), so a cliff top over the ground below beats its foot; ranks only, never decides worth; 0 = off
 	"height": 0.5,  // the most a spot's height adds to its value (all of it 150 elmos above its targets)
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
@@ -226,6 +227,13 @@
 	"defended_radius": 600,  // after a flee, a defence this near where it started means no turret
 	"near_enemy": true,  // a mobile ground constructor with a known enemy building (seen in the last 3 minutes) within enemy_reach and no armed ally within ally_radius orders one around itself
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
+	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots. An order
+	// tries the heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier,
+	// down to light. The turret account must then cover the dearest unlocked def
+	"tiers": [
+		{"mex": 0.4, "defs": ["turretriot", "turretgauss"]},  // Stardust, Gauss
+		{"mex": 0.55, "defs": ["turretheavylaser"]}  // HLT
+	],
 	"enemy_reach": 600,
 	"ally_radius": 500,
 	"cooldown": 30  // seconds between one constructor's orders, whatever the result
