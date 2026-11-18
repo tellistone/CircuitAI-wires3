@@ -907,10 +907,16 @@ float ISquadTask::GetSafeThreat() const
 
 float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
 {
-	// The pathfinder skips cells hotter than this. One value for the whole route: the squad's strength with
-	// the strictest thr_mod.distance and the loosest base_bonus of start and goals (as attack groups do), times
-	// GetPathThreatMod. Never below the threat where the unit stands, so a squad already in
-	// danger can still walk out through ground no hotter than here.
+	// The pathfinder skips cells hotter than this. Never below the threat where the unit stands, so a squad already
+	// in danger can still walk out through ground no hotter than here
+	const float cap = GetPathThreatAllowance(unit, startPos, goals);
+	return std::max(cap, GetTaskThreatAt(unit, startPos) + THREAT_MIN);  // on the squad path layer (CPathFinder)
+}
+
+float ISquadTask::GetPathThreatAllowance(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
+{
+	// One value for the whole route: the squad's strength with the strictest thr_mod.distance and the loosest
+	// base_bonus of start and goals (as attack groups do), times GetPathThreatMod
 	const float capMod = GetPathThreatMod();
 	if ((capMod < 0.f) || IsCloakRoute(unit)) {
 		return std::numeric_limits<float>::max();  // off, or cloaked (IsCloakRoute): the pathfinder uses the decloak-range array, a different scale
@@ -924,8 +930,7 @@ float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos,
 		curve = std::max(curve, GetThrDistModAt(g));
 		bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(g)));
 	}
-	const float cap = GetSafeThreat() * bonus / curve * capMod;
-	return std::max(cap, GetTaskThreatAt(unit, startPos) + THREAT_MIN);  // on the squad path layer (CPathFinder)
+	return GetSafeThreat() * bonus / curve * capMod;
 }
 
 void ISquadTask::QueryPath(CCircuitUnit* unit, const AIFloat3& goal, float range, bool isCapped,

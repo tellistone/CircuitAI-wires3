@@ -613,20 +613,24 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     Merlin) walk in only to a heavy within weapon range + 30 s of walking. Mobile first, then the current target,
     then one other squads have shots ready for, then the nearest; one the ready shots of other squads' units in range
     would kill is left to them. Units attack from the shared firing spots (`IFighterTask::Attack`). One spot test
-    for stand-off points, firing spots and park spots: outside the pick zones (or covered), and no hotter than a route
-    may be, the heavy's own threat aside; the stand-off point the squad already walks to is dropped only inside a
-    flee end zone. With no such firing spot a unit in range fires from where it stands, else holds; after the kill it
-    stays (no walk to where the heavy died). Ground units travel on plain moves.
+    for stand-off points, firing spots and park spots: outside the pick zones (or covered), and no hotter than the
+    squad's route allowance (not loosened by hot ground where it stands), the heavy's own threat aside. The current
+    target, the heavy the squad already walks to and their firing spots use the flee end zones instead. With no such
+    firing spot a unit in range fires from where it stands, else holds; after the kill it stays (no walk to where the
+    heavy died). A target the whole squad holds off from out of range is skipped 10 s (doubling, up to 60 s); a
+    long-reload squad keeps its target 3 s after it leaves LOS. Mines and aircraft keep the escort check at the heavy.
+    Ground units travel on plain moves.
   - Flee: per danger, it starts at its range + max(M/2, its speed x 1 s) and ends M/4 further (M = `flee_margin`);
-    pick zones reach max(M, start + M/2). Heavies are no danger, except one that out-ranges a long-reload weapon
+    pick zones reach start + M/2. Heavies are no danger, except one that out-ranges a long-reload weapon
     while it reloads or is out of reach. With the cover map on, `flee_ally_threat` is weighed against its cover (on
     the attack groups' scale), and an enemy standing outside all cover is never covered; on water, which the cover
-    map doesn't cover, our units around count instead. No walk-in for 30 s after a flee.
+    map doesn't cover, our units around count instead. No walk-in for 30 s after a flee, nor for 15 s after no route
+    to any heavy was found.
   - Parking (snipers, cover map on): with nothing to attack or walk to, a squad parks at the best covered, safe spot
-    no other squad claims, never at our base: a third of the range back from a group of towers, or `follow_dist`
-    behind an attack group. Scored by cover (at most 3x `flee_ally_threat`) x recent heavy sightings near it, halved
+    no other squad claims: a third of the range back from a group of towers, or `follow_dist` behind an attack
+    group, never within 256 of our base. Scored by cover (at most 3x `flee_ally_threat`) x recent heavy sightings near it, halved
     per minute of walking and for 60 s where one of ours was sent for repair; kept 30 s, then until another scores
-    1.3x more. Snipers flee to such a spot and stay. Parked, they hold position; the second unit stands to the side.
+    1.3x more. Snipers flee to such a spot and stay. Parked, they hold position; the others stand on alternate sides of the leader.
     Snipers hold fire while a mobile heavy is within 1.25x weapon range (and 5 s after); the attack on their target
     still fires.
   - Scoot: no new scoot out of the target's reach (was: out of all ground threat); parked units step back towards

@@ -267,8 +267,11 @@ protected:
 	float GetSafeThreat() const;
 	// Multiplier on GetPathThreatCap's squad allowance; < 0 = no cap at all
 	virtual float GetPathThreatMod() const { return 1.f; }
-	// Pathfinder threat cap for a route from startPos to goals (see .cpp)
+	// Pathfinder threat cap for a route from startPos to goals (see .cpp): GetPathThreatAllowance, never below the
+	// threat where the unit stands
 	float GetPathThreatCap(CCircuitUnit* unit, const springai::AIFloat3& startPos, const F3Vec& goals) const;
+	// The same without that floor (judging a spot, not a walk out of danger)
+	float GetPathThreatAllowance(CCircuitUnit* unit, const springai::AIFloat3& startPos, const F3Vec& goals) const;
 	// Path for unit to goal (isCapped: under GetPathThreatCap, else through any threat); apply runs if still current
 	void QueryPath(CCircuitUnit* unit, const springai::AIFloat3& goal, float range, bool isCapped,
 			std::function<void (const CQueryPathSingle*)>&& apply);
