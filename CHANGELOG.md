@@ -601,6 +601,45 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Anti-heavy squads hunt, park and fire more** (`antiheavy` block: new `keep_sec` 30, `spacing` 150, `max_group` 2).
+  They ignored heavies they could shoot, idled in small groups at base, flip-flopped at the front and spent little time
+  firing. Now:
+  - Hunt: only mobile heavies start and keep it (buildings stay targets); it lasts `keep_sec` after the last sighting,
+    and new or repaired anti-heavy units (Lance with its support attribute too) join squads meanwhile. The army pull
+    takes a unit for a heavy within its weapon range + 30 s of walking (in a fight: weapon range).
+  - Squads: at most `max_group` units of a type (or its `antiheavy_max_group`), never merged, units `spacing` apart.
+  - Targets: a long-reload weapon (5 s or more) walks in to 0.9x weapon range of a heavy we see; one only on radar
+    draws it only to its LOS, and only if that is outside the heavy's threat. Snipers (weapon range over LOS: Lance,
+    Merlin) walk in only to a heavy within weapon range + 30 s of walking. Mobile first, then the current target,
+    then one other squads have shots ready for, then the nearest; one the ready shots of other squads' units in range
+    would kill is left to them. Units attack from the shared firing spots (`IFighterTask::Attack`). One spot test
+    for stand-off points, firing spots and park spots: outside the pick zones (or covered), and no hotter than the
+    squad's route allowance (not loosened by hot ground where it stands), the heavy's own threat aside where it
+    reaches (elsewhere that would hide turrets). The current
+    target, the heavy the squad already walks to and their firing spots use the flee end zones instead. With no such
+    firing spot a unit in range fires from where it stands, else holds; after the kill it stays (no walk to where the
+    heavy died). A target the whole squad holds off from out of range is skipped 10 s (doubling, up to 60 s; each
+    target its own). A long-reload squad keeps its target 3 s after it leaves LOS, standing without firing at its
+    radar blip. Units still ordered on a dropped target are stopped, so a parked squad (no new route) doesn't go on
+    shooting or chasing it. Mines and aircraft keep the escort check at the heavy. Ground units travel on plain moves.
+  - Flee: per danger, it starts at its range + max(M/2, its speed x 1 s) and ends M/4 further (M = `flee_margin`);
+    pick zones reach start + M/2. Heavies are no danger, except one that out-ranges a long-reload weapon
+    while it reloads or is out of reach. With the cover map on, `flee_ally_threat` is weighed against its cover (on
+    the attack groups' scale), and an enemy standing outside all cover is never covered; on water, which the cover
+    map doesn't cover, our units around count instead. No walk-in for 30 s after a flee, nor for 15 s after no route
+    to any heavy was found. With nothing to do, squads look at the way to the army every 5 s (was: every second).
+  - Parking (snipers, cover map on): with nothing to attack or walk to, a squad parks at the best covered, safe spot
+    no other squad claims: a third of the range back from a group of towers, or `follow_dist` behind an attack
+    group, never within 256 of our base. Scored by cover (at most 3x `flee_ally_threat`) x recent heavy sightings
+    near it, / (1 + minutes of walking) (half at one minute, a third at two), and halved for 60 s where one of ours
+    was sent for repair; kept 30 s, then until another scores
+    1.3x more. Snipers flee to such a spot and stay. Parked, they hold position; the others stand on alternate sides of the leader.
+    Snipers hold fire while a mobile heavy is within 1.25x weapon range (and 5 s after) or is their target; the
+    attack on their target still fires.
+  - Scoot: no new scoot out of the target's reach (was: out of all ground threat); parked units step back towards
+    their spot.
+  - An `ANTIHEAVY` log line per unit type every minute: unit-seconds hunting, parked, engaged and fleeing; shots,
+    radar-only heavies in range, flees, retreats, scoots and dropped targets.
 - **Scouts raid while cut off.** When a scout has no safe route to its picked spot (e.g. it fled into a pocket and
   the danger sits between it and everything else), or nothing could be picked, an armed ground scout goes raiding on a
   "stint": a raid task of its own, which merges, rallies and takes joiners like any raid group. The stint belongs to

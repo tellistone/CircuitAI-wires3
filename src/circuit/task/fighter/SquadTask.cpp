@@ -763,17 +763,15 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& uPos = unit->GetPos(frame);
-	// Outside every ground threat (this unit's threat layer), whatever the target's range or kind (planes count
-	// through their ground threat): no new scoot, the unit fights on. A scooting unit keeps its order (no stop and
-	// go at the threat's edge; the turn-back still brings it in on time)
-	const float hereThreat = GetTaskThreatAt(unit, uPos);
-	if (hereThreat <= THREAT_MIN) {
+	// Out of the target's reach: no new scoot, the unit reloads where it stands. A scooting unit keeps its order (no
+	// stop and go at the edge; the turn-back still brings it in on time)
+	if (uPos.SqDistance2D(target->GetPos()) >= SQUARE(GetTargetGroundRange() + margin)) {
 		return;
 	}
-	// Straight back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here,
-	// where the target's own threat still counts. Else a new scoot doesn't start, and a running one keeps its order
+	// Back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here, where the
+	// target's own threat still counts. Else a new scoot doesn't start, and a running one keeps its order
 	const AIFloat3 dest = GetScootSpot(unit, uPos, margin);
-	if (GetTaskThreatAt(unit, dest) > hereThreat) {
+	if (GetTaskThreatAt(unit, dest) > GetTaskThreatAt(unit, uPos)) {
 		return;
 	}
 
@@ -786,6 +784,7 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 		}
 		scoot = &scoots[unit];
 		SetScootHold(unit, true);
+		OnScootStart(unit);
 	} else if (!unit->GetTravelAct()->IsActive() && (scoot->dest.SqDistance2D(dest) < SQUARE(SQUARE_SIZE * 4))) {
 		return;  // already sent there (target hasn't moved much): no new orders
 	}
@@ -814,28 +813,28 @@ bool ISquadTask::IsRunningAway(CEnemyInfo* enemy, const AIFloat3& pos, float sqS
 		&& (eRange > ourRange * OUTRANGE_MOD);
 }
 
+float ISquadTask::GetTargetGroundRange() const
+{
+	CCircuitDef* edef = target->GetCircuitDef();
+	return (edef != nullptr)
+			? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
+			: 0.f;
+}
+
 AIFloat3 ISquadTask::GetScootSpot(CCircuitUnit* unit, const AIFloat3& uPos, float margin) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& tPos = target->GetPos();
-	CCircuitDef* edef = target->GetCircuitDef();
-	const float tRange = (edef != nullptr)
-			? std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND), edef->GetMaxRange(CCircuitDef::RangeType::WATER))
-			: 0.f;  // unknown type (radar blip): the margin alone
-	AIFloat3 dir = uPos - tPos;
+	AIFloat3 dir = GetScootAnchor(unit, uPos) - tPos;
 	dir.y = 0.f;
-	const float len = dir.Length2D();
-	if (len < 1.f) {
+	if (dir.Length2D() < 1.f) {
 		dir = circuit->GetSetupManager()->GetBasePos() - tPos;  // on top of it: towards our base
 		dir.y = 0.f;
 	}
 	const float dirLen = dir.Length2D();
 	AIFloat3 dest = uPos;
 	if (dirLen > 1.f) {
-		// Just outside the target's ground range + margin; already past that (other enemies, or the threat ring's
-		// slack beyond the target's range): another margin further back
-		const float dist = std::max(tRange + margin, len + std::max(margin, (float)SQUARE_SIZE * 8)) + 50.f;
-		dest = tPos + dir * (dist / dirLen);
+		dest = tPos + dir * ((GetTargetGroundRange() + margin + 50.f) / dirLen);  // just outside its ground range + margin
 	}
 	CTerrainManager::CorrectPosition(dest);
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -851,13 +850,16 @@ bool ISquadTask::IsWalkLongerThanReload(CCircuitUnit* unit, int frame, float dis
 	return (speed > 0.f) && (dist / speed >= unit->GetWeaponReloadLeft(frame));
 }
 
+int ISquadTask::GetMoveState(CCircuitUnit* unit) const
+{
+	const int defState = unit->GetCircuitDef()->GetDef()->GetMoveState();
+	return (defState >= 0) ? defState : 1;
+}
+
 void ISquadTask::SetScootHold(CCircuitUnit* unit, bool isHold)
 {
-	// Back to the def's move state (maneuver when it has none, as artillery does)
-	CCircuitDef* cdef = unit->GetCircuitDef();
 	TRY_UNIT(manager->GetCircuit(), unit,
-		const int defState = cdef->GetDef()->GetMoveState();
-		unit->GetUnit()->SetMoveState(isHold ? 0 : ((defState >= 0) ? defState : 1));
+		unit->GetUnit()->SetMoveState(isHold ? 0 : GetMoveState(unit));
 	)
 }
 
@@ -905,10 +907,16 @@ float ISquadTask::GetSafeThreat() const
 
 float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
 {
-	// The pathfinder skips cells hotter than this. One value for the whole route: the squad's strength with
-	// the strictest thr_mod.distance and the loosest base_bonus of start and goals (as attack groups do), times
-	// GetPathThreatMod. Never below the threat where the unit stands, so a squad already in
-	// danger can still walk out through ground no hotter than here.
+	// The pathfinder skips cells hotter than this. Never below the threat where the unit stands, so a squad already
+	// in danger can still walk out through ground no hotter than here
+	const float cap = GetPathThreatAllowance(unit, startPos, goals);
+	return std::max(cap, GetTaskThreatAt(unit, startPos) + THREAT_MIN);  // on the squad path layer (CPathFinder)
+}
+
+float ISquadTask::GetPathThreatAllowance(CCircuitUnit* unit, const AIFloat3& startPos, const F3Vec& goals) const
+{
+	// One value for the whole route: the squad's strength with the strictest thr_mod.distance and the loosest
+	// base_bonus of start and goals (as attack groups do), times GetPathThreatMod
 	const float capMod = GetPathThreatMod();
 	if ((capMod < 0.f) || IsCloakRoute(unit)) {
 		return std::numeric_limits<float>::max();  // off, or cloaked (IsCloakRoute): the pathfinder uses the decloak-range array, a different scale
@@ -922,8 +930,7 @@ float ISquadTask::GetPathThreatCap(CCircuitUnit* unit, const AIFloat3& startPos,
 		curve = std::max(curve, GetThrDistModAt(g));
 		bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(g)));
 	}
-	const float cap = GetSafeThreat() * bonus / curve * capMod;
-	return std::max(cap, GetTaskThreatAt(unit, startPos) + THREAT_MIN);  // on the squad path layer (CPathFinder)
+	return GetSafeThreat() * bonus / curve * capMod;
 }
 
 void ISquadTask::QueryPath(CCircuitUnit* unit, const AIFloat3& goal, float range, bool isCapped,
@@ -988,7 +995,7 @@ CEnemyInfo* ISquadTask::FindFleeDanger(float margin, bool isGunship, float& dang
 			continue;  // can't act or shoot the squad: enemy AA, aircraft, a parked blip, ...
 		}
 		const AIFloat3& ePos = enemy->GetPos();
-		const float reach = range + margin;
+		const float reach = range + GetDangerStart(enemy) + margin;
 		if (leaderPos.SqDistance2D(ePos) > SQUARE(reach + squadRadius)) {
 			continue;  // out of reach of every unit
 		}
@@ -1002,13 +1009,18 @@ CEnemyInfo* ISquadTask::FindFleeDanger(float margin, bool isGunship, float& dang
 		if (IsFleeIgnored(enemy)) {
 			continue;
 		}
-		dangerThreat += enemy->GetThreat();
+		dangerThreat += GetFleeThreat(enemy);
 		if (sqDist < minSqDist) {
 			minSqDist = sqDist;
 			danger = enemy;
 		}
 	}
 	return danger;
+}
+
+float ISquadTask::GetFleeThreat(CEnemyInfo* enemy) const
+{
+	return enemy->GetThreat();
 }
 
 bool ISquadTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat, float allyThreat, float allyRadius,
