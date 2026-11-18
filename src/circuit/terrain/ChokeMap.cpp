@@ -677,22 +677,18 @@ void CChokeMap::MakeLanes()
 	}
 }
 
-float CChokeMap::GetTrafficThrough(const CRegionGraph::SChoke& choke) const
+std::vector<float> CChokeMap::GetTrafficShares(const std::vector<int>& chokes) const
 {
-	// The blended field over the traffic cells its line crosses, each once: the income the enemy's routes carry through
-	if (traffic.IsEmpty()) {
-		return 0.f;
+	float total = 0.f;
+	for (int c : chokes) {
+		total += chokeTraffic[c];
 	}
-	const SCellMask& mask = graph.GetMask();
-	std::set<int> cells;
-	for (int c : choke.line) {
-		cells.insert(traffic.IndexAt(mask.CentreX(c), mask.CentreZ(c)));
+	std::vector<float> shares;
+	shares.reserve(chokes.size());
+	for (int c : chokes) {
+		shares.push_back((total > 0.f) ? chokeTraffic[c] / total : 1.f / chokes.size());
 	}
-	float sum = 0.f;
-	for (int i : cells) {
-		sum += traffic.GetAt(i);
-	}
-	return sum;
+	return shares;
 }
 
 CRegionGraph::SParams CChokeMap::GetGraphParams() const

@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <map>
 
 namespace circuit {
@@ -77,6 +78,7 @@ void CTurretPicker::ReadConfig()
 	c.chokeDepth = turret.get("choke_depth", c.chokeDepth).asFloat();
 	c.chokeEcon = turret.get("choke_econ", c.chokeEcon).asFloat();
 	c.chokeEnemy = turret.get("choke_enemy", c.chokeEnemy).asFloat();
+	c.chokeCap = turret.get("choke_cap", c.chokeCap).asFloat();
 	c.isAfterFlee = turret.get("after_flee", c.isAfterFlee).asBool();
 	c.afterFleeSince = turret.get("after_flee_since", c.afterFleeSince).asFloat();
 	c.defendedRadius = turret.get("defended_radius", c.defendedRadius).asFloat();
@@ -385,20 +387,21 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		if (!utils::is_valid(pos)) {
 			continue;
 		}
-		const bool isEconDef = cdef->IsPylon() || energyGrid->IsEnergyDef(cdef->GetId())
-				|| (cdef->IsBuilder() && !cdef->IsAssist());
-		if (isEcon && isEconDef) {
+		bool isEconHere = false;  // in the economy C splits among the current line chokes
+		if (isEcon && (cdef->IsPylon() || energyGrid->IsEnergyDef(cdef->GetId())
+			|| (cdef->IsBuilder() && !cdef->IsAssist())))
+		{
 			const int region = chokeMap->GetRegionAt(pos);
-			if ((region != CRegionGraph::NO_REGION) && chokeMap->IsOurTerritory(region)) {
-				econ += cdef->GetCostM();
-			}
+			isEconHere = (region != CRegionGraph::NO_REGION) && chokeMap->IsOurTerritory(region);
+			econ += isEconHere ? cdef->GetCostM() : 0.f;
 		}
 		const float sqDist = pos.SqDistance2D(centre);
 		if (sqDist <= sqInflReach) {
 			g.ourBuildings.push_back(pos);
 		}
 		if (!cdef->IsAttacker() && (sqDist <= sqReach)) {
-			g.raws.push_back({ground(pos), cdef->GetCostM(), CTurretValue::Kind::ALLY});
+			const CTurretValue::Kind kind = isEconHere ? CTurretValue::Kind::ECON : CTurretValue::Kind::ALLY;
+			g.raws.push_back({ground(pos), cdef->GetCostM(), kind});
 		}
 	}
 
@@ -414,32 +417,39 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	// C: the middles of the chokes on our current line and the enemy line, turret.choke each. A current line choke adds
 	// turret.choke_econ x our economy, split among the current line's chokes by the traffic through each (evenly with
 	// none): the routes to what we hold show which pass shuts it in. An enemy line choke adds turret.choke_enemy (a
-	// choke on both lines, both)
+	// choke on both lines, both). At most turret.choke_cap; and none for a choke not settled since a rebuild or with
+	// enemy artillery on it, as choke defence waits
 	if (isChokeReady) {
 		const std::vector<CRegionGraph::SChoke>& chokes = chokeMap->GetGraph().GetChokes();
 		auto isChoke = [&chokes](int c) { return (c >= 0) && (c < (int)chokes.size()); };
-		std::map<int, float> through;  // current line choke -> the traffic through it
-		float totalThrough = 0.f;
-		for (int c : chokeMap->GetCurrentLine()) {
-			if (isChoke(c)) {
-				through[c] = chokeMap->GetTrafficThrough(chokes[c]);
-				totalThrough += through[c];
+		auto isLive = [&](int c) {
+			return isChoke(c) && chokeMap->IsChokeSettled(c, frame) && !chokeMap->IsArtilleryNear(c, frame);
+		};
+		std::vector<int> line;  // shared over all of it: a shelled pass's part isn't moved onto the others
+		const std::vector<int>& current = chokeMap->GetCurrentLine();
+		std::copy_if(current.begin(), current.end(), std::back_inserter(line), isChoke);
+		const std::vector<float> shares = chokeMap->GetTrafficShares(line);
+		struct SWorth {
+			float metal = 0.f;
+			float econ = 0.f;
+		};
+		std::map<int, SWorth> worth;  // choke -> C before halving
+		for (size_t i = 0; i < line.size(); ++i) {
+			if (isLive(line[i])) {
+				const float share = config.chokeEcon * econ * shares[i];
+				worth[line[i]] = {config.choke + share, share};
 			}
-		}
-		std::map<int, float> worth;  // choke -> C before halving
-		for (const auto& [c, amount] : through) {
-			const float share = (totalThrough > 0.f) ? amount / totalThrough : 1.f / through.size();
-			worth[c] = config.choke + config.chokeEcon * econ * share;
 		}
 		for (int c : chokeMap->GetEnemyLine()) {
-			if (isChoke(c)) {
-				worth.emplace(c, config.choke).first->second += config.chokeEnemy;
+			if (isLive(c)) {
+				worth.emplace(c, SWorth{config.choke, 0.f}).first->second.metal += config.chokeEnemy;
 			}
 		}
-		for (const auto& [c, metal] : worth) {
+		for (const auto& [c, w] : worth) {
 			const AIFloat3 pos = chokeMap->GetCellPos(chokes[c].centre);
-			if (pos.SqDistance2D(centre) <= sqReach) {
-				g.raws.push_back({ground(pos), metal, CTurretValue::Kind::CHOKE});
+			if ((w.metal > 0.f) && (pos.SqDistance2D(centre) <= sqReach)) {
+				const float metal = (config.chokeCap > 0.f) ? std::min(w.metal, config.chokeCap) : w.metal;
+				g.raws.push_back({ground(pos), metal, CTurretValue::Kind::CHOKE, w.econ / w.metal});
 			}
 		}
 	}
@@ -505,12 +515,13 @@ std::vector<CTurretValue::STarget> CTurretPicker::MakeTargets(CCircuitDef* def, 
 		float metal = 0.f;
 		switch (r.kind) {
 			case CTurretValue::Kind::TRAFFIC: metal = TrafficMetal(r.metal, range, config.traffic); break;
-			case CTurretValue::Kind::ALLY: metal = r.metal * config.ally; break;
+			case CTurretValue::Kind::ALLY:
+			case CTurretValue::Kind::ECON: metal = r.metal * config.ally; break;
 			case CTurretValue::Kind::ENEMY: metal = r.metal * config.enemy; break;
 			case CTurretValue::Kind::CHOKE: metal = r.metal; break;
 		}
 		if (metal > 0.f) {
-			targets.push_back({r.pos, metal, r.kind});
+			targets.push_back({r.pos, metal, r.kind, r.econPart});
 		}
 	}
 	return targets;

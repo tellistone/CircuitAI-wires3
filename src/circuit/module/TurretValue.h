@@ -28,11 +28,13 @@ public:
 	struct SPos {
 		float x, y, z;  // y: ground height
 	};
-	enum class Kind: char {TRAFFIC, ALLY, ENEMY, CHOKE};
+	// ECON: one of our economy buildings, in A unless a choke the spot counts carries our economy already
+	enum class Kind: char {TRAFFIC, ALLY, ENEMY, CHOKE, ECON};
 	struct STarget {
 		SPos pos;
 		float metal;  // weighted, and halved for each tower already covering it
 		Kind kind;
+		float econPart = 0.f;  // CHOKE: the share of metal that is our economy (turret.choke_econ)
 	};
 	struct SCandidate {
 		SPos pos;

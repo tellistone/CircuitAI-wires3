@@ -42,6 +42,8 @@ CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vect
 	const float sqRange = p.range * p.range;
 	float heightSum = 0.f;
 	int count = 0;
+	float econ = 0.f;  // our economy buildings in range
+	float chokeEcon = 0.f;  // the part of C that is our economy
 	for (const STarget& target : targets) {
 		const float sqDist = SqDist2D(c.pos, target.pos);
 		if ((target.metal <= 0.f) || (sqDist > sqRange) || !isClear(c.pos, target.pos)) {
@@ -50,14 +52,20 @@ CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vect
 		switch (target.kind) {
 			case Kind::TRAFFIC: t.traffic += target.metal; break;
 			case Kind::ALLY: t.ally += target.metal; break;
+			case Kind::ECON: econ += target.metal; break;
 			case Kind::ENEMY: t.enemy += target.metal; break;
-			case Kind::CHOKE:  // one choke's worth at most
-				t.choke = std::max(t.choke, ChokeWorth(target.metal, sqDist, p.range, p.chokeDepth));
-				break;
+			case Kind::CHOKE: {  // one choke's worth at most
+				const float worth = ChokeWorth(target.metal, sqDist, p.range, p.chokeDepth);
+				if (worth > t.choke) {
+					t.choke = worth;
+					chokeEcon = worth * target.econPart;
+				}
+			} break;
 		}
 		heightSum += target.pos.y;
 		++count;
 	}
+	t.ally += std::max(econ - chokeEcon, 0.f);  // our economy once: in range, or through the choke that shuts it in
 	if (count > 0) {
 		const float above = c.pos.y - heightSum / count;
 		t.height = std::min(std::max(above / std::max(p.heightCap, 1.f), 0.f), 1.f);

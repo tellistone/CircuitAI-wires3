@@ -217,6 +217,7 @@
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
 	"choke_econ": 1.0,  // a choke of our current line adds this x our economy (the cost of our and allied energy, pylons and factories in our territory), split among the current line chokes by the traffic through each; 0 = off
 	"choke_enemy": 400,  // metal a choke of the enemy line adds to C, on top of choke (and of the economy share for a choke on both lines)
+	"choke_cap": 1000,  // the most C one choke carries (before depth and halving); 0 = no cap
 	"choke_depth": 1.0,  // C x (1 - this x the choke's distance / range): 1 = full on the choke, nothing at the edge of range; 0 = flat anywhere in range. A tower covering a choke cuts its C for the next one by as much: halved standing on it, by a quarter with it halfway out, not at all at the edge of range (at 1)
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
 	// the callers. Claw mines and missiles are left out too, by customParams.mobilebuilding

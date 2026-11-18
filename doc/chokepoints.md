@@ -119,6 +119,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.choke` | `100` | Metal a choke of our current line or the enemy line in range adds (C). |
 | `turret.choke_econ` | `1.0` | A choke of our current line adds this × our economy to C: the cost of our and allied energy, pylons and factories in our territory, split among the current line chokes by the traffic through each (evenly with no traffic). Mexes are left out; they steer the traffic. 0 = off. |
 | `turret.choke_enemy` | `400` | Metal a choke of the enemy line adds to C, on top of `turret.choke` (and of the economy share for a choke on both lines). |
+| `turret.choke_cap` | `1000` | The most C one choke carries, before depth and halving, so the busiest pass doesn't soak up every turret. 0 = no cap. |
 | `turret.choke_depth` | `1.0` | C × (1 − this × the choke's distance ÷ range). At 1, a choke is worth all of its C right under the turret and nothing at the edge of its range; at 0, the same anywhere in range. A tower covering the choke halves its C for the next by as much: fully when it stands on it, by a quarter when the choke is halfway out at 1. |
 | `turret.not_defence` | `["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"]` | Armed statics that defend nothing in the field: Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity and the Antinuke. They never cover a target, and the callers don't count them as a defence or as allied power. Claw mines and missiles are left out the same way, by their `mobilebuilding` mark. |
 | `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
@@ -305,6 +306,7 @@ cost:
   The heaviest 64 cells within reach are summed over those in range and divided by the cell lengths the range spans
   (2 × range ÷ 64), which gives the income whose routes pass under the turret, in metal/s; × `turret.horizon`.
 - *A*, our and allied unarmed buildings in range (mexes, energy, radar, factories, storage, nanoframes too), at cost.
+  Energy, pylons and factories in our territory count only above what the spot's C already carries of our economy.
 - *E*, known enemy buildings in range seen in radar or sight in the last 3 minutes (so the ghost of one that died
   out of sight drops out), at cost; an enemy mex counts its income × `turret.horizon`, which is what killing it
   takes from them. Mobiles don't count: they move on, and their routes are in T already.
@@ -312,8 +314,10 @@ cost:
   choke adds `turret.choke_econ` × our economy (the cost of our and allied energy, pylons and factories in our
   territory), split among the current line's chokes by the traffic field across each one's line: the enemy's routes
   to what we hold show which pass shuts it in, a base one region back or behind two passes too. An enemy line choke
-  adds `turret.choke_enemy`; a choke on both lines adds both. The whole is × (1 − `turret.choke_depth` × its distance
-  ÷ range). One choke's worth at most. Every other target counts in full anywhere in range, so without the depth a
+  adds `turret.choke_enemy`; a choke on both lines adds both. The whole is capped at `turret.choke_cap` and × (1 −
+  `turret.choke_depth` × its distance ÷ range). A choke gets none until it has settled after a graph rebuild, or while
+  enemy artillery is on it, as choke defence waits; its part of the economy isn't moved onto the others. A spot that
+  counts a choke's economy doesn't count the same economy buildings in A again: A keeps only what is left over. One choke's worth at most. Every other target counts in full anywhere in range, so without the depth a
   turret only has to reach the choke with its outer range, and walk, threat, view and the targets behind it hold it
   back there.
 - Each target counts only if the turret hits it (ground, and under deep water for one that hits there), in range

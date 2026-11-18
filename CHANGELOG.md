@@ -610,7 +610,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   (mexes steer the traffic, so they aren't counted again). A pass that shuts in the base is worth far more than one
   no route uses. A choke of the enemy line adds a flat `turret.choke_enemy` (400); one on both lines, both. A tower
   covering a choke halves its C for the next one by as much as it covers it (fully standing on it, less reaching it
-  with its outer range), and the search's upper bound counts the depth too, so it stays exact.
+  with its outer range), and the search's upper bound counts the depth too, so it stays exact. One choke carries at
+  most `turret.choke_cap` (1000) of C. A choke gets none until it has settled after a graph rebuild or while enemy
+  artillery is on it, as choke defence waits. A spot counting a choke's economy share doesn't count those buildings in
+  A again. Choke defence and the picker split by traffic through one `CChokeMap::GetTrafficShares`.
 - **Lanes are found without `choke.enable` too**, and the turret picker and the spot scorer never put a tower on one,
   so a turret drawn onto a choke doesn't close a narrow pass to our army. Only with `choke.enable` are they also kept
   free of every building on the blocking map.
