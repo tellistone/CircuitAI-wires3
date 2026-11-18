@@ -622,6 +622,7 @@ std::string CChokeMap::MakeFixture() const
 	root["map"] = circuit->GetMap()->GetName();
 	root["min_area"] = config.minArea;
 	root["merge"] = config.merge;
+	root["min_count"] = config.minCount;
 	root["defensible"] = config.defensible;
 	root["main_range"] = mainRange;
 	const SCellMask& mask = graph.GetMask();

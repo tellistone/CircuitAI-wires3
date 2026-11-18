@@ -134,6 +134,7 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	const Json::Value& region = choke["region"];
 	config.minArea = region.get("min_area", config.minArea).asFloat();
 	config.merge = region.get("merge", config.merge).asFloat();
+	config.minCount = region.get("min_count", config.minCount).asInt();
 	config.defensible = choke.get("defensible", config.defensible).asFloat();
 	config.entrances = choke.get("entrances", config.entrances).asInt();
 	config.nearRanges = choke.get("near", config.nearRanges).asFloat();
@@ -615,8 +616,9 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 			MakeDestinations();
 		}
 		nextAnalysisFrame = frame;
-		circuit->LOG("CHOKE graph: %i regions, %i chokes, %.1f ms on %ix%i cells", (int)graph.GetRegions().size(),
-				(int)graph.GetChokes().size(), job.graphMs, graph.GetMask().width, graph.GetMask().height);
+		circuit->LOG("CHOKE graph: %i regions, %i chokes, %.1f ms on %ix%i cells%s", (int)graph.GetRegions().size(),
+				(int)graph.GetChokes().size(), job.graphMs, graph.GetMask().width, graph.GetMask().height,
+				DescribeRelaxed().c_str());
 		overlay->OnGraphBuilt();
 	}
 	if (!job.trafficTypes.empty()) {
@@ -733,11 +735,25 @@ void CChokeMap::MakeLanes()
 	}
 }
 
+std::string CChokeMap::DescribeRelaxed() const
+{
+	const CRegionGraph::SParams& used = graph.GetUsedParams();
+	const CRegionGraph::SParams base = GetGraphParams();
+	if ((used.merge == base.merge) && (used.minArea == base.minArea)) {
+		return "";
+	}
+	char buf[160];
+	snprintf(buf, sizeof(buf), "; relaxed to merge %.2f, min_area %.2f for min_count %i", used.merge,
+			used.minArea / SQUARE(mainRange / GRAPH_CELL), config.minCount);
+	return buf;
+}
+
 CRegionGraph::SParams CChokeMap::GetGraphParams() const
 {
 	CRegionGraph::SParams params;
 	params.minArea = config.minArea * SQUARE(mainRange / GRAPH_CELL);  // cells
 	params.merge = config.merge;
+	params.minCount = config.minCount;
 	params.defensibleWidth = config.defensible * mainRange;
 	return params;
 }

@@ -15,6 +15,10 @@
 #include <map>
 #include <utility>
 
+#define RELAX_STEPS		4  // builds after the first, at most, for SParams::minCount
+#define RELAX_MERGE		1.f  // merge relaxes up to this (a choke as wide as the smaller region's highest)
+#define RELAX_AREA		0.25f  // and minArea down to this share of its value
+
 namespace circuit {
 
 namespace {
@@ -73,6 +77,24 @@ CRegionGraph::CRegionGraph()
 }
 
 void CRegionGraph::Build(const SCellMask& m, const SParams& params)
+{
+	BuildOnce(m, params);
+	usedParams = params;
+	for (int step = 1; ((int)regions.size() < params.minCount) && (step <= RELAX_STEPS); ++step) {
+		const float t = float(step) / RELAX_STEPS;
+		SParams relaxed = params;
+		relaxed.merge = params.merge + (std::max(params.merge, RELAX_MERGE) - params.merge) * t;
+		relaxed.minArea = params.minArea * (1.f - (1.f - RELAX_AREA) * t);
+		CRegionGraph attempt;
+		attempt.BuildOnce(m, relaxed);
+		if (attempt.regions.size() > regions.size()) {
+			attempt.usedParams = relaxed;
+			*this = std::move(attempt);
+		}
+	}
+}
+
+void CRegionGraph::BuildOnce(const SCellMask& m, const SParams& params)
 {
 	mask = m;
 	regions.clear();

@@ -635,6 +635,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   enemy routes under the turret, so a turret pays for itself in our buildings, known enemy buildings or line chokes
   in range. Scored tower spots (`choke.spot`) still weigh traffic.
 
+- **The threat graph keeps at least 12 regions where the map allows** (`choke.region.min_count`). Gated by bots,
+  some maps merged into 2 or 3 big regions, with few chokes left to defend. A build with fewer regions now runs
+  again up to 4 times, `choke.region.merge` raised towards 1 and `choke.region.min_area` lowered towards a quarter,
+  and keeps the build with the most regions. The `CHOKE graph` log line says when it relaxed and to what.
+
 - **Terrain alone rebuilds the threat graph at most every 5 minutes.** Zero-K's craters and the ground levelled under
   buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the
   30 s mask check found a change, 10 times in 13 minutes in one logged game, and each rebuild could move

@@ -183,7 +183,8 @@ std::string CChokeOverlay::DescribeGraph() const
 {
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	return utils::int_to_string(graph.GetRegions().size(), "%i regions, ")
-			+ utils::int_to_string(graph.GetChokes().size(), "%i chokes; enemy types: ") + chokeMap->DescribeTypeSet()
+			+ utils::int_to_string(graph.GetChokes().size(), "%i chokes") + chokeMap->DescribeRelaxed()
+			+ "; enemy types: " + chokeMap->DescribeTypeSet()
 			+ "; '" COMMAND " <class>' shows one class's own graph";
 }
 
@@ -289,11 +290,11 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 		if (isRead) {
 			*flagIt->second = v;
 		}
-	} else if (key == "entrances") {
+	} else if ((key == "entrances") || (key == "region.min_count")) {
 		int v;
 		isRead = bool(in >> v);
 		if (isRead) {
-			c.entrances = v;
+			((key == "entrances") ? c.entrances : c.minCount) = v;
 		}
 	} else if (key == "setback") {
 		float a, b;

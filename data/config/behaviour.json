@@ -160,7 +160,8 @@
 	"enable": false,  // choke defence: a pocket's towers beyond each cluster's first go to its entrances; defence points split by region; lanes kept free of buildings
 	"region": {
 		"min_area": 0.5,  // smallest region, in main-tower ranges squared
-		"merge": 0.7  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
+		"merge": 0.7,  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
+		"min_count": 12  // fewer regions than this: merge rises towards 1 and min_area falls towards a quarter, in 4 steps, until there are this many (or the most it gets)
 	},
 	"defensible": 2.0,  // widest choke towers try to close
 	"entrances": 3,  // most entrances before a cluster counts as open
