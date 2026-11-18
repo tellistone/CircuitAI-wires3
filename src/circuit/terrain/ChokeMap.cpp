@@ -69,6 +69,7 @@ struct CChokeMap::SBuildJob {
 	bool waterIsHarmful = false, waterIsAVoid = false;
 	std::vector<SClassParams> classes;
 	std::vector<bool> isGating;  // per class
+	std::vector<int> graphClasses;  // per class: whose mask it adds to the threat graph (SMoveClass::graphClass)
 	bool isTerrainCheck = false;  // rebuild the graph if the masks changed it (TERRAIN_GRAPH_COOLDOWN)
 	std::vector<SCellMask> masks;  // the current ones: compared with, or used as they are
 	SCellMask prevGraphMask;
@@ -350,6 +351,29 @@ void CChokeMap::InitMoveClasses()
 	std::sort(moveClasses.begin(), moveClasses.end(), [](const SMoveClass& a, const SMoveClass& b) {
 		return a.key < b.key;
 	});
+	// Spiders and jumpers shape the threat graph as kbots: a jumper as its own type walking, a spider as the ground
+	// type that climbs the steepest (bots), so their promotion never opens the cliffs they cross
+	int kbot = -1;
+	for (size_t c = 0; c < moveClasses.size(); ++c) {
+		if ((moveClasses[c].kind == MoveKind::GROUND) && ((kbot < 0)
+			|| (terrainMgr->GetMobileTypeById(moveClasses[c].mobileId)->maxSlope
+				> terrainMgr->GetMobileTypeById(moveClasses[kbot].mobileId)->maxSlope)))
+		{
+			kbot = c;
+		}
+	}
+	for (size_t c = 0; c < moveClasses.size(); ++c) {
+		SMoveClass& mc = moveClasses[c];
+		mc.graphClass = c;
+		if (mc.kind == MoveKind::JUMPER) {
+			const auto walker = std::find_if(moveClasses.begin(), moveClasses.end(), [&mc](const SMoveClass& o) {
+				return o.key == mc.key - 1;
+			});
+			mc.graphClass = (walker != moveClasses.end()) ? int(walker - moveClasses.begin()) : (kbot >= 0) ? kbot : c;
+		} else if ((mc.kind == MoveKind::CLIMBER) && (kbot >= 0)) {
+			mc.graphClass = kbot;
+		}
+	}
 	classMasks.resize(moveClasses.size());
 	classParts.resize(moveClasses.size());
 
@@ -357,6 +381,9 @@ void CChokeMap::InitMoveClasses()
 	text << "CHOKE move classes:";
 	for (const SMoveClass& mc : moveClasses) {
 		text << " " << mc.name << ((mc.role == MoveRole::GATING) ? "(gating)" : (mc.role == MoveRole::LEAK) ? "(leak)" : "(naval)");
+		if (mc.graphClass != (int)(&mc - &moveClasses.front())) {
+			text << "[graph as " << moveClasses[mc.graphClass].name << "]";
+		}
 	}
 	circuit->LOG("%s", text.str().c_str());
 }
@@ -386,6 +413,7 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 	}
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		job->isGating.push_back(IsGating(c));
+		job->graphClasses.push_back(moveClasses[c].graphClass);
 	}
 	job->isTerrainCheck = (isTerrainPending || job->isMasks)
 			&& (circuit->GetLastFrame() >= graphFrame + TERRAIN_GRAPH_COOLDOWN);
@@ -481,7 +509,7 @@ void CChokeMap::RunJob(SBuildJob& job)
 		threatMask.Resize(any.width, any.height, any.cellSize);
 		for (size_t ci = 0; ci < classCount; ++ci) {
 			if (job.isGating[ci]) {
-				threatMask.Unite(job.masks[ci]);
+				threatMask.Unite(job.masks[job.graphClasses[ci]]);
 			}
 		}
 		if (job.isGraph || (threatMask != job.prevGraphMask)) {

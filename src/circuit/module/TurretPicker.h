@@ -39,8 +39,9 @@ struct STurretOrder {
  * turret.*: the best turret spot within a radius of any centre, with no defence point, choke or cluster behind it
  * (CSpotScorer guards one asset; this weighs everything around the spot). Each term is in metal, so a spot's worth
  * compares with the turret's cost (see CTurretValue):
- *   T, traffic: the traffic field over the cells in range, per cell length of its range across (2 x range / cell),
- *      is the income whose enemy routes pass under it in metal/s; x turret.horizon s
+ *   T, traffic (off at turret.traffic 0, the default): the traffic field over the cells in range, per cell length
+ *      of its range across (2 x range / cell), is the income whose enemy routes pass under it in metal/s;
+ *      x turret.horizon s
  *   A, our and allied unarmed buildings in range, at cost
  *   E, known enemy buildings in range seen in the last 3 minutes, at cost; an enemy mex at its income x
  *      turret.horizon. Mobiles don't count: they move on, and their routes are in T already
@@ -60,7 +61,7 @@ public:
 	struct SConfig {
 		float radius = 600.f;
 		float minValue = 1.f;
-		float traffic = 1.f;
+		float traffic = 0.f;  // turret.traffic: 0, T off
 		float horizon = 120.f;  // seconds
 		float ally = 1.f;
 		float enemy = 1.f;

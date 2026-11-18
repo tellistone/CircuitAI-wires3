@@ -375,6 +375,7 @@ std::string CChokeMap::DescribeTypeSet() const
 		const STypeState& ts = typeStates[c];
 		if (ts.isInSet) {
 			text += (text.empty() ? "" : " ") + moveClasses[c].name + (!IsGating(c) ? "(leak "
+					: ((int)c != moveClasses[c].graphClass) ? "(gating as " + moveClasses[moveClasses[c].graphClass].name + " "
 					: (moveClasses[c].role == MoveRole::LEAK) ? "(promoted to gating " : "(gating ")
 					+ utils::float_to_string(ts.share, "%.2f)");
 		}

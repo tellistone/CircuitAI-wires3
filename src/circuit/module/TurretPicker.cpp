@@ -342,7 +342,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	// T: the heaviest traffic cells within reach
 	std::vector<CTurretValue::STarget> traffic;
 	const CTrafficField& field = chokeMap->GetTraffic();
-	if (isChokeReady && !field.IsEmpty()) {
+	if (isChokeReady && !field.IsEmpty() && (config.traffic > 0.f)) {  // turret.traffic 0 (the default): no T
 		const int cellSize = field.GetCellSize();
 		ForEachCellIn(field.GetWidth(), field.GetHeight(), cellSize, centre.x - reach, centre.z - reach,
 				centre.x + reach, centre.z + reach, [&](int x, int z) {

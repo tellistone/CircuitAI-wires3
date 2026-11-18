@@ -41,6 +41,7 @@ class CChokeOverlay;
  * - The threat graph (CRegionGraph) is built from the cells any gating enemy movement type can cross. A cut in it
  *   cuts every gating type. Leak types (amphibious, spiders, jumpers) are ignored by it until their share of the
  *   enemy's army promotes them to gating (choke.gate_share); before that the tower each cluster keeps answers them.
+ *   Spiders and jumpers gate as kbots (SMoveClass::graphClass): the cliffs they cross stay walls in it.
  * - The traffic field (CTrafficField) has one layer per enemy movement type, blended by the enemy's army mix.
  * - Map sides (start boxes, enemy factories) drive gating, pockets and openness. Territory (buildings per region:
  *   ours 20 s to join and 60 s to leave, the enemy's towers, factories and big buildings only, 120 s to leave)
@@ -62,6 +63,7 @@ public:
 		float jumpRange;  // > 0: also crosses wall bands thinner than this
 		MoveKind kind;
 		MoveRole role;  // before promotion (choke.gate_share)
+		int graphClass;  // whose mask it adds to the threat graph when gating: spiders and jumpers walk as kbots
 		std::string name;  // the terrain mobile type's move def, "-jump" for jumpers
 	};
 	// A start box, or a guess at one

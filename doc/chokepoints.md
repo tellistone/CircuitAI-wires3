@@ -22,9 +22,11 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
   longer than their jump along a row or a column of cells. Once an enemy army has been seen, a type gates when it has
   the most cost seen, or once its own cost reaches `choke.gate_share` of the enemy army seen plus a 300-metal prior,
   so a lone early unit or a new factory's first units can't flip the graph. It stays gating until it leaves the game.
-  Before any enemy army is seen, and for the opening default's unseen types, the walkers, tanks and hovers gate. A
-  gating spider type makes the graph close to the spiders' own, so its chokes move to where spiders are held too: the
-  overlay says so each time the graph is rebuilt.
+  Before any enemy army is seen, and for the opening default's unseen types, the walkers, tanks and hovers gate.
+  Spiders and jumpers gate as kbots: a gating jumper type adds its own type's walking cells to the graph, a gating
+  spider type the cells of the ground type that climbs the steepest (bots), so the cliffs they cross stay walls and
+  their promotion can't collapse the map into one region. Their own cells still drive their traffic and reach. A
+  gating amphibious type still adds its own cells, water included.
 - **Enemy types.** The opening default holds until a factory has been seen for every enemy team, or for 5 minutes. A
   type joins when a factory that builds it or one of its units is seen. It leaves only when every known factory for it
   is dead and none of its units has been seen for 5 minutes.
@@ -112,7 +114,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 |---|---|---|
 | `turret.radius` | `600` | Elmos from the order's centre a turret may stand. |
 | `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height) must reach this × the turret's cost. |
-| `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. |
+| `turret.traffic` | `0.0` | Weight of T, the enemy traffic in range. 0 turns it off: the picker doesn't read the traffic field, and a turret pays for itself in A, E and C alone. |
 | `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
 | `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. |
 | `turret.enemy` | `1.0` | Weight of E, the enemies a turret could shoot. |
@@ -149,7 +151,7 @@ players are ignored. A spectator may use it only in games with no human opponent
 
 The AI answers in ally chat and in its log, as `CHOKE overlay: ...`. While the overlay is on, it also says when the
 threat graph is rebuilt, with the enemy types behind it, for example `threat graph rebuilt: 14 regions, 19 chokes;
-enemy types: TANK3(gating 0.60) TKBOT3(promoted to gating 0.35)`.
+enemy types: TANK3(gating 0.60) TKBOT3(gating as KBOT2 0.35)`.
 
 ### Layers
 
@@ -324,13 +326,14 @@ cost:
 
 `base = (T + A + E + C) × (1 + turret.height × height)`, `value = base × (1 + turret.front × F) × (1 + turret.view × V) ÷ (1 + walk ÷ 1000)`
 
-- *T*, traffic: the traffic field carries each destination's income across every cross-section of its enemy routes.
+- *T*, traffic, off by default (`turret.traffic` 0): the traffic field carries each destination's income across every
+  cross-section of its enemy routes.
   The heaviest 64 cells within reach are summed over those in range and divided by the cell lengths the range spans
   (2 × range ÷ 64), which gives the income whose routes pass under the turret, in metal/s; × `turret.horizon`.
 - *A*, our and allied unarmed buildings in range (mexes, energy, radar, factories, storage, nanoframes too), at cost.
 - *E*, known enemy buildings in range seen in radar or sight in the last 3 minutes (so the ghost of one that died
   out of sight drops out), at cost; an enemy mex counts its income × `turret.horizon`, which is what killing it
-  takes from them. Mobiles don't count: they move on, and their routes are in T already.
+  takes from them. Mobiles don't count: they move on, and their routes are T's.
 - *C*, `turret.choke` when a choke of our current line or the enemy line has its middle in range. One choke's worth
   at most.
 - Each target counts only if the turret hits it (ground, and under deep water for one that hits there), in range

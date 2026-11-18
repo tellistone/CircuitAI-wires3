@@ -622,6 +622,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   until it leaves. Before any army is seen, and for the opening default's unseen types, the ground types gate as
   before.
 
+- **Spiders and jumpers gate the threat graph as kbots.** A promoted spider type added the cells spiders climb to,
+  which on most maps joined every region into one; a promoted jumper type opened every wall a jump crosses. Now a
+  gating jumper type adds its own type's walking cells, and a gating spider type the cells of the ground type that
+  climbs the steepest (bots), so their chokes are where kbots' are. Their traffic and reach still use their own cells.
+  Amphibious types are unchanged.
+
+- **The turret picker no longer counts traffic.** `turret.traffic`, the weight of T (enemy routes under the turret),
+  now defaults to 0, and at 0 the picker doesn't read the traffic field. A turret has to pay for itself in our
+  buildings, known enemy buildings or line chokes in range. Scored tower spots (`choke.spot`) still weigh traffic.
+
 - **Terrain alone rebuilds the threat graph at most every 5 minutes.** Zero-K's craters and the ground levelled under
   buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the
   30 s mask check found a change, 10 times in 13 minutes in one logged game, and each rebuild could move
