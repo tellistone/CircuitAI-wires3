@@ -41,8 +41,7 @@ static constexpr int CHECK_FRAMES = FRAMES_PER_SEC * 5;  // idle: the park spot 
 static constexpr int PARK_HOLD_FRAMES = FRAMES_PER_SEC * 30;  // a park spot is kept at least this long
 static constexpr float PARK_SWITCH = 1.3f;  // after that, another spot must score this much better
 static constexpr float PARK_WALK_SEC = 60.f;  // a spot this many seconds' walk away scores half
-static constexpr float FIRE_HOLD_RANGE = 1.25f;  // x weapon range: a mobile heavy this near, parkers hold fire
-static constexpr int FIRE_HOLD_FRAMES = FRAMES_PER_SEC * 5;  // ... until this long after
+static constexpr int PARK_SLOTS = 5;  // spots behind one attack group: straight back, and two to each side
 static constexpr int ROUTE_FRAMES = FRAMES_PER_SEC * 5;  // a walk-in route is planned again at most this often
 static constexpr int WALK_IN_PAUSE_FRAMES = FRAMES_PER_SEC * 30;  // no walk-in this long after a flee
 static constexpr int WALK_IN_RETRY_FRAMES = FRAMES_PER_SEC * 15;  // ... nor after no route to any heavy was found
@@ -181,6 +180,7 @@ void CAntiHeavyTask::Update()
 	 * and a merge would pull a unit off its spot
 	 */
 	if (CheckFlee()) {
+		UpdateHolds(false);  // no attack: fire at will
 		return;
 	}
 
@@ -229,6 +229,7 @@ void CAntiHeavyTask::Update()
 	 * Update target
 	 */
 	if ((GetFleeMargin() < 0.f) && IsReloading(frame)) {
+		UpdateHolds(false);
 		if (IsQueryReady(leader)) {
 			FallbackAttackSafe();  // no flee: old blind pull-back to the attack groups
 		}
@@ -251,7 +252,7 @@ void CAntiHeavyTask::Update()
 	if (isTargetsFound) {
 		checkFrame = 0;  // back from a fight or a walk-in: the park spot (or the way to the army) is looked at at once
 	}
-	UpdateHolds(frame);
+	UpdateHolds((target != nullptr) && !isLosGrace);  // hold fire only while attacking it
 	if (target != nullptr) {
 		position = target->GetPos();
 		if (isLosGrace) {
@@ -547,24 +548,10 @@ bool CAntiHeavyTask::CheckFlee()
 
 void CAntiHeavyTask::FleeFrom(const AIFloat3& dangerPos)
 {
-	// Parkers run to the nearest safe park spot further from the danger, and stay there; others as before
-	CollectDangers();
-	const AIFloat3* goal = nullptr;
-	if (IsParker()) {
-		FillParkSpots(parkSpots);
-		urgentPositions.clear();
-		for (const SParkSpot& spot : parkSpots) {
-			urgentPositions.push_back(spot.pos);
-		}
-		goal = PickFleeSpot(leader->GetPos(manager->GetCircuit()->GetLastFrame()), dangerPos, urgentPositions);
-		ClearPark();
-		if (goal != nullptr) {
-			SetPark(parkSpots[goal - urgentPositions.data()]);
-		}
-	}
-	if (goal == nullptr) {
-		goal = FindFleeGoal(dangerPos);
-	}
+	// Towards the army (FindFleeGoal: the nearest group leader further from the danger, else a defended mex cluster or
+	// our base), stopping once out of reach (OnFleeEnd). The park spot we fled from is dropped: a new one after the flee
+	ClearPark();
+	const AIFloat3* goal = FindFleeGoal(dangerPos);
 	if (goal == nullptr) {
 		FallbackBasePos(true);
 		return;
@@ -586,10 +573,7 @@ void CAntiHeavyTask::OnFleeEnd()
 	CCircuitAI* circuit = manager->GetCircuit();
 	circuit->GetMilitaryManager()->NoteAh(leader->GetCircuitDef(), CMilitaryManager::AhNote::FLEE_END);
 	walkInFrame = circuit->GetLastFrame() + WALK_IN_PAUSE_FRAMES;  // the way back in leads to the same danger
-	if (utils::is_valid(park.pos)) {
-		return;  // keep walking to our park spot: it is safe, and covered
-	}
-	// Out of reach: don't walk the rest of the way to the safety spot
+	// Out of reach: stop here, near the front, rather than walk the rest of the way back
 	pPath = std::make_shared<PathInfo>();  // else OnUnitIdle -> Start() would resume the flee path after the Stop
 	for (CCircuitUnit* unit : units) {
 		if (unit->Blocker() == nullptr) {  // else busy with its own action (jump, ...)
@@ -766,11 +750,6 @@ bool CAntiHeavyTask::FindTarget()
 		}
 		const AIFloat3& ePos = enemy->GetPos();
 		const float sqDist = pos.SqDistance2D(ePos);
-		if (enemy->GetCircuitDef()->IsMobile() && enemy->IsInRadarOrLOS()
-			&& (sqDist <= SQUARE(FIRE_HOLD_RANGE * weaponRange)))
-		{
-			fireHoldFrame = frame;  // UpdateHolds
-		}
 		// A long-reload weapon fires at what we see, not at a radar blip
 		const bool isSeen = !IsLongReload(cdef) || enemy->IsInLOS();
 		isRadarOnly |= !isSeen && (sqDist <= SQUARE(weaponRange));
@@ -939,53 +918,73 @@ void CAntiHeavyTask::FillParkSpots(std::vector<SParkSpot>& outSpots)
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-
-	// Tower groups: the armed statics of each PARK_CELL cell, around their power-weighted centre
-	struct STowers {
-		AIFloat3 sum = ZeroVector;  // positions x power
-		float power = 0.f;
-		float range = 0.f;
-	};
-	std::map<int, STowers> cells;
-	const int cellsX = circuit->GetTerrainManager()->GetTerrainWidth() / PARK_CELL + 1;
-	for (auto& kv : circuit->GetFriendlyUnits()) {
-		CAllyUnit* ally = kv.second;
-		CCircuitDef* adef = ally->GetCircuitDef();
-		if ((adef == nullptr) || adef->IsMobile() || !adef->IsAttacker() || !IsStaticDefence(adef)) {
-			continue;
-		}
-		const AIFloat3& p = ally->GetPos(frame);
-		const float power = utils::is_valid(p) ? GetCoverPower(ally) : 0.f;
-		if (power <= 0.f) {
-			continue;  // nanoframe
-		}
-		STowers& towers = cells[int(p.z / PARK_CELL) * cellsX + int(p.x / PARK_CELL)];
-		towers.sum += p * power;
-		towers.power += power;
-		towers.range = std::max(towers.range, adef->GetMaxRange(CCircuitDef::RangeType::LAND));
-	}
 	// dist back from pos towards our base, but not onto our factory (AddParkSpot skips spots there)
 	auto backFrom = [&basePos](const AIFloat3& pos, float dist) {
 		return GetPointTowards(pos, basePos, std::max(0.f, std::min(dist, pos.distance2D(basePos) - PARK_CELL / 2.f)));
 	};
-	for (auto& kv : cells) {
-		const STowers& towers = kv.second;
-		AddParkSpot(backFrom(towers.sum / towers.power, towers.range / 3.f), nullptr, outSpots);
-	}
 
-	// Behind our attack groups, where artillery follows them
+	// Behind our attack groups, where artillery follows them: follow_dist back, and side slots a claim apart, so a few
+	// squads can wait behind one group. The front: towers count only when no group offers a spot
 	const float followDist = militaryMgr->GetArtilleryCfg().followDist;
+	const float slotGap = 1.1f * GetClaimRadius();
 	for (IFighterTask* task : militaryMgr->GetTasks(FightType::ATTACK)) {
 		AIFloat3 groupPos;
 		float range, power;
-		if (static_cast<CAttackTask*>(task)->GetCoverDisc(frame, groupPos, range, power)) {
-			AddParkSpot(backFrom(groupPos, followDist), task, outSpots);
+		if (!static_cast<CAttackTask*>(task)->GetCoverDisc(frame, groupPos, range, power)) {
+			continue;
+		}
+		const AIFloat3 back = backFrom(groupPos, followDist);
+		AIFloat3 side(basePos.z - groupPos.z, 0.f, groupPos.x - basePos.x);  // across the line to our base
+		const float len = side.Length2D();
+		side = (len > 1.f) ? side / len : RgtVector;
+		for (int slot = 0; slot < PARK_SLOTS; ++slot) {
+			const int k = (slot % 2 == 1) ? (slot + 1) / 2 : -(slot / 2);  // 0, 1, -1, 2, -2
+			AIFloat3 p = back + side * (k * slotGap);
+			CTerrainManager::CorrectPosition(p);
+			AddParkSpot(p, task, slot, outSpots);
+		}
+	}
+
+	// Tower groups: the armed statics of each PARK_CELL cell, around their power-weighted centre
+	if (outSpots.empty()) {
+		struct STowers {
+			AIFloat3 sum = ZeroVector;  // positions x power
+			float power = 0.f;
+			float range = 0.f;
+		};
+		std::map<int, STowers> cells;
+		const int cellsX = circuit->GetTerrainManager()->GetTerrainWidth() / PARK_CELL + 1;
+		for (auto& kv : circuit->GetFriendlyUnits()) {
+			CAllyUnit* ally = kv.second;
+			CCircuitDef* adef = ally->GetCircuitDef();
+			if ((adef == nullptr) || adef->IsMobile() || !adef->IsAttacker() || !IsStaticDefence(adef)) {
+				continue;
+			}
+			const AIFloat3& p = ally->GetPos(frame);
+			const float power = utils::is_valid(p) ? GetCoverPower(ally) : 0.f;
+			if (power <= 0.f) {
+				continue;  // nanoframe
+			}
+			STowers& towers = cells[int(p.z / PARK_CELL) * cellsX + int(p.x / PARK_CELL)];
+			towers.sum += p * power;
+			towers.power += power;
+			towers.range = std::max(towers.range, adef->GetMaxRange(CCircuitDef::RangeType::LAND));
+		}
+		for (auto& kv : cells) {
+			const STowers& towers = kv.second;
+			AddParkSpot(backFrom(towers.sum / towers.power, towers.range / 3.f), nullptr, 0, outSpots);
 		}
 	}
 	std::sort(outSpots.begin(), outSpots.end(), [](const SParkSpot& a, const SParkSpot& b) { return a.score > b.score; });
 }
 
-void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group, std::vector<SParkSpot>& outSpots)
+float CAntiHeavyTask::GetClaimRadius() const
+{
+	return std::max(PARK_CELL / 2.f, 2.f * GetCfg().spacing);
+}
+
+void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group, int slot,
+		std::vector<SParkSpot>& outSpots)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
@@ -995,7 +994,7 @@ void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group,
 	{
 		return;
 	}
-	const float claimRadius = std::max(PARK_CELL / 2.f, 2.f * ahCfg.spacing);
+	const float claimRadius = GetClaimRadius();
 	for (IFighterTask* task : militaryMgr->GetTasks(FightType::AH)) {
 		const AIFloat3& claim = static_cast<CAntiHeavyTask*>(task)->GetParkPos();
 		if ((task != this) && utils::is_valid(claim) && (claim.SqDistance2D(pos) < SQUARE(claimRadius))) {
@@ -1023,7 +1022,7 @@ void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group,
 	if (militaryMgr->IsNearAhRetreat(pos, PARK_CELL / 2.f)) {
 		score *= 0.5f;  // one of ours was hit near there lately
 	}
-	outSpots.push_back({pos, group, cover, score});
+	outSpots.push_back({pos, group, slot, cover, score});
 }
 
 void CAntiHeavyTask::SetPark(const SParkSpot& spot)
@@ -1034,24 +1033,33 @@ void CAntiHeavyTask::SetPark(const SParkSpot& spot)
 
 void CAntiHeavyTask::UpdatePark()
 {
-	// Keep the spot for PARK_HOLD_FRAMES, then until another scores PARK_SWITCH times more. Leave it once it is gone
-	// (unsafe, claimed, its group gone) or has lost half its cover
+	// Keep the spot for PARK_HOLD_FRAMES, then until another scores PARK_SWITCH times more; leave it once it has lost
+	// half its cover. A spot behind an attack group is kept while the group lives, also off the list for a while (the
+	// group falls back, an enemy comes near: the flee guards the squad, and drops the spot); a tower spot once it's gone
 	FillParkSpots(parkSpots);
 	const SParkSpot* current = nullptr;
 	for (const SParkSpot& spot : parkSpots) {
-		const bool isSame = (park.group != nullptr) ? (spot.group == park.group)
+		const bool isSame = (park.group != nullptr) ? ((spot.group == park.group) && (spot.slot == park.slot))
 				: ((spot.group == nullptr) && (spot.pos.SqDistance2D(park.pos) < SQUARE(PARK_CELL / 2.f)));
 		if (isSame) {
 			current = &spot;
 			break;
 		}
 	}
+	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	const std::set<IFighterTask*>& groups = militaryMgr->GetTasks(FightType::ATTACK);
+	const bool isGroupAlive = (park.group != nullptr)
+			&& std::any_of(groups.begin(), groups.end(), [this](const IFighterTask* g) { return g == park.group; });
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	if (utils::is_valid(park.pos) && (current != nullptr) && (current->cover >= 0.5f * park.cover)
-		&& ((frame < parkFrame + PARK_HOLD_FRAMES) || (parkSpots.front().score < PARK_SWITCH * current->score)))
+	const float score = (current != nullptr) ? current->score : park.score;
+	if (utils::is_valid(park.pos)
+		&& ((current != nullptr) ? (current->cover >= 0.5f * park.cover) : isGroupAlive)
+		&& ((frame < parkFrame + PARK_HOLD_FRAMES) || parkSpots.empty() || (parkSpots.front().score < PARK_SWITCH * score)))
 	{
-		park.pos = current->pos;  // a group's spot moves with it
-		park.score = current->score;
+		if (current != nullptr) {
+			park.pos = current->pos;  // a group's spot moves with it
+			park.score = current->score;
+		}
 		return;
 	}
 	ClearPark();
@@ -1064,7 +1072,6 @@ void CAntiHeavyTask::FallbackPark()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	const AIFloat3 oldPos = park.pos;
 	const bool isCheck = IsCheckDue();
 	if (isCheck) {
 		UpdatePark();
@@ -1075,10 +1082,9 @@ void CAntiHeavyTask::FallbackPark()
 		}
 		return;
 	}
-	// A new route when the spot moved, else on a check while the squad isn't there
-	const float spacing = GetCfg().spacing;
-	const bool isMoved = !utils::is_valid(oldPos) || (oldPos.SqDistance2D(park.pos) > SQUARE(spacing));
-	if (isMoved || (isCheck && (leader->GetPos(frame).SqDistance2D(park.pos) > SQUARE(2.f * spacing)))) {
+	// On a check, a new route while the squad isn't there (a new spot, or its group moved on): small moves of the
+	// group's leader don't walk the squad around
+	if (isCheck && (leader->GetPos(frame).SqDistance2D(park.pos) > SQUARE(GetClaimRadius()))) {
 		QueryPath(leader, park.pos, FALLBACK_PATH_RANGE, true, [this](const CQueryPathSingle* query) { ApplyParkPath(query); });
 	}
 }
@@ -1130,12 +1136,11 @@ void CAntiHeavyTask::SpreadOut(CCircuitUnit* unit, int frame)
 	)
 }
 
-void CAntiHeavyTask::UpdateHolds(int frame)
+void CAntiHeavyTask::UpdateHolds(bool isAttack)
 {
-	// Parked: hold position (the spot is the cover). Parkers hold fire while a mobile heavy is near (FindTarget) or
-	// targeted, so the long reload isn't spent on chaff (the attack on a target still fires)
-	const bool isFireHoldNow = IsParker() && ((frame < fireHoldFrame + FIRE_HOLD_FRAMES)
-			|| ((target != nullptr) && target->GetCircuitDef()->IsMobile()));  // FindTarget doesn't run mid-scoot
+	// Parked: hold position (the spot is the cover). Parkers hold fire only while they attack a heavy, so the long
+	// reload isn't spent on chaff (the attack on it still fires); fire at will otherwise
+	const bool isFireHoldNow = IsParker() && isAttack;
 	if ((isParking == isParkHold) && (isFireHoldNow == isFireHold)) {
 		return;
 	}

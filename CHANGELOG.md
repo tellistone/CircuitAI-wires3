@@ -747,13 +747,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     map doesn't cover, our units around count instead. No walk-in for 30 s after a flee, nor for 15 s after no route
     to any heavy was found. With nothing to do, squads look at the way to the army every 5 s (was: every second).
   - Parking (snipers, cover map on): with nothing to attack or walk to, a squad parks at the best covered, safe spot
-    no other squad claims: a third of the range back from a group of towers, or `follow_dist` behind an attack
-    group, never within 256 of our base. Scored by cover (at most 3x `flee_ally_threat`) x recent heavy sightings
-    near it, / (1 + minutes of walking) (half at one minute, a third at two), and halved for 60 s where one of ours
-    was sent for repair; kept 30 s, then until another scores
-    1.3x more. Snipers flee to such a spot and stay. Parked, they hold position; the others stand on alternate sides of the leader.
-    Snipers hold fire while a mobile heavy is within 1.25x weapon range (and 5 s after) or is their target; the
-    attack on their target still fires.
+    no other squad claims, at the front: `follow_dist` behind an attack group (straight back or one of four side
+    slots, so several squads fit behind one group). Only when no group offers a spot, a third of the range back from
+    a group of towers. Never within 256 of our base. Scored by cover (at most 3x `flee_ally_threat`) x recent heavy
+    sightings near it, / (1 + minutes of walking) (half at one minute, a third at two), and halved for 60 s where one
+    of ours was sent for repair; kept 30 s, then until another scores 1.3x more. A spot behind a group is kept while
+    the group lives, also while it is briefly off the list (the group falls back, an enemy comes near). Parked, units
+    hold position, the others on alternate sides of the leader, and walk back only once the squad is more than
+    max(256, 2x `spacing`) from its spot.
+  - Snipers flee like the others, towards the army, and stop once out of reach; they drop their park spot and pick
+    one afresh after the flee (they no longer run back to a park spot, possibly at our base, and stay there).
+  - Snipers hold fire only while they attack a heavy (not during the LOS grace, nor while fleeing), and fire at will
+    otherwise; the attack on their target still fires.
   - Scoot: no new scoot out of the target's reach (was: out of all ground threat); parked units step back towards
     their spot.
   - An `ANTIHEAVY` log line per unit type every minute: unit-seconds hunting, parked, engaged and fleeing; shots,
