@@ -47,7 +47,7 @@ public:
 		Source GetBiggest() const;
 	};
 	// Who judges: its own disc is never cover, nor its partner's in a joint check (both groups' strength, which has
-	// the partner in it already). Cover is weighed against base (> 0)
+	// the partner in it already); self nullptr: not an attack group (anti-heavy). Cover is weighed against base (> 0)
 	struct SJudge {
 		const CAttackTask* self;
 		const CAttackTask* partner;  // nullptr: not a joint check
@@ -106,8 +106,8 @@ private:
 		float power;
 	};
 	const std::vector<SDisc>& GetDiscs();
-	static bool IsLeftOut(const SDisc& d, const SJudge& judge) {
-		return (d.task == judge.self) || ((judge.partner != nullptr) && (d.task == judge.partner));
+	static bool IsLeftOut(const SDisc& d, const SJudge& judge) {  // the commander's disc (task nullptr) never is
+		return (d.task != nullptr) && ((d.task == judge.self) || (d.task == judge.partner));
 	}
 	// The commander's reach: its fitted weapons' longest range (dynamic commanders), else its def's land range
 	float GetCommRange(CCircuitUnit* comm) const;

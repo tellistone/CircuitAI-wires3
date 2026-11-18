@@ -46,17 +46,21 @@ static float GetTargetLift(CCircuitDef* edef)
 
 bool CAttackTask::GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const
 {
+	return GetSightLiftsFor(GetMilitaryMgr(), leader->GetCircuitDef(), enemy, outAimLift, outTargetLift);
+}
+
+bool CAttackTask::GetSightLiftsFor(CMilitaryManager* militaryMgr, CCircuitDef* cdef, const CEnemyInfo* enemy,
+		float& outAimLift, float& outTargetLift)
+{
 	CCircuitDef* edef = enemy->GetCircuitDef();
-	if (((edef != nullptr) && edef->IsAbleToFly()) || (enemy->GetPos().y < -SQUARE_SIZE * 5)
-		|| leader->GetCircuitDef()->IsAbleToFly())
-	{
+	if (((edef != nullptr) && edef->IsAbleToFly()) || (enemy->GetPos().y < -SQUARE_SIZE * 5) || cdef->IsAbleToFly()) {
 		// Flying above the lifts, or under water (torpedoes); or we fly (gunships: squads never mix air and ground):
 		// terrain isn't what blocks it
 		return false;
 	}
 	// No lower than the lifts of target routes (half the leader's height, at SQUARE_SIZE: GetHitTest) and of firing
 	// cells: a stricter pick would read the end of their walk as out of sight, and route to the same spot again
-	outAimLift = std::max(GetMilitaryMgr()->GetAttackCells().aimHeight, leader->GetCircuitDef()->GetHeight() * 0.5f);
+	outAimLift = std::max(militaryMgr->GetAttackCells().aimHeight, cdef->GetHeight() * 0.5f);
 	outTargetLift = GetTargetLift(edef);
 	return true;
 }

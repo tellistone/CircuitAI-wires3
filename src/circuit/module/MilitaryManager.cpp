@@ -977,6 +977,10 @@ void CMilitaryManager::ReadConfig()
 	antiHeavy.fleeMargin = ahCfg.get("flee_margin", -1.f).asFloat();
 	antiHeavy.fleeAllyThreat = ahCfg.get("flee_ally_threat", (antiHeavy.fleeMargin >= 0.f) ? 10.f : -1.f).asFloat();
 	antiHeavy.fleeAllyRadius = std::max(0.f, ahCfg.get("flee_ally_radius", 500.f).asFloat());
+	const float keepSec = ahCfg.get("keep_sec", 30.f).asFloat();
+	antiHeavy.keepFrames = (keepSec < 0.f) ? std::numeric_limits<int>::max() : std::max(1, int(keepSec * FRAMES_PER_SEC));
+	antiHeavy.spacing = std::max(0.f, ahCfg.get("spacing", 150.f).asFloat());
+	antiHeavy.maxGroup = std::max(0, ahCfg.get("max_group", 2).asInt());
 
 	const Json::Value& resignCfg = root["resign"];
 	const float resignTime = resignCfg.get("time", 480.f).asFloat();  // on by default, even with an older behaviour.json
@@ -1222,6 +1226,8 @@ void CMilitaryManager::Init()
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhPull, this), FRAMES_PER_SEC * 2, offset + 1);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhStats, this), FRAMES_PER_SEC, offset + 2);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogAhStats, this), FRAMES_PER_SEC * 60, offset + 3);
 		if (attackRally.cfg.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
 		}
@@ -3865,8 +3871,13 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	if (IsQuotaScout(cdef) && IsScoutSlotFree(cdef)) {
 		task = EnqueueTask(IFighterTask::FightType::SCOUT);
 	}
+	// While a hunt is on, new and repaired anti-heavy units join it, those with the support attribute (Lance) too
+	const bool isAhHunt = (it != types.end()) && (it->second == IFighterTask::FightType::AH)
+			&& (cdef->IsRoleMine() || IsAhHunting());
 	if (task != nullptr) {
 		// scout picked above
+	} else if (isAhHunt) {
+		task = EnqueueAntiHeavy(unit);
 	} else if (cdef->IsRoleSupport()) {
 		if (/*cdef->IsAttacker() && */GetTasks(IFighterTask::FightType::ATTACK).empty() && GetTasks(IFighterTask::FightType::DEFEND).empty()) {
 			task = EnqueueDefend(IFighterTask::FightType::ATTACK,
@@ -3887,11 +3898,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 					}
 				} break;
 				case IFighterTask::FightType::AH: {
-					if (!cdef->IsRoleMine() && !IsEnemyHeavySeen(AH_HUNT_FRAMES)) {
-						task = EnqueueAttackBound(unit);  // see below; UpdateAhPull takes it out once a heavy is seen
-					} else {
-						task = EnqueueAntiHeavy(unit);
-					}
+					task = EnqueueAttackBound(unit);  // no hunt (see above); UpdateAhPull takes it out once a heavy is seen
 				} break;
 				case IFighterTask::FightType::DEFEND: {
 					task = EnqueueAttackBound(unit);  // see below
@@ -3968,23 +3975,25 @@ void CMilitaryManager::UpdateAhPull()
 		if (task->GetState() == IUnitTask::State::DISENGAGE) {
 			continue;  // fleeing: the next pass takes it
 		}
-		if ((task->GetState() == IUnitTask::State::ENGAGE) && !IsQuarryInRange(unit)) {
-			continue;  // fighting with no heavy in reach: losing it now could tip the fight; the next pass takes it
+		// Fighting: only for a heavy in weapon range (the group's targets are chaff to a long-reload anti-heavy weapon;
+		// losing it now could tip the fight). Else one it reaches within 30 s, so a heavy across the map doesn't
+		// empty the army. The next pass takes the others
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		const float reach = (task->GetState() == IUnitTask::State::ENGAGE) ? cdef->GetMaxRange()
+				: CAntiHeavyTask::GetHuntReach(cdef);
+		if (IsQuarryWithin(unit, reach)) {
+			AssignTask(unit, EnqueueAntiHeavy(unit));
 		}
-		AssignTask(unit, EnqueueAntiHeavy(unit));
 	}
 }
 
-bool CMilitaryManager::IsQuarryInRange(CCircuitUnit* unit) const
+bool CMilitaryManager::IsQuarryWithin(CCircuitUnit* unit, float range) const
 {
-	// A heavy (or commander) it can shoot, in radar or LOS now, within its weapon range: in a fight the group's
-	// targets are chaff to a long-reload anti-heavy weapon
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
-	const float sqRange = SQUARE(cdef->GetMaxRange());
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
-		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= sqRange)
+		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= SQUARE(range))
 			&& CAntiHeavyTask::IsQuarryFor(cdef, enemy))
 		{
 			return true;
@@ -4011,25 +4020,78 @@ bool CMilitaryManager::IsEnemyHeavySeen(int frames)
 	if (heavySeenFrame != frame) {  // once a frame: MakeTask asks for every new anti-heavy unit
 		heavySeenFrame = frame;
 		heavySeenAge = std::numeric_limits<int>::max();
+		heavySightings.clear();
 		if (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) >= 1.f) {  // else none is known: no scan
 			for (auto& kv : circuit->GetEnemyInfos()) {
 				const CEnemyInfo* enemy = kv.second;
 				CCircuitDef* edef = enemy->GetCircuitDef();
-				if ((edef == nullptr) || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY)) {
+				if ((edef == nullptr) || !edef->IsMobile() || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY)) {
 					continue;
 				}
-				if (enemy->IsInRadarOrLOS()) {
-					heavySeenAge = 0;
-					break;
-				}
 				const int lastSeen = enemy->GetData()->GetLastSeen();  // the frame it left radar
-				if (lastSeen >= 0) {
-					heavySeenAge = std::min(heavySeenAge, frame - lastSeen);
+				const int age = enemy->IsInRadarOrLOS() ? 0 : (lastSeen >= 0) ? frame - lastSeen : -1;
+				if (age >= 0) {
+					heavySeenAge = std::min(heavySeenAge, age);
+					heavySightings.push_back({enemy->GetPos(), age});
 				}
 			}
 		}
 	}
 	return heavySeenAge < frames;
+}
+
+void CMilitaryManager::NoteAhRetreat(const AIFloat3& pos)
+{
+	ahRetreats.push_back({pos, circuit->GetLastFrame()});
+}
+
+bool CMilitaryManager::IsNearAhRetreat(const AIFloat3& pos, float radius)
+{
+	static constexpr int RETREAT_FRAMES = FRAMES_PER_SEC * 60;
+	const int frame = circuit->GetLastFrame();
+	ahRetreats.erase(std::remove_if(ahRetreats.begin(), ahRetreats.end(),
+			[frame](const std::pair<AIFloat3, int>& r) { return frame >= r.second + RETREAT_FRAMES; }), ahRetreats.end());
+	for (const auto& r : ahRetreats) {
+		if (r.first.SqDistance2D(pos) < SQUARE(radius)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void CMilitaryManager::UpdateAhStats()
+{
+	// A shot: the weapon was ready a second ago and isn't now (anti-heavy reloads are long)
+	const int frame = circuit->GetLastFrame();
+	std::set<int> ready;
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::AH)) {
+		const AhNote activity = static_cast<CAntiHeavyTask*>(t)->GetActivity();
+		for (CCircuitUnit* unit : t->GetAssignees()) {
+			NoteAh(unit->GetCircuitDef(), activity);
+			if (unit->HasWeapon() && unit->IsWeaponReady(frame)) {
+				ready.insert(unit->GetId());
+			} else if (ahReady.find(unit->GetId()) != ahReady.end()) {
+				NoteAh(unit->GetCircuitDef(), AhNote::SHOT);
+			}
+		}
+	}
+	ahReady.swap(ready);
+}
+
+void CMilitaryManager::LogAhStats()
+{
+	for (const auto& kv : ahStats) {
+		const std::array<int, static_cast<int>(AhNote::_SIZE_)>& n = kv.second;
+		auto at = [&n](AhNote note) { return n[static_cast<int>(note)]; };
+		const int total = at(AhNote::HUNT) + at(AhNote::PARK) + at(AhNote::ENGAGE) + at(AhNote::FLEE);
+		const float pct = (total > 0) ? 100.f / total : 0.f;
+		circuit->LOG("ANTIHEAVY last 60 s, %s: %i unit-s, hunting %.0f%%, parked %.0f%%, engaged %.0f%%, fleeing %.0f%%;"
+				" %i shots, %i s with a radar-only heavy in range, %i flees, %i retreats, %i scoots, %i targets dropped",
+				circuit->GetCircuitDef(kv.first)->GetDef()->GetName(), total, at(AhNote::HUNT) * pct,
+				at(AhNote::PARK) * pct, at(AhNote::ENGAGE) * pct, at(AhNote::FLEE) * pct, at(AhNote::SHOT),
+				at(AhNote::RADAR_ONLY), at(AhNote::FLEE_END), at(AhNote::RETREAT), at(AhNote::SCOOT), at(AhNote::DROP));
+	}
+	ahStats.clear();
 }
 
 void CMilitaryManager::Watchdog()
