@@ -221,7 +221,7 @@ void CChokeOverlay::DrawSides()
  *   control: who defended x1 z1 x2 z2, a choke's line end to end. Who controls it: n nobody, o ours, e the enemy,
  *   c contested (CChokeMap::ChokeOwnerOf). Whose ground-hitting towers reach any of its line: n nobody's, o ours,
  *   e the enemy's, b both sides'
- *   lines: kind x1 z1 x2 z2. Kinds: w forward line; f front line; enemy line chokes by rank: e defended,
+ *   lines: kind x1 z1 x2 z2. Kinds: f front line; enemy line chokes by rank: e defended,
  *   u undefended, g not seen enough; h enemy-held off the enemy line; current line: c covered, s short
  *   info: see MakeInfo
  *   known: see MakeKnownEnemies
@@ -286,9 +286,6 @@ void CChokeOverlay::SendWidgetData()
 	CallWidget("control", control.str());
 
 	std::ostringstream lines;
-	for (int c : chokeMap->GetForwardLine()) {
-		putChoke(lines, c, 'w');
-	}
 	for (int c : chokeMap->GetFrontLine()) {
 		putChoke(lines, c, 'f');
 	}

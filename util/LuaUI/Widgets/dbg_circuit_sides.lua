@@ -18,8 +18,7 @@
 -- - posts at its ends when towers reach any of it: blue ours, red the enemy's, half and half both; no posts, none;
 -- - a casing round the core when it is on a line: green our current line where its towers cover what it wants, orange
 --   where it's short, with a white rim on the front line (where ours and the enemy's touch); the enemy line dark red
---   where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the
---   forward line, cut against the enemy's side of the map (start boxes, factories).
+--   where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it.
 -- The lines are the AI's own, cut between territory (each side's buildings, held 20 s), not the owners tinted here.
 -- Each enemy the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building
 -- (red armed, pale unarmed), filled while in its sight or radar, an outline where it was last seen. An enemy you see
@@ -101,7 +100,6 @@ local CASING_WIDTH = 15
 local RIM_WIDTH = 25  -- the front line's casing: a white rim round the others
 local LINES = {  -- casings by line kind, drawn in this order: the last one drawn shows on a choke in several lines
 	{kind = "f", colour = {1.00, 1.00, 1.00, 1.00}, width = RIM_WIDTH},  -- front line, under our line's colour
-	{kind = "w", colour = {1.00, 0.88, 0.20, 0.95}},  -- forward line
 	{kind = "h", colour = {0.40, 0.02, 0.05, 0.95}},  -- enemy-held, off the enemy line
 	{kind = "g", colour = {0.55, 0.55, 0.55, 0.95}},  -- enemy line, not seen enough to rank
 	{kind = "e", colour = {0.70, 0.08, 0.10, 0.95}},  -- enemy line, defended
@@ -692,7 +690,7 @@ local function MakeLegend()
 	return {
 		"Casing: " .. casing.c .. "our line" .. w .. " / " .. casing.s .. "short" .. w .. ", " .. casing.f .. "rimmed"
 				.. w .. " front line, " .. casing.e .. "enemy line defended" .. w .. " / " .. casing.u .. "undefended"
-				.. w .. " / " .. casing.g .. "unseen" .. w .. ", " .. casing.h .. "enemy-held" .. w .. ", " .. casing.w .. "forward line",
+				.. w .. " / " .. casing.g .. "unseen" .. w .. ", " .. casing.h .. "enemy-held",
 		"Posts at a gate's ends: towers reach part of it (" .. sides .. ", half and half both)",
 		"Choke gates: defended where one side's towers cover all of the gap (" .. sides .. "), dashed contested"
 				.. " (both, or the other's towers or 1/3 of the threat in mobiles), grey nobody's",

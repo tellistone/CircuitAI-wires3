@@ -16,7 +16,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   no side covers all of it. Regions are blue, red, striped or clear, stronger in that side's territory. Each choke is a
   gate across its gap: its core coloured by owner, posts at its ends when towers reach part of it, and a casing when it is on one
   of the AI's lines (white front line, green or orange our current line by whether its towers cover what it wants,
-  the enemy line by rank, yellow forward line). Info boxes show the numbers behind each owner: hostile and allied
+  the enemy line by rank). Info boxes show the numbers behind each owner: hostile and allied
   threat (total, mobile, static) and eco, for the region and choke at the cursor and, zoomed in, for owned ones near
   the camera. Each enemy the AI counts is marked where it believes it is (filled while seen, an outline where last
   seen), so a spectator with full view can tell which enemies it knows of; the legend says in red when the AI's LOS
