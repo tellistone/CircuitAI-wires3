@@ -7,16 +7,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
-- **`choke_overlay sides`: who controls each region and choke.** A new overlay layer colours each region by the
-  units in it: blue where only ours are, red where only the enemy's are (enemy mobiles seen in the last minute, enemy
-  buildings until seen dead), stronger in that side's territory, and clear where nobody is. Where both sides are, the
-  side whose armed units are 1.5 times as strong controls it, else it is striped blue and red as contested. Each choke
-  is a gate across its gap: its core coloured by whose threat reaches it (our and the enemy's influence averaged along
-  its line), posts at its ends when towers reach it, and a casing when it is on a line (white front line, green or
-  orange our current line by whether its towers cover what it wants, the enemy line by rank, yellow forward line). A
-  legend is printed bottom left. It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the
-  AI reaches through `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget
-  the layer shows the `lines` layer. Nothing outside the overlay reads the control it shows.
+- **`choke_overlay sides`: who owns each region and choke.** A new overlay layer colours each region and choke by
+  its owner, from each side's mobile threat, static threat and eco there (enemy mobiles seen in the last minute, enemy
+  buildings until seen dead): a side owns it where only it has anything, or where its threat is 1.5 times the other's,
+  else it is contested, and nobody's where neither side has anything. A region counts the units in it; a choke counts
+  the guns whose range reaches its line (mobiles also within a main-tower range of it) and unarmed buildings near it.
+  Regions are blue, red, striped or clear, stronger in that side's territory. Each choke is a gate across its gap: its
+  core coloured by owner, posts at its ends when towers reach it, and a casing when it is on a line (white front line,
+  green or orange our current line by whether its towers cover what it wants, the enemy line by rank, yellow forward
+  line). Info boxes show the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, for
+  the region and choke at the cursor and, zoomed in, for owned ones near the camera. A legend is printed bottom left.
+  It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through
+  `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget the layer shows
+  the `lines` layer. Nothing outside the overlay reads the ownership it shows.
 
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its

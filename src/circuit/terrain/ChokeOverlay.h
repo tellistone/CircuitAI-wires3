@@ -71,28 +71,26 @@ private:
 	void DrawSides();
 
 	/*
-	 * The sides layer (ChokeSides.cpp): who controls each region (by the units in it) and each choke (by whose threat
-	 * reaches it), and the lines by rank and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
+	 * The sides layer (ChokeSides.cpp): who owns each region (by the units in it) and each choke (by the guns that
+	 * reach it), and the lines by rank and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
 	 * running the AI has it (util/LuaUI/Widgets), else the lines layer
 	 */
 	enum class Side: char {NONE, OURS, ENEMY, CONTESTED};
-	struct SControl {
+	struct SStrength {
+		float mobile = 0.f;  // armed mobiles' threat (ours: power)
+		float statics = 0.f;  // armed buildings' threat
+		float eco = 0.f;  // metal in unarmed buildings
+		float Threat() const { return mobile + statics; }
+		bool IsAny() const { return (mobile > 0.f) || (statics > 0.f) || (eco > 0.f); }
+	};
+	struct SView {
 		Side side = Side::NONE;
-		float power = 0.f;  // ours: armed units' power (a region's), or our influence (a choke's)
-		float threat = 0.f;  // the enemy's, the same way
+		SStrength ours, enemy;
+		bool isTerritory = false;  // a region in its owner's territory
 	};
-	struct SRegionView: SControl {
-		bool isTerritory = false;  // the controlling side's buildings are there
-	};
-	struct SChokeView: SControl {
-		float ourTowers = 0.f;  // power of our towers whose range reaches its line
-		float enemyTowers = 0.f;  // threat of known enemy towers whose range reaches it
-	};
-	static Side ControlOf(bool isOurs, bool isEnemy, float power, float threat);
-	std::vector<SRegionView> MakeRegionViews() const;
-	std::vector<SChokeView> MakeChokeViews() const;
-	std::vector<std::pair<springai::AIFloat3, std::string>> MakeSideLabels(const std::vector<SRegionView>& regionViews,
-			const std::vector<SChokeView>& chokeViews) const;
+	static Side OwnerOf(const SStrength& ours, const SStrength& enemy);
+	void MakeViews(std::vector<SView>& regionViews, std::vector<SView>& chokeViews) const;
+	std::string MakeInfo(const std::vector<SView>& regionViews, const std::vector<SView>& chokeViews) const;
 	void SendWidgetData();
 	std::string CallWidget(const std::string& verb, const std::string& body) const;  // the widget's answer
 	void ClearWidget();

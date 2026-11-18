@@ -5,23 +5,28 @@
 -- a game against CircuitAI say "choke_overlay sides" in ally chat. It only draws in games with no human opponents,
 -- on the machine that runs the AI.
 --
--- Regions are tinted by who controls them: blue where only our units are (or ours are 1.5 times the enemy's
--- strength), red likewise for the enemy, striped blue and red where both are and neither leads, and left clear where
--- nobody is. The tint is stronger where that side has buildings. Thin lines are region borders.
+-- Who owns a region or a choke is decided by each side's threat there (armed units: mobile and static) and eco
+-- (unarmed buildings' metal): a side owns it where only it has anything, or where its threat is 1.5 times the
+-- other's; where both sides have something and neither leads, it's contested; where neither has, nobody's.
+-- Regions are tinted by owner: blue ours, red the enemy's, striped blue and red contested, clear nobody's. The tint
+-- is stronger in the owner's territory. Thin lines are region borders.
 -- Each choke is a gate drawn across its gap, wall to wall:
--- - its core is whose threat reaches it: blue ours, red the enemy's, dashed blue and red where both reach and neither
---   leads, thin grey nobody's;
+-- - its core is its owner, counting the guns that reach its line: blue ours, red the enemy's, dashed blue and red
+--   contested, thin grey nobody's;
 -- - posts at its ends when towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended;
 -- - a casing round the core when it is on a line: white the front line; green our current line where its towers cover
 --   what it wants, orange where it's short; the enemy line dark red where defended, pink where undefended, grey where
 --   not seen enough; deep red an enemy-held choke off it; yellow the forward line.
 -- A legend is printed bottom left.
+-- Info boxes give the numbers behind an owner: hostile and allied threat (total, mobile, static) and eco. Hover over a
+-- region or near a choke for its boxes beside the cursor; zoomed in, every owned choke and region near the camera
+-- gets one beside it, as many as fit. Say "choke_overlay labels" to the AI to turn them off and on.
 --
 -- With several AI ally teams sending (spectating AI vs AI), it keeps showing one: the local player's, else the
 -- lowest ally team id, until that one clears or goes quiet. The ally team shown is printed bottom left.
 --
 -- Messages (CChokeOverlay::SendWidgetData in src/circuit/terrain/ChokeSides.cpp), "circuit_sides_<verb>:<ally team>"
--- then a body: hello, grid, state, control, lines, labels, clear.
+-- then a body: hello, grid, state, control, lines, info, clear.
 --------------------------------------------------------------------------------
 
 function widget:GetInfo()
@@ -90,9 +95,23 @@ local LINES = {  -- casings by line kind, drawn in this order: the last one draw
 
 local LIFT = 10  -- lines float this high over the ground
 local STEP = 16  -- elmos between line vertices, so lines follow the ground
-local LABEL_SIZE = 40
-local LABEL_RANGE = 3500  -- labels farther from the camera than this aren't drawn
 local STALE_FRAMES = 30 * 30  -- data the AI hasn't refreshed in 30 s isn't drawn
+
+local TEXT_SCALE_ROWS = 1080  -- text sizes are for a screen this many pixels high, and scale with it
+local LEGEND_SIZE = 13
+local BOX_SIZE = 12
+local BOX_RANGE = 2500  -- elmos from the camera: owned chokes and regions this close get boxes
+local BOX_MAX = 24  -- at most this many of those
+local HOVER_RANGE = 200  -- elmos from a gate: the cursor is at that choke
+local BOX_BACK = {0.03, 0.03, 0.05, 0.82}
+local BOX_DIM = {0.70, 0.70, 0.70}
+local BOX_ZERO = {0.42, 0.42, 0.42}
+local OWNERS = {  -- by owner letter
+	n = {name = "nobody's", colour = {0.80, 0.80, 0.80}},
+	o = {name = "ours", colour = {0.45, 0.65, 1.00}},
+	e = {name = "the enemy's", colour = {1.00, 0.35, 0.30}},
+	c = {name = "contested", colour = {0.85, 0.65, 1.00}},
+}
 
 --------------------------------------------------------------------------------
 -- State
@@ -102,6 +121,7 @@ local PREFIX = "circuit_sides_"
 local spGetGroundHeight = Spring.GetGroundHeight
 local spGetGameFrame = Spring.GetGameFrame
 local spGetCameraPosition = Spring.GetCameraPosition
+local spWorldToScreenCoords = Spring.WorldToScreenCoords
 local glVertex = gl.Vertex
 local floor, max, min, sqrt = math.floor, math.max, math.min, math.sqrt
 
@@ -430,15 +450,39 @@ function handlers.lines(team, body)
 	BuildLines(team)
 end
 
-function handlers.labels(team, body)
-	local labels = {}
+-- Per region and choke: key x z owner, then hostile mobile, static, eco, allied the same, then its title lines
+function handlers.info(team, body)
+	local regions, chokes = {}, {}
 	for _, record in ipairs(Records(body)) do
-		local x, z, text = record:match("^(%-?%d+) (%-?%d+) (.*)$")
-		if x then
-			labels[#labels + 1] = {tonumber(x), tonumber(z), (text:gsub("|", "\n"))}
+		local kind, index, x, z, owner, rest = record:match("^(%a)(%d+) (%-?%d+) (%-?%d+) (%a) (.*)$")
+		if kind and OWNERS[owner] then
+			local values = {}
+			for i = 1, 6 do
+				local value, tail = rest:match("^(%-?[%d%.]+) ?(.*)$")
+				if not value then
+					break
+				end
+				values[i], rest = tonumber(value), tail
+			end
+			if #values == 6 then
+				local lines = {}
+				for line in rest:gmatch("[^|]+") do
+					lines[#lines + 1] = line
+				end
+				local item = {
+					x = tonumber(x), z = tonumber(z), owner = owner, lines = lines, isChoke = (kind == "c"),
+					hostile = {mobile = values[1], static = values[2], eco = values[3]},
+					allied = {mobile = values[4], static = values[5], eco = values[6]},
+				}
+				if kind == "c" then
+					chokes[tonumber(index)] = item
+				else
+					regions[tonumber(index)] = item
+				end
+			end
 		end
 	end
-	team.labels = labels
+	team.regionInfo, team.chokeInfo = regions, chokes
 end
 
 function widget:RecvSkirmishAIMessage(aiTeam, dataStr)
@@ -564,49 +608,232 @@ local function MakeLegend()
 				.. w .. ", " .. casing.e .. "enemy line defended" .. w .. " / " .. casing.u .. "undefended" .. w .. " / "
 				.. casing.g .. "unseen" .. w .. ", " .. casing.h .. "enemy-held" .. w .. ", " .. casing.w .. "forward line",
 		"Posts at a gate's ends: towers reach it (" .. sides .. ", half and half both)",
-		"Choke gates: whose threat reaches them (" .. sides .. ", dashed both, grey nobody's)",
-		"Regions: who has units there (" .. sides .. ", striped both, clear nobody's)",
+		"Choke gates: owner by the guns that reach them (" .. sides .. ", dashed contested, grey nobody's)",
+		"Regions: owner by the units in them (" .. sides .. ", striped contested, clear nobody's)",
+		"Owner: the only side there, or the side with 1.5x the other's threat. Hover for the numbers",
 	}
 end
 local legend = nil
 
-function widget:DrawScreen()
-	if ShownTeam() and font then
-		legend = legend or MakeLegend()
-		font:Begin()
-		for i = 1, #legend do
-			font:Print(legend[i], 16, 16 + 18 * i, 13, "o")
-		end
-		font:Print("CircuitAI sides: ally team " .. shown, 16, 16, 14, "o")
-		font:End()
-	end
+local function TextScale()
+	local _, vsy = gl.GetViewSizes()
+	return max(0.75, vsy / TEXT_SCALE_ROWS)
 end
 
-function widget:DrawWorld()
-	local team = ShownTeam()
-	if not team or not team.labels or #team.labels == 0 or not font then
+-- Info boxes
+
+local function Amount(value)
+	if value >= 9999.5 then
+		return string.format("%.0fk", value / 1000)
+	elseif value >= 999.5 then
+		return string.format("%.1fk", value / 1000)
+	elseif value >= 99.95 or value == floor(value) then
+		return string.format("%.0f", value)
+	end
+	return string.format("%.1f", value)
+end
+
+-- A box's text and size, at font size 1: rows of {text, x, align}, x a fraction of the box's inner width or offset
+local function MakeBox(item)
+	local owner = OWNERS[item.owner]
+	local h, a = item.hostile, item.allied
+	local dim, zero = Ink(BOX_DIM), Ink(BOX_ZERO)
+	local function number(value, ink)
+		return (value > 0) and ((ink or "") .. Amount(value)) or (zero .. "0")
+	end
+	local rows = {
+		{label = Ink(owner.colour) .. (item.lines[1] or "") .. ": " .. owner.name},
+		{label = "", hostile = Ink(RED) .. "hostile", allied = Ink(BLUE) .. "allied"},
+		{label = "threat", hostile = number(h.mobile + h.static), allied = number(a.mobile + a.static)},
+		{label = dim .. "  mobile", hostile = number(h.mobile, dim), allied = number(a.mobile, dim)},
+		{label = dim .. "  static", hostile = number(h.static, dim), allied = number(a.static, dim)},
+		{label = "eco", hostile = number(h.eco), allied = number(a.eco)},
+	}
+	for i = 2, #item.lines do
+		rows[#rows + 1] = {label = dim .. item.lines[i]}
+	end
+	local labelWidth, columnWidth, lineWidth = 0, 0, 0
+	for i, row in ipairs(rows) do
+		local width = font:GetTextWidth(row.label)
+		if row.hostile then
+			labelWidth = max(labelWidth, width)
+			columnWidth = max(columnWidth, font:GetTextWidth(row.hostile), font:GetTextWidth(row.allied))
+		else
+			lineWidth = max(lineWidth, width)
+		end
+	end
+	local gap = 0.8
+	local tableWidth = labelWidth + 2 * (gap + columnWidth)
+	return {
+		rows = rows, colour = owner.colour,
+		width = max(tableWidth, lineWidth), hostileX = labelWidth + gap + columnWidth, alliedX = tableWidth,
+	}
+end
+
+-- The cursor's region and choke (the one whose gate is nearest, within HOVER_RANGE)
+local function Hovered(team)
+	local mx, my, _, _, _, offscreen = Spring.GetMouseState()
+	if offscreen then
 		return
 	end
+	local kind, pos = Spring.TraceScreenRay(mx, my, true)
+	if kind ~= "ground" or not pos then
+		return
+	end
+	local x, z = pos[1], pos[3]
+	local region, choke
+	if team.regionOf then
+		local cx, cz = floor(x / team.cell), floor(z / team.cell)
+		if cx >= 0 and cz >= 0 and cx < team.width and cz < team.height then
+			region = team.regionOf[cz * team.width + cx + 1]
+		end
+	end
+	local best = HOVER_RANGE * HOVER_RANGE
+	for index, item in pairs(team.chokeInfo or {}) do
+		local g = team.gates and team.gates[index + 1]
+		local ax, az, bx, bz = item.x, item.z, item.x, item.z
+		if g then
+			ax, az, bx, bz = g[1], g[2], g[3], g[4]
+		end
+		local dx, dz = bx - ax, bz - az
+		local length2 = dx * dx + dz * dz
+		local t = (length2 > 0) and max(0, min(1, ((x - ax) * dx + (z - az) * dz) / length2)) or 0
+		local ex, ez = ax + dx * t - x, az + dz * t - z
+		local d2 = ex * ex + ez * ez
+		if d2 < best then
+			best, choke = d2, index
+		end
+	end
+	return region, choke, mx, my
+end
+
+local function Overlaps(a, b)
+	return a[1] < b[3] and b[1] < a[3] and a[2] < b[4] and b[2] < a[4]
+end
+
+-- Boxes: the cursor's choke and region beside it, then owned chokes and regions near the camera, nearest first, each
+-- beside its point and where it overlaps no box already placed
+local function DrawBoxes(team)
+	if not (team.regionInfo or team.chokeInfo) then
+		return
+	end
+	local vsx, vsy = gl.GetViewSizes()
+	local size = floor(BOX_SIZE * TextScale() + 0.5)
+	local pad, lineHeight = floor(size * 0.5), floor(size * 1.3)
+	local placed = {}
+	local function boxOf(item)
+		item.box = item.box or MakeBox(item)
+		return item.box, item.box.width * size + 2 * pad, #item.box.rows * lineHeight + 2 * pad
+	end
+	local function place(item, left, top, anchorX, anchorY, isForced)
+		local box, width, height = boxOf(item)
+		left, top = max(0, min(vsx - width, left)), max(height, min(vsy, top))
+		local rect = {left, top - height, left + width, top}
+		if not isForced then
+			for i = 1, #placed do
+				if Overlaps(rect, placed[i].rect) then
+					return false
+				end
+			end
+		end
+		placed[#placed + 1] = {rect = rect, box = box, anchorX = anchorX, anchorY = anchorY}
+		return true
+	end
+
+	local region, choke, mx, my = Hovered(team)
+	local hoveredChoke = choke and team.chokeInfo[choke]
+	local hoveredRegion = region and region >= 0 and team.regionInfo and team.regionInfo[region]
+	local gapX, gapY = floor(size * 1.5), floor(size * 0.5)
+	if hoveredChoke then  -- above the cursor
+		local _, _, height = boxOf(hoveredChoke)
+		place(hoveredChoke, mx + gapX, my + gapY + height, nil, nil, true)
+	end
+	if hoveredRegion then  -- below it
+		place(hoveredRegion, mx + gapX, my - gapY, nil, nil, true)
+	end
+
 	local cx, cy, cz = spGetCameraPosition()
-	gl.DepthTest(false)
+	local near = {}
+	local function consider(item)
+		if item.owner ~= "n" and item ~= hoveredChoke and item ~= hoveredRegion then
+			local y = GroundY(item.x, item.z)
+			local dx, dy, dz = item.x - cx, y - cy, item.z - cz
+			local d2 = dx * dx + dy * dy + dz * dz
+			if d2 <= BOX_RANGE * BOX_RANGE then
+				near[#near + 1] = {item = item, y = y, rank = d2 + (item.isChoke and 0 or BOX_RANGE * BOX_RANGE)}
+			end
+		end
+	end
+	for _, item in pairs(team.chokeInfo or {}) do
+		consider(item)
+	end
+	for _, item in pairs(team.regionInfo or {}) do
+		consider(item)
+	end
+	table.sort(near, function(a, b) return a.rank < b.rank end)
+	local count = 0
+	for i = 1, #near do
+		if count >= BOX_MAX then
+			break
+		end
+		local item = near[i].item
+		local sx, sy, sz = spWorldToScreenCoords(item.x, near[i].y, item.z)
+		if sz and sz < 1 and sx >= 0 and sx <= vsx and sy >= 0 and sy <= vsy then
+			if place(item, sx + gapY, sy - gapY, sx, sy) then
+				count = count + 1
+			end
+		end
+	end
+	if #placed == 0 then
+		return
+	end
+
+	for i = 1, #placed do
+		local p = placed[i]
+		local r = p.rect
+		gl.Color(BOX_BACK)
+		gl.Rect(r[1], r[2], r[3], r[4])
+		gl.Color(p.box.colour[1], p.box.colour[2], p.box.colour[3], 0.9)
+		gl.Rect(r[1], r[4] - 2, r[3], r[4])  -- a bar along the top in the owner's colour
+		gl.Rect(r[1], r[2], r[1] + 1, r[4])
+		gl.Rect(r[3] - 1, r[2], r[3], r[4])
+		gl.Rect(r[1], r[2], r[3], r[2] + 1)
+		if p.anchorX then
+			gl.Rect(p.anchorX - 3, p.anchorY - 3, p.anchorX + 3, p.anchorY + 3)
+		end
+	end
 	font:Begin()
-	font:SetTextColor(1, 1, 1, 1)
-	font:SetOutlineColor(0, 0, 0, 1)
-	for i = 1, #team.labels do
-		local label = team.labels[i]
-		local x, z = label[1], label[2]
-		local y = GroundY(x, z) + 24
-		local dx, dy, dz = x - cx, y - cy, z - cz
-		if dx * dx + dy * dy + dz * dz <= LABEL_RANGE * LABEL_RANGE then
-			gl.PushMatrix()
-			gl.Translate(x, y, z)
-			gl.Billboard()
-			font:Print(label[3], 0, 0, LABEL_SIZE, "con")
-			gl.PopMatrix()
+	for i = 1, #placed do
+		local p = placed[i]
+		local left, top = p.rect[1] + pad, p.rect[4] - pad
+		for k, row in ipairs(p.box.rows) do
+			local y = top - k * lineHeight + floor((lineHeight - size) * 0.5)
+			font:Print(row.label, left, y, size, "o")
+			if row.hostile then
+				font:Print(row.hostile, left + p.box.hostileX * size, y, size, "ro")
+				font:Print(row.allied, left + p.box.alliedX * size, y, size, "ro")
+			end
 		end
 	end
 	font:End()
 	gl.Color(1, 1, 1, 1)
+end
+
+function widget:DrawScreen()
+	local team = ShownTeam()
+	if not team or not font then
+		return
+	end
+	DrawBoxes(team)
+	legend = legend or MakeLegend()
+	local size = floor(LEGEND_SIZE * TextScale() + 0.5)
+	local lineHeight = floor(size * 1.4)
+	font:Begin()
+	for i = 1, #legend do
+		font:Print(legend[i], 16, 16 + lineHeight * i, size, "o")
+	end
+	font:Print("CircuitAI sides: ally team " .. shown, 16, 16, size + 1, "o")
+	font:End()
 end
 
 function widget:Initialize()
