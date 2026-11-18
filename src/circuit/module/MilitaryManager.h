@@ -110,8 +110,8 @@ public:
 		int age;
 	};
 	const std::vector<SHeavySeen>& GetHeavySightings() { IsEnemyHeavySeen(0); return heavySightings; }
-	// A quarry of this unit (CAntiHeavyTask::IsQuarryFor; isMobileOnly: not a building) in radar or LOS within range
-	bool IsQuarryWithin(CCircuitUnit* unit, float range, bool isMobileOnly) const;
+	// A quarry of this unit (CAntiHeavyTask::IsQuarryFor) in radar or LOS within range
+	bool IsQuarryWithin(CCircuitUnit* unit, float range) const;
 	// Where an anti-heavy unit was sent home for repair: a park spot near it scores lower for a while (CAntiHeavyTask)
 	void NoteAhRetreat(const springai::AIFloat3& pos);
 	bool IsNearAhRetreat(const springai::AIFloat3& pos, float radius);
@@ -119,7 +119,7 @@ public:
 	 * The ANTIHEAVY log, every minute, per anti-heavy unit type: unit-seconds by activity (CAntiHeavyTask::GetActivity,
 	 * sampled every second) and event counts, for comparing builds
 	 */
-	enum class AhNote: int {HUNT = 0, PARK, ENGAGE, FLEE, SHOT, RADAR_ONLY, FLEE_START, RETREAT, SCOOT, DROP, _SIZE_};
+	enum class AhNote: int {HUNT = 0, PARK, ENGAGE, FLEE, SHOT, RADAR_ONLY, FLEE_END, RETREAT, SCOOT, DROP, _SIZE_};
 	void NoteAh(const CCircuitDef* cdef, AhNote note) { ++ahStats[cdef->GetId()][static_cast<int>(note)]; }
 	CRetreatTask* EnqueueRetreat();
 	// Static artillery with behaviour.json "target_tiers" (CPriorityArtyTask)
@@ -533,7 +533,7 @@ private:
 	void UpdateCaptureHide();
 	// An enemy heavy seen within AH_HUNT_FRAMES: anti-heavy units in attack and gathering groups (where they go while
 	// there is none) and support tasks leave for anti-heavy squads, every 2 s, if a heavy they can shoot is within their
-	// weapon range + 30 s of walking (IsQuarryWithin); not while their group is fleeing, and while it is fighting
+	// weapon range + 30 s of walking (CAntiHeavyTask::GetHuntReach); not while their group is fleeing, and while it is fighting
 	// only for one within their weapon range
 	void UpdateAhPull();
 	void UpdateAhStats();  // every second (NoteAh)

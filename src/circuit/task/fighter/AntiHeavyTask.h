@@ -16,11 +16,11 @@ namespace circuit {
 /*
  * Anti-heavy squads: at most antiheavy.max_group units of one type (2 by default), never merged, standing
  * antiheavy.spacing apart. They attack mobile heavies (and commanders, heavy buildings) they can shoot from a spot clear of
- * escorts (FindTarget, firing spots: IFighterTask::Attack). With no such heavy, types whose weapon outranges their LOS
- * (Lance, Merlin) park under cover (FallbackPark): at our towers or behind an attack group, near where heavies were seen.
- * The flee and every spot check share one danger model: per danger, the flee starts at its range + GetDangerStart, ends
- * a quarter of the flee margin further out, and spots are picked only outside range + GetPickMargin; cover (the cover
- * map, CAllyCover) counts only against dangers it reaches
+ * escorts (FindTarget, firing spots: IFighterTask::Attack). Types whose weapon outranges their LOS (Lance, Merlin) walk
+ * in only to heavies within GetHuntReach; with none, they park under cover (FallbackPark): at our towers or behind an
+ * attack group, near where heavies were seen. The flee and every spot check share one danger model: per danger, the
+ * flee starts at its range + GetDangerStart, ends a quarter of the flee margin further out, and spots are picked only
+ * outside range + GetPickMargin; cover (the cover map, CAllyCover) counts only against dangers it reaches
  */
 class CAntiHeavyTask: public ISquadTask {
 public:
@@ -43,6 +43,9 @@ public:
 	// For the ANTIHEAVY log: fleeing, engaged, parked (or walking to its park spot), else hunting
 	CMilitaryManager::AhNote GetActivity() const;
 	const springai::AIFloat3& GetParkPos() const { return park.pos; }  // invalid: none
+	// Weapon range + 30 s of walking: snipers walk in to heavies this near, and the army pull (UpdateAhPull) takes
+	// units for them
+	static float GetHuntReach(const CCircuitDef* cdef);
 
 protected:
 	// Cloaked units route like the rest (threat map, path_threat cap) unless their type has the cloak_route attribute
@@ -52,9 +55,10 @@ protected:
 	// heavy in its reach (we shoot first)
 	virtual bool IsFleeIgnored(CEnemyInfo* enemy) const override;
 	virtual float GetDangerStart(const CEnemyInfo* enemy) const override;  // max(half the flee margin, its speed x 1 s)
-	// Cover map on: a danger the cover doesn't reach (no cover where it stands) weighs more than any cover
+	// Cover map on (not on water): a danger the cover doesn't reach (no cover where it stands) weighs more than any cover
 	virtual float GetFleeThreat(CEnemyInfo* enemy) const override;
-	// Cover map on: the cover there (towers, attack groups, commander), net of enemyThreat, reaches allyThreat
+	// Cover map on (not on water, which it doesn't cover): the cover there (towers, attack groups, commander), net of
+	// enemyThreat, reaches allyThreat. Else our units around pos, as other squads
 	virtual bool IsFleeCovered(const springai::AIFloat3& pos, float enemyThreat, float allyThreat, float allyRadius,
 			CCircuitDef::RoleT ownRole) const override;
 	// antiheavy_max_group of the squad's unit type (else antiheavy.max_group): new units join only while there is room
@@ -67,12 +71,10 @@ protected:
 	virtual void OnScootStart(CCircuitUnit* unit) override;
 	// A unit near its park spot steps back towards it, so it stays in cover
 	virtual springai::AIFloat3 GetScootAnchor(CCircuitUnit* unit, const springai::AIFloat3& uPos) const override;
-	virtual int GetMoveState(CCircuitUnit* unit) const override;  // hold position while parked at towers
+	virtual int GetMoveState(CCircuitUnit* unit) const override;  // hold position while parked
 
-	// Firing spots (IFighterTask::Attack): outside the pick zones, with lines of fire as attack groups have. A sniper's
-	// must also be no hotter than a route may be; a hunter's needn't (it closes in, where the heavy's own threat is)
-	virtual float GetEscapeSafeThreat() const override;
-	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override;
+	// Firing spots (IFighterTask::Attack): safe (IsSpotSafe, the target's own threat aside), with lines of fire as
+	// attack groups have
 	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const override;
 	virtual bool IsFireSpotAllowed(const springai::AIFloat3& p) const override;
 
@@ -86,29 +88,34 @@ private:
 	static bool IsLongReload(const CCircuitDef* cdef);  // 5 s or more
 	bool IsQuarry(CEnemyInfo* enemy) const;  // IsQuarryFor the leader's type
 	bool IsCoverOn() const;
+	bool IsCoverMapAt(const springai::AIFloat3& pos) const;  // cover map on, and pos not on water (no cover there)
 	float GetCoverAt(const springai::AIFloat3& pos) const;  // CAllyCover's total there
-	// Ready damage of the other anti-heavy squads that target it (focus fire)
+	// Ready damage of the other anti-heavy squads that target it, from units within their weapon range (focus fire)
 	float GetOthersReadyDamage(CEnemyInfo* enemy) const;
 
 	void AttackTarget(int frame);
 	// Mines and aircraft: a plain attack order (mines: only as many as it takes)
-	bool AttackDirect(CCircuitUnit* unit, int frame, float& minePower);
+	void AttackDirect(CCircuitUnit* unit, int frame, float& minePower);
 
 	// Stand-off distance from a heavy: just outside its own threat ring on our threat layer, but never less than
 	// engageRange. Routes end there; within it the squad attacks
 	float GetStandOff(CEnemyInfo* enemy, float engageRange) const;
 	// The point on the line from ePos towards pos, dist from ePos (pos itself if it's nearer)
 	static springai::AIFloat3 GetPointTowards(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float dist);
-	// Pick zones of the enemies the flee doesn't ignore (range + GetPickMargin), for IsSpotSafe; every update
+	// The enemies the flee doesn't ignore, for IsSpotSafe; every update
 	void CollectDangers();
-	// No pick zone reaches spot, or the cover there covers the enemies that reach it (IsFleeCovered)
-	bool IsSpotSafe(const springai::AIFloat3& spot) const;
+	// The one test for stand-off, firing and park spots: no hotter, the threat exclThreat aside (the heavy's own), than
+	// a route there may be (GetPathThreatCap), and no pick zone reaches it, or the cover there covers the enemies that
+	// reach it (IsFleeCovered). isKept: the spot the squad already walks to, judged against the flee's end zones
+	bool IsSpotSafe(const springai::AIFloat3& spot, float exclThreat, bool isKept = false) const;
 	// Stand-off point for a heavy at ePos: the first walkable point from standOff outwards (one threat cell at a
 	// time, a few cells at most) towards pos whose threat is under the route cap; false if none
 	bool ProbeStandOff(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float standOff,
 			springai::AIFloat3& outPos) const;
 
+	// Also notes a mobile heavy within FIRE_HOLD_RANGE (fireHoldFrame)
 	bool FindTarget();
+	bool TakePath(const std::shared_ptr<PathInfo>& path);  // walk it, if it isn't empty
 	void ApplyTargetPath(const CQueryPathMulti* query);
 	void FallbackTargetEmpty();
 	void FallbackAttackSafe();
@@ -131,9 +138,9 @@ private:
 	bool IsSniper() const;  // weapon range over LOS (Lance, Merlin): not mines or aircraft
 	bool IsParker() const;  // a sniper, with the cover map on
 	// Candidates: tower groups (our and allied built armed statics by cell), on our side of them a third of their range
-	// back, and spots behind our attack groups. Walkable, under the route cap, safe (IsSpotSafe), covered, and not
-	// claimed by another squad. Score: cover x heavy pressure (sightings weighted down over keep_sec, full within our
-	// weapon range), halved per minute of walking, and halved near a recent retreat. Best first
+	// back, and spots behind our attack groups. Not at our base, walkable, safe (IsSpotSafe), covered, and not claimed
+	// by another squad. Score: cover (at most 3x flee_ally_threat) x heavy pressure (sightings weighted down over
+	// keep_sec, full within our weapon range), halved per minute of walking, and halved near a recent retreat. Best first
 	void FillParkSpots(std::vector<SParkSpot>& outSpots);
 	void AddParkSpot(const springai::AIFloat3& pos, const IFighterTask* group, std::vector<SParkSpot>& outSpots);
 	void SetPark(const SParkSpot& spot);  // claims it (GetParkPos) from now
@@ -142,18 +149,19 @@ private:
 	void FallbackPark();
 	void ApplyParkPath(const CQueryPathSingle* query);
 	void SpreadOut(CCircuitUnit* unit, int frame);  // parked: the second unit stands spacing to the side of the leader
-	// Hold position while parked at towers; hold fire (parkers) while a mobile heavy is within 1.25x weapon range
+	// Hold position while parked; hold fire (parkers) while a mobile heavy is within 1.25x weapon range
 	void UpdateHolds(int frame);
 	void ApplyHolds(CCircuitUnit* unit);
 
 	bool CheckFlee();  // antiheavy.flee_margin (UpdateFlee); true while fleeing
 	virtual void FleeFrom(const springai::AIFloat3& dangerPos) override;  // to the nearest safe park spot away from it
-	virtual void OnFleeEnd() override;  // stop walking the flee path (unless it leads to our park spot)
+	virtual void OnFleeEnd() override;  // stop walking the flee path (unless it leads to our park spot); counts the flee
 	void ApplyFleePath(const CQueryPathSingle* query);
 
 	struct SDanger {
 		springai::AIFloat3 pos;
-		float sqReach;  // (weapon range + GetPickMargin)^2
+		float sqPick;  // pick zone: (weapon range + GetPickMargin)^2
+		float sqKeep;  // flee end zone: (weapon range + GetDangerStart + a quarter of the flee margin)^2
 		float threat;  // GetFleeThreat
 	};
 	std::vector<SDanger> dangers;  // CollectDangers
@@ -168,7 +176,6 @@ private:
 	int fireHoldFrame = -FRAMES_PER_SEC * 60;  // a mobile heavy was last within 1.25x weapon range
 	bool isParkHold = false;  // units on hold position (UpdateHolds)
 	bool isFireHold = false;  // units on hold fire
-	bool wasFleeing = false;
 };
 
 } // namespace circuit

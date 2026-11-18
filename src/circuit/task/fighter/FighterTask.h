@@ -139,8 +139,8 @@ protected:
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)
 	bool isFireSpotChase = true;  // at a firing spot: true = Attack order (engine may chase), false = fight from the spot
-	// HOLD with the target in weapon range: true = an Attack order on it (it shoots that target first, even on hold fire),
-	// false = fight at the spot (whatever comes into range)
+	// HOLD with the target in weapon range: true = an attack on it from the unit's spot (it shoots that target first,
+	// even on hold fire, and stays there after), false = fight at the spot (whatever comes into range)
 	bool isHoldAttack = false;
 	// > 0: a unit already ordered on the target is re-ordered for a tile change only once the target moved
 	// this far (elmos) from where it was at the last orders; the repeat timer still applies

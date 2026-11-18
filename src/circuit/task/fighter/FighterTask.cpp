@@ -258,7 +258,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 				claim.pos = firePos;
 				fireSpots.erase(unit);
 				if (isHoldAttack && (firePos.SqDistance2D(tPos) <= SQUARE(order.range))) {
-					unit->Attack(target, targetTile, timeout);  // in range from here
+					unit->AttackFrom(firePos, target, targetTile, timeout);  // in range from here; stays here after
 				} else {
 					unit->HoldFire(firePos, target, targetTile, timeout);
 				}
@@ -533,8 +533,9 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		return FireSpot::RISKY;
 	}
 	// No spot in sight of the target that we walk to directly (or none we can stand on): hold rather than a direct
-	// Attack, which the engine would turn into a walk round to wherever it can fire from
-	if (isSight) {
+	// Attack, which the engine would turn into a walk round to wherever it can fire from. isHoldAttack (anti-heavy):
+	// also with no lifts, so it never walks in to a spot it doesn't allow
+	if (isSight || isHoldAttack) {
 		outPos = uPos;
 		return FireSpot::HOLD;
 	}

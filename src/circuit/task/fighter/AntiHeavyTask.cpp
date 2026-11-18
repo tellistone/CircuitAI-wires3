@@ -362,12 +362,17 @@ float CAntiHeavyTask::GetDangerStart(const CEnemyInfo* enemy) const
 bool CAntiHeavyTask::IsReloading(int frame) const
 {
 	CCircuitDef* cdef = leader->GetCircuitDef();
-	return !cdef->IsRoleMine() && (cdef->GetReloadTime() >= FRAMES_PER_SEC * 5) && !leader->IsWeaponReady(frame);
+	return !cdef->IsRoleMine() && IsLongReload(cdef) && !leader->IsWeaponReady(frame);
 }
 
 bool CAntiHeavyTask::IsLongReload(const CCircuitDef* cdef)
 {
 	return cdef->GetReloadTime() >= FRAMES_PER_SEC * 5;
+}
+
+float CAntiHeavyTask::GetHuntReach(const CCircuitDef* cdef)
+{
+	return cdef->GetMaxRange() + cdef->GetSpeed() * 30.f;
 }
 
 float CAntiHeavyTask::GetScootMargin(CCircuitUnit* unit) const
@@ -389,7 +394,7 @@ bool CAntiHeavyTask::IsUnitReloading(CCircuitUnit* unit, int frame) const
 	if (cdef->IsReloadScoot()) {
 		return ISquadTask::IsUnitReloading(unit, frame);
 	}
-	return (cdef->GetReloadTime() >= FRAMES_PER_SEC * 5) && unit->HasWeapon() && !unit->IsWeaponReady(frame);
+	return IsLongReload(cdef) && unit->HasWeapon() && !unit->IsWeaponReady(frame);
 }
 
 void CAntiHeavyTask::OnScootStart(CCircuitUnit* unit)
@@ -411,29 +416,26 @@ int CAntiHeavyTask::GetMoveState(CCircuitUnit* unit) const
 
 void CAntiHeavyTask::AttackTarget(int frame)
 {
-	CCircuitDef* cdef = leader->GetCircuitDef();
-	if (cdef->IsRoleMine() || cdef->IsAbleToFly()) {
-		float minePower = 0.f;
-		for (CCircuitUnit* unit : units) {
-			AttackDirect(unit, frame, minePower);  // they never scoot
-		}
-		return;
-	}
 	for (CCircuitUnit* unit : units) {
 		if (unit->GetDGunAct() != nullptr) {
 			unit->GetDGunAct()->StateActivate();
 		}
 	}
-	Attack(frame, true);  // firing spots (IFighterTask): spread out, outside the pick zones
+	CCircuitDef* cdef = leader->GetCircuitDef();
+	if (!cdef->IsRoleMine() && !cdef->IsAbleToFly()) {
+		Attack(frame, true);  // firing spots (IFighterTask): spread out, safe (IsSpotSafe)
+		return;
+	}
+	float minePower = 0.f;
+	for (CCircuitUnit* unit : units) {
+		AttackDirect(unit, frame, minePower);  // they never scoot
+	}
 }
 
-bool CAntiHeavyTask::AttackDirect(CCircuitUnit* unit, int frame, float& minePower)
+void CAntiHeavyTask::AttackDirect(CCircuitUnit* unit, int frame, float& minePower)
 {
 	if (unit->Blocker() != nullptr) {
-		return false;
-	}
-	if (unit->GetDGunAct() != nullptr) {
-		unit->GetDGunAct()->StateActivate();
+		return;
 	}
 	unit->GetTravelAct()->StateWait();
 
@@ -441,7 +443,7 @@ bool CAntiHeavyTask::AttackDirect(CCircuitUnit* unit, int frame, float& minePowe
 		const bool isAttack = (target->GetThreat() > minePower);
 		minePower += unit->GetCircuitDef()->GetPower();
 		if (!isAttack) {
-			return false;
+			return;
 		}
 	}
 	if (target->GetUnit()->IsCloaked()) {
@@ -449,7 +451,6 @@ bool CAntiHeavyTask::AttackDirect(CCircuitUnit* unit, int frame, float& minePowe
 	} else {
 		unit->Attack(target, frame + FRAMES_PER_SEC * 60);
 	}
-	return true;
 }
 
 bool CAntiHeavyTask::IsQuarry(CEnemyInfo* enemy) const
@@ -490,6 +491,11 @@ bool CAntiHeavyTask::IsCoverOn() const
 	return manager->GetCircuit()->GetMilitaryManager()->GetAllyCover()->IsOn();
 }
 
+bool CAntiHeavyTask::IsCoverMapAt(const AIFloat3& pos) const
+{
+	return IsCoverOn() && !manager->GetCircuit()->GetThreatMap()->IsWaterAt(pos);
+}
+
 float CAntiHeavyTask::GetCoverAt(const AIFloat3& pos) const
 {
 	return manager->GetCircuit()->GetMilitaryManager()->GetAllyCover()->GetCoverAt(pos, {nullptr, nullptr, 1.f}).GetSum();
@@ -497,13 +503,14 @@ float CAntiHeavyTask::GetCoverAt(const AIFloat3& pos) const
 
 float CAntiHeavyTask::GetFleeThreat(CEnemyInfo* enemy) const
 {
-	return (!IsCoverOn() || (GetCoverAt(enemy->GetPos()) > 0.f)) ? enemy->GetThreat() : std::numeric_limits<float>::max();
+	const AIFloat3& ePos = enemy->GetPos();
+	return (!IsCoverMapAt(ePos) || (GetCoverAt(ePos) > 0.f)) ? enemy->GetThreat() : std::numeric_limits<float>::max();
 }
 
 bool CAntiHeavyTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat, float allyThreat, float allyRadius,
 		CCircuitDef::RoleT ownRole) const
 {
-	if (!IsCoverOn()) {
+	if (!IsCoverMapAt(pos)) {
 		return ISquadTask::IsFleeCovered(pos, enemyThreat, allyThreat, allyRadius, ownRole);  // our units around pos
 	}
 	return GetCoverAt(pos) - enemyThreat >= allyThreat;
@@ -515,13 +522,8 @@ bool CAntiHeavyTask::CheckFlee()
 	// quarter of M further out; cover (IsFleeCovered, flee_ally_threat) calls it off
 	const CMilitaryManager::SAntiHeavyCfg& ahCfg = GetCfg();
 	const float margin = GetFleeMargin();
-	const bool isFlee = UpdateFlee((margin < 0.f) ? -1.f : 0.f, 0.25f * margin, true,
-			ahCfg.fleeAllyThreat, ahCfg.fleeAllyRadius, ROLE_TYPE(AH));
-	if (isFlee && !wasFleeing) {
-		manager->GetCircuit()->GetMilitaryManager()->NoteAh(leader->GetCircuitDef(), CMilitaryManager::AhNote::FLEE_START);
-	}
-	wasFleeing = isFlee;
-	return isFlee;
+	return UpdateFlee((margin < 0.f) ? -1.f : 0.f, 0.25f * margin, true, ahCfg.fleeAllyThreat, ahCfg.fleeAllyRadius,
+			ROLE_TYPE(AH));
 }
 
 void CAntiHeavyTask::FleeFrom(const AIFloat3& dangerPos)
@@ -553,11 +555,7 @@ void CAntiHeavyTask::FleeFrom(const AIFloat3& dangerPos)
 
 void CAntiHeavyTask::ApplyFleePath(const CQueryPathSingle* query)
 {
-	pPath = query->GetPathInfo();
-
-	if (!pPath->posPath.empty()) {
-		position = pPath->posPath.back();
-		ActivePath();
+	if (TakePath(query->GetPathInfo())) {
 		state = State::DISENGAGE;
 	} else {
 		FallbackBasePos(true);  // no path under the cap: base, then (last resort) through any threat
@@ -566,13 +564,14 @@ void CAntiHeavyTask::ApplyFleePath(const CQueryPathSingle* query)
 
 void CAntiHeavyTask::OnFleeEnd()
 {
-	walkInFrame = manager->GetCircuit()->GetLastFrame() + PARK_HOLD_FRAMES;  // the way back in leads to the same danger
+	CCircuitAI* circuit = manager->GetCircuit();
+	circuit->GetMilitaryManager()->NoteAh(leader->GetCircuitDef(), CMilitaryManager::AhNote::FLEE_END);
+	walkInFrame = circuit->GetLastFrame() + PARK_HOLD_FRAMES;  // the way back in leads to the same danger
 	if (utils::is_valid(park.pos)) {
 		return;  // keep walking to our park spot: it is safe, and covered
 	}
 	// Out of reach: don't walk the rest of the way to the safety spot
 	pPath = std::make_shared<PathInfo>();  // else OnUnitIdle -> Start() would resume the flee path after the Stop
-	CCircuitAI* circuit = manager->GetCircuit();
 	for (CCircuitUnit* unit : units) {
 		if (unit->Blocker() != nullptr) {
 			continue;  // busy with its own action (jump, ...)
@@ -643,7 +642,8 @@ AIFloat3 CAntiHeavyTask::GetPointTowards(const AIFloat3& ePos, const AIFloat3& p
 void CAntiHeavyTask::CollectDangers()
 {
 	dangers.clear();
-	if (GetFleeMargin() < 0.f) {
+	const float margin = GetFleeMargin();
+	if (margin < 0.f) {
 		return;
 	}
 	for (auto& kv : manager->GetCircuit()->GetEnemyInfos()) {
@@ -652,16 +652,21 @@ void CAntiHeavyTask::CollectDangers()
 		if (!IsGroundDanger(enemy, true, eRange) || IsFleeIgnored(enemy)) {
 			continue;  // as FindFleeDanger
 		}
-		dangers.push_back({enemy->GetPos(), SQUARE(eRange + GetPickMargin(enemy)), GetFleeThreat(enemy)});
+		dangers.push_back({enemy->GetPos(), SQUARE(eRange + GetPickMargin(enemy)),
+				SQUARE(eRange + GetDangerStart(enemy) + 0.25f * margin), GetFleeThreat(enemy)});
 	}
 }
 
-bool CAntiHeavyTask::IsSpotSafe(const AIFloat3& spot) const
+bool CAntiHeavyTask::IsSpotSafe(const AIFloat3& spot, float exclThreat, bool isKept) const
 {
+	const AIFloat3& leaderPos = leader->GetPos(manager->GetCircuit()->GetLastFrame());
+	if (GetTaskThreatExcl(leader, spot, exclThreat) > GetPathThreatCap(leader, leaderPos, {spot})) {
+		return false;
+	}
 	float threat = 0.f;
 	bool isReached = false;
 	for (const SDanger& danger : dangers) {
-		if (spot.SqDistance2D(danger.pos) <= danger.sqReach) {
+		if (spot.SqDistance2D(danger.pos) <= (isKept ? danger.sqKeep : danger.sqPick)) {
 			threat += danger.threat;
 			isReached = true;
 		}
@@ -674,24 +679,6 @@ bool CAntiHeavyTask::IsSpotSafe(const AIFloat3& spot) const
 		&& IsFleeCovered(spot, threat, ahCfg.fleeAllyThreat, ahCfg.fleeAllyRadius, ROLE_TYPE(AH));
 }
 
-float CAntiHeavyTask::GetEscapeSafeThreat() const
-{
-	return IsSniper() ? GetSafeThreat() : -1.f;
-}
-
-float CAntiHeavyTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) const
-{
-	// As the route cap (GetPathThreatCap), for this strength
-	const float capMod = GetPathThreatMod();
-	if (capMod < 0.f) {
-		return std::numeric_limits<float>::max();
-	}
-	CCircuitAI* circuit = manager->GetCircuit();
-	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	const float bonus = circuit->GetMilitaryManager()->GetBaseThrBonus(basePos.SqDistance2D(pos));
-	return strength * bonus / GetThrDistModAt(pos) * capMod;
-}
-
 bool CAntiHeavyTask::GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const
 {
 	return CAttackTask::GetSightLiftsFor(manager->GetCircuit()->GetMilitaryManager(), leader->GetCircuitDef(), enemy,
@@ -700,7 +687,7 @@ bool CAntiHeavyTask::GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, f
 
 bool CAntiHeavyTask::IsFireSpotAllowed(const AIFloat3& p) const
 {
-	return IsSpotSafe(p);
+	return IsSpotSafe(p, target->GetThreat());
 }
 
 bool CAntiHeavyTask::FindTarget()
@@ -721,7 +708,12 @@ bool CAntiHeavyTask::FindTarget()
 	// Stand-off routing goes with the route cap; without it (path_threat < 0, aircraft) the old goals: the heavies
 	const bool isStandOff = (GetPathThreatMod() >= 0.f);
 	const float pathSlack = isStandOff ? 2 * circuit->GetPathfinder()->GetSquareSize() : 0.f;  // routes end within this of a stand-off point
-	const bool isFleeOn = (GetFleeMargin() >= 0.f);
+	// Snipers walk in only to heavies they reach within 30 s (they park meanwhile); the others hunt across the map
+	const float sqHuntReach = IsSniper() ? SQUARE(GetHuntReach(cdef)) : std::numeric_limits<float>::max();
+	// The heavy the squad walks in to now (its route ends at that heavy's ring) is judged against the flee's end zones,
+	// not the pick zones, so a small shift in its escorts doesn't turn the squad back
+	const bool isWalkingIn = (State::ROAM == state) && !isParking && !pPath->posPath.empty();
+	const float goalSlack = pathSlack + 2 * threatMap->GetSquareSize();
 	bool isRadarOnly = false;
 
 	// Best first: mobile, the target we have, one other squads shoot at too (focus fire), nearest
@@ -738,6 +730,11 @@ bool CAntiHeavyTask::FindTarget()
 		}
 		const AIFloat3& ePos = enemy->GetPos();
 		const float sqDist = pos.SqDistance2D(ePos);
+		if (enemy->GetCircuitDef()->IsMobile() && enemy->IsInRadarOrLOS()
+			&& (sqDist <= SQUARE(FIRE_HOLD_RANGE * weaponRange)))
+		{
+			fireHoldFrame = frame;  // UpdateHolds
+		}
 		// A long-reload weapon fires at what we see, not at a radar blip
 		const bool isSeen = !IsLongReload(cdef) || enemy->IsInLOS();
 		isRadarOnly |= !isSeen && (sqDist <= SQUARE(weaponRange));
@@ -746,17 +743,19 @@ bool CAntiHeavyTask::FindTarget()
 		// so a heavy at the edge of range isn't dropped and picked again every check
 		const float reach = (enemy == target) ? weaponRange * 1.2f : weaponRange;
 		const bool isInReach = isSeen && (sqDist <= SQUARE(reach));
-		if ((!isInReach && (frame < walkInFrame))  // just fled: no walk back in for a while
+		// No walk in for a while after a flee, nor (snipers) to a heavy beyond GetHuntReach
+		if ((!isInReach && ((frame < walkInFrame) || (sqDist > sqHuntReach)))
 			|| (ePos.y - map->GetElevationAt(ePos.x, ePos.z) > weaponRange)
 			|| (!isStandOff && !terrainMgr->CanMoveToPos(area, ePos)))
 		{
 			continue;
 		}
 		// Its escorts against our power. Not for one that can't shoot back where we stand (the spot checks below)
+		const float exclThreat = enemy->GetThreat();
 		float eRange;
 		const bool isOutranged = !IsGroundDangerDef(enemy->GetCircuitDef(), true, eRange) || (eRange < weaponRange);
 		if (!isInReach && !isOutranged
-			&& (maxPower / GetThrDistModAt(ePos) <= GetTaskThreatExcl(leader, ePos, enemy->GetThreat())))
+			&& (maxPower / GetThrDistModAt(ePos) <= GetTaskThreatExcl(leader, ePos, exclThreat)))
 		{
 			continue;
 		}
@@ -778,10 +777,13 @@ bool CAntiHeavyTask::FindTarget()
 			}
 			standOff = ePos.distance2D(standPos);  // engage once there
 		}
-		// Flee on: skip heavies we'd have to attack from inside a pick zone (escorts, riots, ...), else the squad walks
-		// in, flees, and walks back in. Where the attack ends up (weapon range) and where the route ends
-		if (isFleeOn && !isInReach
-			&& (!IsSpotSafe(GetPointTowards(ePos, pos, weaponRange * 0.9f)) || !IsSpotSafe(standPos)))
+		// Skip heavies we'd have to attack from a spot that isn't safe (escorts, riots, turrets), else the squad walks
+		// in, flees, and walks back in; firing spots pass the same test. Where the attack ends up (0.9x weapon range)
+		// and where the route ends. Mines and aircraft attack directly, as before
+		const bool isKept = isWalkingIn && (position.SqDistance2D(ePos) <= SQUARE(standOff + goalSlack));
+		if (!isOldEngage && !isInReach
+			&& (!IsSpotSafe(GetPointTowards(ePos, pos, weaponRange * 0.9f), exclThreat, isKept)
+				|| !IsSpotSafe(standPos, exclThreat, isKept)))
 		{
 			continue;
 		}
@@ -816,28 +818,36 @@ bool CAntiHeavyTask::FindTarget()
 float CAntiHeavyTask::GetOthersReadyDamage(CEnemyInfo* enemy) const
 {
 	const int frame = manager->GetCircuit()->GetLastFrame();
+	const AIFloat3& ePos = enemy->GetPos();
 	float damage = 0.f;
 	for (IFighterTask* task : enemy->GetTasks()) {
 		if ((task == this) || (task->GetFightType() != FightType::AH)) {
 			continue;
 		}
 		for (CCircuitUnit* unit : task->GetAssignees()) {
-			if (unit->IsWeaponReady(frame)) {
-				damage += unit->GetCircuitDef()->GetShotDamage();
+			CCircuitDef* udef = unit->GetCircuitDef();
+			if (unit->IsWeaponReady(frame) && (unit->GetPos(frame).SqDistance2D(ePos) <= SQUARE(udef->GetMaxRange()))) {
+				damage += udef->GetShotDamage();
 			}
 		}
 	}
 	return damage;
 }
 
+bool CAntiHeavyTask::TakePath(const std::shared_ptr<PathInfo>& path)
+{
+	pPath = path;
+	if (pPath->posPath.empty()) {
+		return false;
+	}
+	position = pPath->posPath.back();
+	ActivePath();
+	return true;
+}
+
 void CAntiHeavyTask::ApplyTargetPath(const CQueryPathMulti* query)
 {
-	pPath = query->GetPathInfo();
-
-	if (!pPath->posPath.empty()) {
-		position = pPath->posPath.back();
-		ActivePath();
-	} else {
+	if (!TakePath(query->GetPathInfo())) {
 		FallbackTargetEmpty();
 	}
 }
@@ -918,10 +928,10 @@ void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group,
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const AIFloat3& leaderPos = leader->GetPos(circuit->GetLastFrame());
-	if (!circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), pos)
-		|| (GetTaskThreatAt(leader, pos) > GetPathThreatCap(leader, leaderPos, {pos}))
-		|| !IsSpotSafe(pos))
+	// Not on our factory: spots near the base fold onto it (GetPointTowards)
+	if ((pos.SqDistance2D(circuit->GetSetupManager()->GetBasePos()) < SQUARE(PARK_CELL / 2.f))
+		|| !circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), pos)
+		|| !IsSpotSafe(pos, 0.f))
 	{
 		return;
 	}
@@ -938,15 +948,19 @@ void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group,
 	}
 
 	// Heavy pressure: recent sightings (weighted down over keep_sec), full within our weapon range of the spot
+	const CMilitaryManager::SAntiHeavyCfg& ahCfg = GetCfg();
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const float range = cdef->GetMaxRange();
-	const float keepFrames = GetCfg().keepFrames;
+	const float keepFrames = ahCfg.keepFrames;
 	float pressure = 0.f;
 	for (const CMilitaryManager::SHeavySeen& seen : militaryMgr->GetHeavySightings()) {
 		pressure += std::max(0.f, 1.f - seen.age / keepFrames) * std::min(1.f, range / std::max(pos.distance2D(seen.pos), 1.f));
 	}
+	// Cover past 3x what calls off a flee adds nothing: the pressure decides between well-covered spots
+	const float usedCover = (ahCfg.fleeAllyThreat > 0.f) ? std::min(cover, 3.f * ahCfg.fleeAllyThreat) : cover;
+	const AIFloat3& leaderPos = leader->GetPos(circuit->GetLastFrame());
 	const float walkSec = leaderPos.distance2D(pos) / std::max(cdef->GetSpeed(), 1.f);
-	float score = cover * pressure / (1.f + walkSec / PARK_WALK_SEC);
+	float score = usedCover * pressure / (1.f + walkSec / PARK_WALK_SEC);
 	if (militaryMgr->IsNearAhRetreat(pos, PARK_CELL / 2.f)) {
 		score *= 0.5f;  // one of ours was hit near there lately
 	}
@@ -1011,12 +1025,7 @@ void CAntiHeavyTask::FallbackPark()
 
 void CAntiHeavyTask::ApplyParkPath(const CQueryPathSingle* query)
 {
-	pPath = query->GetPathInfo();
-
-	if (!pPath->posPath.empty()) {
-		position = pPath->posPath.back();
-		ActivePath();
-	} else {
+	if (!TakePath(query->GetPathInfo())) {
 		ClearPark();  // no way there under the cap
 		FallbackAttackSafe();
 	}
@@ -1029,7 +1038,7 @@ void CAntiHeavyTask::SpreadOut(CCircuitUnit* unit, int frame)
 	const AIFloat3& uPos = unit->GetPos(frame);
 	const float spacing = GetCfg().spacing;
 	const float sqDist = uPos.SqDistance2D(leaderPos);
-	if ((unit == leader) || ((sqDist >= SQUARE(spacing)) && (sqDist <= SQUARE(2.f * spacing)))) {
+	if ((unit == leader) || (spacing <= 0.f) || ((sqDist >= SQUARE(spacing)) && (sqDist <= SQUARE(2.f * spacing)))) {
 		return;
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -1051,19 +1060,13 @@ void CAntiHeavyTask::SpreadOut(CCircuitUnit* unit, int frame)
 
 void CAntiHeavyTask::UpdateHolds(int frame)
 {
-	// Hold position while parked at towers (the tower spot is the cover); parkers hold fire while a mobile heavy is
-	// near, so the long reload isn't spent on chaff (the attack on a target still fires)
-	const bool isParker = IsParker();
-	const float range = leader->GetCircuitDef()->GetMaxRange();
-	if (isParker && manager->GetCircuit()->GetMilitaryManager()->IsQuarryWithin(leader, FIRE_HOLD_RANGE * range, true)) {
-		fireHoldFrame = frame;
-	}
-	const bool isMoveHold = isParking && (park.group == nullptr);
-	const bool isFireHoldNow = isParker && (frame < fireHoldFrame + FIRE_HOLD_FRAMES);
-	if ((isMoveHold == isParkHold) && (isFireHoldNow == isFireHold)) {
+	// Parked: hold position (the spot is the cover). Parkers hold fire while a mobile heavy is near (FindTarget), so
+	// the long reload isn't spent on chaff (the attack on a target still fires)
+	const bool isFireHoldNow = IsParker() && (frame < fireHoldFrame + FIRE_HOLD_FRAMES);
+	if ((isParking == isParkHold) && (isFireHoldNow == isFireHold)) {
 		return;
 	}
-	isParkHold = isMoveHold;
+	isParkHold = isParking;
 	isFireHold = isFireHoldNow;
 	for (CCircuitUnit* unit : units) {
 		ApplyHolds(unit);
@@ -1099,12 +1102,7 @@ void CAntiHeavyTask::FallbackAttackSafe()
 
 void CAntiHeavyTask::ApplyAttackSafe(const CQueryPathMulti* query)
 {
-	pPath = query->GetPathInfo();
-
-	if (!pPath->posPath.empty()) {
-		position = pPath->posPath.back();
-		ActivePath();
-	} else {
+	if (!TakePath(query->GetPathInfo())) {
 		FallbackStaticSafe();
 	}
 }
@@ -1123,12 +1121,7 @@ void CAntiHeavyTask::FallbackStaticSafe()
 
 void CAntiHeavyTask::ApplyStaticSafe(const CQueryPathMulti* query)
 {
-	pPath = query->GetPathInfo();
-
-	if (!pPath->posPath.empty()) {
-		position = pPath->posPath.back();
-		ActivePath();
-	} else {
+	if (!TakePath(query->GetPathInfo())) {
 		FallbackBasePos(true);
 	}
 }
@@ -1143,12 +1136,10 @@ void CAntiHeavyTask::FallbackBasePos(bool isCapped)
 
 void CAntiHeavyTask::ApplyBasePos(const CQueryPathSingle* query, bool isCapped)
 {
-	pPath = query->GetPathInfo();
-
-	if (!pPath->posPath.empty()) {
-		position = pPath->posPath.back();
-		ActivePath();
-	} else if (isCapped && (GetPathThreatMod() >= 0.f)) {
+	if (TakePath(query->GetPathInfo())) {
+		return;
+	}
+	if (isCapped && (GetPathThreatMod() >= 0.f)) {
 		FallbackBasePos(false);  // getting home matters more than the cap: last try through any threat
 	} else {
 		FallbackCommPos();

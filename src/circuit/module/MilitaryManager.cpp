@@ -978,7 +978,7 @@ void CMilitaryManager::ReadConfig()
 	antiHeavy.fleeAllyThreat = ahCfg.get("flee_ally_threat", (antiHeavy.fleeMargin >= 0.f) ? 10.f : -1.f).asFloat();
 	antiHeavy.fleeAllyRadius = std::max(0.f, ahCfg.get("flee_ally_radius", 500.f).asFloat());
 	const float keepSec = ahCfg.get("keep_sec", 30.f).asFloat();
-	antiHeavy.keepFrames = (keepSec < 0.f) ? std::numeric_limits<int>::max() : int(keepSec * FRAMES_PER_SEC);
+	antiHeavy.keepFrames = (keepSec < 0.f) ? std::numeric_limits<int>::max() : std::max(1, int(keepSec * FRAMES_PER_SEC));
 	antiHeavy.spacing = std::max(0.f, ahCfg.get("spacing", 150.f).asFloat());
 	antiHeavy.maxGroup = std::max(0, ahCfg.get("max_group", 2).asInt());
 
@@ -3978,23 +3978,23 @@ void CMilitaryManager::UpdateAhPull()
 		// Fighting: only for a heavy in weapon range (the group's targets are chaff to a long-reload anti-heavy weapon;
 		// losing it now could tip the fight). Else one it reaches within 30 s, so a heavy across the map doesn't
 		// empty the army. The next pass takes the others
-		const float range = unit->GetCircuitDef()->GetMaxRange();
-		const float reach = (task->GetState() == IUnitTask::State::ENGAGE) ? range
-				: range + unit->GetCircuitDef()->GetSpeed() * 30.f;
-		if (IsQuarryWithin(unit, reach, false)) {
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		const float reach = (task->GetState() == IUnitTask::State::ENGAGE) ? cdef->GetMaxRange()
+				: CAntiHeavyTask::GetHuntReach(cdef);
+		if (IsQuarryWithin(unit, reach)) {
 			AssignTask(unit, EnqueueAntiHeavy(unit));
 		}
 	}
 }
 
-bool CMilitaryManager::IsQuarryWithin(CCircuitUnit* unit, float range, bool isMobileOnly) const
+bool CMilitaryManager::IsQuarryWithin(CCircuitUnit* unit, float range) const
 {
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= SQUARE(range))
-			&& CAntiHeavyTask::IsQuarryFor(cdef, enemy) && (!isMobileOnly || enemy->GetCircuitDef()->IsMobile()))
+			&& CAntiHeavyTask::IsQuarryFor(cdef, enemy))
 		{
 			return true;
 		}
@@ -4089,7 +4089,7 @@ void CMilitaryManager::LogAhStats()
 				" %i shots, %i s with a radar-only heavy in range, %i flees, %i retreats, %i scoots, %i targets dropped",
 				circuit->GetCircuitDef(kv.first)->GetDef()->GetName(), total, at(AhNote::HUNT) * pct,
 				at(AhNote::PARK) * pct, at(AhNote::ENGAGE) * pct, at(AhNote::FLEE) * pct, at(AhNote::SHOT),
-				at(AhNote::RADAR_ONLY), at(AhNote::FLEE_START), at(AhNote::RETREAT), at(AhNote::SCOOT), at(AhNote::DROP));
+				at(AhNote::RADAR_ONLY), at(AhNote::FLEE_END), at(AhNote::RETREAT), at(AhNote::SCOOT), at(AhNote::DROP));
 	}
 	ahStats.clear();
 }
