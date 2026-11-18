@@ -142,6 +142,8 @@ public:
 		}
 	};
 	enum class Openness: char {CHOKEPOINTED = 0, SEMI_OPEN = 1, OPEN = 2};
+	// A region's side of the current and enemy lines (UpdateLines)
+	enum class LineSide: char {UNKNOWN = 0, OURS = 1, ENEMY = 2, BETWEEN = 3};
 
 public:
 	CChokeMap(CCircuitAI* circuit);
@@ -206,6 +208,11 @@ public:
 	// which every cheapest cut between the sides passes (empty while the lines don't touch). Ascending
 	const std::vector<int>& GetEnemyLine() const { return enemyLine; }
 	const std::vector<int>& GetFrontLine() const { return frontLine; }
+	// Per region: behind the current line (ours), beyond the enemy line (enemy), between the two (ground either side
+	// could hold as cheaply), or unknown (it can't reach both sides). The side flags before the lines exist
+	LineSide GetLineSide(int region) const {
+		return ((region >= 0) && (region < (int)lineSides.size())) ? lineSides[region] : LineSide::UNKNOWN;
+	}
 	// Per region: the chokes of the cut nearest it from our territory (E), up to choke.entrances of them
 	const std::vector<int>& GetEntrancesFromUs(int region) const;
 
@@ -364,6 +371,7 @@ private:
 	SCutCache sideCuts;  // from the enemy side, up to choke.entrances (AnalyzePoints)
 	mutable SCutCache entranceCuts;  // from our regions (GetEntrancesFromUs)
 	std::vector<int> currentLine, forwardLine, enemyLine, frontLine;
+	std::vector<LineSide> lineSides;  // per region index
 	float openness;
 	Openness opennessBand;
 	bool isOpennessSet;

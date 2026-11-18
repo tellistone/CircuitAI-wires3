@@ -135,7 +135,7 @@ players are ignored. A spectator may use it only in games with no human opponent
 |---|---|
 | `choke_overlay` or `choke_overlay toggle` | Shows or hides the overlay. The first time, it builds the analysis if no feature asked for it. The answer gives the map's openness and band. |
 | `choke_overlay next` | Shows the next layer. |
-| `choke_overlay <layer>` | Shows that layer: `chokes`, `pockets`, `lines`, `ranks`, `traffic`, `spots`, `radar`, `regions` or `turrets`. |
+| `choke_overlay <layer>` | Shows that layer: `chokes`, `pockets`, `lines`, `ranks`, `traffic`, `spots`, `radar`, `regions`, `sides` or `turrets`. |
 | `choke_overlay <movement class>` | Shows one movement class's own graph on the `chokes` and `regions` layers. Use a unit def name (`cloakraid`) or a class name. An unknown name lists the classes. |
 | `choke_overlay all` | Back to the threat graph. |
 | `choke_overlay labels` | Turns the text labels on or off. They are map markers, which human allies see too, so they start off when the AI has human allies. |
@@ -159,10 +159,26 @@ enemy types: TANK3(gating 0.60) TKBOT3(promoted to gating 0.35)`.
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
 | `regions` | The graph itself: region centres linked to their chokes. On the threat graph, our side is green and the enemy's side red. |
+| `sides` | Who holds each region, on the threat graph whatever class is shown. With the widget (below): regions behind our current line tinted blue, beyond the enemy line red, both stronger in that side's territory; contested regions striped blue and red; dashed region borders; the current line blue, the enemy line red, the front line white, the forward line yellow; orange arrows from enemy armies to the current-line chokes they press, thick to the nearest. Without it: the same lines, a cross per region (blue, red, or half of each when contested, bigger in territory) and the arrows. Labels give each region's side, why it's contested and the enemy threat there, and the enemy-line chokes' defence. |
 | `turrets` | The last turret order: its radius ring and centre white, the candidates that passed the hard rules grey, the best green, the next 4 cyan, and those outside our buildings' influence dark red. Tested spots are labelled with their value ÷ cost and F, the chosen one with its def and the four terms. |
 
-Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`) redraw every 10 s. The others redraw when the
-analysis changes.
+Layers that other modules feed (`lines`, `ranks`, `spots`, `radar`, `sides` and `turrets`) redraw every 10 s. The others redraw
+when the analysis changes.
+
+### The sides layer and its widget
+
+A region's side comes from the cut that gives the current and enemy lines (`CChokeMap::GetLineSide`): what our
+territory reaches without crossing the current line is ours, what enemy territory reaches without crossing the enemy
+line is the enemy's, and what both reach across them is between the lines, ground either side could hold as cheaply.
+Before both territories (or sides) are known it is the side flags. The layer also calls a region contested when both
+sides' armed units were there in the last 3 minutes (enemy towers until seen dead; ours tracked every 2 s while the
+overlay is on), or when both sides have buildings there. Nothing but the overlay reads these.
+
+The fills need the `dbg_circuit_sides.lua` widget in `util/LuaUI/Widgets/`. Copy it into the Zero-K data folder's
+`LuaUI/Widgets/` on the machine that runs the AI (local widgets are on by default). The AI finds it through
+`Lua_callUI` each time it draws, so it works if the widget is turned on mid-game, and the figure version comes back
+if it's turned off. In games with human opponents the AI never calls it, as the machine running the AI may be
+theirs. The widget hides data the AI hasn't refreshed in 30 s. The messages are described in `ChokeSides.cpp`.
 
 ## How the features decide
 

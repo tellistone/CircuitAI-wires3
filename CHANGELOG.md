@@ -7,6 +7,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **`choke_overlay sides`: who holds each region.** A new overlay layer colours the map by the current and enemy
+  lines' cut: regions behind our current line blue, beyond the enemy line red (stronger in that side's territory),
+  and contested regions striped blue and red. Contested means between the two lines, both sides' armed units there in
+  the last 3 minutes, or both sides' buildings there. It also draws dashed region borders, the lines as segments
+  across their gaps (current blue, enemy red, front white, forward yellow), and orange arrows from enemy armies to the
+  current-line chokes they press (thick to the nearest, thin to the half-share ones). The fills are drawn by a LuaUI
+  widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through `Lua_callUI` on the machine that
+  runs it, never in games with human opponents. Without the widget the layer draws the lines, a cross per region and
+  the arrows with map figures. Nothing outside the overlay reads the new region sides (`CChokeMap::GetLineSide`) or
+  the per-choke pressure (`CFrontline::GetPresses`).
+
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
   fixed offset; the offset stays the fallback, and for shields, storages and AA. A scored hub tower's site goes on the

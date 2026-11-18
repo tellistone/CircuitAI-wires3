@@ -444,6 +444,33 @@ void CChokeMap::UpdateLines()
 	std::set_intersection(currentLine.begin(), currentLine.end(), enemyLine.begin(), enemyLine.end(),
 			std::back_inserter(frontLine));
 	forwardLine = graph.CutFrom(enemySide, ours, capacity, NO_LIMIT).nearTarget;
+
+	// Line sides: what our territory reaches without crossing the current line is behind it, what enemy territory
+	// reaches without crossing the enemy line is beyond it (the cut's own sides), and what both reach across them is
+	// between. With no cut yet, the side flags
+	const size_t regionCount = graph.GetRegions().size();
+	lineSides.assign(regionCount, LineSide::UNKNOWN);
+	if (ours.empty() || theirs.empty()) {
+		for (size_t r = 0; r < regionCount; ++r) {
+			lineSides[r] = isOurSide[r] ? LineSide::OURS : isEnemySide[r] ? LineSide::ENEMY : LineSide::UNKNOWN;
+		}
+	} else {
+		auto blockedBy = [this](const std::vector<int>& line) {
+			std::vector<bool> isBlocked(graph.GetChokes().size(), false);
+			for (int c : line) {
+				isBlocked[c] = true;
+			}
+			return isBlocked;
+		};
+		const std::vector<bool> isBehind = graph.ReachableFrom(ours, blockedBy(currentLine));
+		const std::vector<bool> isBeyond = graph.ReachableFrom(theirs, blockedBy(enemyLine));
+		const std::vector<bool> isOursReached = graph.ReachableFrom(ours, {});
+		const std::vector<bool> isTheirsReached = graph.ReachableFrom(theirs, {});
+		for (size_t r = 0; r < regionCount; ++r) {
+			lineSides[r] = isBehind[r] ? LineSide::OURS : isBeyond[r] ? LineSide::ENEMY
+					: (isOursReached[r] && isTheirsReached[r]) ? LineSide::BETWEEN : LineSide::UNKNOWN;
+		}
+	}
 	// Entrances from us: found when first asked, as only regions with enemy units are
 	entranceCuts.Reset(std::move(ours), ChokeCapacity(1.f, 1.f), config.entrances, graph.GetRegions().size());
 }

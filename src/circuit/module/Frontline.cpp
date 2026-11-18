@@ -204,6 +204,7 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 {
 	front.clear();
+	presses.clear();
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
@@ -247,6 +248,8 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 				: (behind[choke.regionB] ? choke.regionA : -1);
 	}
 	std::vector<float> wanted(line.size(), 0.f), wantedCost(line.size(), 0.f);
+	std::map<std::pair<int, int>, size_t> pressOf;  // (line index, region) -> index in presses
+	std::vector<float> pressWeight;
 	for (const SArmed& e : armed) {
 		const int region = e.isMobile ? chokeMap->GetRegionAt(e.pos) : -1;
 		if (region < 0) {
@@ -270,7 +273,22 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 			const float share = WANT_MARGIN * ((i == nearest) ? 1.f : WANT_OTHER);
 			wanted[i] += e.threat * share;
 			wantedCost[i] += e.cost * share;
+
+			auto it = pressOf.find(std::make_pair((int)i, region));
+			if (it == pressOf.end()) {
+				it = pressOf.emplace(std::make_pair((int)i, region), presses.size()).first;
+				presses.push_back({chokes[line[i]].id, graph.GetRegions()[region].id, ZeroVector, 0.f, 0.f});
+				pressWeight.push_back(0.f);
+			}
+			SPress& press = presses[it->second];
+			((i == nearest) ? press.full : press.half) += e.threat;
+			const float weight = std::max(e.threat, 1e-3f);
+			press.from += e.pos * weight;
+			pressWeight[it->second] += weight;
 		}
+	}
+	for (size_t p = 0; p < presses.size(); ++p) {
+		presses[p].from /= pressWeight[p];
 	}
 	for (size_t i = 0; i < line.size(); ++i) {
 		const CRegionGraph::SChoke& choke = chokes[line[i]];
