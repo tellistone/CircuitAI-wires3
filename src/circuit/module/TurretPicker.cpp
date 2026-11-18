@@ -71,6 +71,7 @@ void CTurretPicker::ReadConfig()
 	c.view = turret.get("view", c.view).asFloat();
 	c.height = turret.get("height", c.height).asFloat();
 	c.choke = turret.get("choke", c.choke).asFloat();
+	c.chokeDepth = turret.get("choke_depth", c.chokeDepth).asFloat();
 	c.isAfterFlee = turret.get("after_flee", c.isAfterFlee).asBool();
 	c.afterFleeSince = turret.get("after_flee_since", c.afterFleeSince).asFloat();
 	c.defendedRadius = turret.get("defended_radius", c.defendedRadius).asFloat();
@@ -599,6 +600,7 @@ CTurretValue::SParams CTurretPicker::MakeParams(CCircuitDef* def) const
 	p.heightBonus = config.height;
 	p.front = config.front;
 	p.view = config.view;
+	p.chokeDepth = config.chokeDepth;
 	p.minBase = config.minValue * def->GetCostM();
 	p.refineStep = CELL * 0.25f;
 	return p;

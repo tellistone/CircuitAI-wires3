@@ -59,6 +59,7 @@ public:
 		float heightCap = 150.f;  // elmos above the targets that earn all of heightBonus
 		float front = 1.f;  // turret.front
 		float view = 1.f;  // turret.view
+		float chokeDepth = 0.f;  // turret.choke_depth: C x (1 - this x the choke's distance / range)
 		float travel = 1000.f;  // constructor walk that halves a spot's rank
 		float minBase = 0.f;  // turret.min_value x the def's cost
 		float refineStep = 16.f;  // elmos to each corner of the best few

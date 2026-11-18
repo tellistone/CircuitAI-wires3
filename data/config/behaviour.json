@@ -215,6 +215,7 @@
 	"view": 1.0,  // a spot ranks up to 1 + this x its value by the share of its range circle's ground in a clear line of fire (V), so a cliff top over the ground below beats its foot; ranks only, never decides worth; 0 = off
 	"height": 0.5,  // the most a spot's height adds to its value (all of it 150 elmos above its targets)
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
+	"choke_depth": 1.0,  // C x (1 - this x the choke's distance / range): 1 = full on the choke, nothing at the edge of range; 0 = flat anywhere in range
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
 	// the callers. Claw mines and missiles are left out too, by customParams.mobilebuilding
 	"not_defence": ["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"],  // Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity, Antinuke

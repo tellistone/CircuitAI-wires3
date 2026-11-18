@@ -601,6 +601,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **The turret picker's choke bonus grows with how deep the choke is in range** (`turret.choke_depth`, default 1).
+  C was worth all of `turret.choke` anywhere in range, as every target is, so a turret only had to reach the choke
+  with its outer range, and walk, threat, view and the targets behind it kept it there. Now C is `turret.choke` ×
+  (1 − depth × the choke's distance ÷ range): all of it on the choke, nothing at the edge. 0 keeps the old flat bonus.
+
 - **Anti-heavy squads hunt, park and fire more** (`antiheavy` block: new `keep_sec` 30, `spacing` 150, `max_group` 2).
   They ignored heavies they could shoot, idled in small groups at base, flip-flopped at the front and spent little time
   firing. Now:

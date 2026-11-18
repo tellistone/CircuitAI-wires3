@@ -8,6 +8,7 @@
 #include "module/TurretValue.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace circuit {
 
@@ -36,15 +37,20 @@ CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vect
 	const float sqRange = p.range * p.range;
 	float heightSum = 0.f;
 	int count = 0;
+	const float chokeDepth = std::min(std::max(p.chokeDepth, 0.f), 1.f);
 	for (const STarget& target : targets) {
-		if ((target.metal <= 0.f) || (SqDist2D(c.pos, target.pos) > sqRange) || !isClear(c.pos, target.pos)) {
+		const float sqDist = SqDist2D(c.pos, target.pos);
+		if ((target.metal <= 0.f) || (sqDist > sqRange) || !isClear(c.pos, target.pos)) {
 			continue;
 		}
 		switch (target.kind) {
 			case Kind::TRAFFIC: t.traffic += target.metal; break;
 			case Kind::ALLY: t.ally += target.metal; break;
 			case Kind::ENEMY: t.enemy += target.metal; break;
-			case Kind::CHOKE: t.choke = std::max(t.choke, target.metal); break;  // one choke's worth at most
+			case Kind::CHOKE: {  // one choke's worth at most, the more the deeper it is in range
+				const float depth = 1.f - chokeDepth * std::sqrt(sqDist) / p.range;
+				t.choke = std::max(t.choke, target.metal * depth);
+			} break;
 		}
 		heightSum += target.pos.y;
 		++count;

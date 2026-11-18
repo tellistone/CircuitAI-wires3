@@ -44,7 +44,9 @@ struct STurretOrder {
  *   A, our and allied unarmed buildings in range, at cost
  *   E, known enemy buildings in range seen in the last 3 minutes, at cost; an enemy mex at its income x
  *      turret.horizon. Mobiles don't count: they move on, and their routes are in T already
- *   C, turret.choke when a choke of our current line or the enemy line has its middle in range
+ *   C, turret.choke when a choke of our current line or the enemy line has its middle in range, x (1 -
+ *      turret.choke_depth x its distance / range): worth the most on the choke, so a turret stands at it, not just
+ *      reaching it with its outer range
  * each one the def hits, in a clear line of fire (high-arc: any), and halved for every tower of ours or an ally's,
  * queued too, that covers it already and hits it. F, the front, is the known enemy buildings' influence at the spot,
  * 2 x (1 - d / 2048) each (the enemy territory layer's), over the highest among the candidates. V, the view
@@ -68,6 +70,7 @@ public:
 		float view = 1.f;
 		float height = 0.5f;
 		float choke = 100.f;  // metal
+		float chokeDepth = 1.f;  // C x (1 - this x the choke's distance / range)
 		// Armed statics that defend nothing in the field: no tower covering a target, nor a defence to the callers
 		std::vector<CCircuitDef*> notDefence;
 		// Callers (CBuilderManager::UpdateTurrets)
