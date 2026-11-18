@@ -55,6 +55,17 @@ CChokeOverlay::Side CChokeOverlay::OwnerOf(const SStrength& ours, const SStrengt
 }
 
 /*
+ * The enemies the views count, all the AI knows of them: buildings until seen dead, armed mobiles seen (in sight or on
+ * radar) in the last ARMY_SEEN, at the last place seen; aircraft and unidentified radar blips aside
+ */
+static bool IsCountedEnemy(const CEnemyUnit* enemy, int frame)
+{
+	const CCircuitDef* edef = enemy->GetCircuitDef();
+	return !enemy->IsDead() && !enemy->IsFake() && (edef != nullptr) && !edef->IsAbleToFly()
+			&& (!edef->IsMobile() || (edef->IsAttacker() && enemy->IsRecentlySeen(frame, ARMY_SEEN)));
+}
+
+/*
  * Both sides' units, aircraft aside: ours where they are now, enemy buildings until seen dead, enemy mobiles where
  * they were seen in the last minute. Armed ones bring threat (ours: power, as the influence map counts them); unarmed
  * buildings bring eco, their metal cost; constructors bring nothing.
@@ -82,12 +93,10 @@ void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView
 	}
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
-		const CCircuitDef* edef = enemy->GetCircuitDef();
-		if (enemy->IsDead() || enemy->IsFake() || (edef == nullptr) || edef->IsAbleToFly()
-			|| (edef->IsMobile() && (!edef->IsAttacker() || !enemy->IsRecentlySeen(frame, ARMY_SEEN))))
-		{
+		if (!IsCountedEnemy(enemy, frame)) {
 			continue;
 		}
+		const CCircuitDef* edef = enemy->GetCircuitDef();
 		const bool isArmed = edef->IsAttacker();
 		enemies.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(),
 				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost()});
@@ -138,6 +147,28 @@ void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView
 		addReaching(chokes[c], centre, enemies, view.enemy);
 		view.side = OwnerOf(view.ours, view.enemy);
 	}
+}
+
+/*
+ * A record per enemy the views count: kind x z. Kinds: m an armed mobile, s an armed building, e an unarmed one;
+ * capital while in sight or on radar now, else where it was last seen
+ */
+std::string CChokeOverlay::MakeKnownEnemies() const
+{
+	const int frame = circuit->GetLastFrame();
+	std::ostringstream out;
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+		const CEnemyUnit* enemy = kv.second;
+		if (!IsCountedEnemy(enemy, frame)) {
+			continue;
+		}
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		const char kind = edef->IsMobile() ? 'm' : edef->IsAttacker() ? 's' : 'e';
+		const AIFloat3& pos = enemy->GetPos();
+		out << '\n' << (enemy->IsInRadarOrLOS() ? (char)std::toupper(kind) : kind) << ' ' << (int)std::lround(pos.x)
+				<< ' ' << (int)std::lround(pos.z);
+	}
+	return out.str();
 }
 
 /*
@@ -217,12 +248,14 @@ void CChokeOverlay::DrawSides()
  * - grid: width height cellSize, then (region index, count) runs over the cells row by row; -1 is a wall
  * - state: a letter per region index: u nobody's, o ours, e the enemy's, c contested; capital in that side's
  *   territory
- * - control, lines, info: a record per line, after the header line
+ * - control, lines, info, known: a record per line, after the header line
  *   control: who defended x1 z1 x2 z2, a choke's line end to end. Who controls it: n nobody, o ours, e the enemy,
  *   c contested. Whose towers reach its line: n nobody's, o ours, e the enemy's, b both sides'
  *   lines: kind x1 z1 x2 z2. Kinds: w forward line; f front line; enemy line chokes by rank: e defended,
  *   u undefended, g not seen enough; h enemy-held off the enemy line; current line: c covered, s short
  *   info: see MakeInfo
+ *   known: see MakeKnownEnemies
+ * - status: " cheating" when the AI's LOS cheating option is on (it knows every enemy unit), else empty
  */
 void CChokeOverlay::SendWidgetData()
 {
@@ -311,6 +344,8 @@ void CChokeOverlay::SendWidgetData()
 	CallWidget("lines", lines.str());
 
 	CallWidget("info", isLabels ? MakeInfo(regionViews, chokeViews) : "");
+	CallWidget("known", MakeKnownEnemies());
+	CallWidget("status", circuit->IsCheating() ? " cheating" : "");
 	isWidgetDrawn = true;
 }
 

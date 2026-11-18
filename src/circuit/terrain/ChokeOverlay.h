@@ -91,6 +91,7 @@ private:
 	static Side OwnerOf(const SStrength& ours, const SStrength& enemy);
 	void MakeViews(std::vector<SView>& regionViews, std::vector<SView>& chokeViews) const;
 	std::string MakeInfo(const std::vector<SView>& regionViews, const std::vector<SView>& chokeViews) const;
+	std::string MakeKnownEnemies() const;
 	void SendWidgetData();
 	std::string CallWidget(const std::string& verb, const std::string& body) const;  // the widget's answer
 	void ClearWidget();

@@ -16,7 +16,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   core coloured by owner, posts at its ends when towers reach it, and a casing when it is on a line (white front line,
   green or orange our current line by whether its towers cover what it wants, the enemy line by rank, yellow forward
   line). Info boxes show the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, for
-  the region and choke at the cursor and, zoomed in, for owned ones near the camera. A legend is printed bottom left.
+  the region and choke at the cursor and, zoomed in, for owned ones near the camera. Each enemy the AI counts is
+  marked where it believes it is (filled while seen, an outline where last seen), so a spectator with full view can
+  tell which enemies it knows of; the legend says in red when the AI's LOS cheating option is on, and the infolog
+  says `LOS cheating: on` or `off` at start. A legend is printed bottom left.
   It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through
   `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget the layer shows
   the `lines` layer. Nothing outside the overlay reads the ownership it shows.

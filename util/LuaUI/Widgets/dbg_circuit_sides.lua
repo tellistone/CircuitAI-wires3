@@ -17,6 +17,10 @@
 -- - a casing round the core when it is on a line: white the front line; green our current line where its towers cover
 --   what it wants, orange where it's short; the enemy line dark red where defended, pink where undefended, grey where
 --   not seen enough; deep red an enemy-held choke off it; yellow the forward line.
+-- Each enemy the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building
+-- (red armed, pale unarmed), filled while in its sight or radar, an outline where it was last seen. An enemy you see
+-- with no mark is one the AI doesn't know of, so a spectator with full view can tell what the overlay is built on.
+-- When the AI's "LOS cheating" option is on it knows every enemy unit, and the bottom line says so in red.
 -- A legend is printed bottom left.
 -- Info boxes give the numbers behind an owner: hostile and allied threat (total, mobile, static) and eco. Hover over a
 -- region or near a choke for its boxes beside the cursor; zoomed in, every owned choke and region near the camera
@@ -26,7 +30,7 @@
 -- lowest ally team id, until that one clears or goes quiet. The ally team shown is printed bottom left.
 --
 -- Messages (CChokeOverlay::SendWidgetData in src/circuit/terrain/ChokeSides.cpp), "circuit_sides_<verb>:<ally team>"
--- then a body: hello, grid, state, control, lines, info, clear.
+-- then a body: hello, grid, state, control, lines, info, known, status, clear.
 --------------------------------------------------------------------------------
 
 function widget:GetInfo()
@@ -80,6 +84,14 @@ local POSTS = {  -- by whose towers reach the choke; n (nobody's) has none
 }
 local POST_RADIUS = 30  -- elmos
 local POST_RIM = {0.05, 0.05, 0.05, 0.90}
+
+local KNOWN = {  -- enemy marks by kind: m an armed mobile, s an armed building, e an unarmed one
+	m = {sides = 12, size = 36, colour = {1.00, 0.25, 0.20, 0.90}},
+	s = {sides = 4, size = 40, colour = {1.00, 0.25, 0.20, 0.90}},
+	e = {sides = 4, size = 32, colour = {1.00, 0.72, 0.62, 0.90}},
+}
+local KNOWN_RIM = {0.05, 0.05, 0.05, 0.90}
+local KNOWN_OUTLINE_WIDTH = 3  -- a remembered one's outline
 
 local CASING_WIDTH = 15
 local LINES = {  -- casings by line kind, drawn in this order: the last one drawn shows on a choke in several lines
@@ -149,6 +161,7 @@ local function DeleteLists(team)
 	DeleteList(team, "shadowList")
 	DeleteList(team, "gateList")
 	DeleteList(team, "lineList")
+	DeleteList(team, "knownList")
 end
 
 -- Vertices of a ground-following line from (x1, z1) to (x2, z2), as GL.LINES pairs
@@ -358,6 +371,55 @@ local function BuildGates(team)
 	end)
 end
 
+-- Each known enemy's mark: a filled shape with a dark rim while seen, an outline where it was last seen
+local function BuildKnown(team)
+	DeleteList(team, "knownList")
+	local known = team.known or {}
+	team.knownList = gl.CreateList(function()
+		for i = 1, #known do
+			local k = known[i]
+			local style = KNOWN[k.kind]
+			local x, z = k[1], k[2]
+			local y = GroundY(x, z) + 3
+			local rim = {}
+			for s = 0, style.sides - 1 do
+				local a = 2 * math.pi * (s + 0.5) / style.sides
+				local r = (style.sides == 4) and style.size * sqrt(2) or style.size
+				rim[s] = {x + math.cos(a) * r, z + math.sin(a) * r}
+			end
+			if k.isNow then
+				gl.Color(style.colour)
+				gl.BeginEnd(GL.TRIANGLES, function()
+					for s = 0, style.sides - 1 do
+						local a, b = rim[s], rim[(s + 1) % style.sides]
+						glVertex(x, y, z)
+						glVertex(a[1], y, a[2])
+						glVertex(b[1], y, b[2])
+					end
+				end)
+				gl.Color(KNOWN_RIM)
+				gl.LineWidth(2)
+			else  -- dark under the outline, so it reads on any ground
+				gl.Color(KNOWN_RIM)
+				gl.LineWidth(KNOWN_OUTLINE_WIDTH + 2)
+				gl.BeginEnd(GL.LINE_LOOP, function()
+					for s = 0, style.sides - 1 do
+						glVertex(rim[s][1], y, rim[s][2])
+					end
+				end)
+				gl.Color(style.colour)
+				gl.LineWidth(KNOWN_OUTLINE_WIDTH)
+			end
+			gl.BeginEnd(GL.LINE_LOOP, function()
+				for s = 0, style.sides - 1 do
+					glVertex(rim[s][1], y, rim[s][2])
+				end
+			end)
+		end
+		gl.LineWidth(1)
+	end)
+end
+
 local function BuildLines(team)
 	DeleteList(team, "lineList")
 	local lines = team.lines or {}
@@ -448,6 +510,22 @@ function handlers.lines(team, body)
 	end
 	team.lines = lines
 	BuildLines(team)
+end
+
+function handlers.status(team, body)
+	team.isCheating = (body:find("cheating") ~= nil)
+end
+
+function handlers.known(team, body)
+	local known = {}
+	for _, record in ipairs(Records(body)) do
+		local kind, x, z = record:match("^(%a) (%-?%d+) (%-?%d+)")
+		if kind and KNOWN[kind:lower()] then
+			known[#known + 1] = {tonumber(x), tonumber(z), kind = kind:lower(), isNow = (kind ~= kind:lower())}
+		end
+	end
+	team.known = known
+	BuildKnown(team)
 end
 
 -- Per region and choke: key x z owner, then hostile mobile, static, eco, allied the same, then its title lines
@@ -583,6 +661,9 @@ function widget:DrawWorldPreUnit()
 	if team.gateList then
 		gl.CallList(team.gateList)
 	end
+	if team.knownList then
+		gl.CallList(team.knownList)
+	end
 	gl.DepthMask(true)
 	gl.DepthTest(false)
 	gl.Color(1, 1, 1, 1)
@@ -611,6 +692,8 @@ local function MakeLegend()
 		"Choke gates: owner by the guns that reach them (" .. sides .. ", dashed contested, grey nobody's)",
 		"Regions: owner by the units in them (" .. sides .. ", striped contested, clear nobody's)",
 		"Owner: the only side there, or the side with 1.5x the other's threat. Hover for the numbers",
+		"Enemies the AI counts: " .. red .. "circle" .. w .. " unit, " .. red .. "square" .. w .. " building ("
+				.. Ink(KNOWN.e.colour) .. "pale" .. w .. " unarmed), filled seen now, outline last seen. Unmarked: unknown to it",
 	}
 end
 local legend = nil
@@ -832,7 +915,8 @@ function widget:DrawScreen()
 	for i = 1, #legend do
 		font:Print(legend[i], 16, 16 + lineHeight * i, size, "o")
 	end
-	font:Print("CircuitAI sides: ally team " .. shown, 16, 16, size + 1, "o")
+	font:Print("CircuitAI sides: ally team " .. shown .. (team.isCheating
+			and (Ink(RED) .. "   LOS cheating is on: the AI knows every enemy unit") or ""), 16, 16, size + 1, "o")
 	font:End()
 end
 
