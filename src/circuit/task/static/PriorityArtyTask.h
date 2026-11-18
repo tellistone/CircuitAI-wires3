@@ -71,6 +71,9 @@ public:
 	// An enemy took damage from this task's gun (EnemyDamaged, in our LOS or radar)
 	void OnEnemyDamaged(CEnemyInfo* enemy);
 
+	// The main weapon's shell (outShell keeps its defaults for what the weapon doesn't set); false: no main weapon
+	static bool ReadShell(const CCircuitDef* cdef, ballistics::SShell& outShell);
+
 private:
 	struct SCandidate {
 		CEnemyInfo* enemy;
@@ -141,7 +144,7 @@ private:
 	void SoftSkip(CEnemyInfo* enemy, int frame);  // dropped for friends: skipped for a while, no failure
 
 	const STargetPriority* tp;
-	springai::AIFloat3 aimFrom;  // muzzle: the gun's base + 50
+	springai::AIFloat3 aimFrom;  // the gun's base + ballistics::AIM_FROM_HEIGHT
 	float range;  // on flat ground
 	float speed;  // elmo/s
 	float gravity;  // elmo/s^2

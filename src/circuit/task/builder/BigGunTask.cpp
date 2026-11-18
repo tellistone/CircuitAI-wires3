@@ -6,6 +6,7 @@
  */
 
 #include "task/builder/BigGunTask.h"
+#include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
 #include "terrain/TerrainManager.h"
 #include "unit/CircuitUnit.h"
@@ -25,6 +26,23 @@ CBBigGunTask::CBBigGunTask(ITaskManager* mgr, Priority priority,
 
 CBBigGunTask::~CBBigGunTask()
 {
+}
+
+void CBBigGunTask::Execute(CCircuitUnit* unit)
+{
+	// A preset site (CBuilderManager::EnqueueBigGun) is built on before IBuilderTask::Execute looks for an ally's
+	// superweapon to help: look first
+	if ((target == nullptr) && utils::is_valid(buildPos)) {
+		CCircuitAI* circuit = manager->GetCircuit();
+		circuit->GetThreatMap()->SetThreatType(unit);
+		if (AssistSameAlly(unit)) {
+			TRY_UNIT(circuit, unit,
+				unit->CmdPriority(ClampPriority());
+			)
+			return;
+		}
+	}
+	IBuilderTask::Execute(unit);
 }
 
 void CBBigGunTask::Finish()

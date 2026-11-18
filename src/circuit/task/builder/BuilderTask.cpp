@@ -248,18 +248,8 @@ void IBuilderTask::Execute(CCircuitUnit* unit)
 
 	// FIXME: Move to Reevaluate
 	circuit->GetThreatMap()->SetThreatType(unit);
-	// FIXME: Replace const 999.0f with build time?
-	if (circuit->IsAllyAware() && (cost > 999.0f)) {
-		circuit->UpdateFriendlyUnits();
-		auto friendlies = circuit->GetCallback()->GetFriendlyUnitsIn(position, cost);
-		CAllyUnit* alu = FindSameAlly(unit, friendlies);
-		utils::free_clear(friendlies);
-		if (alu != nullptr) {
-			TRY_UNIT(circuit, unit,
-				unit->GetUnit()->Repair(alu->GetUnit(), UNIT_CMD_OPTION, frame + FRAMES_PER_SEC * 60);
-			)
-			return;
-		}
+	if (AssistSameAlly(unit)) {
+		return;
 	}
 
 	// Alter/randomize position
@@ -576,6 +566,26 @@ void IBuilderTask::ShowAssignee(CCircuitUnit* unit)
 	if ((buildDef != nullptr) && !manager->GetCircuit()->GetEconomyManager()->IsIgnorePull(this)) {
 		manager->AddMetalPull(unit);
 	}
+}
+
+bool IBuilderTask::AssistSameAlly(CCircuitUnit* unit)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	// FIXME: Replace const 999.0f with build time?
+	if (!circuit->IsAllyAware() || (cost <= 999.0f)) {
+		return false;
+	}
+	circuit->UpdateFriendlyUnits();
+	auto friendlies = circuit->GetCallback()->GetFriendlyUnitsIn(position, cost);
+	CAllyUnit* alu = FindSameAlly(unit, friendlies);
+	utils::free_clear(friendlies);
+	if (alu == nullptr) {
+		return false;
+	}
+	TRY_UNIT(circuit, unit,
+		unit->GetUnit()->Repair(alu->GetUnit(), UNIT_CMD_OPTION, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);
+	)
+	return true;
 }
 
 CAllyUnit* IBuilderTask::FindSameAlly(CCircuitUnit* builder, const std::vector<Unit*>& friendlies)

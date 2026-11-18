@@ -96,6 +96,9 @@ public:
 								 bool isPlop = false,
 								 bool isActive = true,
 								 int timeout = ASSIGN_TIMEOUT);
+	// A superweapon at site; a cannon (Big Bertha, the Disco Rave Party) on its best spot around it if one passes
+	// (CSpotScorer::FindGunSpot), held on the blocking map from now and built right there
+	IBuilderTask* EnqueueBigGun(IBuilderTask::Priority priority, CCircuitDef* buildDef, const springai::AIFloat3& site);
 	IBuilderTask* EnqueuePylon(IBuilderTask::Priority priority,
 							   CCircuitDef* buildDef,
 							   const springai::AIFloat3& position,

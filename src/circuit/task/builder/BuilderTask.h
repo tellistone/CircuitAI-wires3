@@ -120,6 +120,9 @@ protected:
 	virtual void ApplyPath(const CQueryPathSingle* query);
 	void HideAssignee(CCircuitUnit* unit);
 	void ShowAssignee(CCircuitUnit* unit);
+	// Ally-aware, a job over 999 metal: unit helps build an ally's frame that FindSameAlly finds near the job instead.
+	// true: ordered to. Needs the threat map's type set for unit
+	bool AssistSameAlly(CCircuitUnit* unit);
 	virtual CAllyUnit* FindSameAlly(CCircuitUnit* builder, const std::vector<springai::Unit*>& friendlies);
 	virtual void FindBuildSite(CCircuitUnit* builder, const springai::AIFloat3& pos, float searchRadius);
 

@@ -282,6 +282,7 @@ public:
 	// Not a grid consumer, or a grid with enough energy is in pylon reach of GetBigGunPos
 	bool IsBigGunPowerable(CCircuitDef* cdef) const;
 	void DiceBigGun();
+	const CSpotScorer::SGunConfig& GetGunSpotConfig() const { return gunSpotConfig; }  // porcupine.superweapon.spot
 
 	// Escalation mode (build_chain.json "escalation"): turns on when the allied team's mobile army is at least
 	// army_ratio[0] x the known enemy one, an enemy unit of escalation.enemy is known, and (terraform: true) a
@@ -810,6 +811,7 @@ private:
 		float weight;
 	};
 	std::vector<SSuperInfo> superInfos;
+	CSpotScorer::SGunConfig gunSpotConfig;
 
 	struct SEscalation {
 		bool isEnabled = false;

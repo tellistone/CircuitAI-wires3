@@ -20,6 +20,7 @@ public:
 	virtual ~CBBigGunTask();
 
 protected:
+	virtual void Execute(CCircuitUnit* unit) override;
 	virtual void Finish() override;
 
 	virtual CAllyUnit* FindSameAlly(CCircuitUnit* builder, const std::vector<springai::Unit*>& friendlies) override;

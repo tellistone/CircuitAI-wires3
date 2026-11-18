@@ -57,6 +57,21 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   LOS and radar: skipped until seen). While it turns, it switches only to a target no further away unless that's in the
   top tier. `BEAM` lines in the debug log
 
+- **Big Bertha and the Disco Rave Party are built where their shells clear the terrain**
+  (`porcupine.superweapon.spot` in build_chain.json, `CSpotScorer::FindGunSpot`). Their site was the mean of the base
+  and our finished clusters, or (Bertha, as an escalation `front` super) the frontline cluster's centre, each shaken by
+  up to 256 elmos, so they often went up in a hollow whose rim blocks the flat low arc (Bertha's tops out near 475
+  elmos at full range and 125 at 3,000). Now, when the job is queued, the spots every 128 elmos within `radius`
+  (1,000) of that site are scored on the turret picker's value model: E is the metal of the targets in reach (the
+  height-adjusted cannon range) with a clear simulated low arc, as the gun's task aims, over the enemy buildings we
+  know of (a mex at its income x `turret.horizon`) and, at half that, the metal spots on the enemy's half with no mex
+  we know of, the best 48; it gains up to `height` (0.5) for standing 150 elmos above them, and halves at `radius`
+  from the old site. A spot must be in our territory, off the lanes, out of threat, buildable, in reach of a builder
+  of ours and (both are grid consumers) in pylon reach of a grid with enough energy. The spot goes on the blocking map
+  then, as a turret picker job's does, and the gun is built right there, with no shake (an ally's superweapon frame in
+  reach is still helped first); with no spot (no targets known, nothing passes, `radius` 0) the old site stands.
+  Whether a gun can be powered is still judged at the old site. `BIG GUN spot` lines in the log
+
 - **One scorer for every scored turret spot.** `CSpotScorer::FindSpot` (cluster and base towers with
   `choke.spot.enable`, choke towers, radar guards, hold spots) now scores and searches on the turret picker's value
   model, `CTurretValue`, with each goal's own targets and terms (setback, lean, threat, builder distance) as a factor.
@@ -766,6 +781,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   When waiting for a builder, its own build range is used instead of the nano tower's.
 
 ### Fixed
+
+- **Big Bertha and the Disco Rave Party no longer skip targets they can hit as behind terrain.** Their arc test
+  started the shell 50 elmos above the gun's base (Bertha's `aimposoffset`, where enemies aim at it), checked the
+  ground to 44 elmos short of the target, and aimed at the target's base. The engine (`CCannon::HaveFreeLineOfFire`)
+  starts it at the aim-from piece (Bertha's is 113 elmos up, the Rave Party's 112) and skips the last 1/16 of the
+  distance. Over 101 shot distances from 400 to 5,400 elmos, the old test blocked 21 to 68 more than the engine past a
+  100- to 200-elmo ridge or a 40-elmo bump short of the target, and flat shots from about 400 to 2,000 elmos. It now
+  starts at 112, skips the larger of 44 elmos and 1/16, and aims 20 elmos up (water: from its surface), and agrees
+  with the engine on all but 0 to 5 of those distances.
 
 - **Only one geothermal morphs at a time** (`economy.energy.geo.morph`). The AI used to give up waiting after 300 s
   and start the next geo, while a morph short of metal (it can run well past its 90 s) was still going. It now waits

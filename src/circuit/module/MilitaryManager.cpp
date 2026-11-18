@@ -1104,6 +1104,9 @@ void CMilitaryManager::ReadConfig()
 		si.weight = probs.get(i, 1.f).asFloat();
 		superInfos.push_back(si);
 	}
+	const Json::Value& gunSpot = super["spot"];
+	gunSpotConfig.radius = std::max(gunSpot.get("radius", gunSpotConfig.radius).asFloat(), 0.f);
+	gunSpotConfig.height = std::max(gunSpot.get("height", gunSpotConfig.height).asFloat(), 0.f);
 	DiceBigGun();
 
 	const Json::Value& esc = root["escalation"];
