@@ -8,7 +8,9 @@
 #include "module/TurretPicker.h"
 #include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
+#include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
+#include "resource/EnergyGrid.h"
 #include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
 #include "task/builder/DefenceTask.h"
@@ -72,6 +74,7 @@ void CTurretPicker::ReadConfig()
 	c.height = turret.get("height", c.height).asFloat();
 	c.choke = turret.get("choke", c.choke).asFloat();
 	c.chokeDepth = turret.get("choke_depth", c.chokeDepth).asFloat();
+	c.chokeEcon = turret.get("choke_econ", c.chokeEcon).asFloat();
 	c.isAfterFlee = turret.get("after_flee", c.isAfterFlee).asBool();
 	c.afterFleeSince = turret.get("after_flee_since", c.afterFleeSince).asFloat();
 	c.defendedRadius = turret.get("defended_radius", c.defendedRadius).asFloat();
@@ -365,7 +368,13 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	keepBest(traffic, MAX_TRAFFIC * 4);  // the line-of-fire tests of the halving only for those that may make it
 
 	// A, and our buildings for the influence rule (armed or not, nanoframes too; constructors, Claw mines and missiles
-	// left out)
+	// left out). With turret.choke_econ, per region: the cost of our and allied economy there (mexes, energy, pylons,
+	// factories), for C
+	std::vector<float> econ;
+	if (isChokeReady && (config.chokeEcon > 0.f)) {
+		econ.assign(chokeMap->GetGraph().GetRegions().size(), 0.f);
+	}
+	const CEnergyGrid* energyGrid = circuit->GetEconomyManager()->GetEnergyGrid();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
 		if ((cdef == nullptr) || cdef->IsMobile() || cdef->IsMobileBuilding()) {
@@ -374,6 +383,14 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		const AIFloat3& pos = kv.second->GetPos(frame);
 		if (!utils::is_valid(pos)) {
 			continue;
+		}
+		if (!econ.empty() && (cdef->IsMex() || cdef->IsPylon() || energyGrid->IsEnergyDef(cdef->GetId())
+			|| (cdef->IsBuilder() && !cdef->IsAssist())))
+		{
+			const int region = chokeMap->GetRegionAt(pos);
+			if (region != CRegionGraph::NO_REGION) {
+				econ[region] += cdef->GetCostM();
+			}
 		}
 		const float sqDist = pos.SqDistance2D(centre);
 		if (sqDist <= sqInflReach) {
@@ -393,21 +410,43 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	const std::vector<CTurretValue::STarget> enemies = GetEnemyTargets(centre, reach);
 	g.raws.insert(g.raws.end(), enemies.begin(), enemies.end());
 
-	// C: the middles of the chokes on our current line and the enemy line
+	// C: the middles of the chokes on our current line and the enemy line, turret.choke each. A current line choke adds
+	// turret.choke_econ x its share of our economy: per region of our territory it touches, that region's economy over
+	// the current line chokes touching it
 	if (isChokeReady) {
 		const std::vector<CRegionGraph::SChoke>& chokes = chokeMap->GetGraph().GetChokes();
-		std::vector<int> ids = chokeMap->GetCurrentLine();
+		const std::vector<int>& current = chokeMap->GetCurrentLine();
+		auto isChoke = [&chokes](int c) { return (c >= 0) && (c < (int)chokes.size()); };
+		std::vector<int> lineChokes(econ.size(), 0);  // per region of our territory
+		auto forOurSides = [&](int c, const std::function<void (int)>& fn) {
+			for (int r : {chokes[c].regionA, chokes[c].regionB}) {
+				if ((r >= 0) && (r < (int)econ.size()) && chokeMap->IsOurTerritory(r)) {
+					fn(r);
+				}
+			}
+		};
+		for (int c : current) {
+			if (isChoke(c)) {
+				forOurSides(c, [&lineChokes](int r) { ++lineChokes[r]; });
+			}
+		}
+		std::vector<int> ids = current;
 		ids.insert(ids.end(), chokeMap->GetEnemyLine().begin(), chokeMap->GetEnemyLine().end());
 		std::sort(ids.begin(), ids.end());
 		ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
 		for (int c : ids) {
-			if ((c < 0) || (c >= (int)chokes.size())) {
+			if (!isChoke(c)) {
 				continue;
 			}
 			const AIFloat3 pos = chokeMap->GetCellPos(chokes[c].centre);
-			if (pos.SqDistance2D(centre) <= sqReach) {
-				g.raws.push_back({ground(pos), config.choke, CTurretValue::Kind::CHOKE});
+			if (pos.SqDistance2D(centre) > sqReach) {
+				continue;
 			}
+			float share = 0.f;
+			if (std::find(current.begin(), current.end(), c) != current.end()) {
+				forOurSides(c, [&](int r) { share += econ[r] / lineChokes[r]; });
+			}
+			g.raws.push_back({ground(pos), config.choke + config.chokeEcon * share, CTurretValue::Kind::CHOKE});
 		}
 	}
 
