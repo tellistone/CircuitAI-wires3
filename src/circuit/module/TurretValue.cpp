@@ -8,6 +8,7 @@
 #include "module/TurretValue.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace circuit {
 
@@ -29,6 +30,11 @@ inline float LeanAndWalk(const CTurretValue::SCandidate& c, const CTurretValue::
 
 }  // namespace
 
+float CTurretValue::ChokeWorth(float metal, float sqDist, float range, float depth)
+{
+	return metal * (1.f - std::min(std::max(depth, 0.f), 1.f) * std::sqrt(sqDist) / std::max(range, 1.f));
+}
+
 CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vector<STarget>& targets, const SParams& p,
 		float frontNorm, const ClearFn& isClear, const ViewFn& viewOf)
 {
@@ -36,19 +42,30 @@ CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vect
 	const float sqRange = p.range * p.range;
 	float heightSum = 0.f;
 	int count = 0;
+	float econ = 0.f;  // our economy buildings in range
+	float chokeEcon = 0.f;  // the part of C that is our economy
 	for (const STarget& target : targets) {
-		if ((target.metal <= 0.f) || (SqDist2D(c.pos, target.pos) > sqRange) || !isClear(c.pos, target.pos)) {
+		const float sqDist = SqDist2D(c.pos, target.pos);
+		if ((target.metal <= 0.f) || (sqDist > sqRange) || !isClear(c.pos, target.pos)) {
 			continue;
 		}
 		switch (target.kind) {
 			case Kind::TRAFFIC: t.traffic += target.metal; break;
 			case Kind::ALLY: t.ally += target.metal; break;
+			case Kind::ECON: econ += target.metal; break;
 			case Kind::ENEMY: t.enemy += target.metal; break;
-			case Kind::CHOKE: t.choke = std::max(t.choke, target.metal); break;  // one choke's worth at most
+			case Kind::CHOKE: {  // one choke's worth at most
+				const float worth = ChokeWorth(target.metal, sqDist, p.range, p.chokeDepth);
+				if (worth > t.choke) {
+					t.choke = worth;
+					chokeEcon = worth * target.econPart;
+				}
+			} break;
 		}
 		heightSum += target.pos.y;
 		++count;
 	}
+	t.ally += std::max(econ - chokeEcon, 0.f);  // our economy once: in range, or through the choke that shuts it in
 	if (count > 0) {
 		const float above = c.pos.y - heightSum / count;
 		t.height = std::min(std::max(above / std::max(p.heightCap, 1.f), 0.f), 1.f);
@@ -89,9 +106,10 @@ CTurretValue::SResult CTurretValue::Search(const std::vector<SCandidate>& candid
 		float inRange = 0.f;
 		float choke = 0.f;
 		for (const STarget& target : targets) {
-			if ((target.metal > 0.f) && (SqDist2D(c.pos, target.pos) <= sqRange)) {
+			const float sqDist = SqDist2D(c.pos, target.pos);
+			if ((target.metal > 0.f) && (sqDist <= sqRange)) {
 				if (target.kind == Kind::CHOKE) {
-					choke = std::max(choke, target.metal);
+					choke = std::max(choke, ChokeWorth(target.metal, sqDist, p.range, p.chokeDepth));
 				} else {
 					inRange += target.metal;
 				}

@@ -231,6 +231,7 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	params.heightBonus = cfg.spotHeight;
 	params.heightCap = cfg.spotHeightCap;
 	params.front = (goal.type == GoalType::HOLD) ? 0.f : picker->GetConfig().front;  // turret.front
+	params.chokeDepth = picker->GetConfig().chokeDepth;  // turret.choke_depth
 	params.view = cfg.spotView;
 	params.minBase = 0.f;  // a goal's tower goes up wherever is best
 	params.refineStep = cellSize * 0.25f;
@@ -575,14 +576,19 @@ std::vector<CTurretValue::STarget> CSpotScorer::MakeTargets(CCircuitDef* def, co
  */
 void CSpotScorer::HalveCovered(std::vector<CTurretValue::STarget>& targets, const std::vector<STower>& towers) const
 {
+	// A choke by as much as the tower covers it (turret.choke_depth): halved by one standing on it, less by one
+	// reaching it with its outer range
 	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
+	const float chokeDepth = picker->GetConfig().chokeDepth;
 	for (CTurretValue::STarget& t : targets) {
 		const AIFloat3 p(t.pos.x, t.pos.y, t.pos.z);
 		for (const STower& tower : towers) {
-			if (picker->IsDefence(tower.def) && IsHit(tower.def, p) && (tower.pos.SqDistance2D(p) <= SQUARE(tower.range))
+			const float sqDist = tower.pos.SqDistance2D(p);
+			if (picker->IsDefence(tower.def) && IsHit(tower.def, p) && (sqDist <= SQUARE(tower.range))
 				&& (tower.isHighArc || IsClearLine(tower.pos, tower.emit, p)))
 			{
-				t.metal *= 0.5f;
+				t.metal *= (t.kind == CTurretValue::Kind::CHOKE)
+						? 1.f - 0.5f * CTurretValue::ChokeWorth(1.f, sqDist, tower.range, chokeDepth) : 0.5f;
 			}
 		}
 	}

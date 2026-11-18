@@ -28,11 +28,13 @@ public:
 	struct SPos {
 		float x, y, z;  // y: ground height
 	};
-	enum class Kind: char {TRAFFIC, ALLY, ENEMY, CHOKE};
+	// ECON: one of our economy buildings, in A unless a choke the spot counts carries our economy already
+	enum class Kind: char {TRAFFIC, ALLY, ENEMY, CHOKE, ECON};
 	struct STarget {
 		SPos pos;
 		float metal;  // weighted, and halved for each tower already covering it
 		Kind kind;
+		float econPart = 0.f;  // CHOKE: the share of metal that is our economy (turret.choke_econ)
 	};
 	struct SCandidate {
 		SPos pos;
@@ -59,6 +61,7 @@ public:
 		float heightCap = 150.f;  // elmos above the targets that earn all of heightBonus
 		float front = 1.f;  // turret.front
 		float view = 1.f;  // turret.view
+		float chokeDepth = 0.f;  // turret.choke_depth: C x (1 - this x the choke's distance / range)
 		float travel = 1000.f;  // constructor walk that halves a spot's rank
 		float minBase = 0.f;  // turret.min_value x the def's cost
 		float refineStep = 16.f;  // elmos to each corner of the best few
@@ -83,6 +86,8 @@ public:
 	};
 
 	// viewOf: V, read only for a spot with a base (nullptr: V = 1 everywhere)
+	// C of a choke target sqDist away: its metal, less the farther it is in range (turret.choke_depth, 0 to 1)
+	static float ChokeWorth(float metal, float sqDist, float range, float depth);
 	static STerms Evaluate(const SCandidate& c, const std::vector<STarget>& targets, const SParams& p, float frontNorm,
 			const ClearFn& isClear, const ViewFn& viewOf = nullptr);
 	// Best upper bound first: the targets in range with no line test, x the full height bonus, x the spot's own front,

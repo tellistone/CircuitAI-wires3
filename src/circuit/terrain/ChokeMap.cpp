@@ -739,45 +739,44 @@ void CChokeMap::QueueAllTraffic()
 
 /*
  * Lanes: a corridor choke.lane wide along the path through every choke narrower than three lanes, out to one lane
- * length either side of its line. Only with choke.enable, so building placement stays as it was without it
+ * length either side of its line. The turret picker and the spot scorer keep off them always; only with choke.enable
+ * are they kept free of every building on the blocking map (CChokeDefence)
  */
 void CChokeMap::MakeLanes()
 {
 	std::vector<SLane> newLanes;
 	const SCellMask& mask = graph.GetMask();
-	if (config.isChoke) {
-		for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
-			if (choke.width >= 3.f * config.lane) {
-				continue;
-			}
-			// Across the line: from region A's cells beside it to region B's
-			float ax = 0.f, az = 0.f, bx = 0.f, bz = 0.f;
-			int na = 0, nb = 0;
-			for (int c : choke.line) {
-				ForEachNeighbour(mask, c, [&](int next, int) {
-					const int r = graph.GetRegionAt(next);
-					if (r == choke.regionA) {
-						ax += mask.CentreX(next); az += mask.CentreZ(next); ++na;
-					} else if (r == choke.regionB) {
-						bx += mask.CentreX(next); bz += mask.CentreZ(next); ++nb;
-					}
-				});
-			}
-			AIFloat3 dir(1.f, 0.f, 0.f);
-			if ((na > 0) && (nb > 0)) {
-				const AIFloat3 d(bx / nb - ax / na, 0.f, bz / nb - az / na);
-				if (d.SqLength2D() > 1.f) {
-					dir = d / d.Length2D();
-				}
-			}
-			SLane lane;
-			lane.chokeId = choke.id;
-			lane.centre = AIFloat3(mask.CentreX(choke.centre), 0.f, mask.CentreZ(choke.centre));
-			lane.dir = dir;
-			lane.halfLength = config.lane + GRAPH_CELL;
-			lane.halfWidth = config.lane * 0.5f;
-			newLanes.push_back(lane);
+	for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
+		if (choke.width >= 3.f * config.lane) {
+			continue;
 		}
+		// Across the line: from region A's cells beside it to region B's
+		float ax = 0.f, az = 0.f, bx = 0.f, bz = 0.f;
+		int na = 0, nb = 0;
+		for (int c : choke.line) {
+			ForEachNeighbour(mask, c, [&](int next, int) {
+				const int r = graph.GetRegionAt(next);
+				if (r == choke.regionA) {
+					ax += mask.CentreX(next); az += mask.CentreZ(next); ++na;
+				} else if (r == choke.regionB) {
+					bx += mask.CentreX(next); bz += mask.CentreZ(next); ++nb;
+				}
+			});
+		}
+		AIFloat3 dir(1.f, 0.f, 0.f);
+		if ((na > 0) && (nb > 0)) {
+			const AIFloat3 d(bx / nb - ax / na, 0.f, bz / nb - az / na);
+			if (d.SqLength2D() > 1.f) {
+				dir = d / d.Length2D();
+			}
+		}
+		SLane lane;
+		lane.chokeId = choke.id;
+		lane.centre = AIFloat3(mask.CentreX(choke.centre), 0.f, mask.CentreZ(choke.centre));
+		lane.dir = dir;
+		lane.halfLength = config.lane + GRAPH_CELL;
+		lane.halfWidth = config.lane * 0.5f;
+		newLanes.push_back(lane);
 	}
 	auto isSame = [](const SLane& a, const SLane& b) {
 		return (a.chokeId == b.chokeId) && (a.centre.SqDistance2D(b.centre) < 1.f) && (a.dir.SqDistance2D(b.dir) < 1e-4f)
@@ -800,6 +799,20 @@ std::string CChokeMap::DescribeRelaxed() const
 	snprintf(buf, sizeof(buf), "; relaxed to merge %.2f, min_area %.2f for min_count %i", used.merge,
 			used.minArea / SQUARE(mainRange / GRAPH_CELL), config.minCount);
 	return buf;
+}
+
+std::vector<float> CChokeMap::GetTrafficShares(const std::vector<int>& chokes) const
+{
+	float total = 0.f;
+	for (int c : chokes) {
+		total += chokeTraffic[c];
+	}
+	std::vector<float> shares;
+	shares.reserve(chokes.size());
+	for (int c : chokes) {
+		shares.push_back((total > 0.f) ? chokeTraffic[c] / total : 1.f / chokes.size());
+	}
+	return shares;
 }
 
 CRegionGraph::SParams CChokeMap::GetGraphParams() const

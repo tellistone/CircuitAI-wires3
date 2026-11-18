@@ -42,10 +42,15 @@ struct STurretOrder {
  *   T, traffic: the traffic field over the cells in range, per cell length of its range across (2 x range / cell),
  *      is the income whose enemy routes pass under it in metal/s; x turret.horizon s. None while spiders and jumpers
  *      are choke.gate_share of the enemy army (until they fall below half of that)
- *   A, our and allied unarmed buildings in range, at cost
+ *   A, our and allied unarmed buildings in range, at cost; our economy there (ECON) only above what C carries of it
  *   E, known enemy buildings in range seen in the last 3 minutes, at cost; an enemy mex at its income x
  *      turret.horizon. Mobiles don't count: they move on, and their routes are in T already
- *   C, turret.choke when a choke of our current line or the enemy line has its middle in range
+ *   C, turret.choke when a choke of our current line or the enemy line has its middle in range; a current line
+ *      choke adds turret.choke_econ x our economy (energy, pylons, factories on our held ground) split among the
+ *      current line's chokes by the traffic through each, an enemy line choke turret.choke_enemy (one on both lines, both),
+ *      at most turret.choke_cap, none for a choke not settled or with enemy artillery on it;
+ *      x (1 - turret.choke_depth x its distance / range): worth the most on the choke, so a turret stands at it, not
+ *      just reaching it with its outer range
  * each one the def hits, in a clear line of fire (high-arc: any), and halved for every tower of ours or an ally's,
  * queued too, that covers it already and hits it. F, the front, is the known enemy buildings' influence at the spot,
  * 2 x (1 - d / 2048) each (the enemy territory layer's), over the highest among the candidates. V, the view
@@ -69,6 +74,10 @@ public:
 		float view = 1.f;
 		float height = 0.5f;
 		float choke = 100.f;  // metal
+		float chokeDepth = 1.f;  // C x (1 - this x the choke's distance / range)
+		float chokeEcon = 1.f;  // x our economy, split among the current line chokes by traffic, added to C
+		float chokeEnemy = 400.f;  // metal an enemy line choke adds to C
+		float chokeCap = 1000.f;  // the most C one choke carries; 0 = no cap
 		// Armed statics that defend nothing in the field: no tower covering a target, nor a defence to the callers
 		std::vector<CCircuitDef*> notDefence;
 		// Callers (CBuilderManager::UpdateTurrets)
@@ -87,7 +96,7 @@ public:
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
 	};
-	enum class Reject: char {NONE, RADIUS, MASK, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
+	enum class Reject: char {NONE, RADIUS, MASK, LANE, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
 	// The cheap hard rules over the candidate grid of one order: the same for every def
 	struct SGrid {
 		std::vector<CTurretValue::SCandidate> passed;

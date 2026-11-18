@@ -653,8 +653,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Scored tower spots weigh what the turret picker does** (with `choke.spot.enable`). `FindSpot` scored a tower's
   spot by its goal's approach traffic, enemy buildings, height and view only, so a defence point's or a choke's tower
   ignored our buildings, the line chokes and the front that a picker turret weighs. Now it adds the picker's A (our
-  and allies' unarmed buildings in range, at cost × `turret.ally`), C (`turret.choke` for the best line choke in
-  range) and F (`turret.front` × the known enemy buildings' influence at the spot), as an order counts them
+  and allies' unarmed buildings in range, at cost × `turret.ally`), C (the best line choke in range, by its depth in
+  range and with its economy share, as the picker's C) and F (`turret.front` × the known enemy buildings' influence at the spot), as an order counts them
   (`CTurretPicker::GetSpotShare`), so those keys tune scored spots too. Hold spots don't take them.
 
 - **The threat graph follows the enemy army's mix.** Walkers, tanks and hovers gated the graph as soon as one of
@@ -692,6 +692,23 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   passed since the last rebuild, unless it opens a new crossing: newly crossable cells joining two of the graph's
   regions (a wall blown through, a terraformed ramp), which rebuilds it at the next mask check (at most 30 s). A
   change in the gating masks still rebuilds at once.
+
+- **The turret picker's choke bonus grows with how deep the choke is in range** (`turret.choke_depth`, default 1).
+  C was worth all of `turret.choke` anywhere in range, as every target is, so a turret only had to reach the choke
+  with its outer range, and walk, threat, view and the targets behind it kept it there. Now C is `turret.choke` ×
+  (1 − depth × the choke's distance ÷ range): all of it on the choke, nothing at the edge. 0 keeps the old flat bonus.
+  A choke of our current line also adds `turret.choke_econ` (default 1) × our economy: the cost of our and allied
+  energy, pylons and factories in our territory, split among the current line's chokes by the traffic through each
+  (mexes steer the traffic, so they aren't counted again). A pass that shuts in the base is worth far more than one
+  no route uses. A choke of the enemy line adds a flat `turret.choke_enemy` (400); one on both lines, both. A tower
+  covering a choke halves its C for the next one by as much as it covers it (fully standing on it, less reaching it
+  with its outer range), and the search's upper bound counts the depth too, so it stays exact. One choke carries at
+  most `turret.choke_cap` (1000) of C. A choke gets none until it has settled after a graph rebuild or while enemy
+  artillery is on it, as choke defence waits. A spot counting a choke's economy share doesn't count those buildings in
+  A again. Choke defence and the picker split by traffic through one `CChokeMap::GetTrafficShares`.
+- **Lanes are found without `choke.enable` too**, and the turret picker and the spot scorer never put a tower on one,
+  so a turret drawn onto a choke doesn't close a narrow pass to our army. Only with `choke.enable` are they also kept
+  free of every building on the blocking map.
 
 - **Anti-heavy squads hunt, park and fire more** (`antiheavy` block: new `keep_sec` 30, `spacing` 150, `max_group` 2).
   They ignored heavies they could shoot, idled in small groups at base, flip-flopped at the front and spent little time
