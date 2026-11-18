@@ -8,13 +8,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Added
 
 - **`choke_overlay sides`: who owns each region and choke.** A new overlay layer colours each region and choke by
-  its owner, from each side's mobile threat, static threat and eco there (enemy mobiles seen in the last minute, enemy
-  buildings until seen dead): a side owns it where only it has anything, or where its threat is 1.5 times the other's,
-  else it is contested, and nobody's where neither side has anything. A region counts the units in it; a choke counts
-  the guns whose range reaches its line (mobiles also within a main-tower range of it) and unarmed buildings near it.
+  its owner (enemy mobiles seen in the last minute, enemy buildings until seen dead). A region is the side's with
+  buildings in it, contested when both sides have buildings there or the other side's threat is at least a third of
+  the owner's, and nobody's with no buildings, whatever armies stand in it. A choke is defended by a side whose
+  ground-hitting towers cover all of its gap, contested when both do, when the other side's towers reach any of it or
+  its mobiles there are a third of the defender's threat, and nobody's when no side covers all of it.
   Regions are blue, red, striped or clear, stronger where the lines take them as that side's ground (see Changed).
-  Enemy eco under 150 metal with no enemy guns (a lone mex) counts as nothing. Each choke is a gate across its gap: its
-  core coloured by owner, posts at its ends when towers reach it, and a casing when it is on a line (white front line,
+  Each choke is a gate across its gap: its
+  core coloured by owner, posts at its ends when towers reach part of it, and a casing when it is on a line (white front line,
   green or orange our current line by whether its towers cover what it wants, the enemy line by rank, yellow forward
   line). Info boxes show the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, for
   the region and choke at the cursor and, zoomed in, for owned ones near the camera. Each enemy the AI counts is
@@ -622,19 +623,20 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **The choke lines follow who owns the ground, armies included.** The current, enemy and front lines were cut
   between territory, which only buildings make, so our line could run through ground the enemy army held and behind
   ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
-  base outside it. Now they are cut between held ground: each region's owner by the units the AI knows of (the
-  `sides` tint: enemy mobiles for a minute after they were seen, enemy buildings until seen dead, neither once the
-  AI has seen their spot empty), once it has owned it for 20 s, with the enemy's side of the map counting as theirs
-  where we don't own it. Contested and nobody's ground between the sides keeps our line and theirs apart. Enemy eco
-  under 150 metal with no enemy guns (a lone mex) owns nothing, and each side's ground counts only where it joins
-  that side's main ground (on its side of the map) without crossing the other's, so a sneaky mex or an army camped
-  deep in our ground doesn't wrap our line round it. Held ground replaces territory (buildings per region, 20 s to
-  join, 60 or 120 s to leave) everywhere: pockets qualify when the ground right outside them isn't the enemy's built
-  ground (held, with their towers or 150 metal of eco in it, or on their side), and the radar planner weighs and
+  base outside it. Now they are cut between held ground: each region's owner as the `sides` tint shows it (the side
+  with buildings there; contested by both sides' buildings, or by the other side's threat at a third of the owner's;
+  nobody's with no buildings), once it has owned it for 20 s, with the enemy's side of the map counting as theirs
+  where we don't own it. Enemy mobiles count for a minute after they were seen, enemy buildings until seen dead,
+  neither once the AI has seen their spot empty. Contested and nobody's ground between the sides keeps our line and
+  theirs apart, so an enemy army in our ground pulls our line back behind it. Each side's ground counts only where it
+  joins that side's main ground (on its side of the map) without crossing the other's, so an enemy outpost deep in
+  our ground doesn't wrap our line round it. Held ground replaces territory (20 s to join, 60 or 120 s to leave)
+  everywhere: pockets qualify when the ground right outside them isn't the enemy's, and the radar planner weighs and
   places by it.
   - The forward line was the cut against the enemy's start boxes and factories, so it hugged the enemy base. It is
-    now where our line would be if the enemy army were driven off: the cut against the enemy's buildings and side of
-    the map alone. A forward objective (D) counts the enemy army on the ground it would take in its defence and cost.
+    now where our line would be if the enemy army were driven off: the same cut from our ground and every region
+    where only we have buildings. A forward objective (D) counts the enemy army on the ground it would take in its
+    defence and cost.
   - Our line and the ranked enemy chokes count the enemies held ground counts: armed mobiles seen in the last
     minute, not the last 3 minutes, aircraft aside, and none whose spot was seen empty. What we saw of a ranked choke
     counts for a minute too, so a choke seen 2 minutes ago with its army since forgotten isn't undefended.

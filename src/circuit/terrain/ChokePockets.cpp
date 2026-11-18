@@ -34,14 +34,13 @@ namespace circuit {
 
 using namespace springai;
 
-#define ENEMY_ECO_FLOOR	150.f  // metal: less enemy eco than this in a region with no enemy guns (a lone mex) owns nothing
 #define HELD_SETTLE		(FRAMES_PER_SEC * 20)  // a region's new owner holds it for the lines after this long
-#define OWN_RATIO		1.5f  // where both sides have threat, one owns with this many times the other's
 #define MAX_DESTINATIONS	16
 
 static constexpr float NO_LIMIT = std::numeric_limits<float>::max();
 
 const int CChokeMap::ARMY_SEEN = FRAMES_PER_SEC * 60;
+const float CChokeMap::CONTEST_SHARE = 0.33f;
 
 void CChokeMap::SCutCache::Reset(std::vector<int>&& from, std::vector<float>&& cap, float limit, size_t regionCount)
 {
@@ -127,27 +126,40 @@ std::vector<bool> CChokeMap::GetShelteredBy(int region) const
 }
 
 /*
- * Nobody's where neither side has anything; one side's where only it has; where both have, the side with OWN_RATIO
- * times the other's threat, else contested (both sides' eco and no guns is contested too). Enemy eco under
- * ENEMY_ECO_FLOOR with no enemy guns counts as nothing: a sneaky mex doesn't flip a region in the middle of ours
+ * Buildings decide who owns a region; armies only contest it. A side's mobiles in a region with none of its
+ * buildings contest it when their threat is CONTEST_SHARE of the owner's there (any threat, if the owner has no guns)
  */
 CChokeMap::Side CChokeMap::OwnerOf(const SStrength& ours, const SStrength& enemy)
 {
-	const bool isOurs = ours.IsAny(), isEnemy = (enemy.Threat() > 0.f) || (enemy.eco >= ENEMY_ECO_FLOOR);
-	if (isOurs != isEnemy) {
-		return isOurs ? Side::OURS : Side::ENEMY;
+	const bool isOurs = (ours.structures > 0), isEnemy = (enemy.structures > 0);
+	if (isOurs == isEnemy) {
+		return isOurs ? Side::CONTESTED : Side::NONE;
 	}
-	if (!isOurs) {
-		return Side::NONE;
+	const SStrength& owner = isOurs ? ours : enemy;
+	const SStrength& other = isOurs ? enemy : ours;
+	if ((other.Threat() > 0.f) && (other.Threat() >= CONTEST_SHARE * owner.Threat())) {
+		return Side::CONTESTED;
 	}
-	const float power = ours.Threat(), threat = enemy.Threat();
-	if ((power > 0.f) && (power >= OWN_RATIO * threat)) {
-		return Side::OURS;
+	return isOurs ? Side::OURS : Side::ENEMY;
+}
+
+/*
+ * Only towers covering all of a choke's line defend it: one gap in their cover and the enemy walks through
+ */
+CChokeMap::Side CChokeMap::ChokeOwnerOf(const SStrength& ours, const SStrength& enemy, float ourCover,
+		float enemyCover)
+{
+	const bool isOurs = (ourCover >= 1.f), isEnemy = (enemyCover >= 1.f);
+	if (isOurs == isEnemy) {
+		return isOurs ? Side::CONTESTED : Side::NONE;
 	}
-	if ((threat > 0.f) && (threat >= OWN_RATIO * power)) {
-		return Side::ENEMY;
+	const SStrength& owner = isOurs ? ours : enemy;
+	const SStrength& other = isOurs ? enemy : ours;
+	const float otherCover = isOurs ? enemyCover : ourCover;
+	if ((otherCover > 0.f) || ((other.mobile > 0.f) && (other.mobile >= CONTEST_SHARE * owner.Threat()))) {
+		return Side::CONTESTED;
 	}
-	return Side::CONTESTED;
+	return isOurs ? Side::OURS : Side::ENEMY;
 }
 
 /*
@@ -178,7 +190,7 @@ void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideU
 		}
 		const bool isArmed = cdef->IsAttacker();
 		outOurs.push_back({kv.second->GetPos(frame), cdef->IsMobile(), cdef->GetMaxRange(),
-				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cdef->GetCostM()});
+				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cdef->GetCostM(), isArmed && cdef->HasAntiLand()});
 	}
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
@@ -188,13 +200,14 @@ void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideU
 		const CCircuitDef* edef = enemy->GetCircuitDef();
 		const bool isArmed = edef->IsAttacker();
 		outEnemies.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(),
-				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost()});
+				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost(), isArmed && edef->HasAntiLand()});
 	}
 }
 
 /*
- * Held ground, which the lines, pockets and radar go by: a region's owner by the units in it (OwnerOf, as the sides
- * overlay tints it), once it has owned it for HELD_SETTLE, so a raid passing through doesn't move the lines. The enemy
+ * Held ground, which the lines, pockets and radar go by: a region's owner by the buildings in it, contested by armies
+ * (OwnerOf, as the sides overlay tints it), once it has owned it for HELD_SETTLE, so a raid passing through doesn't
+ * move the lines. The enemy
  * also holds its side of the map (start boxes, factories) where we don't, so an unscouted base still counts as theirs.
  * Each side's ground counts only where it joins that side's main ground (its regions on its side of the map) without
  * crossing the other's: an army camped deep in the other's ground is an island, not a new front. Keyed by region id,
@@ -265,10 +278,9 @@ void CChokeMap::UpdateHeld()
 	};
 	isOurGround = joined(isOurs, isTheirs, isOurSide);
 	isEnemyGround = joined(isTheirs, isOurs, isEnemySide);
-	isEnemyBuilt.assign(regions.size(), false);
+	isOurBuilt.assign(regions.size(), false);
 	for (size_t r = 0; r < regions.size(); ++r) {
-		isEnemyBuilt[r] = isEnemyGround[r]
-				&& (isSide(isEnemySide, r) || (enemy[r].statics > 0.f) || (enemy[r].eco >= ENEMY_ECO_FLOOR));
+		isOurBuilt[r] = isOurGround[r] || ((ours[r].structures > 0) && (enemy[r].structures == 0));
 	}
 }
 
@@ -397,8 +409,8 @@ void CChokeMap::AnalyzePoints()
 
 	/*
 	 * Entrances and cuts. The pocket cut is the enemy-nearest cut when it qualifies (every choke defensible, within
-	 * choke.near, outer side not the enemy's built ground: an army passing doesn't move the towers), else the
-	 * cluster-nearest cut
+	 * choke.near, outer side not the enemy's ground: buildings make that, so an army passing doesn't move the
+	 * towers), else the cluster-nearest cut
 	 */
 	auto innerOf = [this, &chokes](int region, const std::vector<int>& cut) {
 		std::vector<bool> isBlocked(chokes.size(), false);
@@ -413,7 +425,7 @@ void CChokeMap::AnalyzePoints()
 			const bool isNear = std::any_of(pts.begin(), pts.end(), [&](int p) {
 				return (pointChokeDist[p][c] >= 0.f) && (pointChokeDist[p][c] <= nearDist);
 			});
-			if (!chokes[c].isDefensible || !isNear || isEnemyBuilt[outer]) {
+			if (!chokes[c].isDefensible || !isNear || isEnemyGround[outer]) {
 				return false;
 			}
 		}
@@ -514,9 +526,9 @@ void CChokeMap::AnalyzePoints()
  * Between held ground (UpdateHeld), chokes too wide to defend counting double. The current line: the cut nearest our
  * ground against the enemy's (C). The enemy line: the same cut nearest the enemy's ground, and the front line the
  * chokes both share, which every cheapest cut between the sides passes; contested and nobody's ground between them
- * keeps them apart. The forward line: the cut nearest our ground against the enemy's buildings and side alone, where
- * our line would be if their army were driven off (D). Entrances from us: per region, the cut nearest it from our
- * ground (E)
+ * keeps them apart. The forward line: the same cut, from our ground and every region where only we have buildings
+ * (contested by their army alone), where our line would be if their army were driven off (D). Entrances from us: per
+ * region, the cut nearest it from our ground (E)
  */
 void CChokeMap::UpdateLines()
 {
@@ -536,7 +548,13 @@ void CChokeMap::UpdateLines()
 	frontLine.clear();
 	std::set_intersection(currentLine.begin(), currentLine.end(), enemyLine.begin(), enemyLine.end(),
 			std::back_inserter(frontLine));
-	forwardLine = graph.CutFrom(notOurs(RegionsWhere(isEnemyBuilt)), ours, capacity, NO_LIMIT).nearTarget;
+	std::vector<int> built = RegionsWhere(isOurBuilt);
+	if (built.empty()) {
+		built = ours;
+	}
+	std::vector<int> theirsLeft;
+	std::copy_if(theirs.begin(), theirs.end(), std::back_inserter(theirsLeft), [this](int r) { return !isOurBuilt[r]; });
+	forwardLine = graph.CutFrom(theirsLeft, built, capacity, NO_LIMIT).nearTarget;
 	// Entrances from us: found when first asked, as only regions with enemy units are
 	entranceCuts.Reset(std::move(ours), ChokeCapacity(1.f, 1.f), config.entrances, graph.GetRegions().size());
 }
