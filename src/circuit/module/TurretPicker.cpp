@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 
 namespace circuit {
 
@@ -237,6 +238,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 				+ utils::int_to_string(count(Reject::SITE), ", %i not buildable")
 				+ utils::int_to_string(count(Reject::REACH), ", %i out of reach")
 				+ utils::int_to_string(count(Reject::UNSAFE), ", %i unsafe")
+				+ utils::int_to_string(count(Reject::LANE), ", %i on a lane")
 				+ utils::int_to_string(count(Reject::MASK), ", %i masked)"));
 	}
 	if (last.res.search.scored.size() > MAX_SHOWN) {
@@ -369,12 +371,10 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	keepBest(traffic, MAX_TRAFFIC * 4);  // the line-of-fire tests of the halving only for those that may make it
 
 	// A, and our buildings for the influence rule (armed or not, nanoframes too; constructors, Claw mines and missiles
-	// left out). With turret.choke_econ, per region: the cost of our and allied economy there (mexes, energy, pylons,
-	// factories), for C
-	std::vector<float> econ;
-	if (isChokeReady && (config.chokeEcon > 0.f)) {
-		econ.assign(chokeMap->GetGraph().GetRegions().size(), 0.f);
-	}
+	// left out). With turret.choke_econ, for C: the cost of our and allied economy in our territory (energy, pylons,
+	// factories; mexes steer the traffic, which splits it among the chokes)
+	const bool isEcon = isChokeReady && (config.chokeEcon > 0.f);
+	float econ = 0.f;
 	const CEnergyGrid* energyGrid = circuit->GetEconomyManager()->GetEnergyGrid();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
@@ -385,12 +385,12 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		if (!utils::is_valid(pos)) {
 			continue;
 		}
-		if (!econ.empty() && (cdef->IsMex() || cdef->IsPylon() || energyGrid->IsEnergyDef(cdef->GetId())
-			|| (cdef->IsBuilder() && !cdef->IsAssist())))
-		{
+		const bool isEconDef = cdef->IsPylon() || energyGrid->IsEnergyDef(cdef->GetId())
+				|| (cdef->IsBuilder() && !cdef->IsAssist());
+		if (isEcon && isEconDef) {
 			const int region = chokeMap->GetRegionAt(pos);
-			if (region != CRegionGraph::NO_REGION) {
-				econ[region] += cdef->GetCostM();
+			if ((region != CRegionGraph::NO_REGION) && chokeMap->IsOurTerritory(region)) {
+				econ += cdef->GetCostM();
 			}
 		}
 		const float sqDist = pos.SqDistance2D(centre);
@@ -412,45 +412,35 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	g.raws.insert(g.raws.end(), enemies.begin(), enemies.end());
 
 	// C: the middles of the chokes on our current line and the enemy line, turret.choke each. A current line choke adds
-	// turret.choke_econ x its share of our economy: per region of our territory it touches, that region's economy over
-	// the current line chokes touching it. An enemy line choke adds turret.choke_enemy (a choke on both, both)
+	// turret.choke_econ x our economy, split among the current line's chokes by the traffic through each (evenly with
+	// none): the routes to what we hold show which pass shuts it in. An enemy line choke adds turret.choke_enemy (a
+	// choke on both lines, both)
 	if (isChokeReady) {
 		const std::vector<CRegionGraph::SChoke>& chokes = chokeMap->GetGraph().GetChokes();
-		const std::vector<int>& current = chokeMap->GetCurrentLine();
 		auto isChoke = [&chokes](int c) { return (c >= 0) && (c < (int)chokes.size()); };
-		std::vector<int> lineChokes(econ.size(), 0);  // per region of our territory
-		auto forOurSides = [&](int c, const std::function<void (int)>& fn) {
-			for (int r : {chokes[c].regionA, chokes[c].regionB}) {
-				if ((r >= 0) && (r < (int)econ.size()) && chokeMap->IsOurTerritory(r)) {
-					fn(r);
-				}
-			}
-		};
-		for (int c : current) {
+		std::map<int, float> through;  // current line choke -> the traffic through it
+		float totalThrough = 0.f;
+		for (int c : chokeMap->GetCurrentLine()) {
 			if (isChoke(c)) {
-				forOurSides(c, [&lineChokes](int r) { ++lineChokes[r]; });
+				through[c] = chokeMap->GetTrafficThrough(chokes[c]);
+				totalThrough += through[c];
 			}
 		}
-		const std::vector<int>& enemyLine = chokeMap->GetEnemyLine();
-		std::vector<int> ids = current;
-		ids.insert(ids.end(), enemyLine.begin(), enemyLine.end());
-		std::sort(ids.begin(), ids.end());
-		ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-		for (int c : ids) {
-			if (!isChoke(c)) {
-				continue;
+		std::map<int, float> worth;  // choke -> C before halving
+		for (const auto& [c, amount] : through) {
+			const float share = (totalThrough > 0.f) ? amount / totalThrough : 1.f / through.size();
+			worth[c] = config.choke + config.chokeEcon * econ * share;
+		}
+		for (int c : chokeMap->GetEnemyLine()) {
+			if (isChoke(c)) {
+				worth.emplace(c, config.choke).first->second += config.chokeEnemy;
 			}
+		}
+		for (const auto& [c, metal] : worth) {
 			const AIFloat3 pos = chokeMap->GetCellPos(chokes[c].centre);
-			if (pos.SqDistance2D(centre) > sqReach) {
-				continue;
+			if (pos.SqDistance2D(centre) <= sqReach) {
+				g.raws.push_back({ground(pos), metal, CTurretValue::Kind::CHOKE});
 			}
-			float share = 0.f;
-			if (std::find(current.begin(), current.end(), c) != current.end()) {
-				forOurSides(c, [&](int r) { share += econ[r] / lineChokes[r]; });
-			}
-			const bool isEnemyLine = std::find(enemyLine.begin(), enemyLine.end(), c) != enemyLine.end();
-			const float metal = config.choke + config.chokeEcon * share + (isEnemyLine ? config.chokeEnemy : 0.f);
-			g.raws.push_back({ground(pos), metal, CTurretValue::Kind::CHOKE});
 		}
 	}
 
@@ -565,6 +555,9 @@ CTurretPicker::Reject CTurretPicker::MakeCandidate(CCircuitUnit* builder, const 
 	}
 	if (circuit->GetMilitaryManager()->GetSpotScorer()->IsMasked(pos)) {
 		return Reject::MASK;
+	}
+	if (circuit->GetChokeMap()->IsOnLane(pos)) {  // a narrow choke's path (choke.lane): our army walks it
+		return Reject::LANE;
 	}
 	const float sqInfl = SQUARE(inflRadius);
 	if (std::none_of(gather.ourBuildings.begin(), gather.ourBuildings.end(), [&](const AIFloat3& b) {

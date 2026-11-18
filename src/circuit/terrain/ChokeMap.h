@@ -216,6 +216,7 @@ public:
 	const std::vector<SLane>& GetLanes() const { return lanes; }
 	int GetLaneVersion() const { return laneVersion; }
 	bool IsOnLane(const springai::AIFloat3& pos) const;
+	float GetTrafficThrough(const CRegionGraph::SChoke& choke) const;  // the traffic field across its line
 
 	CChokeOverlay* GetOverlay() const { return overlay.get(); }
 	// choke_overlay save: the chokes and pocket classes as a JSON fixture

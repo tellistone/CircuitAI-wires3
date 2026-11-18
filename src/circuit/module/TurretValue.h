@@ -84,6 +84,8 @@ public:
 	};
 
 	// viewOf: V, read only for a spot with a base (nullptr: V = 1 everywhere)
+	// C of a choke target sqDist away: its metal, less the farther it is in range (turret.choke_depth, 0 to 1)
+	static float ChokeWorth(float metal, float sqDist, float range, float depth);
 	static STerms Evaluate(const SCandidate& c, const std::vector<STarget>& targets, const SParams& p, float frontNorm,
 			const ClearFn& isClear, const ViewFn& viewOf = nullptr);
 	// Best upper bound first: the targets in range with no line test, x the full height bonus, x the spot's own front,

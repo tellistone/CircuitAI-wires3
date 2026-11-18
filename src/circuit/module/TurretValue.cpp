@@ -30,6 +30,11 @@ inline float LeanAndWalk(const CTurretValue::SCandidate& c, const CTurretValue::
 
 }  // namespace
 
+float CTurretValue::ChokeWorth(float metal, float sqDist, float range, float depth)
+{
+	return metal * (1.f - std::min(std::max(depth, 0.f), 1.f) * std::sqrt(sqDist) / std::max(range, 1.f));
+}
+
 CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vector<STarget>& targets, const SParams& p,
 		float frontNorm, const ClearFn& isClear, const ViewFn& viewOf)
 {
@@ -37,7 +42,6 @@ CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vect
 	const float sqRange = p.range * p.range;
 	float heightSum = 0.f;
 	int count = 0;
-	const float chokeDepth = std::min(std::max(p.chokeDepth, 0.f), 1.f);
 	for (const STarget& target : targets) {
 		const float sqDist = SqDist2D(c.pos, target.pos);
 		if ((target.metal <= 0.f) || (sqDist > sqRange) || !isClear(c.pos, target.pos)) {
@@ -47,10 +51,9 @@ CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vect
 			case Kind::TRAFFIC: t.traffic += target.metal; break;
 			case Kind::ALLY: t.ally += target.metal; break;
 			case Kind::ENEMY: t.enemy += target.metal; break;
-			case Kind::CHOKE: {  // one choke's worth at most, the more the deeper it is in range
-				const float depth = 1.f - chokeDepth * std::sqrt(sqDist) / p.range;
-				t.choke = std::max(t.choke, target.metal * depth);
-			} break;
+			case Kind::CHOKE:  // one choke's worth at most
+				t.choke = std::max(t.choke, ChokeWorth(target.metal, sqDist, p.range, p.chokeDepth));
+				break;
 		}
 		heightSum += target.pos.y;
 		++count;
@@ -95,9 +98,10 @@ CTurretValue::SResult CTurretValue::Search(const std::vector<SCandidate>& candid
 		float inRange = 0.f;
 		float choke = 0.f;
 		for (const STarget& target : targets) {
-			if ((target.metal > 0.f) && (SqDist2D(c.pos, target.pos) <= sqRange)) {
+			const float sqDist = SqDist2D(c.pos, target.pos);
+			if ((target.metal > 0.f) && (sqDist <= sqRange)) {
 				if (target.kind == Kind::CHOKE) {
-					choke = std::max(choke, target.metal);
+					choke = std::max(choke, ChokeWorth(target.metal, sqDist, p.range, p.chokeDepth));
 				} else {
 					inRange += target.metal;
 				}
