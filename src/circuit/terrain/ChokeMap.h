@@ -80,7 +80,7 @@ public:
 		bool isChoke = false;  // choke.enable: choke defence (A), region splits of defence points, lanes
 		bool isSpot = false;  // choke.spot.enable: scored spots for towers (F)
 		bool isRadar = false;  // choke.radar.enable: the radar planner (B)
-		bool isObjective = false;  // choke.objective.enable: forward objectives (D), rankings steering (E)
+		bool isObjective = false;  // choke.objective.enable: objectives (D), rankings steering (E)
 		bool isHold = false;  // quota.hold_choke: the idle army holds a frontline choke (C)
 		bool isExpand = false;  // choke.expand: expansion bonus behind a defended cut
 		float minArea = 0.5f;  // choke.region.min_area: main-tower ranges squared
@@ -200,7 +200,7 @@ public:
 	std::vector<bool> GetShelteredBy(int region) const;
 
 	// Who owns ground (ChokePockets.cpp), by the units the AI knows of. The sides overlay tints regions by it, and the
-	// lines are cut between the ground each side holds by it
+	// lines go round the ground each side holds by it
 	enum class Side: char {NONE, OURS, ENEMY, CONTESTED};
 	struct SSideUnit {
 		springai::AIFloat3 pos;
@@ -246,14 +246,16 @@ public:
 	const std::vector<SPointInfo>& GetPointInfos() const { return pointInfos; }
 	const SPointInfo* GetPointInfo(int cluster, int index) const;  // nullptr before the analysis
 	const std::vector<SPocket>& GetPockets() const { return pockets; }
-	// Chokes of the cut nearest our held ground against the enemy's (C), and of the cut from our ground and the
-	// regions only we have buildings in, as if their army were driven off (D)
+	// Our line (C): the chokes out of our held ground (GetOurRegions) into regions the enemy reaches from their held
+	// ground without crossing ours. The enemy line: the chokes out of their held ground into regions we reach from
+	// ours without crossing theirs. The front line: the chokes between our ground and theirs, and every choke of a
+	// contested region (settled). Ascending
 	const std::vector<int>& GetCurrentLine() const { return currentLine; }
-	const std::vector<int>& GetForwardLine() const { return forwardLine; }
-	// The current line's cut nearest the enemy's held ground instead, and the chokes the two share: where the lines
-	// touch, which every cheapest cut between the sides passes (empty while the lines don't touch). Ascending
 	const std::vector<int>& GetEnemyLine() const { return enemyLine; }
 	const std::vector<int>& GetFrontLine() const { return frontLine; }
+	// Our line as it would be were every region we have buildings in and the enemy hasn't ours: where it would be if
+	// their army were driven off our buildings (D). Ascending
+	const std::vector<int>& GetForwardLine() const { return forwardLine; }
 	// Per region: the chokes of the cut nearest it from our held ground (E), up to choke.entrances of them
 	const std::vector<int>& GetEntrancesFromUs(int region) const;
 
@@ -412,7 +414,7 @@ private:
 	std::map<int, SHeld> held;  // region id
 	std::vector<Side> settledOwner;
 	std::vector<bool> isOurGround, isEnemyGround;
-	std::vector<bool> isOurBuilt;  // our buildings and none of theirs: ours, if their army were driven off
+	std::vector<bool> isOurBuilt;  // our ground, and where we have buildings and they have none (the forward line's)
 
 	// Pockets and lines
 	std::vector<SPointInfo> pointInfos;
@@ -421,7 +423,7 @@ private:
 	std::vector<std::vector<float>> pointChokeDist;  // per point info, per choke: walking elmos, -1 out of reach
 	SCutCache sideCuts;  // from the enemy side, up to choke.entrances (AnalyzePoints)
 	mutable SCutCache entranceCuts;  // from our regions (GetEntrancesFromUs)
-	std::vector<int> currentLine, forwardLine, enemyLine, frontLine;
+	std::vector<int> currentLine, enemyLine, frontLine, forwardLine;
 	float openness;
 	Openness opennessBand;
 	bool isOpennessSet;

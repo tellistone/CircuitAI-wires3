@@ -16,7 +16,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   Regions are blue, red, striped or clear, stronger where the lines take them as that side's ground (see Changed).
   Each choke is a gate across its gap: its
   core coloured by owner, posts at its ends when towers reach part of it, and a casing when it is on a line (white front line,
-  green or orange our current line by whether its towers cover what it wants, the enemy line by rank, yellow forward
+  green or orange our current line by whether its towers cover what it wants, the enemy line by tower cover, yellow forward
   line). Info boxes show the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, for
   the region and choke at the cursor and, zoomed in, for owned ones near the camera. Each enemy the AI counts is
   marked where it believes it is (filled while seen, an outline where last seen), so a spectator with full view can
@@ -24,7 +24,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   says `LOS cheating: on` or `off` at start. A legend is printed bottom left.
   It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through
   `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget the layer shows
-  the `lines` layer. The choke lines are cut between the ground it shows each side owning (see Changed).
+  the `lines` layer. The choke lines go round the ground it shows each side owning (see Changed).
 
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
@@ -620,30 +620,36 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
-- **The choke lines follow who owns the ground, armies included.** The current, enemy and front lines were cut
+- **The choke lines go round who owns the ground, armies included.** The current, enemy and front lines were cut
   between territory, which only buildings make, so our line could run through ground the enemy army held and behind
   ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
-  base outside it. Now they are cut between held ground: each region's owner as the `sides` tint shows it (the side
+  base outside it. Now they go round held ground: each region's owner as the `sides` tint shows it (the side
   with buildings there; contested by both sides' buildings, or by the other side's threat at a third of the owner's;
   nobody's with no buildings), once it has owned it for 20 s, with the enemy's side of the map counting as theirs
-  where we don't own it. Enemy mobiles count for a minute after they were seen, enemy buildings until seen dead,
+  where nobody owns it. Enemy mobiles count for a minute after they were seen, enemy buildings until seen dead,
   neither once the AI has seen their spot empty. Contested and nobody's ground between the sides keeps our line and
   theirs apart, so an enemy army in our ground pulls our line back behind it. Each side's ground counts only where it
   joins that side's main ground (on its side of the map) without crossing the other's, so an enemy outpost deep in
   our ground doesn't wrap our line round it. Held ground replaces territory (20 s to join, 60 or 120 s to leave)
   everywhere: pockets qualify when the ground right outside them isn't the enemy's, and the radar planner weighs and
   places by it.
+  - The lines were each one cheapest cut, which could leave an entrance off a line when a cheaper set of chokes
+    further out also split the sides. Our line is now every choke out of our ground into a region the enemy can
+    walk to without crossing our ground, and the enemy line its mirror round theirs. The front line was the chokes
+    both cuts shared; it is now the chokes between our ground and theirs, plus every choke of a contested region.
   - The forward line was the cut against the enemy's start boxes and factories, so it hugged the enemy base. It is
-    now where our line would be if the enemy army were driven off: the same cut from our ground and every region
-    where only we have buildings. A forward objective (D) counts the enemy army on the ground it would take in its
-    defence and cost.
+    now where our line would be if the enemy army were driven off: our line as if every region where only we have
+    buildings were ours. A forward objective (D) counts the enemy army on the ground it would take in its defence
+    and cost.
   - Our line and the ranked enemy chokes count the enemies held ground counts: armed mobiles seen in the last
     minute, not the last 3 minutes, aircraft aside, and none whose spot was seen empty. What we saw of a ranked choke
     counts for a minute too, so a choke seen 2 minutes ago with its army since forgotten isn't undefended.
   - A ranked enemy choke counts as seen (and so can be undefended) only for the lower of the shares of its gap and of
     the ground a main-tower range beyond it on the enemy's side in our LOS lately, not the gap alone.
-  - The `sides` widget draws the front line as a white rim round our line's casing, so a front choke that is short
-    shows orange (the front line hid it). A region's info box says when the lines still take it otherwise.
+  - The `sides` widget draws the front line as a white rim round the other casings, so a front choke that is short
+    shows orange (the front line hid it). It draws an enemy line choke dark red (defended) when enemy ground-hitting
+    towers cover all of its gap and pink (undefended) when they don't, and no longer marks unranked or enemy-held
+    chokes off the lines. A region's info box says when the lines still take it otherwise.
 
 - **The threat graph follows the enemy army's mix.** Walkers, tanks and hovers gated the graph as soon as one of
   them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only graph of

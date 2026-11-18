@@ -5,7 +5,7 @@
  *      Author: Claude
  */
 
-// CChokeMap: map sides and held ground, pockets and their cuts, the current and forward lines, openness,
+// CChokeMap: map sides and held ground, pockets and their cuts, the lines, openness,
 // the traffic field's destinations, and the choke_overlay save fixture
 
 #include "terrain/ChokeMap.h"
@@ -249,7 +249,7 @@ void CChokeMap::UpdateHeld()
 		next[regions[r].id] = h;
 		settledOwner[r] = h.side;
 		isOurs[r] = (h.side == Side::OURS);
-		isTheirs[r] = (h.side == Side::ENEMY) || (isSide(isEnemySide, r) && !isOurs[r]);
+		isTheirs[r] = (h.side == Side::ENEMY) || (isSide(isEnemySide, r) && (h.side == Side::NONE));
 	}
 	held = std::move(next);
 
@@ -303,7 +303,7 @@ void CChokeMap::Analyze()
 			mix(id);
 		}
 	}
-	for (const std::vector<int>* line : {&currentLine, &forwardLine, &enemyLine}) {
+	for (const std::vector<int>* line : {&currentLine, &forwardLine, &enemyLine, &frontLine}) {
 		mix(-1);
 		for (int c : *line) {
 			mix(c);
@@ -523,40 +523,66 @@ void CChokeMap::AnalyzePoints()
 }
 
 /*
- * Between held ground (UpdateHeld), chokes too wide to defend counting double. The current line: the cut nearest our
- * ground against the enemy's (C). The enemy line: the same cut nearest the enemy's ground, and the front line the
- * chokes both share, which every cheapest cut between the sides passes; contested and nobody's ground between them
- * keeps them apart. The forward line: the same cut, from our ground and every region where only we have buildings
- * (contested by their army alone), where our line would be if their army were driven off (D). Entrances from us: per
- * region, the cut nearest it from our ground (E)
+ * Around held ground (UpdateHeld). Our line (C): every choke out of our ground into a region the enemy reaches from
+ * theirs without crossing ours, so not the ones into ground only we can get to. The enemy line the same around
+ * theirs, for regions we reach without crossing theirs. The front line: the chokes where our ground meets theirs, and
+ * every choke of a region contested 20 s. The forward line (D): our line as if every region we have buildings in
+ * and the enemy hasn't were ours, where it would be if their army were driven off our buildings. Entrances from us:
+ * per region, the cut nearest it from our ground (E)
  */
 void CChokeMap::UpdateLines()
 {
-	const std::vector<float> capacity = ChokeCapacity(1.f, 2.f);
+	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
+	const size_t regionCount = graph.GetRegions().size();
 	std::vector<int> ours = GetOurRegions();
-	auto notOurs = [&ours](std::vector<int> regions) {  // our side before we hold any ground
-		regions.erase(std::remove_if(regions.begin(), regions.end(), [&ours](int r) {
-			return std::find(ours.begin(), ours.end(), r) != ours.end();
-		}), regions.end());
-		return regions;
-	};
-	const std::vector<int> theirs = notOurs(RegionsWhere(isEnemyGround));
-	// An open cut has no chokes
-	CRegionGraph::SCut cut = graph.CutFrom(theirs, ours, capacity, NO_LIMIT);
-	currentLine = std::move(cut.nearTarget);
-	enemyLine = std::move(cut.nearSource);
-	frontLine.clear();
-	std::set_intersection(currentLine.begin(), currentLine.end(), enemyLine.begin(), enemyLine.end(),
-			std::back_inserter(frontLine));
-	std::vector<int> built = RegionsWhere(isOurBuilt);
-	if (built.empty()) {
-		built = ours;
+	std::vector<bool> isOurs(regionCount, false), isTheirs(regionCount, false), isBuilt(regionCount, false);
+	for (int r : ours) {
+		isOurs[r] = true;
 	}
-	std::vector<int> theirsLeft;
-	std::copy_if(theirs.begin(), theirs.end(), std::back_inserter(theirsLeft), [this](int r) { return !isOurBuilt[r]; });
-	forwardLine = graph.CutFrom(theirsLeft, built, capacity, NO_LIMIT).nearTarget;
+	std::vector<int> theirs, theirsLeft;  // our side before we hold any ground stays ours; left: not built in
+	for (size_t r = 0; r < regionCount; ++r) {
+		isTheirs[r] = isEnemyGround[r] && !isOurs[r];
+		isBuilt[r] = isOurs[r] || isOurBuilt[r];
+		if (isTheirs[r]) {
+			theirs.push_back(r);
+			if (!isBuilt[r]) {
+				theirsLeft.push_back(r);
+			}
+		}
+	}
+	// A side's line: the chokes out of its ground into regions the other side reaches from its own ground without
+	// crossing this side's
+	auto lineOf = [&](const std::vector<bool>& mine, const std::vector<int>& other) {
+		std::vector<int> line;
+		if (other.empty()) {
+			return line;
+		}
+		std::vector<bool> isBlocked(chokes.size());
+		for (size_t c = 0; c < chokes.size(); ++c) {
+			isBlocked[c] = mine[chokes[c].regionA] || mine[chokes[c].regionB];
+		}
+		const std::vector<bool> isReached = graph.ReachableFrom(other, isBlocked);
+		for (size_t c = 0; c < chokes.size(); ++c) {
+			const int a = chokes[c].regionA, b = chokes[c].regionB;
+			if ((mine[a] && !mine[b] && isReached[b]) || (mine[b] && !mine[a] && isReached[a])) {
+				line.push_back(c);
+			}
+		}
+		return line;
+	};
+	currentLine = lineOf(isOurs, theirs);
+	enemyLine = lineOf(isTheirs, ours);
+	forwardLine = lineOf(isBuilt, theirsLeft);
+	auto isContested = [this](int r) { return (r < (int)settledOwner.size()) && (settledOwner[r] == Side::CONTESTED); };
+	frontLine.clear();
+	for (size_t c = 0; c < chokes.size(); ++c) {
+		const int a = chokes[c].regionA, b = chokes[c].regionB;
+		if ((isOurs[a] && isTheirs[b]) || (isOurs[b] && isTheirs[a]) || isContested(a) || isContested(b)) {
+			frontLine.push_back(c);
+		}
+	}
 	// Entrances from us: found when first asked, as only regions with enemy units are
-	entranceCuts.Reset(std::move(ours), ChokeCapacity(1.f, 1.f), config.entrances, graph.GetRegions().size());
+	entranceCuts.Reset(std::move(ours), ChokeCapacity(1.f, 1.f), config.entrances, regionCount);
 }
 
 const std::vector<int>& CChokeMap::GetEntrancesFromUs(int region) const

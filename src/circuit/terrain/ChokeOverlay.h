@@ -73,7 +73,7 @@ private:
 
 	/*
 	 * The sides layer (ChokeSides.cpp): who owns each region (by the units in it) and each choke (by the guns that
-	 * reach it), and the lines by rank and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
+	 * reach it), and the lines by tower cover and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
 	 * running the AI has it (util/LuaUI/Widgets), else the lines layer
 	 */
 	using Side = CChokeMap::Side;

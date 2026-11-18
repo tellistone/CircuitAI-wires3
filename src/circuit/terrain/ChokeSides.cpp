@@ -178,10 +178,19 @@ std::string CChokeOverlay::MakeInfo(const std::vector<SView>& regionViews, const
 		std::string title = utils::int_to_string(chokes[c].id, "Choke %i")
 				+ utils::float_to_string(view.ourCover * 100.f, "|towers cover: ours %.0f%%")
 				+ utils::float_to_string(view.enemyCover * 100.f, ", enemy %.0f%%");
+		auto isOn = [c](const std::vector<int>& line) { return std::binary_search(line.begin(), line.end(), (int)c); };
+		if (isOn(chokeMap->GetFrontLine())) {
+			title += "|front line";
+		}
+		if (isOn(chokeMap->GetEnemyLine())) {
+			title += (view.enemyCover >= 1.f) ? "|enemy line, defended" : "|enemy line, undefended";
+		}
+		if (isOn(chokeMap->GetForwardLine())) {
+			title += "|forward line";
+		}
 		for (const CFrontline::SRank& rank : frontline->GetRanks()) {
 			if (rank.chokeId == chokes[c].id) {
-				title += std::string(rank.isHeld ? "|enemy-held" : "|enemy line") + (rank.isUndefended ? ", undefended" : "")
-						+ utils::float_to_string(rank.defence, ": defence %.0f")
+				title += utils::float_to_string(rank.defence, "|enemy defence %.0f")
 						+ utils::float_to_string(rank.confidence * 100.f, ", seen %.0f%%");
 			}
 		}
@@ -231,8 +240,8 @@ void CChokeOverlay::DrawSides()
  *   control: who defended x1 z1 x2 z2, a choke's line end to end. Who controls it: n nobody, o ours, e the enemy,
  *   c contested (CChokeMap::ChokeOwnerOf). Whose ground-hitting towers reach any of its line: n nobody's, o ours,
  *   e the enemy's, b both sides'
- *   lines: kind x1 z1 x2 z2. Kinds: w forward line; f front line; enemy line chokes by rank: e defended,
- *   u undefended, g not seen enough; h enemy-held off the enemy line; current line: c covered, s short
+ *   lines: kind x1 z1 x2 z2. Kinds: w forward line; f front line; enemy line: e defended (their ground-hitting
+ *   towers cover all of its line), u undefended; our line: c its towers cover what it wants, s short
  *   info: see MakeInfo
  *   known: see MakeKnownEnemies
  * - status: " cheating" when the AI's LOS cheating option is on (it knows every enemy unit), else empty
@@ -302,19 +311,8 @@ void CChokeOverlay::SendWidgetData()
 	for (int c : chokeMap->GetFrontLine()) {
 		putChoke(lines, c, 'f');
 	}
-	std::vector<bool> isRanked(chokes.size(), false);
-	for (const CFrontline::SRank& rank : frontline->GetRanks()) {
-		const int c = graph.FindChoke(rank.chokeId);
-		if (c >= 0) {
-			isRanked[c] = true;
-			const bool isOnLine = std::binary_search(chokeMap->GetEnemyLine().begin(), chokeMap->GetEnemyLine().end(), c);
-			putChoke(lines, c, !isOnLine ? 'h' : rank.isUndefended ? 'u' : (rank.defence > 0.f) ? 'e' : 'g');
-		}
-	}
 	for (int c : chokeMap->GetEnemyLine()) {
-		if (!isRanked[c]) {
-			putChoke(lines, c, 'g');  // not ranked since the lines moved
-		}
+		putChoke(lines, c, (chokeViews[c].enemyCover >= 1.f) ? 'e' : 'u');  // their towers cover all of its gap, or not
 	}
 	for (int c : chokeMap->GetCurrentLine()) {
 		const auto it = std::find_if(frontline->GetFront().begin(), frontline->GetFront().end(),

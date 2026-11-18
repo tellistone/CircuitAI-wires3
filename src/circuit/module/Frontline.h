@@ -33,8 +33,9 @@ class IFighterTask;
  *   up the shortfall, and loses the claim when it hasn't asked for its spot in a minute. A claimed slot keeps its
  *   choke until 30 s after it was last short, unless a short one ranks 1.3x higher; then it moves to the top short
  *   one, or ends if none is. With choke.enable, the top-ranked short choke's pocket is fortified (MakeDefence).
- * - D, choke.objective.enable: when the forward line is shorter than the current line (or as long, with more
- *   income behind it), its chokes become an objective if the gain (the retired chokes' towers and wanted power, plus
+ * - D, choke.objective.enable: when the forward line (CChokeMap::GetForwardLine: our line were the regions we
+ *   have buildings in and the enemy hasn't ours) is shorter than our line (or as long, with more income behind it), its chokes
+ *   become an objective if the gain (the retired chokes' towers and wanted power, plus
  *   3 minutes of the income it brings behind the line) is choke.objective.gain x the cost (their defence and the enemy
  *   army on the ground it brings behind the line, plus what holding them takes), and our attack power is
  *   choke.objective.power x that defence. A choke's defence is what we saw over the share of it we saw lately (at
