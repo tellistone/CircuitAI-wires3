@@ -117,6 +117,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.height` | `0.5` | The most a spot's height adds to its value. |
 | `turret.choke` | `100` | Metal a choke of our current line or the enemy line in range adds (C). |
 | `turret.choke_econ` | `1.0` | A choke of our current line adds this × its share of our economy behind it to C: per region of our territory it touches, the cost of our and allied mexes, energy, pylons and factories there ÷ the current line chokes touching that region. 0 = off. |
+| `turret.choke_enemy` | `400` | Metal a choke of the enemy line adds to C, on top of `turret.choke` (and of the economy share for a choke on both lines). |
 | `turret.choke_depth` | `1.0` | C × (1 − this × the choke's distance ÷ range). At 1, a choke is worth all of `turret.choke` right under the turret and nothing at the edge of its range; at 0, the same anywhere in range. |
 | `turret.not_defence` | `["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"]` | Armed statics that defend nothing in the field: Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity and the Antinuke. They never cover a target, and the callers don't count them as a defence or as allied power. Claw mines and missiles are left out the same way, by their `mobilebuilding` mark. |
 | `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
@@ -309,7 +310,8 @@ cost:
 - *C*, `turret.choke` when a choke of our current line or the enemy line has its middle in range. A current line
   choke adds `turret.choke_econ` × its share of the economy it shuts in: for each region of our territory it touches,
   the cost of our and allied mexes, energy, pylons and factories there, divided by the number of current line chokes
-  touching that region. The whole is × (1 − `turret.choke_depth` × its distance ÷ range). One choke's worth at most.
+  touching that region. An enemy line choke adds `turret.choke_enemy`; a choke on both lines adds both. The whole is
+  × (1 − `turret.choke_depth` × its distance ÷ range). One choke's worth at most.
   Every other target counts in full anywhere in range, so without the depth a turret only has to reach the choke with
   its outer range, and walk, threat, view and the targets behind it hold it back there.
 - Each target counts only if the turret hits it (ground, and under deep water for one that hits there), in range

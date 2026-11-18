@@ -75,6 +75,7 @@ void CTurretPicker::ReadConfig()
 	c.choke = turret.get("choke", c.choke).asFloat();
 	c.chokeDepth = turret.get("choke_depth", c.chokeDepth).asFloat();
 	c.chokeEcon = turret.get("choke_econ", c.chokeEcon).asFloat();
+	c.chokeEnemy = turret.get("choke_enemy", c.chokeEnemy).asFloat();
 	c.isAfterFlee = turret.get("after_flee", c.isAfterFlee).asBool();
 	c.afterFleeSince = turret.get("after_flee_since", c.afterFleeSince).asFloat();
 	c.defendedRadius = turret.get("defended_radius", c.defendedRadius).asFloat();
@@ -412,7 +413,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 
 	// C: the middles of the chokes on our current line and the enemy line, turret.choke each. A current line choke adds
 	// turret.choke_econ x its share of our economy: per region of our territory it touches, that region's economy over
-	// the current line chokes touching it
+	// the current line chokes touching it. An enemy line choke adds turret.choke_enemy (a choke on both, both)
 	if (isChokeReady) {
 		const std::vector<CRegionGraph::SChoke>& chokes = chokeMap->GetGraph().GetChokes();
 		const std::vector<int>& current = chokeMap->GetCurrentLine();
@@ -430,8 +431,9 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 				forOurSides(c, [&lineChokes](int r) { ++lineChokes[r]; });
 			}
 		}
+		const std::vector<int>& enemyLine = chokeMap->GetEnemyLine();
 		std::vector<int> ids = current;
-		ids.insert(ids.end(), chokeMap->GetEnemyLine().begin(), chokeMap->GetEnemyLine().end());
+		ids.insert(ids.end(), enemyLine.begin(), enemyLine.end());
 		std::sort(ids.begin(), ids.end());
 		ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
 		for (int c : ids) {
@@ -446,7 +448,9 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 			if (std::find(current.begin(), current.end(), c) != current.end()) {
 				forOurSides(c, [&](int r) { share += econ[r] / lineChokes[r]; });
 			}
-			g.raws.push_back({ground(pos), config.choke + config.chokeEcon * share, CTurretValue::Kind::CHOKE});
+			const bool isEnemyLine = std::find(enemyLine.begin(), enemyLine.end(), c) != enemyLine.end();
+			const float metal = config.choke + config.chokeEcon * share + (isEnemyLine ? config.chokeEnemy : 0.f);
+			g.raws.push_back({ground(pos), metal, CTurretValue::Kind::CHOKE});
 		}
 	}
 

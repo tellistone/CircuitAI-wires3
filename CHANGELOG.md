@@ -608,7 +608,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   A choke of our current line also adds its share of the economy behind it (`turret.choke_econ`, default 1): for each
   region of our territory it touches, the cost of our and allied mexes, energy, pylons and factories there, divided by
   the current line chokes touching that region. A pass that shuts in a fusion is worth defending far more than one in
-  front of a single mex.
+  front of a single mex. A choke of the enemy line adds a flat `turret.choke_enemy` (400); one on both lines, both.
 
 - **Anti-heavy squads hunt, park and fire more** (`antiheavy` block: new `keep_sec` 30, `spacing` 150, `max_group` 2).
   They ignored heavies they could shoot, idled in small groups at base, flip-flopped at the front and spent little time
