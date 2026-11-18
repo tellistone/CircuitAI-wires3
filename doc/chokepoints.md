@@ -159,20 +159,21 @@ enemy types: TANK3(gating 0.60) TKBOT3(promoted to gating 0.35)`.
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
 | `regions` | The graph itself: region centres linked to their chokes. On the threat graph, our side is green and the enemy's side red. |
-| `sides` | Who holds each region, and the lines by rank and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions behind our current line tinted blue, beyond the enemy line red, both stronger in that side's territory; contested regions striped blue and red; thin region borders. Our current line is blue where its towers cover what it wants and orange where it's short; the enemy line red where defended, pink where undefended and grey where not seen enough; enemy-held chokes off it dark red; the front line has a white halo; the forward line is thin yellow. Labels give each region's side, why it's contested and the enemy threat there, the ranked chokes' defence and seen share, and our line's wanted and tower power. Without the widget it shows the `lines` layer. |
+| `sides` | Who controls each region and choke, and the lines by rank and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger in that side's territory, striped blue and red where contested, and clear where nobody is; thin region borders. A band across each choke shows whose threat reaches it, in the same colours, faint grey for nobody's. Our current line is blue where its towers cover what it wants and orange where it's short; the enemy line red where defended, pink where undefended and grey where not seen enough; enemy-held chokes off it dark red; the front line has a white halo; the forward line is thin yellow. Labels give each controlled region's and choke's side with both strengths, the ranked chokes' defence and seen share, and our line's wanted and tower power. Without the widget it shows the `lines` layer. |
 | `turrets` | The last turret order: its radius ring and centre white, the candidates that passed the hard rules grey, the best green, the next 4 cyan, and those outside our buildings' influence dark red. Tested spots are labelled with their value ÷ cost and F, the chosen one with its def and the four terms. |
 
-Layers that other modules feed (`lines`, `ranks`, `spots`, `radar`, `sides` and `turrets`) redraw every 10 s. The others redraw
-when the analysis changes.
+Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`) redraw every 10 s, and `sides` every
+4 s. The others redraw when the analysis changes.
 
 ### The sides layer and its widget
 
-A region's side comes from the cut that gives the current and enemy lines (`CChokeMap::GetLineSide`): what our
-territory reaches without crossing the current line is ours, what enemy territory reaches without crossing the enemy
-line is the enemy's, and what both reach across them is between the lines, ground either side could hold as cheaply.
-Before both territories (or sides) are known it is the side flags. The layer also calls a region contested when both
-sides have an army there (300 metal of armed mobiles each: ours there now, the enemy's seen there in the last minute),
-or when both sides have buildings there. Nothing but the overlay reads these.
+Control comes from units, so ground nobody stands on is nobody's. A region is controlled by the side whose units are
+in it: ours where they are now, enemy buildings until seen dead, and enemy mobiles where they were seen in the last
+minute, aircraft aside. Where both sides are, the side whose armed units are 1.5 times as strong (power for ours,
+threat for the enemy's) controls it, and otherwise it is contested; that includes both sides' buildings with no armed
+units. A choke is controlled by whose threat reaches across it: our and the enemy's influence (`CInfluenceMap`, each
+armed unit's power or threat fading to nothing at its range) averaged along the choke's line, with the same 1.5 rule.
+Nothing but the overlay reads these.
 
 The layer needs the `dbg_circuit_sides.lua` widget in `util/LuaUI/Widgets/`. Copy it into the Zero-K data folder's
 `LuaUI/Widgets/` on the machine that runs the AI (local widgets are on by default). The AI finds it through

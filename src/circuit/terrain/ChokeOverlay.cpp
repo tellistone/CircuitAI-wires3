@@ -44,6 +44,7 @@ namespace circuit {
 using namespace springai;
 
 #define LIVE_FRAMES		(FRAMES_PER_SEC * 10)  // layers fed by other modules redraw this often
+#define SIDES_FRAMES	(FRAMES_PER_SEC * 4)  // the sides layer follows units moving: it costs a few short messages
 #define TRAFFIC_SHOWN	1500  // busiest traffic cells drawn
 #define COMMAND			"choke_overlay"
 
@@ -159,8 +160,9 @@ void CChokeOverlay::Update()
 	}
 	const bool isLive = (layer == Layer::LINES) || (layer == Layer::RANKS) || (layer == Layer::SPOTS)
 			|| (layer == Layer::RADAR) || (layer == Layer::TURRETS) || (layer == Layer::SIDES);
+	const int liveFrames = (layer == Layer::SIDES) ? SIDES_FRAMES : LIVE_FRAMES;
 	const int frame = circuit->GetLastFrame();
-	if ((drawnVersion != chokeMap->GetVersion()) || (isLive && (frame >= drawnFrame + LIVE_FRAMES))) {
+	if ((drawnVersion != chokeMap->GetVersion()) || (isLive && (frame >= drawnFrame + liveFrames))) {
 		Draw();
 	}
 }

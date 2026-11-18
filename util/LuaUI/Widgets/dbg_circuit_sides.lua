@@ -5,9 +5,11 @@
 -- a game against CircuitAI say "choke_overlay sides" in ally chat. It only draws in games with no human opponents,
 -- on the machine that runs the AI.
 --
--- Regions behind our current line are tinted blue, beyond the enemy line red, stronger where that side has
--- buildings. Contested regions (between the lines, both sides' armies there now, or both sides' buildings) are
--- striped blue and red. Thin lines are region borders. Our current line is blue where its towers cover what it
+-- Regions are tinted by who controls them: blue where only our units are (or ours are 1.5 times the enemy's
+-- strength), red likewise for the enemy, striped blue and red where both are and neither leads, and left clear where
+-- nobody is. The tint is stronger where that side has buildings. Thin lines are region borders.
+-- Each choke has a wide band across it, by whose threat reaches it: blue ours, red the enemy's, striped where both
+-- reach and neither leads, faint grey nobody's. On top: our current line is blue where its towers cover what it
 -- wants, orange where it's short. The enemy line is red where defended, pink where undefended, grey where not seen
 -- enough; enemy-held chokes off it are dark red. The front line has a white halo, the forward line is thin yellow.
 --
@@ -15,13 +17,13 @@
 -- lowest ally team id, until that one clears or goes quiet. The ally team shown is printed bottom left.
 --
 -- Messages (CChokeOverlay::SendWidgetData in src/circuit/terrain/ChokeSides.cpp), "circuit_sides_<verb>:<ally team>"
--- then a body: hello, grid, state, lines, labels, clear.
+-- then a body: hello, grid, state, control, lines, labels, clear.
 --------------------------------------------------------------------------------
 
 function widget:GetInfo()
 	return {
 		name    = "CircuitAI sides",
-		desc    = "Draws CircuitAI's choke_overlay sides layer: who holds each region, the lines, enemy pressure",
+		desc    = "Draws CircuitAI's choke_overlay sides layer: who controls each region and choke, and the lines",
 		author  = "CircuitAI",
 		date    = "2026-11-18",
 		license = "GNU GPL, v2 or later",
@@ -33,19 +35,35 @@ end
 --------------------------------------------------------------------------------
 -- Look
 
-local FILL = {
-	o = {0.25, 0.45, 1.00, 0.16},  -- ours, behind the current line
-	O = {0.25, 0.45, 1.00, 0.30},  -- our territory
-	e = {1.00, 0.22, 0.18, 0.16},  -- the enemy's, beyond the enemy line
-	E = {1.00, 0.22, 0.18, 0.30},  -- enemy territory
-	cA = {0.25, 0.45, 1.00, 0.26},  -- contested: blue stripes
-	cB = {1.00, 0.22, 0.18, 0.26},  -- and red stripes
+local BLUE = {0.25, 0.45, 1.00}
+local RED = {1.00, 0.22, 0.18}
+local function Tint(colour, alpha)
+	return {colour[1], colour[2], colour[3], alpha}
+end
+
+local FILL = {  -- by region letter; u (nobody's) isn't drawn
+	o = Tint(BLUE, 0.16),  -- ours
+	O = Tint(BLUE, 0.30),  -- ours, with our buildings
+	e = Tint(RED, 0.16),  -- the enemy's
+	E = Tint(RED, 0.30),  -- the enemy's, with its buildings
+	cA = Tint(BLUE, 0.26),  -- contested: blue stripes
+	cB = Tint(RED, 0.26),  -- and red stripes
 }
 local STRIPE_CELLS = 3  -- each stripe this many cells wide, on the diagonal
 local FILL_LIFT = 4  -- elmos: fills sample the ground only at cell corners, so they float a little over it
 
 local BORDER_COLOUR = {0.85, 0.85, 0.85, 0.35}
 local BORDER_WIDTH = 1
+
+local CONTROL = {  -- a choke's band by who controls it; stripes take the colours in turn along it
+	o = {Tint(BLUE, 0.70)},
+	e = {Tint(RED, 0.70)},
+	c = {Tint(BLUE, 0.70), Tint(RED, 0.70)},
+	n = {{0.85, 0.85, 0.85, 0.22}},
+}
+local BAND_HALF = 48  -- elmos either side of the choke's line
+local BAND_PAST = 16  -- elmos past each end of the line, so a one-cell choke shows
+local BAND_STRIPE = 64  -- elmos per stripe
 
 local LINES = {  -- by kind, drawn in this order
 	{kind = "w", colour = {1.00, 1.00, 0.25, 0.80}, width = 3},  -- forward line
@@ -96,6 +114,7 @@ local function DeleteLists(team)
 	end
 	team.regionLists = nil
 	DeleteList(team, "borderList")
+	DeleteList(team, "controlList")
 	DeleteList(team, "lineList")
 end
 
@@ -217,6 +236,43 @@ local function BuildBorders(team)
 	end)
 end
 
+-- A band across each choke, ground-following quads STEP long, coloured by stripe
+local function BuildControl(team)
+	DeleteList(team, "controlList")
+	local bands = team.control or {}
+	local function vertex(x, z)
+		glVertex(x, max(spGetGroundHeight(x, z), 0) + FILL_LIFT, z)
+	end
+	team.controlList = gl.CreateList(function()
+		gl.BeginEnd(GL.QUADS, function()
+			for i = 1, #bands do
+				local b = bands[i]
+				local colours = CONTROL[b.who]
+				local dx, dz = b[3] - b[1], b[4] - b[2]
+				local length = sqrt(dx * dx + dz * dz)
+				local ux, uz = 1, 0
+				if length >= 1 then
+					ux, uz = dx / length, dz / length
+				end
+				local x0, z0 = b[1] - ux * BAND_PAST, b[2] - uz * BAND_PAST
+				length = length + 2 * BAND_PAST
+				local px, pz = -uz * BAND_HALF, ux * BAND_HALF
+				local steps = max(1, floor(length / STEP + 0.5))
+				for k = 0, steps - 1 do
+					local t0, t1 = length * k / steps, length * (k + 1) / steps
+					gl.Color(colours[floor((t0 + t1) * 0.5 / BAND_STRIPE) % #colours + 1])
+					local ax, az = x0 + ux * t0, z0 + uz * t0
+					local bx, bz = x0 + ux * t1, z0 + uz * t1
+					vertex(ax - px, az - pz)
+					vertex(ax + px, az + pz)
+					vertex(bx + px, bz + pz)
+					vertex(bx - px, bz - pz)
+				end
+			end
+		end)
+	end)
+end
+
 local function BuildLines(team)
 	DeleteList(team, "lineList")
 	local lines = team.lines or {}
@@ -285,6 +341,18 @@ function handlers.state(team, body)
 	team.state = body:sub(2)
 end
 
+function handlers.control(team, body)
+	local bands = {}
+	for _, record in ipairs(Records(body)) do
+		local who, x1, z1, x2, z2 = record:match("^(%a) (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)")
+		if who and CONTROL[who] then
+			bands[#bands + 1] = {tonumber(x1), tonumber(z1), tonumber(x2), tonumber(z2), who = who}
+		end
+	end
+	team.control = bands
+	BuildControl(team)
+end
+
 function handlers.lines(team, body)
 	local lines = {}
 	for _, record in ipairs(Records(body)) do
@@ -302,7 +370,7 @@ function handlers.labels(team, body)
 	for _, record in ipairs(Records(body)) do
 		local x, z, text = record:match("^(%-?%d+) (%-?%d+) (.*)$")
 		if x then
-			labels[#labels + 1] = {tonumber(x), tonumber(z), text}
+			labels[#labels + 1] = {tonumber(x), tonumber(z), (text:gsub("|", "\n"))}
 		end
 	end
 	team.labels = labels
@@ -396,6 +464,11 @@ function widget:DrawWorldPreUnit()
 		gl.LineWidth(BORDER_WIDTH)
 		gl.CallList(team.borderList)
 		gl.LineWidth(1)
+	end
+	if team.controlList then
+		gl.PolygonOffset(-30, -3)
+		gl.CallList(team.controlList)
+		gl.PolygonOffset(false)
 	end
 	if team.lineList then
 		gl.CallList(team.lineList)

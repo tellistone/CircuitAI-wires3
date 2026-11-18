@@ -71,22 +71,25 @@ private:
 	void DrawSides();
 
 	/*
-	 * The sides layer (ChokeSides.cpp): each region ours, the enemy's, contested or unknown, and the lines by rank and
-	 * shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine running the AI has it
-	 * (util/LuaUI/Widgets), else the lines layer
+	 * The sides layer (ChokeSides.cpp): who controls each region (by the units in it) and each choke (by whose threat
+	 * reaches it), and the lines by rank and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
+	 * running the AI has it (util/LuaUI/Widgets), else the lines layer
 	 */
-	enum class Side: char {UNKNOWN, OURS, ENEMY, CONTESTED};
-	struct SRegionView {
-		Side side = Side::UNKNOWN;
-		bool isTerritory = false;  // the side's buildings are there
-		bool isBetween = false;  // between the current and enemy lines
-		bool isArmies = false;  // both sides' armies there now
-		bool isBuilt = false;  // both sides' buildings there
-		float threat = 0.f;  // of enemy armed mobiles seen there in the last minute
+	enum class Side: char {NONE, OURS, ENEMY, CONTESTED};
+	struct SControl {
+		Side side = Side::NONE;
+		float power = 0.f;  // ours: armed units' power (a region's), or our influence (a choke's)
+		float threat = 0.f;  // the enemy's, the same way
 	};
+	struct SRegionView: SControl {
+		bool isTerritory = false;  // the controlling side's buildings are there
+	};
+	static Side ControlOf(bool isOurs, bool isEnemy, float power, float threat);
 	std::vector<SRegionView> MakeRegionViews() const;
-	std::vector<std::pair<springai::AIFloat3, std::string>> MakeSideLabels(const std::vector<SRegionView>& views) const;
-	void SendWidgetData(const std::vector<SRegionView>& views);
+	std::vector<SControl> MakeChokeViews() const;
+	std::vector<std::pair<springai::AIFloat3, std::string>> MakeSideLabels(const std::vector<SRegionView>& regionViews,
+			const std::vector<SControl>& chokeViews) const;
+	void SendWidgetData();
 	std::string CallWidget(const std::string& verb, const std::string& body) const;  // the widget's answer
 	void ClearWidget();
 	// The two cells of its line farthest apart
