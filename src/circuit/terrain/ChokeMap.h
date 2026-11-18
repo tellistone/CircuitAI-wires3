@@ -64,6 +64,7 @@ public:
 		MoveKind kind;
 		MoveRole role;  // before promotion (choke.gate_share)
 		int graphClass;  // whose mask it adds to the threat graph when gating: spiders and jumpers walk as kbots
+		bool isVehicle;  // the ground type that climbs the least (tanks): gates until an enemy army is seen
 		std::string name;  // the terrain mobile type's move def, "-jump" for jumpers
 	};
 	// A start box, or a guess at one
@@ -185,6 +186,7 @@ public:
 	int GetWalkClass(const CCircuitDef* cdef) const;  // the class it moves as, -1 if none (air, or no factory builds it)
 	int FindMoveClass(const std::string& name) const;  // by unit def or class name, -1 if none
 	bool IsGating(int classIdx) const;
+	bool IsCliffCrosserGating() const;  // a spider or jumper type gates (promoted): the turret picker skips traffic
 	std::string DescribeTypeSet() const;  // each type in the set: its name, role and share
 
 	bool IsEnemySide(int region) const { return isEnemySide[region]; }

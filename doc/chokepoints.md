@@ -12,20 +12,19 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
 
 ## The analysis
 
-- **Threat graph.** The map is cut into 32-elmo cells that the enemy's *gating* movement types can cross (walkers,
-  tanks, and hovers when the map has water). A cell counts as crossable when at least 3 of its 4 slope-map pixels
+- **Threat graph.** The map is cut into 32-elmo cells that the enemy's *gating* movement types can cross (vehicles
+  until an enemy army is seen, then the types its army is made of, below). A cell counts as crossable when at least 3 of its 4 slope-map pixels
   are, so a cliff or a spike's side only one or two pixels thick stays a wall wherever it falls on the grid. Of two
   crossable neighbours that no pair of pixels crosses between (a thin diagonal cliff), one closes. The open
   areas become regions, and the narrow gaps between them become chokes. A choke is *defensible* when it is at most `choke.defensible` main-tower ranges wide. A type
   that doesn't shape the graph is a *leak* type, and each cluster keeps a tower of its own against leaks and anything
   else the cut doesn't stop. Amphibious bots, spiders and jumpers start as leaks; jumpers cross a wall when it is no
-  longer than their jump along a row or a column of cells. Which types gate depends on what has been seen of the
-  enemy. Before anything is seen, the opening default's walkers, tanks and hovers (on a wet map) gate. Once an enemy
-  factory or unit is seen (constructors count, commanders don't), the types seen gate and the unseen defaults no
-  longer do. Once an enemy army has been seen, a type gates when it has the most cost seen, or once its own cost
+  longer than their jump along a row or a column of cells. Until an enemy army is seen (armed mobiles: constructors
+  and commanders don't count), the graph assumes vehicles, the ground types that climb the least, so it starts with
+  the most regions. Once an army has been seen, a type gates when it has the most cost seen, or once its own cost
   reaches `choke.gate_share` of the enemy army seen plus a 300-metal prior, so a lone early unit or a new factory's
-  first units can't flip the graph. It stays gating until it leaves the game. A stage with no type to gate falls back
-  to the one before.
+  first units can't flip the graph. It stays gating until it leaves the game. If every gating type leaves, the graph
+  assumes vehicles again.
   Spiders and jumpers gate as kbots: a gating jumper type adds its own type's walking cells to the graph, a gating
   spider type the cells of the ground type that climbs the steepest (bots), so the cliffs they cross stay walls and
   their promotion can't collapse the map into one region. Their own cells still drive their traffic and reach. A
@@ -117,7 +116,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 |---|---|---|
 | `turret.radius` | `600` | Elmos from the order's centre a turret may stand. |
 | `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height) must reach this × the turret's cost. |
-| `turret.traffic` | `0.0` | Weight of T, the enemy traffic in range. 0 turns it off: the picker doesn't read the traffic field, and a turret pays for itself in A, E and C alone. |
+| `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. T is left out while a spider or jumper type gates the threat graph (it is the biggest type or has reached `choke.gate_share`): then a turret pays for itself in A, E and C alone. |
 | `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
 | `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. |
 | `turret.enemy` | `1.0` | Weight of E, the enemies a turret could shoot. |
@@ -154,7 +153,8 @@ players are ignored. A spectator may use it only in games with no human opponent
 
 The AI answers in ally chat and in its log, as `CHOKE overlay: ...`. While the overlay is on, it also says when the
 threat graph is rebuilt, with the enemy types behind it, for example `threat graph rebuilt: 14 regions, 19 chokes;
-enemy types: TANK3(gating 0.60) TKBOT3(gating as KBOT2 0.35)`.
+enemy types: TANK3(gating 0.60) TKBOT3(gating as KBOT2 0.35)`. Before an army is seen, the vehicles show as
+`(gating, assumed)` once the opening default has left the set.
 
 ### Layers
 
@@ -329,14 +329,14 @@ cost:
 
 `base = (T + A + E + C) × (1 + turret.height × height)`, `value = base × (1 + turret.front × F) × (1 + turret.view × V) ÷ (1 + walk ÷ 1000)`
 
-- *T*, traffic, off by default (`turret.traffic` 0): the traffic field carries each destination's income across every
-  cross-section of its enemy routes.
+- *T*, traffic: the traffic field carries each destination's income across every cross-section of its enemy routes.
   The heaviest 64 cells within reach are summed over those in range and divided by the cell lengths the range spans
-  (2 × range ÷ 64), which gives the income whose routes pass under the turret, in metal/s; × `turret.horizon`.
+  (2 × range ÷ 64), which gives the income whose routes pass under the turret, in metal/s; × `turret.horizon`. None while a spider or
+  jumper type gates the threat graph: it walks them as kbots, and their routes over cliffs are left out.
 - *A*, our and allied unarmed buildings in range (mexes, energy, radar, factories, storage, nanoframes too), at cost.
 - *E*, known enemy buildings in range seen in radar or sight in the last 3 minutes (so the ghost of one that died
   out of sight drops out), at cost; an enemy mex counts its income × `turret.horizon`, which is what killing it
-  takes from them. Mobiles don't count: they move on, and their routes are T's.
+  takes from them. Mobiles don't count: they move on, and their routes are in T already.
 - *C*, `turret.choke` when a choke of our current line or the enemy line has its middle in range. One choke's worth
   at most.
 - Each target counts only if the turret hits it (ground, and under deep water for one that hits there), in range

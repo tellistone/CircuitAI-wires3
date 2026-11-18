@@ -351,18 +351,27 @@ void CChokeMap::InitMoveClasses()
 		return a.key < b.key;
 	});
 	// Spiders and jumpers shape the threat graph as kbots: a jumper as its own type walking, a spider as the ground
-	// type that climbs the steepest (bots), so their promotion never opens the cliffs they cross
-	int kbot = -1;
+	// type that climbs the steepest (bots), so their promotion never opens the cliffs they cross. Vehicles are the
+	// ground types that climb the least: the most restrictive, which the threat graph assumes until an enemy army is
+	// seen
+	auto slopeOf = [terrainMgr](const SMoveClass& mc) {
+		return terrainMgr->GetMobileTypeById(mc.mobileId)->maxSlope;
+	};
+	int kbot = -1, vehicle = -1;
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
-		if ((moveClasses[c].kind == MoveKind::GROUND) && ((kbot < 0)
-			|| (terrainMgr->GetMobileTypeById(moveClasses[c].mobileId)->maxSlope
-				> terrainMgr->GetMobileTypeById(moveClasses[kbot].mobileId)->maxSlope)))
-		{
+		if (moveClasses[c].kind != MoveKind::GROUND) {
+			continue;
+		}
+		if ((kbot < 0) || (slopeOf(moveClasses[c]) > slopeOf(moveClasses[kbot]))) {
 			kbot = c;
+		}
+		if ((vehicle < 0) || (slopeOf(moveClasses[c]) < slopeOf(moveClasses[vehicle]))) {
+			vehicle = c;
 		}
 	}
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		SMoveClass& mc = moveClasses[c];
+		mc.isVehicle = (vehicle >= 0) && (mc.kind == MoveKind::GROUND) && (slopeOf(mc) == slopeOf(moveClasses[vehicle]));
 		mc.graphClass = c;
 		if (mc.kind == MoveKind::JUMPER) {
 			const auto walker = std::find_if(moveClasses.begin(), moveClasses.end(), [&mc](const SMoveClass& o) {
@@ -382,6 +391,9 @@ void CChokeMap::InitMoveClasses()
 		text << " " << mc.name << ((mc.role == MoveRole::GATING) ? "(gating)" : (mc.role == MoveRole::LEAK) ? "(leak)" : "(naval)");
 		if (mc.graphClass != (int)(&mc - &moveClasses.front())) {
 			text << "[graph as " << moveClasses[mc.graphClass].name << "]";
+		}
+		if (mc.isVehicle) {
+			text << "[vehicle]";
 		}
 	}
 	circuit->LOG("%s", text.str().c_str());
@@ -820,6 +832,18 @@ const std::vector<int>& CChokeMap::GetClassParts(int classIdx) const
 bool CChokeMap::IsGating(int classIdx) const
 {
 	return typeStates[classIdx].isGating;
+}
+
+bool CChokeMap::IsCliffCrosserGating() const
+{
+	for (size_t c = 0; c < moveClasses.size(); ++c) {
+		if (((moveClasses[c].kind == MoveKind::CLIMBER) || (moveClasses[c].kind == MoveKind::JUMPER))
+			&& typeStates[c].isGating)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 const CChokeMap::SPointInfo* CChokeMap::GetPointInfo(int cluster, int index) const

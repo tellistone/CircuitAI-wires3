@@ -67,8 +67,8 @@ int CChokeMap::GetWalkClass(const CCircuitDef* cdef) const
 }
 
 /*
- * The opening default: walkers and tanks gate, and hovers too when the map has water. Amphibious bots are in the set
- * as a leak type. Spiders and jumpers join once seen
+ * The opening default set: walkers, tanks and amphibious bots, and hovers too when the map has water. Spiders and
+ * jumpers join once seen. Only the vehicles gate until an enemy army is seen (UpdateGating)
  */
 void CChokeMap::InitTypeSet()
 {
@@ -371,25 +371,22 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 }
 
 /*
- * The types the threat graph is built on, by what has been seen of the enemy:
- * - nothing yet: the opening default's walkers, tanks and hovers (on a wet map);
- * - a factory or a unit (constructors too, no commanders), no army yet: the types seen, the unseen defaults no longer;
- * - an army (cost, UpdateTypeSet): the promoted types.
- * A stage with no type falls back to the one before
+ * The types the threat graph is built on: the vehicles (the most restrictive, in the set or not) until an enemy army
+ * is seen, then the promoted types (UpdateTypeSet). With none promoted (they all left), the vehicles again; with no
+ * vehicle type in the game, the ground types and hovers
  */
 void CChokeMap::UpdateGating()
 {
-	bool isSeen = false, isPromoted = false;
+	bool isPromoted = false, isVehicle = false;
 	for (size_t c = 0; c < typeStates.size(); ++c) {
-		const STypeState& ts = typeStates[c];
-		isSeen |= ts.isInSet && !ts.isDefault && (moveClasses[c].role != MoveRole::NAVAL);
-		isPromoted |= ts.isInSet && ts.isPromoted;
+		isPromoted |= typeStates[c].isInSet && typeStates[c].isPromoted;
+		isVehicle |= moveClasses[c].isVehicle;
 	}
 	for (size_t c = 0; c < typeStates.size(); ++c) {
 		STypeState& ts = typeStates[c];
-		ts.isGating = ts.isInSet && (isPromoted ? ts.isPromoted
-				: isSeen ? !ts.isDefault
-				: (moveClasses[c].role == MoveRole::GATING));
+		ts.isGating = isPromoted ? (ts.isInSet && ts.isPromoted)
+				: isVehicle ? moveClasses[c].isVehicle
+				: (moveClasses[c].role == MoveRole::GATING);
 	}
 }
 
@@ -398,12 +395,16 @@ std::string CChokeMap::DescribeTypeSet() const
 	std::string text;
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		const STypeState& ts = typeStates[c];
-		if (ts.isInSet) {
-			text += (text.empty() ? "" : " ") + moveClasses[c].name + (!IsGating(c) ? "(leak "
-					: ((int)c != moveClasses[c].graphClass) ? "(gating as " + moveClasses[moveClasses[c].graphClass].name + " "
-					: (moveClasses[c].role == MoveRole::LEAK) ? "(promoted to gating " : "(gating ")
-					+ utils::float_to_string(ts.share, "%.2f)");
+		if (!ts.isInSet) {
+			if (ts.isGating) {
+				text += (text.empty() ? "" : " ") + moveClasses[c].name + "(gating, assumed)";
+			}
+			continue;
 		}
+		text += (text.empty() ? "" : " ") + moveClasses[c].name + (!IsGating(c) ? "(leak "
+				: ((int)c != moveClasses[c].graphClass) ? "(gating as " + moveClasses[moveClasses[c].graphClass].name + " "
+				: (moveClasses[c].role == MoveRole::LEAK) ? "(promoted to gating " : "(gating ")
+				+ utils::float_to_string(ts.share, "%.2f)");
 	}
 	return text;
 }

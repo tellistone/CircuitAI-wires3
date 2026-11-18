@@ -619,10 +619,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   one of them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only
   graph of 122 regions into 38, moving every choke. Now, once an enemy army has been seen, a type gates when it has
   the most cost seen or its cost reaches `choke.gate_share`, the rule leak types already followed, and stays gating
-  until it leaves. The opening default's walkers, tanks and hovers gate only until the first enemy factory or unit
-  is seen; from then until an army is seen, the types seen gate. They gated until the opening ended (a factory
-  scouted for every enemy team, or 5 minutes), so the graph kept the default's few regions for minutes after the
-  first enemy units were sighted, then snapped to the real layout.
+  until it leaves. Until an enemy army is seen, the graph assumes vehicles (the ground types that climb the least)
+  instead of the opening default's walkers, tanks and hovers together, which gated until the opening ended (a
+  factory scouted for every enemy team, or 5 minutes): the graph started with the bots' few regions and snapped to
+  the tanks' many minutes after the first enemy units were sighted.
 
 - **Spiders and jumpers gate the threat graph as kbots.** A promoted spider type added the cells spiders climb to,
   which on most maps joined every region into one; a promoted jumper type opened every wall a jump crosses. Now a
@@ -630,9 +630,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   climbs the steepest (bots), so their chokes are where kbots' are. Their traffic and reach still use their own cells.
   Amphibious types are unchanged.
 
-- **The turret picker no longer counts traffic.** `turret.traffic`, the weight of T (enemy routes under the turret),
-  now defaults to 0, and at 0 the picker doesn't read the traffic field. A turret has to pay for itself in our
-  buildings, known enemy buildings or line chokes in range. Scored tower spots (`choke.spot`) still weigh traffic.
+- **The turret picker leaves traffic out against spiders and jumpers.** While a spider or jumper type gates the
+  threat graph (it is the biggest enemy type, or its cost reached `choke.gate_share`), the picker drops T, the
+  enemy routes under the turret, so a turret pays for itself in our buildings, known enemy buildings or line chokes
+  in range. Scored tower spots (`choke.spot`) still weigh traffic.
 
 - **Terrain alone rebuilds the threat graph at most every 5 minutes.** Zero-K's craters and the ground levelled under
   buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the

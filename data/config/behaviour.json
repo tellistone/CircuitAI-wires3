@@ -207,7 +207,7 @@
 "turret": {
 	"radius": 600,  // elmos from the centre a turret may stand
 	"min_value": 1.0,  // a spot's value (T + A + E + C, x height) must reach this x the turret's cost
-	"traffic": 0.0,  // weight of T, the enemy traffic in range; 0 = off (the traffic field isn't read)
+	"traffic": 1.0,  // weight of T, the enemy traffic in range; none while spiders or jumpers are promoted (choke.gate_share)
 	"horizon": 120,  // seconds of threatened income that T counts (and an enemy mex in E)
 	"ally": 1.0,  // weight of A
 	"enemy": 1.0,  // weight of E
