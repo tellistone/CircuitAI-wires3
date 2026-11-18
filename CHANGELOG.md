@@ -12,7 +12,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   buildings until seen dead), stronger in that side's territory, and clear where nobody is. Where both sides are, the
   side whose armed units are 1.5 times as strong controls it, else it is striped blue and red as contested. A band
   across each choke shows whose threat reaches it (our and the enemy's influence averaged along its line), in the same
-  colours. The lines are drawn across their gaps: our current line blue where its towers cover what it wants and
+  colours, outlined with a white halo when towers defend it: blue ours, red the enemy's, dashed both. The lines are drawn across their gaps: our current line blue where its towers cover what it wants and
   orange where it's short, the enemy line by rank (red defended, pink undefended, grey not seen enough), enemy-held
   chokes off it dark red, the front line with a white halo, the forward line yellow. It is drawn by a LuaUI widget,
   `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through `Lua_callUI` on the machine that runs it,

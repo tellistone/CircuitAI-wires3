@@ -9,7 +9,10 @@
 -- strength), red likewise for the enemy, striped blue and red where both are and neither leads, and left clear where
 -- nobody is. The tint is stronger where that side has buildings. Thin lines are region borders.
 -- Each choke has a wide band across it, by whose threat reaches it: blue ours, red the enemy's, striped where both
--- reach and neither leads, faint grey nobody's. On top: our current line is blue where its towers cover what it
+-- reach and neither leads, faint grey nobody's. A defended choke (towers whose range reaches its line) has an
+-- outline with a white halo round its band: blue our towers, red the enemy's, dashed blue and red both; an undefended
+-- one has none.
+-- On top: our current line is blue where its towers cover what it
 -- wants, orange where it's short. The enemy line is red where defended, pink where undefended, grey where not seen
 -- enough; enemy-held chokes off it are dark red. The front line has a white halo, the forward line is thin yellow.
 --
@@ -64,6 +67,14 @@ local CONTROL = {  -- a choke's band by who controls it; stripes take the colour
 local BAND_HALF = 48  -- elmos either side of the choke's line
 local BAND_PAST = 16  -- elmos past each end of the line, so a one-cell choke shows
 local BAND_STRIPE = 64  -- elmos per stripe
+local DEFENDED = {  -- a choke's outline by whose towers reach it; n (nobody's) has none
+	o = {{0.40, 0.65, 1.00, 1.00}},
+	e = {{1.00, 0.30, 0.25, 1.00}},
+	b = {{0.40, 0.65, 1.00, 1.00}, {1.00, 0.30, 0.25, 1.00}},
+}
+local OUTLINE_WIDTH = 3
+local OUTLINE_HALO = {{1.00, 1.00, 1.00, 0.85}}  -- under the outline, so it shows on a band of its own colour
+local OUTLINE_HALO_WIDTH = 7
 
 local LINES = {  -- by kind, drawn in this order
 	{kind = "w", colour = {1.00, 1.00, 0.25, 0.80}, width = 3},  -- forward line
@@ -236,7 +247,32 @@ local function BuildBorders(team)
 	end)
 end
 
--- A band across each choke, ground-following quads STEP long, coloured by stripe
+-- A band's frame: from just past one end of the choke's line to just past the other, BAND_HALF either side
+local function BandFrame(b)
+	local dx, dz = b[3] - b[1], b[4] - b[2]
+	local length = sqrt(dx * dx + dz * dz)
+	local ux, uz = 1, 0
+	if length >= 1 then
+		ux, uz = dx / length, dz / length
+	end
+	return b[1] - ux * BAND_PAST, b[2] - uz * BAND_PAST, ux, uz, length + 2 * BAND_PAST, -uz * BAND_HALF, ux * BAND_HALF
+end
+
+-- Ground-following GL.LINES from (x1, z1) to (x2, z2), coloured in turn every BAND_STRIPE
+local function DashedSegment(x1, z1, x2, z2, colours)
+	local dx, dz = x2 - x1, z2 - z1
+	local length = sqrt(dx * dx + dz * dz)
+	local steps = max(1, floor(length / STEP + 0.5))
+	for k = 0, steps - 1 do
+		local t0, t1 = k / steps, (k + 1) / steps
+		gl.Color(colours[floor((t0 + t1) * 0.5 * length / BAND_STRIPE) % #colours + 1])
+		local ax, az, bx, bz = x1 + dx * t0, z1 + dz * t0, x1 + dx * t1, z1 + dz * t1
+		glVertex(ax, GroundY(ax, az), az)
+		glVertex(bx, GroundY(bx, bz), bz)
+	end
+end
+
+-- A band across each choke, ground-following quads STEP long, coloured by stripe; then the defended ones' outlines
 local function BuildControl(team)
 	DeleteList(team, "controlList")
 	local bands = team.control or {}
@@ -246,17 +282,8 @@ local function BuildControl(team)
 	team.controlList = gl.CreateList(function()
 		gl.BeginEnd(GL.QUADS, function()
 			for i = 1, #bands do
-				local b = bands[i]
-				local colours = CONTROL[b.who]
-				local dx, dz = b[3] - b[1], b[4] - b[2]
-				local length = sqrt(dx * dx + dz * dz)
-				local ux, uz = 1, 0
-				if length >= 1 then
-					ux, uz = dx / length, dz / length
-				end
-				local x0, z0 = b[1] - ux * BAND_PAST, b[2] - uz * BAND_PAST
-				length = length + 2 * BAND_PAST
-				local px, pz = -uz * BAND_HALF, ux * BAND_HALF
+				local colours = CONTROL[bands[i].who]
+				local x0, z0, ux, uz, length, px, pz = BandFrame(bands[i])
 				local steps = max(1, floor(length / STEP + 0.5))
 				for k = 0, steps - 1 do
 					local t0, t1 = length * k / steps, length * (k + 1) / steps
@@ -270,6 +297,26 @@ local function BuildControl(team)
 				end
 			end
 		end)
+		local function outlines(width, halo)
+			gl.LineWidth(width)
+			gl.BeginEnd(GL.LINES, function()
+				for i = 1, #bands do
+					local colours = DEFENDED[bands[i].defended]
+					if colours then
+						colours = halo or colours
+						local x0, z0, ux, uz, length, px, pz = BandFrame(bands[i])
+						local x1, z1 = x0 + ux * length, z0 + uz * length
+						DashedSegment(x0 - px, z0 - pz, x0 + px, z0 + pz, colours)
+						DashedSegment(x0 + px, z0 + pz, x1 + px, z1 + pz, colours)
+						DashedSegment(x1 + px, z1 + pz, x1 - px, z1 - pz, colours)
+						DashedSegment(x1 - px, z1 - pz, x0 - px, z0 - pz, colours)
+					end
+				end
+			end)
+		end
+		outlines(OUTLINE_HALO_WIDTH, OUTLINE_HALO)
+		outlines(OUTLINE_WIDTH)
+		gl.LineWidth(1)
 	end)
 end
 
@@ -344,9 +391,9 @@ end
 function handlers.control(team, body)
 	local bands = {}
 	for _, record in ipairs(Records(body)) do
-		local who, x1, z1, x2, z2 = record:match("^(%a) (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)")
+		local who, defended, x1, z1, x2, z2 = record:match("^(%a) (%a) (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)")
 		if who and CONTROL[who] then
-			bands[#bands + 1] = {tonumber(x1), tonumber(z1), tonumber(x2), tonumber(z2), who = who}
+			bands[#bands + 1] = {tonumber(x1), tonumber(z1), tonumber(x2), tonumber(z2), who = who, defended = defended}
 		end
 	end
 	team.control = bands

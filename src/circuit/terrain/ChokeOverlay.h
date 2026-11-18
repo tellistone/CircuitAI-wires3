@@ -84,11 +84,15 @@ private:
 	struct SRegionView: SControl {
 		bool isTerritory = false;  // the controlling side's buildings are there
 	};
+	struct SChokeView: SControl {
+		float ourTowers = 0.f;  // power of our towers whose range reaches its line
+		float enemyTowers = 0.f;  // threat of known enemy towers whose range reaches it
+	};
 	static Side ControlOf(bool isOurs, bool isEnemy, float power, float threat);
 	std::vector<SRegionView> MakeRegionViews() const;
-	std::vector<SControl> MakeChokeViews() const;
+	std::vector<SChokeView> MakeChokeViews() const;
 	std::vector<std::pair<springai::AIFloat3, std::string>> MakeSideLabels(const std::vector<SRegionView>& regionViews,
-			const std::vector<SControl>& chokeViews) const;
+			const std::vector<SChokeView>& chokeViews) const;
 	void SendWidgetData();
 	std::string CallWidget(const std::string& verb, const std::string& body) const;  // the widget's answer
 	void ClearWidget();
