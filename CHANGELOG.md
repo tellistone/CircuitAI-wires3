@@ -7,6 +7,24 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **`choke_overlay sides`: who owns each region and choke.** A new overlay layer colours each region and choke by
+  its owner (enemy mobiles seen in the last minute, enemy buildings until seen dead, neither once the AI has seen
+  their spot empty). A region is the side's with buildings in it, contested when both sides have buildings there or
+  the other side's threat is at least a third of the owner's, and nobody's with no buildings, whatever armies stand in
+  it. A choke is defended by a side whose ground-hitting towers cover all of its gap, contested when both do, when
+  the other side's towers reach any of it or its mobiles there are a third of the defender's threat, and nobody's when
+  no side covers all of it. Regions are blue, red, striped or clear, stronger in that side's territory. Each choke is a
+  gate across its gap: its core coloured by owner, posts at its ends when towers reach part of it, and a casing when it is on one
+  of the AI's lines (white front line, green or orange our current line by whether its towers cover what it wants,
+  the enemy line by rank). Info boxes show the numbers behind each owner: hostile and allied
+  threat (total, mobile, static) and eco, for the region and choke at the cursor and, zoomed in, for owned ones near
+  the camera. Each enemy the AI counts is marked where it believes it is (filled while seen, an outline where last
+  seen), so a spectator with full view can tell which enemies it knows of; the legend says in red when the AI's LOS
+  cheating option is on, and the infolog says `LOS cheating: on` or `off` at start. A legend is printed bottom left.
+  It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through
+  `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget the layer shows
+  the `lines` layer. Nothing but the overlay reads the ownership: the AI's play is unchanged.
+
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
   fixed offset; the offset stays the fallback, and for shields, storages and AA. A scored hub tower's site goes on the

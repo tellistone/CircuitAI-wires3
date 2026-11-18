@@ -596,6 +596,7 @@ int CCircuitAI::Init(int skirmishAIId, const struct SSkirmishAICallback* sAICall
 	}
 
 	std::string profile = InitOptions();  // Inits GameAttribute
+	LOG("LOS cheating: %s", isCheating ? "on (the AI sees every enemy unit)" : "off");
 	InitWeaponDefs();
 	float decloakRadius;
 	InitUnitDefs(decloakRadius);  // Inits TerrainData

@@ -14,6 +14,7 @@
 #include "setup/SetupManager.h"
 #include "unit/ally/AllyUnit.h"
 #include "unit/enemy/EnemyManager.h"
+#include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitDef.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -40,6 +41,9 @@ using namespace springai;
 #define MAX_DESTINATIONS	16
 
 static constexpr float NO_LIMIT = std::numeric_limits<float>::max();
+
+const int CChokeMap::ARMY_SEEN = FRAMES_PER_SEC * 60;
+const float CChokeMap::CONTEST_SHARE = 0.33f;
 
 void CChokeMap::SCutCache::Reset(std::vector<int>&& from, std::vector<float>&& cap, float limit, size_t regionCount)
 {
@@ -175,6 +179,85 @@ void CChokeMap::UpdateTerritory()
 	};
 	update(ourHold, ours, OUR_LEAVE, isOurTerritory);
 	update(enemyHold, theirs, ENEMY_LEAVE, isEnemyTerritory);
+}
+
+/*
+ * Buildings decide who owns a region; armies only contest it. A side's mobiles in a region with none of its
+ * buildings contest it when their threat is CONTEST_SHARE of the owner's there (any threat, if the owner has no guns)
+ */
+CChokeMap::Side CChokeMap::OwnerOf(const SStrength& ours, const SStrength& enemy)
+{
+	const bool isOurs = (ours.structures > 0), isEnemy = (enemy.structures > 0);
+	if (isOurs == isEnemy) {
+		return isOurs ? Side::CONTESTED : Side::NONE;
+	}
+	const SStrength& owner = isOurs ? ours : enemy;
+	const SStrength& other = isOurs ? enemy : ours;
+	if ((other.Threat() > 0.f) && (other.Threat() >= CONTEST_SHARE * owner.Threat())) {
+		return Side::CONTESTED;
+	}
+	return isOurs ? Side::OURS : Side::ENEMY;
+}
+
+/*
+ * Only towers covering all of a choke's line defend it: one gap in their cover and the enemy walks through
+ */
+CChokeMap::Side CChokeMap::ChokeOwnerOf(const SStrength& ours, const SStrength& enemy, float ourCover,
+		float enemyCover)
+{
+	const bool isOurs = (ourCover >= 1.f), isEnemy = (enemyCover >= 1.f);
+	if (isOurs == isEnemy) {
+		return isOurs ? Side::CONTESTED : Side::NONE;
+	}
+	const SStrength& owner = isOurs ? ours : enemy;
+	const SStrength& other = isOurs ? enemy : ours;
+	const float otherCover = isOurs ? enemyCover : ourCover;
+	if ((otherCover > 0.f) || ((other.mobile > 0.f) && (other.mobile >= CONTEST_SHARE * owner.Threat()))) {
+		return Side::CONTESTED;
+	}
+	return isOurs ? Side::OURS : Side::ENEMY;
+}
+
+/*
+ * All the AI knows of the enemy: buildings until seen dead or their spot seen empty, armed mobiles seen (in sight or
+ * on radar) in the last ARMY_SEEN, at the last place seen, until that place is seen empty (hidden, as the rest of
+ * the AI skips them); aircraft and unidentified radar blips aside
+ */
+bool CChokeMap::IsCountedEnemy(const CEnemyUnit* enemy, int frame)
+{
+	const CCircuitDef* edef = enemy->GetCircuitDef();
+	return !enemy->IsHidden() && !enemy->IsFake() && (edef != nullptr) && !edef->IsAbleToFly()
+			&& (!edef->IsMobile() || (edef->IsAttacker() && enemy->IsRecentlySeen(frame, ARMY_SEEN)));
+}
+
+/*
+ * Armed ones bring threat (ours: power, as the influence map counts them); unarmed buildings bring eco, their metal
+ * cost
+ */
+void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideUnit>& outEnemies) const
+{
+	const int frame = circuit->GetLastFrame();
+	outOurs.clear();
+	outEnemies.clear();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if (cdef->IsAbleToFly() || (cdef->IsMobile() && !cdef->IsAttacker())) {
+			continue;
+		}
+		const bool isArmed = cdef->IsAttacker();
+		outOurs.push_back({kv.second->GetPos(frame), cdef->IsMobile(), cdef->GetMaxRange(),
+				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cdef->GetCostM(), isArmed && cdef->HasAntiLand()});
+	}
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+		const CEnemyUnit* enemy = kv.second;
+		if (!IsCountedEnemy(enemy, frame)) {
+			continue;
+		}
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		const bool isArmed = edef->IsAttacker();
+		outEnemies.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(),
+				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost(), isArmed && edef->HasAntiLand()});
+	}
 }
 
 void CChokeMap::Analyze()
