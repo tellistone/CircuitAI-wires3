@@ -159,7 +159,7 @@ enemy types: TANK3(gating 0.60) TKBOT3(promoted to gating 0.35)`.
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
 | `regions` | The graph itself: region centres linked to their chokes. On the threat graph, our side is green and the enemy's side red. |
-| `sides` | Who controls each region and choke, and the lines by rank and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger in that side's territory, striped blue and red where contested, and clear where nobody is; thin region borders. Each choke is a gate across its gap, wall to wall. Its core is its owner: blue ours, red the enemy's, dashed contested, thin grey nobody's. Posts at its ends mean towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended. A casing round the core marks a choke on a line: green our current line where its towers cover what it wants, orange where it's short, with a white rim on the front line; the enemy line dark red where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the forward line. The lines are the AI's own, cut between territory, not the owners tinted. Each enemy unit the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building (red armed, pale unarmed), filled while in its sight or radar and an outline where it was last seen, so a spectator with full view can see which enemies the AI knows of. When the AI's LOS cheating option is on, the bottom line says so in red (the infolog says `LOS cheating: on` at start). A legend is printed bottom left. With labels on, info boxes give the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, the ranked chokes' defence and seen share, and our line's wanted and tower power. The cursor's region and choke get boxes beside the cursor; zoomed in, owned chokes and regions near the camera get one beside them, as many as fit. Without the widget it shows the `lines` layer. |
+| `sides` | Who controls each region and choke, and the lines by rank and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger in that side's territory, striped blue and red where contested, and clear where nobody is; thin region borders. Each choke is a gate across its gap, wall to wall. Its core is its owner: blue or red where that side's towers cover all of its gap, dashed where that is contested, thin grey where no side's do. Posts at its ends mean towers reach part of it: blue ours, red the enemy's, half and half both; no posts, none. A casing round the core marks a choke on a line: green our current line where its towers cover what it wants, orange where it's short, with a white rim on the front line; the enemy line dark red where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the forward line. The lines are the AI's own, cut between territory, not the owners tinted. Each enemy unit the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building (red armed, pale unarmed), filled while in its sight or radar and an outline where it was last seen, so a spectator with full view can see which enemies the AI knows of. When the AI's LOS cheating option is on, the bottom line says so in red (the infolog says `LOS cheating: on` at start). A legend is printed bottom left. With labels on, info boxes give the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, the ranked chokes' defence and seen share, and our line's wanted and tower power. The cursor's region and choke get boxes beside the cursor; zoomed in, owned chokes and regions near the camera get one beside them, as many as fit. Without the widget it shows the `lines` layer. |
 | `turrets` | The last turret order: its radius ring and centre white, the candidates that passed the hard rules grey, the best green, the next 4 cyan, and those outside our buildings' influence dark red. Tested spots are labelled with their value ÷ cost and F, the chosen one with its def and the four terms. |
 
 Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`) redraw every 10 s, and `sides` every
@@ -167,18 +167,25 @@ Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`
 
 ### The sides layer and its widget
 
-Ownership comes from units, so ground nobody stands on is nobody's. Each side has three numbers at a region or a
-choke: mobile threat and static threat (its armed units', power for ours and threat for the enemy's, as the influence
-map counts them) and eco (its unarmed buildings' metal cost). The units are ours where they are now, enemy buildings
+Buildings decide who owns a region, and towers who defends a choke; armies only contest them. Each side has three
+numbers at a region or a choke: mobile threat and static threat (its armed units', power for ours and threat for the
+enemy's, as the influence map counts them) and eco (its unarmed buildings' metal cost). The units are ours where they are now, enemy buildings
 until seen dead, and armed enemy mobiles where they were seen in the last minute, aircraft and constructors aside.
 Enemies whose spot the AI has seen empty since (hidden, as the rest of the AI skips them) don't count. At
 a region they are the units in it. At a choke they are the guns that reach its line, as `CFrontline` counts towers:
 buildings whose range reaches it, mobiles within their range or a main-tower range of it (whichever is longer, as they
-walk), and unarmed buildings within a main-tower range of it. A side owns it where only that side has anything there,
-or where its threat is 1.5 times the other's; where both sides have something and neither leads it is contested (both
-sides' eco and no guns is contested too), and where neither has anything it is nobody's. Enemy eco under 150 metal
-with no enemy guns (a lone mex) counts as nothing. A choke has posts where either side's static threat reaches it.
-That covers every choke, those inside an owned region too. Nothing but the overlay reads these.
+walk), and unarmed buildings within a main-tower range of it.
+
+- **A region** is the side's with buildings in it, armed or not. Both sides' buildings make it contested, and so does
+  the other side's threat there when it is at least a third (`CChokeMap::CONTEST_SHARE`, 0.33) of the owner's (any
+  threat, if the owner has no guns). With no buildings it is nobody's, whatever armies stand in it.
+- **A choke** is defended by a side whose towers that hit ground cover all of its line, wall to wall: every cell of
+  it within one of their ranges. Both sides covering it, the other side's towers reaching any of it, or its mobiles
+  there at a third of the defender's threat or more make it contested. Where no side covers all of it, it is
+  nobody's, whatever towers reach part of it (its posts show those). A choke's info box gives the share of its line
+  each side's towers cover.
+
+Nothing but the overlay reads these.
 
 The layer needs the `dbg_circuit_sides.lua` widget in `util/LuaUI/Widgets/`. Copy it into the Zero-K data folder's
 `LuaUI/Widgets/` on the machine that runs the AI (local widgets are on by default). The AI finds it through

@@ -82,6 +82,7 @@ private:
 		Side side = Side::NONE;
 		SStrength ours, enemy;
 		bool isTerritory = false;  // a region in its owner's territory (CChokeMap::IsOurTerritory, IsEnemyTerritory)
+		float ourCover = 0.f, enemyCover = 0.f;  // a choke: share of its line in range of each side's ground-hitting towers
 	};
 	void MakeViews(std::vector<SView>& regionViews, std::vector<SView>& chokeViews) const;
 	std::string MakeInfo(const std::vector<SView>& regionViews, const std::vector<SView>& chokeViews) const;

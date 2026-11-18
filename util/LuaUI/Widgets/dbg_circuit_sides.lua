@@ -5,21 +5,22 @@
 -- a game against CircuitAI say "choke_overlay sides" in ally chat. It only draws in games with no human opponents,
 -- on the machine that runs the AI.
 --
--- Who owns a region or a choke is decided by each side's threat there (armed units: mobile and static) and eco
--- (unarmed buildings' metal): a side owns it where only it has anything, or where its threat is 1.5 times the
--- other's; where both sides have something and neither leads, it's contested; where neither has, nobody's. Enemy eco
--- under 150 metal with no enemy guns (a lone mex) counts as nothing.
+-- A region belongs to the side with buildings in it. Both sides' buildings make it contested, and so does the other
+-- side's threat there (armed units) at a third of the owner's or more. With no buildings it is nobody's, whatever
+-- armies stand in it.
+-- A choke is defended by a side whose towers that hit ground cover all of its gap, wall to wall. The other side's
+-- towers reaching any of it, or its mobiles there at a third of the defender's threat or more, contest it. Where no
+-- side covers all of it, it is nobody's.
 -- Regions are tinted by owner: blue ours, red the enemy's, striped blue and red contested, clear nobody's. The tint
--- is stronger in the owner's territory (its buildings there). Thin lines are region borders.
+-- is stronger in the owner's territory (where the AI's lines take it as theirs). Thin lines are region borders.
 -- Each choke is a gate drawn across its gap, wall to wall:
--- - its core is its owner, counting the guns that reach its line: blue ours, red the enemy's, dashed blue and red
---   contested, thin grey nobody's;
--- - posts at its ends when towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended;
+-- - its core is its owner: blue ours, red the enemy's, dashed blue and red contested, thin grey nobody's;
+-- - posts at its ends when towers reach any of it: blue ours, red the enemy's, half and half both; no posts, none;
 -- - a casing round the core when it is on a line: green our current line where its towers cover what it wants, orange
 --   where it's short, with a white rim on the front line (where ours and the enemy's touch); the enemy line dark red
 --   where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the
 --   forward line, cut against the enemy's side of the map (start boxes, factories).
--- The lines are the AI's own, cut between territory (each side's buildings), not the owners tinted here.
+-- The lines are the AI's own, cut between territory (each side's buildings, held 20 s), not the owners tinted here.
 -- Each enemy the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building
 -- (red armed, pale unarmed), filled while in its sight or radar, an outline where it was last seen. An enemy you see
 -- with no mark is one the AI doesn't know of, so a spectator with full view can tell what the overlay is built on.
@@ -692,12 +693,12 @@ local function MakeLegend()
 		"Casing: " .. casing.c .. "our line" .. w .. " / " .. casing.s .. "short" .. w .. ", " .. casing.f .. "rimmed"
 				.. w .. " front line, " .. casing.e .. "enemy line defended" .. w .. " / " .. casing.u .. "undefended"
 				.. w .. " / " .. casing.g .. "unseen" .. w .. ", " .. casing.h .. "enemy-held" .. w .. ", " .. casing.w .. "forward line",
-		"Posts at a gate's ends: towers reach it (" .. sides .. ", half and half both)",
-		"Choke gates: owner by the guns that reach them (" .. sides .. ", dashed contested, grey nobody's)",
-		"Regions: owner by the units in them (" .. sides .. ", striped contested, clear nobody's), strong in the"
-				.. " owner's territory",
-		"Owner: the only side there (enemy eco under 150 metal alone is nothing), or the side with 1.5x the other's"
-				.. " threat. Hover for the numbers",
+		"Posts at a gate's ends: towers reach part of it (" .. sides .. ", half and half both)",
+		"Choke gates: defended where one side's towers cover all of the gap (" .. sides .. "), dashed contested"
+				.. " (both, or the other's towers or 1/3 of the threat in mobiles), grey nobody's",
+		"Regions: the side with buildings there (" .. sides .. "), striped contested (both, or 1/3 of the threat in"
+				.. " the other's units), clear no buildings",
+		"Strong tint: in that side's territory, as the AI's lines take it. Hover for the numbers",
 		"Enemies the AI counts: " .. red .. "circle" .. w .. " unit, " .. red .. "square" .. w .. " building ("
 				.. Ink(KNOWN.e.colour) .. "pale" .. w .. " unarmed), filled seen now, outline last seen. Unmarked: unknown to it",
 	}

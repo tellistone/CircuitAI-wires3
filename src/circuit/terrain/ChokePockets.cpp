@@ -38,13 +38,12 @@ using namespace springai;
 #define OUR_LEAVE		(FRAMES_PER_SEC * 60)  // our territory leaves this long after its last building went
 #define ENEMY_LEAVE		(FRAMES_PER_SEC * 120)  // and the enemy's
 #define ENEMY_HOLD_COST	150.f  // metal: a cheaper enemy building that isn't armed (a mex, a solar) holds no ground
-#define OWN_RATIO		1.5f  // where both sides have threat, one owns with this many times the other's
-#define ENEMY_ECO_FLOOR	150.f  // metal: less enemy eco than this in a region with no enemy guns (a lone mex) owns nothing
 #define MAX_DESTINATIONS	16
 
 static constexpr float NO_LIMIT = std::numeric_limits<float>::max();
 
 const int CChokeMap::ARMY_SEEN = FRAMES_PER_SEC * 60;
+const float CChokeMap::CONTEST_SHARE = 0.33f;
 
 void CChokeMap::SCutCache::Reset(std::vector<int>&& from, std::vector<float>&& cap, float limit, size_t regionCount)
 {
@@ -183,27 +182,40 @@ void CChokeMap::UpdateTerritory()
 }
 
 /*
- * Nobody's where neither side has anything; one side's where only it has; where both have, the side with OWN_RATIO
- * times the other's threat, else contested (both sides' eco and no guns is contested too). Enemy eco under
- * ENEMY_ECO_FLOOR with no enemy guns counts as nothing: a sneaky mex doesn't flip a region in the middle of ours
+ * Buildings decide who owns a region; armies only contest it. A side's mobiles in a region with none of its
+ * buildings contest it when their threat is CONTEST_SHARE of the owner's there (any threat, if the owner has no guns)
  */
 CChokeMap::Side CChokeMap::OwnerOf(const SStrength& ours, const SStrength& enemy)
 {
-	const bool isOurs = ours.IsAny(), isEnemy = (enemy.Threat() > 0.f) || (enemy.eco >= ENEMY_ECO_FLOOR);
-	if (isOurs != isEnemy) {
-		return isOurs ? Side::OURS : Side::ENEMY;
+	const bool isOurs = (ours.structures > 0), isEnemy = (enemy.structures > 0);
+	if (isOurs == isEnemy) {
+		return isOurs ? Side::CONTESTED : Side::NONE;
 	}
-	if (!isOurs) {
-		return Side::NONE;
+	const SStrength& owner = isOurs ? ours : enemy;
+	const SStrength& other = isOurs ? enemy : ours;
+	if ((other.Threat() > 0.f) && (other.Threat() >= CONTEST_SHARE * owner.Threat())) {
+		return Side::CONTESTED;
 	}
-	const float power = ours.Threat(), threat = enemy.Threat();
-	if ((power > 0.f) && (power >= OWN_RATIO * threat)) {
-		return Side::OURS;
+	return isOurs ? Side::OURS : Side::ENEMY;
+}
+
+/*
+ * Only towers covering all of a choke's line defend it: one gap in their cover and the enemy walks through
+ */
+CChokeMap::Side CChokeMap::ChokeOwnerOf(const SStrength& ours, const SStrength& enemy, float ourCover,
+		float enemyCover)
+{
+	const bool isOurs = (ourCover >= 1.f), isEnemy = (enemyCover >= 1.f);
+	if (isOurs == isEnemy) {
+		return isOurs ? Side::CONTESTED : Side::NONE;
 	}
-	if ((threat > 0.f) && (threat >= OWN_RATIO * power)) {
-		return Side::ENEMY;
+	const SStrength& owner = isOurs ? ours : enemy;
+	const SStrength& other = isOurs ? enemy : ours;
+	const float otherCover = isOurs ? enemyCover : ourCover;
+	if ((otherCover > 0.f) || ((other.mobile > 0.f) && (other.mobile >= CONTEST_SHARE * owner.Threat()))) {
+		return Side::CONTESTED;
 	}
-	return Side::CONTESTED;
+	return isOurs ? Side::OURS : Side::ENEMY;
 }
 
 /*
@@ -234,7 +246,7 @@ void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideU
 		}
 		const bool isArmed = cdef->IsAttacker();
 		outOurs.push_back({kv.second->GetPos(frame), cdef->IsMobile(), cdef->GetMaxRange(),
-				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cdef->GetCostM()});
+				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cdef->GetCostM(), isArmed && cdef->HasAntiLand()});
 	}
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
@@ -244,7 +256,7 @@ void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideU
 		const CCircuitDef* edef = enemy->GetCircuitDef();
 		const bool isArmed = edef->IsAttacker();
 		outEnemies.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(),
-				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost()});
+				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost(), isArmed && edef->HasAntiLand()});
 	}
 }
 

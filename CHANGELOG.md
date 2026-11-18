@@ -8,13 +8,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Added
 
 - **`choke_overlay sides`: who owns each region and choke.** A new overlay layer colours each region and choke by
-  its owner, from each side's mobile threat, static threat and eco there (enemy mobiles seen in the last minute, enemy
-  buildings until seen dead, neither once the AI has seen their spot empty): a side owns it where only it has
-  anything, or where its threat is 1.5 times the other's, else it is contested, and nobody's where neither side has
-  anything; enemy eco under 150 metal with no enemy guns (a lone mex) counts as nothing. A region counts the units in
-  it; a choke counts the guns whose range reaches its line (mobiles also within a main-tower range of it) and unarmed
-  buildings near it. Regions are blue, red, striped or clear, stronger in that side's territory. Each choke is a gate
-  across its gap: its core coloured by owner, posts at its ends when towers reach it, and a casing when it is on one
+  its owner (enemy mobiles seen in the last minute, enemy buildings until seen dead, neither once the AI has seen
+  their spot empty). A region is the side's with buildings in it, contested when both sides have buildings there or
+  the other side's threat is at least a third of the owner's, and nobody's with no buildings, whatever armies stand in
+  it. A choke is defended by a side whose ground-hitting towers cover all of its gap, contested when both do, when
+  the other side's towers reach any of it or its mobiles there are a third of the defender's threat, and nobody's when
+  no side covers all of it. Regions are blue, red, striped or clear, stronger in that side's territory. Each choke is a
+  gate across its gap: its core coloured by owner, posts at its ends when towers reach part of it, and a casing when it is on one
   of the AI's lines (white front line, green or orange our current line by whether its towers cover what it wants,
   the enemy line by rank, yellow forward line). Info boxes show the numbers behind each owner: hostile and allied
   threat (total, mobile, static) and eco, for the region and choke at the cursor and, zoomed in, for owned ones near
