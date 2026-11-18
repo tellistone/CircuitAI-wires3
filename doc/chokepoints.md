@@ -53,9 +53,7 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
   The *enemy line* is its mirror: every choke out of the enemy's ground into a region we can walk to from ours
   without crossing theirs. Where our ground meets theirs a choke is on both; contested and nobody's ground between
   them keeps them apart. The *front line* is the chokes between our ground and theirs, plus every choke of a region
-  contested for 20 s; only the overlay draws it. The *forward line* is our line as if every region we have buildings
-  in and the enemy hasn't (contested by their army alone, still settling, or cut off from our main ground) were
-  ours: where our line would be if their army were driven off our buildings. Objectives (D) aim at it.
+  contested for 20 s; only the overlay draws it.
 - **Traffic field.** On 64-elmo cells (crossable by the same rule over their four 32-elmo cells), one layer per enemy
   movement type: where its units are likely to walk from the
   enemy's factories (or start boxes) to our clusters and base. The layers are blended by the enemy's army mix, at most
@@ -81,13 +79,12 @@ anything acts on it.
 | `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers, the armed hub towers of build chains and the hold spots get the best spot within reach, scored on the turret picker's value model: covered traffic and enemies in metal, height, view, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
 | `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
 | `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked frontline choke whose towers are short of the enemy army in the region outside it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
-| `choke.objective.enable` | `false` | **Forward objectives (D).** When taking the forward line is worth it, idle attack groups go for its enemy-held chokes. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
 | `turret.after_flee` | `true` | **Turret picker (G), after a flee.** A constructor whose flee from nearby enemies ends clear or covered orders a light turret where the flee started. |
 | `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. |
 
-The rankings of enemy-held chokes and the enemy line's (E) feed D and the overlay. They are computed when C or D is
-on, or when the overlay is on.
+The rankings of enemy-held chokes and the enemy line's (E) feed only the overlay. They are computed when C is on, or
+when the overlay is on.
 
 ## Tuning keys
 
@@ -119,9 +116,6 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.radar.inside` | `0.25` | A builder standing in coverage builds a radar only if at least this share of its view (by weight) is new. |
 | `choke.radar.guard` | `"turretmissile"` | Tower queued once a new radar stands, at the best spot near it. `""` turns it off. |
 | `choke.radar.guard_radius` | `300` | Elmos from the radar the guard tower may stand. |
-| `choke.objective.gain` | `1.5` | An objective's gain must be at least this × its cost. |
-| `choke.objective.power` | `1.3` | Our attack power must be at least this × the objective's defence. |
-| `choke.objective.retry` | `180` | Seconds before a failed objective may be tried again. |
 
 The turret picker has its own top-level `"turret"` block, so the two pickers are tuned apart. Sizes are in elmos.
 
@@ -160,7 +154,7 @@ players are ignored. A spectator may use it only in games with no human opponent
 | `choke_overlay <movement class>` | Shows one movement class's own graph on the `chokes` and `regions` layers. Use a unit def name (`cloakraid`) or a class name. An unknown name lists the classes. |
 | `choke_overlay all` | Back to the threat graph. |
 | `choke_overlay labels` | Turns the text labels on or off, and the `sides` layer's info boxes. Labels are map markers, which human allies see too, so they start off when the AI has human allies. |
-| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` and `objective.retry` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light`, `turret.tiers` and `turret.not_defence` can't be set. Only in games with no human opponents. |
+| `choke_overlay set <key> <value>` | Changes a tuning key or flag and rebuilds. Keys are named as in the config without `choke.`, for example `region.min_area 0.4`, `setback 0.5 0.7`, `spot.enable true`, and `hold_choke` for `quota.hold_choke`. `openness.bands` can't be set this way. The `turret.*` keys take their full name (`turret.front 2`), change only the AI that answers, and need no rebuild; `turret.light`, `turret.tiers` and `turret.not_defence` can't be set. Only in games with no human opponents. |
 | `choke_overlay turret <x> <z> [def]` | Our nearest free constructor orders a turret at (x, z), with no cooldown or budget, at HIGH priority. With no def the picker chooses from the porcupine list (AA left out). Shows the `turrets` layer. Only in games with no human opponents. |
 | `choke_overlay save` | Writes the chokes and point classes to `choke/<map>.json` in the AI's writeable data directory, for comparing maps by hand. Only in games with no human opponents. |
 
@@ -176,13 +170,13 @@ Before an army is seen, the vehicles show as `(gating, assumed)` once the openin
 |---|---|
 | `chokes` | Each choke from end to end of its line: green when defensible, grey when not. Lanes are yellow rectangles. |
 | `pockets` | Each pocket's entrances by mode: green at chokes, white on cluster, grey not decided yet. Blue lines link its points to them. Points are red when open, green gated, grey unreached. Magenta marks the anchors of choke points. |
-| `lines` | The current line orange, the forward line yellow, the enemy line red, the front line white, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
+| `lines` | The current line orange, the enemy line red, the front line white. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
 | `ranks` | Enemy-held chokes and the enemy line's: red when defended, white when undefended, grey when not seen enough to say. Labels say which, and give the defence, the unarmed value behind and the share seen in the last minute. |
 | `traffic` | The busiest cells of the blended traffic field: bigger and redder the busier. |
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
 | `regions` | The graph itself: region centres linked to their chokes. On the threat graph, our side is green and the enemy's side red. |
-| `sides` | Who controls each region and choke, and the lines by tower cover and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger where the lines take the region as that side's held ground, striped blue and red where contested, and clear where nobody is; thin region borders. Each choke is a gate across its gap, wall to wall. Its core is its owner: blue or red where that side's towers cover all of its gap, dashed where that is contested, thin grey where no side's do. Posts at its ends mean towers reach part of it: blue ours, red the enemy's, half and half both; no posts, none. A casing round the core marks a choke on a line: green our current line where its towers cover what it wants, orange where it's short; the enemy line dark red where the enemy's ground-hitting towers cover all of its gap (defended), pink where they don't (undefended); yellow the forward line; a white rim round any of them on the front line. The lines go round held ground, so they follow the tint once it has held 20 s and joins its side's main ground; a region's info box says when the lines still take it otherwise, or that it is cut off. Each enemy unit the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building (red armed, pale unarmed), filled while in its sight or radar and an outline where it was last seen, so a spectator with full view can see which enemies the AI knows of. When the AI's LOS cheating option is on, the bottom line says so in red (the infolog says `LOS cheating: on` at start). A legend is printed bottom left. With labels on, info boxes give the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, the ranked chokes' defence and seen share, and our line's wanted and tower power. The cursor's region and choke get boxes beside the cursor; zoomed in, owned chokes and regions near the camera get one beside them, as many as fit. Without the widget it shows the `lines` layer. |
+| `sides` | Who controls each region and choke, and the lines by tower cover and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger where the lines take the region as that side's held ground, striped blue and red where contested, and clear where nobody is; thin region borders. Each choke is a gate across its gap, wall to wall. Its core is its owner: blue or red where that side's towers cover all of its gap, dashed where that is contested, thin grey where no side's do. Posts at its ends mean towers reach part of it: blue ours, red the enemy's, half and half both; no posts, none. A casing round the core marks a choke on a line: green our current line where its towers cover what it wants, orange where it's short; the enemy line dark red where the enemy's ground-hitting towers cover all of its gap (defended), pink where they don't (undefended); a white rim on the front line, round the other casing if it has one. The lines go round held ground, so they follow the tint once it has held 20 s and joins its side's main ground; a region's info box says when the lines still take it otherwise, or that it is cut off. Each enemy unit the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building (red armed, pale unarmed), filled while in its sight or radar and an outline where it was last seen, so a spectator with full view can see which enemies the AI knows of. When the AI's LOS cheating option is on, the bottom line says so in red (the infolog says `LOS cheating: on` at start). A legend is printed bottom left. With labels on, info boxes give the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, the ranked chokes' defence and seen share, and our line's wanted and tower power. The cursor's region and choke get boxes beside the cursor; zoomed in, owned chokes and regions near the camera get one beside them, as many as fit. Without the widget it shows the `lines` layer. |
 | `turrets` | The last turret order: its radius ring and centre white, the candidates that passed the hard rules grey, the best green, the next 4 cyan, and those outside our buildings' influence dark red. Tested spots are labelled with their value ÷ cost and F, the chosen one with its def and the four terms. |
 
 Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`) redraw every 10 s, and `sides` every
@@ -426,7 +420,7 @@ charged too, but never wait, so they can take it below zero; preventive towers a
 that dies to a known mobile killer that doesn't outrange it pays `loss_refund` (2) x its cost back, past the cap if
 need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 90 s if nothing else spends.
 
-### Holding the line (C), objectives (D) and rankings (E)
+### Holding the line (C) and rankings (E)
 
 - **Frontline.** The current line's chokes, ranked by our income behind each one × its traffic. Each of our points
   behind the line counts at its nearest line choke.
@@ -441,16 +435,6 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
   group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A slot with nowhere to stand (no
   traffic near the choke) stays free and is tried again after 30 s. A group that runs from a fight gives up its claim
   for 30 s.
-- **Objectives.** When the forward line is shorter than the current line, or as long with more income behind it,
-  its enemy-held chokes become an objective. That needs the gain to be `choke.objective.gain` × the cost, and our
-  attack power to be `choke.objective.power` × their defence. Their defence is what we saw there, over the share of
-  their lines we saw in the last minute (at least a quarter), so chokes we haven't watched count as stronger.
-  - The gain is the towers and wanted power of the current-line chokes it would retire, plus 3 minutes of the income
-    it brings behind the line.
-  - The cost is their defence, plus the enemy army on the ground it brings behind the line (seen in the last minute),
-    plus what holding them takes. The power check counts that army too.
-  - It lasts until taken, for at most 4 minutes in all (switches included), or until our attack power falls below its
-    defence as it is now. A failed one waits `choke.objective.retry` seconds.
 - **Rankings.** A choke is enemy-held when its outer side from us (more chokes from our ground) is the enemy's
   ground, or known enemy towers cover its line. Every choke of the enemy line is ranked too, held or not. Its defence
   is the threat of enemy towers reaching the line or our approach to it, plus enemy mobiles seen in the last minute
@@ -459,7 +443,6 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
   is the lower of two shares in our LOS in the last minute: of its line, and of the ground beyond it on the
   enemy's side, up to a main-tower range out, where its defenders would stand. A ranked choke is *undefended* when no
   armed enemy is in reach and we saw at least a quarter of it; with less seen, no defence only means we don't know.
-  Objectives (D) still take only enemy-held chokes.
 
 ## Logs
 
@@ -473,7 +456,7 @@ Lines in the AI's infolog, for tuning:
 - `CHOKE point for choke`: where a choke's towers anchor.
 - `CHOKE spot`: each spot search, and each failed spot.
 - `CHOKE artillery near choke`: towers called off.
-- `CHOKE hold` and `CHOKE objective`: slots and objectives starting, moving and ending.
+- `CHOKE hold`: slots starting, moving and ending.
 - `RADAR by`: each radar a builder is sent to build, with the coverage before it.
 - `TURRET <caller>, by <builder>`: each turret order (`after flee`, `near enemy` or `test`) with its def, spot, the
   four terms, height, F, the nearest building of ours, the walk, base and value per cost, candidates tested and the
@@ -490,7 +473,7 @@ Lines in the AI's infolog, for tuning:
 - Fortifying the frontline (C) only calls `MakeDefence` for pockets whose entrances are frontline chokes. A frontline
   choke with no pocket of ours behind it gets no towers of its own.
 - New tower spending behind a line that moves forward doesn't pause.
-- Objectives (D) only send idle attack groups to the chokes. E's rankings don't steer raids, scouts or artillery yet.
+- E's rankings only feed the overlay. They don't steer attacks, raids, scouts or artillery yet.
 - A tower's cost is counted on the nearest defence point with room for it, as before. A tower at a choke can
   occasionally be counted on a cluster point near that choke.
 - Viewsheds are cached while their cell stays a candidate, and aren't made again when terraform changes the ground.

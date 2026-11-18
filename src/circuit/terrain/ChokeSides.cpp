@@ -185,9 +185,6 @@ std::string CChokeOverlay::MakeInfo(const std::vector<SView>& regionViews, const
 		if (isOn(chokeMap->GetEnemyLine())) {
 			title += (view.enemyCover >= 1.f) ? "|enemy line, defended" : "|enemy line, undefended";
 		}
-		if (isOn(chokeMap->GetForwardLine())) {
-			title += "|forward line";
-		}
 		for (const CFrontline::SRank& rank : frontline->GetRanks()) {
 			if (rank.chokeId == chokes[c].id) {
 				title += utils::float_to_string(rank.defence, "|enemy defence %.0f")
@@ -240,7 +237,7 @@ void CChokeOverlay::DrawSides()
  *   control: who defended x1 z1 x2 z2, a choke's line end to end. Who controls it: n nobody, o ours, e the enemy,
  *   c contested (CChokeMap::ChokeOwnerOf). Whose ground-hitting towers reach any of its line: n nobody's, o ours,
  *   e the enemy's, b both sides'
- *   lines: kind x1 z1 x2 z2. Kinds: w forward line; f front line; enemy line: e defended (their ground-hitting
+ *   lines: kind x1 z1 x2 z2. Kinds: f front line; enemy line: e defended (their ground-hitting
  *   towers cover all of its line), u undefended; our line: c its towers cover what it wants, s short
  *   info: see MakeInfo
  *   known: see MakeKnownEnemies
@@ -305,9 +302,6 @@ void CChokeOverlay::SendWidgetData()
 	CallWidget("control", control.str());
 
 	std::ostringstream lines;
-	for (int c : chokeMap->GetForwardLine()) {
-		putChoke(lines, c, 'w');
-	}
 	for (int c : chokeMap->GetFrontLine()) {
 		putChoke(lines, c, 'f');
 	}

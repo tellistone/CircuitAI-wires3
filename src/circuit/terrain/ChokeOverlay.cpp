@@ -267,11 +267,10 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 		{"spot.enemy", &c.spotEnemy}, {"spot.forward", &c.spotForward}, {"spot.view", &c.spotView},
 		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare}, {"radar.enemy", &c.radarEnemy},
 		{"radar.inside", &c.radarInside}, {"radar.guard_radius", &c.radarGuardRadius},
-		{"objective.gain", &c.objGain}, {"objective.power", &c.objPower},
 	};
 	const std::map<std::string, bool*> flags = {
 		{"enable", &c.isChoke}, {"spot.enable", &c.isSpot}, {"radar.enable", &c.isRadar},
-		{"objective.enable", &c.isObjective}, {"expand", &c.isExpand}, {"hold_choke", &c.isHold},
+		{"expand", &c.isExpand}, {"hold_choke", &c.isHold},
 	};
 	// Read into copies, so a bad value changes nothing
 	std::istringstream in(value);
@@ -539,8 +538,7 @@ void CChokeOverlay::DrawPockets()
 }
 
 /*
- * Current line orange, forward line yellow, enemy line red, front line white, objective magenta; hold slots cyan,
- * with their spots
+ * Current line orange, enemy line red, front line white; hold slots cyan, with their spots
  */
 void CChokeOverlay::DrawLines()
 {
@@ -549,9 +547,6 @@ void CChokeOverlay::DrawLines()
 	auto drawChoke = [&](int c, Colour colour, float size) {
 		AddCross(chokeMap->GetCellPos(chokes[c].centre), colour, size);
 	};
-	for (int c : chokeMap->GetForwardLine()) {
-		drawChoke(c, Colour::YELLOW, 128.f);
-	}
 	for (int c : chokeMap->GetCurrentLine()) {
 		drawChoke(c, Colour::ORANGE, 96.f);
 	}
@@ -562,12 +557,6 @@ void CChokeOverlay::DrawLines()
 		drawChoke(c, Colour::WHITE, 192.f);
 	}
 	const CFrontline* frontline = circuit->GetMilitaryManager()->GetFrontline();
-	for (int id : frontline->GetObjectiveChokes()) {
-		const int c = graph.FindChoke(id);
-		if (c >= 0) {
-			drawChoke(c, Colour::MAGENTA, 160.f);
-		}
-	}
 	for (const CFrontline::SFront& f : frontline->GetFront()) {
 		const int c = graph.FindChoke(f.chokeId);
 		if (c >= 0) {

@@ -18,15 +18,13 @@
 -- - posts at its ends when towers reach any of it: blue ours, red the enemy's, half and half both; no posts, none;
 -- - a casing round the core when it is on a line: green our line where its towers cover what it wants, orange where
 --   it's short; the enemy line dark red where their ground-hitting towers cover all of the gap (defended), pink where
---   they don't (undefended); yellow the forward line; a white rim round any of them on the front line.
+--   they don't (undefended); a white rim on the front line, round the other casing if it has one.
 -- The lines go round the ground each side owns (as tinted, once that has held 20 s), the enemy's side of the map
 -- counting as theirs where nobody owns it, and each side's ground only where it joins that side's main ground (on its
 -- side of the map) without crossing the other's: an army camped deep in the other's ground is an island.
 -- - our line: every choke out of our ground into a region the enemy can walk to without crossing our ground;
 -- - the enemy line: every choke out of their ground into a region we can walk to without crossing theirs;
--- - the front line: the chokes between our ground and theirs, and every choke of a contested region;
--- - the forward line: our line as if the regions we have buildings in and the enemy hasn't were ours, where it would
---   be if their army were driven off our buildings. The army's objectives aim at it.
+-- - the front line: the chokes between our ground and theirs, and every choke of a contested region.
 -- Each enemy the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building
 -- (red armed, pale unarmed), filled while in its sight or radar, an outline where it was last seen. An enemy you see
 -- with no mark is one the AI doesn't know of, so a spectator with full view can tell what the overlay is built on.
@@ -107,7 +105,6 @@ local CASING_WIDTH = 15
 local RIM_WIDTH = 25  -- the front line's casing: a white rim round the others
 local LINES = {  -- casings by line kind, drawn in this order: the last one drawn shows on a choke in several lines
 	{kind = "f", colour = {1.00, 1.00, 1.00, 1.00}, width = RIM_WIDTH},  -- front line: a rim under the other casings
-	{kind = "w", colour = {1.00, 0.88, 0.20, 0.95}},  -- forward line
 	{kind = "e", colour = {0.70, 0.08, 0.10, 0.95}},  -- enemy line, defended
 	{kind = "u", colour = {1.00, 0.62, 0.78, 0.95}},  -- enemy line, undefended
 	{kind = "c", colour = {0.20, 0.80, 0.30, 0.95}},  -- our line, towers cover what it wants
@@ -695,8 +692,7 @@ local function MakeLegend()
 	local sides = blue .. "ours" .. w .. ", " .. red .. "enemy" .. w
 	return {
 		"Casing: " .. casing.c .. "our line" .. w .. " / " .. casing.s .. "short" .. w .. ", " .. casing.f .. "rimmed"
-				.. w .. " front line, " .. casing.e .. "enemy line defended" .. w .. " / " .. casing.u .. "undefended"
-				.. w .. ", " .. casing.w .. "forward line",
+				.. w .. " front line, " .. casing.e .. "enemy line defended" .. w .. " / " .. casing.u .. "undefended",
 		"Posts at a gate's ends: towers reach part of it (" .. sides .. ", half and half both)",
 		"Choke gates: defended where one side's towers cover all of the gap (" .. sides .. "), dashed contested"
 				.. " (both, or the other's towers or 1/3 of the threat in mobiles), grey nobody's",

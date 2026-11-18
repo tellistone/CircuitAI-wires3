@@ -33,14 +33,7 @@ class IFighterTask;
  *   up the shortfall, and loses the claim when it hasn't asked for its spot in a minute. A claimed slot keeps its
  *   choke until 30 s after it was last short, unless a short one ranks 1.3x higher; then it moves to the top short
  *   one, or ends if none is. With choke.enable, the top-ranked short choke's pocket is fortified (MakeDefence).
- * - D, choke.objective.enable: when the forward line (CChokeMap::GetForwardLine: our line were the regions we
- *   have buildings in and the enemy hasn't ours) is shorter than our line (or as long, with more income behind it), its chokes
- *   become an objective if the gain (the retired chokes' towers and wanted power, plus
- *   3 minutes of the income it brings behind the line) is choke.objective.gain x the cost (their defence and the enemy
- *   army on the ground it brings behind the line, plus what holding them takes), and our attack power is
- *   choke.objective.power x that defence. A choke's defence is what we saw over the share of it we saw lately (at
- *   least a quarter). Idle attack groups head there. It ends once taken, after 4 minutes, or when our power falls
- *   below their defence now (retried after choke.objective.retry)
+ * The rankings only feed the overlay.
  */
 class CFrontline {
 public:
@@ -81,23 +74,13 @@ public:
 	springai::AIFloat3 GetHoldSpot(CCircuitUnit* leader);
 	// The task ended, or ran from danger: its claim goes, and it may not claim again for banFrames
 	void ReleaseHold(const IFighterTask* task, int banFrames);
-	// choke.objective.enable: where idle attack groups go, empty if no objective
-	const std::vector<springai::AIFloat3>& GetObjective() const { return objective.positions; }
 
 	// choke_overlay
 	const std::vector<SRank>& GetRanks() const { return ranks; }  // weakest first
 	const std::vector<SFront>& GetFront() const { return front; }  // highest rank first
 	const std::vector<SHold>& GetHolds() const { return holds; }
-	const std::vector<int>& GetObjectiveChokes() const { return objective.chokeIds; }
 
 private:
-	struct SObjective {
-		std::vector<int> chokeIds;
-		std::vector<springai::AIFloat3> positions;
-		float score = 0.f;  // gain / cost
-		float defence = 0.f;  // threat
-		int startFrame = -1;
-	};
 	struct SArmed {
 		springai::AIFloat3 pos;
 		bool isMobile;
@@ -109,13 +92,9 @@ private:
 	void UpdateFront(const std::vector<SArmed>& armed);
 	void UpdateHolds();
 	void Fortify();
-	void UpdateObjective();
-	SObjective MakeObjective(float& outArmyPower) const;
 	springai::AIFloat3 FindHoldSpot(int chokeId, CCircuitUnit* leader) const;  // -RgtVector if none
 	// Regions reachable from our held ground (our side before we hold any) without crossing these chokes
 	std::vector<bool> ReachableFromUs(const std::vector<int>& blocked) const;
-	float GetIncomeIn(const std::vector<bool>& regions) const;  // of every defence point in them
-	const SRank* FindHeld(int chokeId) const;  // an enemy-held choke's rank, nullptr if it isn't held
 	const SFront* FindFront(int chokeId) const;
 
 	CCircuitAI* circuit;
@@ -124,8 +103,6 @@ private:
 	std::vector<SHold> holds;
 	std::map<const IFighterTask*, int> holdBans;  // task -> frame it may claim again
 	std::map<int, std::vector<int>> sampleSeen;  // choke id -> per sample (its line's, then beyond): last in our LOS
-	SObjective objective;
-	int retryFrame;  // no new objective before
 };
 
 } // namespace circuit

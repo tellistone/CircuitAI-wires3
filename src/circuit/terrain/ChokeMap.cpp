@@ -168,11 +168,6 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.radarInside = radar.get("inside", config.radarInside).asFloat();
 	config.radarGuard = radar.get("guard", "").asString();
 	config.radarGuardRadius = radar.get("guard_radius", config.radarGuardRadius).asFloat();
-	const Json::Value& objective = choke["objective"];
-	config.isObjective = objective.get("enable", false).asBool();
-	config.objGain = objective.get("gain", config.objGain).asFloat();
-	config.objPower = objective.get("power", config.objPower).asFloat();
-	config.objRetryFrames = objective.get("retry", config.objRetryFrames / FRAMES_PER_SEC).asFloat() * FRAMES_PER_SEC;
 	config.isHold = root["quota"].get("hold_choke", false).asBool();
 }
 

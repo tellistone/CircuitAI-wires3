@@ -80,7 +80,6 @@ public:
 		bool isChoke = false;  // choke.enable: choke defence (A), region splits of defence points, lanes
 		bool isSpot = false;  // choke.spot.enable: scored spots for towers (F)
 		bool isRadar = false;  // choke.radar.enable: the radar planner (B)
-		bool isObjective = false;  // choke.objective.enable: objectives (D), rankings steering (E)
 		bool isHold = false;  // quota.hold_choke: the idle army holds a frontline choke (C)
 		bool isExpand = false;  // choke.expand: expansion bonus behind a defended cut
 		float minArea = 0.5f;  // choke.region.min_area: main-tower ranges squared
@@ -106,10 +105,7 @@ public:
 		float radarInside = 0.25f;  // choke.radar.inside
 		std::string radarGuard;  // choke.radar.guard: the tower def that guards a new radar, "" = none
 		float radarGuardRadius = 300.f;  // choke.radar.guard_radius
-		float objGain = 1.5f;  // choke.objective.gain
-		float objPower = 1.3f;  // choke.objective.power
-		int objRetryFrames = FRAMES_PER_SEC * 180;  // choke.objective.retry
-		bool IsAnyOn() const { return isChoke || isSpot || isRadar || isObjective || isHold || isExpand; }
+		bool IsAnyOn() const { return isChoke || isSpot || isRadar || isHold || isExpand; }
 	};
 
 	// A defence point of a cluster (CDefenceMatrix), as the graph sees it
@@ -253,9 +249,6 @@ public:
 	const std::vector<int>& GetCurrentLine() const { return currentLine; }
 	const std::vector<int>& GetEnemyLine() const { return enemyLine; }
 	const std::vector<int>& GetFrontLine() const { return frontLine; }
-	// Our line as it would be were every region we have buildings in and the enemy hasn't ours: where it would be if
-	// their army were driven off our buildings (D). Ascending
-	const std::vector<int>& GetForwardLine() const { return forwardLine; }
 	// Per region: the chokes of the cut nearest it from our held ground (E), up to choke.entrances of them
 	const std::vector<int>& GetEntrancesFromUs(int region) const;
 
@@ -414,7 +407,6 @@ private:
 	std::map<int, SHeld> held;  // region id
 	std::vector<Side> settledOwner;
 	std::vector<bool> isOurGround, isEnemyGround;
-	std::vector<bool> isOurBuilt;  // our ground, and where we have buildings and they have none (the forward line's)
 
 	// Pockets and lines
 	std::vector<SPointInfo> pointInfos;
@@ -423,7 +415,7 @@ private:
 	std::vector<std::vector<float>> pointChokeDist;  // per point info, per choke: walking elmos, -1 out of reach
 	SCutCache sideCuts;  // from the enemy side, up to choke.entrances (AnalyzePoints)
 	mutable SCutCache entranceCuts;  // from our regions (GetEntrancesFromUs)
-	std::vector<int> currentLine, enemyLine, frontLine, forwardLine;
+	std::vector<int> currentLine, enemyLine, frontLine;
 	float openness;
 	Openness opennessBand;
 	bool isOpennessSet;

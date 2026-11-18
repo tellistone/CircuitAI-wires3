@@ -230,11 +230,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   400 elmos), ahead of the leader only.
 
 - **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
-  `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with
+  `choke.spot.enable`, `choke.radar.enable`, `choke.expand`, `quota.hold_choke`), and with
   all of them off the AI plays as before.
   - Each ally team learns the map's shape, shared by allied AIs and built on the area worker. It finds the chokes
-    between regions the enemy's walkers can cross, the pockets of clusters behind them, the current and forward
-    lines, the enemy line (the current line's cut nearest the enemy) and the front line where the two touch. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
+    between regions the enemy's walkers can cross, the pockets of clusters behind them, our (current) line, the
+    enemy line and the front line between them. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
   - Choke defence (A): each cluster of a qualified pocket keeps its AA and its first tower, and the rest goes to the
     pocket's entrances, from a budget of what its held clusters would spend anyway. Modes switch at most every 3
     minutes. Narrow chokes keep a lane free of buildings.
@@ -253,8 +253,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     view must be new. So radar follows the builders as they expand. The first goes up once the first factory
     stands. Once a radar stands, a `choke.radar.guard` tower (turretmissile) goes at the best spot within
     `choke.radar.guard_radius` (300 elmos), unless a tower already reaches it.
-  - Holding the line (C), forward objectives (D) and rankings of enemy-held and enemy line chokes, with undefended
-    ones flagged (E).
+  - Holding the line (C) and rankings of enemy-held and enemy line chokes, with undefended ones flagged (E).
   - Expansion bonus for clusters behind a defended cut.
   - `choke_overlay` chat command: draws chokes, pockets, lines, rankings, traffic, spots, radar and regions with map
     figures, and announces each threat-graph rebuild with the enemy types behind it. In games with no human
@@ -637,10 +636,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     further out also split the sides. Our line is now every choke out of our ground into a region the enemy can
     walk to without crossing our ground, and the enemy line its mirror round theirs. The front line was the chokes
     both cuts shared; it is now the chokes between our ground and theirs, plus every choke of a contested region.
-  - The forward line was the cut against the enemy's start boxes and factories, so it hugged the enemy base. It is
-    now where our line would be if the enemy army were driven off: our line as if every region where only we have
-    buildings were ours. A forward objective (D) counts the enemy army on the ground it would take in its defence
-    and cost.
+  - The forward line and forward objectives (D: `choke.objective.enable`, `gain`, `power`, `retry`) are gone. The
+    objectives were the forward line's only reader, and were off by default.
   - Our line and the ranked enemy chokes count the enemies held ground counts: armed mobiles seen in the last
     minute, not the last 3 minutes, aircraft aside, and none whose spot was seen empty. What we saw of a ranked choke
     counts for a minute too, so a choke seen 2 minutes ago with its army since forgotten isn't undefended.
@@ -682,7 +679,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Terrain alone rebuilds the threat graph at most every 5 minutes.** Zero-K's craters and the ground levelled under
   buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the
   30 s mask check found a change, 10 times in 13 minutes in one logged game, and each rebuild could move
-  chokes and regions that choke defence, holds and objectives act on. A terrain change now waits until 5 minutes have
+  chokes and regions that choke defence and holds act on. A terrain change now waits until 5 minutes have
   passed since the last rebuild, unless it opens a new crossing: newly crossable cells joining two of the graph's
   regions (a wall blown through, a terraformed ramp), which rebuilds it at the next mask check (at most 30 s). A
   change in the gating masks still rebuilds at once.
