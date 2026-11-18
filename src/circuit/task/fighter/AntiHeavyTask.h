@@ -49,6 +49,7 @@ public:
 	// Weapon range + 30 s of walking: snipers walk in to heavies this near, and the army pull (UpdateAhPull) takes
 	// units for them
 	static float GetHuntReach(const CCircuitDef* cdef);
+	static bool IsLongReload(const CCircuitDef* cdef);  // 5 s or more
 
 protected:
 	// Cloaked units route like the rest (threat map, path_threat cap) unless their type has the cloak_route attribute
@@ -88,7 +89,6 @@ private:
 	float GetPickMargin(const CEnemyInfo* enemy) const;  // GetDangerStart + half the flee margin
 	// The leader's long-reload weapon (5 s or more) isn't ready; never for mines
 	bool IsReloading(int frame) const;
-	static bool IsLongReload(const CCircuitDef* cdef);  // 5 s or more
 	bool IsQuarry(CEnemyInfo* enemy) const;  // IsQuarryFor the leader's type
 	bool IsCoverOn() const;
 	bool IsCoverMapAt(const springai::AIFloat3& pos) const;  // cover map on, and pos not on water (no cover there)

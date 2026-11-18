@@ -619,6 +619,20 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Lance and Merlin behave as artillery, with heavies as targets** (`antiheavy.as_artillery`, shipped on; missing =
+  off). Anti-heavy units on the ground with a long reload (5 s or more) that are not mines or melee units now get
+  the artillery task (one unit each) instead of anti-heavy squads, the army or support tasks, always, not only while
+  a heavy is around. It works as artillery does (`artillery` block): shoot from where it stands when that spot is
+  threat-free and covered, otherwise walk to a covered threat-free firing spot within range, otherwise stay put while
+  safe and covered or move behind the nearest attack or defend group (`follow_dist`), and flee from enemies within
+  their range + `artillery_flee_margin`. Its targets are the heavies and commanders anti-heavy squads hunt, mobile or
+  not, instead of buildings, and it fires only at those in LOS (radar blips are still walked to). A heavy it hunts is
+  neither a flee danger nor makes its spot unsafe to shoot from while its weapon is ready and it out-ranges the heavy
+  or the heavy is within its range; while it reloads that heavy counts like any other enemy, so it steps back after
+  a shot. No hold fire: the attack order fires at the target, and it fires at will otherwise. These units no longer
+  count as artillery escorts. Ultimatum, Scorpion, Widow, Skuttle and aircraft keep the anti-heavy squads. The
+  ANTIHEAVY log line covers them too (hunting = walking to a firing spot, parked = holding or following).
+
 - **The choke lines go round who owns the ground, armies included.** The current, enemy and front lines were cut
   between territory, which only buildings make, so our line could run through ground the enemy army held and behind
   ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
