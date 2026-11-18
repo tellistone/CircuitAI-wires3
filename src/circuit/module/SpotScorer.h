@@ -58,6 +58,9 @@ public:
 	// The best spot for def, -RgtVector if none passes: CHOKE, HOLD within choke.setback[1] + 0.3 ranges of the
 	// choke's centre, POSITION within radius of the asset
 	springai::AIFloat3 FindSpot(CCircuitDef* def, const SGoal& goal, float radius = 0.f);
+	// A tower guarding a building of ours (the base's, a build chain hub's, a radar's): FindSpot's best POSITION spot
+	// within radius of it; -RgtVector for AA or a def that isn't a defence (FindSpot values ground targets only)
+	springai::AIFloat3 FindGuardSpot(CCircuitDef* def, const springai::AIFloat3& asset, float radius);
 	// porcupine.superweapon.spot
 	struct SGunConfig {
 		float radius = 1000.f;  // elmos around the old site that are searched; 0: off

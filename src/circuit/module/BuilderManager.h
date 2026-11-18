@@ -69,6 +69,9 @@ public:
 	float GetWorkerCost() const { return workerCost; }  // metal value of mobile constructors, commanders excluded
 	bool CanEnqueueTask(const unsigned mod = 8) const { return buildTasksCount < workers.size() * mod; }
 	const std::set<IBuilderTask*>& GetTasks(IBuilderTask::BuildType type) const;
+	// Every tower job not started yet (a static attacker): each queue's jobs and the chains waiting behind them, whatever
+	// heads them (a porc chain's towers wait behind a tower, a big gun hub's behind its radar)
+	void ForEachQueuedTower(const std::function<void (IBuilderTask*)>& fn) const;
 	void ActivateTask(IBuilderTask* task);
 
 	IBuilderTask* EnqueueTask(IBuilderTask::Priority priority,

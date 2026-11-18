@@ -2172,12 +2172,12 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 
 bool CMilitaryManager::IsSpotTaken(const AIFloat3& pos) const
 {
-	for (IBuilderTask* task : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
-		for (IBuilderTask* t = task; t != nullptr; t = t->GetNextTask()) {  // a porc chain's waiting towers too
-			if (t->GetTaskPos().SqDistance2D(pos) < SQUARE(SQUARE_SIZE)) {
-				return true;
-			}
-		}
+	bool isQueued = false;
+	circuit->GetBuilderManager()->ForEachQueuedTower([&isQueued, &pos](IBuilderTask* t) {
+		isQueued = isQueued || (t->GetTaskPos().SqDistance2D(pos) < SQUARE(SQUARE_SIZE));
+	});
+	if (isQueued) {
+		return true;
 	}
 	COOAICallback* clb = circuit->GetCallback();
 	for (int id : clb->GetFriendlyUnitIdsIn(pos, SQUARE_SIZE * 8)) {  // the spot's shake
@@ -3762,10 +3762,8 @@ void CMilitaryManager::UpdateDefence()
 				AIFloat3 buildPos = ibd->first;
 				// choke.spot.enable: an attacker goes to the best spot within the main tower's range
 				const CChokeMap* chokeMap = circuit->GetChokeMap();
-				if (chokeMap->GetConfig().isSpot && chokeMap->IsReady() && buildDef->IsAttacker()) {
-					CSpotScorer::SGoal goal;
-					goal.asset = ibd->first;
-					const AIFloat3 spot = spotScorer->FindSpot(buildDef, goal, chokeMap->GetMainRange());
+				if (chokeMap->GetConfig().isSpot) {
+					const AIFloat3 spot = spotScorer->FindGuardSpot(buildDef, ibd->first, chokeMap->GetMainRange());
 					if (utils::is_valid(spot)) {
 						buildPos = spot;
 					}
