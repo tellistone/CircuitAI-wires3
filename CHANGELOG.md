@@ -635,7 +635,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - The lines were each one cheapest cut, which could leave an entrance off a line when a cheaper set of chokes
     further out also split the sides. Our line is now every choke out of our ground into a region the enemy can
     walk to without crossing our ground, and the enemy line its mirror round theirs. The front line was the chokes
-    both cuts shared; it is now the chokes between our ground and theirs, plus every choke of a contested region.
+    both cuts shared; it is now the chokes where our ground meets theirs, neither side contested.
   - The forward line and forward objectives (D: `choke.objective.enable`, `gain`, `power`, `retry`) are gone. The
     objectives were the forward line's only reader, and were off by default.
   - Our line and the ranked enemy chokes count the enemies held ground counts: armed mobiles seen in the last

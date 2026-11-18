@@ -18,13 +18,13 @@
 -- - posts at its ends when towers reach any of it: blue ours, red the enemy's, half and half both; no posts, none;
 -- - a casing round the core when it is on a line: green our line where its towers cover what it wants, orange where
 --   it's short; the enemy line dark red where their ground-hitting towers cover all of the gap (defended), pink where
---   they don't (undefended); a white rim on the front line, round the other casing if it has one.
+--   they don't (undefended); a white rim round the casing on the front line.
 -- The lines go round the ground each side owns (as tinted, once that has held 20 s), the enemy's side of the map
 -- counting as theirs where nobody owns it, and each side's ground only where it joins that side's main ground (on its
 -- side of the map) without crossing the other's: an army camped deep in the other's ground is an island.
 -- - our line: every choke out of our ground into a region the enemy can walk to without crossing our ground;
 -- - the enemy line: every choke out of their ground into a region we can walk to without crossing theirs;
--- - the front line: the chokes between our ground and theirs, and every choke of a contested region.
+-- - the front line: the chokes where our ground meets theirs, neither side contested.
 -- Each enemy the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building
 -- (red armed, pale unarmed), filled while in its sight or radar, an outline where it was last seen. An enemy you see
 -- with no mark is one the AI doesn't know of, so a spectator with full view can tell what the overlay is built on.

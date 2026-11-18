@@ -521,8 +521,8 @@ void CChokeMap::AnalyzePoints()
 /*
  * Around held ground (UpdateHeld). Our line (C): every choke out of our ground into a region the enemy reaches from
  * theirs without crossing ours, so not the ones into ground only we can get to. The enemy line the same around
- * theirs, for regions we reach without crossing theirs. The front line: the chokes where our ground meets theirs, and
- * every choke of a region contested 20 s. Entrances from us: per region, the cut nearest it from our ground (E)
+ * theirs, for regions we reach without crossing theirs. The front line: the chokes where our ground meets theirs,
+ * neither side contested. Entrances from us: per region, the cut nearest it from our ground (E)
  */
 void CChokeMap::UpdateLines()
 {
@@ -562,11 +562,12 @@ void CChokeMap::UpdateLines()
 	};
 	currentLine = lineOf(isOurs, theirs);
 	enemyLine = lineOf(isTheirs, ours);
-	auto isContested = [this](int r) { return (r < (int)settledOwner.size()) && (settledOwner[r] == Side::CONTESTED); };
+	// Neither side contested: our side, standing in before we hold any ground, may have contested regions
+	auto isUncontested = [this](int r) { return (r >= (int)settledOwner.size()) || (settledOwner[r] != Side::CONTESTED); };
 	frontLine.clear();
 	for (size_t c = 0; c < chokes.size(); ++c) {
 		const int a = chokes[c].regionA, b = chokes[c].regionB;
-		if ((isOurs[a] && isTheirs[b]) || (isOurs[b] && isTheirs[a]) || isContested(a) || isContested(b)) {
+		if (((isOurs[a] && isTheirs[b]) || (isOurs[b] && isTheirs[a])) && isUncontested(a) && isUncontested(b)) {
 			frontLine.push_back(c);
 		}
 	}

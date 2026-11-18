@@ -244,8 +244,8 @@ public:
 	const std::vector<SPocket>& GetPockets() const { return pockets; }
 	// Our line (C): the chokes out of our held ground (GetOurRegions) into regions the enemy reaches from their held
 	// ground without crossing ours. The enemy line: the chokes out of their held ground into regions we reach from
-	// ours without crossing theirs. The front line: the chokes between our ground and theirs, and every choke of a
-	// contested region (settled). Ascending
+	// ours without crossing theirs. The front line: the chokes between our ground and theirs, neither side contested.
+	// Ascending
 	const std::vector<int>& GetCurrentLine() const { return currentLine; }
 	const std::vector<int>& GetEnemyLine() const { return enemyLine; }
 	const std::vector<int>& GetFrontLine() const { return frontLine; }
