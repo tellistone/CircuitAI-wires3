@@ -83,29 +83,13 @@ void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView
 			}
 		}
 	};
-	// The share of a choke's line (wall to wall: all of its crossable gap) in range of a side's towers that hit ground
-	const SCellMask& mask = graph.GetMask();
-	auto coverOf = [&](const CRegionGraph::SChoke& choke, const AIFloat3& centre, const std::vector<SUnit>& units) {
-		std::vector<bool> isCovered(choke.line.size(), false);
-		for (const SUnit& u : units) {
-			if (u.isMobile || !u.isAntiLand || (centre.distance2D(u.pos) > u.range + choke.width * 0.5f + 64.f)) {
-				continue;
-			}
-			for (size_t i = 0; i < choke.line.size(); ++i) {
-				const float dx = mask.CentreX(choke.line[i]) - u.pos.x, dz = mask.CentreZ(choke.line[i]) - u.pos.z;
-				isCovered[i] = isCovered[i] || (dx * dx + dz * dz <= u.range * u.range);
-			}
-		}
-		const size_t count = std::count(isCovered.begin(), isCovered.end(), true);
-		return choke.line.empty() ? 0.f : float(count) / choke.line.size();
-	};
 	for (size_t c = 0; c < chokes.size(); ++c) {
 		const AIFloat3 centre = chokeMap->GetCellPos(chokes[c].centre);
 		SView& view = chokeViews[c];
 		addReaching(chokes[c], centre, ours, view.ours);
 		addReaching(chokes[c], centre, enemies, view.enemy);
-		view.ourCover = coverOf(chokes[c], centre, ours);
-		view.enemyCover = coverOf(chokes[c], centre, enemies);
+		view.ourCover = chokeMap->GetCover(c, ours);
+		view.enemyCover = chokeMap->GetCover(c, enemies);
 		view.side = CChokeMap::ChokeOwnerOf(view.ours, view.enemy, view.ourCover, view.enemyCover);
 	}
 }
@@ -193,7 +177,7 @@ std::string CChokeOverlay::MakeInfo(const std::vector<SView>& regionViews, const
 		}
 		for (const CFrontline::SFront& f : frontline->GetFront()) {
 			if (f.chokeId == chokes[c].id) {
-				title += std::string("|our line") + ((f.GetShortfall() > 0.f) ? ", short" : "")
+				title += std::string("|our line") + (f.IsShort() ? ", short" : "")
 						+ utils::float_to_string(f.wanted, ": wants %.0f") + utils::float_to_string(f.towers, ", towers %.0f");
 			}
 		}
@@ -311,7 +295,7 @@ void CChokeOverlay::SendWidgetData()
 	for (int c : chokeMap->GetCurrentLine()) {
 		const auto it = std::find_if(frontline->GetFront().begin(), frontline->GetFront().end(),
 				[&](const CFrontline::SFront& f) { return f.chokeId == chokes[c].id; });
-		putChoke(lines, c, ((it != frontline->GetFront().end()) && (it->GetShortfall() > 0.f)) ? 's' : 'c');
+		putChoke(lines, c, ((it != frontline->GetFront().end()) && it->IsShort()) ? 's' : 'c');
 	}
 	CallWidget("lines", lines.str());
 

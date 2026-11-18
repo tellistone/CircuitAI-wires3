@@ -230,6 +230,9 @@ public:
 	// Both sides' units the owners count, aircraft aside: ours where they are now, enemy buildings until seen dead,
 	// armed enemy mobiles where they were seen in the last ARMY_SEEN. Constructors bring nothing
 	void GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideUnit>& outEnemies) const;
+	// The share of a choke's line (wall to wall: all of its crossable gap) in range of these units' towers that hit
+	// ground, 0 to 1
+	float GetCover(int choke, const std::vector<SSideUnit>& units) const;
 	// Held ground (UpdateHeld), per region. Ours: regions we own. The enemy's: regions they own, and the enemy side
 	// where we don't. Each only where it joins its side's main ground. Contested and nobody's regions are neither
 	bool IsOurGround(int region) const { return isOurGround[region]; }

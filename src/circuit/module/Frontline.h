@@ -27,9 +27,9 @@ class IFighterTask;
  *   of the shares of its line and of the ground a main-tower range beyond it on the enemy's side), and the unarmed
  *   enemy value directly behind it. One is undefended when no armed enemy is in reach and we saw a quarter of it.
  * - C, quota.hold_choke: the current line's chokes ranked by our income behind each one x its traffic. The idle army
- *   holds at the top-ranked one whose towers are short of the enemy army outside it (x 1.2): each enemy mobile seen
- *   in the last minute in a region our line opens into counts at the nearest of those chokes in full and at the
- *   others by half. 1 slot, 2 on chokepointed maps, none on open maps. A group claims a slot only if its power makes
+ *   holds at the top-ranked short one: our towers that hit ground don't cover all of its line, or our towers are
+ *   short of the enemy army outside it (x 1.2), where each enemy mobile seen in the last minute in a region our line
+ *   opens into counts at the nearest of those chokes in full and at the others by half. 1 slot, 2 on chokepointed maps, none on open maps. A group claims a slot only if its power makes
  *   up the shortfall, and loses the claim when it hasn't asked for its spot in a minute. A claimed slot keeps its
  *   choke until 30 s after it was last short, unless a short one ranks 1.3x higher; then it moves to the top short
  *   one, or ends if none is. With choke.enable, the top-ranked short choke's pocket is fortified (MakeDefence).
@@ -53,7 +53,10 @@ public:
 		float wanted;  // threat of enemy mobiles seen in the last minute in the region outside it (shared, see C) x 1.2
 		float wantedCost;  // their metal x 1.2
 		float towers;  // threat of our towers near it
-		float GetShortfall() const { return wanted - towers; }  // short when above 0
+		float cover;  // the share of its line our towers that hit ground cover
+		float GetShortfall() const { return wanted - towers; }
+		// Our towers that hit ground don't cover all of its line, or are short of the enemy army outside it
+		bool IsShort() const { return (cover < 1.f) || (GetShortfall() > 0.f); }
 	};
 	struct SHold {
 		int chokeId = -1;

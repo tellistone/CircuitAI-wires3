@@ -16,9 +16,10 @@
 -- Each choke is a gate drawn across its gap, wall to wall:
 -- - its core is its owner: blue ours, red the enemy's, dashed blue and red contested, thin grey nobody's;
 -- - posts at its ends when towers reach any of it: blue ours, red the enemy's, half and half both; no posts, none;
--- - a casing round the core when it is on a line: green our line where its towers cover what it wants, orange where
---   it's short; the enemy line dark red where their ground-hitting towers cover all of the gap (defended), pink where
---   they don't (undefended); a white rim round the casing on the front line.
+-- - a casing round the core when it is on a line: green our line where our ground-hitting towers cover all of the gap
+--   and outgun the enemy army outside it, orange where it's short (either fails); the enemy line dark red where their
+--   ground-hitting towers cover all of the gap (defended), pink where they don't (undefended); a white rim round the
+--   casing on the front line.
 -- The lines go round the ground each side owns (as tinted, once that has held 20 s), the enemy's side of the map
 -- counting as theirs where nobody owns it, and each side's ground only where it joins that side's main ground (on its
 -- side of the map) without crossing the other's: an army camped deep in the other's ground is an island.

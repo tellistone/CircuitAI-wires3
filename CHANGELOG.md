@@ -647,6 +647,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     shows orange (the front line hid it). It draws an enemy line choke dark red (defended) when enemy ground-hitting
     towers cover all of its gap and pink (undefended) when they don't, and no longer marks unranked or enemy-held
     chokes off the lines. A region's info box says when the lines still take it otherwise.
+  - A choke of our line is short (orange, and what hold slots and fortifying go for) also when our ground-hitting
+    towers don't cover all of its gap, not only when its towers are short of the enemy army outside it.
 
 - **The threat graph follows the enemy army's mix.** Walkers, tanks and hovers gated the graph as soon as one of
   them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only graph of

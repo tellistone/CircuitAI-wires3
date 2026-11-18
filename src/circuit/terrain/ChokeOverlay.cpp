@@ -561,7 +561,8 @@ void CChokeOverlay::DrawLines()
 		const int c = graph.FindChoke(f.chokeId);
 		if (c >= 0) {
 			AddLabel(chokeMap->GetCellPos(chokes[c].centre), utils::float_to_string(f.rank, "front: rank %.1f")
-					+ utils::float_to_string(f.wanted, ", wants %.0f") + utils::float_to_string(f.towers, ", towers %.0f"));
+					+ utils::float_to_string(f.wanted, ", wants %.0f") + utils::float_to_string(f.towers, ", towers %.0f")
+					+ utils::float_to_string(f.cover * 100.f, ", cover %.0f%%"));
 		}
 	}
 	for (const CFrontline::SHold& hold : frontline->GetHolds()) {

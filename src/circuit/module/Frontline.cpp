@@ -236,7 +236,7 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 
 /*
  * C: each of our points behind the current line counts at its nearest line choke. Our towers count when their range
- * reaches the line. An enemy mobile seen in the last minute (as the held ground counts it) counts at the line chokes
+ * reaches the line; its cover is the share of its line our towers that hit ground reach. An enemy mobile seen in the last minute (as the held ground counts it) counts at the line chokes
  * out into its region: the nearest in full, the others by half (none when no line choke opens into its region)
  */
 void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
@@ -270,10 +270,15 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 
 	const int frame = circuit->GetLastFrame();
 	std::vector<SArmed> towers;  // ours and allies'
+	std::vector<CChokeMap::SSideUnit> groundTowers;  // those that hit ground, for cover
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CCircuitDef* cdef = kv.second->GetCircuitDef();
 		if (!cdef->IsMobile() && cdef->IsAttacker()) {
-			towers.push_back({kv.second->GetPos(frame), false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f});
+			const AIFloat3 pos = kv.second->GetPos(frame);
+			towers.push_back({pos, false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f});
+			if (cdef->HasAntiLand()) {
+				groundTowers.push_back({pos, false, cdef->GetMaxRange(), cdef->GetPower(), 0.f, true});
+			}
 		}
 	}
 	// Enemy mobiles in the region outside a line choke: each threatens the nearest of its region's line chokes in full,
@@ -315,7 +320,8 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 		const AIFloat3 centre = chokeMap->GetCellPos(choke.centre);
 		const int inner = behind[choke.regionA] ? choke.regionA : behind[choke.regionB] ? choke.regionB : -1;
 		SFront f = {choke.id, (inner >= 0) ? graph.GetRegions()[inner].id : -1,
-				income[i] * chokeMap->GetChokeTraffic(line[i]), wanted[i], wantedCost[i], 0.f};
+				income[i] * chokeMap->GetChokeTraffic(line[i]), wanted[i], wantedCost[i], 0.f,
+				chokeMap->GetCover(line[i], groundTowers)};
 		for (const SArmed& t : towers) {
 			if ((centre.distance2D(t.pos) <= t.range + choke.width * 0.5f + 64.f)
 				&& (graph.GetLineDist(choke, t.pos.x, t.pos.z) <= t.range))
@@ -331,7 +337,7 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 }
 
 /*
- * C: a slot is at the top-ranked choke whose towers are short of what it wants. Once claimed, its choke keeps it until
+ * C: a slot is at the top-ranked short choke (SFront::IsShort): not all covered, or its towers short of what it wants. Once claimed, its choke keeps it until
  * 30 s after it was last short (an enemy army walking in and out of range doesn't walk its group away), unless another
  * short one ranks 1.3x higher; then it moves to the top short one, or ends if none is. Its group keeps the claim when
  * it moves
@@ -358,13 +364,13 @@ void CFrontline::UpdateHolds()
 			hold.spot = -RgtVector;
 		}
 		const SFront* current = FindFront(hold.chokeId);
-		if ((current != nullptr) && (current->GetShortfall() > 0.f)) {
+		if ((current != nullptr) && current->IsShort()) {
 			hold.shortFrame = frame;
 		}
 		const bool isKept = (current != nullptr) && (hold.task != nullptr) && (frame < hold.shortFrame + HOLD_END);
 		const SFront* best = nullptr;
 		for (const SFront& f : front) {  // highest rank first
-			if ((f.GetShortfall() > 0.f) && ((f.chokeId == hold.chokeId) || !isTaken(f.chokeId))) {
+			if (f.IsShort() && ((f.chokeId == hold.chokeId) || !isTaken(f.chokeId))) {
 				best = &f;
 				break;
 			}
@@ -401,7 +407,7 @@ void CFrontline::Fortify()
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	for (const SFront& f : front) {
-		if (f.GetShortfall() <= 0.f) {
+		if (!f.IsShort()) {
 			continue;
 		}
 		const int choke = graph.FindChoke(f.chokeId);
@@ -437,7 +443,7 @@ AIFloat3 CFrontline::GetHoldSpot(CCircuitUnit* leader)
 		// A free slot at a short choke, whose shortfall this group can make up
 		it = std::find_if(holds.begin(), holds.end(), [this, task, frame](const SHold& h) {
 			const SFront* f = FindFront(h.chokeId);
-			return (f != nullptr) && (h.task == nullptr) && (frame >= h.retryFrame) && (f->GetShortfall() > 0.f)
+			return (f != nullptr) && (h.task == nullptr) && (frame >= h.retryFrame) && f->IsShort()
 					&& (task->GetAttackPower() >= f->GetShortfall());
 		});
 		if (it == holds.end()) {

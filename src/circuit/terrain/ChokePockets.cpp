@@ -204,6 +204,27 @@ void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideU
 	}
 }
 
+float CChokeMap::GetCover(int choke, const std::vector<SSideUnit>& units) const
+{
+	const CRegionGraph::SChoke& ch = graph.GetChokes()[choke];
+	if (ch.line.empty()) {
+		return 0.f;
+	}
+	const SCellMask& mask = graph.GetMask();
+	const AIFloat3 centre = GetCellPos(ch.centre);
+	std::vector<bool> isCovered(ch.line.size(), false);
+	for (const SSideUnit& u : units) {
+		if (u.isMobile || !u.isAntiLand || (centre.distance2D(u.pos) > u.range + ch.width * 0.5f + 64.f)) {
+			continue;
+		}
+		for (size_t i = 0; i < ch.line.size(); ++i) {
+			const float dx = mask.CentreX(ch.line[i]) - u.pos.x, dz = mask.CentreZ(ch.line[i]) - u.pos.z;
+			isCovered[i] = isCovered[i] || (dx * dx + dz * dz <= u.range * u.range);
+		}
+	}
+	return float(std::count(isCovered.begin(), isCovered.end(), true)) / ch.line.size();
+}
+
 /*
  * Held ground, which the lines, pockets and radar go by: a region's owner by the buildings in it, contested by armies
  * (OwnerOf, as the sides overlay tints it), once it has owned it for HELD_SETTLE, so a raid passing through doesn't
