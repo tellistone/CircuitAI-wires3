@@ -530,6 +530,17 @@ void CThreatMap::AddDecloaker(const SEnemyData& e)
 // Allied statics with more land range give no cover: as the threat map leaves out enemy ones (allowedRange)
 static constexpr float COVER_MAX_RANGE = 2000.f;
 
+float CThreatMap::GetCoverRange(const CCircuitDef* sdef, float range)
+{
+	// Its weapon's real reach, not its threat range: that carries the slack for keeping clear of an enemy static
+	// (DEFAULT_SLACK, AoE), which as cover would count ground the static can't shoot
+	if ((range <= 0.f) || (range > COVER_MAX_RANGE)) {
+		return 0.f;
+	}
+	// Half of it past 1000 elmos, as the influence map counts long-range units (CInfluenceMap::GetUnitRange)
+	return (sdef->GetMaxRange() > 1000.f) ? range / 2 : range;
+}
+
 void CThreatMap::PrepareCover()
 {
 	// Values only, never CAllyUnit pointers: the ally list is rebuilt at every influence map apply
@@ -545,14 +556,9 @@ void CThreatMap::PrepareCover()
 		if ((adef == nullptr) || adef->IsMobile() || !adef->IsAttacker()) {
 			continue;
 		}
-		// Its weapon's real reach, not its threat range: that carries the slack for keeping clear of an enemy static
-		// (DEFAULT_SLACK, AoE), which as cover would count ground the static can't shoot
-		float range = adef->GetMaxRange(CCircuitDef::RangeType::LAND);
-		if (!adef->HasAntiLand() || (range <= 0.f) || (range > COVER_MAX_RANGE)) {
+		const float range = adef->HasAntiLand() ? GetCoverRange(adef, adef->GetMaxRange(CCircuitDef::RangeType::LAND)) : 0.f;
+		if (range <= 0.f) {
 			continue;  // anti-air only, or as long-ranged as the threat map leaves out
-		}
-		if (adef->GetMaxRange() > 1000.f) {
-			range /= 2;  // as the influence map counts long-range units (CInfluenceMap::GetUnitRange)
 		}
 		const AIFloat3& pos = ally->GetPos(frame);
 		if (!utils::is_valid(pos) || ally->GetUnit()->IsParalyzed()) {

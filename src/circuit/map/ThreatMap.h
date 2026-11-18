@@ -98,6 +98,9 @@ public:
 	// On the main thread before an update (CMapManager::PrepareUpdate, while none is in flight): the statics to draw,
 	// from the friendly units as the last influence map apply left them (no second refresh of the ally list)
 	void PrepareCover();
+	// A static's reach on the defences layer for one of its weapon ranges (PrepareCover; CAttackBalance weighs enemy
+	// statics the same way): that range, half of it for a static over 1000 elmos of range, 0 (none) over 2000
+	static float GetCoverRange(const CCircuitDef* sdef, float range);
 	// The defences layer at a position (CAllyCover::GetCoverAt adds the mobile cover)
 	float GetDefenceCoverAt(const springai::AIFloat3& position) const;
 	int GetCoverSourceCount() const { return static_cast<int>(coverSources.size()); }  // main thread (log)

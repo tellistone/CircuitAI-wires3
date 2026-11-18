@@ -7,6 +7,7 @@
 
 #include "module/MilitaryManager.h"
 #include "module/AllyCover.h"
+#include "module/AttackBalance.h"
 #include "module/BuilderManager.h"
 #include "module/ChokeDefence.h"
 #include "module/Frontline.h"
@@ -629,6 +630,36 @@ void CMilitaryManager::ReadConfig()
 	// could commit to (1 + this) x their joint strength; at 1 cover would leave no margin
 	allyCover = std::make_unique<CAllyCover>(circuit, readAttackNum("attack_ally_cover", 0.f, 0.f, 0.75f));
 	{
+		// quota.attack_balance: {ratio, horizon_sec, log_only}. Missing (or not an object): off; a missing key uses
+		// its default, a wrong value logs and uses it
+		const Json::Value& q = quotas["attack_balance"];
+		if (!q.isNull() && !q.isObject()) {
+			circuit->LOG("CONFIG %s: quota.attack_balance must be an object, it is off", cfgName.c_str());
+		}
+		CAttackBalance::SConfig cfg;  // off
+		if (q.isObject()) {
+			auto num = [&](const char* key, float def, float lo, float hi) {
+				const Json::Value& v = q[key];
+				if (v.isNull()) {
+					return def;
+				}
+				if (!v.isNumeric() || (v.asFloat() < lo) || (v.asFloat() > hi)) {
+					circuit->LOG("CONFIG %s: quota.attack_balance.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
+					return def;
+				}
+				return v.asFloat();
+			};
+			cfg.ratio = num("ratio", 1.2f, 0.f, 10.f);  // 0 = off
+			cfg.horizon = num("horizon_sec", 10.f, 1.f, 60.f);
+			const Json::Value& qlog = q["log_only"];
+			if (!qlog.isNull() && !qlog.isBool()) {
+				circuit->LOG("CONFIG %s: quota.attack_balance.log_only must be true or false, using true", cfgName.c_str());
+			}
+			cfg.isLogOnly = qlog.isBool() ? qlog.asBool() : true;
+		}
+		attackBalance = std::make_unique<CAttackBalance>(circuit, cfg);
+	}
+	{
 		// Each route kind on or off (default on); a bare true/false sets them all
 		static const char* const kinds[] = {"target", "reinforce", "front", "flee", "cornered"};
 		const Json::Value& qdyn = quotas["attack_path_dynamic_cost"];
@@ -1247,6 +1278,9 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogRaidStats, this), FRAMES_PER_SEC * 60, offset + 2);
 		if (allyCover->IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CAllyCover::Log, allyCover.get()), FRAMES_PER_SEC * 60, offset + 3);
+		}
+		if (attackBalance->IsOn()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CAttackBalance::Log, attackBalance.get()), FRAMES_PER_SEC * 60, offset + 4);
 		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),

@@ -29,6 +29,8 @@
 
 #include "spring/SpringMap.h"
 
+#include "Log.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -71,6 +73,19 @@ static constexpr float FLEE_ARRIVE_DIST = 400.f;
 static constexpr int CELL_ROUTE_REUSE_FRAMES = FRAMES_PER_SEC * 6;
 // Cell targets (buildings, parked mobiles) checked for firing cells per target decision; beyond that: discs
 static constexpr int MAX_CELL_CHECKS = 32;
+
+// quota.attack_balance (CAttackBalance). The base core, this x the base defence radius: fights inside it are never judged
+// by the balance (the full radius often reaches our front, where the escape holds every fight: IsHoldingGround)
+static constexpr float BALANCE_BASE_CORE = 0.5f;
+// Candidates the balance checks per decision (plus the own spot); past it the rest are skipped unchecked: at least
+// MAX_TARGET_GOALS + 1 of the nearest failed, the ground ahead is the enemy's
+static constexpr int MAX_BALANCE_CHECKS = 32;
+// A candidate is skipped while the line from the leader to its F passes this near a holding avoid zone's spot
+static constexpr float AVOID_ZONE_RADIUS = 600.f;
+// The skip line: at most one per group this often (flag and zone events always log)
+static constexpr int BALANCE_LOG_FRAMES = FRAMES_PER_SEC * 10;
+// The outcome log: a fight's losses and escape are collected this long after it was engaged
+static constexpr int BALANCE_FIGHT_FRAMES = FRAMES_PER_SEC * 20;
 
 // Route ids for ReuseRoute/KeepRoute that aren't enemy ids
 static constexpr ICoreUnit::Id FRONT_ROUTE_ID = -1;  // FallbackFrontPos
@@ -135,6 +150,16 @@ float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::Ran
 	}
 	return ranges.empty() ? 0.f : ranges.back().first;
 }
+
+// Squared 2D distance from p to the segment a-b
+float SqDistToSegment2D(const AIFloat3& p, const AIFloat3& a, const AIFloat3& b)
+{
+	const float dx = b.x - a.x;
+	const float dz = b.z - a.z;
+	const float sqLen = SQUARE(dx) + SQUARE(dz);
+	const float t = (sqLen > 0.f) ? utils::clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / sqLen, 0.f, 1.f) : 0.f;
+	return SQUARE(a.x + t * dx - p.x) + SQUARE(a.z + t * dz - p.z);
+}
 } // namespace
 
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
@@ -169,6 +194,11 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, contactSpread(0.f)
 		, contactFrame(-1)
 		, lastRoute({nullptr, -RgtVector, -1, 0, ROUTE_REUSE_FRAMES, AIFloat3(-RgtVector), -1, 0.f, -1})
+		, isOutnumbered(false)
+		, ownForce(0.f)
+		, ownForceFrame(-1)
+		, balanceLogFrame(-BALANCE_LOG_FRAMES)
+		, blockSince(-1)
 		, isHolding(false)
 		, holdPos(-RgtVector)
 		, stepFrame(0)
@@ -360,6 +390,12 @@ void CAttackTask::Decide(int frame, bool isReuse)
 {
 	isHolding = false;  // re-set by HoldPosition if this decision finds nothing to go to
 	isDecisionReuse = isReuse;  // the target route's callbacks fall back with the same (FallbackFrontPos)
+	// quota.attack_balance logs: blocked since the last decision, and a fight window that ran its time
+	if (blockSince >= 0) {
+		GetBalance()->NoteBlocked(this, leader->GetId(), frame - blockSince);
+		blockSince = -1;
+	}
+	CloseBalanceFight(frame);
 
 	/*
 	 * Reinforce: a group under quota.attack walks to the nearest group ranked above it (CMilitaryManager::IsRankedAbove)
@@ -393,6 +429,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		AIFloat3 goal = reinforce->GetLeaderPos(frame);  // validated by GetReinforceSquad
 		SStrength routeStrength = GetSafeThreat();  // joint with the host when the route is capped for both groups
 		if ((reinforce != rallyHost) || PickRallyGoal(frame, goal, routeStrength)) {
+			SetOutnumbered(false, frame, "walk to a host");  // quota.attack_balance: combining, exempt
 			// Fight back on the way; otherwise keep walking
 			if (EngageInRange(frame, true)) {
 				return;
@@ -407,6 +444,13 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		rallyEdgeFailFrame = frame;
 		reinforce = nullptr;
 	}  // else: nothing to join, carry on as a small attack group
+
+	// quota.attack_balance: outnumbered where we stand? Before the wait for a pending route, so a group whose route is
+	// still being worked out doesn't keep walking into an army (the flag going on drops that route)
+	UpdateOutnumbered(frame);
+	if (isOutnumbered) {
+		NoteBlocked(frame);
+	}
 
 	// A route is still being worked out: keep the current pick until it comes back, unless the target is
 	// already within range or in contact (then engage as usual)
@@ -429,7 +473,8 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		FallbackFrontPos(isReuse);
 		return;
 	}
-	if (SeekMerge(frame, isReuse, targetSqKey)) {  // the group we'd merge with is nearer: merge, then hunt together
+	// The group we'd merge with is nearer: merge, then hunt together (outnumbered: only one nearer our base)
+	if (SeekMerge(frame, isReuse, targetSqKey, IsFlagged())) {
 		return;
 	}
 	if (isReuse && ReuseRoute(target->GetId(), position, frame)) {  // position: GetRangePos (FindTarget)
@@ -460,6 +505,7 @@ bool CAttackTask::EngageInRange(int frame, bool isWalking)
 	}
 	state = State::ENGAGE;
 	NoteCoverEngage(frame);  // the cover log
+	NoteBalanceEngage(frame);  // quota.attack_balance: the outcome log
 	Engage(frame);
 	return true;
 }
@@ -708,6 +754,263 @@ bool CAttackTask::IsInBaseRadius(const AIFloat3& pos, float scale) const
 }
 
 /*
+ * Force balance (quota.attack_balance)
+ */
+
+CAttackBalance* CAttackTask::GetBalance() const
+{
+	return GetMilitaryMgr()->GetAttackBalance();
+}
+
+bool CAttackTask::IsBalanceOn() const
+{
+	return GetBalance()->IsOn() && (leader != nullptr) && !leader->GetCircuitDef()->IsAbleToFly()
+		&& !IsCloakRoute(leader);
+}
+
+bool CAttackTask::IsBalanceLive() const
+{
+	return !GetBalance()->IsLogOnly() && IsBalanceOn();
+}
+
+bool CAttackTask::IsInBaseCore(const AIFloat3& pos) const
+{
+	return IsInBaseRadius(pos, BALANCE_BASE_CORE);
+}
+
+void CAttackTask::GetForceAt(const AIFloat3& F, CAttackBalance::SForce& outForce)
+{
+	GetBalance()->GetForceAt(F, this, leader->GetCircuitDef()->IsAmphibious(), outForce);
+	outForce.own = GetOwnForce(manager->GetCircuit()->GetLastFrame());
+}
+
+float CAttackTask::GetOwnForce(int frame)
+{
+	// The same at every F of a decision: our units are timed to the leader, not to F
+	if (ownForceFrame == frame) {
+		return ownForce;
+	}
+	ownForceFrame = frame;
+	CAttackBalance* balance = GetBalance();
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	const bool isWater = manager->GetCircuit()->GetThreatMap()->IsWaterAt(leaderPos);
+	const bool isAmph = leader->GetCircuitDef()->IsAmphibious();
+	float sum = 0.f;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		const CCircuitDef* cdef = s.unit->GetCircuitDef();
+		const float range = CAttackBalance::GetRangeAt(cdef, isWater, isAmph);
+		sum += s.power * balance->GetMobileWeight(s.unit->GetPos(frame).distance2D(leaderPos), range, cdef->GetSpeed());
+	}
+	ownForce = sum * powerMod;
+	return ownForce;
+}
+
+AIFloat3 CAttackTask::GetFirePos(const AIFloat3& rangePos, int frame) const
+{
+	// One continuous rule, so F never jumps as the group closes in
+	const AIFloat3& pos = leader->GetPos(frame);
+	const float dist = rangePos.distance2D(pos);
+	if (dist < 1.f) {
+		return rangePos;
+	}
+	AIFloat3 F = rangePos + (pos - rangePos) * (std::min(GetGroundFireRange(), dist) / dist);
+	F.y = rangePos.y;
+	return F;
+}
+
+void CAttackTask::UpdateOutnumbered(int frame)
+{
+	if (!IsBalanceOn()) {
+		isOutnumbered = false;
+		return;
+	}
+	const AIFloat3& pos = leader->GetPos(frame);
+	// Exempt, and each clears the flag: an army walking to merge (SeekMerge; smaller groups walking to a host, rally
+	// joiners included, cleared it in Decide's reinforce branch), a group at our base or heading home to a fight there
+	if (reinforce != nullptr) {
+		SetOutnumbered(false, frame, "walk to a host");
+		return;
+	}
+	if (IsInBaseCore(pos) || ((target != nullptr) && IsInBaseCore(target->GetPos()))) {
+		SetOutnumbered(false, frame, "base core");
+		return;
+	}
+	const bool isEngaged = (State::ENGAGE == state);
+	if (isEngaged && !isOutnumbered) {
+		return;  // the fight we accepted: the escape judges it
+	}
+	CAttackBalance* balance = GetBalance();
+	GetForceAt(pos, spotForce);
+	if (isOutnumbered) {
+		// Held between the lines: cleared only at the pick line. While engaged this is all, so a flagged group finishes
+		// a fight it is in
+		const bool isClear = !balance->IsFail(spotForce, CAttackBalance::Line::PICK);
+		balance->NoteCheck(CAttackBalance::Line::OWN, !isClear);
+		if (isClear) {
+			SetOutnumbered(false, frame, "pick line", &spotForce);
+		}
+		return;
+	}
+	const bool isFail = balance->IsFail(spotForce, CAttackBalance::Line::OWN);
+	balance->NoteCheck(CAttackBalance::Line::OWN, isFail);
+	if (isFail) {
+		SetOutnumbered(true, frame, "keep line", &spotForce);
+		SetAvoidZone(pos, frame, "outnumbered here");
+	}
+}
+
+void CAttackTask::SetOutnumbered(bool value, int frame, const char* reason, const CAttackBalance::SForce* force)
+{
+	if (isOutnumbered == value) {
+		return;
+	}
+	isOutnumbered = value;
+	GetBalance()->NoteFlag(value);
+	const AIFloat3& pos = leader->GetPos(frame);
+	const std::string forceText = (force == nullptr) ? std::string()
+			: utils::string_format(": E %.1f, own %.1f, allied %.1f, turrets %.1f, E/A %.2f", force->enemy, force->own,
+				force->allied, force->cover, force->GetRatio());
+	manager->GetCircuit()->LOG("BALANCE%s #%i (%i units) outnumbered %s (%s) at (%.0f, %.0f)%s",
+			IsBalanceLive() ? "" : " would be", leader->GetId(), static_cast<int>(units.size()), value ? "on" : "off",
+			reason, pos.x, pos.z, forceText.c_str());
+	if (value && IsBalanceLive()) {
+		// Never walk the route this decision was still waiting for into the army: drop it (its reply is ignored)
+		pathQueries.erase(leader);
+	}
+}
+
+bool CAttackTask::IsBalanceSkip(const CEnemyInfo* enemy, const AIFloat3& F, bool isHeld, bool isFirst, int& ioChecks,
+		int frame)
+{
+	CAttackBalance* balance = GetBalance();
+	const ICoreUnit::Id id = enemy->GetId();
+	if (IsInAvoidZone(F, frame)) {
+		balance->NoteCheck(CAttackBalance::Line::ZONE, true, id);
+		if (isFirst && (frame >= balanceLogFrame + BALANCE_LOG_FRAMES)) {
+			CAttackBalance::SForce force;
+			GetForceAt(F, force);
+			LogBalanceSkip("avoid zone", enemy, F, force, nullptr, frame);
+		}
+		return true;
+	}
+	if (ioChecks >= MAX_BALANCE_CHECKS) {
+		return true;
+	}
+	++ioChecks;
+	CAttackBalance::SForce force;
+	GetForceAt(F, force);
+	const CAttackBalance::Line line = isHeld ? CAttackBalance::Line::KEEP : CAttackBalance::Line::PICK;
+	const bool isSkip = balance->IsFail(force, line);
+	balance->NoteCheck(line, isSkip, id);
+	if (!isSkip) {
+		return false;
+	}
+	if (isHeld) {
+		SetAvoidZone(F, frame, "the target we held dropped");
+	}
+	if (isFirst) {
+		LogBalanceSkip(isHeld ? "keep" : "pick", enemy, F, force, nullptr, frame);
+	}
+	return true;
+}
+
+void CAttackTask::SetAvoidZone(const AIFloat3& spot, int frame, const char* reason)
+{
+	// A free slot, else the older zone
+	SAvoidZone* zone = &avoidZones[0];
+	for (SAvoidZone& z : avoidZones) {
+		if (z.setFrame < 0) {
+			zone = &z;
+			break;
+		}
+		if (z.setFrame < zone->setFrame) {
+			zone = &z;
+		}
+	}
+	const bool isReplace = (zone->setFrame >= 0);
+	*zone = {spot, frame, -1, true};
+	GetBalance()->NoteZone(true);
+	manager->GetCircuit()->LOG("BALANCE%s #%i avoid zone %s at (%.0f, %.0f): %s", IsBalanceLive() ? "" : " would",
+			leader->GetId(), isReplace ? "replaced" : "set", spot.x, spot.z, reason);
+}
+
+bool CAttackTask::IsInAvoidZone(const AIFloat3& F, int frame)
+{
+	const AIFloat3& pos = leader->GetPos(frame);
+	bool isIn = false;
+	for (SAvoidZone& z : avoidZones) {
+		if ((z.setFrame < 0) || (SqDistToSegment2D(z.spot, pos, F) >= SQUARE(AVOID_ZONE_RADIUS))) {
+			continue;
+		}
+		if (z.testFrame != frame) {
+			// As the own-spot check would see it with our group standing there: the same two lines as the flag (set at
+			// the keep line, lifted at the pick line), so the zone holds while the army stays, and lifts as soon as it
+			// leaves or allies arrive
+			z.testFrame = frame;
+			CAttackBalance::SForce force;
+			GetForceAt(z.spot, force);
+			z.isHolding = GetBalance()->IsFail(force, CAttackBalance::Line::PICK);
+			if (!z.isHolding) {
+				z.setFrame = -1;
+				GetBalance()->NoteZone(false);
+				manager->GetCircuit()->LOG("BALANCE%s #%i avoid zone lifted at (%.0f, %.0f): E %.1f, A %.1f, E/A %.2f",
+						IsBalanceLive() ? "" : " would be", leader->GetId(), z.spot.x, z.spot.z, force.enemy,
+						force.GetOurs(), force.GetRatio());
+				continue;
+			}
+		}
+		isIn = true;
+	}
+	return isIn;
+}
+
+void CAttackTask::LogBalanceSkip(const char* line, const CEnemyInfo* enemy, const AIFloat3& F,
+		const CAttackBalance::SForce& force, const char* fallback, int frame)
+{
+	if (frame < balanceLogFrame + BALANCE_LOG_FRAMES) {
+		return;
+	}
+	balanceLogFrame = frame;
+	const CCircuitDef* edef = (enemy != nullptr) ? enemy->GetCircuitDef() : nullptr;
+	const AIFloat3& ePos = (enemy != nullptr) ? enemy->GetPos() : F;
+	manager->GetCircuit()->LOG("BALANCE%s skip #%i (%i units) %s line: %s%s at (%.0f, %.0f), F (%.0f, %.0f): E %.1f,"
+			" own %.1f, allied %.1f, turrets %.1f, E/A %.2f, blips %.0f%%%s%s",
+			IsBalanceLive() ? "" : " would", leader->GetId(), static_cast<int>(units.size()), line,
+			(enemy == nullptr) ? "own spot" : (edef != nullptr) ? edef->GetDef()->GetName() : "unknown",
+			((enemy != nullptr) && (target != nullptr) && (enemy->GetId() == target->GetId())) ? " (current)" : "",
+			ePos.x, ePos.z, F.x, F.z, force.enemy, force.own, force.allied, force.cover, force.GetRatio(),
+			100.f * force.GetBlipShare(), (fallback != nullptr) ? ", fall-back: " : "", (fallback != nullptr) ? fallback : "");
+}
+
+void CAttackTask::NoteBalanceEngage(int frame)
+{
+	// A new target engaged (contact and base-core fights too, for the log only); one window at a time
+	if ((target->GetId() == balanceFight.targetId) || !IsBalanceOn()) {
+		return;
+	}
+	balanceFight.targetId = target->GetId();
+	if (balanceFight.frame >= 0) {
+		return;
+	}
+	CAttackBalance::SForce force;
+	GetForceAt(GetFirePos(GetRangePos(target, frame), frame), force);
+	balanceFight.frame = frame;
+	balanceFight.ratio = force.GetRatio();
+	balanceFight.blipShare = force.GetBlipShare();
+	balanceFight.metalLost = 0.f;
+	balanceFight.isFled = false;
+}
+
+void CAttackTask::CloseBalanceFight(int frame)
+{
+	if ((balanceFight.frame < 0) || (frame < balanceFight.frame + BALANCE_FIGHT_FRAMES)) {
+		return;
+	}
+	GetBalance()->NoteFight(balanceFight.ratio, balanceFight.blipShare, balanceFight.metalLost, balanceFight.isFled);
+	balanceFight.frame = -1;
+}
+
+/*
  * Merging and reinforcing
  */
 
@@ -915,7 +1218,7 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
  * Merging armies (quota.attack_merge.idle_merge): an army walks to another group and merges, unless it has a nearer target
  */
 
-bool CAttackTask::SeekMerge(int frame, bool isReuse, float sqTargetKey)
+bool CAttackTask::SeekMerge(int frame, bool isReuse, float sqTargetKey, bool isBackOnly)
 {
 	// Armies only: a smaller group reinforces already (Decide), the rally host and its joiners have their own rules.
 	// An army's reinforce is the group it walks to: kept through fights on the way, ended by a hunt (a target route
@@ -934,6 +1237,15 @@ bool CAttackTask::SeekMerge(int frame, bool isReuse, float sqTargetKey)
 	CAttackTask* host = GetReinforceSquad();
 	if (host == nullptr) {
 		return false;
+	}
+	// Outnumbered (quota.attack_balance): never toward the enemy. GetReinforceSquad has stored the host already: clear
+	// it, or we would count as walking to a host, which is exempt and clears the flag (the retry wait is untouched)
+	if (isBackOnly) {
+		const AIFloat3& basePos = manager->GetCircuit()->GetSetupManager()->GetBasePos();
+		if (host->GetLeaderPos(frame).SqDistance2D(basePos) >= leader->GetPos(frame).SqDistance2D(basePos)) {
+			reinforce = nullptr;
+			return false;
+		}
 	}
 	// The group competes with the target on the target ranking's scale (FindTarget: a raid near our base, a commander
 	// or a contested cluster counts as nearer, a scout as farther)
@@ -1153,6 +1465,7 @@ bool CAttackTask::Flee(int frame)
 	if (!wasFleeing) {
 		NoteCoverEscape(frame);  // the cover log
 	}
+	balanceFight.isFled |= (balanceFight.frame >= 0);  // quota.attack_balance: the outcome log
 	if (target != nullptr) {
 		fleeTargetId = target->GetId();  // kept for the next pick (FindTarget)
 	}
@@ -1468,6 +1781,8 @@ bool CAttackTask::FindTarget()
 	// pick. During the cautious window that is 0.75 x 1.34 ~ the usual allowance, so we don't walk straight back
 	// into what we ran from
 	const float keepPower = maxPower * militaryMgr->GetAttackKeepThreat();
+	// quota.attack_balance: its keep line is only for the target we still hold, never the one we fled from
+	const ICoreUnit::Id heldTargetId = (target != nullptr) ? target->GetId() : -1;
 	const ICoreUnit::Id prevTargetId = (target != nullptr) ? target->GetId() : fleeTargetId;
 	fleeTargetId = -1;
 	// quota.raid_attack_factor: an enemy raider or scout is judged with our strength x our units' raid_thr_mod
@@ -1669,6 +1984,14 @@ bool CAttackTask::FindTarget()
 	// quota.attack_static_cells: a cell target beyond range is routed to its safe firing cells (one goal per cell)
 	static std::vector<SFiringCell> cells;  // NOTE: micro-opt
 	int cellChecks = 0;
+	// quota.attack_balance: every candidate out of contact and the base core is judged by the force balance at its F.
+	// Outnumbered where we stand (and not log-only): only targets in contact or inside the base core. In-range targets
+	// don't count: the in-range test uses highestRange, which includes sight
+	const bool isBalanceOn = IsBalanceOn();
+	const bool isBalanceLive = isBalanceOn && !GetBalance()->IsLogOnly();
+	const bool isFlagged = isBalanceLive && isOutnumbered;
+	int balanceChecks = 0;
+	bool isBalanceSkip = false;  // the balance skipped a candidate: if none is picked, the group is blocked
 	bool isPlannedGoal = false;  // the current target's goals are its planned cell (no other side of it)
 	size_t targetCount = 0;  // goals are counted by target: a cell target may bring several cells
 	for (SCandidate& c : candidates) {
@@ -1728,6 +2051,19 @@ bool CAttackTask::FindTarget()
 			}
 			isPlannedGoal |= isPlanned;
 		}
+		if (isBalanceOn && !c.isContact && !IsInBaseCore(rangePos)) {
+			if (isFlagged) {
+				continue;
+			}
+			// F: where we'd fire from, its first firing cell for a cell target. The keep line only for the target we hold
+			const AIFloat3 firePos = cells.empty() ? GetFirePos(rangePos, frame) : cells.front().pos;
+			if (IsBalanceSkip(c.enemy, firePos, id == heldTargetId, best == nullptr, balanceChecks, frame)) {
+				isBalanceSkip = true;
+				if (isBalanceLive) {
+					continue;
+				}
+			}
+		}
 		if (best == nullptr) {
 			best = &c;
 		}
@@ -1781,6 +2117,9 @@ bool CAttackTask::FindTarget()
 	}
 
 	if (best == nullptr) {
+		if (isBalanceSkip) {
+			NoteBlocked(frame);  // quota.attack_balance: blocked time
+		}
 		ClearScaleAnchor();  // no fight accepted: no near-base discount
 		return false;
 	}
@@ -2053,30 +2392,52 @@ bool CAttackTask::IsApproachSafe(const F3Vec& path, const AIFloat3& targetPos, f
 void CAttackTask::FallbackFrontPos(bool isReuse)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	// Nothing to attack: first walk to merge with another group (quota.attack_merge.idle_merge)
-	if (SeekMerge(circuit->GetLastFrame(), isReuse, std::numeric_limits<float>::max())) {
+	const int frame = circuit->GetLastFrame();
+	// quota.attack_balance: outnumbered where we stand, so never toward the enemy (the reason logged with the own spot)
+	const bool isFlagged = IsFlagged();
+	auto logFallback = [&](const char* fallback) {
+		if (isFlagged) {
+			LogBalanceSkip("own spot", nullptr, leader->GetPos(frame), spotForce, fallback, frame);
+		}
+	};
+	// Nothing to attack: first walk to merge with another group (quota.attack_merge.idle_merge). Outnumbered: only one
+	// nearer our base, combining is the best answer to being outnumbered
+	if (SeekMerge(frame, isReuse, std::numeric_limits<float>::max(), isFlagged)) {
+		logFallback("merge");
 		return;
 	}
 	GetMilitaryMgr()->FillFrontPos(leader, urgentPositions);
 	if (urgentPositions.empty()) {
+		logFallback("hold");
 		HoldPosition();
 		return;
 	}
 
-	const int frame = circuit->GetLastFrame();
 	const AIFloat3& startPos = leader->GetPos(frame);
-	// Restricted to our ground (isOwnGroundOnly): nothing out here may be picked, so walk back to the front
-	// (a floor can switch on mid-push); there is no border to bounce on
-	if (!isOwnGroundOnly && IsOnEnemyGround()) {
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float sqOwnDist = startPos.SqDistance2D(basePos);
+	if (isFlagged) {
+		// Only the front's points nearer our base than we are (without the enemy-ground hold); none: hold here
+		urgentPositions.erase(std::remove_if(urgentPositions.begin(), urgentPositions.end(), [&](const AIFloat3& p) {
+			return p.SqDistance2D(basePos) >= sqOwnDist;
+		}), urgentPositions.end());
+		if (urgentPositions.empty()) {
+			logFallback("hold");
+			HoldPosition();
+			return;
+		}
+		logFallback("front");
+	} else if (!isOwnGroundOnly && IsOnEnemyGround()) {
+		// Restricted to our ground (isOwnGroundOnly): nothing out here may be picked, so walk back to the front
+		// (a floor can switch on mid-push); there is no border to bounce on.
 		// The front is our own cluster on friendly ground. Already past it (farther from our base than its
 		// nearest point): routing there walks the group back, and it would bounce on the border, so hold at
 		// the quietest spot nearby. Not past it (an enemy-held patch on the way): keep going to the front.
-		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 		float sqFrontDist = std::numeric_limits<float>::max();
 		for (const AIFloat3& p : urgentPositions) {
 			sqFrontDist = std::min(sqFrontDist, p.SqDistance2D(basePos));
 		}
-		if (startPos.SqDistance2D(basePos) > sqFrontDist) {
+		if (sqOwnDist > sqFrontDist) {
 			HoldPosition();
 			return;
 		}
@@ -2625,6 +2986,9 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 void CAttackTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	NoteCoverLoss(unit, manager->GetCircuit()->GetLastFrame());  // the cover log, while the unit is still ours
+	if (balanceFight.frame >= 0) {  // quota.attack_balance: the outcome log
+		balanceFight.metalLost += unit->GetCircuitDef()->GetCostM();
+	}
 	ISquadTask::OnUnitDestroyed(unit, attacker);
 }
 
