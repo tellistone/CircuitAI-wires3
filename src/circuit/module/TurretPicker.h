@@ -133,6 +133,15 @@ public:
 	// E before its weight: known enemy buildings within reach of centre seen in the last 3 minutes, at cost, an enemy mex
 	// at its income x turret.horizon. Shared with CSpotScorer::FindSpot
 	std::vector<CTurretValue::STarget> GetEnemyTargets(const springai::AIFloat3& centre, float reach) const;
+	// A and C for CSpotScorer::FindSpot, as an order counts them for def at a spot within radius of centre (weighed,
+	// line-tested for what def hits, halved for covering towers), and the known enemy buildings F reads there
+	struct SSpotShare {
+		std::vector<CTurretValue::STarget> targets;  // A and C
+		std::vector<springai::AIFloat3> enemyBuildings;  // within radius + defence.infl_rad
+	};
+	SSpotShare GetSpotShare(CCircuitDef* def, const springai::AIFloat3& centre, float radius) const;
+	// F before it is normalised (CTurretValue::SCandidate::enemyInfl): 2 x (1 - d / defence.infl_rad) per building
+	float GetEnemyInfl(const std::vector<springai::AIFloat3>& enemyBuildings, const springai::AIFloat3& pos) const;
 	// The turret.tiers entry def is in, from 1; 0 if none (turret.light)
 	int GetTier(const CCircuitDef* def) const;
 
@@ -156,7 +165,7 @@ private:
 	void ReadConfig();
 	std::vector<CCircuitDef*> GetDefs(const STurretOrder& order, const springai::AIFloat3& centre) const;
 	SGather Gather(const springai::AIFloat3& centre, float radius, float maxRange,
-			const springai::AIFloat3& skipTower) const;
+			const springai::AIFloat3& skipTower, bool isTraffic = true) const;
 	std::vector<CTurretValue::STarget> MakeTargets(CCircuitDef* def, const SGather& gather) const;
 	SGrid MakeGrid(CCircuitUnit* builder, const SGather& gather) const;
 	// The cheap hard rules at (x, z): NONE and out filled, or the first rule it fails

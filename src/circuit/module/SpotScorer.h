@@ -24,17 +24,22 @@ struct STerrainMapArea;
 /*
  * One scorer for towers at a cluster (choke.spot.enable), towers at a choke, base towers, radar guards and army hold
  * spots, on the turret picker's value model (CTurretValue) with each goal's own targets and factor:
- *   score = (T + E) x (1 + choke.spot.height x height) x (1 + choke.spot.view x V) x factor
+ *   score = (T + E + A + C) x (1 + choke.spot.height x height) x (1 + turret.front x F) x (1 + choke.spot.view x V)
+ *           x factor
  *   factor = setback x lean / (1 + threat at the spot / the def's own threat)
  *            / (1 + distance to our nearest builder / a quarter of the map's diagonal)
  * T is the goal's approach traffic in range with a clear line, in metal as the picker counts it (halved for each
  * tower already covering it that defends and hits it), E choke.spot.enemy x the picker's enemy targets (buildings seen
- * in the last 3 minutes; CTurretPicker::GetEnemyTargets) in range and in a clear line that it can hit, halved so, height the height above those targets as a share of choke.spot.height_cap (up to 1),
+ * in the last 3 minutes; CTurretPicker::GetEnemyTargets) in range and in a clear line that it can hit, halved so, A and
+ * C the picker's as an order counts them (CTurretPicker::GetSpotShare: our unarmed buildings in range at cost x
+ * turret.ally, and turret.choke for the best choke of our line or the enemy line in range), F the picker's front (the
+ * known enemy buildings' influence at the spot over the highest among the candidates), height the height above
+ * the targets as a share of choke.spot.height_cap (up to 1),
  * V the share of the range circle in a clear line of fire, setback (choke goals) the closeness to choke.setback x
  * range behind the line, lean (position goals) 1 + choke.spot.forward x (1 + ahead) / 2, where ahead (-1 to 1) is how
- * far the spot sits, per radius, toward where the asset's approach comes from. Hold spots skip the builder term and
- * E. Candidates stay on the goal's side: the home region (a choke's inner region, the asset's), a region the enemy
- * only walks into through it, or a wall cell no enemy walks. No cost threshold: a goal's tower goes on its best spot.
+ * far the spot sits, per radius, toward where the asset's approach comes from. Hold spots skip the builder term, E,
+ * A, C and F. Candidates stay on the goal's side: the home region (a choke's inner region, the asset's), a region the
+ * enemy only walks into through it, or a wall cell no enemy walks. No cost threshold: a goal's tower goes on its best spot.
  * Big cannons have their own targets and terms on the same model (FindGunSpot)
  */
 class CSpotScorer {

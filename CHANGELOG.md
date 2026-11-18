@@ -650,6 +650,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - A choke of our line is short (orange, and what hold slots and fortifying go for) also when our ground-hitting
     towers don't cover all of its gap, not only when its towers are short of the enemy army outside it.
 
+- **Scored tower spots weigh what the turret picker does** (with `choke.spot.enable`). `FindSpot` scored a tower's
+  spot by its goal's approach traffic, enemy buildings, height and view only, so a defence point's or a choke's tower
+  ignored our buildings, the line chokes and the front that a picker turret weighs. Now it adds the picker's A (our
+  and allies' unarmed buildings in range, at cost × `turret.ally`), C (`turret.choke` for the best line choke in
+  range) and F (`turret.front` × the known enemy buildings' influence at the spot), as an order counts them
+  (`CTurretPicker::GetSpotShare`), so those keys tune scored spots too. Hold spots don't take them.
+
 - **The threat graph follows the enemy army's mix.** Walkers, tanks and hovers gated the graph as soon as one of
   them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only graph of
   122 regions into 38, moving every choke. Now the graph is built from a few masks, one per way of walking (each

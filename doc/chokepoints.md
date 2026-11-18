@@ -243,7 +243,7 @@ started are called off.
 
 Scored spots use the turret picker's value model (see "Turret picker (G)"), with each goal's own targets and terms:
 
-`score = (T + E) × (1 + choke.spot.height × height) × (1 + choke.spot.view × V) × setback × lean ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
+`score = (T + E + A + C) × (1 + choke.spot.height × height) × (1 + turret.front × F) × (1 + choke.spot.view × V) × setback × lean ÷ (1 + threat ÷ own threat) ÷ (1 + builder distance ÷ a quarter of the map's diagonal)`
 
 There is no cost threshold: a goal's tower goes on its best spot.
 
@@ -261,6 +261,12 @@ There is no cost threshold: a goal's tower goes on its best spot.
   enemy mex at its income × `turret.horizon`. They are halved for covering towers as T is. Mobile units don't count:
   their routes are T already, and a spot frozen once its tower is queued mustn't follow a passing raid. As towers
   skip threatened spots, an armed building only counts where the tower outranges it.
+- *A*, *C* and *F* are the picker's, as one of its orders counts them (`CTurretPicker::GetSpotShare`), so the
+  `turret.ally`, `turret.choke` and `turret.front` keys tune them here too. *A* is our and allies' unarmed buildings
+  in range with a clear line of fire, at cost × `turret.ally`. *C* is `turret.choke` for the best choke of our line
+  or the enemy line with its middle in range. Both are halved for covering towers as T is. *F* is the known enemy
+  buildings' influence at the spot over the highest among the candidates, so towers lean toward the enemy's
+  buildings on top of *lean*.
 - *setback* is the closeness to `choke.setback` ranges behind the line, for towers at chokes.
 - *lean* pulls a defence point's, the base's and the radar guard's towers the way the enemy comes from. It is
   `1 + choke.spot.forward × (1 + ahead) ÷ 2`, where *ahead* (from −1 to 1) is how far the spot sits toward the
@@ -268,7 +274,7 @@ There is no cost threshold: a goal's tower goes on its best spot.
   above, walked from the enemy, so on a plateau the lean points down its ramp, not at a cliff edge facing the
   enemy. By default a spot a radius toward an approach from one side scores 1.5×, one a radius away from it 1×,
   and an approach from all sides leans nowhere.
-- Hold spots skip the builder term and E.
+- Hold spots skip the builder term, E, A, C and F.
 
 A tower's spot is moved onto its build site, buildable facing south and open on the blocking map (lanes, queued
 jobs), as the picker's are, so it never lands on another job's footprint. A tower skips spots that enemy threat reaches, because a builder only builds out of threat and would move it to the

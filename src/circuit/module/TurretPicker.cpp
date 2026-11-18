@@ -323,7 +323,7 @@ std::vector<CCircuitDef*> CTurretPicker::GetDefs(const STurretOrder& order, cons
  * halved here for each tower (ours and allies', queued too) already covering them, skipTower's left out
  */
 CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radius, float maxRange,
-		const AIFloat3& skipTower) const
+		const AIFloat3& skipTower, bool isTraffic) const
 {
 	SGather g;
 	g.centre = centre;
@@ -344,7 +344,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	const CTrafficField& field = chokeMap->GetTraffic();
 	// None while a spider or jumper type is a big part of the enemy's army: the threat graph walks them as kbots, and
 	// their routes over cliffs aren't the turret's to cover
-	if (isChokeReady && !field.IsEmpty() && (config.traffic > 0.f) && !chokeMap->IsCliffCrosserArmy()) {
+	if (isTraffic && isChokeReady && !field.IsEmpty() && (config.traffic > 0.f) && !chokeMap->IsCliffCrosserArmy()) {
 		const int cellSize = field.GetCellSize();
 		ForEachCellIn(field.GetWidth(), field.GetHeight(), cellSize, centre.x - reach, centre.z - reach,
 				centre.x + reach, centre.z + reach, [&](int x, int z) {
@@ -448,6 +448,32 @@ std::vector<CTurretValue::STarget> CTurretPicker::GetEnemyTargets(const AIFloat3
 		targets.push_back({{pos.x, terrainMgr->GetHeightAt(pos.x, pos.z), pos.z}, amount, CTurretValue::Kind::ENEMY});
 	}
 	return targets;
+}
+
+CTurretPicker::SSpotShare CTurretPicker::GetSpotShare(CCircuitDef* def, const AIFloat3& centre, float radius) const
+{
+	// The scorer has its own traffic (the goal's approach) and E (choke.spot.enemy)
+	const SGather gather = Gather(centre, radius, def->GetMaxRange(), -RgtVector, false);
+	SSpotShare share;
+	for (const CTurretValue::STarget& t : MakeTargets(def, gather)) {
+		if ((t.kind == CTurretValue::Kind::ALLY) || (t.kind == CTurretValue::Kind::CHOKE)) {
+			share.targets.push_back(t);
+		}
+	}
+	share.enemyBuildings = gather.enemyBuildings;
+	return share;
+}
+
+float CTurretPicker::GetEnemyInfl(const std::vector<AIFloat3>& enemyBuildings, const AIFloat3& pos) const
+{
+	float infl = 0.f;
+	for (const AIFloat3& b : enemyBuildings) {
+		const float d = b.distance2D(pos);
+		if (d < inflRadius) {
+			infl += 2.f * (1.f - d / inflRadius);
+		}
+	}
+	return infl;
 }
 
 float CTurretPicker::TrafficMetal(float amount, float range, float weight) const
@@ -561,13 +587,7 @@ void CTurretPicker::FillCandidate(CCircuitUnit* builder, const SGather& gather, 
 		CTurretValue::SCandidate& out) const
 {
 	out.pos = {pos.x, circuit->GetTerrainManager()->GetHeightAt(pos.x, pos.z), pos.z};
-	out.enemyInfl = 0.f;
-	for (const AIFloat3& b : gather.enemyBuildings) {
-		const float d = b.distance2D(pos);
-		if (d < inflRadius) {
-			out.enemyInfl += 2.f * (1.f - d / inflRadius);
-		}
-	}
+	out.enemyInfl = GetEnemyInfl(gather.enemyBuildings, pos);
 	out.walk = builder->GetPos(circuit->GetLastFrame()).distance2D(pos);
 }
 
