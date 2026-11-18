@@ -241,9 +241,9 @@ void CSensorPlanner::UpdateWeights()
 			weights[cell] = 1.f;  // marks it reachable
 			++reachCount;
 			trafficSum += traffic.GetAt(cell);
-			// The enemy's half of the map, and enemy territory on ours
+			// The enemy's half of the map, and the enemy's held ground on ours
 			const int region = chokeMap->GetRegionAt(pos);
-			isEnemyGround[cell] = !chokeMap->IsOurHalf(pos) || ((region >= 0) && chokeMap->IsEnemyTerritory(region));
+			isEnemyGround[cell] = !chokeMap->IsOurHalf(pos) || ((region >= 0) && chokeMap->IsEnemyGround(region));
 			enemyCount += isEnemyGround[cell];
 		}
 	}
@@ -328,11 +328,11 @@ void CSensorPlanner::UpdateCandidates()
 {
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CTrafficField& traffic = chokeMap->GetTraffic();
-	// Our half of the map (not enemy territory), or our territory
+	// Our half of the map (not the enemy's held ground), or our held ground
 	auto isOurs = [chokeMap](const AIFloat3& pos) {
 		const int region = chokeMap->GetRegionAt(pos);
-		return chokeMap->IsOurHalf(pos) ? ((region < 0) || !chokeMap->IsEnemyTerritory(region))
-				: ((region >= 0) && chokeMap->IsOurTerritory(region));
+		return chokeMap->IsOurHalf(pos) ? ((region < 0) || !chokeMap->IsEnemyGround(region))
+				: ((region >= 0) && chokeMap->IsOurGround(region));
 	};
 	candidates.clear();
 	for (int z = 0; z < traffic.GetHeight() * traffic.GetCellSize(); z += BLOCK_SIZE) {

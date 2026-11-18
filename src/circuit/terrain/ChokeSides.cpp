@@ -33,7 +33,8 @@ using namespace springai;
  * Both sides' units as CChokeMap::GetSideUnits counts them: ours where they are now, enemy buildings until seen dead,
  * armed enemy mobiles where they were seen in the last minute, aircraft aside. Armed ones bring threat (ours: power, as
  * the influence map counts them); unarmed buildings bring eco, their metal cost; constructors bring nothing.
- * - A region: the units in it; its owner by the buildings (CChokeMap::OwnerOf).
+ * - A region: the units in it; its owner by the buildings (CChokeMap::OwnerOf), as held ground takes it before it
+ *   settles.
  * - A choke: armed buildings whose range reaches its line, armed mobiles within their range or a main-tower range of
  *   it (whichever is longer: they walk), unarmed buildings within a main-tower range of it; its owner by the towers
  *   that cover all of its line (CChokeMap::ChokeOwnerOf).
@@ -64,8 +65,8 @@ void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView
 	for (size_t r = 0; r < regionViews.size(); ++r) {
 		SView& view = regionViews[r];
 		view.side = CChokeMap::OwnerOf(view.ours, view.enemy);
-		view.isTerritory = ((view.side == Side::OURS) && chokeMap->IsOurTerritory(r))
-				|| ((view.side == Side::ENEMY) && chokeMap->IsEnemyTerritory(r));
+		view.isHeld = ((view.side == Side::OURS) && chokeMap->IsOurGround(r))
+				|| ((view.side == Side::ENEMY) && chokeMap->IsEnemyGround(r));
 	}
 
 	const float mainRange = chokeMap->GetMainRange();
@@ -82,29 +83,13 @@ void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView
 			}
 		}
 	};
-	// The share of a choke's line (wall to wall: all of its crossable gap) in range of a side's towers that hit ground
-	const SCellMask& mask = graph.GetMask();
-	auto coverOf = [&](const CRegionGraph::SChoke& choke, const AIFloat3& centre, const std::vector<SUnit>& units) {
-		std::vector<bool> isCovered(choke.line.size(), false);
-		for (const SUnit& u : units) {
-			if (u.isMobile || !u.isAntiLand || (centre.distance2D(u.pos) > u.range + choke.width * 0.5f + 64.f)) {
-				continue;
-			}
-			for (size_t i = 0; i < choke.line.size(); ++i) {
-				const float dx = mask.CentreX(choke.line[i]) - u.pos.x, dz = mask.CentreZ(choke.line[i]) - u.pos.z;
-				isCovered[i] = isCovered[i] || (dx * dx + dz * dz <= u.range * u.range);
-			}
-		}
-		const size_t count = std::count(isCovered.begin(), isCovered.end(), true);
-		return choke.line.empty() ? 0.f : float(count) / choke.line.size();
-	};
 	for (size_t c = 0; c < chokes.size(); ++c) {
 		const AIFloat3 centre = chokeMap->GetCellPos(chokes[c].centre);
 		SView& view = chokeViews[c];
 		addReaching(chokes[c], centre, ours, view.ours);
 		addReaching(chokes[c], centre, enemies, view.enemy);
-		view.ourCover = coverOf(chokes[c], centre, ours);
-		view.enemyCover = coverOf(chokes[c], centre, enemies);
+		view.ourCover = chokeMap->GetCover(c, ours);
+		view.enemyCover = chokeMap->GetCover(c, enemies);
 		view.side = CChokeMap::ChokeOwnerOf(view.ours, view.enemy, view.ourCover, view.enemyCover);
 	}
 }
@@ -153,14 +138,23 @@ std::string CChokeOverlay::MakeInfo(const std::vector<SView>& regionViews, const
 	for (size_t r = 0; r < regionViews.size(); ++r) {
 		const CRegionGraph::SRegion& region = graph.GetRegions()[r];
 		const SView& view = regionViews[r];
-		// The lines are cut between territory (buildings), not the owners shown
-		const bool isOurs = chokeMap->IsOurTerritory(r), isEnemy = chokeMap->IsEnemyTerritory(r);
-		const char* territory = isOurs ? "|our territory" : isEnemy ? "|enemy territory" : "";
+		// Where the ground the lines go by isn't the owner: it settles in 20 s, and counts only joined to its side's
+		// main ground
+		const bool isOurGround = chokeMap->IsOurGround(r), isEnemyGround = chokeMap->IsEnemyGround(r);
+		const Side settled = chokeMap->GetSettledOwner(r);
+		const char* ground = (isOurGround == (view.side == Side::OURS)) && (isEnemyGround == (view.side == Side::ENEMY))
+				? ""
+				: ((settled == view.side) && (view.side == Side::OURS)) ? "|lines: cut off from our main ground"
+				: ((settled == view.side) && (view.side == Side::ENEMY) && !isEnemyGround)
+						? "|lines: cut off from the enemy's main ground"
+				: isOurGround ? "|lines: still our ground"
+				: !isEnemyGround ? "|lines: nobody's ground yet"
+				: chokeMap->IsEnemySide(r) ? "|lines: enemy ground (their side)" : "|lines: still enemy ground";
 		const std::string buildings = (view.ours.structures + view.enemy.structures == 0) ? "|no buildings"
 				: utils::int_to_string(view.ours.structures, "|buildings: ours %i")
 				+ utils::int_to_string(view.enemy.structures, ", enemy %i");
 		put('r', r, mask.CentreX(region.centre), mask.CentreZ(region.centre), view,
-				utils::int_to_string(region.id, "Region %i") + buildings + territory);
+				utils::int_to_string(region.id, "Region %i") + buildings + ground);
 	}
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
 	for (size_t c = 0; c < chokes.size(); ++c) {
@@ -168,16 +162,22 @@ std::string CChokeOverlay::MakeInfo(const std::vector<SView>& regionViews, const
 		std::string title = utils::int_to_string(chokes[c].id, "Choke %i")
 				+ utils::float_to_string(view.ourCover * 100.f, "|towers cover: ours %.0f%%")
 				+ utils::float_to_string(view.enemyCover * 100.f, ", enemy %.0f%%");
+		auto isOn = [c](const std::vector<int>& line) { return std::binary_search(line.begin(), line.end(), (int)c); };
+		if (isOn(chokeMap->GetFrontLine())) {
+			title += "|front line";
+		}
+		if (isOn(chokeMap->GetEnemyLine())) {
+			title += (view.enemyCover >= 1.f) ? "|enemy line, defended" : "|enemy line, undefended";
+		}
 		for (const CFrontline::SRank& rank : frontline->GetRanks()) {
 			if (rank.chokeId == chokes[c].id) {
-				title += std::string(rank.isHeld ? "|enemy-held" : "|enemy line") + (rank.isUndefended ? ", undefended" : "")
-						+ utils::float_to_string(rank.defence, ": defence %.0f")
+				title += utils::float_to_string(rank.defence, "|enemy defence %.0f")
 						+ utils::float_to_string(rank.confidence * 100.f, ", seen %.0f%%");
 			}
 		}
 		for (const CFrontline::SFront& f : frontline->GetFront()) {
 			if (f.chokeId == chokes[c].id) {
-				title += std::string("|our line") + ((f.GetShortfall() > 0.f) ? ", short" : "")
+				title += std::string("|our line") + (f.IsShort() ? ", short" : "")
 						+ utils::float_to_string(f.wanted, ": wants %.0f") + utils::float_to_string(f.towers, ", towers %.0f");
 			}
 		}
@@ -215,14 +215,14 @@ void CChokeOverlay::DrawSides()
 /*
  * One message each, prefixed circuit_sides_<verb>:<ally team>. Positions in whole elmos
  * - grid: width height cellSize, then (region index, count) runs over the cells row by row; -1 is a wall
- * - state: a letter per region index: u nobody's, o ours, e the enemy's, c contested; capital in that side's
- *   territory
+ * - state: a letter per region index: u nobody's, o ours, e the enemy's, c contested; capital where the lines
+ *   take it as that side's ground (settled, and joined to its main ground)
  * - control, lines, info, known: a record per line, after the header line
  *   control: who defended x1 z1 x2 z2, a choke's line end to end. Who controls it: n nobody, o ours, e the enemy,
  *   c contested (CChokeMap::ChokeOwnerOf). Whose ground-hitting towers reach any of its line: n nobody's, o ours,
  *   e the enemy's, b both sides'
- *   lines: kind x1 z1 x2 z2. Kinds: f front line; enemy line chokes by rank: e defended,
- *   u undefended, g not seen enough; h enemy-held off the enemy line; current line: c covered, s short
+ *   lines: kind x1 z1 x2 z2. Kinds: f front line; enemy line: e defended (their ground-hitting
+ *   towers cover all of its line), u undefended; our line: c its towers cover what it wants, s short
  *   info: see MakeInfo
  *   known: see MakeKnownEnemies
  * - status: " cheating" when the AI's LOS cheating option is on (it knows every enemy unit), else empty
@@ -270,7 +270,7 @@ void CChokeOverlay::SendWidgetData()
 	std::string letters(regionViews.size(), 'u');
 	for (size_t r = 0; r < regionViews.size(); ++r) {
 		const char letter = sideLetters[static_cast<int>(regionViews[r].side)];
-		letters[r] = regionViews[r].isTerritory ? (char)std::toupper(letter) : letter;
+		letters[r] = regionViews[r].isHeld ? (char)std::toupper(letter) : letter;
 	}
 	CallWidget("state", " " + letters);
 
@@ -289,24 +289,13 @@ void CChokeOverlay::SendWidgetData()
 	for (int c : chokeMap->GetFrontLine()) {
 		putChoke(lines, c, 'f');
 	}
-	std::vector<bool> isRanked(chokes.size(), false);
-	for (const CFrontline::SRank& rank : frontline->GetRanks()) {
-		const int c = graph.FindChoke(rank.chokeId);
-		if (c >= 0) {
-			isRanked[c] = true;
-			const bool isOnLine = std::binary_search(chokeMap->GetEnemyLine().begin(), chokeMap->GetEnemyLine().end(), c);
-			putChoke(lines, c, !isOnLine ? 'h' : rank.isUndefended ? 'u' : (rank.defence > 0.f) ? 'e' : 'g');
-		}
-	}
 	for (int c : chokeMap->GetEnemyLine()) {
-		if (!isRanked[c]) {
-			putChoke(lines, c, 'g');  // not ranked since the lines moved
-		}
+		putChoke(lines, c, (chokeViews[c].enemyCover >= 1.f) ? 'e' : 'u');  // their towers cover all of its gap, or not
 	}
 	for (int c : chokeMap->GetCurrentLine()) {
 		const auto it = std::find_if(frontline->GetFront().begin(), frontline->GetFront().end(),
 				[&](const CFrontline::SFront& f) { return f.chokeId == chokes[c].id; });
-		putChoke(lines, c, ((it != frontline->GetFront().end()) && (it->GetShortfall() > 0.f)) ? 's' : 'c');
+		putChoke(lines, c, ((it != frontline->GetFront().end()) && it->IsShort()) ? 's' : 'c');
 	}
 	CallWidget("lines", lines.str());
 

@@ -8,22 +8,23 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Added
 
 - **`choke_overlay sides`: who owns each region and choke.** A new overlay layer colours each region and choke by
-  its owner (enemy mobiles seen in the last minute, enemy buildings until seen dead, neither once the AI has seen
-  their spot empty). A region is the side's with buildings in it, contested when both sides have buildings there or
-  the other side's threat is at least a third of the owner's, and nobody's with no buildings, whatever armies stand in
-  it. A choke is defended by a side whose ground-hitting towers cover all of its gap, contested when both do, when
-  the other side's towers reach any of it or its mobiles there are a third of the defender's threat, and nobody's when
-  no side covers all of it. Regions are blue, red, striped or clear, stronger in that side's territory. Each choke is a
-  gate across its gap: its core coloured by owner, posts at its ends when towers reach part of it, and a casing when it is on one
-  of the AI's lines (white front line, green or orange our current line by whether its towers cover what it wants,
-  the enemy line by rank). Info boxes show the numbers behind each owner: hostile and allied
-  threat (total, mobile, static) and eco, for the region and choke at the cursor and, zoomed in, for owned ones near
-  the camera. Each enemy the AI counts is marked where it believes it is (filled while seen, an outline where last
-  seen), so a spectator with full view can tell which enemies it knows of; the legend says in red when the AI's LOS
-  cheating option is on, and the infolog says `LOS cheating: on` or `off` at start. A legend is printed bottom left.
+  its owner (enemy mobiles seen in the last minute, enemy buildings until seen dead). A region is the side's with
+  buildings in it, contested when both sides have buildings there or the other side's threat is at least a third of
+  the owner's, and nobody's with no buildings, whatever armies stand in it. A choke is defended by a side whose
+  ground-hitting towers cover all of its gap, contested when both do, when the other side's towers reach any of it or
+  its mobiles there are a third of the defender's threat, and nobody's when no side covers all of it.
+  Regions are blue, red, striped or clear, stronger where the lines take them as that side's ground (see Changed).
+  Each choke is a gate across its gap: its
+  core coloured by owner, posts at its ends when towers reach part of it, and a casing when it is on a line (white front line,
+  green or orange our current line by whether its towers cover what it wants, the enemy line by tower cover, yellow forward
+  line). Info boxes show the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, for
+  the region and choke at the cursor and, zoomed in, for owned ones near the camera. Each enemy the AI counts is
+  marked where it believes it is (filled while seen, an outline where last seen), so a spectator with full view can
+  tell which enemies it knows of; the legend says in red when the AI's LOS cheating option is on, and the infolog
+  says `LOS cheating: on` or `off` at start. A legend is printed bottom left.
   It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through
   `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget the layer shows
-  the `lines` layer. Nothing but the overlay reads the ownership: the AI's play is unchanged.
+  the `lines` layer. The choke lines go round the ground it shows each side owning (see Changed).
 
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
@@ -229,11 +230,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   400 elmos), ahead of the leader only.
 
 - **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
-  `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with
+  `choke.spot.enable`, `choke.radar.enable`, `choke.expand`, `quota.hold_choke`), and with
   all of them off the AI plays as before.
   - Each ally team learns the map's shape, shared by allied AIs and built on the area worker. It finds the chokes
-    between regions the enemy's walkers can cross, the pockets of clusters behind them, the current and forward
-    lines, the enemy line (the current line's cut nearest the enemy) and the front line where the two touch. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
+    between regions the enemy's walkers can cross, the pockets of clusters behind them, our (current) line, the
+    enemy line and the front line between them. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
   - Choke defence (A): each cluster of a qualified pocket keeps its AA and its first tower, and the rest goes to the
     pocket's entrances, from a budget of what its held clusters would spend anyway. Modes switch at most every 3
     minutes. Narrow chokes keep a lane free of buildings.
@@ -252,8 +253,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     view must be new. So radar follows the builders as they expand. The first goes up once the first factory
     stands. Once a radar stands, a `choke.radar.guard` tower (turretmissile) goes at the best spot within
     `choke.radar.guard_radius` (300 elmos), unless a tower already reaches it.
-  - Holding the line (C), forward objectives (D) and rankings of enemy-held and enemy line chokes, with undefended
-    ones flagged (E).
+  - Holding the line (C) and rankings of enemy-held and enemy line chokes, with undefended ones flagged (E).
   - Expansion bonus for clusters behind a defended cut.
   - `choke_overlay` chat command: draws chokes, pockets, lines, rankings, traffic, spots, radar and regions with map
     figures, and announces each threat-graph rebuild with the enemy types behind it. In games with no human
@@ -619,6 +619,89 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **The choke lines go round who owns the ground, armies included.** The current, enemy and front lines were cut
+  between territory, which only buildings make, so our line could run through ground the enemy army held and behind
+  ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
+  base outside it. Now they go round held ground: each region's owner as the `sides` tint shows it (the side
+  with buildings there; contested by both sides' buildings, each side's worth a third of the other's metal there, or
+  by the other side's threat at a third of the owner's;
+  nobody's with no buildings), once it has owned it for 20 s, with the enemy's side of the map counting as theirs
+  where nobody owns it. Enemy mobiles count for a minute after they were seen, enemy buildings until seen dead,
+  neither once the AI has seen their spot empty. Contested and nobody's ground between the sides keeps our line and
+  theirs apart, so an enemy army in our ground pulls our line back behind it. Each side's ground counts only where it
+  joins that side's main ground (on its side of the map) without crossing the other's, so an enemy outpost deep in
+  our ground doesn't wrap our line round it. Held ground replaces territory (20 s to join, 60 or 120 s to leave)
+  everywhere: pockets qualify when the ground right outside them isn't the enemy's, and the radar planner weighs and
+  places by it.
+  - The lines were each one cheapest cut, which could leave an entrance off a line when a cheaper set of chokes
+    further out also split the sides. Our line is now every choke out of our ground into a region the enemy can
+    walk to without crossing our ground, and the enemy line its mirror round theirs. The front line was the chokes
+    both cuts shared; it is now the chokes where our ground meets theirs, neither side contested.
+  - The forward line and forward objectives (D: `choke.objective.enable`, `gain`, `power`, `retry`) are gone. The
+    objectives were the forward line's only reader, and were off by default.
+  - Our line and the ranked enemy chokes count the enemies held ground counts: armed mobiles seen in the last
+    minute, not the last 3 minutes, aircraft aside, and none whose spot was seen empty. What we saw of a ranked choke
+    counts for a minute too, so a choke seen 2 minutes ago with its army since forgotten isn't undefended.
+  - A ranked enemy choke counts as seen (and so can be undefended) only for the lower of the shares of its gap and of
+    the ground a main-tower range beyond it on the enemy's side in our LOS lately, not the gap alone.
+  - The `sides` widget draws the front line as a white rim round the other casings, so a front choke that is short
+    shows orange (the front line hid it). It draws an enemy line choke dark red (defended) when enemy ground-hitting
+    towers cover all of its gap and pink (undefended) when they don't, and no longer marks unranked or enemy-held
+    chokes off the lines. A region's info box says when the lines still take it otherwise.
+  - A choke of our line is short (orange, and what hold slots and fortifying go for) also when our ground-hitting
+    towers don't cover all of its gap, not only when its towers are short of the enemy army outside it.
+  - Hold slots go to the most short choke, not the top-ranked short one: the biggest shortfall (the enemy army
+    outside it over its towers), and where no choke has one, the least covered, the higher rank on a tie. A slot
+    moves once another choke is 1.3× as short (it was 1.3× the rank).
+  - Only finished towers the turret picker counts as defence (`CTurretPicker::IsDefence`) arm a region or cover a
+    choke, for both sides. One Big Bertha covered every choke in its range, so none of our line was short, and a
+    nanoframe covered its choke from its first second. Claw mines, missiles and other mobile buildings no longer count
+    at all, and a cheap building in a region the other side owns (an enemy radar by our base) contests it only when it
+    is worth a third of the owner's buildings there.
+
+- **Scored tower spots weigh what the turret picker does** (with `choke.spot.enable`). `FindSpot` scored a tower's
+  spot by its goal's approach traffic, enemy buildings, height and view only, so a defence point's or a choke's tower
+  ignored our buildings, the line chokes and the front that a picker turret weighs. Now it adds the picker's A (our
+  and allies' unarmed buildings in range, at cost × `turret.ally`), C (the best line choke in range, by its depth in
+  range and with its economy share, as the picker's C) and F (`turret.front` × the known enemy buildings' influence at the spot), as an order counts them
+  (`CTurretPicker::GetSpotShare`), so those keys tune scored spots too. Hold spots don't take them.
+
+- **The threat graph follows the enemy army's mix.** Walkers, tanks and hovers gated the graph as soon as one of
+  them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only graph of
+  122 regions into 38, moving every choke. Now the graph is built from a few masks, one per way of walking (each
+  ground type's, the amphibious bots', the hovers'), and a mask gates by its share of the enemy army seen plus a
+  300-metal prior: on at `choke.gate_share`, or as the biggest once the army reaches 300 metal, off below half of
+  `choke.gate_share`. A mask that stops being a big part of the army stops shaping the graph, so the first type seen
+  (the only one, and so the biggest) no longer gates for the rest of the game, and a mix near the line doesn't flip
+  it back and forth. Until a mask first gates, the graph assumes vehicles (the ground types that climb the least)
+  instead of the opening default's walkers, tanks and hovers together, which gated until the opening ended (a
+  factory scouted for every enemy team, or 5 minutes): the graph started with the bots' few regions and snapped to
+  the tanks' many minutes after the first enemy units were sighted. After that, an army that died or faded under the
+  prior keeps the masks it had.
+
+- **Spiders and jumpers count for the kbots' mask.** A promoted spider type added the cells spiders climb to, which
+  on most maps joined every region into one; a promoted jumper type opened every wall a jump crosses. Now a jumper
+  type's cost counts for its own type walking, and a spider type's for the ground type that climbs the steepest
+  (bots), so their chokes are where kbots' are. Their traffic and reach still use their own cells.
+
+- **The turret picker leaves traffic out against spiders and jumpers.** While spiders and jumpers are
+  `choke.gate_share` of the enemy army (until they fall below half of that), the picker drops T, the enemy routes
+  under the turret, so a turret pays for itself in our buildings, known enemy buildings or line chokes in range.
+  Scored tower spots (`choke.spot`) still weigh traffic.
+
+- **The threat graph keeps at least 12 regions where the map allows** (`choke.region.min_count`). Gated by bots,
+  some maps merged into 2 or 3 big regions, with few chokes left to defend. A build with fewer regions now runs
+  again up to 4 times, `choke.region.merge` raised towards 1 and `choke.region.min_area` lowered towards a quarter,
+  and keeps the build with the most regions. The `CHOKE graph` log line says when it relaxed and to what.
+
+- **Terrain alone rebuilds the threat graph at most every 5 minutes.** Zero-K's craters and the ground levelled under
+  buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the
+  30 s mask check found a change, 10 times in 13 minutes in one logged game, and each rebuild could move
+  chokes and regions that choke defence and holds act on. A terrain change now waits until 5 minutes have
+  passed since the last rebuild, unless it opens a new crossing: newly crossable cells joining two of the graph's
+  regions (a wall blown through, a terraformed ramp), which rebuilds it at the next mask check (at most 30 s). A
+  change in the gating masks still rebuilds at once.
+
 - **The turret picker's choke bonus grows with how deep the choke is in range** (`turret.choke_depth`, default 1).
   C was worth all of `turret.choke` anywhere in range, as every target is, so a turret only had to reach the choke
   with its outer range, and walk, threat, view and the targets behind it kept it there. Now C is `turret.choke` ×
@@ -675,6 +758,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     their spot.
   - An `ANTIHEAVY` log line per unit type every minute: unit-seconds hunting, parked, engaged and fleeing; shots,
     radar-only heavies in range, flees, retreats, scoots and dropped targets.
+
 - **Scouts raid while cut off.** When a scout has no safe route to its picked spot (e.g. it fled into a pocket and
   the danger sits between it and everything else), or nothing could be picked, an armed ground scout goes raiding on a
   "stint": a raid task of its own, which merges, rallies and takes joiners like any raid group. The stint belongs to

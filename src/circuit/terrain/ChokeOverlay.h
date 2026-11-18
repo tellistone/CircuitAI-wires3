@@ -73,7 +73,7 @@ private:
 
 	/*
 	 * The sides layer (ChokeSides.cpp): who owns each region (by the units in it) and each choke (by the guns that
-	 * reach it), and the lines by rank and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
+	 * reach it), and the lines by tower cover and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
 	 * running the AI has it (util/LuaUI/Widgets), else the lines layer
 	 */
 	using Side = CChokeMap::Side;
@@ -81,7 +81,7 @@ private:
 	struct SView {
 		Side side = Side::NONE;
 		SStrength ours, enemy;
-		bool isTerritory = false;  // a region in its owner's territory (CChokeMap::IsOurTerritory, IsEnemyTerritory)
+		bool isHeld = false;  // a region the lines take as its owner's ground (CChokeMap::IsOurGround, IsEnemyGround)
 		float ourCover = 0.f, enemyCover = 0.f;  // a choke: share of its line in range of each side's ground-hitting towers
 	};
 	void MakeViews(std::vector<SView>& regionViews, std::vector<SView>& chokeViews) const;

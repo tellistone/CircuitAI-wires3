@@ -115,6 +115,14 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			}
 		}
 	}
+	// The turret picker's A (our unarmed buildings in range) and C (line chokes in range), as an order counts them, and
+	// its F (the front) below. A hold spot is the army's, not a tower's: none of them
+	std::vector<AIFloat3> enemyBuildings;
+	if (goal.type != GoalType::HOLD) {
+		CTurretPicker::SSpotShare share = picker->GetSpotShare(def, pos, radius);
+		values.insert(values.end(), share.targets.begin(), share.targets.end());
+		enemyBuildings = std::move(share.enemyBuildings);
+	}
 	// choke.spot.forward: a position's towers lean the way its approach comes from. pull: the targets' weighted offsets
 	// from the asset; a spot's ahead (-1 to 1) is its offset along pull, per radius, times how one-sided the approach
 	// is (|pull| over the targets' weighted distance), so 0 for an approach from all sides
@@ -191,6 +199,7 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			return false;
 		}
 		vc.pos = {c.x, c.y, c.z};
+		vc.enemyInfl = picker->GetEnemyInfl(enemyBuildings, c);
 		vc.factor = factorAt(c);
 		return true;
 	};
@@ -200,7 +209,7 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 			return false;
 		}
 		out.pos = {c.x, c.y, c.z};
-		out.enemyInfl = 0.f;
+		out.enemyInfl = picker->GetEnemyInfl(enemyBuildings, c);
 		out.walk = 0.f;
 		out.factor = factorAt(c);
 		return true;
@@ -221,7 +230,8 @@ AIFloat3 CSpotScorer::FindSpot(CCircuitDef* def, const SGoal& goal, float radius
 	params.range = range;
 	params.heightBonus = cfg.spotHeight;
 	params.heightCap = cfg.spotHeightCap;
-	params.front = 0.f;  // the lean is the factor's
+	params.front = (goal.type == GoalType::HOLD) ? 0.f : picker->GetConfig().front;  // turret.front
+	params.chokeDepth = picker->GetConfig().chokeDepth;  // turret.choke_depth
 	params.view = cfg.spotView;
 	params.minBase = 0.f;  // a goal's tower goes up wherever is best
 	params.refineStep = cellSize * 0.25f;

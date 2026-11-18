@@ -28,13 +28,13 @@ class IBuilderTask;
  * choke.radar.enable: the radar planner (B), on CChokeMap's traffic grid. The ally team's authority AI keeps the map
  * every 15 s; every AI's builders take their radar spots from it.
  * - Weight: each cell any enemy movement type reaches weighs a floor plus its traffic, each scaled to add up to our
- *   mex income, plus the income of our clusters' mexes in it. Enemy ground (the enemy's half of the map, and enemy
- *   territory on ours) weighs choke.radar.enemy x our mex income more, spread over its cells.
+ *   mex income, plus the income of our clusters' mexes in it. Enemy ground (the enemy's half of the map, and the
+ *   enemy's held ground on ours, CChokeMap::IsEnemyGround) weighs choke.radar.enemy x our mex income more, spread over its cells.
  * - Coverage: the union of the viewsheds of known static radars, ours and allies', nanoframes too; a radar a builder
  *   was sent to build counts until a radar stands within 500 elmos of it, or for 90 s. Mobile radar is ignored, so
  *   coverage doesn't flicker. Sight rays start half the model's height plus its sight emit height up.
- * - Candidates: the highest buildable cell of each 512-elmo block on our half of the map (not in enemy territory),
- *   or in our territory.
+ * - Candidates: the highest buildable cell of each 512-elmo block on our half of the map (not on the enemy's held
+ *   ground), or on our held ground.
  * - A builder between jobs, with a factory up and no NOW job waiting, builds a radar nearby first (a NOW job, stalls
  *   or not) when its AI's budget holds one: choke.radar.share of its income, at most two radars' worth, starting
  *   with one. So radar follows the builders as they expand, with no walks for it. The spot is one of the candidates

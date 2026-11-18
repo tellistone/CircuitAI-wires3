@@ -22,6 +22,8 @@ namespace circuit {
  *   each pair. Meeting cells of a pair that don't touch are separate chokes;
  * - merge: two regions merge when a choke between them is nearly as wide as the smaller one (choke altitude >=
  *   merge x its highest altitude), and a region under minArea merges across its widest choke. Until nothing changes.
+ * - too few: under minCount regions, the build runs again with merge raised towards 1 and minArea lowered towards a
+ *   quarter, in steps, until there are enough; the build with the most regions is kept (GetUsedParams).
  * Every step breaks ties by cell index, so allied AIs and reruns get the same graph.
  *
  * Regions and chokes are used by index (0..n-1) within one build. Their ids stay the same across rebuilds where
@@ -33,6 +35,7 @@ public:
 		float minArea = 0.f;  // cells: a smaller region merges into a neighbour
 		float merge = 0.7f;  // share of the smaller region's highest altitude
 		float defensibleWidth = 0.f;  // elmos: towers try to close chokes up to this wide
+		int minCount = 0;  // fewer regions: merge and minArea relax in steps (Build)
 	};
 	struct SRegion {
 		int id;
@@ -63,6 +66,7 @@ public:
 	CRegionGraph();
 
 	void Build(const SCellMask& mask, const SParams& params);
+	const SParams& GetUsedParams() const { return usedParams; }  // as relaxed for minCount
 	// Ids from the previous build where the shape is the same: a region keeps the id of the old region holding at
 	// least half its cells, a choke the id (and bornFrame) of the old choke whose line runs within a cell of at least
 	// half of its own. Everything else gets a new id and bornFrame = frame
@@ -94,6 +98,7 @@ public:
 	std::vector<bool> ReachableFrom(const std::vector<int>& sources, const std::vector<bool>& isChokeBlocked) const;
 
 private:
+	void BuildOnce(const SCellMask& mask, const SParams& params);
 	void ComputeAltitude();
 	float GetAltitude(int cell) const;  // elmos to the nearest wall
 
@@ -102,6 +107,7 @@ private:
 	std::vector<int> regionOf;  // region index per cell, NO_REGION on walls
 	std::vector<SRegion> regions;
 	std::vector<SChoke> chokes;
+	SParams usedParams;
 	int nextRegionId;
 	int nextChokeId;
 };

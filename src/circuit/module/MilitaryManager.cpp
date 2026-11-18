@@ -3027,25 +3027,11 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 {
 	outPositions.clear();
 
-	// quota.hold_choke: the attack group holding a frontline choke goes to its spot; choke.objective.enable: idle
-	// attack groups go to the objective's chokes
+	// quota.hold_choke: the attack group holding a frontline choke goes to its spot
 	const AIFloat3 holdSpot = frontline->GetHoldSpot(unit);
 	if (utils::is_valid(holdSpot)) {
 		outPositions.push_back(holdSpot);
 		return;
-	}
-	IUnitTask* task = unit->GetTask();
-	const bool isAttack = (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
-			&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK);
-	if (isAttack) {
-		for (const AIFloat3& pos : frontline->GetObjective()) {
-			if (circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), pos)) {
-				outPositions.push_back(pos);
-			}
-		}
-		if (!outPositions.empty()) {
-			return;
-		}
 	}
 
 	CInfluenceMap* inflMap = circuit->GetInflMap();

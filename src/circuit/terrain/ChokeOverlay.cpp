@@ -176,14 +176,15 @@ void CChokeOverlay::OnGraphBuilt()
 }
 
 /*
- * Its size and the enemy types it was built from: a leak type promoted to gating (choke.gate_share, spiders say)
- * opens most of the walls the old graph had, so its chokes move a long way
+ * Its size and the enemy types it was built from: a mask that starts or stops gating (choke.gate_share) opens or
+ * closes walls the old graph had, so its chokes can move a long way
  */
 std::string CChokeOverlay::DescribeGraph() const
 {
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	return utils::int_to_string(graph.GetRegions().size(), "%i regions, ")
-			+ utils::int_to_string(graph.GetChokes().size(), "%i chokes; enemy types: ") + chokeMap->DescribeTypeSet()
+			+ utils::int_to_string(graph.GetChokes().size(), "%i chokes") + chokeMap->DescribeRelaxed()
+			+ "; enemy types: " + chokeMap->DescribeTypeSet()
 			+ "; '" COMMAND " <class>' shows one class's own graph";
 }
 
@@ -266,11 +267,10 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 		{"spot.enemy", &c.spotEnemy}, {"spot.forward", &c.spotForward}, {"spot.view", &c.spotView},
 		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare}, {"radar.enemy", &c.radarEnemy},
 		{"radar.inside", &c.radarInside}, {"radar.guard_radius", &c.radarGuardRadius},
-		{"objective.gain", &c.objGain}, {"objective.power", &c.objPower},
 	};
 	const std::map<std::string, bool*> flags = {
 		{"enable", &c.isChoke}, {"spot.enable", &c.isSpot}, {"radar.enable", &c.isRadar},
-		{"objective.enable", &c.isObjective}, {"expand", &c.isExpand}, {"hold_choke", &c.isHold},
+		{"expand", &c.isExpand}, {"hold_choke", &c.isHold},
 	};
 	// Read into copies, so a bad value changes nothing
 	std::istringstream in(value);
@@ -289,11 +289,11 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 		if (isRead) {
 			*flagIt->second = v;
 		}
-	} else if (key == "entrances") {
+	} else if ((key == "entrances") || (key == "region.min_count")) {
 		int v;
 		isRead = bool(in >> v);
 		if (isRead) {
-			c.entrances = v;
+			((key == "entrances") ? c.entrances : c.minCount) = v;
 		}
 	} else if (key == "setback") {
 		float a, b;
@@ -539,8 +539,7 @@ void CChokeOverlay::DrawPockets()
 }
 
 /*
- * Current line orange, forward line yellow, enemy line red, front line white, objective magenta; hold slots cyan,
- * with their spots
+ * Current line orange, enemy line red, front line white; hold slots cyan, with their spots
  */
 void CChokeOverlay::DrawLines()
 {
@@ -549,9 +548,6 @@ void CChokeOverlay::DrawLines()
 	auto drawChoke = [&](int c, Colour colour, float size) {
 		AddCross(chokeMap->GetCellPos(chokes[c].centre), colour, size);
 	};
-	for (int c : chokeMap->GetForwardLine()) {
-		drawChoke(c, Colour::YELLOW, 128.f);
-	}
 	for (int c : chokeMap->GetCurrentLine()) {
 		drawChoke(c, Colour::ORANGE, 96.f);
 	}
@@ -562,17 +558,12 @@ void CChokeOverlay::DrawLines()
 		drawChoke(c, Colour::WHITE, 192.f);
 	}
 	const CFrontline* frontline = circuit->GetMilitaryManager()->GetFrontline();
-	for (int id : frontline->GetObjectiveChokes()) {
-		const int c = graph.FindChoke(id);
-		if (c >= 0) {
-			drawChoke(c, Colour::MAGENTA, 160.f);
-		}
-	}
 	for (const CFrontline::SFront& f : frontline->GetFront()) {
 		const int c = graph.FindChoke(f.chokeId);
 		if (c >= 0) {
 			AddLabel(chokeMap->GetCellPos(chokes[c].centre), utils::float_to_string(f.rank, "front: rank %.1f")
-					+ utils::float_to_string(f.wanted, ", wants %.0f") + utils::float_to_string(f.towers, ", towers %.0f"));
+					+ utils::float_to_string(f.wanted, ", wants %.0f") + utils::float_to_string(f.towers, ", towers %.0f")
+					+ utils::float_to_string(f.cover * 100.f, ", cover %.0f%%"));
 		}
 	}
 	for (const CFrontline::SHold& hold : frontline->GetHolds()) {
@@ -764,7 +755,7 @@ void CChokeOverlay::DrawRegions(const CRegionGraph& graph)
 		}
 		std::string text = utils::int_to_string(region.id, "region %i") + utils::int_to_string(region.area, ", %i cells");
 		if (isThreatGraph) {
-			text += chokeMap->IsOurTerritory(r) ? ", our territory" : chokeMap->IsEnemyTerritory(r) ? ", enemy territory" : "";
+			text += chokeMap->IsOurGround(r) ? ", our ground" : chokeMap->IsEnemyGround(r) ? ", enemy ground" : "";
 		}
 		AddLabel(centre, text);
 	}

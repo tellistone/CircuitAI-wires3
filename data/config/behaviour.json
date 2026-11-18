@@ -160,14 +160,15 @@
 	"enable": false,  // choke defence: a pocket's towers beyond each cluster's first go to its entrances; defence points split by region; lanes kept free of buildings
 	"region": {
 		"min_area": 0.5,  // smallest region, in main-tower ranges squared
-		"merge": 0.7  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
+		"merge": 0.7,  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
+		"min_count": 12  // fewer regions than this: merge rises towards 1 and min_area falls towards a quarter, in 4 steps, until there are this many (or the most it gets)
 	},
 	"defensible": 2.0,  // widest choke towers try to close
 	"entrances": 3,  // most entrances before a cluster counts as open
 	"near": 2.5,  // furthest useful entrance from a defence point
 	"setback": [0.6, 0.8],  // ideal tower distance behind a choke's line, in the tower's weapon ranges
 	"lane": 96.0,  // elmos: corridor through chokes under 3x this wide; the turret picker and scored spots never put a tower on it, and with enable it is kept free of buildings (but mexes)
-	"gate_share": 0.25,  // a leak type (amphibious, spiders, jumpers) starts gating once its cost reaches this share of the enemy army seen + 300 metal
+	"gate_share": 0.25,  // a graph mask (a way of walking: spiders and jumpers count as kbots) shapes the threat graph once its cost reaches this share of the enemy army seen + 300 metal (or it is the biggest of 300 metal), until it falls below half of this
 	"traffic": {"spread": 0.15},  // width of the enemy's traffic corridors, as a share of the route's length
 	"openness": {"bands": [0.35, 0.65, 0.05]},  // [<chokepointed below>, <open above>, <margin around them>]
 	"spot": {
@@ -188,12 +189,6 @@
 		"guard_radius": 300,  // elmos from the radar the guard tower may stand
 		"share": 0.05  // share of metal income the radar budget grows by (it starts with one radar, holds two)
 	},
-	"objective": {
-		"enable": false,  // forward objectives for idle attack groups
-		"gain": 1.5,  // gain over cost
-		"power": 1.3,  // our attack power over their defence
-		"retry": 180  // seconds before a failed objective may be tried again
-	},
 	"expand": false  // mex expansion favours clusters behind a defended cut (needs mex_front)
 },
 
@@ -207,7 +202,7 @@
 "turret": {
 	"radius": 600,  // elmos from the centre a turret may stand
 	"min_value": 1.0,  // a spot's value (T + A + E + C, x height) must reach this x the turret's cost
-	"traffic": 1.0,  // weight of T
+	"traffic": 1.0,  // weight of T, the enemy traffic in range; none while spiders and jumpers are choke.gate_share of the enemy army (until under half of it)
 	"horizon": 120,  // seconds of threatened income that T counts (and an enemy mex in E)
 	"ally": 1.0,  // weight of A
 	"enemy": 1.0,  // weight of E
@@ -215,7 +210,7 @@
 	"view": 1.0,  // a spot ranks up to 1 + this x its value by the share of its range circle's ground in a clear line of fire (V), so a cliff top over the ground below beats its foot; ranks only, never decides worth; 0 = off
 	"height": 0.5,  // the most a spot's height adds to its value (all of it 150 elmos above its targets)
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
-	"choke_econ": 1.0,  // a choke of our current line adds this x our economy (the cost of our and allied energy, pylons and factories in our territory), split among the current line chokes by the traffic through each; 0 = off
+	"choke_econ": 1.0,  // a choke of our current line adds this x our economy (the cost of our and allied energy, pylons and factories on our held ground), split among the current line chokes by the traffic through each; 0 = off
 	"choke_enemy": 400,  // metal a choke of the enemy line adds to C, on top of choke (and of the economy share for a choke on both lines)
 	"choke_cap": 1000,  // the most C one choke carries (before depth and halving); 0 = no cap
 	"choke_depth": 1.0,  // C x (1 - this x the choke's distance / range): 1 = full on the choke, nothing at the edge of range; 0 = flat anywhere in range. A tower covering a choke cuts its C for the next one by as much: halved standing on it, by a quarter with it halfway out, not at all at the edge of range (at 1)
