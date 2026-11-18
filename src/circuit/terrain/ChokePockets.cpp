@@ -14,6 +14,7 @@
 #include "setup/SetupManager.h"
 #include "unit/ally/AllyUnit.h"
 #include "unit/enemy/EnemyManager.h"
+#include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitDef.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -37,9 +38,13 @@ using namespace springai;
 #define OUR_LEAVE		(FRAMES_PER_SEC * 60)  // our territory leaves this long after its last building went
 #define ENEMY_LEAVE		(FRAMES_PER_SEC * 120)  // and the enemy's
 #define ENEMY_HOLD_COST	150.f  // metal: a cheaper enemy building that isn't armed (a mex, a solar) holds no ground
+#define OWN_RATIO		1.5f  // where both sides have threat, one owns with this many times the other's
+#define ENEMY_ECO_FLOOR	150.f  // metal: less enemy eco than this in a region with no enemy guns (a lone mex) owns nothing
 #define MAX_DESTINATIONS	16
 
 static constexpr float NO_LIMIT = std::numeric_limits<float>::max();
+
+const int CChokeMap::ARMY_SEEN = FRAMES_PER_SEC * 60;
 
 void CChokeMap::SCutCache::Reset(std::vector<int>&& from, std::vector<float>&& cap, float limit, size_t regionCount)
 {
@@ -175,6 +180,72 @@ void CChokeMap::UpdateTerritory()
 	};
 	update(ourHold, ours, OUR_LEAVE, isOurTerritory);
 	update(enemyHold, theirs, ENEMY_LEAVE, isEnemyTerritory);
+}
+
+/*
+ * Nobody's where neither side has anything; one side's where only it has; where both have, the side with OWN_RATIO
+ * times the other's threat, else contested (both sides' eco and no guns is contested too). Enemy eco under
+ * ENEMY_ECO_FLOOR with no enemy guns counts as nothing: a sneaky mex doesn't flip a region in the middle of ours
+ */
+CChokeMap::Side CChokeMap::OwnerOf(const SStrength& ours, const SStrength& enemy)
+{
+	const bool isOurs = ours.IsAny(), isEnemy = (enemy.Threat() > 0.f) || (enemy.eco >= ENEMY_ECO_FLOOR);
+	if (isOurs != isEnemy) {
+		return isOurs ? Side::OURS : Side::ENEMY;
+	}
+	if (!isOurs) {
+		return Side::NONE;
+	}
+	const float power = ours.Threat(), threat = enemy.Threat();
+	if ((power > 0.f) && (power >= OWN_RATIO * threat)) {
+		return Side::OURS;
+	}
+	if ((threat > 0.f) && (threat >= OWN_RATIO * power)) {
+		return Side::ENEMY;
+	}
+	return Side::CONTESTED;
+}
+
+/*
+ * All the AI knows of the enemy: buildings until seen dead or their spot seen empty, armed mobiles seen (in sight or
+ * on radar) in the last ARMY_SEEN, at the last place seen, until that place is seen empty (hidden, as the rest of
+ * the AI skips them); aircraft and unidentified radar blips aside
+ */
+bool CChokeMap::IsCountedEnemy(const CEnemyUnit* enemy, int frame)
+{
+	const CCircuitDef* edef = enemy->GetCircuitDef();
+	return !enemy->IsHidden() && !enemy->IsFake() && (edef != nullptr) && !edef->IsAbleToFly()
+			&& (!edef->IsMobile() || (edef->IsAttacker() && enemy->IsRecentlySeen(frame, ARMY_SEEN)));
+}
+
+/*
+ * Armed ones bring threat (ours: power, as the influence map counts them); unarmed buildings bring eco, their metal
+ * cost
+ */
+void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideUnit>& outEnemies) const
+{
+	const int frame = circuit->GetLastFrame();
+	outOurs.clear();
+	outEnemies.clear();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if (cdef->IsAbleToFly() || (cdef->IsMobile() && !cdef->IsAttacker())) {
+			continue;
+		}
+		const bool isArmed = cdef->IsAttacker();
+		outOurs.push_back({kv.second->GetPos(frame), cdef->IsMobile(), cdef->GetMaxRange(),
+				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cdef->GetCostM()});
+	}
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+		const CEnemyUnit* enemy = kv.second;
+		if (!IsCountedEnemy(enemy, frame)) {
+			continue;
+		}
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		const bool isArmed = edef->IsAttacker();
+		outEnemies.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(),
+				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost()});
+	}
 }
 
 void CChokeMap::Analyze()

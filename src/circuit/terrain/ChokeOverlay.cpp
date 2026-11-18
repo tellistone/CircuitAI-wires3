@@ -44,12 +44,14 @@ namespace circuit {
 using namespace springai;
 
 #define LIVE_FRAMES		(FRAMES_PER_SEC * 10)  // layers fed by other modules redraw this often
+#define SIDES_FRAMES	(FRAMES_PER_SEC * 4)  // the sides layer follows units moving: it costs a few short messages
 #define TRAFFIC_SHOWN	1500  // busiest traffic cells drawn
 #define COMMAND			"choke_overlay"
 
 namespace {
 
-const char* LAYER_NAMES[] = {"chokes", "pockets", "lines", "ranks", "traffic", "spots", "radar", "regions", "turrets"};
+const char* LAYER_NAMES[] = {"chokes", "pockets", "lines", "ranks", "traffic", "spots", "radar", "regions", "sides",
+		"turrets"};
 
 AIColor ColourOf(int colour)
 {
@@ -80,6 +82,9 @@ CChokeOverlay::CChokeOverlay(CChokeMap* chokeMap)
 		, drawnVersion(-1)
 		, drawnFrame(-1)
 		, commandFrame(-1)
+		, isWidgetDrawn(false)
+		, isGridSent(false)
+		, isWidgetHinted(false)
 {
 	isLabels = !IsHumanIn(true);
 }
@@ -91,6 +96,8 @@ CChokeOverlay::~CChokeOverlay()
 void CChokeOverlay::SetAuthority(CCircuitAI* authority)
 {
 	circuit = authority;
+	isWidgetDrawn = false;  // the new authority may run on another machine
+	isGridSent = false;
 }
 
 bool CChokeOverlay::OnChat(CCircuitAI* ai, int playerId, const char* message)
@@ -152,15 +159,17 @@ void CChokeOverlay::Update()
 		return;
 	}
 	const bool isLive = (layer == Layer::LINES) || (layer == Layer::RANKS) || (layer == Layer::SPOTS)
-			|| (layer == Layer::RADAR) || (layer == Layer::TURRETS);
+			|| (layer == Layer::RADAR) || (layer == Layer::TURRETS) || (layer == Layer::SIDES);
+	const int liveFrames = (layer == Layer::SIDES) ? SIDES_FRAMES : LIVE_FRAMES;
 	const int frame = circuit->GetLastFrame();
-	if ((drawnVersion != chokeMap->GetVersion()) || (isLive && (frame >= drawnFrame + LIVE_FRAMES))) {
+	if ((drawnVersion != chokeMap->GetVersion()) || (isLive && (frame >= drawnFrame + liveFrames))) {
 		Draw();
 	}
 }
 
 void CChokeOverlay::OnGraphBuilt()
 {
+	isGridSent = false;
 	if (isOn) {
 		Say("threat graph rebuilt: " + DescribeGraph());
 	}
@@ -183,6 +192,7 @@ void CChokeOverlay::Toggle()
 	isOn = !isOn;
 	if (!isOn) {
 		Clear();
+		ClearWidget();
 		Say("off");
 		return;
 	}
@@ -421,6 +431,9 @@ void CChokeOverlay::Draw()
 	Clear();
 	drawnVersion = chokeMap->GetVersion();
 	drawnFrame = circuit->GetLastFrame();
+	if (!isOn || (layer != Layer::SIDES)) {
+		ClearWidget();
+	}
 	if (!isOn || !chokeMap->IsReady()) {
 		return;
 	}
@@ -437,6 +450,7 @@ void CChokeOverlay::Draw()
 		case Layer::SPOTS: DrawSpots(); break;
 		case Layer::RADAR: DrawRadar(); break;
 		case Layer::REGIONS: DrawRegions(graph); break;
+		case Layer::SIDES: DrawSides(); break;
 		case Layer::TURRETS: DrawTurrets(); break;
 		default: break;
 	}
@@ -463,20 +477,10 @@ void CChokeOverlay::DrawChokes(const CRegionGraph& graph)
 {
 	const SCellMask& mask = graph.GetMask();
 	for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
-		int a = choke.line.front(), b = choke.line.front();
-		float bestSq = -1.f;
-		for (int i : choke.line) {
-			for (int j : choke.line) {
-				const float sq = SQUARE(mask.CentreX(i) - mask.CentreX(j)) + SQUARE(mask.CentreZ(i) - mask.CentreZ(j));
-				if (sq > bestSq) {
-					bestSq = sq;
-					a = i;
-					b = j;
-				}
-			}
-		}
+		AIFloat3 a, b;
+		GetChokeEnds(graph, choke, a, b);
 		const Colour colour = choke.isDefensible ? Colour::GREEN : Colour::GREY;
-		AddLine(OnGround(mask.CentreX(a), mask.CentreZ(a)), OnGround(mask.CentreX(b), mask.CentreZ(b)), colour, 24.f);
+		AddLine(OnGround(a.x, a.z), OnGround(b.x, b.z), colour, 24.f);
 		AddLabel(OnGround(mask.CentreX(choke.centre), mask.CentreZ(choke.centre)),
 				utils::int_to_string(choke.id, "choke %i") + utils::int_to_string(choke.width, ", %i wide"));
 	}
@@ -763,6 +767,26 @@ void CChokeOverlay::DrawRegions(const CRegionGraph& graph)
 		}
 		AddLabel(centre, text);
 	}
+}
+
+void CChokeOverlay::GetChokeEnds(const CRegionGraph& graph, const CRegionGraph::SChoke& choke,
+		AIFloat3& outA, AIFloat3& outB) const
+{
+	const SCellMask& mask = graph.GetMask();
+	int a = choke.line.front(), b = choke.line.front();
+	float bestSq = -1.f;
+	for (int i : choke.line) {
+		for (int j : choke.line) {
+			const float sq = SQUARE(mask.CentreX(i) - mask.CentreX(j)) + SQUARE(mask.CentreZ(i) - mask.CentreZ(j));
+			if (sq > bestSq) {
+				bestSq = sq;
+				a = i;
+				b = j;
+			}
+		}
+	}
+	outA = AIFloat3(mask.CentreX(a), 0.f, mask.CentreZ(a));
+	outB = AIFloat3(mask.CentreX(b), 0.f, mask.CentreZ(b));
 }
 
 void CChokeOverlay::AddLine(const AIFloat3& from, const AIFloat3& to, Colour colour, float width)

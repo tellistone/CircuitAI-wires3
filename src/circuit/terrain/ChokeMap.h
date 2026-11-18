@@ -33,6 +33,7 @@ class CCircuitAI;
 class CCircuitDef;
 class CGameTask;
 class CChokeOverlay;
+class CEnemyUnit;
 
 /*
  * The shape of the map for one ally team: which gaps are chokes, which mex clusters sit behind which chokes, where
@@ -192,6 +193,32 @@ public:
 	std::vector<bool> GetShelteredBy(int region) const;
 	bool IsEnemyTerritory(int region) const { return isEnemyTerritory[region]; }
 	bool IsOurTerritory(int region) const { return isOurTerritory[region]; }
+
+	// Who owns ground (ChokePockets.cpp), by the units the AI knows of: the sides overlay tints regions and chokes by it
+	enum class Side: char {NONE, OURS, ENEMY, CONTESTED};
+	struct SSideUnit {
+		springai::AIFloat3 pos;
+		bool isMobile;
+		float range;
+		float threat;  // > 0: armed (ours: power)
+		float eco;  // unarmed buildings: metal
+	};
+	struct SStrength {
+		float mobile = 0.f;  // armed mobiles' threat (ours: power)
+		float statics = 0.f;  // armed buildings' threat
+		float eco = 0.f;  // metal in unarmed buildings
+		float Threat() const { return mobile + statics; }
+		bool IsAny() const { return (mobile > 0.f) || (statics > 0.f) || (eco > 0.f); }
+		void Add(const SSideUnit& u) {
+			(u.isMobile ? mobile : (u.threat > 0.f) ? statics : eco) += (u.threat > 0.f) ? u.threat : u.eco;
+		}
+	};
+	static const int ARMY_SEEN;  // frames: an enemy mobile counts where it was seen this long ago
+	static Side OwnerOf(const SStrength& ours, const SStrength& enemy);
+	static bool IsCountedEnemy(const CEnemyUnit* enemy, int frame);
+	// Both sides' units the owners count, aircraft aside: ours where they are now, enemy buildings until seen dead,
+	// armed enemy mobiles where they were seen in the last ARMY_SEEN. Constructors bring nothing
+	void GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideUnit>& outEnemies) const;
 	std::vector<int> GetOurRegions() const;  // our territory, or our side before we hold any
 	// Nearer our start box than any enemy source (true until both are known): the half of the map we defend
 	bool IsOurHalf(const springai::AIFloat3& pos) const;
