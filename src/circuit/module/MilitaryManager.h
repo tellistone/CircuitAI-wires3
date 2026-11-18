@@ -15,6 +15,7 @@
 #include "unit/CircuitDef.h"
 
 #include <algorithm>
+#include <array>
 #include <vector>
 #include <functional>
 #include <map>
@@ -96,13 +97,30 @@ public:
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
 	// Mines always get a new one (each lays its field somewhere else)
 	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
-	// An enemy heavy (enemy role, as GetEnemyCost) in radar or LOS within the last frames (CEnemyUnit::IsRecentlySeen).
-	// Anti-heavy hunting starts on a fresh sighting (AH_HUNT_FRAMES: new units, the army pull) and stops once none
-	// has been seen for much longer (AH_KEEP_FRAMES: squads disband), so a heavy dipping in and out of radar can't
-	// send the units back and forth
+	// A mobile enemy heavy (enemy role, as GetEnemyCost; buildings don't count, they stay targets) in radar or LOS within
+	// the last frames (CEnemyUnit::IsRecentlySeen). The army pull starts on a fresh sighting (AH_HUNT_FRAMES), and the hunt
+	// lasts until none has been seen for antiheavy.keep_sec (IsAhHunting: squads disband, new units go to the army), so a
+	// heavy dipping in and out of radar can't send the units back and forth
 	static constexpr int AH_HUNT_FRAMES = FRAMES_PER_SEC * 10;
-	static constexpr int AH_KEEP_FRAMES = FRAMES_PER_SEC * 60;
 	bool IsEnemyHeavySeen(int frames);
+	bool IsAhHunting() { return IsEnemyHeavySeen(antiHeavy.keepFrames); }
+	// Every known mobile enemy heavy: where it was last seen, and how long ago (frames)
+	struct SHeavySeen {
+		springai::AIFloat3 pos;
+		int age;
+	};
+	const std::vector<SHeavySeen>& GetHeavySightings() { IsEnemyHeavySeen(0); return heavySightings; }
+	// A quarry of this unit (CAntiHeavyTask::IsQuarryFor; isMobileOnly: not a building) in radar or LOS within range
+	bool IsQuarryWithin(CCircuitUnit* unit, float range, bool isMobileOnly) const;
+	// Where an anti-heavy unit was sent home for repair: a park spot near it scores lower for a while (CAntiHeavyTask)
+	void NoteAhRetreat(const springai::AIFloat3& pos);
+	bool IsNearAhRetreat(const springai::AIFloat3& pos, float radius);
+	/*
+	 * The ANTIHEAVY log, every minute, per anti-heavy unit type: unit-seconds by activity (CAntiHeavyTask::GetActivity,
+	 * sampled every second) and event counts, for comparing builds
+	 */
+	enum class AhNote: int {HUNT = 0, PARK, ENGAGE, FLEE, SHOT, RADAR_ONLY, FLEE_START, RETREAT, SCOOT, DROP, _SIZE_};
+	void NoteAh(const CCircuitDef* cdef, AhNote note) { ++ahStats[cdef->GetId()][static_cast<int>(note)]; }
 	CRetreatTask* EnqueueRetreat();
 	// Static artillery with behaviour.json "target_tiers" (CPriorityArtyTask)
 	IFighterTask* EnqueuePriorityArty();
@@ -248,9 +266,12 @@ public:
 	const SAntiAirCfg& GetAntiAirCfg() const { return antiAir; }
 	struct SAntiHeavyCfg {
 		float pathThreat;  // routes may not cross threat above this x the squad's allowance (as anti-air's cap); < 0 = no cap
-		float fleeMargin;  // flee when an armed mobile enemy (not the heavy being hunted, unless reloading) is within its range + this; < 0 = off
-		float fleeAllyThreat;  // no flee while escorts within fleeAllyRadius of the leader, net of the enemies, have this much power; < 0 = always flee
-		float fleeAllyRadius;
+		float fleeMargin;  // flee and pick-zone margins (CAntiHeavyTask::GetDangerStart, GetPickMargin); < 0 = off
+		float fleeAllyThreat;  // no flee while cover at the leader, net of the enemies, has this much power; < 0 = always flee
+		float fleeAllyRadius;  // escorts counted within this, while the cover map is off
+		int keepFrames;  // keep_sec: the hunt lasts this long after the last mobile heavy sighting (max: while one is known)
+		float spacing;  // the two units of a squad stand at least this far apart
+		int maxGroup;  // units in a squad when its type has no antiheavy_max_group; 0 = no limit
 	};
 	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
 	struct SResignCfg {
@@ -511,10 +532,12 @@ private:
 	void UpdateFight();
 	void UpdateCaptureHide();
 	// An enemy heavy seen within AH_HUNT_FRAMES: anti-heavy units in attack and gathering groups (where they go while
-	// there is none) and support tasks leave for anti-heavy squads, every 2 s; not while their group is fleeing, nor
-	// while it is fighting unless such a heavy is within the unit's weapon range (IsQuarryInRange)
+	// there is none) and support tasks leave for anti-heavy squads, every 2 s, if a heavy they can shoot is within their
+	// weapon range + 30 s of walking (IsQuarryWithin); not while their group is fleeing, and while it is fighting
+	// only for one within their weapon range
 	void UpdateAhPull();
-	bool IsQuarryInRange(CCircuitUnit* unit) const;
+	void UpdateAhStats();  // every second (NoteAh)
+	void LogAhStats();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
@@ -743,6 +766,10 @@ private:
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at
 	int heavySeenAge;  // frames since an enemy heavy was last in radar or LOS; max = none
+	std::vector<SHeavySeen> heavySightings;  // GetHeavySightings, for heavySeenFrame
+	std::vector<std::pair<springai::AIFloat3, int>> ahRetreats;  // NoteAhRetreat: where and when
+	std::map<CCircuitDef::Id, std::array<int, static_cast<int>(AhNote::_SIZE_)>> ahStats;  // NoteAh since the last log
+	std::set<int> ahReady;  // anti-heavy units whose weapon was ready at the last UpdateAhStats (shots)
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
 	SAttackCells attackCells;  // quota.attack_static_cells
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted

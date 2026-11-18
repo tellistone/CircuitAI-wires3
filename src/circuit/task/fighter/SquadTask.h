@@ -186,11 +186,12 @@ protected:
 	int pullFrame = 0;  // last pull-back
 
 	/*
-	 * Shoot and scoot: while engaged, a unit whose weapon is still reloading and that stands in ground threat steps
-	 * straight away from the target to just outside the target's ground range + its scoot margin (or a margin further
-	 * back, if already past that), and fights again once reloaded enough, or sooner if walking back into range would
-	 * take longer than the reload it has left. No scoot when there isn't time to get out and back before the weapon is
-	 * ready. The rest of the squad fights on. Scoots exist only while the squad is engaged: they end when it stops.
+	 * Shoot and scoot: while engaged, a unit whose weapon is still reloading and that stands within the target's ground
+	 * range + its scoot margin steps back (away from the target, along the line to its scoot anchor) to just outside
+	 * it, and fights again once reloaded enough, or sooner if walking back into range would take longer than the
+	 * reload it has left. Out of the target's reach it stays put and reloads (other enemies are the flee's job). No
+	 * scoot when there isn't time to get out and back before the weapon is ready. The rest of the squad fights on.
+	 * Scoots exist only while the squad is engaged: they end when it stops.
 	 * Call UpdateScoots every update; Attack, the pull-back and the regroup check skip scooting units
 	 */
 	static constexpr float DEFAULT_SCOOT_MARGIN = 100.f;  // reload_scoot_margin when unset (tasks may override)
@@ -203,9 +204,14 @@ protected:
 	// A scooting unit is reloaded enough. Default: drop its old target so the next Attack re-orders it, and (engaged)
 	// ask for an update now, or (not engaged) Start it on the squad's path
 	virtual void OnScootEnd(CCircuitUnit* unit, int frame, bool isEngaged);
+	virtual void OnScootStart(CCircuitUnit* unit) {}
+	// The point a scoot steps back towards, along the line from the target. Default: the unit itself (straight away)
+	virtual springai::AIFloat3 GetScootAnchor(CCircuitUnit* unit, const springai::AIFloat3& uPos) const { return uPos; }
+	// The move state a unit has when it isn't scooting. Default: its def's (maneuver when it has none, as artillery)
+	virtual int GetMoveState(CCircuitUnit* unit) const;
 	// Every update: scoot reloading units while engaged, and end the scoot of units reloaded enough, or whose walk back
 	// into range takes as long as the reload they have left. Not engaged: every scoot ends.
-	// A unit outside all ground threat doesn't start a scoot (it fights on). Re-checked once a second while scooting
+	// A unit out of the target's reach doesn't start a scoot (it reloads there). Re-checked once a second while scooting
 	void UpdateScoots(int frame);
 
 private:
@@ -216,13 +222,17 @@ private:
 	using Scoots = std::map<CCircuitUnit*, SScoot>;
 	// Starts (scoot == nullptr) or renews a scoot
 	void Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margin);
-	// Straight away from the target, just outside its ground range + margin
+	// The target's ground range (0 for a radar blip: the margin alone)
+	float GetTargetGroundRange() const;
+	// Away from the target towards the scoot anchor, just outside its ground range + margin
 	springai::AIFloat3 GetScootSpot(CCircuitUnit* unit, const springai::AIFloat3& uPos, float margin) const;
 	// Does walking dist take as long as the unit's weapon has left to reload?
 	bool IsWalkLongerThanReload(CCircuitUnit* unit, int frame, float dist) const;
 	// While scooting a unit is on hold position: the engine's idle auto-attack (weapon range + 200 elmos on
-	// maneuver) would otherwise walk it straight back in after its scoot move ends or it stops
+	// maneuver) would otherwise walk it straight back in after its scoot move ends or it stops. Off: GetMoveState
+protected:
 	void SetScootHold(CCircuitUnit* unit, bool isHold);
+private:
 	// Erases the scoot, gives the unit its move state back, then OnScootEnd
 	void EndScoot(Scoots::iterator it, int frame, bool isEngaged);
 	Scoots scoots;  // reloading units stepping out of reach (on hold position)
@@ -265,14 +275,18 @@ protected:
 	// Path for the leader to the nearest of goals within range, under GetPathThreatCap
 	void QueryPathMulti(const F3Vec& goals, float range, std::function<void (const CQueryPathMulti*)>&& apply);
 	// The nearest enemy we see now that can act and shoot the squad (IsGroundDanger; isGunship: gunships count),
-	// within its ground (or water) weapon range + margin of any squad unit; IsFleeIgnored enemies and high radar
-	// blips (planes) don't count. dangerThreat: the threat of every such enemy, each counted once
+	// within its ground (or water) weapon range + GetDangerStart + margin of any squad unit; IsFleeIgnored enemies and
+	// high radar blips (planes) don't count. dangerThreat: the GetFleeThreat of every such enemy, each counted once
 	CEnemyInfo* FindFleeDanger(float margin, bool isGunship, float& dangerThreat) const;
 	virtual bool IsFleeIgnored(CEnemyInfo* enemy) const { return false; }  // FindFleeDanger skips it
+	// An enemy's reach beyond its range before the flee margin. Default: none (anti-heavy: its own start margin)
+	virtual float GetDangerStart(const CEnemyInfo* enemy) const { return 0.f; }
+	// What an enemy weighs against cover. Default: its threat (anti-heavy: no cover outweighs one cover can't reach)
+	virtual float GetFleeThreat(CEnemyInfo* enemy) const;
 	// Escorts next to pos (our and allied armed units within allyRadius: mobile ones that aren't aircraft or of
 	// ownRole (main role, so squads of one kind can't cover each other), and static defences that can hit ground),
 	// minus enemyThreat, reach allyThreat
-	bool IsFleeCovered(const springai::AIFloat3& pos, float enemyThreat, float allyThreat, float allyRadius,
+	virtual bool IsFleeCovered(const springai::AIFloat3& pos, float enemyThreat, float allyThreat, float allyRadius,
 			CCircuitDef::RoleT ownRole) const;
 	// Flee goal for the leader away from dangerPos: a safe spot (attack/defend group leaders, else a defended mex
 	// cluster, else base) or the base (PickFleeSpot); nullptr if none. Fills fleeSpots

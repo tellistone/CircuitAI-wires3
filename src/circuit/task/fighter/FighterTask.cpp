@@ -257,7 +257,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			case FireSpot::HOLD: {  // every spot dangerous, here is safe: stay, fight what comes into range
 				claim.pos = firePos;
 				fireSpots.erase(unit);
-				unit->HoldFire(firePos, target, targetTile, timeout);
+				if (isHoldAttack && (firePos.SqDistance2D(tPos) <= SQUARE(order.range))) {
+					unit->Attack(target, targetTile, timeout);  // in range from here
+				} else {
+					unit->HoldFire(firePos, target, targetTile, timeout);
+				}
 			} break;
 			default: {  // no usable range (or melee spots off)
 				fireSpots.erase(unit);
@@ -275,7 +279,6 @@ namespace {
 const float FIRE_RADIUS   = 0.9f;   // arc spots, x range
 const float FIRE_BAND_MIN = 0.6f;   // own/kept spot no closer than this, x range (else step back out)
 const float FIRE_BAND_MAX = 0.95f;  // own/kept spot no farther than this, x range
-const float CROWD_RADIUS  = 80.f;   // claims within this count as crowding a spot
 const float CROWD_WEIGHT  = 0.5f;   // score per crowding claim (x attack_spot_threat)
 const int   ARC_STEPS     = 6;      // spots each side of our bearing, PI/24 apart (+-45 degrees)
 const float ARC_SPAN      = 0.25f;  // half the arc, x PI
@@ -419,7 +422,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	struct SCandidate {
 		AIFloat3 pos;
 		float threat;
-		int crowd;  // other claims within CROWD_RADIUS
+		int crowd;  // other claims within crowdRadius
 		float dist;  // walking distance / range
 		float walkPeak = -1.f;  // worst threat of a dangerous walk there, 0: safe walk; < 0: not walked yet
 		float cost = 0.f;  // with a safe walk
@@ -436,14 +439,14 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	const bool isSight = GetUnitSightLifts(unit, target, aimLift, targetLift);
 	std::vector<SCandidate> cands;
 	auto add = [&](const AIFloat3& p) {
-		if (isSight && (!terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)
-			|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p, WALK_CLIMB)))
+		if ((isSight && (!terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)
+			|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p, WALK_CLIMB))) || !IsFireSpotAllowed(p))
 		{
 			return;
 		}
 		int crowd = 0;
 		for (size_t i = 0; i < claims.size(); ++i) {
-			if ((i != self) && (claims[i].pos.SqDistance2D(p) < SQUARE(CROWD_RADIUS))) {
+			if ((i != self) && (claims[i].pos.SqDistance2D(p) < SQUARE(crowdRadius))) {
 				++crowd;
 			}
 		}

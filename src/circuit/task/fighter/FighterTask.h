@@ -139,11 +139,17 @@ protected:
 	virtual float GetEscapeSafeThreat() const { return -1.f; }
 	int attackRepeat = FRAMES_PER_SEC * 3;  // re-send attack orders this often (frames)
 	bool isFireSpotChase = true;  // at a firing spot: true = Attack order (engine may chase), false = fight from the spot
+	// HOLD with the target in weapon range: true = an Attack order on it (it shoots that target first, even on hold fire),
+	// false = fight at the spot (whatever comes into range)
+	bool isHoldAttack = false;
 	// > 0: a unit already ordered on the target is re-ordered for a tile change only once the target moved
 	// this far (elmos) from where it was at the last orders; the repeat timer still applies
 	float retargetMove = -1.f;
 	springai::AIFloat3 lastOrderTargetPos;
 	float fireSpotReach = -1.f;  // > 0: units farther than this x their fire range from the target get no attack order and keep travelling
+	float crowdRadius = 80.f;  // other claims within this of a firing spot crowd it (FindFireSpot)
+	// May a unit fire from p (FindFireSpot skips the spot if not)? Default: yes. Anti-heavy: outside its pick zones
+	virtual bool IsFireSpotAllowed(const springai::AIFloat3& p) const { return true; }
 	// Attack skips this unit (no attack order, keeps travelling). Default: fireSpotReach
 	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const;
 	// Attack leaves this unit alone: it is stepping out of the target's reach while it reloads (ISquadTask scoot)
