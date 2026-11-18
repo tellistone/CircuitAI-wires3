@@ -7,9 +7,10 @@
 --
 -- Who owns a region or a choke is decided by each side's threat there (armed units: mobile and static) and eco
 -- (unarmed buildings' metal): a side owns it where only it has anything, or where its threat is 1.5 times the
--- other's; where both sides have something and neither leads, it's contested; where neither has, nobody's.
+-- other's; where both sides have something and neither leads, it's contested; where neither has, nobody's. Enemy eco
+-- under 150 metal with no enemy guns (a lone mex) counts as nothing.
 -- Regions are tinted by owner: blue ours, red the enemy's, striped blue and red contested, clear nobody's. The tint
--- is stronger in the owner's territory. Thin lines are region borders.
+-- is stronger where the lines take the region as the owner's ground (below). Thin lines are region borders.
 -- Each choke is a gate drawn across its gap, wall to wall:
 -- - its core is its owner, counting the guns that reach its line: blue ours, red the enemy's, dashed blue and red
 --   contested, thin grey nobody's;
@@ -19,7 +20,8 @@
 --   where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the
 --   forward line, where ours would be if the enemy army were driven back to its buildings.
 -- The lines are cut between the ground each side owns (as tinted, once that has held 20 s), the enemy's side of the
--- map counting as theirs where we don't own it.
+-- map counting as theirs where we don't own it, and each side's ground only where it joins that side's main ground
+-- (on its side of the map) without crossing the other's: an army camped deep in the other's ground is an island.
 -- Each enemy the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building
 -- (red armed, pale unarmed), filled while in its sight or radar, an outline where it was last seen. An enemy you see
 -- with no mark is one the AI doesn't know of, so a spectator with full view can tell what the overlay is built on.
@@ -59,9 +61,9 @@ end
 
 local FILL = {  -- by region letter; u (nobody's) isn't drawn
 	o = Tint(BLUE, 0.16),  -- ours
-	O = Tint(BLUE, 0.30),  -- ours, with our buildings
+	O = Tint(BLUE, 0.30),  -- ours, and the lines take it as ours
 	e = Tint(RED, 0.16),  -- the enemy's
-	E = Tint(RED, 0.30),  -- the enemy's, with its buildings
+	E = Tint(RED, 0.30),  -- the enemy's, and the lines take it as theirs
 	cA = Tint(BLUE, 0.26),  -- contested: blue stripes
 	cB = Tint(RED, 0.26),  -- and red stripes
 }
@@ -694,8 +696,10 @@ local function MakeLegend()
 				.. w .. " / " .. casing.g .. "unseen" .. w .. ", " .. casing.h .. "enemy-held" .. w .. ", " .. casing.w .. "forward line",
 		"Posts at a gate's ends: towers reach it (" .. sides .. ", half and half both)",
 		"Choke gates: owner by the guns that reach them (" .. sides .. ", dashed contested, grey nobody's)",
-		"Regions: owner by the units in them (" .. sides .. ", striped contested, clear nobody's)",
-		"Owner: the only side there, or the side with 1.5x the other's threat. Hover for the numbers",
+		"Regions: owner by the units in them (" .. sides .. ", striped contested, clear nobody's), strong where the lines"
+				.. " take it (held 20 s, joined to its side's main ground)",
+		"Owner: the only side there (enemy eco under 150 metal alone is nothing), or the side with 1.5x the other's"
+				.. " threat. Hover for the numbers",
 		"Enemies the AI counts: " .. red .. "circle" .. w .. " unit, " .. red .. "square" .. w .. " building ("
 				.. Ink(KNOWN.e.colour) .. "pale" .. w .. " unarmed), filled seen now, outline last seen. Unmarked: unknown to it",
 	}

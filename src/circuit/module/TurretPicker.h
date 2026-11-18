@@ -40,8 +40,8 @@ struct STurretOrder {
  * (CSpotScorer guards one asset; this weighs everything around the spot). Each term is in metal, so a spot's worth
  * compares with the turret's cost (see CTurretValue):
  *   T, traffic: the traffic field over the cells in range, per cell length of its range across (2 x range / cell),
- *      is the income whose enemy routes pass under it in metal/s; x turret.horizon s. None while a spider or jumper
- *      type gates the threat graph (promoted: the biggest, or choke.gate_share of the enemy army)
+ *      is the income whose enemy routes pass under it in metal/s; x turret.horizon s. None while spiders and jumpers
+ *      are choke.gate_share of the enemy army (until they fall below half of that)
  *   A, our and allied unarmed buildings in range, at cost
  *   E, known enemy buildings in range seen in the last 3 minutes, at cost; an enemy mex at its income x
  *      turret.horizon. Mobiles don't count: they move on, and their routes are in T already

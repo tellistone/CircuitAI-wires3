@@ -27,6 +27,7 @@
 #include "UnitDef.h"
 
 #include <algorithm>
+#include <numeric>
 
 namespace circuit {
 
@@ -80,8 +81,7 @@ void CChokeMap::InitTypeSet()
 		ts.isInSet = (kind == MoveKind::GROUND) || (kind == MoveKind::AMPHIBIOUS) || ((kind == MoveKind::HOVER) && isWet);
 		ts.isDefault = ts.isInSet;
 	}
-	UpdateShares();
-	UpdateGating();
+	UpdateGating(UpdateShares());
 }
 
 /*
@@ -293,10 +293,7 @@ void CChokeMap::AddFactory(const AIFloat3& pos, int allyTeam)
  *   seen. Then the default types never seen leave.
  * - Joining: a factory that builds the type, or one of its units (no commanders), was seen.
  * - Leaving: every known factory for it was seen dead, and nothing of it was seen for 5 minutes.
- * - Promoted: the type with the most cost seen, and any type whose own cost reached choke.gate_share of the set's
- *   cost plus the prior, until it leaves. The prior counts for nobody here, so a lone Flea or a new factory's first
- *   units don't promote it.
- * - Gating (the types the threat graph is built on): see UpdateGating.
+ * - Gating (the masks the threat graph is built on): see UpdateGating.
  * Ships never join: they don't walk through chokes
  */
 CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
@@ -323,7 +320,6 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 				if (ts.isDefault) {
 					ts.isInSet = false;
 					ts.isDefault = false;
-					ts.isPromoted = false;
 				}
 			}
 		}
@@ -335,25 +331,10 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 			ts.isInSet = true;
 		} else if (ts.isInSet && !ts.isDefault && !isRecent && ts.factories.empty()) {
 			ts.isInSet = false;
-			ts.isPromoted = false;
 		}
 	}
-	const float total = UpdateShares();
-	int biggest = -1;
-	for (size_t c = 0; c < n; ++c) {
-		const STypeState& ts = typeStates[c];
-		if (ts.isInSet && (ts.cost > 0.f) && ((biggest < 0) || (ts.cost > typeStates[biggest].cost))) {
-			biggest = c;
-		}
-	}
-	for (size_t c = 0; c < n; ++c) {
-		STypeState& ts = typeStates[c];
-		if (ts.isInSet && (((int)c == biggest) || (ts.cost >= config.gateShare * (total + SHARE_PRIOR)))) {
-			ts.isPromoted = true;
-		}
-	}
-
-	UpdateGating();
+	const bool wasCrosser = isCliffCrosserArmy;
+	UpdateGating(UpdateShares());
 
 	STypeChange change;
 	for (size_t c = 0; c < n; ++c) {
@@ -364,47 +345,90 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 		}
 		change.isGating |= (IsGating(c) != wasGating[c]);
 	}
-	if (change.isGating || !change.joined.empty() || !change.left.empty()) {
+	if (change.isGating || !change.joined.empty() || !change.left.empty() || (isCliffCrosserArmy != wasCrosser)) {
 		circuit->LOG("CHOKE type set: %s", DescribeTypeSet().c_str());
 	}
 	return change;
 }
 
 /*
- * The types the threat graph is built on: the vehicles (the most restrictive, in the set or not) until an enemy army
- * is seen, then the promoted types (UpdateTypeSet). With none promoted (they all left), the vehicles again; with no
- * vehicle type in the game, the ground types and hovers
+ * The threat graph's masks, one per SMoveClass::graphClass: spiders and jumpers count with the kbots they walk as. A
+ * mask's share is the faded army cost of the types that walk as it over the set's total plus the prior, which counts
+ * for nobody: a lone Flea or a new factory's first units don't reach it. A mask gates once its share reaches
+ * choke.gate_share, or once it is the biggest of an army of at least the prior, and stops when its share falls below
+ * half of choke.gate_share: the graph follows the army's mix both ways, and a mix near the line doesn't flip it on
+ * every scan. Until a mask first gates (no army seen yet), the vehicles gate: the ground types that climb the least,
+ * so the most regions; with no vehicle type in the game, the ground types and hovers. Once one has, an army that
+ * died or faded under the prior keeps the masks it had: the graph doesn't flip back and forth over a few units.
+ * The spiders' and jumpers' own share (the turret picker drops traffic for it) switches the same way
  */
-void CChokeMap::UpdateGating()
+void CChokeMap::UpdateGating(float total)
 {
-	bool isPromoted = false, isVehicle = false;
-	for (size_t c = 0; c < typeStates.size(); ++c) {
-		isPromoted |= typeStates[c].isInSet && typeStates[c].isPromoted;
-		isVehicle |= moveClasses[c].isVehicle;
+	const size_t n = typeStates.size();
+	const float denom = total + SHARE_PRIOR;
+	const float off = 0.5f * config.gateShare;
+	std::vector<float> maskCost(n, 0.f);
+	float crosserCost = 0.f;
+	bool isVehicle = false;
+	for (size_t c = 0; c < n; ++c) {
+		const SMoveClass& mc = moveClasses[c];
+		isVehicle |= mc.isVehicle;
+		if (typeStates[c].isInSet) {
+			maskCost[mc.graphClass] += typeStates[c].cost;
+			if ((mc.kind == MoveKind::CLIMBER) || (mc.kind == MoveKind::JUMPER)) {
+				crosserCost += typeStates[c].cost;
+			}
+		}
 	}
-	for (size_t c = 0; c < typeStates.size(); ++c) {
+	int biggest = -1;
+	for (size_t c = 0; c < n; ++c) {
+		if ((maskCost[c] > 0.f) && ((biggest < 0) || (maskCost[c] > maskCost[biggest]))) {
+			biggest = c;
+		}
+	}
+	bool isAnyMask = false;
+	for (size_t c = 0; c < n; ++c) {
 		STypeState& ts = typeStates[c];
-		ts.isGating = isPromoted ? (ts.isInSet && ts.isPromoted)
+		ts.graphShare = maskCost[c] / denom;
+		ts.isMaskOn = (ts.graphShare >= config.gateShare) || (((int)c == biggest) && (total >= SHARE_PRIOR))
+				|| (ts.isMaskOn && (ts.graphShare >= off));
+		isAnyMask |= ts.isMaskOn;
+	}
+	isArmyGraph |= isAnyMask;
+	for (size_t c = 0; (c < n) && (isAnyMask || !isArmyGraph); ++c) {
+		typeStates[c].isGating = isAnyMask ? typeStates[c].isMaskOn
 				: isVehicle ? moveClasses[c].isVehicle
 				: (moveClasses[c].role == MoveRole::GATING);
 	}
+	const float crosserShare = crosserCost / denom;
+	isCliffCrosserArmy = (crosserShare >= config.gateShare) || (isCliffCrosserArmy && (crosserShare >= off));
 }
 
+/*
+ * Each type in the set: what it shapes the graph as, and its graph share (UpdateGating). A type walking as another
+ * shows its own cost's share; a mask gating for a type not in the set (the vehicles' default) is "assumed"
+ */
 std::string CChokeMap::DescribeTypeSet() const
 {
 	std::string text;
+	const float denom = std::accumulate(typeStates.begin(), typeStates.end(), SHARE_PRIOR,
+			[](float sum, const STypeState& ts) { return ts.isInSet ? sum + ts.cost : sum; });
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		const STypeState& ts = typeStates[c];
+		const int g = moveClasses[c].graphClass;
 		if (!ts.isInSet) {
 			if (ts.isGating) {
-				text += (text.empty() ? "" : " ") + moveClasses[c].name + "(gating, assumed)";
+				text += (text.empty() ? "" : " ") + moveClasses[c].name
+						+ (ts.isMaskOn ? utils::float_to_string(ts.graphShare, "(gating %.2f)") : "(gating, assumed)");
 			}
 			continue;
 		}
-		text += (text.empty() ? "" : " ") + moveClasses[c].name + (!IsGating(c) ? "(leak "
-				: ((int)c != moveClasses[c].graphClass) ? "(gating as " + moveClasses[moveClasses[c].graphClass].name + " "
-				: (moveClasses[c].role == MoveRole::LEAK) ? "(promoted to gating " : "(gating ")
-				+ utils::float_to_string(ts.share, "%.2f)");
+		text += (text.empty() ? "" : " ") + moveClasses[c].name
+				+ (((int)c != g) ? "(as " + moveClasses[g].name + utils::float_to_string(ts.cost / denom, " %.2f)")
+				: utils::float_to_string(ts.graphShare, IsGating(c) ? "(gating %.2f)" : "(leak %.2f)"));
+	}
+	if (isCliffCrosserArmy) {
+		text += "; spiders and jumpers are a big share";
 	}
 	return text;
 }

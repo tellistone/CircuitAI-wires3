@@ -168,7 +168,7 @@
 	"near": 2.5,  // furthest useful entrance from a defence point
 	"setback": [0.6, 0.8],  // ideal tower distance behind a choke's line, in the tower's weapon ranges
 	"lane": 96.0,  // elmos: corridor kept free of buildings (but mexes) through chokes under 3x this wide
-	"gate_share": 0.25,  // an enemy type shapes the threat graph once its cost reaches this share of the enemy army seen + 300 metal (the biggest always does)
+	"gate_share": 0.25,  // a graph mask (a way of walking: spiders and jumpers count as kbots) shapes the threat graph once its cost reaches this share of the enemy army seen + 300 metal (or it is the biggest of 300 metal), until it falls below half of this
 	"traffic": {"spread": 0.15},  // width of the enemy's traffic corridors, as a share of the route's length
 	"openness": {"bands": [0.35, 0.65, 0.05]},  // [<chokepointed below>, <open above>, <margin around them>]
 	"spot": {
@@ -208,7 +208,7 @@
 "turret": {
 	"radius": 600,  // elmos from the centre a turret may stand
 	"min_value": 1.0,  // a spot's value (T + A + E + C, x height) must reach this x the turret's cost
-	"traffic": 1.0,  // weight of T, the enemy traffic in range; none while spiders or jumpers are promoted (choke.gate_share)
+	"traffic": 1.0,  // weight of T, the enemy traffic in range; none while spiders and jumpers are choke.gate_share of the enemy army (until under half of it)
 	"horizon": 120,  // seconds of threatened income that T counts (and an enemy mex in E)
 	"ally": 1.0,  // weight of A
 	"enemy": 1.0,  // weight of E

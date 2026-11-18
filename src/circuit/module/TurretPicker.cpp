@@ -344,7 +344,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	const CTrafficField& field = chokeMap->GetTraffic();
 	// None while a spider or jumper type is a big part of the enemy's army: the threat graph walks them as kbots, and
 	// their routes over cliffs aren't the turret's to cover
-	if (isChokeReady && !field.IsEmpty() && (config.traffic > 0.f) && !chokeMap->IsCliffCrosserGating()) {
+	if (isChokeReady && !field.IsEmpty() && (config.traffic > 0.f) && !chokeMap->IsCliffCrosserArmy()) {
 		const int cellSize = field.GetCellSize();
 		ForEachCellIn(field.GetWidth(), field.GetHeight(), cellSize, centre.x - reach, centre.z - reach,
 				centre.x + reach, centre.z + reach, [&](int x, int z) {

@@ -31,7 +31,6 @@ namespace circuit {
 
 using namespace springai;
 
-#define RECENT_FRAMES	(FRAMES_PER_SEC * 180)  // enemies and our LOS samples count this long
 #define COMMIT_FRAMES	(FRAMES_PER_SEC * 240)  // an objective lasts at most this long
 #define BUILDER_HALF	(FRAMES_PER_SEC * 60)  // an unseen enemy constructor's value halves this often
 #define INCOME_SEC		180.f  // an objective's gain: this much of the income it brings behind the line
@@ -78,17 +77,16 @@ void CFrontline::Update()
 		objective = SObjective();
 		return;
 	}
-	// Armed enemies, once for every choke
+	// Armed enemies, once for every choke: the ones the held ground counts (CChokeMap::IsCountedEnemy), so the lines
+	// and what they're ranked by forget an army at the same time
 	const int frame = circuit->GetLastFrame();
 	std::vector<SArmed> armed;
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
-		CCircuitDef* edef = enemy->GetCircuitDef();
-		if (!enemy->IsDead() && !enemy->IsFake() && (edef != nullptr) && edef->IsAttacker()
-			&& (!edef->IsMobile() || enemy->IsRecentlySeen(frame, RECENT_FRAMES)))  // towers count until seen dead
-		{
+		if (CChokeMap::IsCountedEnemy(enemy, frame) && enemy->GetCircuitDef()->IsAttacker()) {
+			const CCircuitDef* edef = enemy->GetCircuitDef();
 			armed.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(), enemy->GetThreat(),
-					enemy->GetCost(), !edef->IsMobile() || enemy->IsRecentlySeen(frame, CChokeMap::ARMY_SEEN)});
+					enemy->GetCost()});
 		}
 	}
 	UpdateRanks(armed);
@@ -127,8 +125,8 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
 		CCircuitDef* edef = enemy->GetCircuitDef();
-		if (enemy->IsDead() || enemy->IsFake() || (edef == nullptr) || edef->IsAttacker()) {
-			continue;
+		if (enemy->IsHidden() || enemy->IsFake() || (edef == nullptr) || edef->IsAttacker() || edef->IsAbleToFly()) {
+			continue;  // gone (seen dead, or its spot seen empty), or not there to take
 		}
 		const int region = chokeMap->GetRegionAt(enemy->GetPos());
 		if (region < 0) {
@@ -180,7 +178,7 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 		}
 
 		// Confidence: samples on its line, and beyond it on the enemy's side (its outer side, else the side that is
-		// enemy ground), in our LOS within the last 3 minutes
+		// enemy ground), in our LOS within the last minute: as long as an army seen there counts
 		std::vector<AIFloat3> samples;
 		const int count = std::min<int>(SAMPLE_COUNT, choke.line.size());
 		for (int i = 0; i < count; ++i) {
@@ -218,13 +216,13 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 			}
 		}
 		std::vector<int>& seen = sampleSeen[choke.id];
-		seen.resize(samples.size(), -RECENT_FRAMES - 1);
+		seen.resize(samples.size(), -CChokeMap::ARMY_SEEN - 1);
 		int fresh = 0, freshBeyond = 0;
 		for (size_t i = 0; i < samples.size(); ++i) {
 			if (mapMgr->IsInLOS(samples[i])) {
 				seen[i] = frame;
 			}
-			if (frame - seen[i] <= RECENT_FRAMES) {
+			if (frame - seen[i] <= CChokeMap::ARMY_SEEN) {
 				if (i < (size_t)count) {
 					++fresh;
 				} else {
@@ -286,7 +284,7 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CCircuitDef* cdef = kv.second->GetCircuitDef();
 		if (!cdef->IsMobile() && cdef->IsAttacker()) {
-			towers.push_back({kv.second->GetPos(frame), false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f, true});
+			towers.push_back({kv.second->GetPos(frame), false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f});
 		}
 	}
 	// Enemy mobiles in the region outside a line choke: each threatens the nearest of its region's line chokes in full,
@@ -299,7 +297,7 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 	}
 	std::vector<float> wanted(line.size(), 0.f), wantedCost(line.size(), 0.f);
 	for (const SArmed& e : armed) {
-		const int region = (e.isMobile && e.isRecent) ? chokeMap->GetRegionAt(e.pos) : -1;
+		const int region = e.isMobile ? chokeMap->GetRegionAt(e.pos) : -1;
 		if (region < 0) {
 			continue;
 		}

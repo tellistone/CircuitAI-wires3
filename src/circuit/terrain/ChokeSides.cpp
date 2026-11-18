@@ -63,8 +63,8 @@ void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView
 	for (size_t r = 0; r < regionViews.size(); ++r) {
 		SView& view = regionViews[r];
 		view.side = CChokeMap::OwnerOf(view.ours, view.enemy);
-		view.isTerritory = ((view.side == Side::OURS) && chokeMap->IsOurTerritory(r))
-				|| ((view.side == Side::ENEMY) && chokeMap->IsEnemyTerritory(r));
+		view.isHeld = ((view.side == Side::OURS) && chokeMap->IsOurGround(r))
+				|| ((view.side == Side::ENEMY) && chokeMap->IsEnemyGround(r));
 	}
 
 	const float mainRange = chokeMap->GetMainRange();
@@ -134,16 +134,20 @@ std::string CChokeOverlay::MakeInfo(const std::vector<SView>& regionViews, const
 	for (size_t r = 0; r < regionViews.size(); ++r) {
 		const CRegionGraph::SRegion& region = graph.GetRegions()[r];
 		const SView& view = regionViews[r];
-		// Where the ground the lines are cut between isn't the owner yet (or still): it settles in 20 s
+		// Where the ground the lines go by isn't the owner: it settles in 20 s, and counts only joined to its side's
+		// main ground
 		const bool isOurGround = chokeMap->IsOurGround(r), isEnemyGround = chokeMap->IsEnemyGround(r);
+		const Side settled = chokeMap->GetSettledOwner(r);
 		const char* ground = (isOurGround == (view.side == Side::OURS)) && (isEnemyGround == (view.side == Side::ENEMY))
 				? ""
+				: ((settled == view.side) && (view.side == Side::OURS)) ? "|lines: cut off from our main ground"
+				: ((settled == view.side) && (view.side == Side::ENEMY) && !isEnemyGround)
+						? "|lines: cut off from the enemy's main ground"
 				: isOurGround ? "|lines: still our ground"
 				: !isEnemyGround ? "|lines: nobody's ground yet"
 				: chokeMap->IsEnemySide(r) ? "|lines: enemy ground (their side)" : "|lines: still enemy ground";
-		const char* territory = !view.isTerritory ? "" : (view.side == Side::OURS) ? "|our territory" : "|enemy territory";
 		put('r', r, mask.CentreX(region.centre), mask.CentreZ(region.centre), view,
-				utils::int_to_string(region.id, "Region %i") + territory + ground);
+				utils::int_to_string(region.id, "Region %i") + ground);
 	}
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
 	for (size_t c = 0; c < chokes.size(); ++c) {
@@ -195,8 +199,8 @@ void CChokeOverlay::DrawSides()
 /*
  * One message each, prefixed circuit_sides_<verb>:<ally team>. Positions in whole elmos
  * - grid: width height cellSize, then (region index, count) runs over the cells row by row; -1 is a wall
- * - state: a letter per region index: u nobody's, o ours, e the enemy's, c contested; capital in that side's
- *   territory
+ * - state: a letter per region index: u nobody's, o ours, e the enemy's, c contested; capital where the lines
+ *   take it as that side's ground (settled, and joined to its main ground)
  * - control, lines, info, known: a record per line, after the header line
  *   control: who defended x1 z1 x2 z2, a choke's line end to end. Who controls it: n nobody, o ours, e the enemy,
  *   c contested. Whose towers reach its line: n nobody's, o ours, e the enemy's, b both sides'
@@ -249,7 +253,7 @@ void CChokeOverlay::SendWidgetData()
 	std::string letters(regionViews.size(), 'u');
 	for (size_t r = 0; r < regionViews.size(); ++r) {
 		const char letter = sideLetters[static_cast<int>(regionViews[r].side)];
-		letters[r] = regionViews[r].isTerritory ? (char)std::toupper(letter) : letter;
+		letters[r] = regionViews[r].isHeld ? (char)std::toupper(letter) : letter;
 	}
 	CallWidget("state", " " + letters);
 

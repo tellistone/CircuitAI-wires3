@@ -18,34 +18,36 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
   crossable neighbours that no pair of pixels crosses between (a thin diagonal cliff), one closes. The open
   areas become regions, and the narrow gaps between them become chokes. A choke is *defensible* when it is at most `choke.defensible` main-tower ranges wide. A type
   that doesn't shape the graph is a *leak* type, and each cluster keeps a tower of its own against leaks and anything
-  else the cut doesn't stop. Amphibious bots, spiders and jumpers start as leaks; jumpers cross a wall when it is no
-  longer than their jump along a row or a column of cells. Until an enemy army is seen (armed mobiles: constructors
-  and commanders don't count), the graph assumes vehicles, the ground types that climb the least, so it starts with
-  the most regions. Once an army has been seen, a type gates when it has the most cost seen, or once its own cost
-  reaches `choke.gate_share` of the enemy army seen plus a 300-metal prior, so a lone early unit or a new factory's
-  first units can't flip the graph. It stays gating until it leaves the game. If every gating type leaves, the graph
-  assumes vehicles again.
-  Spiders and jumpers gate as kbots: a gating jumper type adds its own type's walking cells to the graph, a gating
-  spider type the cells of the ground type that climbs the steepest (bots), so the cliffs they cross stay walls and
-  their promotion can't collapse the map into one region. Their own cells still drive their traffic and reach. A
-  gating amphibious type still adds its own cells, water included.
+  else the cut doesn't stop. Jumpers cross a wall when it is no longer than their jump along a row or a column of
+  cells. The graph is built from a few *masks*, one per way of walking: each ground type's, the amphibious bots',
+  the hovers'. Spiders and jumpers count for the kbots' mask (a jumper type for its own type walking, a spider type
+  for the ground type that climbs the steepest, bots), so the cliffs they cross stay walls and they can't collapse
+  the map into one region; their own cells still drive their traffic and reach. A mask's share is the faded army cost
+  of the types that walk as it (armed mobiles: constructors and commanders don't count) over the enemy army seen plus
+  a 300-metal prior. A mask gates once its share reaches `choke.gate_share`, or once it is the biggest of an army of
+  at least 300 metal, and stops when its share falls below half of `choke.gate_share`. So the graph follows the
+  army's mix both ways, a lone early unit or a new factory's first units can't flip it, and a mix near the line
+  doesn't flip it back and forth. Until a mask first gates (no army seen yet), the graph assumes vehicles, the ground
+  types that climb the least, so it starts with the most regions. After that, an army that died or faded under the
+  prior keeps the masks it had.
 - **Enemy types.** The opening default holds until a factory has been seen for every enemy team, or for 5 minutes. A
   type joins when a factory that builds it or one of its units is seen. It leaves only when every known factory for it
   is dead and none of its units has been seen for 5 minutes.
-- **Sides and territory.** Map sides come from start boxes and enemy factories only. Territory comes from buildings
-  in each region: a region joins 20 s after the first building is seen there. It leaves 60 s after our last one, or
-  120 s after the enemy's last. Only enemy towers and enemy buildings of at least 150 metal count, so a lone radar or
-  wall doesn't flip a region. Territory qualifies pockets and weighs radar; the lines follow held ground (below).
+- **Sides.** Map sides come from start boxes and enemy factories only.
 - **Pockets.** Each defence point (`CDefenceMatrix`) gets its entrances from the enemy side: the fewest chokes the
   enemy must pass to walk in. Points with more than `choke.entrances` entrances are *open*. Points that share a cut
   form a *pocket*. A pocket is *qualified* when every entrance is defensible, within `choke.near` ranges of its
-  points, and has no enemy territory right outside it.
+  points, and has none of the enemy's built ground (held ground, below, with their towers or 150 metal of their eco
+  in it, or on their side of the map) right outside it, so an army passing doesn't move the towers.
 - **Held ground.** Who owns each region by the units the AI knows of, armies included, as the `sides` overlay tints
   it: ours where only we have anything there or our threat is 1.5× theirs, the enemy's likewise, contested where both
-  have something and neither leads, nobody's where neither has. Enemy mobiles count where they were last seen, for a
-  minute. A region's owner holds it for the lines once it has owned it for 20 s, so a raid passing through doesn't
-  move them. The enemy also holds its side of the map where we don't own it, so an unscouted base still counts as
-  theirs.
+  have something and neither leads, nobody's where neither has. Enemy eco under 150 metal with no enemy guns (a lone
+  mex) counts as nothing. Enemy mobiles count where they were last seen, for a minute, and none counts once the AI
+  has seen that spot empty. A region's owner holds it once it has owned it for 20 s, so a raid passing through
+  doesn't move the lines. The enemy also holds its side of the map where we don't own it, so an unscouted base still
+  counts as theirs. Each side's ground counts only where it joins that side's main ground (its regions on its side
+  of the map) without crossing the other's, so an army camped deep in the other's ground is an island, not a new
+  front. Held ground is the one ground model: the lines, pocket qualification and the radar planner go by it.
 - **Lines.** Cut between held ground; a choke too wide to defend counts double. The *current line* is the cut nearest
   our ground against the enemy's. The *enemy line* is the same cut nearest the enemy's ground, its mirror. Where the
   narrowest gap between the sides is one set of chokes, the two are the same; contested and nobody's ground between
@@ -63,9 +65,11 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
 - **Lanes** (with `choke.enable`). A corridor `choke.lane` wide through every choke narrower than 3 lanes is kept
   free of buildings, except mexes, so our own towers and walls never close it.
 
-The graph is rebuilt when the gating types change, and when the terrain changes what they can cross. Craters and the
+The graph is rebuilt when the gating masks change, and when the terrain changes what they can cross. Craters and the
 ground levelled under buildings change it through every fight, so the terrain alone rebuilds it at most every 5
-minutes; a terraformed wall or ramp shows within that. Choke ids carry over either way. A new choke waits 20 s before
+minutes, unless the change opens a new crossing: newly crossable cells joining two of the graph's regions (a wall
+blown through, a terraformed ramp), which rebuilds it at once (the masks are made again at most every 30 s). Choke
+ids carry over either way. A new choke waits 20 s before
 anything acts on it.
 
 ## Features and their flags
@@ -99,7 +103,7 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.near` | `2.5` | Furthest useful entrance from a defence point. |
 | `choke.setback` | `[0.6, 0.8]` | Ideal tower distance behind a choke's line, in the tower's own weapon ranges. |
 | `choke.lane` | `96` | Elmos. Width of the corridor kept free of buildings. |
-| `choke.gate_share` | `0.25` | Share of the enemy army seen (plus a 300-metal prior) a leak type's cost must reach to start gating. |
+| `choke.gate_share` | `0.25` | Share of the enemy army seen (plus a 300-metal prior) a graph mask's cost must reach to start gating; it stops below half of this. Spiders and jumpers switch the turret picker's T off and on at the same shares. |
 | `choke.traffic.spread` | `0.15` | Width of the traffic corridors, as a share of the route's length. |
 | `choke.openness.bands` | `[0.35, 0.65, 0.05]` | Chokepointed below, open above, and the margin around them. |
 | `choke.spot.radius` | `300` | Elmos from a defence point its towers may stand. |
@@ -110,7 +114,7 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.spot.forward` | `0.5` | Lean of a defence point's, the base's and the radar guard's towers the way the enemy comes from: a spot a radius toward the point's approach scores up to this much more than one a radius away from it. 0 turns it off. |
 | `choke.radar.min_gain` | `0.02` | Share of the map's weight a radar must add to the coverage. |
 | `choke.radar.share` | `0.05` | Share of each AI's metal income its radar budget grows by. The budget starts with one radar and holds two at most. |
-| `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and enemy territory on ours), × our mex income. |
+| `choke.radar.enemy` | `2.0` | Extra weight of enemy ground (the enemy's half of the map, and the enemy's held ground on ours), × our mex income. |
 | `choke.radar.inside` | `0.25` | A builder standing in coverage builds a radar only if at least this share of its view (by weight) is new. |
 | `choke.radar.guard` | `"turretmissile"` | Tower queued once a new radar stands, at the best spot near it. `""` turns it off. |
 | `choke.radar.guard_radius` | `300` | Elmos from the radar the guard tower may stand. |
@@ -124,7 +128,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 |---|---|---|
 | `turret.radius` | `600` | Elmos from the order's centre a turret may stand. |
 | `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height) must reach this × the turret's cost. |
-| `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. T is left out while a spider or jumper type gates the threat graph (it is the biggest type or has reached `choke.gate_share`): then a turret pays for itself in A, E and C alone. |
+| `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. T is left out while spiders and jumpers are `choke.gate_share` of the enemy army (until they fall below half of that): then a turret pays for itself in A, E and C alone. |
 | `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
 | `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. |
 | `turret.enemy` | `1.0` | Weight of E, the enemies a turret could shoot. |
@@ -161,8 +165,9 @@ players are ignored. A spectator may use it only in games with no human opponent
 
 The AI answers in ally chat and in its log, as `CHOKE overlay: ...`. While the overlay is on, it also says when the
 threat graph is rebuilt, with the enemy types behind it, for example `threat graph rebuilt: 14 regions, 19 chokes;
-enemy types: TANK3(gating 0.60) TKBOT3(gating as KBOT2 0.35)`. Before an army is seen, the vehicles show as
-`(gating, assumed)` once the opening default has left the set.
+enemy types: TANK3(gating 0.40) KBOT2(gating 0.45) TKBOT3(as KBOT2 0.35)`: each type's graph mask and its share
+(a type walking as another shows its own share, which counts for that mask), `leak` for a mask that doesn't gate.
+Before an army is seen, the vehicles show as `(gating, assumed)` once the opening default has left the set.
 
 ### Layers
 
@@ -171,12 +176,12 @@ enemy types: TANK3(gating 0.60) TKBOT3(gating as KBOT2 0.35)`. Before an army is
 | `chokes` | Each choke from end to end of its line: green when defensible, grey when not. Lanes are yellow rectangles. |
 | `pockets` | Each pocket's entrances by mode: green at chokes, white on cluster, grey not decided yet. Blue lines link its points to them. Points are red when open, green gated, grey unreached. Magenta marks the anchors of choke points. |
 | `lines` | The current line orange, the forward line yellow, the enemy line red, the front line white, the objective magenta. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
-| `ranks` | Enemy-held chokes and the enemy line's: red when defended, white when undefended, grey when not seen enough to say. Labels say which, and give the defence, the unarmed value behind and the share seen in the last 3 minutes. |
+| `ranks` | Enemy-held chokes and the enemy line's: red when defended, white when undefended, grey when not seen enough to say. Labels say which, and give the defence, the unarmed value behind and the share seen in the last minute. |
 | `traffic` | The busiest cells of the blended traffic field: bigger and redder the busier. |
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
 | `regions` | The graph itself: region centres linked to their chokes. On the threat graph, our side is green and the enemy's side red. |
-| `sides` | Who controls each region and choke, and the lines by rank and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger in that side's territory, striped blue and red where contested, and clear where nobody is; thin region borders. Each choke is a gate across its gap, wall to wall. Its core is its owner: blue ours, red the enemy's, dashed contested, thin grey nobody's. Posts at its ends mean towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended. A casing round the core marks a choke on a line: green our current line where its towers cover what it wants, orange where it's short, with a white rim on the front line; the enemy line dark red where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the forward line. The lines are cut between held ground, so they follow the tint once it has held 20 s; a region's info box says when the lines still take it otherwise. Each enemy unit the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building (red armed, pale unarmed), filled while in its sight or radar and an outline where it was last seen, so a spectator with full view can see which enemies the AI knows of. When the AI's LOS cheating option is on, the bottom line says so in red (the infolog says `LOS cheating: on` at start). A legend is printed bottom left. With labels on, info boxes give the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, the ranked chokes' defence and seen share, and our line's wanted and tower power. The cursor's region and choke get boxes beside the cursor; zoomed in, owned chokes and regions near the camera get one beside them, as many as fit. Without the widget it shows the `lines` layer. |
+| `sides` | Who controls each region and choke, and the lines by rank and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger where the lines take the region as that side's held ground, striped blue and red where contested, and clear where nobody is; thin region borders. Each choke is a gate across its gap, wall to wall. Its core is its owner: blue ours, red the enemy's, dashed contested, thin grey nobody's. Posts at its ends mean towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended. A casing round the core marks a choke on a line: green our current line where its towers cover what it wants, orange where it's short, with a white rim on the front line; the enemy line dark red where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the forward line. The lines are cut between held ground, so they follow the tint once it has held 20 s and joins its side's main ground; a region's info box says when the lines still take it otherwise, or that it is cut off. Each enemy unit the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building (red armed, pale unarmed), filled while in its sight or radar and an outline where it was last seen, so a spectator with full view can see which enemies the AI knows of. When the AI's LOS cheating option is on, the bottom line says so in red (the infolog says `LOS cheating: on` at start). A legend is printed bottom left. With labels on, info boxes give the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, the ranked chokes' defence and seen share, and our line's wanted and tower power. The cursor's region and choke get boxes beside the cursor; zoomed in, owned chokes and regions near the camera get one beside them, as many as fit. Without the widget it shows the `lines` layer. |
 | `turrets` | The last turret order: its radius ring and centre white, the candidates that passed the hard rules grey, the best green, the next 4 cyan, and those outside our buildings' influence dark red. Tested spots are labelled with their value ÷ cost and F, the chosen one with its def and the four terms. |
 
 Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`) redraw every 10 s, and `sides` every
@@ -187,14 +192,16 @@ Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`
 Ownership comes from units, so ground nobody stands on is nobody's. Each side has three numbers at a region or a
 choke: mobile threat and static threat (its armed units', power for ours and threat for the enemy's, as the influence
 map counts them) and eco (its unarmed buildings' metal cost). The units are ours where they are now, enemy buildings
-until seen dead, and armed enemy mobiles where they were seen in the last minute, aircraft and constructors aside. At
+until seen dead, and armed enemy mobiles where they were seen in the last minute, aircraft and constructors aside.
+Enemies whose spot the AI has seen empty since (hidden, as the rest of the AI skips them) don't count. At
 a region they are the units in it. At a choke they are the guns that reach its line, as `CFrontline` counts towers:
 buildings whose range reaches it, mobiles within their range or a main-tower range of it (whichever is longer, as they
 walk), and unarmed buildings within a main-tower range of it. A side owns it where only that side has anything there,
 or where its threat is 1.5 times the other's; where both sides have something and neither leads it is contested (both
-sides' eco and no guns is contested too), and where neither has anything it is nobody's. A choke has posts where
-either side's static threat reaches it. That covers every choke, those inside a held region too. Nothing but the
-overlay reads these.
+sides' eco and no guns is contested too), and where neither has anything it is nobody's. Enemy eco under 150 metal
+with no enemy guns (a lone mex) counts as nothing. A choke has posts where either side's static threat reaches it.
+That covers every choke, those inside a held region too. A region's owner is what held ground settles on; nothing
+but the overlay reads a choke's.
 
 The layer needs the `dbg_circuit_sides.lua` widget in `util/LuaUI/Widgets/`. Copy it into the Zero-K data folder's
 `LuaUI/Widgets/` on the machine that runs the AI (local widgets are on by default). The AI finds it through
@@ -292,11 +299,11 @@ every 5 s. Our towers are listed once for the whole round.
 
 One AI per ally team keeps the radar map, every 15 s: the one that builds the analysis. Each cell the enemy can reach
 weighs a floor plus its traffic, each scaled to add up to our mex income, plus the income of our clusters' mexes in
-it. Enemy ground (the enemy's half of the map, and enemy territory on ours) weighs `choke.radar.enemy` × our mex
+it. Enemy ground (the enemy's half of the map, and the enemy's held ground on ours) weighs `choke.radar.enemy` × our mex
 income more, spread over its cells, because artillery, bombers and raids only fire at what radar or sight shows.
 Coverage is the union of the viewsheds of known static radars, ours and our allies', unfinished ones too. Mobile
-radar is ignored. Candidates are the highest buildable cell of each 512-elmo block on our half of the map (outside
-enemy territory) or in our territory.
+radar is ignored. Candidates are the highest buildable cell of each 512-elmo block on our half of the map (off the
+enemy's held ground) or on our held ground.
 
 Radar is built by builders as they expand, on every AI of the team, with no walks for it. Once the AI's first
 factory stands, a builder that finishes a job builds a radar nearby first when its AI's budget holds one, unless a
@@ -339,8 +346,9 @@ cost:
 
 - *T*, traffic: the traffic field carries each destination's income across every cross-section of its enemy routes.
   The heaviest 64 cells within reach are summed over those in range and divided by the cell lengths the range spans
-  (2 × range ÷ 64), which gives the income whose routes pass under the turret, in metal/s; × `turret.horizon`. None while a spider or
-  jumper type gates the threat graph: it walks them as kbots, and their routes over cliffs are left out.
+  (2 × range ÷ 64), which gives the income whose routes pass under the turret, in metal/s; × `turret.horizon`. None while spiders and
+  jumpers are `choke.gate_share` of the enemy army (until they fall below half of that): the threat graph walks them
+  as kbots, and their routes over cliffs are left out.
 - *A*, our and allied unarmed buildings in range (mexes, energy, radar, factories, storage, nanoframes too), at cost.
 - *E*, known enemy buildings in range seen in radar or sight in the last 3 minutes (so the ghost of one that died
   out of sight drops out), at cost; an enemy mex counts its income × `turret.horizon`, which is what killing it
@@ -429,7 +437,7 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
 - **Objectives.** When the forward line is shorter than the current line, or as long with more income behind it,
   its enemy-held chokes become an objective. That needs the gain to be `choke.objective.gain` × the cost, and our
   attack power to be `choke.objective.power` × their defence. Their defence is what we saw there, over the share of
-  their lines we saw in the last 3 minutes (at least a quarter), so chokes we haven't watched count as stronger.
+  their lines we saw in the last minute (at least a quarter), so chokes we haven't watched count as stronger.
   - The gain is the towers and wanted power of the current-line chokes it would retire, plus 3 minutes of the income
     it brings behind the line.
   - The cost is their defence, plus the enemy army on the ground it brings behind the line (seen in the last minute),
@@ -438,9 +446,10 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
     defence as it is now. A failed one waits `choke.objective.retry` seconds.
 - **Rankings.** A choke is enemy-held when its outer side from us (more chokes from our ground) is the enemy's
   ground, or known enemy towers cover its line. Every choke of the enemy line is ranked too, held or not. Its defence
-  is the threat of enemy towers reaching the line or our approach to it, plus enemy mobiles seen in the last 3
-  minutes within a main-tower range. Its value is the cost of unarmed enemy units directly behind it. What we saw of
-  it is the lower of two shares in our LOS in the last 3 minutes: of its line, and of the ground beyond it on the
+  is the threat of enemy towers reaching the line or our approach to it, plus enemy mobiles seen in the last minute
+  within a main-tower range (aircraft aside, as held ground counts them: the lines and their ranks forget an army at
+  the same time). Its value is the cost of unarmed enemy units directly behind it, aircraft aside. What we saw of it
+  is the lower of two shares in our LOS in the last minute: of its line, and of the ground beyond it on the
   enemy's side, up to a main-tower range out, where its defenders would stand. A ranked choke is *undefended* when no
   armed enemy is in reach and we saw at least a quarter of it; with less seen, no defence only means we don't know.
   Objectives (D) still take only enemy-held chokes.
@@ -451,7 +460,7 @@ Lines in the AI's infolog, for tuning:
 
 - `CHOKE graph`, `CHOKE masks` and `CHOKE traffic`: build sizes and times. Traffic layers are built one movement
   class at a time (classes with the same mask share one), so other work on the worker thread never waits long.
-- `CHOKE type set`: each change to the enemy's types, with each type's share and role.
+- `CHOKE type set`: each change to the enemy's types or the gating masks, with each type's mask and share.
 - `CHOKE openness`: the value, the band and its inputs.
 - `CHOKE pocket [...]`: a pocket's first mode, and every switch.
 - `CHOKE point for choke`: where a choke's towers anchor.

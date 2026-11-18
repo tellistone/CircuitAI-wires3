@@ -12,7 +12,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   buildings until seen dead): a side owns it where only it has anything, or where its threat is 1.5 times the other's,
   else it is contested, and nobody's where neither side has anything. A region counts the units in it; a choke counts
   the guns whose range reaches its line (mobiles also within a main-tower range of it) and unarmed buildings near it.
-  Regions are blue, red, striped or clear, stronger in that side's territory. Each choke is a gate across its gap: its
+  Regions are blue, red, striped or clear, stronger where the lines take them as that side's ground (see Changed).
+  Enemy eco under 150 metal with no enemy guns (a lone mex) counts as nothing. Each choke is a gate across its gap: its
   core coloured by owner, posts at its ends when towers reach it, and a casing when it is on a line (white front line,
   green or orange our current line by whether its towers cover what it wants, the enemy line by rank, yellow forward
   line). Info boxes show the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, for
@@ -622,38 +623,48 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   between territory, which only buildings make, so our line could run through ground the enemy army held and behind
   ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
   base outside it. Now they are cut between held ground: each region's owner by the units the AI knows of (the
-  `sides` tint: enemy mobiles for a minute after they were seen, enemy buildings until seen dead), once it has owned
-  it for 20 s, with the enemy's side of the map counting as theirs where we don't own it. Contested and nobody's
-  ground between the sides keeps our line and theirs apart. Territory still qualifies pockets and weighs radar.
+  `sides` tint: enemy mobiles for a minute after they were seen, enemy buildings until seen dead, neither once the
+  AI has seen their spot empty), once it has owned it for 20 s, with the enemy's side of the map counting as theirs
+  where we don't own it. Contested and nobody's ground between the sides keeps our line and theirs apart. Enemy eco
+  under 150 metal with no enemy guns (a lone mex) owns nothing, and each side's ground counts only where it joins
+  that side's main ground (on its side of the map) without crossing the other's, so a sneaky mex or an army camped
+  deep in our ground doesn't wrap our line round it. Held ground replaces territory (buildings per region, 20 s to
+  join, 60 or 120 s to leave) everywhere: pockets qualify when the ground right outside them isn't the enemy's built
+  ground (held, with their towers or 150 metal of eco in it, or on their side), and the radar planner weighs and
+  places by it.
   - The forward line was the cut against the enemy's start boxes and factories, so it hugged the enemy base. It is
     now where our line would be if the enemy army were driven off: the cut against the enemy's buildings and side of
     the map alone. A forward objective (D) counts the enemy army on the ground it would take in its defence and cost.
-  - A line choke is short of the enemy army seen in the last minute outside it, as the tint counts it, not the last
-    3 minutes.
+  - Our line and the ranked enemy chokes count the enemies held ground counts: armed mobiles seen in the last
+    minute, not the last 3 minutes, aircraft aside, and none whose spot was seen empty. What we saw of a ranked choke
+    counts for a minute too, so a choke seen 2 minutes ago with its army since forgotten isn't undefended.
   - A ranked enemy choke counts as seen (and so can be undefended) only for the lower of the shares of its gap and of
     the ground a main-tower range beyond it on the enemy's side in our LOS lately, not the gap alone.
   - The `sides` widget draws the front line as a white rim round our line's casing, so a front choke that is short
     shows orange (the front line hid it). A region's info box says when the lines still take it otherwise.
 
-- **A minor enemy type no longer reshapes the threat graph.** Walkers, tanks and hovers gated the graph as soon as
-  one of them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only
-  graph of 122 regions into 38, moving every choke. Now, once an enemy army has been seen, a type gates when it has
-  the most cost seen or its cost reaches `choke.gate_share`, the rule leak types already followed, and stays gating
-  until it leaves. Until an enemy army is seen, the graph assumes vehicles (the ground types that climb the least)
+- **The threat graph follows the enemy army's mix.** Walkers, tanks and hovers gated the graph as soon as one of
+  them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only graph of
+  122 regions into 38, moving every choke. Now the graph is built from a few masks, one per way of walking (each
+  ground type's, the amphibious bots', the hovers'), and a mask gates by its share of the enemy army seen plus a
+  300-metal prior: on at `choke.gate_share`, or as the biggest once the army reaches 300 metal, off below half of
+  `choke.gate_share`. A mask that stops being a big part of the army stops shaping the graph, so the first type seen
+  (the only one, and so the biggest) no longer gates for the rest of the game, and a mix near the line doesn't flip
+  it back and forth. Until a mask first gates, the graph assumes vehicles (the ground types that climb the least)
   instead of the opening default's walkers, tanks and hovers together, which gated until the opening ended (a
   factory scouted for every enemy team, or 5 minutes): the graph started with the bots' few regions and snapped to
-  the tanks' many minutes after the first enemy units were sighted.
+  the tanks' many minutes after the first enemy units were sighted. After that, an army that died or faded under the
+  prior keeps the masks it had.
 
-- **Spiders and jumpers gate the threat graph as kbots.** A promoted spider type added the cells spiders climb to,
-  which on most maps joined every region into one; a promoted jumper type opened every wall a jump crosses. Now a
-  gating jumper type adds its own type's walking cells, and a gating spider type the cells of the ground type that
-  climbs the steepest (bots), so their chokes are where kbots' are. Their traffic and reach still use their own cells.
-  Amphibious types are unchanged.
+- **Spiders and jumpers count for the kbots' mask.** A promoted spider type added the cells spiders climb to, which
+  on most maps joined every region into one; a promoted jumper type opened every wall a jump crosses. Now a jumper
+  type's cost counts for its own type walking, and a spider type's for the ground type that climbs the steepest
+  (bots), so their chokes are where kbots' are. Their traffic and reach still use their own cells.
 
-- **The turret picker leaves traffic out against spiders and jumpers.** While a spider or jumper type gates the
-  threat graph (it is the biggest enemy type, or its cost reached `choke.gate_share`), the picker drops T, the
-  enemy routes under the turret, so a turret pays for itself in our buildings, known enemy buildings or line chokes
-  in range. Scored tower spots (`choke.spot`) still weigh traffic.
+- **The turret picker leaves traffic out against spiders and jumpers.** While spiders and jumpers are
+  `choke.gate_share` of the enemy army (until they fall below half of that), the picker drops T, the enemy routes
+  under the turret, so a turret pays for itself in our buildings, known enemy buildings or line chokes in range.
+  Scored tower spots (`choke.spot`) still weigh traffic.
 
 - **The threat graph keeps at least 12 regions where the map allows** (`choke.region.min_count`). Gated by bots,
   some maps merged into 2 or 3 big regions, with few chokes left to defend. A build with fewer regions now runs
@@ -664,8 +675,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the
   30 s mask check found a change, 10 times in 13 minutes in one logged game, and each rebuild could move
   chokes and regions that choke defence, holds and objectives act on. A terrain change now waits until 5 minutes have
-  passed since the last rebuild, so a terraformed wall or ramp still shows within 5 minutes. A change in the gating
-  types still rebuilds at once.
+  passed since the last rebuild, unless it opens a new crossing: newly crossable cells joining two of the graph's
+  regions (a wall blown through, a terraformed ramp), which rebuilds it at the next mask check (at most 30 s). A
+  change in the gating masks still rebuilds at once.
 
 - **Scouts raid while cut off.** When a scout has no safe route to its picked spot (e.g. it fled into a pocket and
   the danger sits between it and everything else), or nothing could be picked, an armed ground scout goes raiding on a

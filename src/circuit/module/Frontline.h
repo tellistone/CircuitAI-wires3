@@ -23,7 +23,7 @@ class IFighterTask;
  * Chokes by what they mean for the army, every 10 s on CChokeMap's lines (choke ids, so a rebuild can't mix them up):
  * - E, rankings: every enemy-held choke (its outer side from us is the enemy's held ground, or known enemy towers
  *   cover its line) and every choke of the enemy line, by its defence (enemy towers reaching the line or our approach
- *   to it, plus enemy mobiles seen in the last 3 minutes near it), what we saw of it in the last 3 minutes (the lower
+ *   to it, plus enemy mobiles seen in the last minute near it), what we saw of it in the last minute (the lower
  *   of the shares of its line and of the ground a main-tower range beyond it on the enemy's side), and the unarmed
  *   enemy value directly behind it. One is undefended when no armed enemy is in reach and we saw a quarter of it.
  * - C, quota.hold_choke: the current line's chokes ranked by our income behind each one x its traffic. The idle army
@@ -47,14 +47,14 @@ public:
 		int chokeId;
 		float defence;  // threat
 		float defenceCost;  // metal
-		float confidence;  // the lower share of its line's and the ground beyond's samples in our LOS in the last 3 min
+		float confidence;  // the lower share of its line's and the ground beyond's samples in our LOS in the last minute
 		float value;  // metal
-		bool isHeld;  // its outer side is enemy territory, or enemy towers cover its line (else only on the enemy line)
+		bool isHeld;  // its outer side is enemy ground, or enemy towers cover its line (else only on the enemy line)
 		bool isUndefended;  // no armed enemy in reach, and confidence of a quarter or more
 	};
 	struct SFront {
 		int chokeId;
-		int innerRegionId;  // its side towards our territory
+		int innerRegionId;  // its side towards our ground
 		float rank;  // income behind x traffic
 		float wanted;  // threat of enemy mobiles seen in the last minute in the region outside it (shared, see C) x 1.2
 		float wantedCost;  // their metal x 1.2
@@ -103,7 +103,6 @@ private:
 		float range;
 		float threat;
 		float cost;
-		bool isRecent;  // a building, or a mobile seen within CChokeMap::ARMY_SEEN (else within 3 minutes)
 	};
 	void UpdateRanks(const std::vector<SArmed>& armed);
 	void UpdateFront(const std::vector<SArmed>& armed);
@@ -112,7 +111,7 @@ private:
 	void UpdateObjective();
 	SObjective MakeObjective(float& outArmyPower) const;
 	springai::AIFloat3 FindHoldSpot(int chokeId, CCircuitUnit* leader) const;  // -RgtVector if none
-	// Regions reachable from our territory (our side before we hold any) without crossing these chokes
+	// Regions reachable from our held ground (our side before we hold any) without crossing these chokes
 	std::vector<bool> ReachableFromUs(const std::vector<int>& blocked) const;
 	float GetIncomeIn(const std::vector<bool>& regions) const;  // of every defence point in them
 	const SRank* FindHeld(int chokeId) const;  // an enemy-held choke's rank, nullptr if it isn't held

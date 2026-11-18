@@ -176,8 +176,8 @@ void CChokeOverlay::OnGraphBuilt()
 }
 
 /*
- * Its size and the enemy types it was built from: a leak type promoted to gating (choke.gate_share, spiders say)
- * opens most of the walls the old graph had, so its chokes move a long way
+ * Its size and the enemy types it was built from: a mask that starts or stops gating (choke.gate_share) opens or
+ * closes walls the old graph had, so its chokes can move a long way
  */
 std::string CChokeOverlay::DescribeGraph() const
 {
@@ -764,7 +764,6 @@ void CChokeOverlay::DrawRegions(const CRegionGraph& graph)
 		}
 		std::string text = utils::int_to_string(region.id, "region %i") + utils::int_to_string(region.area, ", %i cells");
 		if (isThreatGraph) {
-			text += chokeMap->IsOurTerritory(r) ? ", our territory" : chokeMap->IsEnemyTerritory(r) ? ", enemy territory" : "";
 			text += chokeMap->IsOurGround(r) ? ", our ground" : chokeMap->IsEnemyGround(r) ? ", enemy ground" : "";
 		}
 		AddLabel(centre, text);

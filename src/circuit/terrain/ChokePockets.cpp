@@ -5,7 +5,7 @@
  *      Author: Claude
  */
 
-// CChokeMap: map sides, territory and held ground, pockets and their cuts, the current and forward lines, openness,
+// CChokeMap: map sides and held ground, pockets and their cuts, the current and forward lines, openness,
 // the traffic field's destinations, and the choke_overlay save fixture
 
 #include "terrain/ChokeMap.h"
@@ -34,10 +34,7 @@ namespace circuit {
 
 using namespace springai;
 
-#define TERRITORY_JOIN	(FRAMES_PER_SEC * 20)
-#define OUR_LEAVE		(FRAMES_PER_SEC * 60)  // our territory leaves this long after its last building went
-#define ENEMY_LEAVE		(FRAMES_PER_SEC * 120)  // and the enemy's
-#define ENEMY_HOLD_COST	150.f  // metal: a cheaper enemy building that isn't armed (a mex, a solar) holds no ground
+#define ENEMY_ECO_FLOOR	150.f  // metal: less enemy eco than this in a region with no enemy guns (a lone mex) owns nothing
 #define HELD_SETTLE		(FRAMES_PER_SEC * 20)  // a region's new owner holds it for the lines after this long
 #define OWN_RATIO		1.5f  // where both sides have threat, one owns with this many times the other's
 #define MAX_DESTINATIONS	16
@@ -130,65 +127,13 @@ std::vector<bool> CChokeMap::GetShelteredBy(int region) const
 }
 
 /*
- * Territory: regions holding a side's buildings, joining after 20 s and leaving 60 s (ours) or 120 s (the enemy's)
- * after the last one went. Only the enemy's towers and buildings of 150 metal or more count, so a lone mex or solar
- * doesn't flip a pocket or the lines. Keyed by region id, so it carries over a rebuild
- */
-void CChokeMap::UpdateTerritory()
-{
-	const int frame = circuit->GetLastFrame();
-	const std::vector<CRegionGraph::SRegion>& regions = graph.GetRegions();
-	std::set<int> ours, theirs;
-	for (const auto& kv : circuit->GetFriendlyUnits()) {
-		CAllyUnit* unit = kv.second;
-		if (!unit->GetCircuitDef()->IsMobile()) {
-			const int region = GetRegionAt(unit->GetPos(frame));
-			if (region != CRegionGraph::NO_REGION) {
-				ours.insert(regions[region].id);
-			}
-		}
-	}
-	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
-		const CEnemyUnit* e = kv.second;
-		const CCircuitDef* edef = e->GetCircuitDef();
-		if ((edef != nullptr) && !edef->IsMobile() && !e->IsDead()
-			&& (edef->IsAttacker() || (e->GetCost() >= ENEMY_HOLD_COST)))
-		{
-			const int region = GetRegionAt(e->GetPos());
-			if (region != CRegionGraph::NO_REGION) {
-				theirs.insert(regions[region].id);
-			}
-		}
-	}
-	auto update = [frame, &regions](std::map<int, STerritory>& hold, const std::set<int>& now, int leave,
-			std::vector<bool>& out) {
-		for (int id : now) {
-			STerritory& t = hold[id];
-			if (t.since < 0) {
-				t.since = frame;
-			}
-			t.lastSeen = frame;
-		}
-		for (auto it = hold.begin(); it != hold.end();) {
-			it = (frame > it->second.lastSeen + leave) ? hold.erase(it) : std::next(it);
-		}
-		out.assign(regions.size(), false);
-		for (size_t r = 0; r < regions.size(); ++r) {
-			auto it = hold.find(regions[r].id);
-			out[r] = (it != hold.end()) && (frame >= it->second.since + TERRITORY_JOIN);
-		}
-	};
-	update(ourHold, ours, OUR_LEAVE, isOurTerritory);
-	update(enemyHold, theirs, ENEMY_LEAVE, isEnemyTerritory);
-}
-
-/*
  * Nobody's where neither side has anything; one side's where only it has; where both have, the side with OWN_RATIO
- * times the other's threat, else contested (both sides' eco and no guns is contested too)
+ * times the other's threat, else contested (both sides' eco and no guns is contested too). Enemy eco under
+ * ENEMY_ECO_FLOOR with no enemy guns counts as nothing: a sneaky mex doesn't flip a region in the middle of ours
  */
 CChokeMap::Side CChokeMap::OwnerOf(const SStrength& ours, const SStrength& enemy)
 {
-	const bool isOurs = ours.IsAny(), isEnemy = enemy.IsAny();
+	const bool isOurs = ours.IsAny(), isEnemy = (enemy.Threat() > 0.f) || (enemy.eco >= ENEMY_ECO_FLOOR);
 	if (isOurs != isEnemy) {
 		return isOurs ? Side::OURS : Side::ENEMY;
 	}
@@ -206,13 +151,14 @@ CChokeMap::Side CChokeMap::OwnerOf(const SStrength& ours, const SStrength& enemy
 }
 
 /*
- * All the AI knows of the enemy: buildings until seen dead, armed mobiles seen (in sight or on radar) in the last
- * ARMY_SEEN, at the last place seen; aircraft and unidentified radar blips aside
+ * All the AI knows of the enemy: buildings until seen dead or their spot seen empty, armed mobiles seen (in sight or
+ * on radar) in the last ARMY_SEEN, at the last place seen, until that place is seen empty (hidden, as the rest of
+ * the AI skips them); aircraft and unidentified radar blips aside
  */
 bool CChokeMap::IsCountedEnemy(const CEnemyUnit* enemy, int frame)
 {
 	const CCircuitDef* edef = enemy->GetCircuitDef();
-	return !enemy->IsDead() && !enemy->IsFake() && (edef != nullptr) && !edef->IsAbleToFly()
+	return !enemy->IsHidden() && !enemy->IsFake() && (edef != nullptr) && !edef->IsAbleToFly()
 			&& (!edef->IsMobile() || (edef->IsAttacker() && enemy->IsRecentlySeen(frame, ARMY_SEEN)));
 }
 
@@ -247,10 +193,12 @@ void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideU
 }
 
 /*
- * Held ground, which the lines are cut between: a region's owner by the units in it (OwnerOf, as the sides overlay
- * tints it), once it has owned it for HELD_SETTLE, so a raid passing through doesn't move the lines. The enemy also
- * holds its side of the map (start boxes, factories) where we don't, so an unscouted base still counts as theirs.
- * Keyed by region id, so it carries over a rebuild
+ * Held ground, which the lines, pockets and radar go by: a region's owner by the units in it (OwnerOf, as the sides
+ * overlay tints it), once it has owned it for HELD_SETTLE, so a raid passing through doesn't move the lines. The enemy
+ * also holds its side of the map (start boxes, factories) where we don't, so an unscouted base still counts as theirs.
+ * Each side's ground counts only where it joins that side's main ground (its regions on its side of the map) without
+ * crossing the other's: an army camped deep in the other's ground is an island, not a new front. Keyed by region id,
+ * so it carries over a rebuild
  */
 void CChokeMap::UpdateHeld()
 {
@@ -272,9 +220,9 @@ void CChokeMap::UpdateHeld()
 		}
 	}
 	std::map<int, SHeld> next;
-	isOurGround.assign(regions.size(), false);
-	isEnemyGround.assign(regions.size(), false);
-	isEnemyBuilt.assign(regions.size(), false);
+	settledOwner.assign(regions.size(), Side::NONE);
+	std::vector<bool> isOurs(regions.size(), false), isTheirs(regions.size(), false);
+	auto isSide = [](const std::vector<bool>& side, size_t r) { return (r < side.size()) && side[r]; };
 	for (size_t r = 0; r < regions.size(); ++r) {
 		const Side owner = OwnerOf(ours[r], enemy[r]);
 		auto it = held.find(regions[r].id);
@@ -286,12 +234,42 @@ void CChokeMap::UpdateHeld()
 			h.side = owner;
 		}
 		next[regions[r].id] = h;
-		const bool isEnemySideHere = (r < isEnemySide.size()) && isEnemySide[r];
-		isOurGround[r] = (h.side == Side::OURS);
-		isEnemyGround[r] = (h.side == Side::ENEMY) || (isEnemySideHere && !isOurGround[r]);
-		isEnemyBuilt[r] = isEnemyGround[r] && (isEnemySideHere || (enemy[r].statics > 0.f) || (enemy[r].eco > 0.f));
+		settledOwner[r] = h.side;
+		isOurs[r] = (h.side == Side::OURS);
+		isTheirs[r] = (h.side == Side::ENEMY) || (isSide(isEnemySide, r) && !isOurs[r]);
 	}
 	held = std::move(next);
+
+	// Joined to the main ground: reached from the side's regions on its side through any region but the other's.
+	// With none of it on its side (our base lost, or the sides unknown), all of it counts
+	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
+	auto joined = [&](const std::vector<bool>& mine, const std::vector<bool>& other, const std::vector<bool>& side) {
+		std::vector<int> main;
+		for (size_t r = 0; r < regions.size(); ++r) {
+			if (mine[r] && isSide(side, r)) {
+				main.push_back(r);
+			}
+		}
+		if (main.empty()) {
+			return mine;
+		}
+		std::vector<bool> isBlocked(chokes.size());
+		for (size_t c = 0; c < chokes.size(); ++c) {
+			isBlocked[c] = other[chokes[c].regionA] || other[chokes[c].regionB];
+		}
+		std::vector<bool> out = graph.ReachableFrom(main, isBlocked);
+		for (size_t r = 0; r < regions.size(); ++r) {
+			out[r] = out[r] && mine[r];
+		}
+		return out;
+	};
+	isOurGround = joined(isOurs, isTheirs, isOurSide);
+	isEnemyGround = joined(isTheirs, isOurs, isEnemySide);
+	isEnemyBuilt.assign(regions.size(), false);
+	for (size_t r = 0; r < regions.size(); ++r) {
+		isEnemyBuilt[r] = isEnemyGround[r]
+				&& (isSide(isEnemySide, r) || (enemy[r].statics > 0.f) || (enemy[r].eco >= ENEMY_ECO_FLOOR));
+	}
 }
 
 void CChokeMap::Analyze()
@@ -419,7 +397,8 @@ void CChokeMap::AnalyzePoints()
 
 	/*
 	 * Entrances and cuts. The pocket cut is the enemy-nearest cut when it qualifies (every choke defensible, within
-	 * choke.near, outer side not enemy territory), else the cluster-nearest cut
+	 * choke.near, outer side not the enemy's built ground: an army passing doesn't move the towers), else the
+	 * cluster-nearest cut
 	 */
 	auto innerOf = [this, &chokes](int region, const std::vector<int>& cut) {
 		std::vector<bool> isBlocked(chokes.size(), false);
@@ -434,7 +413,7 @@ void CChokeMap::AnalyzePoints()
 			const bool isNear = std::any_of(pts.begin(), pts.end(), [&](int p) {
 				return (pointChokeDist[p][c] >= 0.f) && (pointChokeDist[p][c] <= nearDist);
 			});
-			if (!chokes[c].isDefensible || !isNear || isEnemyTerritory[outer]) {
+			if (!chokes[c].isDefensible || !isNear || isEnemyBuilt[outer]) {
 				return false;
 			}
 		}

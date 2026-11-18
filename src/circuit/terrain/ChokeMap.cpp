@@ -39,7 +39,8 @@ using namespace springai;
 #define SCAN_RATE			(FRAMES_PER_SEC * 5)
 #define ANALYSIS_RATE		(FRAMES_PER_SEC * 10)
 #define MASK_COOLDOWN		(FRAMES_PER_SEC * 30)
-#define TERRAIN_GRAPH_COOLDOWN	(FRAMES_PER_SEC * 300)  // terrain alone (craters, levelled ground) rebuilds the graph at most this often
+// Terrain alone (craters, levelled ground) rebuilds the graph at most this often, unless it opened a new crossing
+#define TERRAIN_GRAPH_COOLDOWN	(FRAMES_PER_SEC * 300)
 #define TRAFFIC_COOLDOWN	(FRAMES_PER_SEC * 60)
 #define SOURCE_COOLDOWN		(FRAMES_PER_SEC * 120)
 #define SETTLE_FRAMES		(FRAMES_PER_SEC * 20)
@@ -68,11 +69,12 @@ struct CChokeMap::SBuildJob {
 	FloatVec heightMap, slopeMap;
 	bool waterIsHarmful = false, waterIsAVoid = false;
 	std::vector<SClassParams> classes;
-	std::vector<bool> isGating;  // per class
-	std::vector<int> graphClasses;  // per class: whose mask it adds to the threat graph (SMoveClass::graphClass)
-	bool isTerrainCheck = false;  // rebuild the graph if the masks changed it (TERRAIN_GRAPH_COOLDOWN)
+	std::vector<bool> isGating;  // per class: its mask is in the threat graph
+	bool isTerrainCheck = false;  // rebuild the graph if the masks changed it: when due, or for a new crossing
+	bool isTerrainDue = false;  // TERRAIN_GRAPH_COOLDOWN has passed
 	std::vector<SCellMask> masks;  // the current ones: compared with, or used as they are
 	SCellMask prevGraphMask;
+	std::vector<int> prevRegionOf;  // per cell, the graph's regions: only while the terrain check isn't due
 	CRegionGraph::SParams graphParams;
 	std::vector<int> trafficClasses;  // never naval: ships get no layer
 	std::vector<MoveKey> keys;  // per class
@@ -82,6 +84,7 @@ struct CChokeMap::SBuildJob {
 	// Outputs
 	bool isMasksChanged = false;
 	bool isGraphBuilt = false;
+	bool isTerrainDeferred = false;  // the masks changed the graph's, but opened no new crossing: not due yet
 	CRegionGraph graph;
 	std::vector<CTrafficField::SType> trafficTypes;
 	std::vector<int> doneClasses;  // trafficClasses that got their layer
@@ -239,7 +242,6 @@ void CChokeMap::Reanalyze()
 {
 	if (isReady) {
 		nextAnalysisFrame = circuit->GetLastFrame() + ANALYSIS_RATE;
-		UpdateTerritory();
 		UpdateHeld();
 		Analyze();
 	}
@@ -353,7 +355,7 @@ void CChokeMap::InitMoveClasses()
 		return a.key < b.key;
 	});
 	// Spiders and jumpers shape the threat graph as kbots: a jumper as its own type walking, a spider as the ground
-	// type that climbs the steepest (bots), so their promotion never opens the cliffs they cross. Vehicles are the
+	// type that climbs the steepest (bots), so their share never opens the cliffs they cross. Vehicles are the
 	// ground types that climb the least: the most restrictive, which the threat graph assumes until an enemy army is
 	// seen
 	auto slopeOf = [terrainMgr](const SMoveClass& mc) {
@@ -426,12 +428,17 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 	}
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		job->isGating.push_back(IsGating(c));
-		job->graphClasses.push_back(moveClasses[c].graphClass);
 	}
-	job->isTerrainCheck = (isTerrainPending || job->isMasks)
-			&& (circuit->GetLastFrame() >= graphFrame + TERRAIN_GRAPH_COOLDOWN);
+	job->isTerrainCheck = isTerrainPending || job->isMasks;
+	job->isTerrainDue = circuit->GetLastFrame() >= graphFrame + TERRAIN_GRAPH_COOLDOWN;
 	job->masks = classMasks;
 	job->prevGraphMask = graph.GetMask();
+	if (job->isTerrainCheck && !job->isTerrainDue && !isGraph) {
+		job->prevRegionOf.resize(job->prevGraphMask.Size());
+		for (int i = 0; i < job->prevGraphMask.Size(); ++i) {
+			job->prevRegionOf[i] = graph.GetRegionAt(i);
+		}
+	}
 	job->graphParams = GetGraphParams();
 	job->trafficClasses = trafficClasses;
 	job->sourceCells = GetSourceCells();
@@ -439,6 +446,52 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 	job->trafficParams = {config.spread, mainRange * 0.5f};
 	return job;
 }
+
+namespace {
+
+/*
+ * The cells passable in after and not in before, in connected groups (ForEachNeighbour on after): does a group touch
+ * two of the old graph's regions? Then the enemy has a way between them the old graph has no choke for
+ */
+bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf, const SCellMask& after)
+{
+	if ((before.Size() != after.Size()) || ((int)regionOf.size() != after.Size())) {
+		return true;
+	}
+	auto isNew = [&](int i) { return after.IsPassable(i) && !before.IsPassable(i); };
+	std::vector<bool> isDone(after.Size(), false);
+	std::vector<int> stack;
+	for (int start = 0; start < after.Size(); ++start) {
+		if (isDone[start] || !isNew(start)) {
+			continue;
+		}
+		int touched = CRegionGraph::NO_REGION;
+		bool isCrossing = false;
+		isDone[start] = true;
+		stack.assign(1, start);
+		while (!stack.empty() && !isCrossing) {
+			const int cell = stack.back();
+			stack.pop_back();
+			ForEachNeighbour(after, cell, [&](int next, int) {
+				if (isNew(next)) {
+					if (!isDone[next]) {
+						isDone[next] = true;
+						stack.push_back(next);
+					}
+				} else if (regionOf[next] != CRegionGraph::NO_REGION) {
+					isCrossing |= (touched != CRegionGraph::NO_REGION) && (regionOf[next] != touched);
+					touched = regionOf[next];
+				}
+			});
+		}
+		if (isCrossing) {
+			return true;
+		}
+	}
+	return false;
+}
+
+}  // namespace
 
 void CChokeMap::RunJob(SBuildJob& job)
 {
@@ -512,8 +565,10 @@ void CChokeMap::RunJob(SBuildJob& job)
 
 	/*
 	 * The threat graph, from the union of the gating classes. Rebuilt when the gating classes changed, and when the
-	 * terrain changed that union, but then at most every TERRAIN_GRAPH_COOLDOWN: craters and ground levelled under
-	 * buildings change it through every fight, and each rebuild can move chokes the defence and holds act on
+	 * terrain changed that union: at once when it opened a way between two of the graph's regions that no choke of
+	 * it has (a wall blown through, or a ramp), else at most every TERRAIN_GRAPH_COOLDOWN: craters and ground
+	 * levelled under buildings change it through every fight, and each rebuild can move chokes the defence and holds
+	 * act on
 	 */
 	if (job.isGraph || job.isTerrainCheck) {
 		const clock::time_point t0 = clock::now();
@@ -522,12 +577,17 @@ void CChokeMap::RunJob(SBuildJob& job)
 		threatMask.Resize(any.width, any.height, any.cellSize);
 		for (size_t ci = 0; ci < classCount; ++ci) {
 			if (job.isGating[ci]) {
-				threatMask.Unite(job.masks[job.graphClasses[ci]]);
+				threatMask.Unite(job.masks[ci]);
 			}
 		}
-		if (job.isGraph || (threatMask != job.prevGraphMask)) {
+		const bool isChanged = job.isGraph || (threatMask != job.prevGraphMask);
+		if (isChanged && (job.isGraph || job.isTerrainDue || job.prevRegionOf.empty()
+			|| IsNewCrossing(job.prevGraphMask, job.prevRegionOf, threatMask)))
+		{
 			job.graph.Build(threatMask, job.graphParams);
 			job.isGraphBuilt = true;
+		} else {
+			job.isTerrainDeferred = isChanged;
 		}
 		job.graphMs = ms(t0);
 	}
@@ -598,9 +658,7 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 		circuit->LOG("CHOKE masks: %.1f ms%s", job.maskMs, job.isMasksChanged ? ", changed" : "");
 	}
 	if (job.isGraph || job.isTerrainCheck) {
-		isTerrainPending = false;  // the graph was checked against these masks
-	} else if (job.isMasksChanged) {
-		isTerrainPending = true;
+		isTerrainPending = job.isTerrainDeferred;  // the graph was checked against these masks
 	}
 	if (job.isGraphBuilt) {
 		graphFrame = frame;
@@ -849,18 +907,6 @@ const std::vector<int>& CChokeMap::GetClassParts(int classIdx) const
 bool CChokeMap::IsGating(int classIdx) const
 {
 	return typeStates[classIdx].isGating;
-}
-
-bool CChokeMap::IsCliffCrosserGating() const
-{
-	for (size_t c = 0; c < moveClasses.size(); ++c) {
-		if (((moveClasses[c].kind == MoveKind::CLIMBER) || (moveClasses[c].kind == MoveKind::JUMPER))
-			&& typeStates[c].isGating)
-		{
-			return true;
-		}
-	}
-	return false;
 }
 
 const CChokeMap::SPointInfo* CChokeMap::GetPointInfo(int cluster, int index) const

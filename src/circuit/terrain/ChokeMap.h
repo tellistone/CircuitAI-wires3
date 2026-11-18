@@ -39,15 +39,14 @@ class CEnemyUnit;
  * The shape of the map for one ally team: which gaps are chokes, which mex clusters sit behind which chokes, where
  * the enemy is likely to walk, and how open the map is. Shared by allied AIs, built on the area worker.
  *
- * - The threat graph (CRegionGraph) is built from the cells any gating enemy movement type can cross. A cut in it
- *   cuts every gating type. Leak types (amphibious, spiders, jumpers) are ignored by it until their share of the
- *   enemy's army promotes them to gating (choke.gate_share); before that the tower each cluster keeps answers them.
- *   Spiders and jumpers gate as kbots (SMoveClass::graphClass): the cliffs they cross stay walls in it.
+ * - The threat graph (CRegionGraph) is built from the cells the gating masks can cross. A cut in it cuts every
+ *   gating type. A mask gates while its share of the enemy's army holds (choke.gate_share on, half of it off), and
+ *   the vehicles' mask with none (UpdateGating); the tower each cluster keeps answers the rest. Spiders and jumpers
+ *   count for the kbots' mask (SMoveClass::graphClass): the cliffs they cross stay walls in it.
  * - The traffic field (CTrafficField) has one layer per enemy movement type, blended by the enemy's army mix.
- * - Map sides (start boxes, enemy factories) drive gating, pockets and openness. Territory (buildings per region:
- *   ours 20 s to join and 60 s to leave, the enemy's towers, factories and big buildings only, 120 s to leave)
- *   drives pocket qualification. Held ground (who owns each region by the units the AI knows of, armies included, as
- *   the sides overlay tints it, once that has held 20 s) drives the lines.
+ * - Map sides (start boxes, enemy factories) drive gating, pockets and openness. Held ground (who owns each region
+ *   by the units the AI knows of, armies included, as the sides overlay tints it, once that has held 20 s, and
+ *   joined to its side's main ground) drives the lines, pocket qualification and radar.
  * - Defence points (CDefenceMatrix) get a pocket: the 1 to choke.entrances chokes the enemy must pass to walk in.
  *
  * Built only when a feature that reads it is on in config, or when the overlay asks. Everything here is analysis:
@@ -64,8 +63,8 @@ public:
 		int mobileId;
 		float jumpRange;  // > 0: also crosses wall bands thinner than this
 		MoveKind kind;
-		MoveRole role;  // before promotion (choke.gate_share)
-		int graphClass;  // whose mask it adds to the threat graph when gating: spiders and jumpers walk as kbots
+		MoveRole role;  // the graph's default with no vehicle type in the game (UpdateGating)
+		int graphClass;  // whose graph mask its army cost counts for: spiders and jumpers walk as kbots
 		bool isVehicle;  // the ground type that climbs the least (tanks): gates until an enemy army is seen
 		std::string name;  // the terrain mobile type's move def, "-jump" for jumpers
 	};
@@ -131,7 +130,7 @@ public:
 		std::vector<int> chokeIds;  // their ids: the pocket's key across rebuilds
 		std::vector<int> points;  // indices in GetPointInfos()
 		std::vector<bool> isInner;  // per region: behind the cut
-		bool isQualified;  // every entrance defensible, within choke.near, outer side not enemy territory
+		bool isQualified;  // every entrance defensible, within choke.near, outer side not the enemy's built ground
 		bool isHeld;  // one of its clusters is ours (queued or finished)
 	};
 	// A gap kept free of buildings through a narrow choke: a rectangle along the path through it
@@ -163,7 +162,7 @@ public:
 	void Request();
 	// Rebuilds the graph and the traffic on the worker (choke_overlay set)
 	void Rebuild();
-	// Territory, pockets, lines and openness now (CDefenceMatrix::Init, once its points exist)
+	// Held ground, pockets, lines and openness now (CDefenceMatrix::Init, once its points exist)
 	void Reanalyze();
 	int GetVersion() const { return version; }  // bumped whenever what the overlay draws changes
 
@@ -190,7 +189,8 @@ public:
 	int GetWalkClass(const CCircuitDef* cdef) const;  // the class it moves as, -1 if none (air, or no factory builds it)
 	int FindMoveClass(const std::string& name) const;  // by unit def or class name, -1 if none
 	bool IsGating(int classIdx) const;
-	bool IsCliffCrosserGating() const;  // a spider or jumper type gates (promoted): the turret picker skips traffic
+	// Spiders and jumpers are a big share of the enemy army (UpdateGating): the turret picker skips traffic
+	bool IsCliffCrosserArmy() const { return isCliffCrosserArmy; }
 	std::string DescribeTypeSet() const;  // each type in the set: its name, role and share
 
 	bool IsEnemySide(int region) const { return isEnemySide[region]; }
@@ -198,8 +198,6 @@ public:
 	// Per region: the region itself, and each region the enemy side walks into only through it (a mesa or a dead end
 	// off it). Only the region itself while the enemy side is unknown
 	std::vector<bool> GetShelteredBy(int region) const;
-	bool IsEnemyTerritory(int region) const { return isEnemyTerritory[region]; }
-	bool IsOurTerritory(int region) const { return isOurTerritory[region]; }
 
 	// Who owns ground (ChokePockets.cpp), by the units the AI knows of. The sides overlay tints regions by it, and the
 	// lines are cut between the ground each side holds by it
@@ -228,9 +226,10 @@ public:
 	// armed enemy mobiles where they were seen in the last ARMY_SEEN. Constructors bring nothing
 	void GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideUnit>& outEnemies) const;
 	// Held ground (UpdateHeld), per region. Ours: regions we own. The enemy's: regions they own, and the enemy side
-	// where we don't. Contested and nobody's regions are neither
+	// where we don't. Each only where it joins its side's main ground. Contested and nobody's regions are neither
 	bool IsOurGround(int region) const { return isOurGround[region]; }
 	bool IsEnemyGround(int region) const { return isEnemyGround[region]; }
+	Side GetSettledOwner(int region) const { return settledOwner[region]; }  // the owner once settled, before joining
 	std::vector<int> GetOurRegions() const;  // our held ground, or our side before we hold any
 	// Nearer our start box than any enemy source (true until both are known): the half of the map we defend
 	bool IsOurHalf(const springai::AIFloat3& pos) const;
@@ -289,13 +288,14 @@ private:
 	 */
 	struct STypeState {
 		bool isInSet = false;
-		bool isPromoted = false;  // the biggest, or its cost reached choke.gate_share (UpdateTypeSet): gating until it leaves
-		bool isGating = false;  // shapes the threat graph (UpdateGating)
+		bool isMaskOn = false;  // as a graph mask (SMoveClass::graphClass): its share holds it on (UpdateGating)
+		bool isGating = false;  // its mask shapes the threat graph (UpdateGating)
 		bool isDefault = false;  // in the set by the opening default, not yet seen
 		int lastSeen = -1;  // frame a unit of it (no commanders) or a live factory for it was last seen
 		std::set<ICoreUnit::Id> factories;  // known live enemy factories that build it
 		float cost = 0.f;  // faded army cost (CEnemyManager::GetArmyCostWeight)
-		float share = 0.f;  // of the set's army cost, with a prior so shares start equal
+		float share = 0.f;  // of the set's army cost, with a prior so shares start equal: the traffic blend
+		float graphShare = 0.f;  // as a graph mask: the cost of the types walking as it over the set's plus the prior
 		float blendShare = -1.f;  // share in the last traffic blend, -1: not in it
 	};
 	// One enemy ally team's traffic source: its start box until one of its factories is seen, then its factories
@@ -317,13 +317,13 @@ private:
 	void ScanEnemies();
 	void AddFactory(const springai::AIFloat3& pos, int allyTeam);
 	STypeChange UpdateTypeSet();
-	void UpdateGating();
+	void UpdateGating(float total);
 	float UpdateShares();  // the set's faded cost
 	void Reblend();
 	std::vector<CTrafficField::Cells> GetSourceCells() const;
 
 	/*
-	 * Graph queries (ChokePockets.cpp): sides, territory, pockets, lines, openness
+	 * Graph queries (ChokePockets.cpp): sides, held ground, pockets, lines, openness
 	 */
 	// Cuts from one set of source regions to each region, found on first ask (main thread only)
 	struct SCutCache {
@@ -336,7 +336,6 @@ private:
 		const CRegionGraph::SCut& Get(const CRegionGraph& graph, int region);  // an empty cut out of range
 	};
 	void UpdateSides();
-	void UpdateTerritory();
 	void UpdateHeld();
 	void Analyze();
 	void AnalyzePoints();
@@ -382,6 +381,8 @@ private:
 
 	// Enemy types and sources
 	std::vector<STypeState> typeStates;  // per class
+	bool isCliffCrosserArmy = false;
+	bool isArmyGraph = false;  // a mask has gated: the vehicles' default is over (UpdateGating)
 	bool isOpening;
 	std::map<ICoreUnit::Id, std::vector<int>> factories;  // known live enemy factories: the classes each builds
 	std::set<int> factoryTeams;  // enemy teams with a factory seen
@@ -390,24 +391,19 @@ private:
 	std::map<int, int> artySeen;  // choke id -> last frame enemy artillery was in range
 	int blendFrame;
 
-	// Sides and territory, per region index
+	// Sides and held ground, per region index
 	std::vector<SRect> ourBoxes;  // our start box, or a square around our start; empty until that is known
 	bool isStartKnown;
 	std::vector<bool> isEnemySide, isOurSide;
-	std::vector<bool> isEnemyTerritory, isOurTerritory;
-	struct STerritory {
-		int since = -1;  // frame buildings were first seen there
-		int lastSeen = -1;
-	};
-	std::map<int, STerritory> ourHold, enemyHold;  // region id -> buildings seen
 	struct SHeld {
 		Side side = Side::NONE;  // the owner the lines take
 		Side next = Side::NONE;  // the owner now, settling in
 		int since = -1;  // frame next became the owner
 	};
 	std::map<int, SHeld> held;  // region id
+	std::vector<Side> settledOwner;
 	std::vector<bool> isOurGround, isEnemyGround;
-	std::vector<bool> isEnemyBuilt;  // enemy ground with their buildings in it, or on their side
+	std::vector<bool> isEnemyBuilt;  // enemy ground with their towers or 150 metal of eco in it, or on their side
 
 	// Pockets and lines
 	std::vector<SPointInfo> pointInfos;

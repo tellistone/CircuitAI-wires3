@@ -81,7 +81,7 @@ private:
 	struct SView {
 		Side side = Side::NONE;
 		SStrength ours, enemy;
-		bool isTerritory = false;  // a region in its owner's territory
+		bool isHeld = false;  // a region the lines take as its owner's ground (CChokeMap::IsOurGround, IsEnemyGround)
 	};
 	void MakeViews(std::vector<SView>& regionViews, std::vector<SView>& chokeViews) const;
 	std::string MakeInfo(const std::vector<SView>& regionViews, const std::vector<SView>& chokeViews) const;
