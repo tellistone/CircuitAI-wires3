@@ -15,12 +15,14 @@
 
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <vector>
 
 namespace circuit {
 
 class CCircuitAI;
 class CCircuitDef;
+class CCircuitUnit;
 class CAttackTask;
 
 /*
@@ -49,6 +51,7 @@ public:
 	static constexpr int LINE_COUNT = static_cast<int>(Line::_SIZE_);
 	static constexpr float ALLY_SHARE = 0.75f;  // allies and allied statics count this much
 	static constexpr float KEEP_FACTOR = 1.34f;  // the keep line: ratio x this
+	static constexpr int FIGHT_FRAMES = FRAMES_PER_SEC * 20;  // a fight's outcome: what happens this long after engage
 
 	struct SConfig {
 		float ratio = 0.f;  // fail at enemy >= ratio x ours; 0: off
@@ -95,9 +98,17 @@ public:
 	void NoteCheck(Line line, bool isSkip, ICoreUnit::Id targetId = -1);
 	void NoteFlag(bool isOn) { ++(isOn ? stats.flagsOn : stats.flagsOff); }
 	void NoteZone(bool isSet) { ++(isSet ? stats.zonesSet : stats.zonesLifted); }
-	// One fight (CAttackTask's 20 s window after it engaged a new target): its E/A at engage, the metal it lost and
-	// killed, fled or not
-	void NoteFight(float ratio, float blipShare, float metalLost, float metalKilled, bool isFled);
+	/*
+	 * Fights (the outcome log): a group that engages a new target opens one (CAttackTask, its E/A at engage), and for
+	 * FIGHT_FRAMES the metal its units lose and kill and whether it flees are added. The units are counted by id
+	 * wherever they are by then: a damaged unit leaves its group to retreat and usually dies after, so the group's
+	 * own death events miss most losses. A fight that ran its time is counted at the next Log
+	 */
+	int OpenFight(const std::set<CCircuitUnit*>& units, float ratio, float blipShare);  // its id
+	bool IsFightOpen(int fightId) const;
+	void NoteFled(int fightId);
+	void NoteUnitLost(ICoreUnit::Id unitId, float metal);  // any of our units died (CMilitaryManager::UnitDestroyed)
+	void NoteKill(ICoreUnit::Id attackerId, float metal);  // one of our units killed an enemy
 	// A group's blocked time (frames): outnumbered, or a decision whose candidates the balance all skipped
 	void NoteBlocked(const CAttackTask* task, ICoreUnit::Id leaderId, int frames);
 	void Log();
@@ -118,6 +129,9 @@ private:
 	void AddEntry(std::vector<SEntry>& entries, const CCircuitDef* cdef, const springai::AIFloat3& pos, float power,
 			const CAttackTask* task);
 	float GetWeight(const SEntry& e, float sqDist, bool isWater, bool isAmph) const;
+	struct SFight;
+	SFight* GetFightOf(ICoreUnit::Id unitId);  // the open fight a unit counts toward, or nullptr
+	void CloseFights();  // count the fights that ran their time into the bands
 
 	CCircuitAI* circuit;
 	SConfig cfg;
@@ -128,6 +142,19 @@ private:
 	float blipSpeed = 0.f;
 	float blipRange = 0.f;
 	int listFrame;
+
+	struct SFight {
+		int endFrame;
+		float ratio;  // E/A at engage
+		float blipShare;
+		float metalLost = 0.f;
+		float metalKilled = 0.f;
+		bool isFled = false;
+		std::vector<ICoreUnit::Id> unitIds;  // the group's units at engage
+	};
+	std::unordered_map<int, SFight> fights;  // open, by id
+	std::unordered_map<ICoreUnit::Id, int> fightOfUnit;  // our units in an open fight: its id (the latest one)
+	int nextFightId = 0;
 
 	struct SFights {
 		int count = 0;
@@ -148,7 +175,7 @@ private:
 		int flagsOff = 0;
 		int zonesSet = 0;
 		int zonesLifted = 0;
-		SFights fights[4];  // by E/A at engage: under 1, 1 to 1.5, 1.5 to 2, 2 or more
+		SFights bands[4];  // fights by E/A at engage: under 1, 1 to 1.5, 1.5 to 2, 2 or more
 		std::map<const CAttackTask*, SBlocked> blocked;  // only compared, never dereferenced
 		int rebuilds = 0;
 		float rebuildMs = 0.f;

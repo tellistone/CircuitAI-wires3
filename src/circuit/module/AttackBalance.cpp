@@ -264,14 +264,85 @@ void CAttackBalance::NoteCheck(Line line, bool isSkip, ICoreUnit::Id targetId)
 	}
 }
 
-void CAttackBalance::NoteFight(float ratio, float blipShare, float metalLost, float metalKilled, bool isFled)
+int CAttackBalance::OpenFight(const std::set<CCircuitUnit*>& units, float ratio, float blipShare)
 {
-	SFights& f = stats.fights[(ratio < 1.f) ? 0 : (ratio < 1.5f) ? 1 : (ratio < 2.f) ? 2 : 3];
-	++f.count;
-	f.metalLost += metalLost;
-	f.metalKilled += metalKilled;
-	f.flees += isFled ? 1 : 0;
-	f.blipShare += blipShare;
+	const int id = nextFightId++;
+	SFight& f = fights[id];
+	f.endFrame = circuit->GetLastFrame() + FIGHT_FRAMES;
+	f.ratio = ratio;
+	f.blipShare = blipShare;
+	f.unitIds.reserve(units.size());
+	for (const CCircuitUnit* unit : units) {
+		f.unitIds.push_back(unit->GetId());
+		fightOfUnit[unit->GetId()] = id;  // a unit counts toward its group's latest fight
+	}
+	return id;
+}
+
+bool CAttackBalance::IsFightOpen(int fightId) const
+{
+	auto it = fights.find(fightId);
+	return (it != fights.end()) && (circuit->GetLastFrame() < it->second.endFrame);
+}
+
+void CAttackBalance::NoteFled(int fightId)
+{
+	auto it = fights.find(fightId);
+	if ((it != fights.end()) && (circuit->GetLastFrame() < it->second.endFrame)) {
+		it->second.isFled = true;
+	}
+}
+
+CAttackBalance::SFight* CAttackBalance::GetFightOf(ICoreUnit::Id unitId)
+{
+	auto it = fightOfUnit.find(unitId);
+	if (it == fightOfUnit.end()) {
+		return nullptr;
+	}
+	auto itf = fights.find(it->second);
+	return ((itf != fights.end()) && (circuit->GetLastFrame() < itf->second.endFrame)) ? &itf->second : nullptr;
+}
+
+void CAttackBalance::NoteUnitLost(ICoreUnit::Id unitId, float metal)
+{
+	SFight* f = GetFightOf(unitId);
+	if (f != nullptr) {
+		f->metalLost += metal;
+	}
+	fightOfUnit.erase(unitId);  // ids get reused
+}
+
+void CAttackBalance::NoteKill(ICoreUnit::Id attackerId, float metal)
+{
+	SFight* f = GetFightOf(attackerId);
+	if (f != nullptr) {
+		f->metalKilled += metal;
+	}
+}
+
+void CAttackBalance::CloseFights()
+{
+	const int frame = circuit->GetLastFrame();
+	for (auto it = fights.begin(); it != fights.end();) {
+		const SFight& f = it->second;
+		if (frame < f.endFrame) {
+			++it;
+			continue;
+		}
+		SFights& b = stats.bands[(f.ratio < 1.f) ? 0 : (f.ratio < 1.5f) ? 1 : (f.ratio < 2.f) ? 2 : 3];
+		++b.count;
+		b.metalLost += f.metalLost;
+		b.metalKilled += f.metalKilled;
+		b.flees += f.isFled ? 1 : 0;
+		b.blipShare += f.blipShare;
+		for (ICoreUnit::Id unitId : f.unitIds) {
+			auto itu = fightOfUnit.find(unitId);
+			if ((itu != fightOfUnit.end()) && (itu->second == it->first)) {
+				fightOfUnit.erase(itu);
+			}
+		}
+		it = fights.erase(it);
+	}
 }
 
 void CAttackBalance::NoteBlocked(const CAttackTask* task, ICoreUnit::Id leaderId, int frames)
@@ -285,21 +356,23 @@ void CAttackBalance::Log()
 {
 	// For tuning quota.attack_balance: how often each line skipped, the fights by the E/A they were engaged at and how
 	// they ended (the ratio belongs where losses outgrow kills), how long groups were held back, and the cost
+	CloseFights();
 	SStats& st = stats;
 	circuit->LOG("BALANCE last 60 s%s: checks pick %i, keep %i, own spot %i, zone %i; skips pick %i, keep %i, own spot %i,"
 			" zone %i (%i targets); outnumbered on %i, off %i; zones set %i, lifted %i",
 			cfg.isLogOnly ? " (log only)" : "",
 			st.checks[0], st.checks[1], st.checks[2], st.checks[3], st.skips[0], st.skips[1], st.skips[2], st.skips[3],
 			static_cast<int>(st.skippedTargets.size()), st.flagsOn, st.flagsOff, st.zonesSet, st.zonesLifted);
-	std::string fights;
-	static const char* const bands[] = {"under 1", "1-1.5", "1.5-2", "2+"};
+	std::string bandText;
+	static const char* const bandNames[] = {"under 1", "1-1.5", "1.5-2", "2+"};
 	for (int i = 0; i < 4; ++i) {
-		const SFights& f = st.fights[i];
-		fights += utils::string_format("%s%s: %i fights, metal lost %.0f, killed %.0f, %i fled, blips %.0f%%",
-				(i > 0) ? "; " : "", bands[i], f.count, f.metalLost, f.metalKilled, f.flees,
+		const SFights& f = st.bands[i];
+		bandText += utils::string_format("%s%s: %i fights, metal lost %.0f, killed %.0f, %i fled, blips %.0f%%",
+				(i > 0) ? "; " : "", bandNames[i], f.count, f.metalLost, f.metalKilled, f.flees,
 				(f.count > 0) ? 100.f * f.blipShare / f.count : 0.f);
 	}
-	circuit->LOG("BALANCE fights last 60 s by E/A at engage: %s", fights.c_str());
+	circuit->LOG("BALANCE fights last 60 s by E/A at engage (lost and killed in the 20 s after, by unit): %s",
+			bandText.c_str());
 	std::vector<SBlocked> blocked;
 	int frames = 0;
 	for (const auto& kv : st.blocked) {

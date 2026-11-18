@@ -84,8 +84,6 @@ static constexpr int MAX_BALANCE_CHECKS = 32;
 static constexpr float AVOID_ZONE_RADIUS = 600.f;
 // The skip line: at most one per group this often (flag and zone events always log)
 static constexpr int BALANCE_LOG_FRAMES = FRAMES_PER_SEC * 10;
-// The outcome log: a fight's losses and escape are collected this long after it was engaged
-static constexpr int BALANCE_FIGHT_FRAMES = FRAMES_PER_SEC * 20;
 
 // Route ids for ReuseRoute/KeepRoute that aren't enemy ids
 static constexpr ICoreUnit::Id FRONT_ROUTE_ID = -1;  // FallbackFrontPos
@@ -189,6 +187,8 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, ownForceFrame(-1)
 		, balanceLogFrame(-BALANCE_LOG_FRAMES)
 		, blockSince(-1)
+		, balanceTargetId(-1)
+		, balanceFightId(-1)
 		, isHolding(false)
 		, holdPos(-RgtVector)
 		, stepFrame(0)
@@ -380,12 +380,11 @@ void CAttackTask::Decide(int frame, bool isReuse)
 {
 	isHolding = false;  // re-set by HoldPosition if this decision finds nothing to go to
 	isDecisionReuse = isReuse;  // the target route's callbacks fall back with the same (FallbackFrontPos)
-	// quota.attack_balance logs: blocked since the last decision, and a fight window that ran its time
+	// quota.attack_balance log: blocked since the last decision
 	if (blockSince >= 0) {
 		GetBalance()->NoteBlocked(this, leader->GetId(), frame - blockSince);
 		blockSince = -1;
 	}
-	CloseBalanceFight(frame);
 
 	/*
 	 * Reinforce: a group under quota.attack walks to the nearest group ranked above it (CMilitaryManager::IsRankedAbove)
@@ -982,40 +981,25 @@ void CAttackTask::LogBalanceSkip(const char* line, const CEnemyInfo* enemy, bool
 
 void CAttackTask::NoteBalanceEngage(int frame)
 {
-	// A new target engaged (contact and base-core fights too, for the log only); one window at a time
-	if ((target->GetId() == balanceFight.targetId) || !IsBalanceOn()) {
+	// A new target engaged (contact and base-core fights too, for the log only); one fight at a time
+	if ((target->GetId() == balanceTargetId) || !IsBalanceOn()) {
 		return;
 	}
-	balanceFight.targetId = target->GetId();
-	if (balanceFight.frame >= 0) {
+	balanceTargetId = target->GetId();
+	CAttackBalance* balance = GetBalance();
+	if (balance->IsFightOpen(balanceFightId)) {
 		return;
 	}
 	CAttackBalance::SForce force;
 	GetForceAt(GetFirePos(GetRangePos(target, frame), frame), force);
-	balanceFight.frame = frame;
-	balanceFight.ratio = force.GetRatio();
-	balanceFight.blipShare = force.GetBlipShare();
-	balanceFight.metalLost = 0.f;
-	balanceFight.metalKilled = 0.f;
-	balanceFight.isFled = false;
-}
-
-void CAttackTask::CloseBalanceFight(int frame, bool isEnd)
-{
-	if ((balanceFight.frame < 0) || (!isEnd && (frame < balanceFight.frame + BALANCE_FIGHT_FRAMES))) {
-		return;
-	}
-	GetBalance()->NoteFight(balanceFight.ratio, balanceFight.blipShare, balanceFight.metalLost, balanceFight.metalKilled,
-			balanceFight.isFled);
-	balanceFight.frame = -1;
+	balanceFightId = balance->OpenFight(units, force.GetRatio(), force.GetBlipShare());
 }
 
 void CAttackTask::Stop(bool done)
 {
-	// quota.attack_balance logs: wiped out or merged mid-fight, the fight and the blocked time still count
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	CloseBalanceFight(frame, true);
+	// quota.attack_balance log: wiped out or merged, the blocked time up to now still counts
 	if (blockSince >= 0) {
+		const int frame = manager->GetCircuit()->GetLastFrame();
 		GetBalance()->NoteBlocked(this, (leader != nullptr) ? leader->GetId() : -1, frame - blockSince);
 		blockSince = -1;
 	}
@@ -1477,7 +1461,9 @@ bool CAttackTask::Flee(int frame)
 	if (!wasFleeing) {
 		NoteCoverEscape(frame);  // the cover log
 	}
-	balanceFight.isFled |= (balanceFight.frame >= 0);  // quota.attack_balance: the outcome log
+	if (balanceFightId >= 0) {
+		GetBalance()->NoteFled(balanceFightId);  // quota.attack_balance: the outcome log
+	}
 	if (target != nullptr) {
 		fleeTargetId = target->GetId();  // kept for the next pick (FindTarget)
 	}
@@ -3008,9 +2994,6 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 void CAttackTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	NoteCoverLoss(unit, manager->GetCircuit()->GetLastFrame());  // the cover log, while the unit is still ours
-	if (balanceFight.frame >= 0) {  // quota.attack_balance: the outcome log
-		balanceFight.metalLost += unit->GetCircuitDef()->GetCostM();
-	}
 	ISquadTask::OnUnitDestroyed(unit, attacker);
 }
 

@@ -1371,6 +1371,8 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
 	scoutStints.erase(unit->GetId());  // ids get reused
+	// quota.attack_balance outcome log: counted for the fight the unit was in, also after it left its group to retreat
+	attackBalance->NoteUnitLost(unit->GetId(), unit->GetCircuitDef()->GetCostM());
 	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays its
 	// rebuild back. Captures and the garbage path have no attacker
 	const CCircuitDef* tdef = unit->GetCircuitDef();
@@ -3867,13 +3869,7 @@ void CMilitaryManager::ReactSuddenThreat(CEnemyInfo* enemy)
 
 void CMilitaryManager::NoteEnemyKilled(const CEnemyInfo* enemy, int attackerId)
 {
-	CCircuitUnit* unit = (attackerId >= 0) ? circuit->GetTeamUnit(attackerId) : nullptr;
-	IUnitTask* task = (unit != nullptr) ? unit->GetTask() : nullptr;
-	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
-		&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK))
-	{
-		static_cast<CAttackTask*>(task)->NoteBalanceKill(enemy->GetCost());
-	}
+	attackBalance->NoteKill(attackerId, enemy->GetCost());
 }
 
 void CMilitaryManager::UnmarkPointOfInterest(CEnemyInfo* enemy)

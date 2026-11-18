@@ -43,7 +43,7 @@ public:
 	virtual void Start(CCircuitUnit* unit) override;
 	// Merging, escape and regrouping on every update; a decision (Decide) every 2 updates, or when a unit asks
 	virtual void Update() override;
-	// quota.attack_balance logs first: a group wiped out or merged inside a fight window still counts the fight
+	// quota.attack_balance: blocked time up to now still counts
 	virtual void Stop(bool done) override;
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
@@ -59,8 +59,6 @@ public:
 	// quota.attack_balance: outnumbered where it stands (UpdateOutnumbered), so left out of other groups' ally sums
 	// (CAttackBalance). Also in log-only mode, so the skip counts mean the same in both builds
 	bool IsOutnumbered() const { return isOutnumbered; }
-	// The outcome log: one of our units killed an enemy (the engine's enemy-destroyed event names the attacker)
-	void NoteBalanceKill(float metal) { balanceFight.metalKilled += (balanceFight.frame >= 0) ? metal : 0.f; }
 
 protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
@@ -311,11 +309,9 @@ private:
 	// isHeld: the target we hold
 	void LogBalanceSkip(const char* line, const CEnemyInfo* enemy, bool isHeld, const springai::AIFloat3& F,
 			const CAttackBalance::SForce& force, const char* fallback, int frame);
-	// The outcome log: on a move to ENGAGE on a new target its E/A at F, and for BALANCE_FIGHT_FRAMES what the group
-	// lost and killed and whether it fled (OnUnitDestroyed, NoteBalanceKill, Flee); one window at a time.
-	// isEnd: the task stops, close it now
+	// The outcome log: on a move to ENGAGE on a new target, a fight opens (CAttackBalance::OpenFight) with its E/A at
+	// F; one at a time. Flee marks it
 	void NoteBalanceEngage(int frame);
-	void CloseBalanceFight(int frame, bool isEnd = false);
 	// Blocked time: from this decision to the next (outnumbered, or every candidate skipped by the balance)
 	void NoteBlocked(int frame) { blockSince = (blockSince < 0) ? frame : blockSince; }
 
@@ -570,15 +566,8 @@ private:
 	int ownForceFrame;
 	int balanceLogFrame;  // last skip line
 	int blockSince;  // blocked from this frame on (NoteBlocked), counted at the next decision; -1: not blocked
-	struct SBalanceFight {
-		ICoreUnit::Id targetId = -1;  // the last target engaged
-		int frame = -1;  // the window opened then; -1: none open
-		float ratio = 0.f;  // E/A at F at engage
-		float blipShare = 0.f;
-		float metalLost = 0.f;
-		float metalKilled = 0.f;
-		bool isFled = false;
-	} balanceFight;
+	ICoreUnit::Id balanceTargetId;  // the last target engaged (NoteBalanceEngage)
+	int balanceFightId;  // its fight (CAttackBalance::OpenFight); -1: none
 
 	// Holding
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)
