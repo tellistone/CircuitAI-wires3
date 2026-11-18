@@ -111,7 +111,6 @@ CChokeMap::CChokeMap(CCircuitAI* circuit)
 		, nextAnalysisFrame(0)
 		, isTrafficDirty(false)
 		, isOpening(true)
-		, isArmySeen(false)
 		, enemyAllyCount(1)
 		, blendFrame(0)
 		, isStartKnown(false)
@@ -820,10 +819,7 @@ const std::vector<int>& CChokeMap::GetClassParts(int classIdx) const
 
 bool CChokeMap::IsGating(int classIdx) const
 {
-	const STypeState& ts = typeStates[classIdx];
-	// Unseen opening defaults, and every ground type until an enemy army is seen, gate by their role
-	return ts.isInSet && (ts.isPromoted
-			|| ((moveClasses[classIdx].role == MoveRole::GATING) && (ts.isDefault || !isArmySeen)));
+	return typeStates[classIdx].isGating;
 }
 
 const CChokeMap::SPointInfo* CChokeMap::GetPointInfo(int cluster, int index) const

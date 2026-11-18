@@ -619,8 +619,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   one of them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only
   graph of 122 regions into 38, moving every choke. Now, once an enemy army has been seen, a type gates when it has
   the most cost seen or its cost reaches `choke.gate_share`, the rule leak types already followed, and stays gating
-  until it leaves. Before any army is seen, and for the opening default's unseen types, the ground types gate as
-  before.
+  until it leaves. The opening default's walkers, tanks and hovers gate only until the first enemy factory or unit
+  is seen; from then until an army is seen, the types seen gate. They gated until the opening ended (a factory
+  scouted for every enemy team, or 5 minutes), so the graph kept the default's few regions for minutes after the
+  first enemy units were sighted, then snapped to the real layout.
 
 - **Spiders and jumpers gate the threat graph as kbots.** A promoted spider type added the cells spiders climb to,
   which on most maps joined every region into one; a promoted jumper type opened every wall a jump crosses. Now a

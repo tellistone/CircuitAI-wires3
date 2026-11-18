@@ -19,10 +19,13 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
   areas become regions, and the narrow gaps between them become chokes. A choke is *defensible* when it is at most `choke.defensible` main-tower ranges wide. A type
   that doesn't shape the graph is a *leak* type, and each cluster keeps a tower of its own against leaks and anything
   else the cut doesn't stop. Amphibious bots, spiders and jumpers start as leaks; jumpers cross a wall when it is no
-  longer than their jump along a row or a column of cells. Once an enemy army has been seen, a type gates when it has
-  the most cost seen, or once its own cost reaches `choke.gate_share` of the enemy army seen plus a 300-metal prior,
-  so a lone early unit or a new factory's first units can't flip the graph. It stays gating until it leaves the game.
-  Before any enemy army is seen, and for the opening default's unseen types, the walkers, tanks and hovers gate.
+  longer than their jump along a row or a column of cells. Which types gate depends on what has been seen of the
+  enemy. Before anything is seen, the opening default's walkers, tanks and hovers (on a wet map) gate. Once an enemy
+  factory or unit is seen (constructors count, commanders don't), the types seen gate and the unseen defaults no
+  longer do. Once an enemy army has been seen, a type gates when it has the most cost seen, or once its own cost
+  reaches `choke.gate_share` of the enemy army seen plus a 300-metal prior, so a lone early unit or a new factory's
+  first units can't flip the graph. It stays gating until it leaves the game. A stage with no type to gate falls back
+  to the one before.
   Spiders and jumpers gate as kbots: a gating jumper type adds its own type's walking cells to the graph, a gating
   spider type the cells of the ground type that climbs the steepest (bots), so the cliffs they cross stay walls and
   their promotion can't collapse the map into one region. Their own cells still drive their traffic and reach. A

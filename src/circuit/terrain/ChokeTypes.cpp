@@ -81,6 +81,7 @@ void CChokeMap::InitTypeSet()
 		ts.isDefault = ts.isInSet;
 	}
 	UpdateShares();
+	UpdateGating();
 }
 
 /*
@@ -292,10 +293,10 @@ void CChokeMap::AddFactory(const AIFloat3& pos, int allyTeam)
  *   seen. Then the default types never seen leave.
  * - Joining: a factory that builds the type, or one of its units (no commanders), was seen.
  * - Leaving: every known factory for it was seen dead, and nothing of it was seen for 5 minutes.
- * - Gating (the types the threat graph is built on): the type with the most cost seen, and any type whose own cost
- *   reached choke.gate_share of the set's cost plus the prior, until it leaves. The prior counts for nobody here, so
- *   a lone Flea or a new factory's first units don't change the graph. Before any enemy army is seen, and while the
- *   opening default holds, the ground types gate (IsGating).
+ * - Promoted: the type with the most cost seen, and any type whose own cost reached choke.gate_share of the set's
+ *   cost plus the prior, until it leaves. The prior counts for nobody here, so a lone Flea or a new factory's first
+ *   units don't promote it.
+ * - Gating (the types the threat graph is built on): see UpdateGating.
  * Ships never join: they don't walk through chokes
  */
 CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
@@ -345,13 +346,14 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 			biggest = c;
 		}
 	}
-	isArmySeen |= (biggest >= 0);
 	for (size_t c = 0; c < n; ++c) {
 		STypeState& ts = typeStates[c];
 		if (ts.isInSet && (((int)c == biggest) || (ts.cost >= config.gateShare * (total + SHARE_PRIOR)))) {
 			ts.isPromoted = true;
 		}
 	}
+
+	UpdateGating();
 
 	STypeChange change;
 	for (size_t c = 0; c < n; ++c) {
@@ -366,6 +368,29 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 		circuit->LOG("CHOKE type set: %s", DescribeTypeSet().c_str());
 	}
 	return change;
+}
+
+/*
+ * The types the threat graph is built on, by what has been seen of the enemy:
+ * - nothing yet: the opening default's walkers, tanks and hovers (on a wet map);
+ * - a factory or a unit (constructors too, no commanders), no army yet: the types seen, the unseen defaults no longer;
+ * - an army (cost, UpdateTypeSet): the promoted types.
+ * A stage with no type falls back to the one before
+ */
+void CChokeMap::UpdateGating()
+{
+	bool isSeen = false, isPromoted = false;
+	for (size_t c = 0; c < typeStates.size(); ++c) {
+		const STypeState& ts = typeStates[c];
+		isSeen |= ts.isInSet && !ts.isDefault && (moveClasses[c].role != MoveRole::NAVAL);
+		isPromoted |= ts.isInSet && ts.isPromoted;
+	}
+	for (size_t c = 0; c < typeStates.size(); ++c) {
+		STypeState& ts = typeStates[c];
+		ts.isGating = ts.isInSet && (isPromoted ? ts.isPromoted
+				: isSeen ? !ts.isDefault
+				: (moveClasses[c].role == MoveRole::GATING));
+	}
 }
 
 std::string CChokeMap::DescribeTypeSet() const

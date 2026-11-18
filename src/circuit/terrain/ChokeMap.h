@@ -252,6 +252,7 @@ private:
 	struct STypeState {
 		bool isInSet = false;
 		bool isPromoted = false;  // the biggest, or its cost reached choke.gate_share (UpdateTypeSet): gating until it leaves
+		bool isGating = false;  // shapes the threat graph (UpdateGating)
 		bool isDefault = false;  // in the set by the opening default, not yet seen
 		int lastSeen = -1;  // frame a unit of it (no commanders) or a live factory for it was last seen
 		std::set<ICoreUnit::Id> factories;  // known live enemy factories that build it
@@ -278,6 +279,7 @@ private:
 	void ScanEnemies();
 	void AddFactory(const springai::AIFloat3& pos, int allyTeam);
 	STypeChange UpdateTypeSet();
+	void UpdateGating();
 	float UpdateShares();  // the set's faded cost
 	void Reblend();
 	std::vector<CTrafficField::Cells> GetSourceCells() const;
@@ -342,7 +344,6 @@ private:
 	// Enemy types and sources
 	std::vector<STypeState> typeStates;  // per class
 	bool isOpening;
-	bool isArmySeen;  // an enemy type in the set has had cost: from then on only promoted types gate
 	std::map<ICoreUnit::Id, std::vector<int>> factories;  // known live enemy factories: the classes each builds
 	std::set<int> factoryTeams;  // enemy teams with a factory seen
 	std::vector<SSourceGroup> sourceGroups;
