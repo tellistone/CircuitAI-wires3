@@ -204,25 +204,29 @@ public:
 		springai::AIFloat3 pos;
 		bool isMobile;
 		float range;
-		float threat;  // > 0: armed (ours: power)
+		float threat;  // > 0: armed (ours: power); a building only as a finished tower (CTurretPicker::IsDefence)
 		float eco;  // unarmed buildings: metal
 		bool isAntiLand;  // armed and hits ground units: a tower that can defend a choke
+		float cost = 0.f;  // buildings, armed or not: metal
 	};
 	struct SStrength {
 		float mobile = 0.f;  // armed mobiles' threat (ours: power)
 		float statics = 0.f;  // armed buildings' threat
 		float eco = 0.f;  // metal in unarmed buildings
 		int structures = 0;  // buildings, armed or not
+		float metal = 0.f;  // in buildings, armed or not
 		float Threat() const { return mobile + statics; }
 		void Add(const SSideUnit& u) {
 			(u.isMobile ? mobile : (u.threat > 0.f) ? statics : eco) += (u.threat > 0.f) ? u.threat : u.eco;
 			structures += u.isMobile ? 0 : 1;
+			metal += u.isMobile ? 0.f : u.cost;
 		}
 	};
 	static const int ARMY_SEEN;  // frames: an enemy mobile counts where it was seen this long ago
 	static const float CONTEST_SHARE;  // the other side's threat that contests a side's region or choke, per its own
-	// A region: the side with buildings in it, contested when both have, or when the other side's threat there is
-	// CONTEST_SHARE of the owner's; nobody's with no buildings, whatever armies stand in it
+	// A region: the side with buildings in it, contested when both have, each side's worth CONTEST_SHARE of the
+	// other's metal there, or when the other side's threat there is CONTEST_SHARE of the owner's; nobody's with no
+	// buildings, whatever armies stand in it
 	static Side OwnerOf(const SStrength& ours, const SStrength& enemy);
 	// A choke: defended by a side whose ground-hitting towers cover all of its line (cover: the share they do),
 	// contested when both cover it, or when the other side's towers reach any of it or its mobiles there are
@@ -230,7 +234,9 @@ public:
 	static Side ChokeOwnerOf(const SStrength& ours, const SStrength& enemy, float ourCover, float enemyCover);
 	static bool IsCountedEnemy(const CEnemyUnit* enemy, int frame);
 	// Both sides' units the owners count, aircraft aside: ours where they are now, enemy buildings until seen dead,
-	// armed enemy mobiles where they were seen in the last ARMY_SEEN. Constructors bring nothing
+	// armed enemy mobiles where they were seen in the last ARMY_SEEN. Constructors bring nothing, nor do Claw mines,
+	// missiles and other mobile buildings. Only finished towers are armed (CTurretPicker::IsDefence: a Big Bertha or
+	// a nanoframe is an unarmed building)
 	void GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideUnit>& outEnemies) const;
 	// The share of a choke's line (wall to wall: all of its crossable gap) in range of these units' towers that hit
 	// ground, 0 to 1

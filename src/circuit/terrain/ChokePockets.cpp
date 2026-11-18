@@ -9,6 +9,8 @@
 // the traffic field's destinations, and the choke_overlay save fixture
 
 #include "terrain/ChokeMap.h"
+#include "module/MilitaryManager.h"
+#include "module/TurretPicker.h"
 #include "resource/MetalManager.h"
 #include "setup/DefenceMatrix.h"
 #include "setup/SetupManager.h"
@@ -126,12 +128,18 @@ std::vector<bool> CChokeMap::GetShelteredBy(int region) const
 }
 
 /*
- * Buildings decide who owns a region; armies only contest it. A side's mobiles in a region with none of its
- * buildings contest it when their threat is CONTEST_SHARE of the owner's there (any threat, if the owner has no guns)
+ * Buildings decide who owns a region; armies only contest it. Both sides' buildings contest it when each side's are
+ * worth CONTEST_SHARE of the other's there, so an enemy radar by our base doesn't. A side's mobiles in a region with
+ * none of its buildings contest it when their threat is CONTEST_SHARE of the owner's there (any threat, if the owner
+ * has no guns)
  */
 CChokeMap::Side CChokeMap::OwnerOf(const SStrength& ours, const SStrength& enemy)
 {
-	const bool isOurs = (ours.structures > 0), isEnemy = (enemy.structures > 0);
+	bool isOurs = (ours.structures > 0), isEnemy = (enemy.structures > 0);
+	if (isOurs && isEnemy) {
+		isOurs = (ours.metal >= CONTEST_SHARE * enemy.metal);
+		isEnemy = (enemy.metal >= CONTEST_SHARE * ours.metal);
+	}
 	if (isOurs == isEnemy) {
 		return isOurs ? Side::CONTESTED : Side::NONE;
 	}
@@ -165,32 +173,34 @@ CChokeMap::Side CChokeMap::ChokeOwnerOf(const SStrength& ours, const SStrength& 
 /*
  * All the AI knows of the enemy: buildings until seen dead or their spot seen empty, armed mobiles seen (in sight or
  * on radar) in the last ARMY_SEEN, at the last place seen, until that place is seen empty (hidden, as the rest of
- * the AI skips them); aircraft and unidentified radar blips aside
+ * the AI skips them); aircraft, mobile buildings (Claw mines, missiles) and unidentified radar blips aside
  */
 bool CChokeMap::IsCountedEnemy(const CEnemyUnit* enemy, int frame)
 {
 	const CCircuitDef* edef = enemy->GetCircuitDef();
 	return !enemy->IsHidden() && !enemy->IsFake() && (edef != nullptr) && !edef->IsAbleToFly()
-			&& (!edef->IsMobile() || (edef->IsAttacker() && enemy->IsRecentlySeen(frame, ARMY_SEEN)));
+			&& !edef->IsMobileBuilding() && (!edef->IsMobile() || (edef->IsAttacker() && enemy->IsRecentlySeen(frame, ARMY_SEEN)));
 }
 
 /*
  * Armed ones bring threat (ours: power, as the influence map counts them); unarmed buildings bring eco, their metal
- * cost
+ * cost; every building its cost
  */
 void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideUnit>& outEnemies) const
 {
 	const int frame = circuit->GetLastFrame();
+	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	outOurs.clear();
 	outEnemies.clear();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
-		if (cdef->IsAbleToFly() || (cdef->IsMobile() && !cdef->IsAttacker())) {
+		if (cdef->IsAbleToFly() || (cdef->IsMobile() && !cdef->IsAttacker()) || cdef->IsMobileBuilding()) {
 			continue;
 		}
-		const bool isArmed = cdef->IsAttacker();
+		const bool isArmed = cdef->IsMobile() || (picker->IsDefence(cdef) && !kv.second->GetUnit()->IsBeingBuilt());
+		const float cost = cdef->GetCostM();
 		outOurs.push_back({kv.second->GetPos(frame), cdef->IsMobile(), cdef->GetMaxRange(),
-				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cdef->GetCostM(), isArmed && cdef->HasAntiLand()});
+				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cost, isArmed && cdef->HasAntiLand(), cost});
 	}
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
@@ -198,9 +208,10 @@ void CChokeMap::GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideU
 			continue;
 		}
 		const CCircuitDef* edef = enemy->GetCircuitDef();
-		const bool isArmed = edef->IsAttacker();
+		const bool isArmed = edef->IsMobile() || (picker->IsDefence(edef) && !enemy->IsBeingBuilt());
+		const float cost = enemy->GetCost();
 		outEnemies.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(),
-				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost(), isArmed && edef->HasAntiLand()});
+				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : cost, isArmed && edef->HasAntiLand(), cost});
 	}
 }
 

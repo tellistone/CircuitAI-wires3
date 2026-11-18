@@ -623,7 +623,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   between territory, which only buildings make, so our line could run through ground the enemy army held and behind
   ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
   base outside it. Now they go round held ground: each region's owner as the `sides` tint shows it (the side
-  with buildings there; contested by both sides' buildings, or by the other side's threat at a third of the owner's;
+  with buildings there; contested by both sides' buildings, each side's worth a third of the other's metal there, or
+  by the other side's threat at a third of the owner's;
   nobody's with no buildings), once it has owned it for 20 s, with the enemy's side of the map counting as theirs
   where nobody owns it. Enemy mobiles count for a minute after they were seen, enemy buildings until seen dead,
   neither once the AI has seen their spot empty. Contested and nobody's ground between the sides keeps our line and
@@ -649,6 +650,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     chokes off the lines. A region's info box says when the lines still take it otherwise.
   - A choke of our line is short (orange, and what hold slots and fortifying go for) also when our ground-hitting
     towers don't cover all of its gap, not only when its towers are short of the enemy army outside it.
+  - Hold slots go to the most short choke, not the top-ranked short one: the biggest shortfall (the enemy army
+    outside it over its towers), and where no choke has one, the least covered, the higher rank on a tie. A slot
+    moves once another choke is 1.3× as short (it was 1.3× the rank).
+  - Only finished towers the turret picker counts as defence (`CTurretPicker::IsDefence`) arm a region or cover a
+    choke, for both sides. One Big Bertha covered every choke in its range, so none of our line was short, and a
+    nanoframe covered its choke from its first second. Claw mines, missiles and other mobile buildings no longer count
+    at all, and a cheap building in a region the other side owns (an enemy radar by our base) contests it only when it
+    is worth a third of the owner's buildings there.
 
 - **Scored tower spots weigh what the turret picker does** (with `choke.spot.enable`). `FindSpot` scored a tower's
   spot by its goal's approach traffic, enemy buildings, height and view only, so a defence point's or a choke's tower

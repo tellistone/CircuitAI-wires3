@@ -40,7 +40,8 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
   points, and has none of the enemy's held ground (below: their buildings make it, or their side of the map) right
   outside it, so an army passing doesn't move the towers.
 - **Held ground.** Who owns each region, as the `sides` overlay tints it: the side with buildings in it. Both
-  sides' buildings make it contested, and so does the other side's threat there (armed units) when it is at least a
+  sides' buildings make it contested when each side's are worth at least a third of the other's metal there (so an
+  enemy radar by our base doesn't), and so does the other side's threat there (armed units) when it is at least a
   third (`CChokeMap::CONTEST_SHARE`, 0.33) of the owner's; with no guns of its own, any threat contests it. A region
   with no buildings is nobody's, whatever armies stand in it. Enemy buildings count until seen dead, enemy mobiles
   where they were last seen, for a minute, and none once the AI has seen that spot empty. A region's owner holds it
@@ -79,7 +80,7 @@ anything acts on it.
 | `choke.enable` | `false` | **Choke defence (A).** A qualified pocket with fewer entrances than defence points defends at its entrances. Each cluster keeps its AA and its first tower, and the rest of the pocket's towers go to the entrances. Defence points are also split by region, and lanes are kept free of buildings. |
 | `choke.spot.enable` | `false` | **Scored spots (F).** Every tower from `MakeDefence`, the base towers, the armed hub towers of build chains and the hold spots get the best spot within reach, scored on the turret picker's value model: covered traffic and enemies in metal, height, view, threat and builder distance. The porc sweep visits the points with the most uncovered traffic × income first. |
 | `choke.radar.enable` | `false` | **Radar planner (B).** A builder between jobs builds a radar nearby first when its budget holds one, if it adds at least `choke.radar.min_gain` of the map's weight (and, standing in coverage, `choke.radar.inside` of its view is new). It takes over `MakeDefence`'s radar. |
-| `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the top-ranked short choke of our line: one our ground-hitting towers don't cover all of, or whose towers are short of the enemy army in the region outside it. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, that choke's pocket is fortified too. |
+| `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the most short choke of our line: short is one our ground-hitting towers don't cover all of, or whose towers are short of the enemy army in the region outside it, and the most short has the biggest shortfall, else the least cover. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, the top-ranked short choke's pocket is fortified. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
 | `turret.after_flee` | `true` | **Turret picker (G), after a flee.** A constructor whose flee from nearby enemies ends clear or covered orders a light turret where the flee started. |
 | `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. |
@@ -191,15 +192,18 @@ Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`
 
 Buildings decide who owns a region, and towers who defends a choke; armies only contest them. Each side has three
 numbers at a region or a choke: mobile threat and static threat (its armed units', power for ours and threat for the
-enemy's, as the influence map counts them) and eco (its unarmed buildings' metal cost). The units are ours where they are now, enemy buildings
-until seen dead, and armed enemy mobiles where they were seen in the last minute, aircraft and constructors aside.
+enemy's, as the influence map counts them) and eco (its unarmed buildings' metal cost). A building is armed only as a
+finished tower the turret picker counts as defence (`CTurretPicker::IsDefence`), so a nanoframe or a Big Bertha (and
+the rest of `turret.not_defence`) is an unarmed building. The units are ours where they are now, enemy buildings
+until seen dead, and armed enemy mobiles where they were seen in the last minute, aircraft, constructors and mobile
+buildings (Claw mines, missiles) aside.
 Enemies whose spot the AI has seen empty since (hidden, as the rest of the AI skips them) don't count. At
 a region they are the units in it. At a choke they are the guns that reach its line, as `CFrontline` counts towers:
 buildings whose range reaches it, mobiles within their range or a main-tower range of it (whichever is longer, as they
 walk), and unarmed buildings within a main-tower range of it.
 
-- **A region** is the side's with buildings in it, armed or not. Both sides' buildings make it contested, and so does
-  the other side's threat there when it is at least a third of the owner's (any threat, if the owner has no guns).
+- **A region** is the side's with buildings in it, armed or not. Both sides' buildings make it contested, each
+  side's worth at least a third of the other's metal there, and so does the other side's threat there when it is at least a third of the owner's (any threat, if the owner has no guns).
   With no buildings it is nobody's.
 - **A choke** is defended by a side whose towers that hit ground cover all of its line, wall to wall: every cell of
   it within one of their ranges. Both sides covering it, the other side's towers reaching any of it, or its mobiles
@@ -451,11 +455,14 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
 - **Short.** A choke of our line is short when our towers that hit ground don't cover all of its gap, wall to wall
   (the enemy reaches every choke of our line without crossing our ground, by its definition), or when its towers are
   short of 1.2 × the enemy army at it.
-- **Hold slots.** A slot sits at the top-ranked short choke. The first idle attack group to ask while that choke is
-  short, and whose power makes up the shortfall (any group, where the choke is short only for its cover), claims it, walks to its
-  scored hold spot, and keeps the claim while it keeps asking. Once claimed, the slot keeps its choke until 30 s
-  after it was last short, so an enemy army that steps out of its region or dies doesn't walk the group away at once,
-  unless another short choke ranks 1.3× higher. Then it moves to the top-ranked short choke, or ends if none is. A
+- **Hold slots.** A slot sits at the most short choke no other slot has: the biggest shortfall (the enemy army
+  outside it over its towers), and where no choke has one, the smallest share of its gap covered, the higher rank on
+  a tie. The first idle attack group to ask while that choke is short, and whose power makes up the shortfall (any
+  group, where the choke is short only for its cover), claims it, walks to its scored hold spot, and keeps the claim
+  while it keeps asking. Once claimed, the slot keeps its choke until 30 s after it was last short, so an enemy army
+  that steps out of its region or dies doesn't walk the group away at once, unless another choke is 1.3× as short
+  (against its last shortfall within 30 s, for the same reason).
+  Then it moves to the most short choke, or ends if none is short. A
   group that hasn't asked for a minute (it went to fight elsewhere) loses its claim. A slot with nowhere to stand (no
   traffic near the choke) stays free and is tried again after 30 s. A group that runs from a fight gives up its claim
   for 30 s.

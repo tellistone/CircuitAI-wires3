@@ -5,8 +5,9 @@
 -- a game against CircuitAI say "choke_overlay sides" in ally chat. It only draws in games with no human opponents,
 -- on the machine that runs the AI.
 --
--- A region belongs to the side with buildings in it. Both sides' buildings make it contested, and so does the other
--- side's threat there (armed units) at a third of the owner's or more. With no buildings it is nobody's, whatever
+-- A region belongs to the side with buildings in it. Both sides' buildings make it contested, each side's worth a
+-- third of the other's metal there or more, and so does the other side's threat there (armed units) at a third of the
+-- owner's or more. With no buildings it is nobody's, whatever
 -- armies stand in it.
 -- A choke is defended by a side whose towers that hit ground cover all of its gap, wall to wall. The other side's
 -- towers reaching any of it, or its mobiles there at a third of the defender's threat or more, contest it. Where no

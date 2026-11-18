@@ -9,6 +9,7 @@
 #include "map/MapManager.h"
 #include "module/MilitaryManager.h"
 #include "module/SpotScorer.h"
+#include "module/TurretPicker.h"
 #include "resource/MetalManager.h"
 #include "setup/DefenceMatrix.h"
 #include "task/fighter/FighterTask.h"
@@ -34,7 +35,7 @@ using namespace springai;
 #define BUILDER_HALF	(FRAMES_PER_SEC * 60)  // an unseen enemy constructor's value halves this often
 #define WANT_MARGIN		1.2f  // a choke wants this much more than the enemy army near it
 #define WANT_OTHER		0.5f  // an enemy threatens its region's other line chokes by this share (its nearest in full)
-#define SWITCH_SHARE	1.3f  // a slot moves only to a choke this much better
+#define SWITCH_SHARE	1.3f  // a slot moves only to a choke this much shorter
 #define SAMPLE_COUNT	8  // LOS samples on a choke's line, and as many beyond it on the enemy's side
 #define SEEN_MIN		0.25f  // a choke with no defence is undefended once this share of it was seen lately
 #define HOLD_RETRY		(FRAMES_PER_SEC * 30)  // a slot with no hold spot is scored again after this
@@ -235,9 +236,11 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 }
 
 /*
- * C: each of our points behind the current line counts at its nearest line choke. Our towers count when their range
- * reaches the line; its cover is the share of its line our towers that hit ground reach. An enemy mobile seen in the last minute (as the held ground counts it) counts at the line chokes
- * out into its region: the nearest in full, the others by half (none when no line choke opens into its region)
+ * C: each of our points behind the current line counts at its nearest line choke. Our finished towers count when their
+ * range reaches the line (CTurretPicker::IsDefence: not a Big Bertha); its cover is the share of its line our towers
+ * that hit ground reach (CChokeMap::GetCover). An enemy mobile seen in the last minute (as the held ground counts it)
+ * counts at the line chokes out into its region: the nearest in full, the others by half (none when no line choke
+ * opens into its region)
  */
 void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 {
@@ -269,11 +272,12 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 	}
 
 	const int frame = circuit->GetLastFrame();
+	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	std::vector<SArmed> towers;  // ours and allies'
 	std::vector<CChokeMap::SSideUnit> groundTowers;  // those that hit ground, for cover
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CCircuitDef* cdef = kv.second->GetCircuitDef();
-		if (!cdef->IsMobile() && cdef->IsAttacker()) {
+		if (picker->IsDefence(cdef) && !kv.second->GetUnit()->IsBeingBuilt()) {
 			const AIFloat3 pos = kv.second->GetPos(frame);
 			towers.push_back({pos, false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f});
 			if (cdef->HasAntiLand()) {
@@ -337,10 +341,10 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 }
 
 /*
- * C: a slot is at the top-ranked short choke (SFront::IsShort): not all covered, or its towers short of what it wants. Once claimed, its choke keeps it until
+ * C: a slot is at the most short choke (SFront::IsShorter) no other slot has. Once claimed, its choke keeps it until
  * 30 s after it was last short (an enemy army walking in and out of range doesn't walk its group away), unless another
- * short one ranks 1.3x higher; then it moves to the top short one, or ends if none is. Its group keeps the claim when
- * it moves
+ * is 1.3x as short as its choke was in the last 30 s; then it moves to the most short one, or ends if none is short.
+ * Its group keeps the claim when it moves
  */
 void CFrontline::UpdateHolds()
 {
@@ -367,12 +371,17 @@ void CFrontline::UpdateHolds()
 		if ((current != nullptr) && current->IsShort()) {
 			hold.shortFrame = frame;
 		}
+		if ((current != nullptr) && (current->GetShortfall() > 0.f)) {
+			hold.shortfall = current->GetShortfall();
+			hold.shortfallFrame = frame;
+		}
 		const bool isKept = (current != nullptr) && (hold.task != nullptr) && (frame < hold.shortFrame + HOLD_END);
 		const SFront* best = nullptr;
-		for (const SFront& f : front) {  // highest rank first
-			if (f.IsShort() && ((f.chokeId == hold.chokeId) || !isTaken(f.chokeId))) {
+		for (const SFront& f : front) {
+			if (f.IsShort() && ((f.chokeId == hold.chokeId) || !isTaken(f.chokeId))
+				&& ((best == nullptr) || f.IsShorter(*best)))
+			{
 				best = &f;
-				break;
 			}
 		}
 		if ((hold.chokeId >= 0) && (best == nullptr) && !isKept) {
@@ -383,13 +392,22 @@ void CFrontline::UpdateHolds()
 		if ((best == nullptr) || (best == current)) {
 			continue;
 		}
-		if (!isKept || (best->rank >= SWITCH_SHARE * current->rank)) {
-			circuit->LOG("CHOKE hold at choke %i (rank %.1f, wants %.0f, towers %.0f)", best->chokeId, best->rank,
-					best->wanted, best->towers);
+		// Its last shortfall for HOLD_END: an army stepping out of its region doesn't make it less short
+		auto asHeld = [&](SFront f) {
+			if ((frame < hold.shortfallFrame + HOLD_END) && (f.GetShortfall() < hold.shortfall)) {
+				f.wanted = f.towers + hold.shortfall;
+			}
+			return f;
+		};
+		if (!isKept || best->IsShorter(asHeld(*current), SWITCH_SHARE)) {
+			circuit->LOG("CHOKE hold at choke %i (wants %.0f, towers %.0f, cover %.0f%%, rank %.1f)", best->chokeId,
+					best->wanted, best->towers, best->cover * 100.f, best->rank);
 			hold.chokeId = best->chokeId;
 			hold.spot = -RgtVector;  // scored again for its group
 			hold.retryFrame = 0;
 			hold.shortFrame = frame;
+			hold.shortfall = std::max(best->GetShortfall(), 0.f);
+			hold.shortfallFrame = frame;
 		}
 	}
 }
@@ -510,6 +528,20 @@ std::vector<bool> CFrontline::ReachableFromUs(const std::vector<int>& blocked) c
 		isBlocked[c] = true;
 	}
 	return graph.ReachableFrom(chokeMap->GetOurRegions(), isBlocked);
+}
+
+/*
+ * The enemy army outside a choke first: by shortfall where either has one, else by the share of its line uncovered,
+ * the higher rank on a tie
+ */
+bool CFrontline::SFront::IsShorter(const SFront& other, float share) const
+{
+	const float self = std::max(GetShortfall(), 0.f), theirs = std::max(other.GetShortfall(), 0.f);
+	if ((self > 0.f) || (theirs > 0.f)) {
+		return (self != theirs) ? (self > share * theirs) : (rank > share * other.rank);
+	}
+	const float gap = 1.f - cover, otherGap = 1.f - other.cover;
+	return (gap != otherGap) ? (gap > share * otherGap) : (rank > share * other.rank);
 }
 
 const CFrontline::SFront* CFrontline::FindFront(int chokeId) const
