@@ -12,6 +12,8 @@
 #include "module/MilitaryManager.h"
 #include "unit/CoreUnit.h"
 
+#include <map>
+
 namespace circuit {
 
 /*
@@ -74,8 +76,8 @@ protected:
 	virtual springai::AIFloat3 GetScootAnchor(CCircuitUnit* unit, const springai::AIFloat3& uPos) const override;
 	virtual int GetMoveState(CCircuitUnit* unit) const override;  // hold position while parked
 
-	// Firing spots (IFighterTask::Attack): safe (IsSpotSafe, the target's own threat aside, against the flee end zones:
-	// the squad is committed to the target), with lines of fire as attack groups have
+	// Firing spots (IFighterTask::Attack): safe (IsSpotSafe, the target's own threat aside where it reaches, against the
+	// flee end zones: the squad is committed to the target), with lines of fire as attack groups have
 	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const override;
 	virtual bool IsFireSpotAllowed(const springai::AIFloat3& p) const override;
 
@@ -97,13 +99,18 @@ private:
 	void AttackTarget(int frame);
 	// Mines and aircraft: a plain attack order (mines: only as many as it takes)
 	void AttackDirect(CCircuitUnit* unit, int frame, float& minePower);
-	// The target the whole squad last held off from (IFighterTask::IsAllHolding): FindTarget skips it until 'until'
+	// Stand the unit down (travel action, Stop) and clear its target, so IFighterTask::Attack orders it again
+	void StopUnit(CCircuitUnit* unit);
+	// No target now (dropped), or one out of LOS a moment: units still ordered on a target are stopped once, else the
+	// engine goes on shooting it (at a radar blip too) or chasing it. Not busy or scooting units
+	void StopAttacks();
+	// Targets the whole squad held off from (IFighterTask::IsAllHolding): FindTarget skips each until 'until'
 	struct SHeld {
-		ICoreUnit::Id id = -1;
 		int until = 0;
 		int frames = 0;  // the last skip's length (doubles when it happens again soon)
 	};
-	SHeld held;
+	std::map<ICoreUnit::Id, SHeld> helds;  // forgotten a minute after the skip ends
+	bool IsHeld(CEnemyInfo* enemy, int frame) const;
 	int targetSeenFrame = 0;  // the target was last in LOS (a long-reload squad keeps it a moment out of LOS)
 
 	// Stand-off distance from a heavy: just outside its own threat ring on our threat layer, but never less than
@@ -113,11 +120,11 @@ private:
 	static springai::AIFloat3 GetPointTowards(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float dist);
 	// The enemies the flee doesn't ignore, for IsSpotSafe; every update
 	void CollectDangers();
-	// The one test for stand-off, firing and park spots: no hotter, the threat exclThreat aside (the heavy's own), than
+	// The one test for stand-off, firing and park spots: no hotter, excl's threat aside where its ring reaches, than
 	// a route there may be (GetPathThreatAllowance: not loosened by hot ground where the squad stands), and no pick zone
 	// reaches it, or the cover there covers the enemies that reach it (IsFleeCovered). isKept: a spot for the current
 	// target or the heavy the squad already walks to, judged against the flee's end zones
-	bool IsSpotSafe(const springai::AIFloat3& spot, float exclThreat, bool isKept = false) const;
+	bool IsSpotSafe(const springai::AIFloat3& spot, CEnemyInfo* excl, bool isKept = false) const;
 	// Stand-off point for a heavy at ePos: the first walkable point from standOff outwards (one threat cell at a
 	// time, a few cells at most) towards pos whose threat is under the route cap; false if none
 	bool ProbeStandOff(const springai::AIFloat3& ePos, const springai::AIFloat3& pos, float standOff,
@@ -128,6 +135,8 @@ private:
 	bool TakePath(const std::shared_ptr<PathInfo>& path);  // walk it, if it isn't empty
 	void ApplyTargetPath(const CQueryPathMulti* query);
 	void FallbackTargetEmpty();
+	// Nothing to attack: look at the park spot (or the way to the army) again? Every CHECK_FRAMES, or with no route
+	bool IsCheckDue();
 	void FallbackAttackSafe();
 	void ApplyAttackSafe(const CQueryPathMulti* query);
 	void FallbackStaticSafe();
@@ -150,7 +159,7 @@ private:
 	// Candidates: tower groups (our and allied built armed statics by cell), on our side of them a third of their range
 	// back, and spots behind our attack groups; never within 256 of our base. Walkable, safe (IsSpotSafe), covered, and
 	// not claimed by another squad. Score: cover (at most 3x flee_ally_threat) x heavy pressure (sightings weighted down
-	// over keep_sec, full within our weapon range), halved per minute of walking, and halved near a recent retreat.
+	// over keep_sec, full within our weapon range), / (1 + minutes of walking), and halved near a recent retreat.
 	// Best first
 	void FillParkSpots(std::vector<SParkSpot>& outSpots);
 	void AddParkSpot(const springai::AIFloat3& pos, const IFighterTask* group, std::vector<SParkSpot>& outSpots);
@@ -160,7 +169,7 @@ private:
 	void FallbackPark();
 	void ApplyParkPath(const CQueryPathSingle* query);
 	void SpreadOut(CCircuitUnit* unit, int frame);  // parked: the others stand to alternate sides of the leader
-	// Hold position while parked; hold fire (parkers) while a mobile heavy is within 1.25x weapon range
+	// Hold position while parked; hold fire (parkers) while a mobile heavy is within 1.25x weapon range or targeted
 	void UpdateHolds(int frame);
 	void ApplyHolds(CCircuitUnit* unit);
 
@@ -180,11 +189,11 @@ private:
 
 	SParkSpot park = {-RgtVector, nullptr, 0.f, 0.f};  // pos invalid: none; cover: when claimed
 	int parkFrame = 0;  // when it was claimed
-	int parkCheckFrame = 0;  // UpdatePark from then
+	int checkFrame = 0;  // IsCheckDue from then
 	int routeFrame = 0;  // last walk-in route
 	bool isParking = false;  // nothing to attack or walk to: the squad parks
 	int walkInFrame = 0;  // no new walk-in to a heavy before this (after a flee, or no route to any heavy)
-	int fireHoldFrame = -FRAMES_PER_SEC * 60;  // a mobile heavy was last within 1.25x weapon range
+	int fireHoldFrame = -FRAMES_PER_SEC * 60;  // a mobile heavy was last within 1.25x weapon range (FindTarget)
 	bool isParkHold = false;  // units on hold position (UpdateHolds)
 	bool isFireHold = false;  // units on hold fire
 };
