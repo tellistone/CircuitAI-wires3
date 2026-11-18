@@ -6,12 +6,16 @@
 -- on the machine that runs the AI.
 --
 -- Regions behind our current line are tinted blue, beyond the enemy line red, stronger where that side has
--- buildings. Contested regions (between the lines, both armies there in the last 3 minutes, or both sides' buildings)
--- are striped blue and red. Dashed lines are region borders. Choke lines: blue current, red enemy, white front,
--- yellow forward. Orange arrows run from enemy armies to the line chokes they press, thick to the nearest.
+-- buildings. Contested regions (between the lines, both sides' armies there now, or both sides' buildings) are
+-- striped blue and red. Thin lines are region borders. Our current line is blue where its towers cover what it
+-- wants, orange where it's short. The enemy line is red where defended, pink where undefended, grey where not seen
+-- enough; enemy-held chokes off it are dark red. The front line has a white halo, the forward line is thin yellow.
+--
+-- With several AI ally teams sending (spectating AI vs AI), it keeps showing one: the local player's, else the
+-- lowest ally team id, until that one clears or goes quiet. The ally team shown is printed bottom left.
 --
 -- Messages (CChokeOverlay::SendWidgetData in src/circuit/terrain/ChokeSides.cpp), "circuit_sides_<verb>:<ally team>"
--- then a body: hello, grid, state, lines, arrows, labels, clear.
+-- then a body: hello, grid, state, lines, labels, clear.
 --------------------------------------------------------------------------------
 
 function widget:GetInfo()
@@ -38,21 +42,21 @@ local FILL = {
 	cB = {1.00, 0.22, 0.18, 0.26},  -- and red stripes
 }
 local STRIPE_CELLS = 3  -- each stripe this many cells wide, on the diagonal
+local FILL_LIFT = 4  -- elmos: fills sample the ground only at cell corners, so they float a little over it
 
-local BORDER_COLOUR = {0.85, 0.85, 0.85, 0.45}
-local BORDER_WIDTH = 1.5
-local DASH_ON, DASH_OFF = 48, 32  -- elmos
+local BORDER_COLOUR = {0.85, 0.85, 0.85, 0.35}
+local BORDER_WIDTH = 1
 
 local LINES = {  -- by kind, drawn in this order
 	{kind = "w", colour = {1.00, 1.00, 0.25, 0.80}, width = 3},  -- forward line
-	{kind = "c", colour = {0.30, 0.55, 1.00, 0.95}, width = 6},  -- current line
-	{kind = "e", colour = {1.00, 0.25, 0.20, 0.95}, width = 6},  -- enemy line
-	{kind = "f", colour = {1.00, 1.00, 1.00, 1.00}, width = 9},  -- front line: on both
+	{kind = "f", colour = {1.00, 1.00, 1.00, 1.00}, width = 14},  -- front line: a halo under its two lines
+	{kind = "h", colour = {0.55, 0.05, 0.05, 0.95}, width = 6},  -- enemy-held, off the enemy line
+	{kind = "g", colour = {0.60, 0.60, 0.60, 0.95}, width = 6},  -- enemy line, not seen enough to rank
+	{kind = "e", colour = {1.00, 0.20, 0.15, 0.95}, width = 6},  -- enemy line, defended
+	{kind = "u", colour = {1.00, 0.60, 0.75, 0.95}, width = 6},  -- enemy line, undefended
+	{kind = "c", colour = {0.30, 0.55, 1.00, 0.95}, width = 4},  -- current line, towers cover what it wants
+	{kind = "s", colour = {1.00, 0.55, 0.05, 0.95}, width = 4},  -- current line, short
 }
-
-local ARROW_FULL = {1.00, 0.60, 0.10, 0.90}
-local ARROW_HALF = {1.00, 0.60, 0.10, 0.45}
-local ARROW_HEAD = 80  -- elmos
 
 local LIFT = 10  -- lines float this high over the ground
 local STEP = 16  -- elmos between line vertices, so lines follow the ground
@@ -72,7 +76,6 @@ local glVertex = gl.Vertex
 local floor, max, min, sqrt = math.floor, math.max, math.min, math.sqrt
 
 local teams = {}  -- per ally team: what its AI sent
-local shown = nil  -- the ally team whose AI said hello last
 local font = nil
 
 local function GroundY(x, z)
@@ -87,10 +90,13 @@ local function DeleteList(team, key)
 end
 
 local function DeleteLists(team)
-	DeleteList(team, "fillList")
+	for _, lists in pairs(team.regionLists or {}) do
+		gl.DeleteList(lists[1])
+		gl.DeleteList(lists[2])
+	end
+	team.regionLists = nil
 	DeleteList(team, "borderList")
 	DeleteList(team, "lineList")
-	DeleteList(team, "arrowList")
 end
 
 -- Vertices of a ground-following line from (x1, z1) to (x2, z2), as GL.LINES pairs
@@ -112,57 +118,58 @@ end
 --------------------------------------------------------------------------------
 -- Building the display lists
 
-local function BuildFills(team)
-	DeleteList(team, "fillList")
-	if not team.regionOf or not team.state then
-		return
+-- Per region, two display lists (the cells of stripe A and of stripe B), a quad per cell with the ground's height at
+-- its corners: region cells are passable, so gentle enough for that. Built once per grid; a state change only picks
+-- the colours they are drawn in
+local function BuildRegions(team)
+	for _, lists in pairs(team.regionLists or {}) do
+		gl.DeleteList(lists[1])
+		gl.DeleteList(lists[2])
 	end
-	local width, height, cell = team.width, team.height, team.cell
-	local regionOf, state = team.regionOf, team.state
-	local letters = {}
-	for r = 1, #state do
-		letters[r - 1] = state:sub(r, r)
-	end
-	-- Runs of cells with the same fill, row by row, grouped by fill so each colour is set once
-	local runs = {}
-	for key in pairs(FILL) do
-		runs[key] = {}
-	end
-	local function keyAt(x, z)
-		local region = regionOf[z * width + x + 1]
-		local letter = region and region >= 0 and letters[region]
-		if letter == "c" or letter == "C" then
-			return (floor((x + z) / STRIPE_CELLS) % 2 == 0) and "cA" or "cB"
+	local width, height, cell, regionOf = team.width, team.height, team.cell, team.regionOf
+	local corner = {}  -- (width + 1) x (height + 1) heights
+	for z = 0, height do
+		for x = 0, width do
+			corner[z * (width + 1) + x] = max(spGetGroundHeight(x * cell, z * cell), 0) + FILL_LIFT
 		end
-		return FILL[letter] and letter or nil
 	end
+	local cells = {}  -- region -> stripe (1, 2) -> cell indices
 	for z = 0, height - 1 do
-		local start, current = 0, keyAt(0, z)
-		for x = 1, width do
-			local key = (x < width) and keyAt(x, z) or nil
-			if key ~= current then
-				if current then
-					local list = runs[current]
-					list[#list + 1] = {start * cell, z * cell, x * cell, (z + 1) * cell}
+		for x = 0, width - 1 do
+			local region = regionOf[z * width + x + 1]
+			if region and region >= 0 then
+				local byStripe = cells[region]
+				if not byStripe then
+					byStripe = {{}, {}}
+					cells[region] = byStripe
 				end
-				start, current = x, key
+				local list = byStripe[(floor((x + z) / STRIPE_CELLS) % 2) + 1]
+				list[#list + 1] = z * width + x
 			end
 		end
 	end
-	team.fillList = gl.CreateList(function()
-		for key, list in pairs(runs) do
-			if #list > 0 then
-				gl.Color(FILL[key])
-				for i = 1, #list do
-					local q = list[i]
-					gl.DrawGroundQuad(q[1], q[2], q[3], q[4])
-				end
+	local function drawCells(list)
+		gl.BeginEnd(GL.QUADS, function()
+			for i = 1, #list do
+				local index = list[i]
+				local x, z = index % width, floor(index / width)
+				local x0, z0, x1, z1 = x * cell, z * cell, (x + 1) * cell, (z + 1) * cell
+				local c = z * (width + 1) + x
+				glVertex(x0, corner[c], z0)
+				glVertex(x0, corner[c + width + 1], z1)
+				glVertex(x1, corner[c + width + 2], z1)
+				glVertex(x1, corner[c + 1], z0)
 			end
-		end
-	end)
+		end)
+	end
+	local lists = {}
+	for region, byStripe in pairs(cells) do
+		lists[region] = {gl.CreateList(drawCells, byStripe[1]), gl.CreateList(drawCells, byStripe[2])}
+	end
+	team.regionLists = lists
 end
 
--- Dashed lines along every cell edge between two regions (walls get none)
+-- Thin lines along every cell edge between two regions (walls get none)
 local function BuildBorders(team)
 	DeleteList(team, "borderList")
 	if not team.regionOf then
@@ -204,15 +211,7 @@ local function BuildBorders(team)
 		gl.BeginEnd(GL.LINES, function()
 			for i = 1, #segments do
 				local s = segments[i]
-				local dx, dz = s[3] - s[1], s[4] - s[2]
-				local length = sqrt(dx * dx + dz * dz)
-				local ux, uz = dx / length, dz / length
-				local at = 0
-				while at < length do
-					local stop = min(at + DASH_ON, length)
-					GroundSegment(s[1] + ux * at, s[2] + uz * at, s[1] + ux * stop, s[2] + uz * stop)
-					at = stop + DASH_OFF
-				end
+				GroundSegment(s[1], s[2], s[3], s[4])
 			end
 		end)
 	end)
@@ -233,40 +232,6 @@ local function BuildLines(team)
 					end
 				end
 			end)
-		end
-		gl.LineWidth(1)
-	end)
-end
-
-local function BuildArrows(team)
-	DeleteList(team, "arrowList")
-	local arrows = team.arrows or {}
-	local maxFull = 0
-	for i = 1, #arrows do
-		maxFull = max(maxFull, arrows[i][5])
-	end
-	team.arrowList = gl.CreateList(function()
-		for i = 1, #arrows do
-			local a = arrows[i]
-			local x1, z1, x2, z2, full = a[1], a[2], a[3], a[4], a[5]
-			local dx, dz = x2 - x1, z2 - z1
-			local length = sqrt(dx * dx + dz * dz)
-			if length > 1 then
-				local ux, uz = dx / length, dz / length
-				local head = min(ARROW_HEAD, length * 0.5)
-				if full > 0 then
-					gl.Color(ARROW_FULL)
-					gl.LineWidth(2 + 6 * full / max(maxFull, 1))
-				else
-					gl.Color(ARROW_HALF)
-					gl.LineWidth(2)
-				end
-				gl.BeginEnd(GL.LINES, function()
-					GroundSegment(x1, z1, x2, z2)
-					GroundSegment(x2, z2, x2 - (ux + uz * 0.5) * head, z2 - (uz - ux * 0.5) * head)
-					GroundSegment(x2, z2, x2 - (ux - uz * 0.5) * head, z2 - (uz + ux * 0.5) * head)
-				end)
-			end
 		end
 		gl.LineWidth(1)
 	end)
@@ -313,15 +278,11 @@ function handlers.grid(team, body)
 	end
 	team.regionOf = regionOf
 	BuildBorders(team)
-	BuildFills(team)
+	BuildRegions(team)
 end
 
 function handlers.state(team, body)
-	local state = body:sub(2)
-	if state ~= team.state or not team.fillList then
-		team.state = state
-		BuildFills(team)
-	end
+	team.state = body:sub(2)
 end
 
 function handlers.lines(team, body)
@@ -334,18 +295,6 @@ function handlers.lines(team, body)
 	end
 	team.lines = lines
 	BuildLines(team)
-end
-
-function handlers.arrows(team, body)
-	local arrows = {}
-	for _, record in ipairs(Records(body)) do
-		local n = Numbers(record)
-		if #n >= 6 then
-			arrows[#arrows + 1] = n
-		end
-	end
-	team.arrows = arrows
-	BuildArrows(team)
 end
 
 function handlers.labels(team, body)
@@ -373,9 +322,6 @@ function widget:RecvSkirmishAIMessage(aiTeam, dataStr)
 			DeleteLists(teams[ally])
 			teams[ally] = nil
 		end
-		if shown == ally then
-			shown = nil
-		end
 		return "1"
 	end
 	local handler = handlers[verb]
@@ -387,9 +333,6 @@ function widget:RecvSkirmishAIMessage(aiTeam, dataStr)
 		team = {}
 		teams[ally] = team
 	end
-	if verb == "hello" then
-		shown = ally
-	end
 	team.frame = spGetGameFrame()
 	return handler(team, body) or "1"
 end
@@ -397,11 +340,29 @@ end
 --------------------------------------------------------------------------------
 -- Drawing
 
+local shown = nil  -- the ally team drawn: kept until it clears or goes quiet
+
+local function IsFresh(ally)
+	local team = teams[ally]
+	return team and (spGetGameFrame() - (team.frame or 0) <= STALE_FRAMES)
+end
+
 local function ShownTeam()
-	local team = shown and teams[shown]
-	if team and (spGetGameFrame() - (team.frame or 0) <= STALE_FRAMES) then
-		return team
+	if not (shown and IsFresh(shown)) then
+		shown = nil
+		local isSpectator = Spring.GetSpectatingState()
+		local mine = Spring.GetMyAllyTeamID()
+		if not isSpectator and IsFresh(mine) then
+			shown = mine
+		else
+			for ally in pairs(teams) do
+				if IsFresh(ally) and (not shown or ally < shown) then
+					shown = ally
+				end
+			end
+		end
 	end
+	return shown and teams[shown]
 end
 
 function widget:DrawWorldPreUnit()
@@ -412,9 +373,22 @@ function widget:DrawWorldPreUnit()
 	gl.Blending(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA)
 	gl.DepthTest(true)
 	gl.DepthMask(false)
-	if team.fillList then
+	if team.regionLists and team.state then
 		gl.PolygonOffset(-25, -2)
-		gl.CallList(team.fillList)
+		local state = team.state
+		for region, lists in pairs(team.regionLists) do
+			local letter = state:sub(region + 1, region + 1)
+			if letter == "c" or letter == "C" then
+				gl.Color(FILL.cA)
+				gl.CallList(lists[1])
+				gl.Color(FILL.cB)
+				gl.CallList(lists[2])
+			elseif FILL[letter] then
+				gl.Color(FILL[letter])
+				gl.CallList(lists[1])
+				gl.CallList(lists[2])
+			end
+		end
 		gl.PolygonOffset(false)
 	end
 	if team.borderList then
@@ -426,12 +400,15 @@ function widget:DrawWorldPreUnit()
 	if team.lineList then
 		gl.CallList(team.lineList)
 	end
-	if team.arrowList then
-		gl.CallList(team.arrowList)
-	end
 	gl.DepthMask(true)
 	gl.DepthTest(false)
 	gl.Color(1, 1, 1, 1)
+end
+
+function widget:DrawScreen()
+	if ShownTeam() and font then
+		font:Print("CircuitAI sides: ally team " .. shown, 16, 16, 14, "o")
+	end
 end
 
 function widget:DrawWorld()

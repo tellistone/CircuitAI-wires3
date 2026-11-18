@@ -60,14 +60,6 @@ public:
 		float towers;  // threat of our towers near it
 		float GetShortfall() const { return wanted - towers; }  // short when above 0
 	};
-	// Enemy mobiles in one region outside the current line, at one of its chokes out into that region (choke_overlay)
-	struct SPress {
-		int chokeId;
-		int regionId;
-		springai::AIFloat3 from;  // their threat-weighted centre
-		float full;  // threat of those it is the nearest line choke for
-		float half;  // threat of the others, before WANT_OTHER halves it
-	};
 	struct SHold {
 		int chokeId = -1;
 		springai::AIFloat3 spot = -RgtVector;
@@ -93,7 +85,6 @@ public:
 	// choke_overlay
 	const std::vector<SRank>& GetRanks() const { return ranks; }  // weakest first
 	const std::vector<SFront>& GetFront() const { return front; }  // highest rank first
-	const std::vector<SPress>& GetPresses() const { return presses; }
 	const std::vector<SHold>& GetHolds() const { return holds; }
 	const std::vector<int>& GetObjectiveChokes() const { return objective.chokeIds; }
 
@@ -128,7 +119,6 @@ private:
 	CCircuitAI* circuit;
 	std::vector<SRank> ranks;
 	std::vector<SFront> front;
-	std::vector<SPress> presses;
 	std::vector<SHold> holds;
 	std::map<const IFighterTask*, int> holdBans;  // task -> frame it may claim again
 	std::map<int, std::vector<int>> sampleSeen;  // choke id -> per line sample: frame last in our LOS

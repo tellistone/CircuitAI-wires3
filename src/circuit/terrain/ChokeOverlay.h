@@ -71,23 +71,22 @@ private:
 	void DrawSides();
 
 	/*
-	 * The sides layer (ChokeSides.cpp): each region ours, the enemy's, contested or unknown; drawn by the
-	 * dbg_circuit_sides LuaUI widget when the machine running the AI has it (util/LuaUI/Widgets), else with figures
+	 * The sides layer (ChokeSides.cpp): each region ours, the enemy's, contested or unknown, and the lines by rank and
+	 * shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine running the AI has it
+	 * (util/LuaUI/Widgets), else the lines layer
 	 */
 	enum class Side: char {UNKNOWN, OURS, ENEMY, CONTESTED};
 	struct SRegionView {
 		Side side = Side::UNKNOWN;
 		bool isTerritory = false;  // the side's buildings are there
 		bool isBetween = false;  // between the current and enemy lines
-		bool isArmies = false;  // both sides' armed units there lately
+		bool isArmies = false;  // both sides' armies there now
 		bool isBuilt = false;  // both sides' buildings there
-		float threat = 0.f;  // of enemy mobiles there lately
+		float threat = 0.f;  // of enemy armed mobiles seen there in the last minute
 	};
 	std::vector<SRegionView> MakeRegionViews() const;
 	std::vector<std::pair<springai::AIFloat3, std::string>> MakeSideLabels(const std::vector<SRegionView>& views) const;
-	void UpdatePresence();  // our armed units' regions, while the overlay is on
 	void SendWidgetData(const std::vector<SRegionView>& views);
-	void DrawSidesWithFigures(const std::vector<SRegionView>& views);
 	std::string CallWidget(const std::string& verb, const std::string& body) const;  // the widget's answer
 	void ClearWidget();
 	// The two cells of its line farthest apart
@@ -96,8 +95,7 @@ private:
 
 	// One figure group per colour
 	enum class Colour: char {GREEN, GREY, RED, ORANGE, YELLOW, BLUE, CYAN, WHITE, MAGENTA, DARK_RED};
-	void AddLine(const springai::AIFloat3& from, const springai::AIFloat3& to, Colour colour, float width = 16.f,
-			bool isArrow = false);
+	void AddLine(const springai::AIFloat3& from, const springai::AIFloat3& to, Colour colour, float width = 16.f);
 	void AddCross(const springai::AIFloat3& pos, Colour colour, float size = 48.f);
 	void AddLabel(const springai::AIFloat3& pos, const std::string& text);
 	springai::AIFloat3 OnGround(float x, float z, float lift = 24.f) const;
@@ -117,8 +115,7 @@ private:
 	std::vector<springai::AIFloat3> labels;
 	bool isWidgetDrawn;  // the sides widget holds our data
 	bool isGridSent;  // since the last graph build
-	bool isWidgetHinted;  // said that fills need the widget
-	std::map<int, int> ourArmySeen;  // region id -> frame one of our armed units was last there
+	bool isWidgetHinted;  // said that the layer needs the widget
 };
 
 } // namespace circuit

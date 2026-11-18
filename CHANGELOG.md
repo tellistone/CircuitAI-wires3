@@ -9,14 +9,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **`choke_overlay sides`: who holds each region.** A new overlay layer colours the map by the current and enemy
   lines' cut: regions behind our current line blue, beyond the enemy line red (stronger in that side's territory),
-  and contested regions striped blue and red. Contested means between the two lines, both sides' armed units there in
-  the last 3 minutes, or both sides' buildings there. It also draws dashed region borders, the lines as segments
-  across their gaps (current blue, enemy red, front white, forward yellow), and orange arrows from enemy armies to the
-  current-line chokes they press (thick to the nearest, thin to the half-share ones). The fills are drawn by a LuaUI
-  widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through `Lua_callUI` on the machine that
-  runs it, never in games with human opponents. Without the widget the layer draws the lines, a cross per region and
-  the arrows with map figures. Nothing outside the overlay reads the new region sides (`CChokeMap::GetLineSide`) or
-  the per-choke pressure (`CFrontline::GetPresses`).
+  and contested regions striped blue and red. Contested means between the two lines, both sides' armies there (300
+  metal of armed mobiles each: ours now, the enemy's seen in the last minute), or both sides' buildings there. The
+  lines are drawn across their gaps: our current line blue where its towers cover what it wants and orange where it's
+  short, the enemy line by rank (red defended, pink undefended, grey not seen enough), enemy-held chokes off it dark
+  red, the front line with a white halo, the forward line yellow. It is drawn by a LuaUI widget,
+  `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through `Lua_callUI` on the machine that runs it,
+  never in games with human opponents; without the widget the layer shows the `lines` layer. Nothing outside the
+  overlay reads the new region sides (`CChokeMap::GetLineSide`).
 
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its

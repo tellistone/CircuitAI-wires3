@@ -27,41 +27,48 @@ namespace circuit {
 
 using namespace springai;
 
-#define RECENT_FRAMES	(FRAMES_PER_SEC * 180)  // an army counts in a region this long after it was seen there
+#define ARMY_SEEN		(FRAMES_PER_SEC * 60)  // an enemy mobile counts where it was seen this long ago
+#define ARMY_FLOOR		300.f  // metal: a side's mobiles in a region make it an army from this much
 #define WIDGET_PREFIX	"circuit_sides_"  // see util/LuaUI/Widgets/dbg_circuit_sides.lua
 
 /*
- * Each region by its side of the lines, contested when it is between them, when both sides' armed units were there
- * in the last 3 minutes (enemy towers until seen dead), or when both sides have buildings there
+ * Each region by its side of the lines, contested when it is between them, when both sides have an army there
+ * (ARMY_FLOOR of armed mobiles each: ours now, the enemy's seen in the last minute), or when both sides have
+ * buildings there
  */
 std::vector<CChokeOverlay::SRegionView> CChokeOverlay::MakeRegionViews() const
 {
 	const std::vector<CRegionGraph::SRegion>& regions = chokeMap->GetGraph().GetRegions();
 	const int frame = circuit->GetLastFrame();
 	std::vector<SRegionView> views(regions.size());
-	std::vector<bool> isEnemyArmy(regions.size(), false);
+	std::vector<float> ourArmy(regions.size(), 0.f), enemyArmy(regions.size(), 0.f);
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* unit = kv.second;
+		const CCircuitDef* cdef = unit->GetCircuitDef();
+		if (cdef->IsAttacker() && cdef->IsMobile()) {
+			const int region = chokeMap->GetRegionAt(unit->GetPos(frame));
+			if (region >= 0) {
+				ourArmy[region] += cdef->GetCostM();
+			}
+		}
+	}
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
-		CCircuitDef* edef = enemy->GetCircuitDef();
-		if (enemy->IsDead() || enemy->IsFake() || (edef == nullptr) || !edef->IsAttacker()
-			|| (edef->IsMobile() && !enemy->IsRecentlySeen(frame, RECENT_FRAMES)))
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		if (enemy->IsDead() || enemy->IsFake() || (edef == nullptr) || !edef->IsAttacker() || !edef->IsMobile()
+			|| !enemy->IsRecentlySeen(frame, ARMY_SEEN))
 		{
 			continue;
 		}
 		const int region = chokeMap->GetRegionAt(enemy->GetPos());
-		if (region < 0) {
-			continue;
-		}
-		isEnemyArmy[region] = true;
-		if (edef->IsMobile()) {
+		if (region >= 0) {
+			enemyArmy[region] += enemy->GetCost();
 			views[region].threat += enemy->GetThreat();
 		}
 	}
 	for (size_t r = 0; r < regions.size(); ++r) {
 		SRegionView& view = views[r];
-		auto it = ourArmySeen.find(regions[r].id);
-		const bool isOurArmy = (it != ourArmySeen.end()) && (frame - it->second < RECENT_FRAMES);
-		view.isArmies = isOurArmy && isEnemyArmy[r];
+		view.isArmies = (ourArmy[r] >= ARMY_FLOOR) && (enemyArmy[r] >= ARMY_FLOOR);
 		view.isBuilt = chokeMap->IsOurTerritory(r) && chokeMap->IsEnemyTerritory(r);
 		const CChokeMap::LineSide line = chokeMap->GetLineSide(r);
 		view.isBetween = (line == CChokeMap::LineSide::BETWEEN);
@@ -79,33 +86,8 @@ std::vector<CChokeOverlay::SRegionView> CChokeOverlay::MakeRegionViews() const
 }
 
 /*
- * Our armed units' regions (towers too), every 2 s while the overlay is on: the other half of a contested army
- */
-void CChokeOverlay::UpdatePresence()
-{
-	if (!chokeMap->IsReady()) {
-		return;
-	}
-	const int frame = circuit->GetLastFrame();
-	const std::vector<CRegionGraph::SRegion>& regions = chokeMap->GetGraph().GetRegions();
-	for (const auto& kv : circuit->GetFriendlyUnits()) {
-		CAllyUnit* unit = kv.second;
-		if (!unit->GetCircuitDef()->IsAttacker()) {
-			continue;
-		}
-		const int region = chokeMap->GetRegionAt(unit->GetPos(frame));
-		if (region >= 0) {
-			ourArmySeen[regions[region].id] = frame;
-		}
-	}
-	for (auto it = ourArmySeen.begin(); it != ourArmySeen.end();) {
-		it = (frame - it->second >= RECENT_FRAMES) ? ourArmySeen.erase(it) : std::next(it);
-	}
-}
-
-/*
- * Region centres: side, why it's contested, enemy threat there. Enemy-line and enemy-held chokes: as the ranks
- * layer says them
+ * Region centres: side, why it's contested, enemy threat there. Ranked chokes: as the ranks layer says them. Our
+ * current line's chokes, a little south: what they want against the enemy outside and what our towers give
  */
 std::vector<std::pair<AIFloat3, std::string>> CChokeOverlay::MakeSideLabels(const std::vector<SRegionView>& views) const
 {
@@ -136,7 +118,8 @@ std::vector<std::pair<AIFloat3, std::string>> CChokeOverlay::MakeSideLabels(cons
 		}
 		result.emplace_back(AIFloat3(mask.CentreX(region.centre), 0.f, mask.CentreZ(region.centre)), text);
 	}
-	for (const CFrontline::SRank& rank : circuit->GetMilitaryManager()->GetFrontline()->GetRanks()) {
+	const CFrontline* frontline = circuit->GetMilitaryManager()->GetFrontline();
+	for (const CFrontline::SRank& rank : frontline->GetRanks()) {
 		const int c = graph.FindChoke(rank.chokeId);
 		if (c < 0) {
 			continue;
@@ -146,42 +129,51 @@ std::vector<std::pair<AIFloat3, std::string>> CChokeOverlay::MakeSideLabels(cons
 				+ (rank.isUndefended ? ", undefended" : "") + utils::float_to_string(rank.defence, ": defence %.0f")
 				+ utils::float_to_string(rank.confidence * 100.f, ", seen %.0f%%"));
 	}
+	for (const CFrontline::SFront& f : frontline->GetFront()) {
+		const int c = graph.FindChoke(f.chokeId);
+		if (c < 0) {
+			continue;
+		}
+		const AIFloat3 centre = chokeMap->GetCellPos(graph.GetChokes()[c].centre);
+		result.emplace_back(AIFloat3(centre.x, 0.f, centre.z + 96.f), std::string("our line")
+				+ ((f.GetShortfall() > 0.f) ? ", short" : "") + utils::float_to_string(f.wanted, ": wants %.0f")
+				+ utils::float_to_string(f.towers, ", towers %.0f"));
+	}
 	return result;
 }
 
 /*
- * The widget draws the fills when the machine running the AI has it, never in games with human opponents (it may be
- * one of theirs); else lines, region crosses and arrows with figures
+ * The widget draws the layer when the machine running the AI has it, never in games with human opponents (it may be
+ * one of theirs); else the lines layer stands in
  */
 void CChokeOverlay::DrawSides()
 {
-	const std::vector<SRegionView> views = MakeRegionViews();
 	const bool isAllowed = !IsHumanIn(false);
 	if (isAllowed) {
 		const std::string answer = CallWidget("hello", "");
 		if ((answer == "1") || (answer == "0")) {
 			isGridSent &= (answer == "1");  // "0": it has no grid for us (just loaded)
-			SendWidgetData(views);
+			SendWidgetData(MakeRegionViews());
 			return;
 		}
 	}
 	isWidgetDrawn = false;
 	if (!isWidgetHinted) {
 		isWidgetHinted = true;
-		Say(isAllowed ? "sides: region fills need the dbg_circuit_sides widget on the machine running the AI"
-				" (util/LuaUI/Widgets in the AI's repo); drawing lines and region crosses instead"
-				: "sides: no widget in games with human opponents; drawing lines and region crosses instead");
+		Say(isAllowed ? "sides needs the dbg_circuit_sides widget on the machine running the AI"
+				" (util/LuaUI/Widgets in the AI's repo); showing the lines layer instead"
+				: "sides has no widget in games with human opponents; showing the lines layer instead");
 	}
-	DrawSidesWithFigures(views);
+	DrawLines();
 }
 
 /*
  * One message each, prefixed circuit_sides_<verb>:<ally team>. Positions in whole elmos
  * - grid: width height cellSize, then (region index, count) runs over the cells row by row; -1 is a wall
  * - state: a letter per region index: u unknown, o ours, e enemy, c contested; capital in that side's territory
- * - lines, arrows, labels: a record per line, after the header line
- *   lines: kind (w forward, c current, e enemy, f front) x1 z1 x2 z2
- *   arrows: x1 z1 x2 z2 full half (threat of enemy mobiles it's the nearest line choke for, and of the others)
+ * - lines, labels: a record per line, after the header line
+ *   lines: kind x1 z1 x2 z2. Kinds: w forward line; f front line; enemy line chokes by rank: e defended,
+ *   u undefended, g not seen enough; h enemy-held off the enemy line; current line: c covered, s short
  *   labels: x z text
  */
 void CChokeOverlay::SendWidgetData(const std::vector<SRegionView>& views)
@@ -189,6 +181,7 @@ void CChokeOverlay::SendWidgetData(const std::vector<SRegionView>& views)
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	const SCellMask& mask = graph.GetMask();
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
+	const CFrontline* frontline = circuit->GetMilitaryManager()->GetFrontline();
 	auto put = [](std::ostringstream& out, float value) {
 		out << ' ' << (int)std::lround(value);
 	};
@@ -220,32 +213,38 @@ void CChokeOverlay::SendWidgetData(const std::vector<SRegionView>& views)
 	CallWidget("state", " " + letters);
 
 	std::ostringstream lines;
-	auto addLine = [&](const std::vector<int>& line, char kind) {
-		for (int c : line) {
-			AIFloat3 a, b;
-			GetChokeEnds(graph, chokes[c], a, b);
-			lines << '\n' << kind;
-			put(lines, a.x); put(lines, a.z); put(lines, b.x); put(lines, b.z);
-		}
+	auto addChoke = [&](int c, char kind) {
+		AIFloat3 a, b;
+		GetChokeEnds(graph, chokes[c], a, b);
+		lines << '\n' << kind;
+		put(lines, a.x); put(lines, a.z); put(lines, b.x); put(lines, b.z);
 	};
-	addLine(chokeMap->GetForwardLine(), 'w');
-	addLine(chokeMap->GetCurrentLine(), 'c');
-	addLine(chokeMap->GetEnemyLine(), 'e');
-	addLine(chokeMap->GetFrontLine(), 'f');
-	CallWidget("lines", lines.str());
-
-	std::ostringstream arrows;
-	for (const CFrontline::SPress& press : circuit->GetMilitaryManager()->GetFrontline()->GetPresses()) {
-		const int c = graph.FindChoke(press.chokeId);
-		if (c < 0) {
-			continue;
-		}
-		const AIFloat3 centre = chokeMap->GetCellPos(chokes[c].centre);
-		arrows << '\n';
-		put(arrows, press.from.x); put(arrows, press.from.z); put(arrows, centre.x); put(arrows, centre.z);
-		put(arrows, press.full); put(arrows, press.half);
+	for (int c : chokeMap->GetForwardLine()) {
+		addChoke(c, 'w');
 	}
-	CallWidget("arrows", arrows.str());
+	for (int c : chokeMap->GetFrontLine()) {
+		addChoke(c, 'f');
+	}
+	std::vector<bool> isRanked(chokes.size(), false);
+	for (const CFrontline::SRank& rank : frontline->GetRanks()) {
+		const int c = graph.FindChoke(rank.chokeId);
+		if (c >= 0) {
+			isRanked[c] = true;
+			const bool isOnLine = std::binary_search(chokeMap->GetEnemyLine().begin(), chokeMap->GetEnemyLine().end(), c);
+			addChoke(c, !isOnLine ? 'h' : rank.isUndefended ? 'u' : (rank.defence > 0.f) ? 'e' : 'g');
+		}
+	}
+	for (int c : chokeMap->GetEnemyLine()) {
+		if (!isRanked[c]) {
+			addChoke(c, 'g');  // not ranked since the lines moved
+		}
+	}
+	for (int c : chokeMap->GetCurrentLine()) {
+		const auto it = std::find_if(frontline->GetFront().begin(), frontline->GetFront().end(),
+				[&](const CFrontline::SFront& f) { return f.chokeId == chokes[c].id; });
+		addChoke(c, ((it != frontline->GetFront().end()) && (it->GetShortfall() > 0.f)) ? 's' : 'c');
+	}
+	CallWidget("lines", lines.str());
 
 	std::ostringstream labelText;
 	if (isLabels) {
@@ -257,59 +256,6 @@ void CChokeOverlay::SendWidgetData(const std::vector<SRegionView>& views)
 	}
 	CallWidget("labels", labelText.str());
 	isWidgetDrawn = true;
-}
-
-/*
- * Lines blue (current), red (enemy), white (front), yellow (forward); a cross per region, blue ours, red the enemy's,
- * half of each contested, bigger in territory; orange arrows from enemy armies to the line chokes they press, thick
- * to the nearest
- */
-void CChokeOverlay::DrawSidesWithFigures(const std::vector<SRegionView>& views)
-{
-	const CRegionGraph& graph = chokeMap->GetGraph();
-	const SCellMask& mask = graph.GetMask();
-	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
-	auto drawLine = [&](const std::vector<int>& line, Colour colour, float width) {
-		for (int c : line) {
-			AIFloat3 a, b;
-			GetChokeEnds(graph, chokes[c], a, b);
-			AddLine(OnGround(a.x, a.z), OnGround(b.x, b.z), colour, width);
-		}
-	};
-	drawLine(chokeMap->GetForwardLine(), Colour::YELLOW, 16.f);
-	drawLine(chokeMap->GetCurrentLine(), Colour::BLUE, 32.f);
-	drawLine(chokeMap->GetEnemyLine(), Colour::RED, 32.f);
-	drawLine(chokeMap->GetFrontLine(), Colour::WHITE, 48.f);
-
-	for (size_t r = 0; r < views.size(); ++r) {
-		const SRegionView& view = views[r];
-		const int cell = graph.GetRegions()[r].centre;
-		const float x = mask.CentreX(cell), z = mask.CentreZ(cell);
-		const float size = view.isTerritory ? 160.f : 96.f;
-		switch (view.side) {
-			case Side::OURS: AddCross(AIFloat3(x, 0.f, z), Colour::BLUE, size); break;
-			case Side::ENEMY: AddCross(AIFloat3(x, 0.f, z), Colour::RED, size); break;
-			case Side::CONTESTED: {
-				AddLine(OnGround(x - size, z - size), OnGround(x + size, z + size), Colour::BLUE, 12.f);
-				AddLine(OnGround(x - size, z + size), OnGround(x + size, z - size), Colour::RED, 12.f);
-			} break;
-			default: break;
-		}
-	}
-
-	for (const CFrontline::SPress& press : circuit->GetMilitaryManager()->GetFrontline()->GetPresses()) {
-		const int c = graph.FindChoke(press.chokeId);
-		if (c < 0) {
-			continue;
-		}
-		const AIFloat3 centre = chokeMap->GetCellPos(chokes[c].centre);
-		AddLine(OnGround(press.from.x, press.from.z), OnGround(centre.x, centre.z), Colour::ORANGE,
-				(press.full > 0.f) ? 24.f : 8.f, true);
-	}
-
-	for (const auto& label : MakeSideLabels(views)) {
-		AddLabel(OnGround(label.first.x, label.first.z), label.second);
-	}
 }
 
 std::string CChokeOverlay::CallWidget(const std::string& verb, const std::string& body) const

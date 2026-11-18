@@ -157,7 +157,6 @@ void CChokeOverlay::Update()
 	if (!isOn) {
 		return;
 	}
-	UpdatePresence();
 	const bool isLive = (layer == Layer::LINES) || (layer == Layer::RANKS) || (layer == Layer::SPOTS)
 			|| (layer == Layer::RADAR) || (layer == Layer::TURRETS) || (layer == Layer::SIDES);
 	const int frame = circuit->GetLastFrame();
@@ -788,11 +787,11 @@ void CChokeOverlay::GetChokeEnds(const CRegionGraph& graph, const CRegionGraph::
 	outB = AIFloat3(mask.CentreX(b), 0.f, mask.CentreZ(b));
 }
 
-void CChokeOverlay::AddLine(const AIFloat3& from, const AIFloat3& to, Colour colour, float width, bool isArrow)
+void CChokeOverlay::AddLine(const AIFloat3& from, const AIFloat3& to, Colour colour, float width)
 {
 	Figure* figure = circuit->GetDrawer()->GetFigure();
 	auto it = groups.find(colour);
-	const int groupId = figure->DrawLine(from, to, width, isArrow, 0 /* stays */, (it != groups.end()) ? it->second : 0);
+	const int groupId = figure->DrawLine(from, to, width, false, 0 /* stays */, (it != groups.end()) ? it->second : 0);
 	if (it == groups.end()) {
 		groups[colour] = groupId;
 		figure->SetColor(groupId, ColourOf(static_cast<int>(colour)), 255);
