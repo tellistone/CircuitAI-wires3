@@ -240,6 +240,7 @@ void CChokeMap::Reanalyze()
 	if (isReady) {
 		nextAnalysisFrame = circuit->GetLastFrame() + ANALYSIS_RATE;
 		UpdateTerritory();
+		UpdateHeld();
 		Analyze();
 	}
 }

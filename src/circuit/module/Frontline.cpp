@@ -14,6 +14,7 @@
 #include "task/fighter/FighterTask.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/ChokeOverlay.h"
+#include "terrain/TerrainManager.h"
 #include "unit/ally/AllyTeam.h"
 #include "unit/enemy/EnemyManager.h"
 #include "unit/enemy/EnemyUnit.h"
@@ -37,7 +38,7 @@ using namespace springai;
 #define WANT_MARGIN		1.2f  // a choke wants this much more than the enemy army near it
 #define WANT_OTHER		0.5f  // an enemy threatens its region's other line chokes by this share (its nearest in full)
 #define SWITCH_SHARE	1.3f  // a slot or objective moves only to one this much better
-#define SAMPLE_COUNT	8  // LOS samples on a choke's line
+#define SAMPLE_COUNT	8  // LOS samples on a choke's line, and as many beyond it on the enemy's side
 #define SEEN_MIN		0.25f  // a choke's defence is trusted for at least this share of its line seen lately
 #define HOLD_RETRY		(FRAMES_PER_SEC * 30)  // a slot with no hold spot is scored again after this
 #define HOLD_END		(FRAMES_PER_SEC * 30)  // a hold ends once its choke is this long not short
@@ -86,7 +87,8 @@ void CFrontline::Update()
 		if (!enemy->IsDead() && !enemy->IsFake() && (edef != nullptr) && edef->IsAttacker()
 			&& (!edef->IsMobile() || enemy->IsRecentlySeen(frame, RECENT_FRAMES)))  // towers count until seen dead
 		{
-			armed.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(), enemy->GetThreat(), enemy->GetCost()});
+			armed.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(), enemy->GetThreat(),
+					enemy->GetCost(), !edef->IsMobile() || enemy->IsRecentlySeen(frame, CChokeMap::ARMY_SEEN)});
 		}
 	}
 	UpdateRanks(armed);
@@ -101,10 +103,12 @@ void CFrontline::Update()
 }
 
 /*
- * E: enemy-held chokes and the enemy line's. A choke's outer side is the one more chokes away from our territory.
- * Enemy towers count when the line or our approach to it (one main-tower range deep) is in their range, enemy
- * mobiles within a main-tower range of the line. Unarmed enemy units share their cost equally between the entrances
- * of their region from our side, counted at those within 2 x choke.near ranges of them
+ * E: enemy-held chokes and the enemy line's. A choke's outer side is the one more chokes away from our held ground; it
+ * is enemy-held when that side is the enemy's ground. Enemy towers count when the line or our approach to it (one
+ * main-tower range deep) is in their range, enemy mobiles within a main-tower range of the line. Unarmed enemy units
+ * share their cost equally between the entrances of their region from our side, counted at those within
+ * 2 x choke.near ranges of them. What we saw of a choke: the lower of the shares of its line and of the ground beyond
+ * it on the enemy's side (up to a main-tower range out, where its defenders would stand) in our LOS lately
  */
 void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 {
@@ -113,7 +117,10 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
 	const float mainRange = chokeMap->GetMainRange();
 	const int frame = circuit->GetLastFrame();
-	const std::vector<int> hops = graph.HopsFrom(chokeMap->GetOurRegions());  // chokes away from our territory
+	const std::vector<int> hops = graph.HopsFrom(chokeMap->GetOurRegions());  // chokes away from our ground
+	const SCellMask& mask = graph.GetMask();
+	const float mapWidth = mask.width * mask.cellSize, mapHeight = mask.height * mask.cellSize;
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 
 	std::vector<float> values(chokes.size(), 0.f);
 	const float valueReach = 2.f * chokeMap->GetConfig().nearRanges * mainRange;
@@ -167,24 +174,68 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 		};
 		const int a = choke.regionA, b = choke.regionB;
 		const int outer = (farness(a) == farness(b)) ? -1 : (farness(a) > farness(b)) ? a : b;
-		rank.isHeld = isCovered || ((outer >= 0) && chokeMap->IsEnemyTerritory(outer));
+		rank.isHeld = isCovered || ((outer >= 0) && chokeMap->IsEnemyGround(outer));
 		if (!rank.isHeld && !isEnemyLine[c]) {
 			continue;
 		}
 
-		// Confidence: line samples in our LOS within the last 3 minutes
-		std::vector<int>& seen = sampleSeen[choke.id];
+		// Confidence: samples on its line, and beyond it on the enemy's side (its outer side, else the side that is
+		// enemy ground), in our LOS within the last 3 minutes
+		std::vector<AIFloat3> samples;
 		const int count = std::min<int>(SAMPLE_COUNT, choke.line.size());
-		seen.resize(count, -RECENT_FRAMES - 1);
-		int fresh = 0;
 		for (int i = 0; i < count; ++i) {
-			const int cell = choke.line[i * choke.line.size() / count];
-			if (mapMgr->IsInLOS(chokeMap->GetCellPos(cell))) {
+			samples.push_back(chokeMap->GetCellPos(choke.line[i * choke.line.size() / count]));
+		}
+		int enemySide = outer;
+		if (enemySide < 0) {
+			const bool isA = chokeMap->IsEnemyGround(a), isB = chokeMap->IsEnemyGround(b);
+			enemySide = (isA == isB) ? -1 : isA ? a : b;
+		}
+		if ((enemySide >= 0) && (count > 0)) {
+			// Across the line (its cells ascend, so the first and last are near its ends), toward the enemy's side
+			const AIFloat3 first = chokeMap->GetCellPos(choke.line.front());
+			const AIFloat3 last = chokeMap->GetCellPos(choke.line.back());
+			const AIFloat3 toward = chokeMap->GetCellPos(graph.GetRegions()[enemySide].centre) - centre;
+			AIFloat3 across(last.z - first.z, 0.f, first.x - last.x);
+			if (across.SqLength2D() < 1.f) {
+				across = toward;
+			}
+			across.y = 0.f;
+			const float length = across.Length2D();
+			if (length > 0.f) {
+				across = across * ((across.dot2D(toward) < 0.f) ? -1.f / length : 1.f / length);
+				for (int i = 0; i < SAMPLE_COUNT / 2; ++i) {
+					const int cell = choke.line[(2 * i + 1) * choke.line.size() / SAMPLE_COUNT];
+					const AIFloat3 base = chokeMap->GetCellPos(cell);
+					for (float depth : {0.5f, 1.f}) {
+						AIFloat3 p = base + across * (depth * mainRange);
+						if ((p.x >= 0.f) && (p.z >= 0.f) && (p.x < mapWidth) && (p.z < mapHeight)) {
+							p.y = terrainMgr->GetHeightAt(p.x, p.z);  // under water only sonar sees it
+							samples.push_back(p);
+						}
+					}
+				}
+			}
+		}
+		std::vector<int>& seen = sampleSeen[choke.id];
+		seen.resize(samples.size(), -RECENT_FRAMES - 1);
+		int fresh = 0, freshBeyond = 0;
+		for (size_t i = 0; i < samples.size(); ++i) {
+			if (mapMgr->IsInLOS(samples[i])) {
 				seen[i] = frame;
 			}
-			fresh += (frame - seen[i] <= RECENT_FRAMES) ? 1 : 0;
+			if (frame - seen[i] <= RECENT_FRAMES) {
+				if (i < (size_t)count) {
+					++fresh;
+				} else {
+					++freshBeyond;
+				}
+			}
 		}
-		rank.confidence = (count > 0) ? float(fresh) / count : 0.f;
+		const int beyond = (int)samples.size() - count;
+		rank.confidence = (count <= 0) ? 0.f
+				: (beyond <= 0) ? float(fresh) / count
+				: std::min(float(fresh) / count, float(freshBeyond) / beyond);
 		rank.isUndefended = (rank.defence <= 0.f) && (rank.confidence >= SEEN_MIN);
 		ranks.push_back(rank);
 	}
@@ -198,8 +249,8 @@ void CFrontline::UpdateRanks(const std::vector<SArmed>& armed)
 
 /*
  * C: each of our points behind the current line counts at its nearest line choke. Our towers count when their range
- * reaches the line. An enemy mobile counts at the line chokes out into its region: the nearest in full, the others
- * by half (none when no line choke opens into its region)
+ * reaches the line. An enemy mobile seen in the last minute (as the held ground counts it) counts at the line chokes
+ * out into its region: the nearest in full, the others by half (none when no line choke opens into its region)
  */
 void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 {
@@ -235,7 +286,7 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CCircuitDef* cdef = kv.second->GetCircuitDef();
 		if (!cdef->IsMobile() && cdef->IsAttacker()) {
-			towers.push_back({kv.second->GetPos(frame), false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f});
+			towers.push_back({kv.second->GetPos(frame), false, cdef->GetMaxRange(), cdef->GetThreat(), 0.f, true});
 		}
 	}
 	// Enemy mobiles in the region outside a line choke: each threatens the nearest of its region's line chokes in full,
@@ -248,7 +299,7 @@ void CFrontline::UpdateFront(const std::vector<SArmed>& armed)
 	}
 	std::vector<float> wanted(line.size(), 0.f), wantedCost(line.size(), 0.f);
 	for (const SArmed& e : armed) {
-		const int region = e.isMobile ? chokeMap->GetRegionAt(e.pos) : -1;
+		const int region = (e.isMobile && e.isRecent) ? chokeMap->GetRegionAt(e.pos) : -1;
 		if (region < 0) {
 			continue;
 		}
@@ -480,6 +531,19 @@ CFrontline::SObjective CFrontline::MakeObjective(float& outArmyPower) const
 		obj.positions.push_back(chokeMap->GetCellPos(chokes[c].centre));
 		obj.defence += ExpectedDefence(*rank);
 		cost += rank->defenceCost + mainCost * (1.f + chokes[c].width / chokeMap->GetMainRange());
+	}
+	// And the enemy army on the ground it brings behind the line (the forward line is where ours would be without it)
+	const int frame = circuit->GetLastFrame();
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+		const CEnemyUnit* enemy = kv.second;
+		if (!CChokeMap::IsCountedEnemy(enemy, frame) || !enemy->GetCircuitDef()->IsMobile()) {
+			continue;
+		}
+		const int region = chokeMap->GetRegionAt(enemy->GetPos());
+		if ((region >= 0) && brought[region]) {
+			obj.defence += enemy->GetThreat();
+			cost += enemy->GetCost();
+		}
 	}
 	if (obj.chokeIds.empty() || (gain < config.objGain * cost) || (outArmyPower < config.objPower * obj.defence)) {
 		return SObjective();

@@ -22,7 +22,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   says `LOS cheating: on` or `off` at start. A legend is printed bottom left.
   It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through
   `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget the layer shows
-  the `lines` layer. Nothing outside the overlay reads the ownership it shows.
+  the `lines` layer. The choke lines are cut between the ground it shows each side owning (see Changed).
 
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
@@ -617,6 +617,23 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `behaviour.json` gains `energygeo` and `energyheavygeo` entries.
 
 ### Changed
+
+- **The choke lines follow who owns the ground, armies included.** The current, enemy and front lines were cut
+  between territory, which only buildings make, so our line could run through ground the enemy army held and behind
+  ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
+  base outside it. Now they are cut between held ground: each region's owner by the units the AI knows of (the
+  `sides` tint: enemy mobiles for a minute after they were seen, enemy buildings until seen dead), once it has owned
+  it for 20 s, with the enemy's side of the map counting as theirs where we don't own it. Contested and nobody's
+  ground between the sides keeps our line and theirs apart. Territory still qualifies pockets and weighs radar.
+  - The forward line was the cut against the enemy's start boxes and factories, so it hugged the enemy base. It is
+    now where our line would be if the enemy army were driven off: the cut against the enemy's buildings and side of
+    the map alone. A forward objective (D) counts the enemy army on the ground it would take in its defence and cost.
+  - A line choke is short of the enemy army seen in the last minute outside it, as the tint counts it, not the last
+    3 minutes.
+  - A ranked enemy choke counts as seen (and so can be undefended) only for the lower of the shares of its gap and of
+    the ground a main-tower range beyond it on the enemy's side in our LOS lately, not the gap alone.
+  - The `sides` widget draws the front line as a white rim round our line's casing, so a front choke that is short
+    shows orange (the front line hid it). A region's info box says when the lines still take it otherwise.
 
 - **A minor enemy type no longer reshapes the threat graph.** Walkers, tanks and hovers gated the graph as soon as
   one of them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only

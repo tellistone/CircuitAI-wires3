@@ -14,9 +14,12 @@
 -- - its core is its owner, counting the guns that reach its line: blue ours, red the enemy's, dashed blue and red
 --   contested, thin grey nobody's;
 -- - posts at its ends when towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended;
--- - a casing round the core when it is on a line: white the front line; green our current line where its towers cover
---   what it wants, orange where it's short; the enemy line dark red where defended, pink where undefended, grey where
---   not seen enough; deep red an enemy-held choke off it; yellow the forward line.
+-- - a casing round the core when it is on a line: green our current line where its towers cover what it wants, orange
+--   where it's short, with a white rim on the front line (where ours and the enemy's touch); the enemy line dark red
+--   where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the
+--   forward line, where ours would be if the enemy army were driven back to its buildings.
+-- The lines are cut between the ground each side owns (as tinted, once that has held 20 s), the enemy's side of the
+-- map counting as theirs where we don't own it.
 -- Each enemy the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building
 -- (red armed, pale unarmed), filled while in its sight or radar, an outline where it was last seen. An enemy you see
 -- with no mark is one the AI doesn't know of, so a spectator with full view can tell what the overlay is built on.
@@ -94,7 +97,9 @@ local KNOWN_RIM = {0.05, 0.05, 0.05, 0.90}
 local KNOWN_OUTLINE_WIDTH = 3  -- a remembered one's outline
 
 local CASING_WIDTH = 15
+local RIM_WIDTH = 25  -- the front line's casing: a white rim round the others
 local LINES = {  -- casings by line kind, drawn in this order: the last one drawn shows on a choke in several lines
+	{kind = "f", colour = {1.00, 1.00, 1.00, 1.00}, width = RIM_WIDTH},  -- front line, under our line's colour
 	{kind = "w", colour = {1.00, 0.88, 0.20, 0.95}},  -- forward line
 	{kind = "h", colour = {0.40, 0.02, 0.05, 0.95}},  -- enemy-held, off the enemy line
 	{kind = "g", colour = {0.55, 0.55, 0.55, 0.95}},  -- enemy line, not seen enough to rank
@@ -102,7 +107,6 @@ local LINES = {  -- casings by line kind, drawn in this order: the last one draw
 	{kind = "u", colour = {1.00, 0.62, 0.78, 0.95}},  -- enemy line, undefended
 	{kind = "c", colour = {0.20, 0.80, 0.30, 0.95}},  -- current line, towers cover what it wants
 	{kind = "s", colour = {1.00, 0.55, 0.05, 0.95}},  -- current line, short
-	{kind = "f", colour = {1.00, 1.00, 1.00, 1.00}},  -- front line
 }
 
 local LIFT = 10  -- lines float this high over the ground
@@ -424,8 +428,8 @@ local function BuildLines(team)
 	DeleteList(team, "lineList")
 	local lines = team.lines or {}
 	team.lineList = gl.CreateList(function()
-		gl.LineWidth(CASING_WIDTH)
 		for _, style in ipairs(LINES) do
+			gl.LineWidth(style.width or CASING_WIDTH)
 			gl.Color(style.colour)
 			gl.BeginEnd(GL.LINES, function()
 				for i = 1, #lines do
@@ -685,9 +689,9 @@ local function MakeLegend()
 	end
 	local sides = blue .. "ours" .. w .. ", " .. red .. "enemy" .. w
 	return {
-		"Casing: " .. casing.f .. "front line" .. w .. ", " .. casing.c .. "our line" .. w .. " / " .. casing.s .. "short"
-				.. w .. ", " .. casing.e .. "enemy line defended" .. w .. " / " .. casing.u .. "undefended" .. w .. " / "
-				.. casing.g .. "unseen" .. w .. ", " .. casing.h .. "enemy-held" .. w .. ", " .. casing.w .. "forward line",
+		"Casing: " .. casing.c .. "our line" .. w .. " / " .. casing.s .. "short" .. w .. ", " .. casing.f .. "rimmed"
+				.. w .. " front line, " .. casing.e .. "enemy line defended" .. w .. " / " .. casing.u .. "undefended"
+				.. w .. " / " .. casing.g .. "unseen" .. w .. ", " .. casing.h .. "enemy-held" .. w .. ", " .. casing.w .. "forward line",
 		"Posts at a gate's ends: towers reach it (" .. sides .. ", half and half both)",
 		"Choke gates: owner by the guns that reach them (" .. sides .. ", dashed contested, grey nobody's)",
 		"Regions: owner by the units in them (" .. sides .. ", striped contested, clear nobody's)",

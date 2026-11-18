@@ -33,6 +33,7 @@ class CCircuitAI;
 class CCircuitDef;
 class CGameTask;
 class CChokeOverlay;
+class CEnemyUnit;
 
 /*
  * The shape of the map for one ally team: which gaps are chokes, which mex clusters sit behind which chokes, where
@@ -45,7 +46,8 @@ class CChokeOverlay;
  * - The traffic field (CTrafficField) has one layer per enemy movement type, blended by the enemy's army mix.
  * - Map sides (start boxes, enemy factories) drive gating, pockets and openness. Territory (buildings per region:
  *   ours 20 s to join and 60 s to leave, the enemy's towers, factories and big buildings only, 120 s to leave)
- *   drives pocket qualification and the current and forward lines.
+ *   drives pocket qualification. Held ground (who owns each region by the units the AI knows of, armies included, as
+ *   the sides overlay tints it, once that has held 20 s) drives the lines.
  * - Defence points (CDefenceMatrix) get a pocket: the 1 to choke.entrances chokes the enemy must pass to walk in.
  *
  * Built only when a feature that reads it is on in config, or when the overlay asks. Everything here is analysis:
@@ -198,21 +200,53 @@ public:
 	std::vector<bool> GetShelteredBy(int region) const;
 	bool IsEnemyTerritory(int region) const { return isEnemyTerritory[region]; }
 	bool IsOurTerritory(int region) const { return isOurTerritory[region]; }
-	std::vector<int> GetOurRegions() const;  // our territory, or our side before we hold any
+
+	// Who owns ground (ChokePockets.cpp), by the units the AI knows of. The sides overlay tints regions by it, and the
+	// lines are cut between the ground each side holds by it
+	enum class Side: char {NONE, OURS, ENEMY, CONTESTED};
+	struct SSideUnit {
+		springai::AIFloat3 pos;
+		bool isMobile;
+		float range;
+		float threat;  // > 0: armed (ours: power)
+		float eco;  // unarmed buildings: metal
+	};
+	struct SStrength {
+		float mobile = 0.f;  // armed mobiles' threat (ours: power)
+		float statics = 0.f;  // armed buildings' threat
+		float eco = 0.f;  // metal in unarmed buildings
+		float Threat() const { return mobile + statics; }
+		bool IsAny() const { return (mobile > 0.f) || (statics > 0.f) || (eco > 0.f); }
+		void Add(const SSideUnit& u) {
+			(u.isMobile ? mobile : (u.threat > 0.f) ? statics : eco) += (u.threat > 0.f) ? u.threat : u.eco;
+		}
+	};
+	static const int ARMY_SEEN;  // frames: an enemy mobile counts where it was seen this long ago
+	static Side OwnerOf(const SStrength& ours, const SStrength& enemy);
+	static bool IsCountedEnemy(const CEnemyUnit* enemy, int frame);
+	// Both sides' units the owners count, aircraft aside: ours where they are now, enemy buildings until seen dead,
+	// armed enemy mobiles where they were seen in the last ARMY_SEEN. Constructors bring nothing
+	void GetSideUnits(std::vector<SSideUnit>& outOurs, std::vector<SSideUnit>& outEnemies) const;
+	// Held ground (UpdateHeld), per region. Ours: regions we own. The enemy's: regions they own, and the enemy side
+	// where we don't. Contested and nobody's regions are neither
+	bool IsOurGround(int region) const { return isOurGround[region]; }
+	bool IsEnemyGround(int region) const { return isEnemyGround[region]; }
+	std::vector<int> GetOurRegions() const;  // our held ground, or our side before we hold any
 	// Nearer our start box than any enemy source (true until both are known): the half of the map we defend
 	bool IsOurHalf(const springai::AIFloat3& pos) const;
 
 	const std::vector<SPointInfo>& GetPointInfos() const { return pointInfos; }
 	const SPointInfo* GetPointInfo(int cluster, int index) const;  // nullptr before the analysis
 	const std::vector<SPocket>& GetPockets() const { return pockets; }
-	// Chokes of the cut nearest our territory against enemy territory (C), and against the enemy side (D)
+	// Chokes of the cut nearest our held ground against the enemy's (C), and against the enemy's buildings and side
+	// alone, as if their army were driven off (D)
 	const std::vector<int>& GetCurrentLine() const { return currentLine; }
 	const std::vector<int>& GetForwardLine() const { return forwardLine; }
-	// The current line's cut nearest enemy territory instead, and the chokes the two share: where the lines touch,
-	// which every cheapest cut between the sides passes (empty while the lines don't touch). Ascending
+	// The current line's cut nearest the enemy's held ground instead, and the chokes the two share: where the lines
+	// touch, which every cheapest cut between the sides passes (empty while the lines don't touch). Ascending
 	const std::vector<int>& GetEnemyLine() const { return enemyLine; }
 	const std::vector<int>& GetFrontLine() const { return frontLine; }
-	// Per region: the chokes of the cut nearest it from our territory (E), up to choke.entrances of them
+	// Per region: the chokes of the cut nearest it from our held ground (E), up to choke.entrances of them
 	const std::vector<int>& GetEntrancesFromUs(int region) const;
 
 	float GetOpenness() const { return openness; }
@@ -303,6 +337,7 @@ private:
 	};
 	void UpdateSides();
 	void UpdateTerritory();
+	void UpdateHeld();
 	void Analyze();
 	void AnalyzePoints();
 	void UpdateLines();
@@ -365,6 +400,14 @@ private:
 		int lastSeen = -1;
 	};
 	std::map<int, STerritory> ourHold, enemyHold;  // region id -> buildings seen
+	struct SHeld {
+		Side side = Side::NONE;  // the owner the lines take
+		Side next = Side::NONE;  // the owner now, settling in
+		int since = -1;  // frame next became the owner
+	};
+	std::map<int, SHeld> held;  // region id
+	std::vector<bool> isOurGround, isEnemyGround;
+	std::vector<bool> isEnemyBuilt;  // enemy ground with their buildings in it, or on their side
 
 	// Pockets and lines
 	std::vector<SPointInfo> pointInfos;

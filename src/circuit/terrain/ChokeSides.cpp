@@ -27,82 +27,23 @@ namespace circuit {
 
 using namespace springai;
 
-#define ARMY_SEEN		(FRAMES_PER_SEC * 60)  // an enemy mobile counts where it was seen this long ago
-#define OWN_RATIO		1.5f  // where both sides have threat, one owns with this many times the other's
 #define WIDGET_PREFIX	"circuit_sides_"  // see util/LuaUI/Widgets/dbg_circuit_sides.lua
 
 /*
- * Nobody's where neither side has anything; one side's where only it has; where both have, the side with OWN_RATIO
- * times the other's threat, else contested (both sides' eco and no guns is contested too)
- */
-CChokeOverlay::Side CChokeOverlay::OwnerOf(const SStrength& ours, const SStrength& enemy)
-{
-	const bool isOurs = ours.IsAny(), isEnemy = enemy.IsAny();
-	if (isOurs != isEnemy) {
-		return isOurs ? Side::OURS : Side::ENEMY;
-	}
-	if (!isOurs) {
-		return Side::NONE;
-	}
-	const float power = ours.Threat(), threat = enemy.Threat();
-	if ((power > 0.f) && (power >= OWN_RATIO * threat)) {
-		return Side::OURS;
-	}
-	if ((threat > 0.f) && (threat >= OWN_RATIO * power)) {
-		return Side::ENEMY;
-	}
-	return Side::CONTESTED;
-}
-
-/*
- * The enemies the views count, all the AI knows of them: buildings until seen dead, armed mobiles seen (in sight or on
- * radar) in the last ARMY_SEEN, at the last place seen; aircraft and unidentified radar blips aside
- */
-static bool IsCountedEnemy(const CEnemyUnit* enemy, int frame)
-{
-	const CCircuitDef* edef = enemy->GetCircuitDef();
-	return !enemy->IsDead() && !enemy->IsFake() && (edef != nullptr) && !edef->IsAbleToFly()
-			&& (!edef->IsMobile() || (edef->IsAttacker() && enemy->IsRecentlySeen(frame, ARMY_SEEN)));
-}
-
-/*
- * Both sides' units, aircraft aside: ours where they are now, enemy buildings until seen dead, enemy mobiles where
- * they were seen in the last minute. Armed ones bring threat (ours: power, as the influence map counts them); unarmed
- * buildings bring eco, their metal cost; constructors bring nothing.
- * - A region: the units in it.
+ * Both sides' units as CChokeMap::GetSideUnits counts them: ours where they are now, enemy buildings until seen dead,
+ * armed enemy mobiles where they were seen in the last minute, aircraft aside. Armed ones bring threat (ours: power, as
+ * the influence map counts them); unarmed buildings bring eco, their metal cost; constructors bring nothing.
+ * - A region: the units in it (as the held ground the lines are cut between counts them, before it settles).
  * - A choke: armed buildings whose range reaches its line, armed mobiles within their range or a main-tower range of
  *   it (whichever is longer: they walk), unarmed buildings within a main-tower range of it.
  */
 void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView>& chokeViews) const
 {
-	struct SUnit {
-		AIFloat3 pos;
-		bool isMobile;
-		float range, threat, eco;
-	};
-	const int frame = circuit->GetLastFrame();
+	using SUnit = CChokeMap::SSideUnit;
 	std::vector<SUnit> ours, enemies;
-	for (const auto& kv : circuit->GetFriendlyUnits()) {
-		const CCircuitDef* cdef = kv.second->GetCircuitDef();
-		if (cdef->IsAbleToFly() || (cdef->IsMobile() && !cdef->IsAttacker())) {
-			continue;
-		}
-		const bool isArmed = cdef->IsAttacker();
-		ours.push_back({kv.second->GetPos(frame), cdef->IsMobile(), cdef->GetMaxRange(),
-				isArmed ? cdef->GetPower() : 0.f, isArmed ? 0.f : cdef->GetCostM()});
-	}
-	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
-		const CEnemyUnit* enemy = kv.second;
-		if (!IsCountedEnemy(enemy, frame)) {
-			continue;
-		}
-		const CCircuitDef* edef = enemy->GetCircuitDef();
-		const bool isArmed = edef->IsAttacker();
-		enemies.push_back({enemy->GetPos(), edef->IsMobile(), edef->GetMaxRange(),
-				isArmed ? enemy->GetThreat() : 0.f, isArmed ? 0.f : enemy->GetCost()});
-	}
+	chokeMap->GetSideUnits(ours, enemies);
 	auto add = [](SStrength& to, const SUnit& u) {
-		(u.isMobile ? to.mobile : (u.threat > 0.f) ? to.statics : to.eco) += (u.threat > 0.f) ? u.threat : u.eco;
+		to.Add(u);
 	};
 
 	const CRegionGraph& graph = chokeMap->GetGraph();
@@ -121,7 +62,7 @@ void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView
 	}
 	for (size_t r = 0; r < regionViews.size(); ++r) {
 		SView& view = regionViews[r];
-		view.side = OwnerOf(view.ours, view.enemy);
+		view.side = CChokeMap::OwnerOf(view.ours, view.enemy);
 		view.isTerritory = ((view.side == Side::OURS) && chokeMap->IsOurTerritory(r))
 				|| ((view.side == Side::ENEMY) && chokeMap->IsEnemyTerritory(r));
 	}
@@ -145,7 +86,7 @@ void CChokeOverlay::MakeViews(std::vector<SView>& regionViews, std::vector<SView
 		SView& view = chokeViews[c];
 		addReaching(chokes[c], centre, ours, view.ours);
 		addReaching(chokes[c], centre, enemies, view.enemy);
-		view.side = OwnerOf(view.ours, view.enemy);
+		view.side = CChokeMap::OwnerOf(view.ours, view.enemy);
 	}
 }
 
@@ -159,7 +100,7 @@ std::string CChokeOverlay::MakeKnownEnemies() const
 	std::ostringstream out;
 	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
 		const CEnemyUnit* enemy = kv.second;
-		if (!IsCountedEnemy(enemy, frame)) {
+		if (!CChokeMap::IsCountedEnemy(enemy, frame)) {
 			continue;
 		}
 		const CCircuitDef* edef = enemy->GetCircuitDef();
@@ -193,8 +134,16 @@ std::string CChokeOverlay::MakeInfo(const std::vector<SView>& regionViews, const
 	for (size_t r = 0; r < regionViews.size(); ++r) {
 		const CRegionGraph::SRegion& region = graph.GetRegions()[r];
 		const SView& view = regionViews[r];
-		put('r', r, mask.CentreX(region.centre), mask.CentreZ(region.centre), view, utils::int_to_string(region.id, "Region %i")
-				+ (!view.isTerritory ? "" : (view.side == Side::OURS) ? "|our territory" : "|enemy territory"));
+		// Where the ground the lines are cut between isn't the owner yet (or still): it settles in 20 s
+		const bool isOurGround = chokeMap->IsOurGround(r), isEnemyGround = chokeMap->IsEnemyGround(r);
+		const char* ground = (isOurGround == (view.side == Side::OURS)) && (isEnemyGround == (view.side == Side::ENEMY))
+				? ""
+				: isOurGround ? "|lines: still our ground"
+				: !isEnemyGround ? "|lines: nobody's ground yet"
+				: chokeMap->IsEnemySide(r) ? "|lines: enemy ground (their side)" : "|lines: still enemy ground";
+		const char* territory = !view.isTerritory ? "" : (view.side == Side::OURS) ? "|our territory" : "|enemy territory";
+		put('r', r, mask.CentreX(region.centre), mask.CentreZ(region.centre), view,
+				utils::int_to_string(region.id, "Region %i") + territory + ground);
 	}
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
 	for (size_t c = 0; c < chokes.size(); ++c) {

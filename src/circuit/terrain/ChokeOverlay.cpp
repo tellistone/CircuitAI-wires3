@@ -765,6 +765,7 @@ void CChokeOverlay::DrawRegions(const CRegionGraph& graph)
 		std::string text = utils::int_to_string(region.id, "region %i") + utils::int_to_string(region.area, ", %i cells");
 		if (isThreatGraph) {
 			text += chokeMap->IsOurTerritory(r) ? ", our territory" : chokeMap->IsEnemyTerritory(r) ? ", enemy territory" : "";
+			text += chokeMap->IsOurGround(r) ? ", our ground" : chokeMap->IsEnemyGround(r) ? ", enemy ground" : "";
 		}
 		AddLabel(centre, text);
 	}

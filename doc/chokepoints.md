@@ -35,17 +35,24 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
 - **Sides and territory.** Map sides come from start boxes and enemy factories only. Territory comes from buildings
   in each region: a region joins 20 s after the first building is seen there. It leaves 60 s after our last one, or
   120 s after the enemy's last. Only enemy towers and enemy buildings of at least 150 metal count, so a lone radar or
-  wall doesn't flip a region.
+  wall doesn't flip a region. Territory qualifies pockets and weighs radar; the lines follow held ground (below).
 - **Pockets.** Each defence point (`CDefenceMatrix`) gets its entrances from the enemy side: the fewest chokes the
   enemy must pass to walk in. Points with more than `choke.entrances` entrances are *open*. Points that share a cut
   form a *pocket*. A pocket is *qualified* when every entrance is defensible, within `choke.near` ranges of its
   points, and has no enemy territory right outside it.
-- **Lines.** The *current line* is the cut nearest our territory against enemy territory. The *enemy line* is the
-  same cut nearest enemy territory, its mirror. Where the narrowest gap between the sides is one set of chokes, the
-  two are the same; where there is ground between them that either side could hold as cheaply, they part. The *front
-  line* is the chokes they share, which every cheapest cut between the sides passes, and is empty while they don't
-  touch. The *forward line* is the cut nearest our territory against the enemy's side of the map. A region both sides
-  hold counts as ours. Nothing acts on the enemy or front lines yet; the overlay draws them.
+- **Held ground.** Who owns each region by the units the AI knows of, armies included, as the `sides` overlay tints
+  it: ours where only we have anything there or our threat is 1.5× theirs, the enemy's likewise, contested where both
+  have something and neither leads, nobody's where neither has. Enemy mobiles count where they were last seen, for a
+  minute. A region's owner holds it for the lines once it has owned it for 20 s, so a raid passing through doesn't
+  move them. The enemy also holds its side of the map where we don't own it, so an unscouted base still counts as
+  theirs.
+- **Lines.** Cut between held ground; a choke too wide to defend counts double. The *current line* is the cut nearest
+  our ground against the enemy's. The *enemy line* is the same cut nearest the enemy's ground, its mirror. Where the
+  narrowest gap between the sides is one set of chokes, the two are the same; contested and nobody's ground between
+  them keeps them apart. The *front line* is the chokes they share, which every cheapest cut between the sides
+  passes, and is empty while they don't touch. The *forward line* is the cut nearest our ground against the enemy's
+  buildings and side of the map alone: where our line would be if their army were driven off. Nothing acts on the
+  enemy or front lines yet; the overlay draws them.
 - **Traffic field.** On 64-elmo cells (crossable by the same rule over their four 32-elmo cells), one layer per enemy
   movement type: where its units are likely to walk from the
   enemy's factories (or start boxes) to our clusters and base. The layers are blended by the enemy's army mix, at most
@@ -169,7 +176,7 @@ enemy types: TANK3(gating 0.60) TKBOT3(gating as KBOT2 0.35)`. Before an army is
 | `spots` | The last spot search's candidates: the best green, the next 4 cyan, the rest grey. |
 | `radar` | The radar planner's candidates blue, and the edge of today's static radar coverage cyan. |
 | `regions` | The graph itself: region centres linked to their chokes. On the threat graph, our side is green and the enemy's side red. |
-| `sides` | Who controls each region and choke, and the lines by rank and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger in that side's territory, striped blue and red where contested, and clear where nobody is; thin region borders. Each choke is a gate across its gap, wall to wall. Its core is its owner: blue ours, red the enemy's, dashed contested, thin grey nobody's. Posts at its ends mean towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended. A casing round the core marks a choke on a line: white the front line; green our current line where its towers cover what it wants, orange where it's short; the enemy line dark red where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the forward line. Each enemy unit the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building (red armed, pale unarmed), filled while in its sight or radar and an outline where it was last seen, so a spectator with full view can see which enemies the AI knows of. When the AI's LOS cheating option is on, the bottom line says so in red (the infolog says `LOS cheating: on` at start). A legend is printed bottom left. With labels on, info boxes give the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, the ranked chokes' defence and seen share, and our line's wanted and tower power. The cursor's region and choke get boxes beside the cursor; zoomed in, owned chokes and regions near the camera get one beside them, as many as fit. Without the widget it shows the `lines` layer. |
+| `sides` | Who controls each region and choke, and the lines by rank and shortfall, on the threat graph whatever class is shown. Drawn by a widget (below): regions tinted blue where we control them and red where the enemy does, both stronger in that side's territory, striped blue and red where contested, and clear where nobody is; thin region borders. Each choke is a gate across its gap, wall to wall. Its core is its owner: blue ours, red the enemy's, dashed contested, thin grey nobody's. Posts at its ends mean towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended. A casing round the core marks a choke on a line: green our current line where its towers cover what it wants, orange where it's short, with a white rim on the front line; the enemy line dark red where defended, pink where undefended, grey where not seen enough; deep red an enemy-held choke off it; yellow the forward line. The lines are cut between held ground, so they follow the tint once it has held 20 s; a region's info box says when the lines still take it otherwise. Each enemy unit the AI counts is marked where it believes it is: a circle for an armed unit, a square for a building (red armed, pale unarmed), filled while in its sight or radar and an outline where it was last seen, so a spectator with full view can see which enemies the AI knows of. When the AI's LOS cheating option is on, the bottom line says so in red (the infolog says `LOS cheating: on` at start). A legend is printed bottom left. With labels on, info boxes give the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, the ranked chokes' defence and seen share, and our line's wanted and tower power. The cursor's region and choke get boxes beside the cursor; zoomed in, owned chokes and regions near the camera get one beside them, as many as fit. Without the widget it shows the `lines` layer. |
 | `turrets` | The last turret order: its radius ring and centre white, the candidates that passed the hard rules grey, the best green, the next 4 cyan, and those outside our buildings' influence dark red. Tested spots are labelled with their value ÷ cost and F, the chosen one with its def and the four terms. |
 
 Layers that other modules feed (`lines`, `ranks`, `spots`, `radar` and `turrets`) redraw every 10 s, and `sides` every
@@ -408,9 +415,9 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
 
 - **Frontline.** The current line's chokes, ranked by our income behind each one × its traffic. Each of our points
   behind the line counts at its nearest line choke.
-- **Enemy army at a choke.** An enemy mobile seen in the last 3 minutes counts at the line chokes that open into the
-  region it stands in: at the one nearest it in full, and at the others by half. One in a region no line choke opens
-  into, ours or further out, doesn't count.
+- **Enemy army at a choke.** An enemy mobile seen in the last minute (as held ground counts it) counts at the line
+  chokes that open into the region it stands in: at the one nearest it in full, and at the others by half. One in a
+  region no line choke opens into, ours or further out, doesn't count.
 - **Hold slots.** A slot sits at the top-ranked choke whose towers are short of 1.2 × the enemy army at it. The first
   idle attack group to ask while that choke is short, and whose power makes up the shortfall, claims it, walks to its
   scored hold spot, and keeps the claim while it keeps asking. Once claimed, the slot keeps its choke until 30 s
@@ -425,15 +432,18 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
   their lines we saw in the last 3 minutes (at least a quarter), so chokes we haven't watched count as stronger.
   - The gain is the towers and wanted power of the current-line chokes it would retire, plus 3 minutes of the income
     it brings behind the line.
-  - The cost is their defence plus what holding them takes.
+  - The cost is their defence, plus the enemy army on the ground it brings behind the line (seen in the last minute),
+    plus what holding them takes. The power check counts that army too.
   - It lasts until taken, for at most 4 minutes in all (switches included), or until our attack power falls below its
     defence as it is now. A failed one waits `choke.objective.retry` seconds.
-- **Rankings.** A choke is enemy-held when its outer side from us is enemy territory, or known enemy towers cover its
-  line. Every choke of the enemy line is ranked too, held or not. Its defence is the threat of enemy towers reaching
-  the line or our approach to it, plus enemy mobiles within a main-tower range. Its value is the cost of unarmed
-  enemy units directly behind it. A ranked choke is *undefended* when no armed enemy is in reach and we saw at least
-  a quarter of its line in the last 3 minutes; with less seen, no defence only means we don't know. Objectives (D)
-  still take only enemy-held chokes.
+- **Rankings.** A choke is enemy-held when its outer side from us (more chokes from our ground) is the enemy's
+  ground, or known enemy towers cover its line. Every choke of the enemy line is ranked too, held or not. Its defence
+  is the threat of enemy towers reaching the line or our approach to it, plus enemy mobiles seen in the last 3
+  minutes within a main-tower range. Its value is the cost of unarmed enemy units directly behind it. What we saw of
+  it is the lower of two shares in our LOS in the last 3 minutes: of its line, and of the ground beyond it on the
+  enemy's side, up to a main-tower range out, where its defenders would stand. A ranked choke is *undefended* when no
+  armed enemy is in reach and we saw at least a quarter of it; with less seen, no defence only means we don't know.
+  Objectives (D) still take only enemy-held chokes.
 
 ## Logs
 

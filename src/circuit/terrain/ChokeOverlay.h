@@ -8,6 +8,7 @@
 #ifndef SRC_CIRCUIT_TERRAIN_CHOKEOVERLAY_H_
 #define SRC_CIRCUIT_TERRAIN_CHOKEOVERLAY_H_
 
+#include "terrain/ChokeMap.h"
 #include "terrain/RegionGraph.h"
 
 #include "AIFloat3.h"
@@ -75,20 +76,13 @@ private:
 	 * reach it), and the lines by rank and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
 	 * running the AI has it (util/LuaUI/Widgets), else the lines layer
 	 */
-	enum class Side: char {NONE, OURS, ENEMY, CONTESTED};
-	struct SStrength {
-		float mobile = 0.f;  // armed mobiles' threat (ours: power)
-		float statics = 0.f;  // armed buildings' threat
-		float eco = 0.f;  // metal in unarmed buildings
-		float Threat() const { return mobile + statics; }
-		bool IsAny() const { return (mobile > 0.f) || (statics > 0.f) || (eco > 0.f); }
-	};
+	using Side = CChokeMap::Side;
+	using SStrength = CChokeMap::SStrength;
 	struct SView {
 		Side side = Side::NONE;
 		SStrength ours, enemy;
 		bool isTerritory = false;  // a region in its owner's territory
 	};
-	static Side OwnerOf(const SStrength& ours, const SStrength& enemy);
 	void MakeViews(std::vector<SView>& regionViews, std::vector<SView>& chokeViews) const;
 	std::string MakeInfo(const std::vector<SView>& regionViews, const std::vector<SView>& chokeViews) const;
 	std::string MakeKnownEnemies() const;
