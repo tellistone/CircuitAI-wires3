@@ -292,8 +292,10 @@ void CChokeMap::AddFactory(const AIFloat3& pos, int allyTeam)
  *   seen. Then the default types never seen leave.
  * - Joining: a factory that builds the type, or one of its units (no commanders), was seen.
  * - Leaving: every known factory for it was seen dead, and nothing of it was seen for 5 minutes.
- * - Promotion: a leak type whose own cost reached choke.gate_share of the set's cost plus the prior gates until it
- *   leaves. The prior counts for nobody here, so a lone Flea early on doesn't change gating.
+ * - Gating (the types the threat graph is built on): the type with the most cost seen, and any type whose own cost
+ *   reached choke.gate_share of the set's cost plus the prior, until it leaves. The prior counts for nobody here, so
+ *   a lone Flea or a new factory's first units don't change the graph. Before any enemy army is seen, and while the
+ *   opening default holds, the ground types gate (IsGating).
  * Ships never join: they don't walk through chokes
  */
 CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
@@ -320,6 +322,7 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 				if (ts.isDefault) {
 					ts.isInSet = false;
 					ts.isDefault = false;
+					ts.isPromoted = false;
 				}
 			}
 		}
@@ -335,9 +338,17 @@ CChokeMap::STypeChange CChokeMap::UpdateTypeSet()
 		}
 	}
 	const float total = UpdateShares();
+	int biggest = -1;
+	for (size_t c = 0; c < n; ++c) {
+		const STypeState& ts = typeStates[c];
+		if (ts.isInSet && (ts.cost > 0.f) && ((biggest < 0) || (ts.cost > typeStates[biggest].cost))) {
+			biggest = c;
+		}
+	}
+	isArmySeen |= (biggest >= 0);
 	for (size_t c = 0; c < n; ++c) {
 		STypeState& ts = typeStates[c];
-		if (ts.isInSet && (moveClasses[c].role == MoveRole::LEAK) && (ts.cost >= config.gateShare * (total + SHARE_PRIOR))) {
+		if (ts.isInSet && (((int)c == biggest) || (ts.cost >= config.gateShare * (total + SHARE_PRIOR)))) {
 			ts.isPromoted = true;
 		}
 	}
@@ -363,8 +374,9 @@ std::string CChokeMap::DescribeTypeSet() const
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		const STypeState& ts = typeStates[c];
 		if (ts.isInSet) {
-			text += (text.empty() ? "" : " ") + moveClasses[c].name + (ts.isPromoted ? "(promoted to gating "
-					: IsGating(c) ? "(gating " : "(leak ") + utils::float_to_string(ts.share, "%.2f)");
+			text += (text.empty() ? "" : " ") + moveClasses[c].name + (!IsGating(c) ? "(leak "
+					: (moveClasses[c].role == MoveRole::LEAK) ? "(promoted to gating " : "(gating ")
+					+ utils::float_to_string(ts.share, "%.2f)");
 		}
 	}
 	return text;

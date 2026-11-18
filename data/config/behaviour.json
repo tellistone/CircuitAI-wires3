@@ -167,7 +167,7 @@
 	"near": 2.5,  // furthest useful entrance from a defence point
 	"setback": [0.6, 0.8],  // ideal tower distance behind a choke's line, in the tower's weapon ranges
 	"lane": 96.0,  // elmos: corridor kept free of buildings (but mexes) through chokes under 3x this wide
-	"gate_share": 0.25,  // a leak type (amphibious, spiders, jumpers) starts gating once its cost reaches this share of the enemy army seen + 300 metal
+	"gate_share": 0.25,  // an enemy type shapes the threat graph once its cost reaches this share of the enemy army seen + 300 metal (the biggest always does)
 	"traffic": {"spread": 0.15},  // width of the enemy's traffic corridors, as a share of the route's length
 	"openness": {"bands": [0.35, 0.65, 0.05]},  // [<chokepointed below>, <open above>, <margin around them>]
 	"spot": {

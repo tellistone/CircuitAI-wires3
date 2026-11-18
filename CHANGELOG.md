@@ -612,6 +612,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **A minor enemy type no longer reshapes the threat graph.** Walkers, tanks and hovers gated the graph as soon as
+  one of them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only
+  graph of 122 regions into 38, moving every choke. Now, once an enemy army has been seen, a type gates when it has
+  the most cost seen or its cost reaches `choke.gate_share`, the rule leak types already followed, and stays gating
+  until it leaves. Before any army is seen, and for the opening default's unseen types, the ground types gate as
+  before.
+
 - **Terrain alone rebuilds the threat graph at most every 5 minutes.** Zero-K's craters and the ground levelled under
   buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the
   30 s mask check found a change, 10 times in 13 minutes in one logged game, and each rebuild could move

@@ -16,12 +16,14 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
   tanks, and hovers when the map has water). A cell counts as crossable when at least 3 of its 4 slope-map pixels
   are, so a cliff or a spike's side only one or two pixels thick stays a wall wherever it falls on the grid. Of two
   crossable neighbours that no pair of pixels crosses between (a thin diagonal cliff), one closes. The open
-  areas become regions, and the narrow gaps between them become chokes. A choke is *defensible* when it is at most `choke.defensible` main-tower ranges wide. Amphibious bots,
-  spiders and jumpers are *leak* types: they don't shape the graph, and each cluster keeps a tower of its own against
-  them and anything else the cut doesn't stop. Jumpers cross a wall when it is no longer than their jump along a row
-  or a column of cells. A leak type starts gating once its own cost reaches `choke.gate_share` of the enemy army seen
-  plus a 300-metal prior, so a lone early unit can't flip it. It stays gating until it leaves the game. A gating
-  spider type makes the graph close to the spiders' own, so its chokes move to where spiders are held too: the
+  areas become regions, and the narrow gaps between them become chokes. A choke is *defensible* when it is at most `choke.defensible` main-tower ranges wide. A type
+  that doesn't shape the graph is a *leak* type, and each cluster keeps a tower of its own against leaks and anything
+  else the cut doesn't stop. Amphibious bots, spiders and jumpers start as leaks; jumpers cross a wall when it is no
+  longer than their jump along a row or a column of cells. Once an enemy army has been seen, a type gates when it has
+  the most cost seen, or once its own cost reaches `choke.gate_share` of the enemy army seen plus a 300-metal prior,
+  so a lone early unit or a new factory's first units can't flip the graph. It stays gating until it leaves the game.
+  Before any enemy army is seen, and for the opening default's unseen types, the walkers, tanks and hovers gate. A
+  gating spider type makes the graph close to the spiders' own, so its chokes move to where spiders are held too: the
   overlay says so each time the graph is rebuilt.
 - **Enemy types.** The opening default holds until a factory has been seen for every enemy team, or for 5 minutes. A
   type joins when a factory that builds it or one of its units is seen. It leaves only when every known factory for it
