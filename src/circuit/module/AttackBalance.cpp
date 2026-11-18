@@ -75,17 +75,24 @@ float CAttackBalance::GetRangeAt(float rangeLand, float rangeWater, bool isWater
 	return std::max((isWater && isAmph) ? 0.f : rangeLand, isWater ? rangeWater : 0.f);
 }
 
+void CAttackBalance::GetRanges(const CCircuitDef* cdef, float& outLand, float& outWater)
+{
+	outLand = cdef->HasAntiLand() ? cdef->GetMaxRange(CCircuitDef::RangeType::LAND) : 0.f;
+	outWater = cdef->HasAntiWater() ? cdef->GetMaxRange(CCircuitDef::RangeType::WATER) : 0.f;
+}
+
 float CAttackBalance::GetRangeAt(const CCircuitDef* cdef, bool isWater, bool isAmph)
 {
-	return GetRangeAt(cdef->HasAntiLand() ? cdef->GetMaxRange(CCircuitDef::RangeType::LAND) : 0.f,
-			cdef->HasAntiWater() ? cdef->GetMaxRange(CCircuitDef::RangeType::WATER) : 0.f, isWater, isAmph);
+	float rangeLand, rangeWater;
+	GetRanges(cdef, rangeLand, rangeWater);
+	return GetRangeAt(rangeLand, rangeWater, isWater, isAmph);
 }
 
 void CAttackBalance::AddEntry(std::vector<SEntry>& entries, const CCircuitDef* cdef, const AIFloat3& pos, float power,
 		const CAttackTask* task)
 {
-	float rangeLand = cdef->HasAntiLand() ? cdef->GetMaxRange(CCircuitDef::RangeType::LAND) : 0.f;
-	float rangeWater = cdef->HasAntiWater() ? cdef->GetMaxRange(CCircuitDef::RangeType::WATER) : 0.f;
+	float rangeLand, rangeWater;
+	GetRanges(cdef, rangeLand, rangeWater);
 	const Kind kind = !cdef->IsMobile() ? Kind::STATIC : cdef->IsAbleToFly() ? Kind::AIR : Kind::MOBILE;
 	if (kind == Kind::STATIC) {  // the defences layer's reach (cover falloff, as our statics)
 		rangeLand = CThreatMap::GetCoverRange(cdef, rangeLand);
@@ -257,11 +264,12 @@ void CAttackBalance::NoteCheck(Line line, bool isSkip, ICoreUnit::Id targetId)
 	}
 }
 
-void CAttackBalance::NoteFight(float ratio, float blipShare, float metalLost, bool isFled)
+void CAttackBalance::NoteFight(float ratio, float blipShare, float metalLost, float metalKilled, bool isFled)
 {
 	SFights& f = stats.fights[(ratio < 1.f) ? 0 : (ratio < 1.5f) ? 1 : (ratio < 2.f) ? 2 : 3];
 	++f.count;
 	f.metalLost += metalLost;
+	f.metalKilled += metalKilled;
 	f.flees += isFled ? 1 : 0;
 	f.blipShare += blipShare;
 }
@@ -276,7 +284,7 @@ void CAttackBalance::NoteBlocked(const CAttackTask* task, ICoreUnit::Id leaderId
 void CAttackBalance::Log()
 {
 	// For tuning quota.attack_balance: how often each line skipped, the fights by the E/A they were engaged at and how
-	// they ended (the ratio is where they start costing units), how long groups were held back, and the cost
+	// they ended (the ratio belongs where losses outgrow kills), how long groups were held back, and the cost
 	SStats& st = stats;
 	circuit->LOG("BALANCE last 60 s%s: checks pick %i, keep %i, own spot %i, zone %i; skips pick %i, keep %i, own spot %i,"
 			" zone %i (%i targets); outnumbered on %i, off %i; zones set %i, lifted %i",
@@ -287,8 +295,9 @@ void CAttackBalance::Log()
 	static const char* const bands[] = {"under 1", "1-1.5", "1.5-2", "2+"};
 	for (int i = 0; i < 4; ++i) {
 		const SFights& f = st.fights[i];
-		fights += utils::string_format("%s%s: %i fights, %.0f metal lost, %i fled, blips %.0f%%", (i > 0) ? "; " : "",
-				bands[i], f.count, f.metalLost, f.flees, (f.count > 0) ? 100.f * f.blipShare / f.count : 0.f);
+		fights += utils::string_format("%s%s: %i fights, metal lost %.0f, killed %.0f, %i fled, blips %.0f%%",
+				(i > 0) ? "; " : "", bands[i], f.count, f.metalLost, f.metalKilled, f.flees,
+				(f.count > 0) ? 100.f * f.blipShare / f.count : 0.f);
 	}
 	circuit->LOG("BALANCE fights last 60 s by E/A at engage: %s", fights.c_str());
 	std::vector<SBlocked> blocked;

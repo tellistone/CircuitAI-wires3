@@ -363,6 +363,7 @@ int CCircuitAI::HandleGameEvent(int topic, const void* data)
 			struct SEnemyDestroyedEvent* evt = (struct SEnemyDestroyedEvent*)data;
 			CEnemyInfo* enemy = GetEnemyInfo(evt->enemy);
 			if (enemy != nullptr) {
+				militaryManager->NoteEnemyKilled(enemy, evt->attacker);  // quota.attack_balance: the outcome log
 				ret = this->EnemyDestroyed(enemy);
 				UnregisterEnemyInfo(enemy);
 			} else {

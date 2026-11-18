@@ -631,7 +631,7 @@ void CMilitaryManager::ReadConfig()
 	allyCover = std::make_unique<CAllyCover>(circuit, readAttackNum("attack_ally_cover", 0.f, 0.f, 0.75f));
 	{
 		// quota.attack_balance: {ratio, horizon_sec, log_only}. Missing (or not an object): off; a missing key uses
-		// its default, a wrong value logs and uses it
+		// its default, a non-number logs and uses it, others are clamped (as readAttackNum)
 		const Json::Value& q = quotas["attack_balance"];
 		if (!q.isNull() && !q.isObject()) {
 			circuit->LOG("CONFIG %s: quota.attack_balance must be an object, it is off", cfgName.c_str());
@@ -643,11 +643,16 @@ void CMilitaryManager::ReadConfig()
 				if (v.isNull()) {
 					return def;
 				}
-				if (!v.isNumeric() || (v.asFloat() < lo) || (v.asFloat() > hi)) {
+				if (!v.isNumeric()) {
 					circuit->LOG("CONFIG %s: quota.attack_balance.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
 					return def;
 				}
-				return v.asFloat();
+				const float val = v.asFloat();
+				const float clamped = utils::clamp(val, lo, hi);
+				if (clamped != val) {
+					circuit->LOG("CONFIG %s: quota.attack_balance.%s %g clamped to %g", cfgName.c_str(), key, val, clamped);
+				}
+				return clamped;
 			};
 			cfg.ratio = num("ratio", 1.2f, 0.f, 10.f);  // 0 = off
 			cfg.horizon = num("horizon_sec", 10.f, 1.f, 60.f);
@@ -3857,6 +3862,17 @@ void CMilitaryManager::ReactSuddenThreat(CEnemyInfo* enemy)
 		for (IFighterTask* task : GetTasks(type)) {
 			static_cast<ISquadTask*>(task)->OnSuddenThreat(edef, enemy->GetPos(), frame);
 		}
+	}
+}
+
+void CMilitaryManager::NoteEnemyKilled(const CEnemyInfo* enemy, int attackerId)
+{
+	CCircuitUnit* unit = (attackerId >= 0) ? circuit->GetTeamUnit(attackerId) : nullptr;
+	IUnitTask* task = (unit != nullptr) ? unit->GetTask() : nullptr;
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+		&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK))
+	{
+		static_cast<CAttackTask*>(task)->NoteBalanceKill(enemy->GetCost());
 	}
 }
 

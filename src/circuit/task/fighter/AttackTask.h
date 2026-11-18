@@ -43,6 +43,8 @@ public:
 	virtual void Start(CCircuitUnit* unit) override;
 	// Merging, escape and regrouping on every update; a decision (Decide) every 2 updates, or when a unit asks
 	virtual void Update() override;
+	// quota.attack_balance logs first: a group wiped out or merged inside a fight window still counts the fight
+	virtual void Stop(bool done) override;
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
@@ -57,6 +59,8 @@ public:
 	// quota.attack_balance: outnumbered where it stands (UpdateOutnumbered), so left out of other groups' ally sums
 	// (CAttackBalance). Also in log-only mode, so the skip counts mean the same in both builds
 	bool IsOutnumbered() const { return isOutnumbered; }
+	// The outcome log: one of our units killed an enemy (the engine's enemy-destroyed event names the attacker)
+	void NoteBalanceKill(float metal) { balanceFight.metalKilled += (balanceFight.frame >= 0) ? metal : 0.f; }
 
 protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
@@ -298,17 +302,20 @@ private:
 	// (the flag going on: the leader; the target we held dropped at the keep line: its F). Up to two; a third replaces
 	// the older
 	void SetAvoidZone(const springai::AIFloat3& spot, int frame, const char* reason);
-	// A zone holds across the line from the leader to F (passes within AVOID_ZONE_RADIUS of its spot): its spot
-	// fails the pick line, measured as the own-spot check would with our group standing there. Tested at most once per
-	// zone per decision, and only here; a zone that passes is lifted
+	// A zone holds across the line from the leader to F (passes within AVOID_ZONE_RADIUS of its spot; from inside
+	// that radius, heads toward the spot): its spot fails the pick line, measured as the own-spot check would with our
+	// group standing there. Tested at most once per zone per decision (targets and the front walk); a zone that
+	// passes is lifted
 	bool IsInAvoidZone(const springai::AIFloat3& F, int frame);
-	// The skip line (BALANCE): at most once per group every BALANCE_LOG_FRAMES. enemy nullptr: the own spot
-	void LogBalanceSkip(const char* line, const CEnemyInfo* enemy, const springai::AIFloat3& F,
+	// The skip line (BALANCE): at most once per group every BALANCE_LOG_FRAMES. enemy nullptr: the own spot;
+	// isHeld: the target we hold
+	void LogBalanceSkip(const char* line, const CEnemyInfo* enemy, bool isHeld, const springai::AIFloat3& F,
 			const CAttackBalance::SForce& force, const char* fallback, int frame);
 	// The outcome log: on a move to ENGAGE on a new target its E/A at F, and for BALANCE_FIGHT_FRAMES what the group
-	// lost and whether it fled (OnUnitDestroyed, Flee); one window at a time
+	// lost and killed and whether it fled (OnUnitDestroyed, NoteBalanceKill, Flee); one window at a time.
+	// isEnd: the task stops, close it now
 	void NoteBalanceEngage(int frame);
-	void CloseBalanceFight(int frame);
+	void CloseBalanceFight(int frame, bool isEnd = false);
 	// Blocked time: from this decision to the next (outnumbered, or every candidate skipped by the balance)
 	void NoteBlocked(int frame) { blockSince = (blockSince < 0) ? frame : blockSince; }
 
@@ -556,8 +563,7 @@ private:
 	struct SAvoidZone {
 		springai::AIFloat3 spot;
 		int setFrame = -1;  // -1: none
-		int testFrame = -1;  // the decision it was last tested in
-		bool isHolding = true;
+		int testFrame = -1;  // the decision it was last tested in (a zone that passes is lifted: active = holding)
 	};
 	std::array<SAvoidZone, 2> avoidZones;
 	float ownForce;  // GetOwnForce, for ownForceFrame
@@ -570,6 +576,7 @@ private:
 		float ratio = 0.f;  // E/A at F at engage
 		float blipShare = 0.f;
 		float metalLost = 0.f;
+		float metalKilled = 0.f;
 		bool isFled = false;
 	} balanceFight;
 

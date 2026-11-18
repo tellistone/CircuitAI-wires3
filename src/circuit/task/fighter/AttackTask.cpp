@@ -150,16 +150,6 @@ float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::Ran
 	}
 	return ranges.empty() ? 0.f : ranges.back().first;
 }
-
-// Squared 2D distance from p to the segment a-b
-float SqDistToSegment2D(const AIFloat3& p, const AIFloat3& a, const AIFloat3& b)
-{
-	const float dx = b.x - a.x;
-	const float dz = b.z - a.z;
-	const float sqLen = SQUARE(dx) + SQUARE(dz);
-	const float t = (sqLen > 0.f) ? utils::clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / sqLen, 0.f, 1.f) : 0.f;
-	return SQUARE(a.x + t * dx - p.x) + SQUARE(a.z + t * dz - p.z);
-}
 } // namespace
 
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
@@ -821,7 +811,7 @@ AIFloat3 CAttackTask::GetFirePos(const AIFloat3& rangePos, int frame) const
 void CAttackTask::UpdateOutnumbered(int frame)
 {
 	if (!IsBalanceOn()) {
-		isOutnumbered = false;
+		SetOutnumbered(false, frame, "cloaked or flying");  // the leader cloaked (or the balance is off: never set)
 		return;
 	}
 	const AIFloat3& pos = leader->GetPos(frame);
@@ -871,7 +861,7 @@ void CAttackTask::SetOutnumbered(bool value, int frame, const char* reason, cons
 			: utils::string_format(": E %.1f, own %.1f, allied %.1f, turrets %.1f, E/A %.2f", force->enemy, force->own,
 				force->allied, force->cover, force->GetRatio());
 	manager->GetCircuit()->LOG("BALANCE%s #%i (%i units) outnumbered %s (%s) at (%.0f, %.0f)%s",
-			IsBalanceLive() ? "" : " would be", leader->GetId(), static_cast<int>(units.size()), value ? "on" : "off",
+			GetBalance()->IsLogOnly() ? " would be" : "", leader->GetId(), static_cast<int>(units.size()), value ? "on" : "off",
 			reason, pos.x, pos.z, forceText.c_str());
 	if (value && IsBalanceLive()) {
 		// Never walk the route this decision was still waiting for into the army: drop it (its reply is ignored)
@@ -889,7 +879,7 @@ bool CAttackTask::IsBalanceSkip(const CEnemyInfo* enemy, const AIFloat3& F, bool
 		if (isFirst && (frame >= balanceLogFrame + BALANCE_LOG_FRAMES)) {
 			CAttackBalance::SForce force;
 			GetForceAt(F, force);
-			LogBalanceSkip("avoid zone", enemy, F, force, nullptr, frame);
+			LogBalanceSkip("avoid zone", enemy, isHeld, F, force, nullptr, frame);
 		}
 		return true;
 	}
@@ -909,7 +899,7 @@ bool CAttackTask::IsBalanceSkip(const CEnemyInfo* enemy, const AIFloat3& F, bool
 		SetAvoidZone(F, frame, "the target we held dropped");
 	}
 	if (isFirst) {
-		LogBalanceSkip(isHeld ? "keep" : "pick", enemy, F, force, nullptr, frame);
+		LogBalanceSkip(isHeld ? "keep" : "pick", enemy, isHeld, F, force, nullptr, frame);
 	}
 	return true;
 }
@@ -928,18 +918,27 @@ void CAttackTask::SetAvoidZone(const AIFloat3& spot, int frame, const char* reas
 		}
 	}
 	const bool isReplace = (zone->setFrame >= 0);
-	*zone = {spot, frame, -1, true};
+	*zone = {spot, frame, -1};
 	GetBalance()->NoteZone(true);
-	manager->GetCircuit()->LOG("BALANCE%s #%i avoid zone %s at (%.0f, %.0f): %s", IsBalanceLive() ? "" : " would",
+	manager->GetCircuit()->LOG("BALANCE%s #%i avoid zone %s at (%.0f, %.0f): %s", GetBalance()->IsLogOnly() ? " would" : "",
 			leader->GetId(), isReplace ? "replaced" : "set", spot.x, spot.z, reason);
 }
 
 bool CAttackTask::IsInAvoidZone(const AIFloat3& F, int frame)
 {
 	const AIFloat3& pos = leader->GetPos(frame);
+	const float sqRadius = SQUARE(AVOID_ZONE_RADIUS);
 	bool isIn = false;
 	for (SAvoidZone& z : avoidZones) {
-		if ((z.setFrame < 0) || (SqDistToSegment2D(z.spot, pos, F) >= SQUARE(AVOID_ZONE_RADIUS))) {
+		if (z.setFrame < 0) {
+			continue;
+		}
+		// From inside the zone every line starts in it: only one heading toward the spot crosses it (one leading away
+		// is the way out). From outside: the line passes within the radius
+		const bool isCrossing = (pos.SqDistance2D(z.spot) < sqRadius)
+				? ((F.x - pos.x) * (z.spot.x - pos.x) + (F.z - pos.z) * (z.spot.z - pos.z) > 0.f)
+				: (utils::sq_dist_to_segment_2d(z.spot, pos, F) < sqRadius);
+		if (!isCrossing) {
 			continue;
 		}
 		if (z.testFrame != frame) {
@@ -949,12 +948,11 @@ bool CAttackTask::IsInAvoidZone(const AIFloat3& F, int frame)
 			z.testFrame = frame;
 			CAttackBalance::SForce force;
 			GetForceAt(z.spot, force);
-			z.isHolding = GetBalance()->IsFail(force, CAttackBalance::Line::PICK);
-			if (!z.isHolding) {
+			if (!GetBalance()->IsFail(force, CAttackBalance::Line::PICK)) {
 				z.setFrame = -1;
 				GetBalance()->NoteZone(false);
 				manager->GetCircuit()->LOG("BALANCE%s #%i avoid zone lifted at (%.0f, %.0f): E %.1f, A %.1f, E/A %.2f",
-						IsBalanceLive() ? "" : " would be", leader->GetId(), z.spot.x, z.spot.z, force.enemy,
+						GetBalance()->IsLogOnly() ? " would be" : "", leader->GetId(), z.spot.x, z.spot.z, force.enemy,
 						force.GetOurs(), force.GetRatio());
 				continue;
 			}
@@ -964,7 +962,7 @@ bool CAttackTask::IsInAvoidZone(const AIFloat3& F, int frame)
 	return isIn;
 }
 
-void CAttackTask::LogBalanceSkip(const char* line, const CEnemyInfo* enemy, const AIFloat3& F,
+void CAttackTask::LogBalanceSkip(const char* line, const CEnemyInfo* enemy, bool isHeld, const AIFloat3& F,
 		const CAttackBalance::SForce& force, const char* fallback, int frame)
 {
 	if (frame < balanceLogFrame + BALANCE_LOG_FRAMES) {
@@ -975,9 +973,9 @@ void CAttackTask::LogBalanceSkip(const char* line, const CEnemyInfo* enemy, cons
 	const AIFloat3& ePos = (enemy != nullptr) ? enemy->GetPos() : F;
 	manager->GetCircuit()->LOG("BALANCE%s skip #%i (%i units) %s line: %s%s at (%.0f, %.0f), F (%.0f, %.0f): E %.1f,"
 			" own %.1f, allied %.1f, turrets %.1f, E/A %.2f, blips %.0f%%%s%s",
-			IsBalanceLive() ? "" : " would", leader->GetId(), static_cast<int>(units.size()), line,
+			GetBalance()->IsLogOnly() ? " would" : "", leader->GetId(), static_cast<int>(units.size()), line,
 			(enemy == nullptr) ? "own spot" : (edef != nullptr) ? edef->GetDef()->GetName() : "unknown",
-			((enemy != nullptr) && (target != nullptr) && (enemy->GetId() == target->GetId())) ? " (current)" : "",
+			isHeld ? " (current)" : "",
 			ePos.x, ePos.z, F.x, F.z, force.enemy, force.own, force.allied, force.cover, force.GetRatio(),
 			100.f * force.GetBlipShare(), (fallback != nullptr) ? ", fall-back: " : "", (fallback != nullptr) ? fallback : "");
 }
@@ -998,16 +996,30 @@ void CAttackTask::NoteBalanceEngage(int frame)
 	balanceFight.ratio = force.GetRatio();
 	balanceFight.blipShare = force.GetBlipShare();
 	balanceFight.metalLost = 0.f;
+	balanceFight.metalKilled = 0.f;
 	balanceFight.isFled = false;
 }
 
-void CAttackTask::CloseBalanceFight(int frame)
+void CAttackTask::CloseBalanceFight(int frame, bool isEnd)
 {
-	if ((balanceFight.frame < 0) || (frame < balanceFight.frame + BALANCE_FIGHT_FRAMES)) {
+	if ((balanceFight.frame < 0) || (!isEnd && (frame < balanceFight.frame + BALANCE_FIGHT_FRAMES))) {
 		return;
 	}
-	GetBalance()->NoteFight(balanceFight.ratio, balanceFight.blipShare, balanceFight.metalLost, balanceFight.isFled);
+	GetBalance()->NoteFight(balanceFight.ratio, balanceFight.blipShare, balanceFight.metalLost, balanceFight.metalKilled,
+			balanceFight.isFled);
 	balanceFight.frame = -1;
+}
+
+void CAttackTask::Stop(bool done)
+{
+	// quota.attack_balance logs: wiped out or merged mid-fight, the fight and the blocked time still count
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	CloseBalanceFight(frame, true);
+	if (blockSince >= 0) {
+		GetBalance()->NoteBlocked(this, (leader != nullptr) ? leader->GetId() : -1, frame - blockSince);
+		blockSince = -1;
+	}
+	ISquadTask::Stop(done);
 }
 
 /*
@@ -1991,7 +2003,10 @@ bool CAttackTask::FindTarget()
 	const bool isBalanceLive = isBalanceOn && !GetBalance()->IsLogOnly();
 	const bool isFlagged = isBalanceLive && isOutnumbered;
 	int balanceChecks = 0;
-	bool isBalanceSkip = false;  // the balance skipped a candidate: if none is picked, the group is blocked
+	// The balance skipped a candidate (log-only: would have), and whether any candidate passed it or wasn't judged:
+	// skips and no pass, the group is blocked (log-only: would be)
+	bool isBalanceSkip = false;
+	bool isBalancePass = false;
 	bool isPlannedGoal = false;  // the current target's goals are its planned cell (no other side of it)
 	size_t targetCount = 0;  // goals are counted by target: a cell target may bring several cells
 	for (SCandidate& c : candidates) {
@@ -2002,6 +2017,13 @@ bool CAttackTask::FindTarget()
 		const AIFloat3& rangePos = c.rangePos;  // a radar-only parked mobile's spot (GetRangePos)
 		const bool isPrev = (id == prevTargetId);
 		const bool isInRange = c.isInRange;
+		// quota.attack_balance: judged unless in contact or inside the base core. Its free skips come first, before
+		// the approach line and the firing cells: flagged, only unjudged targets; past the check cap, the rest
+		const bool isJudged = isBalanceOn && !c.isContact && !IsInBaseCore(rangePos);
+		if (isJudged && isBalanceLive && (isFlagged || (balanceChecks >= MAX_BALANCE_CHECKS))) {
+			isBalanceSkip = true;
+			continue;
+		}
 		// A target within range (or in contact) is engaged at once, without a route: the straight line from it
 		// towards the leader (its first highestRange: the ground our units will stand on to fire) is its approach
 		// check. One beyond range gets no line check: its route's approach is checked instead
@@ -2051,10 +2073,7 @@ bool CAttackTask::FindTarget()
 			}
 			isPlannedGoal |= isPlanned;
 		}
-		if (isBalanceOn && !c.isContact && !IsInBaseCore(rangePos)) {
-			if (isFlagged) {
-				continue;
-			}
+		if (isJudged) {
 			// F: where we'd fire from, its first firing cell for a cell target. The keep line only for the target we hold
 			const AIFloat3 firePos = cells.empty() ? GetFirePos(rangePos, frame) : cells.front().pos;
 			if (IsBalanceSkip(c.enemy, firePos, id == heldTargetId, best == nullptr, balanceChecks, frame)) {
@@ -2062,7 +2081,11 @@ bool CAttackTask::FindTarget()
 				if (isBalanceLive) {
 					continue;
 				}
+			} else {
+				isBalancePass = true;
 			}
+		} else {
+			isBalancePass = true;
 		}
 		if (best == nullptr) {
 			best = &c;
@@ -2116,10 +2139,10 @@ bool CAttackTask::FindTarget()
 		lastRoute.sector = -1;
 	}
 
+	if (isBalanceSkip && !isBalancePass) {
+		NoteBlocked(frame);  // quota.attack_balance: blocked time (log-only: what would have been)
+	}
 	if (best == nullptr) {
-		if (isBalanceSkip) {
-			NoteBlocked(frame);  // quota.attack_balance: blocked time
-		}
 		ClearScaleAnchor();  // no fight accepted: no near-base discount
 		return false;
 	}
@@ -2397,7 +2420,7 @@ void CAttackTask::FallbackFrontPos(bool isReuse)
 	const bool isFlagged = IsFlagged();
 	auto logFallback = [&](const char* fallback) {
 		if (isFlagged) {
-			LogBalanceSkip("own spot", nullptr, leader->GetPos(frame), spotForce, fallback, frame);
+			LogBalanceSkip("own spot", nullptr, false, leader->GetPos(frame), spotForce, fallback, frame);
 		}
 	};
 	// Nothing to attack: first walk to merge with another group (quota.attack_merge.idle_merge). Outnumbered: only one
@@ -2407,25 +2430,24 @@ void CAttackTask::FallbackFrontPos(bool isReuse)
 		return;
 	}
 	GetMilitaryMgr()->FillFrontPos(leader, urgentPositions);
-	if (urgentPositions.empty()) {
+	const AIFloat3& startPos = leader->GetPos(frame);
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float sqOwnDist = startPos.SqDistance2D(basePos);
+	if (IsBalanceLive()) {
+		// quota.attack_balance: never back across a spot where we were outnumbered (a holding avoid zone, as for
+		// targets), or the front walk leads into the army we just backed away from. Outnumbered: also only the front's
+		// points nearer our base than we are (without the enemy-ground hold below)
+		urgentPositions.erase(std::remove_if(urgentPositions.begin(), urgentPositions.end(), [&](const AIFloat3& p) {
+			return (isFlagged && (p.SqDistance2D(basePos) >= sqOwnDist)) || IsInAvoidZone(p, frame);
+		}), urgentPositions.end());
+	}
+	if (urgentPositions.empty()) {  // no front, or none of it we may walk to: hold here
 		logFallback("hold");
 		HoldPosition();
 		return;
 	}
 
-	const AIFloat3& startPos = leader->GetPos(frame);
-	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	const float sqOwnDist = startPos.SqDistance2D(basePos);
 	if (isFlagged) {
-		// Only the front's points nearer our base than we are (without the enemy-ground hold); none: hold here
-		urgentPositions.erase(std::remove_if(urgentPositions.begin(), urgentPositions.end(), [&](const AIFloat3& p) {
-			return p.SqDistance2D(basePos) >= sqOwnDist;
-		}), urgentPositions.end());
-		if (urgentPositions.empty()) {
-			logFallback("hold");
-			HoldPosition();
-			return;
-		}
 		logFallback("front");
 	} else if (!isOwnGroundOnly && IsOnEnemyGround()) {
 		// Restricted to our ground (isOwnGroundOnly): nothing out here may be picked, so walk back to the front

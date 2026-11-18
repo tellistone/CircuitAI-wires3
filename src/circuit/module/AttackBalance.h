@@ -78,6 +78,8 @@ public:
 	bool IsFail(const SForce& force, Line line) const;
 	// A mobile unit's weight at dist from F (the formula above)
 	float GetMobileWeight(float dist, float range, float speed) const;
+	// A unit's weapon ranges against land and water (0 where it can't hit that layer)
+	static void GetRanges(const CCircuitDef* cdef, float& outLand, float& outWater);
 	// A unit's own range against a spot, as the threat map draws it (header)
 	static float GetRangeAt(float rangeLand, float rangeWater, bool isWater, bool isAmph);
 	static float GetRangeAt(const CCircuitDef* cdef, bool isWater, bool isAmph);
@@ -93,8 +95,9 @@ public:
 	void NoteCheck(Line line, bool isSkip, ICoreUnit::Id targetId = -1);
 	void NoteFlag(bool isOn) { ++(isOn ? stats.flagsOn : stats.flagsOff); }
 	void NoteZone(bool isSet) { ++(isSet ? stats.zonesSet : stats.zonesLifted); }
-	// One fight (CAttackTask's 20 s window after it engaged a new target): its E/A at engage, what it lost, fled or not
-	void NoteFight(float ratio, float blipShare, float metalLost, bool isFled);
+	// One fight (CAttackTask's 20 s window after it engaged a new target): its E/A at engage, the metal it lost and
+	// killed, fled or not
+	void NoteFight(float ratio, float blipShare, float metalLost, float metalKilled, bool isFled);
 	// A group's blocked time (frames): outnumbered, or a decision whose candidates the balance all skipped
 	void NoteBlocked(const CAttackTask* task, ICoreUnit::Id leaderId, int frames);
 	void Log();
@@ -129,6 +132,7 @@ private:
 	struct SFights {
 		int count = 0;
 		float metalLost = 0.f;
+		float metalKilled = 0.f;
 		int flees = 0;
 		float blipShare = 0.f;  // sum
 	};

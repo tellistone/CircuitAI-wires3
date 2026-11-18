@@ -501,6 +501,9 @@ public:
 
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
+	// One of our units killed an enemy (the engine's enemy-destroyed event; attackerId -1: none, or not ours): the
+	// quota.attack_balance outcome log counts it for the attack group the unit is in
+	void NoteEnemyKilled(const CEnemyInfo* enemy, int attackerId);
 	// A turret seen for the first time (CCircuitAI::EnemyEnterLOS): attack and raid groups within its reach + their path
 	// look-ahead re-plan at the next threat-map update and get the flee grace for a while (ISquadTask::OnSuddenThreat)
 	void ReactSuddenThreat(CEnemyInfo* enemy);
