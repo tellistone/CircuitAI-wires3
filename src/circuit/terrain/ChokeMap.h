@@ -171,6 +171,8 @@ public:
 	springai::AIFloat3 GetCellPos(int cell) const;  // centre of a graph cell, on the ground
 	int GetRegionAt(const springai::AIFloat3& pos) const;  // nearest passable cell's region within 2 cells
 	float GetChokeTraffic(int choke) const { return chokeTraffic[choke]; }  // the field summed over its line
+	// Each choke's part of the traffic across them all; even when none carries any
+	std::vector<float> GetTrafficShares(const std::vector<int>& chokes) const;
 	// Nothing acts on a choke until it is 20 s old (found after a rebuild)
 	bool IsChokeSettled(int choke, int frame) const;
 	// Enemy artillery seen in range of the choke within the last 5 minutes: no new towers there

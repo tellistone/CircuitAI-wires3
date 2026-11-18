@@ -166,7 +166,7 @@
 	"entrances": 3,  // most entrances before a cluster counts as open
 	"near": 2.5,  // furthest useful entrance from a defence point
 	"setback": [0.6, 0.8],  // ideal tower distance behind a choke's line, in the tower's weapon ranges
-	"lane": 96.0,  // elmos: corridor kept free of buildings (but mexes) through chokes under 3x this wide
+	"lane": 96.0,  // elmos: corridor through chokes under 3x this wide; the turret picker and scored spots never put a tower on it, and with enable it is kept free of buildings (but mexes)
 	"gate_share": 0.25,  // a leak type (amphibious, spiders, jumpers) starts gating once its cost reaches this share of the enemy army seen + 300 metal
 	"traffic": {"spread": 0.15},  // width of the enemy's traffic corridors, as a share of the route's length
 	"openness": {"bands": [0.35, 0.65, 0.05]},  // [<chokepointed below>, <open above>, <margin around them>]
@@ -215,6 +215,10 @@
 	"view": 1.0,  // a spot ranks up to 1 + this x its value by the share of its range circle's ground in a clear line of fire (V), so a cliff top over the ground below beats its foot; ranks only, never decides worth; 0 = off
 	"height": 0.5,  // the most a spot's height adds to its value (all of it 150 elmos above its targets)
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
+	"choke_econ": 1.0,  // a choke of our current line adds this x our economy (the cost of our and allied energy, pylons and factories in our territory), split among the current line chokes by the traffic through each; 0 = off
+	"choke_enemy": 400,  // metal a choke of the enemy line adds to C, on top of choke (and of the economy share for a choke on both lines)
+	"choke_cap": 1000,  // the most C one choke carries (before depth and halving); 0 = no cap
+	"choke_depth": 1.0,  // C x (1 - this x the choke's distance / range): 1 = full on the choke, nothing at the edge of range; 0 = flat anywhere in range. A tower covering a choke cuts its C for the next one by as much: halved standing on it, by a quarter with it halfway out, not at all at the edge of range (at 1)
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
 	// the callers. Claw mines and missiles are left out too, by customParams.mobilebuilding
 	"not_defence": ["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"],  // Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity, Antinuke

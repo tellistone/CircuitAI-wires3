@@ -311,7 +311,8 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 	const std::map<std::string, float*> floats = {
 		{"radius", &c.radius}, {"min_value", &c.minValue}, {"traffic", &c.traffic}, {"horizon", &c.horizon},
 		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"view", &c.view},
-		{"height", &c.height}, {"choke", &c.choke},
+		{"height", &c.height}, {"choke", &c.choke}, {"choke_depth", &c.chokeDepth}, {"choke_econ", &c.chokeEcon},
+		{"choke_enemy", &c.chokeEnemy}, {"choke_cap", &c.chokeCap},
 		{"enemy_reach", &c.enemyReach}, {"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown},
 		{"share", circuit->GetMilitaryManager()->GetTurretShare()}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
 	};

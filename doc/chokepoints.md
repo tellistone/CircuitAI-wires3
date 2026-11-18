@@ -47,8 +47,9 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
 - **Openness.** Half the share of mex income that is open from the enemy side, plus half the width of the narrowest
   separation between the sides over 4 main-tower ranges. Below `choke.openness.bands[0]` the map is *chokepointed*,
   above `bands[1]` it is *open*, and in between *semi-open*. The band only changes `bands[2]` past a boundary.
-- **Lanes** (with `choke.enable`). A corridor `choke.lane` wide through every choke narrower than 3 lanes is kept
-  free of buildings, except mexes, so our own towers and walls never close it.
+- **Lanes.** A corridor `choke.lane` wide through every choke narrower than 3 lanes. The turret picker and scored
+  spots never put a tower on one; with `choke.enable` it is also kept free of every building, except mexes, so our
+  own walls never close it.
 
 Choke ids carry over when the terrain changes or the gating types change. A new choke waits 20 s before anything acts
 on it.
@@ -82,7 +83,7 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.entrances` | `3` | Most entrances before a cluster counts as open. |
 | `choke.near` | `2.5` | Furthest useful entrance from a defence point. |
 | `choke.setback` | `[0.6, 0.8]` | Ideal tower distance behind a choke's line, in the tower's own weapon ranges. |
-| `choke.lane` | `96` | Elmos. Width of the corridor kept free of buildings. |
+| `choke.lane` | `96` | Elmos. Width of the corridor through a narrow choke: no picker or scored tower on it, and with `choke.enable` no building but a mex. |
 | `choke.gate_share` | `0.25` | Share of the enemy army seen (plus a 300-metal prior) a leak type's cost must reach to start gating. |
 | `choke.traffic.spread` | `0.15` | Width of the traffic corridors, as a share of the route's length. |
 | `choke.openness.bands` | `[0.35, 0.65, 0.05]` | Chokepointed below, open above, and the margin around them. |
@@ -116,6 +117,10 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.view` | `1.0` | A spot ranks up to 1 + this × its value by *V*, the share of its range circle's ground in a clear line of fire from it. A cliff top over the ground below scores high and its foot low; flat open ground scores 1. Like the lean, it ranks spots and never decides whether one is worth its cost. 0 turns it off. |
 | `turret.height` | `0.5` | The most a spot's height adds to its value. |
 | `turret.choke` | `100` | Metal a choke of our current line or the enemy line in range adds (C). |
+| `turret.choke_econ` | `1.0` | A choke of our current line adds this × our economy to C: the cost of our and allied energy, pylons and factories in our territory, split among the current line chokes by the traffic through each (evenly with no traffic). Mexes are left out; they steer the traffic. 0 = off. |
+| `turret.choke_enemy` | `400` | Metal a choke of the enemy line adds to C, on top of `turret.choke` (and of the economy share for a choke on both lines). |
+| `turret.choke_cap` | `1000` | The most C one choke carries, before depth and halving, so the busiest pass doesn't soak up every turret. 0 = no cap. |
+| `turret.choke_depth` | `1.0` | C × (1 − this × the choke's distance ÷ range). At 1, a choke is worth all of its C right under the turret and nothing at the edge of its range; at 0, the same anywhere in range. A tower covering the choke halves its C for the next by as much: fully when it stands on it, by a quarter when the choke is halfway out at 1. |
 | `turret.not_defence` | `["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"]` | Armed statics that defend nothing in the field: Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity and the Antinuke. They never cover a target, and the callers don't count them as a defence or as allied power. Claw mines and missiles are left out the same way, by their `mobilebuilding` mark. |
 | `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
 | `turret.defended_radius` | `600` | After a flee, a defence this near where it started means no turret. |
@@ -301,11 +306,20 @@ cost:
   The heaviest 64 cells within reach are summed over those in range and divided by the cell lengths the range spans
   (2 × range ÷ 64), which gives the income whose routes pass under the turret, in metal/s; × `turret.horizon`.
 - *A*, our and allied unarmed buildings in range (mexes, energy, radar, factories, storage, nanoframes too), at cost.
+  Energy, pylons and factories in our territory count only above what the spot's C already carries of our economy.
 - *E*, known enemy buildings in range seen in radar or sight in the last 3 minutes (so the ghost of one that died
   out of sight drops out), at cost; an enemy mex counts its income × `turret.horizon`, which is what killing it
   takes from them. Mobiles don't count: they move on, and their routes are in T already.
-- *C*, `turret.choke` when a choke of our current line or the enemy line has its middle in range. One choke's worth
-  at most.
+- *C*, `turret.choke` when a choke of our current line or the enemy line has its middle in range. A current line
+  choke adds `turret.choke_econ` × our economy (the cost of our and allied energy, pylons and factories in our
+  territory), split among the current line's chokes by the traffic field across each one's line: the enemy's routes
+  to what we hold show which pass shuts it in, a base one region back or behind two passes too. An enemy line choke
+  adds `turret.choke_enemy`; a choke on both lines adds both. The whole is capped at `turret.choke_cap` and × (1 −
+  `turret.choke_depth` × its distance ÷ range). A choke gets none until it has settled after a graph rebuild, or while
+  enemy artillery is on it, as choke defence waits; its part of the economy isn't moved onto the others. A spot that
+  counts a choke's economy doesn't count the same economy buildings in A again: A keeps only what is left over. One choke's worth at most. Every other target counts in full anywhere in range, so without the depth a
+  turret only has to reach the choke with its outer range, and walk, threat, view and the targets behind it hold it
+  back there.
 - Each target counts only if the turret hits it (ground, and under deep water for one that hits there), in range
   and in a clear line of fire (high-arc turrets skip that). It is halved for each tower of ours or an ally's,
   queued ones included, that already covers it and hits it, so an AA tower doesn't cover a mex. Claw mines,
@@ -325,7 +339,7 @@ wins, so the type follows the enemy buildings in range and the choke through E a
 A spot is skipped when it is outside the radius; more than `defence.infl_rad` (2048 elmos) from every building of
 ours or an ally's (constructors left out, so the ordering constructor can't make its own ground pass, and Claw
 mines and missiles, so a minefield doesn't stretch our ground); not buildable facing south or closed on the
-blocking map (lanes and queued jobs, picker jobs included, are on it); in the constructor's threat; out of its
+blocking map (lanes and queued jobs, picker jobs included, are on it); on a lane; in the constructor's threat; out of its
 reach; not safe for a builder whose flee is on (`IsCommJobSafe`); or masked in the last 5 minutes, by a build the
 engine refused there or a picker job dropped there. Candidates are the 64-elmo cell centres within the radius, the
 same for every def, snapped to the build grid, tried best upper bound first; the best 5 are tried again 16 elmos to
