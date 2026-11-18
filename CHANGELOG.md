@@ -10,14 +10,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **`choke_overlay sides`: who controls each region and choke.** A new overlay layer colours each region by the
   units in it: blue where only ours are, red where only the enemy's are (enemy mobiles seen in the last minute, enemy
   buildings until seen dead), stronger in that side's territory, and clear where nobody is. Where both sides are, the
-  side whose armed units are 1.5 times as strong controls it, else it is striped blue and red as contested. A band
-  across each choke shows whose threat reaches it (our and the enemy's influence averaged along its line), in the same
-  colours, outlined with a white halo when towers defend it: blue ours, red the enemy's, dashed both. The lines are drawn across their gaps: our current line blue where its towers cover what it wants and
-  orange where it's short, the enemy line by rank (red defended, pink undefended, grey not seen enough), enemy-held
-  chokes off it dark red, the front line with a white halo, the forward line yellow. It is drawn by a LuaUI widget,
-  `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through `Lua_callUI` on the machine that runs it,
-  never in games with human opponents; without the widget the layer shows the `lines` layer. Nothing outside the
-  overlay reads the control it shows.
+  side whose armed units are 1.5 times as strong controls it, else it is striped blue and red as contested. Each choke
+  is a gate across its gap: its core coloured by whose threat reaches it (our and the enemy's influence averaged along
+  its line), posts at its ends when towers reach it, and a casing when it is on a line (white front line, green or
+  orange our current line by whether its towers cover what it wants, the enemy line by rank, yellow forward line). A
+  legend is printed bottom left. It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the
+  AI reaches through `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget
+  the layer shows the `lines` layer. Nothing outside the overlay reads the control it shows.
 
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its

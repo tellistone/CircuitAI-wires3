@@ -8,13 +8,14 @@
 -- Regions are tinted by who controls them: blue where only our units are (or ours are 1.5 times the enemy's
 -- strength), red likewise for the enemy, striped blue and red where both are and neither leads, and left clear where
 -- nobody is. The tint is stronger where that side has buildings. Thin lines are region borders.
--- Each choke has a wide band across it, by whose threat reaches it: blue ours, red the enemy's, striped where both
--- reach and neither leads, faint grey nobody's. A defended choke (towers whose range reaches its line) has an
--- outline with a white halo round its band: blue our towers, red the enemy's, dashed blue and red both; an undefended
--- one has none.
--- On top: our current line is blue where its towers cover what it
--- wants, orange where it's short. The enemy line is red where defended, pink where undefended, grey where not seen
--- enough; enemy-held chokes off it are dark red. The front line has a white halo, the forward line is thin yellow.
+-- Each choke is a gate drawn across its gap, wall to wall:
+-- - its core is whose threat reaches it: blue ours, red the enemy's, dashed blue and red where both reach and neither
+--   leads, thin grey nobody's;
+-- - posts at its ends when towers reach it: blue ours, red the enemy's, half and half both; no posts, undefended;
+-- - a casing round the core when it is on a line: white the front line; green our current line where its towers cover
+--   what it wants, orange where it's short; the enemy line dark red where defended, pink where undefended, grey where
+--   not seen enough; deep red an enemy-held choke off it; yellow the forward line.
+-- A legend is printed bottom left.
 --
 -- With several AI ally teams sending (spectating AI vs AI), it keeps showing one: the local player's, else the
 -- lowest ally team id, until that one clears or goes quiet. The ally team shown is printed bottom left.
@@ -58,33 +59,33 @@ local FILL_LIFT = 4  -- elmos: fills sample the ground only at cell corners, so 
 local BORDER_COLOUR = {0.85, 0.85, 0.85, 0.35}
 local BORDER_WIDTH = 1
 
-local CONTROL = {  -- a choke's band by who controls it; stripes take the colours in turn along it
-	o = {Tint(BLUE, 0.70)},
-	e = {Tint(RED, 0.70)},
-	c = {Tint(BLUE, 0.70), Tint(RED, 0.70)},
-	n = {{0.85, 0.85, 0.85, 0.22}},
+local GATE = {  -- a choke's core by who controls it; dashes take the colours in turn along it
+	o = {colours = {{0.35, 0.60, 1.00, 1.00}}, width = 5},
+	e = {colours = {{1.00, 0.25, 0.20, 1.00}}, width = 5},
+	c = {colours = {{0.35, 0.60, 1.00, 1.00}, {1.00, 0.25, 0.20, 1.00}}, width = 5},
+	n = {colours = {{0.85, 0.85, 0.85, 0.90}}, width = 2},
 }
-local BAND_HALF = 48  -- elmos either side of the choke's line
-local BAND_PAST = 16  -- elmos past each end of the line, so a one-cell choke shows
-local BAND_STRIPE = 64  -- elmos per stripe
-local DEFENDED = {  -- a choke's outline by whose towers reach it; n (nobody's) has none
-	o = {{0.40, 0.65, 1.00, 1.00}},
-	e = {{1.00, 0.30, 0.25, 1.00}},
-	b = {{0.40, 0.65, 1.00, 1.00}, {1.00, 0.30, 0.25, 1.00}},
+local GATE_DASH = 40  -- elmos per dash on a contested gate
+local GATE_SHADOW = {0.00, 0.00, 0.00, 0.55}  -- under every core, so it reads on any ground
+local GATE_SHADOW_WIDTH = 9
+local POSTS = {  -- by whose towers reach the choke; n (nobody's) has none
+	o = {{0.35, 0.60, 1.00, 1.00}},
+	e = {{1.00, 0.25, 0.20, 1.00}},
+	b = {{0.35, 0.60, 1.00, 1.00}, {1.00, 0.25, 0.20, 1.00}},
 }
-local OUTLINE_WIDTH = 3
-local OUTLINE_HALO = {{1.00, 1.00, 1.00, 0.85}}  -- under the outline, so it shows on a band of its own colour
-local OUTLINE_HALO_WIDTH = 7
+local POST_RADIUS = 30  -- elmos
+local POST_RIM = {0.05, 0.05, 0.05, 0.90}
 
-local LINES = {  -- by kind, drawn in this order
-	{kind = "w", colour = {1.00, 1.00, 0.25, 0.80}, width = 3},  -- forward line
-	{kind = "f", colour = {1.00, 1.00, 1.00, 1.00}, width = 14},  -- front line: a halo under its two lines
-	{kind = "h", colour = {0.55, 0.05, 0.05, 0.95}, width = 6},  -- enemy-held, off the enemy line
-	{kind = "g", colour = {0.60, 0.60, 0.60, 0.95}, width = 6},  -- enemy line, not seen enough to rank
-	{kind = "e", colour = {1.00, 0.20, 0.15, 0.95}, width = 6},  -- enemy line, defended
-	{kind = "u", colour = {1.00, 0.60, 0.75, 0.95}, width = 6},  -- enemy line, undefended
-	{kind = "c", colour = {0.30, 0.55, 1.00, 0.95}, width = 4},  -- current line, towers cover what it wants
-	{kind = "s", colour = {1.00, 0.55, 0.05, 0.95}, width = 4},  -- current line, short
+local CASING_WIDTH = 15
+local LINES = {  -- casings by line kind, drawn in this order: the last one drawn shows on a choke in several lines
+	{kind = "w", colour = {1.00, 0.88, 0.20, 0.95}},  -- forward line
+	{kind = "h", colour = {0.40, 0.02, 0.05, 0.95}},  -- enemy-held, off the enemy line
+	{kind = "g", colour = {0.55, 0.55, 0.55, 0.95}},  -- enemy line, not seen enough to rank
+	{kind = "e", colour = {0.70, 0.08, 0.10, 0.95}},  -- enemy line, defended
+	{kind = "u", colour = {1.00, 0.62, 0.78, 0.95}},  -- enemy line, undefended
+	{kind = "c", colour = {0.20, 0.80, 0.30, 0.95}},  -- current line, towers cover what it wants
+	{kind = "s", colour = {1.00, 0.55, 0.05, 0.95}},  -- current line, short
+	{kind = "f", colour = {1.00, 1.00, 1.00, 1.00}},  -- front line
 }
 
 local LIFT = 10  -- lines float this high over the ground
@@ -125,7 +126,8 @@ local function DeleteLists(team)
 	end
 	team.regionLists = nil
 	DeleteList(team, "borderList")
-	DeleteList(team, "controlList")
+	DeleteList(team, "shadowList")
+	DeleteList(team, "gateList")
 	DeleteList(team, "lineList")
 end
 
@@ -247,75 +249,91 @@ local function BuildBorders(team)
 	end)
 end
 
--- A band's frame: from just past one end of the choke's line to just past the other, BAND_HALF either side
-local function BandFrame(b)
-	local dx, dz = b[3] - b[1], b[4] - b[2]
-	local length = sqrt(dx * dx + dz * dz)
-	local ux, uz = 1, 0
-	if length >= 1 then
-		ux, uz = dx / length, dz / length
-	end
-	return b[1] - ux * BAND_PAST, b[2] - uz * BAND_PAST, ux, uz, length + 2 * BAND_PAST, -uz * BAND_HALF, ux * BAND_HALF
-end
-
--- Ground-following GL.LINES from (x1, z1) to (x2, z2), coloured in turn every BAND_STRIPE
-local function DashedSegment(x1, z1, x2, z2, colours)
+-- Ground-following GL.LINES from (x1, z1) to (x2, z2), coloured in turn every dash elmos
+local function DashedSegment(x1, z1, x2, z2, colours, dash)
 	local dx, dz = x2 - x1, z2 - z1
 	local length = sqrt(dx * dx + dz * dz)
 	local steps = max(1, floor(length / STEP + 0.5))
 	for k = 0, steps - 1 do
 		local t0, t1 = k / steps, (k + 1) / steps
-		gl.Color(colours[floor((t0 + t1) * 0.5 * length / BAND_STRIPE) % #colours + 1])
+		gl.Color(colours[floor((t0 + t1) * 0.5 * length / dash) % #colours + 1])
 		local ax, az, bx, bz = x1 + dx * t0, z1 + dz * t0, x1 + dx * t1, z1 + dz * t1
 		glVertex(ax, GroundY(ax, az), az)
 		glVertex(bx, GroundY(bx, bz), bz)
 	end
 end
 
--- A band across each choke, ground-following quads STEP long, coloured by stripe; then the defended ones' outlines
-local function BuildControl(team)
-	DeleteList(team, "controlList")
-	local bands = team.control or {}
-	local function vertex(x, z)
-		glVertex(x, max(spGetGroundHeight(x, z), 0) + FILL_LIFT, z)
+-- A disc on the ground at (x, z), in one colour or split in two halves along (ux, uz); a dark rim round it
+local POST_SIDES = 16
+local function Post(x, z, ux, uz, colours)
+	local angle0 = math.atan2(uz, ux)
+	local rim = {}
+	for i = 0, POST_SIDES do
+		local a = angle0 + 2 * math.pi * i / POST_SIDES
+		local px, pz = x + math.cos(a) * POST_RADIUS, z + math.sin(a) * POST_RADIUS
+		rim[i] = {px, GroundY(px, pz) + 2, pz}
 	end
-	team.controlList = gl.CreateList(function()
-		gl.BeginEnd(GL.QUADS, function()
-			for i = 1, #bands do
-				local colours = CONTROL[bands[i].who]
-				local x0, z0, ux, uz, length, px, pz = BandFrame(bands[i])
-				local steps = max(1, floor(length / STEP + 0.5))
-				for k = 0, steps - 1 do
-					local t0, t1 = length * k / steps, length * (k + 1) / steps
-					gl.Color(colours[floor((t0 + t1) * 0.5 / BAND_STRIPE) % #colours + 1])
-					local ax, az = x0 + ux * t0, z0 + uz * t0
-					local bx, bz = x0 + ux * t1, z0 + uz * t1
-					vertex(ax - px, az - pz)
-					vertex(ax + px, az + pz)
-					vertex(bx + px, bz + pz)
-					vertex(bx - px, bz - pz)
-				end
+	local cy = GroundY(x, z) + 2
+	gl.BeginEnd(GL.TRIANGLES, function()
+		for i = 0, POST_SIDES - 1 do
+			gl.Color(colours[(i < POST_SIDES / 2) and 1 or #colours])
+			glVertex(x, cy, z)
+			glVertex(rim[i][1], rim[i][2], rim[i][3])
+			glVertex(rim[i + 1][1], rim[i + 1][2], rim[i + 1][3])
+		end
+	end)
+	gl.Color(POST_RIM)
+	gl.BeginEnd(GL.LINE_LOOP, function()
+		for i = 0, POST_SIDES - 1 do
+			glVertex(rim[i][1], rim[i][2], rim[i][3])
+		end
+	end)
+end
+
+-- Each choke's gate: a shadow under it (its own list, drawn before the line casings), then the core and the posts
+local function BuildGates(team)
+	DeleteList(team, "shadowList")
+	DeleteList(team, "gateList")
+	local gates = team.gates or {}
+	team.shadowList = gl.CreateList(function()
+		gl.Color(GATE_SHADOW)
+		gl.LineWidth(GATE_SHADOW_WIDTH)
+		gl.BeginEnd(GL.LINES, function()
+			for i = 1, #gates do
+				local g = gates[i]
+				GroundSegment(g[1], g[2], g[3], g[4])
 			end
 		end)
-		local function outlines(width, halo)
-			gl.LineWidth(width)
+		gl.LineWidth(1)
+	end)
+	team.gateList = gl.CreateList(function()
+		for who, style in pairs(GATE) do
+			gl.LineWidth(style.width)
 			gl.BeginEnd(GL.LINES, function()
-				for i = 1, #bands do
-					local colours = DEFENDED[bands[i].defended]
-					if colours then
-						colours = halo or colours
-						local x0, z0, ux, uz, length, px, pz = BandFrame(bands[i])
-						local x1, z1 = x0 + ux * length, z0 + uz * length
-						DashedSegment(x0 - px, z0 - pz, x0 + px, z0 + pz, colours)
-						DashedSegment(x0 + px, z0 + pz, x1 + px, z1 + pz, colours)
-						DashedSegment(x1 + px, z1 + pz, x1 - px, z1 - pz, colours)
-						DashedSegment(x1 - px, z1 - pz, x0 - px, z0 - pz, colours)
+				for i = 1, #gates do
+					local g = gates[i]
+					if g.who == who then
+						DashedSegment(g[1], g[2], g[3], g[4], style.colours, GATE_DASH)
 					end
 				end
 			end)
 		end
-		outlines(OUTLINE_HALO_WIDTH, OUTLINE_HALO)
-		outlines(OUTLINE_WIDTH)
+		gl.LineWidth(2)
+		for i = 1, #gates do
+			local g = gates[i]
+			local colours = POSTS[g.defended]
+			if colours then
+				local dx, dz = g[3] - g[1], g[4] - g[2]
+				local length = sqrt(dx * dx + dz * dz)
+				if length < 3 * POST_RADIUS then
+					Post((g[1] + g[3]) * 0.5, (g[2] + g[4]) * 0.5, 1, 0, colours)
+				else
+					local ux, uz = dx / length, dz / length
+					Post(g[1], g[2], ux, uz, colours)
+					Post(g[3], g[4], ux, uz, colours)
+				end
+			end
+		end
 		gl.LineWidth(1)
 	end)
 end
@@ -324,9 +342,9 @@ local function BuildLines(team)
 	DeleteList(team, "lineList")
 	local lines = team.lines or {}
 	team.lineList = gl.CreateList(function()
+		gl.LineWidth(CASING_WIDTH)
 		for _, style in ipairs(LINES) do
 			gl.Color(style.colour)
-			gl.LineWidth(style.width)
 			gl.BeginEnd(GL.LINES, function()
 				for i = 1, #lines do
 					local l = lines[i]
@@ -389,15 +407,15 @@ function handlers.state(team, body)
 end
 
 function handlers.control(team, body)
-	local bands = {}
+	local gates = {}
 	for _, record in ipairs(Records(body)) do
 		local who, defended, x1, z1, x2, z2 = record:match("^(%a) (%a) (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)")
-		if who and CONTROL[who] then
-			bands[#bands + 1] = {tonumber(x1), tonumber(z1), tonumber(x2), tonumber(z2), who = who, defended = defended}
+		if who and GATE[who] then
+			gates[#gates + 1] = {tonumber(x1), tonumber(z1), tonumber(x2), tonumber(z2), who = who, defended = defended}
 		end
 	end
-	team.control = bands
-	BuildControl(team)
+	team.gates = gates
+	BuildGates(team)
 end
 
 function handlers.lines(team, body)
@@ -512,22 +530,55 @@ function widget:DrawWorldPreUnit()
 		gl.CallList(team.borderList)
 		gl.LineWidth(1)
 	end
-	if team.controlList then
-		gl.PolygonOffset(-30, -3)
-		gl.CallList(team.controlList)
-		gl.PolygonOffset(false)
+	if team.shadowList then
+		gl.CallList(team.shadowList)
 	end
 	if team.lineList then
 		gl.CallList(team.lineList)
+	end
+	if team.gateList then
+		gl.CallList(team.gateList)
 	end
 	gl.DepthMask(true)
 	gl.DepthTest(false)
 	gl.Color(1, 1, 1, 1)
 end
 
+-- Colour codes for font:Print
+local function Ink(colour)
+	local function byte(v)
+		return string.char(max(1, min(255, floor(v * 255))))
+	end
+	return "\255" .. byte(colour[1]) .. byte(colour[2]) .. byte(colour[3])
+end
+
+local function MakeLegend()
+	local w, blue, red = Ink({1, 1, 1}), Ink(GATE.o.colours[1]), Ink(GATE.e.colours[1])
+	local casing = {}
+	for _, style in ipairs(LINES) do
+		casing[style.kind] = Ink(style.colour)
+	end
+	local sides = blue .. "ours" .. w .. ", " .. red .. "enemy" .. w
+	return {
+		"Casing: " .. casing.f .. "front line" .. w .. ", " .. casing.c .. "our line" .. w .. " / " .. casing.s .. "short"
+				.. w .. ", " .. casing.e .. "enemy line defended" .. w .. " / " .. casing.u .. "undefended" .. w .. " / "
+				.. casing.g .. "unseen" .. w .. ", " .. casing.h .. "enemy-held" .. w .. ", " .. casing.w .. "forward line",
+		"Posts at a gate's ends: towers reach it (" .. sides .. ", half and half both)",
+		"Choke gates: whose threat reaches them (" .. sides .. ", dashed both, grey nobody's)",
+		"Regions: who has units there (" .. sides .. ", striped both, clear nobody's)",
+	}
+end
+local legend = nil
+
 function widget:DrawScreen()
 	if ShownTeam() and font then
+		legend = legend or MakeLegend()
+		font:Begin()
+		for i = 1, #legend do
+			font:Print(legend[i], 16, 16 + 18 * i, 13, "o")
+		end
 		font:Print("CircuitAI sides: ally team " .. shown, 16, 16, 14, "o")
+		font:End()
 	end
 end
 
