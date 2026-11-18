@@ -613,6 +613,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Terrain alone rebuilds the threat graph at most every 5 minutes.** Zero-K's craters and the ground levelled under
+  buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the
+  30 s mask check found a change, 10 times in 13 minutes in one logged game, and each rebuild could move
+  chokes and regions that choke defence, holds and objectives act on. A terrain change now waits until 5 minutes have
+  passed since the last rebuild, so a terraformed wall or ramp still shows within 5 minutes. A change in the gating
+  types still rebuilds at once.
+
 - **Scouts raid while cut off.** When a scout has no safe route to its picked spot (e.g. it fled into a pocket and
   the danger sits between it and everything else), or nothing could be picked, an armed ground scout goes raiding on a
   "stint": a raid task of its own, which merges, rallies and takes joiners like any raid group. The stint belongs to

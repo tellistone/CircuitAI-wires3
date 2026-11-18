@@ -39,6 +39,7 @@ using namespace springai;
 #define SCAN_RATE			(FRAMES_PER_SEC * 5)
 #define ANALYSIS_RATE		(FRAMES_PER_SEC * 10)
 #define MASK_COOLDOWN		(FRAMES_PER_SEC * 30)
+#define TERRAIN_GRAPH_COOLDOWN	(FRAMES_PER_SEC * 300)  // terrain alone (craters, levelled ground) rebuilds the graph at most this often
 #define TRAFFIC_COOLDOWN	(FRAMES_PER_SEC * 60)
 #define SOURCE_COOLDOWN		(FRAMES_PER_SEC * 120)
 #define SETTLE_FRAMES		(FRAMES_PER_SEC * 20)
@@ -68,6 +69,7 @@ struct CChokeMap::SBuildJob {
 	bool waterIsHarmful = false, waterIsAVoid = false;
 	std::vector<SClassParams> classes;
 	std::vector<bool> isGating;  // per class
+	bool isTerrainCheck = false;  // rebuild the graph if the masks changed it (TERRAIN_GRAPH_COOLDOWN)
 	std::vector<SCellMask> masks;  // the current ones: compared with, or used as they are
 	SCellMask prevGraphMask;
 	CRegionGraph::SParams graphParams;
@@ -100,6 +102,8 @@ CChokeMap::CChokeMap(CCircuitAI* circuit)
 		, laneVersion(0)
 		, heightVersion(-1)
 		, maskFrame(-MASK_COOLDOWN)
+		, graphFrame(-TERRAIN_GRAPH_COOLDOWN)
+		, isTerrainPending(false)
 		, trafficFrame(-TRAFFIC_COOLDOWN)
 		, sourceFrame(-SOURCE_COOLDOWN)
 		, nextScanFrame(0)
@@ -382,6 +386,8 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		job->isGating.push_back(IsGating(c));
 	}
+	job->isTerrainCheck = (isTerrainPending || job->isMasks)
+			&& (circuit->GetLastFrame() >= graphFrame + TERRAIN_GRAPH_COOLDOWN);
 	job->masks = classMasks;
 	job->prevGraphMask = graph.GetMask();
 	job->graphParams = GetGraphParams();
@@ -463,9 +469,11 @@ void CChokeMap::RunJob(SBuildJob& job)
 	}
 
 	/*
-	 * The threat graph, from the union of the gating classes. Rebuilt only when that union changed
+	 * The threat graph, from the union of the gating classes. Rebuilt when the gating classes changed, and when the
+	 * terrain changed that union, but then at most every TERRAIN_GRAPH_COOLDOWN: craters and ground levelled under
+	 * buildings change it through every fight, and each rebuild can move chokes the defence and holds act on
 	 */
-	if (job.isGraph || job.isMasksChanged) {
+	if (job.isGraph || job.isTerrainCheck) {
 		const clock::time_point t0 = clock::now();
 		const SCellMask& any = job.masks.front();
 		SCellMask threatMask;
@@ -547,7 +555,13 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 		}
 		circuit->LOG("CHOKE masks: %.1f ms%s", job.maskMs, job.isMasksChanged ? ", changed" : "");
 	}
+	if (job.isGraph || job.isTerrainCheck) {
+		isTerrainPending = false;  // the graph was checked against these masks
+	} else if (job.isMasksChanged) {
+		isTerrainPending = true;
+	}
 	if (job.isGraphBuilt) {
+		graphFrame = frame;
 		if (isReady) {
 			job.graph.CarryIdsFrom(graph, frame);
 		}
@@ -592,6 +606,7 @@ void CChokeMap::ScheduleBuilds()
 	const int terrainVersion = circuit->GetGameAttribute()->GetTerrainData().GetHeightVersion();
 	const bool isMasks = (terrainVersion != heightVersion) && (frame >= maskFrame + MASK_COOLDOWN);
 	const bool isGraph = isGraphDirty || graph.IsEmpty();
+	const bool isTerrainDue = isTerrainPending && (frame >= graphFrame + TERRAIN_GRAPH_COOLDOWN);
 	const bool isTraffic = isReady && !destinations.empty();
 	if (isTraffic && ((isTrafficDirty && (frame >= trafficFrame + TRAFFIC_COOLDOWN))
 		|| (isSourceDirty && (frame >= sourceFrame + SOURCE_COOLDOWN))))
@@ -601,7 +616,7 @@ void CChokeMap::ScheduleBuilds()
 		trafficFrame = sourceFrame = frame;
 	}
 	const std::vector<int> trafficClasses = isTraffic ? pendingTraffic : std::vector<int>();
-	if (!isMasks && !isGraph && trafficClasses.empty()) {
+	if (!isMasks && !isGraph && !isTerrainDue && trafficClasses.empty()) {
 		return;
 	}
 	isGraphDirty = false;  // the job takes it: a change from now on (gating, a key set) dirties it again

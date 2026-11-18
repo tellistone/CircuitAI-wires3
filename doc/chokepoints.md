@@ -50,8 +50,10 @@ when `choke_overlay` asks for it, or when the turret picker's first order comes 
 - **Lanes** (with `choke.enable`). A corridor `choke.lane` wide through every choke narrower than 3 lanes is kept
   free of buildings, except mexes, so our own towers and walls never close it.
 
-Choke ids carry over when the terrain changes or the gating types change. A new choke waits 20 s before anything acts
-on it.
+The graph is rebuilt when the gating types change, and when the terrain changes what they can cross. Craters and the
+ground levelled under buildings change it through every fight, so the terrain alone rebuilds it at most every 5
+minutes; a terraformed wall or ramp shows within that. Choke ids carry over either way. A new choke waits 20 s before
+anything acts on it.
 
 ## Features and their flags
 

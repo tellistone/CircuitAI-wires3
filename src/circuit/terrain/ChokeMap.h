@@ -327,6 +327,8 @@ private:
 	int laneVersion;
 	int heightVersion;  // CTerrainData's when the masks were built
 	int maskFrame;  // last mask build
+	int graphFrame;  // last threat graph build
+	bool isTerrainPending;  // the masks changed since the graph was last checked against them
 	int trafficFrame;  // last full traffic build
 	int sourceFrame;  // last traffic build for a source change
 	int nextScanFrame;
