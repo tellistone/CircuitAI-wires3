@@ -148,7 +148,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.enemy_reach` | `700` | Distance to a known enemy building that starts the near-enemy caller. |
 | `turret.short_choke_reach` | `600` | Distance from a short choke's line that starts the short-choke caller. |
 | `turret.enemy_line_reach` | `800` | Distance from an enemy line choke's line that starts the enemy-line caller. |
-| `turret.enemy_line_budget` | `0.5` | An enemy-line order needs only this × the dearest def's cost in the turret account. The turret is still charged its full cost, which may take the account below zero. |
+| `turret.enemy_line_budget` | `0.5` | An order at a choke of the enemy line (taken by either choke caller) needs only this × the dearest def's cost in the turret account; 0 to 1, 0 = never refused. The turret is still charged its full cost, which may take the account below zero, ahead of every other spender. |
 | `turret.artillery_reach` | `600` | Distance to our attacking artillery that starts the artillery caller. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |

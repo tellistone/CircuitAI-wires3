@@ -2680,7 +2680,7 @@ void CBuilderManager::UpdateTurrets()
 		auto canHit = [isAir, isWater](const CCircuitDef* d) {
 			return IsHitFor(d, isAir, isWater);
 		};
-		if (TryTurret(unit, state.fleeFrom, canHit, true, false, "after flee", isOrdered)) {
+		if (TryTurret(unit, state.fleeFrom, canHit, true, "after flee", isOrdered)) {
 			state.turretAskFrame = -1;
 		}
 	}
@@ -2719,8 +2719,13 @@ void CBuilderManager::UpdateTurrets()
 	CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	std::vector<int> shortChokes, lineChokes;
+	std::vector<bool> isOnEnemyLine;  // enemy_line_budget for a choke on it, whichever caller takes it
 	if (cfg.isShortChoke || cfg.isEnemyLine) {
 		if (chokeMap->IsReady()) {
+			isOnEnemyLine.assign(graph.GetChokes().size(), false);
+			for (int c : chokeMap->GetEnemyLine()) {
+				isOnEnemyLine[c] = true;
+			}
 			auto isUsable = [&](int c) {
 				return (c >= 0) && graph.GetChokes()[c].isDefensible && chokeMap->IsChokeLive(c, frame);
 			};
@@ -2755,9 +2760,8 @@ void CBuilderManager::UpdateTurrets()
 		const std::vector<int>& chokes;
 		float reach;
 		const char* caller;
-		float budgetMod;  // enemy line: enemy_line_budget x the balance the account must hold
-	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke", 1.f},
-		{lineChokes, cfg.enemyLineReach, "enemy line", cfg.enemyLineBudget}};
+	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke"}, {lineChokes, cfg.enemyLineReach, "enemy line"}};
+	const float lineBudget = utils::clamp(cfg.enemyLineBudget, 0.f, 1.f);  // x the balance the account must hold
 	// Artillery: ours shooting a target in range (an artillery unit; an engaged anti-heavy squad with a unit in range,
 	// not mines or aircraft), only a building in anti-heavy mode; centred on it (a squad: its leader), unless a turret
 	// that hits ground (ours or an ally's, being built or queued too) stands within defended_radius of it
@@ -2793,20 +2797,21 @@ void CBuilderManager::UpdateTurrets()
 			// allied power around (a finished picker turret counts; a Claw minefield or an Antinuke doesn't)
 			&& (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, isCover) <= 0.f))
 		{
-			TryTurret(unit, pos, nullptr, false, false, "near enemy", isOrdered);
+			TryTurret(unit, pos, nullptr, false, "near enemy", isOrdered);
 			continue;
 		}
-		bool isLine = false;
-		for (const auto& l : lines) {
-			const int c = nearChoke(l.chokes, pos, l.reach);
-			if (c >= 0) {
-				TryTurret(unit, chokeMap->GetCellPos(graph.GetChokes()[c].centre), nullptr, false, true, l.caller, isOrdered,
-						l.budgetMod);
-				isLine = true;
-				break;
+		auto tryLines = [&]() {
+			for (const auto& l : lines) {
+				const int c = nearChoke(l.chokes, pos, l.reach);
+				if (c >= 0) {
+					TryTurret(unit, chokeMap->GetCellPos(graph.GetChokes()[c].centre), nullptr, false, l.caller, isOrdered,
+							isOnEnemyLine[c] ? lineBudget : 1.f);
+					return true;
+				}
 			}
-		}
-		if (isLine) {
+			return false;
+		};
+		if (tryLines()) {
 			continue;
 		}
 		AIFloat3 defencePos;
@@ -2814,22 +2819,22 @@ void CBuilderManager::UpdateTurrets()
 			return (a.SqDistance2D(pos) <= sqArtilleryReach) && !HasTurretDefence(a, cfg.defendedRadius, isGround, defencePos);
 		});
 		if (arty != artillery.end()) {
-			TryTurret(unit, *arty, nullptr, false, true, "artillery", isOrdered);
+			TryTurret(unit, *arty, nullptr, false, "artillery", isOrdered);
 		}
 	}
 }
 
 bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit, bool isDefendedSkip, bool isHelpNear,
-		const char* caller, bool& isOrdered, float budgetMod)
+		const std::function<bool (const CCircuitDef*)>& canHit, bool isAfterFlee, const char* caller, bool& isOrdered,
+		float budgetMod)
 {
 	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, canHit);
-	if (defs.empty() || AssistTurret(unit, centre, canHit, isHelpNear, caller)) {
+	if (defs.empty() || AssistTurret(unit, centre, canHit, !isAfterFlee, caller)) {
 		return true;
 	}
 	const CTurretPicker::SConfig& cfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
 	AIFloat3 defencePos;
-	if (isDefendedSkip && HasTurretDefence(centre, cfg.defendedRadius, canHit, defencePos)) {
+	if (isAfterFlee && HasTurretDefence(centre, cfg.defendedRadius, canHit, defencePos)) {
 		circuit->LOG("TURRET %s, by %s %i: nothing, a defence at (%.0f, %.0f) within %.0f of (%.0f, %.0f)", caller,
 				unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), defencePos.x, defencePos.z,
 				cfg.defendedRadius, centre.x, centre.z);

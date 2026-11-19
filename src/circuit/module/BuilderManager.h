@@ -322,14 +322,14 @@ private:
 	// Not player-led, retreating, morphing, on a defence job or on a HIGH or NOW one
 	bool IsTurretFree(CCircuitUnit* unit) const;
 	// A light def unit can build at centre (canHit: that can hit what it fled from); helping a turret of ours being
-	// built, or a picker job, within turret.radius instead (isHelpNear: of the constructor too); after a flee
-	// (isDefendedSkip), no other defence that hits it within turret.defended_radius; the choke analysis (asked for now,
+	// built, or a picker job, within turret.radius instead (in the field, not isAfterFlee: of the constructor too);
+	// after a flee, no other defence that hits it within turret.defended_radius; the choke analysis (asked for now,
 	// waited for while an after-flee ask lasts); the budget; one order a second. true: done (ordered, helped, or
 	// nothing to have), false: try again next second. budgetMod: x the balance the budget asks for (the charge is
 	// the full cost)
 	bool TryTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
-			const std::function<bool (const CCircuitDef*)>& canHit, bool isDefendedSkip, bool isHelpNear,
-			const char* caller, bool& isOrdered, float budgetMod = 1.f);
+			const std::function<bool (const CCircuitDef*)>& canHit, bool isAfterFlee, const char* caller,
+			bool& isOrdered, float budgetMod = 1.f);
 	std::vector<CCircuitDef*> GetTurretDefs(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit) const;
 	bool AssistTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
