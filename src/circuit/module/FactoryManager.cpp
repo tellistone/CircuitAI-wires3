@@ -404,6 +404,7 @@ void CFactoryManager::ReadConfig()
 		}
 
 		cdef->SetRetreat(behaviour.get("retreat", cdef->GetRetreat()).asFloat());
+		cdef->SetRetreatShield(behaviour.get("retreat_shield", cdef->GetRetreatShield()).asFloat());
 
 		cdef->SetCaptureHide(behaviour.get("capture_hide", cdef->GetCaptureHide()).asFloat());
 

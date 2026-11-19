@@ -79,20 +79,17 @@ void CCombatTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	const int frame = circuit->GetLastFrame();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float healthPerc = unit->GetHealthPercent();
-	if (unit->HasShield()) {
-		const float minShield = circuit->GetSetupManager()->GetEmptyShield();
-		if ((healthPerc > cdef->GetRetreat()) && unit->IsShieldCharged(minShield)) {
-			if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
-				circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
-			}
-			return;
-		}
-	} else if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
+	// Two separate reasons to retreat: health at or below "retreat" (or disarmed), and shield charge at or below
+	// "retreat_shield". Neither one's threshold affects the other
+	const bool isHealthLow = (healthPerc <= cdef->GetRetreat()) || unit->IsDisarmed(frame);
+	const bool isShieldLow = circuit->GetSetupManager()->IsShieldLow(unit);
+	if (!isHealthLow && !isShieldLow) {
 		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
 			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
 		}
 		return;
-	} else if (healthPerc < 0.2f) {  // stuck units workaround: they don't shoot and don't see distant threat
+	}
+	if (isHealthLow && (healthPerc < 0.2f)) {  // stuck units workaround: they don't shoot and don't see distant threat
 		CRetreatTask* task = circuit->GetBuilderManager()->EnqueueRetreat();
 		manager->AssignTask(unit, task);
 		return;

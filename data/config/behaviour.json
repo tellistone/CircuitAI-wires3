@@ -140,7 +140,7 @@
 "retreat": {
 	"builder": [0.70, 1.0],  // [<default>, <UnitDef modifier>] for all builders
 	"fighter": [0.45, 1.0],  // [<default>, <UnitDef modifier>] for all not-builder units
-	"shield": [0.25, 0.275],  // [<empty>, <full>] shield power
+	"shield": [0.25, 0.275],  // [<empty>, <full>] shield power: <empty> = default per-unit "retreat_shield"; a unit back from retreat needs its retreat_shield + (<full> - <empty>) shield. Health ("retreat") and shield retreat are independent
         "repair_safe_static": true,  // same as repair_safe, for static units with prio_repair
 	"wait_timeout": 120,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
 	"repair_safe": true,  // true = builders skip priority repair (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs, and leave a mobile unit's repair (priority or retreat) once it leads them into such an area
@@ -427,8 +427,12 @@
 		// Unit can be built only since specific time in seconds
 //		"since": 60,
 
-		// Minimum hp percent before retreat
+		// Minimum hp percent before retreat (health only, the shield doesn't count)
 //		"retreat": 0.8,
+
+		// Shielded units: retreat when shield charge is at or below this share of max shield, whatever the
+		// health; unset = retreat.shield[0], 0 = never retreat for the shield
+//		"retreat_shield": 0.25,
 
 		// Builders other than commanders: overrides retreat.builder_flee's margin, -1 = no flee
 //		"builder_flee_margin": 200.0,

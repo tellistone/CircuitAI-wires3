@@ -112,10 +112,10 @@ void IFighterTask::Update()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const float minShield = circuit->GetSetupManager()->GetEmptyShield();
+	CSetupManager* setupMgr = circuit->GetSetupManager();
 	decltype(units) tmpUnits = shields;
 	for (CCircuitUnit* unit : tmpUnits) {
-		if (!unit->IsShieldCharged(minShield)) {
+		if (setupMgr->IsShieldLow(unit)) {  // its "retreat_shield", whatever its health
 			CRetreatTask* task = militaryMgr->EnqueueRetreat();
 			manager->AssignTask(unit, task);
 		}
@@ -141,20 +141,17 @@ void IFighterTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	const int frame = circuit->GetLastFrame();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float healthPerc = unit->GetHealthPercent();
-	if (unit->HasShield()) {
-		const float minShield = circuit->GetSetupManager()->GetEmptyShield();
-		if ((healthPerc > cdef->GetRetreat()) && unit->IsShieldCharged(minShield)) {
-			if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
-				circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
-			}
-			return;
-		}
-	} else if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
+	// Two separate reasons to retreat: health at or below "retreat" (or disarmed), and shield charge at or below
+	// "retreat_shield". Neither one's threshold affects the other
+	const bool isHealthLow = (healthPerc <= cdef->GetRetreat()) || unit->IsDisarmed(frame);
+	const bool isShieldLow = circuit->GetSetupManager()->IsShieldLow(unit);
+	if (!isHealthLow && !isShieldLow) {
 		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
 			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
 		}
 		return;
-	} else if (healthPerc < 0.2f) {  // stuck units workaround: they don't shoot and don't see distant threat
+	}
+	if (isHealthLow && (healthPerc < 0.2f)) {  // stuck units workaround: they don't shoot and don't see distant threat
 		CRetreatTask* task = circuit->GetMilitaryManager()->EnqueueRetreat();
 		manager->AssignTask(unit, task);
 		return;
@@ -803,7 +800,7 @@ std::vector<float> IFighterTask::GetShieldShares(int frame) const
 	// Each group shield's full charge shared by the group's armed units inside it, as CThreatMap::AddShields shares
 	// an enemy shield: an area shield (Aspis, unarmed) counts for the units it covers, and once. Full, not current:
 	// Felon spends its shield to fire, and a strength that dips with every shot would flip the escape; shields
-	// below retreat.shield leave the group (Update). Empty: no shields in the group
+	// at or below their retreat_shield leave the group (Update). Empty: no shields in the group
 	std::vector<float> shares;
 	if (shields.empty()) {
 		return shares;

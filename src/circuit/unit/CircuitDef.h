@@ -347,7 +347,11 @@ public:
 	float GetJumpRange() const { return jumpRange; }
 
 	void SetRetreat(float value) { retreat = value; }
-	float GetRetreat()   const { return retreat; }
+	float GetRetreat()   const { return retreat; }  // health share, nothing to do with the shield
+	// behaviour.json per unit "retreat_shield": share of max shield at or below which it retreats, whatever its
+	// health; unset (< 0) = retreat.shield[0], 0 = never retreats for its shield
+	void SetRetreatShield(float value) { retreatShield = value; }
+	float GetRetreatShield() const { return retreatShield; }
 	// behaviour.json per unit "artillery_flee_margin"; unset = use the "artillery" block's value
 	void SetArtyFleeMargin(float value) { artyFleeMargin = value; isArtyFleeMarginSet = true; }
 	float GetArtyFleeMargin(float defaultValue) const { return isArtyFleeMarginSet ? artyFleeMargin : defaultValue; }
@@ -500,6 +504,7 @@ private:
 //	float altitude;
 	float jumpRange;
 	float retreat;
+	float retreatShield = -1.f;
 	float artyFleeMargin = -1.f;
 	bool isArtyFleeMarginSet = false;
 	float ahFleeMargin = -1.f;

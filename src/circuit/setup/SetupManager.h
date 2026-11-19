@@ -79,6 +79,13 @@ public:
 	void ReadConfig();
 	float GetEmptyShield() const { return emptyShield; }
 	float GetFullShield() const { return fullShield; }
+	// Shield share at or below which the unit retreats: its "retreat_shield", else retreat.shield[0]; 0 = never
+	float GetRetreatShield(const CCircuitDef* cdef) const;
+	// Shield share it must pass to leave a retreat: its retreat shield plus the retreat.shield gap, at most 1;
+	// 0 when it never retreats for its shield (then health alone ends the retreat)
+	float GetReturnShield(const CCircuitDef* cdef) const;
+	// It has a shield, retreats for it, and the charge is at or below its retreat shield
+	bool IsShieldLow(CCircuitUnit* unit) const;
 	int GetRetreatWait() const { return retreatWait; }
 
 	bool HasModules(const CCircuitDef* cdef, unsigned level) const;
