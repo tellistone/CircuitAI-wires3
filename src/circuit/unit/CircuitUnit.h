@@ -148,6 +148,9 @@ public:
 	void FightFrom(const springai::AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout);
 	// Stay at pos (no Attack order: the engine fires at whatever comes into range); remembers enemy/tile
 	void HoldFire(const springai::AIFloat3& pos, CEnemyInfo* enemy, int tile, int timeout);
+	// Move to pos and wait there (a plain move: a melee unit doesn't chase in to the enemy, its weapons still shoot
+	// what comes into range); remembers enemy/tile. Melee units kept out of a target's death explosion
+	void StandBy(const springai::AIFloat3& pos, CEnemyInfo* enemy, int tile, int timeout);
 	void Guard(CCircuitUnit* target, int timeout);
 	void Gather(const springai::AIFloat3& groupPos, int timeout);
 
