@@ -7,6 +7,25 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Open maps get at least 20 regions, cut evenly, not along the distance to the walls** (`choke.region.min_count`,
+  now 20, was 12). On an open map the first build has few regions, so the build ran again with `merge` raised up to
+  1, which splits regions wherever the distance to the nearest wall dips. On Conquest of Paradise that split the map
+  in two down its mirror line, then into 37 regions whose chokes ran across open ground at random. Now:
+  - A relaxed build still merges across any choke wider than `choke.defensible`, so relaxing only finds the narrow
+    chokes the first build merged away.
+  - With still too few regions, seeds go on a grid of the map that gets a column or a row finer until there are
+    `min_count`, and each big region's cells go to its nearest seed (walking); a piece under `min_area` goes to its
+    neighbours. The grid depends only on the map's size and is centred, so a crater moves no seed and a mirrored map
+    gets mirrored pieces. The `CHOKE graph` log line and the overlay say how many regions were added.
+  - A line between two pieces of one region is a cut (`SChoke::isCut`), a choke as wide as the ground it crosses. It
+    counts like any other choke; the overlay labels it `cut`.
+  - A crater rebuilds the graph at once only when it joins two regions away from where they already meet, so craters
+    on a cut, or widening a choke, wait for the 5 minute terrain rebuild, while a ramp terraformed into a base still
+    rebuilds it at once.
+  - On synthetic 16x16 masks, `min_count` 20 gives 20 to 23 regions of 1,511 to 3,705 cells, and 98 to 99% of region
+    ids and 70 to 80% of choke ids carry over 5 craters. A corridor map still relaxes from 4 regions to 16 at narrow
+    chokes, then cuts 4 more. A build with cuts takes 29 ms on 256x256 cells and 130 ms on 512x512.
+
 - **Planner off: no small radar under an Advanced Radar.** `MakeDefence` queued a Radar Tower behind a cluster unless
   another Radar Tower stood nearby; now any static radar whose view holds all of the small one's counts.
 - **Preventive towers: the roll is the cluster's total, thrown once.** A cluster's preventive count

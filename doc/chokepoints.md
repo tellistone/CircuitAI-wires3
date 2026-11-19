@@ -68,11 +68,11 @@ with `turret.short_choke` or `turret.enemy_line` on, once a constructor could or
   own walls never close it.
 
 The graph is rebuilt when the gating masks change, and when the terrain changes what they can cross. Craters and the
-ground levelled under buildings change it through every fight, so the terrain alone rebuilds it at most every 5
-minutes, unless the change opens a new crossing: newly crossable cells joining two of the graph's regions (a wall
-blown through, a terraformed ramp), which rebuilds it at once (the masks are made again at most every 30 s). Choke
-ids carry over either way. A new choke waits 20 s before
-anything acts on it.
+ground levelled under buildings change it through every fight, so the terrain alone rebuilds it at most every 5 minutes,
+unless the change opens a new crossing: newly crossable cells joining two of the graph's regions away from their border
+(a wall blown through, a terraformed ramp), which rebuilds it at once. A crater widening a choke, or on a cut across
+open ground, touches both regions where they already meet, so it waits (the masks are made again at most every 30 s).
+Choke ids carry over either way. A new choke waits 20 s before anything acts on it.
 
 ## Features and their flags
 
@@ -99,8 +99,8 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | Key | Default | Meaning |
 |---|---|---|
 | `choke.region.min_area` | `0.5` | Smallest region, in main-tower ranges squared. A smaller one merges into a neighbour. |
-| `choke.region.merge` | `0.7` | Two regions merge when the choke's altitude reaches this share of the smaller region's highest. |
-| `choke.region.min_count` | `12` | Fewest regions wanted. A build with fewer runs again up to 4 times, `merge` raised a step towards 1 and `min_area` lowered a step towards a quarter of its value each time, until it has this many; the build with the most regions is kept. The graph log line and the overlay say when it relaxed and to what. 0 turns it off. |
+| `choke.region.merge` | `0.7` | Two regions merge when the choke's altitude reaches this share of the smaller region's highest. Near 1, open ground splits wherever the distance to the nearest wall dips (on a mirrored map, down the mirror line), into chokes as wide as the regions. |
+| `choke.region.min_count` | `20` | Fewest regions wanted. A build with fewer runs again up to 4 times, `merge` raised a step towards 1 and `min_area` lowered a step towards a quarter of its value each time, until it has this many; the build with the most regions is kept. A relaxed build still merges across any choke wider than `choke.defensible`, so it only finds narrow chokes the first build merged away. With still too few (open ground, which has no choke to split at), seeds go on a grid of the map, centred so a mirrored map gets mirrored pieces, and the grid gets a column or a row finer until there are this many. Each big region's cells go to its nearest seed (walking), and a piece under `min_area` goes to its neighbours. The grid depends only on the map's size, so a crater moves no seed and ids carry over rebuilds. A line between two pieces of one region is a cut: a choke as wide as the ground it crosses, which counts like any other (held ground, the lines, holds, the turret picker's C). The graph log line and the overlay say when it relaxed or cut, and how much. 0 turns it off. |
 | `choke.defensible` | `2.0` | Widest choke that towers try to close. |
 | `choke.entrances` | `3` | Most entrances before a cluster counts as open. |
 | `choke.near` | `2.5` | Furthest useful entrance from a defence point. |
@@ -186,7 +186,7 @@ Before an army is seen, the vehicles show as `(gating, assumed)` once the openin
 
 | Layer | What it draws |
 |---|---|
-| `chokes` | Each choke from end to end of its line: green when defensible, grey when not. Lanes are yellow rectangles. |
+| `chokes` | Each choke from end to end of its line: green when defensible, grey when not. A cut across open ground (`choke.region.min_count`) is labelled `cut`. Lanes are yellow rectangles. |
 | `pockets` | Each pocket's entrances by mode: green at chokes, white on cluster, grey not decided yet. Blue lines link its points to them. Points are red when open, green gated, grey unreached. Magenta marks the anchors of choke points. |
 | `lines` | The current line orange, the enemy line red, the front line white. Hold slots are cyan, with their spot. Labels give each frontline choke's rank, wanted power and tower power. |
 | `ranks` | Enemy-held chokes and the enemy line's: red when defended, white when undefended, grey when not seen enough to say. Labels say which, and give the defence, the unarmed value behind and the share seen in the last minute. |

@@ -476,7 +476,7 @@ void CChokeOverlay::Clear()
 }
 
 /*
- * Defensible chokes green, wider ones grey, each from end to end of its line
+ * Defensible chokes green, wider ones grey, each from end to end of its line; a cut across open ground is labelled so
  */
 void CChokeOverlay::DrawChokes(const CRegionGraph& graph)
 {
@@ -487,7 +487,8 @@ void CChokeOverlay::DrawChokes(const CRegionGraph& graph)
 		const Colour colour = choke.isDefensible ? Colour::GREEN : Colour::GREY;
 		AddLine(OnGround(a.x, a.z), OnGround(b.x, b.z), colour, 24.f);
 		AddLabel(OnGround(mask.CentreX(choke.centre), mask.CentreZ(choke.centre)),
-				utils::int_to_string(choke.id, "choke %i") + utils::int_to_string(choke.width, ", %i wide"));
+				utils::int_to_string(choke.id, choke.isCut ? "cut %i" : "choke %i")
+				+ utils::int_to_string(choke.width, ", %i wide"));
 	}
 }
 

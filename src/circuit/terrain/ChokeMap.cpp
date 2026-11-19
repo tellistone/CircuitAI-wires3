@@ -438,6 +438,7 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 		for (int i = 0; i < job->prevGraphMask.Size(); ++i) {
 			job->prevRegionOf[i] = graph.GetRegionAt(i);
 		}
+
 	}
 	job->graphParams = GetGraphParams();
 	job->trafficClasses = trafficClasses;
@@ -451,7 +452,9 @@ namespace {
 
 /*
  * The cells passable in after and not in before, in connected groups (ForEachNeighbour on after): does a group touch
- * two of the old graph's regions? Then the enemy has a way between them the old graph has no choke for
+ * two of the old graph's regions and no cell of either that the other is next to? Then the enemy has a new way between
+ * them (a wall blown through, a ramp). A group on their border (a crater widening a choke, or on a cut across open
+ * ground) is no new way
  */
 bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf, const SCellMask& after)
 {
@@ -465,27 +468,40 @@ bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf, co
 		if (isDone[start] || !isNew(start)) {
 			continue;
 		}
-		int touched = CRegionGraph::NO_REGION;
-		bool isCrossing = false;
+		std::vector<int> touched;  // regions the group touches
+		std::vector<std::pair<int, int>> met;  // regions that meet at a cell it touches, lower first
 		isDone[start] = true;
 		stack.assign(1, start);
-		while (!stack.empty() && !isCrossing) {
+		while (!stack.empty()) {
 			const int cell = stack.back();
 			stack.pop_back();
 			ForEachNeighbour(after, cell, [&](int next, int) {
+				const int r = regionOf[next];
 				if (isNew(next)) {
 					if (!isDone[next]) {
 						isDone[next] = true;
 						stack.push_back(next);
 					}
-				} else if (regionOf[next] != CRegionGraph::NO_REGION) {
-					isCrossing |= (touched != CRegionGraph::NO_REGION) && (regionOf[next] != touched);
-					touched = regionOf[next];
+				} else if (r != CRegionGraph::NO_REGION) {
+					touched.push_back(r);
+					ForEachNeighbour(before, next, [&](int beyond, int) {
+						const int t = regionOf[beyond];
+						if ((t != CRegionGraph::NO_REGION) && (t != r)) {
+							met.emplace_back(std::min(r, t), std::max(r, t));
+						}
+					});
 				}
 			});
 		}
-		if (isCrossing) {
-			return true;
+		std::sort(touched.begin(), touched.end());
+		touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+		std::sort(met.begin(), met.end());
+		for (size_t i = 0; i < touched.size(); ++i) {
+			for (size_t j = i + 1; j < touched.size(); ++j) {
+				if (!std::binary_search(met.begin(), met.end(), std::make_pair(touched[i], touched[j]))) {
+					return true;
+				}
+			}
 		}
 	}
 	return false;
@@ -565,8 +581,8 @@ void CChokeMap::RunJob(SBuildJob& job)
 
 	/*
 	 * The threat graph, from the union of the gating classes. Rebuilt when the gating classes changed, and when the
-	 * terrain changed that union: at once when it opened a way between two of the graph's regions that no choke of
-	 * it has (a wall blown through, or a ramp), else at most every TERRAIN_GRAPH_COOLDOWN: craters and ground
+	 * terrain changed that union: at once when it opened a way between two of the graph's regions away from their
+	 * border (a wall blown through, or a ramp), else at most every TERRAIN_GRAPH_COOLDOWN: craters and ground
 	 * levelled under buildings change it through every fight, and each rebuild can move chokes the defence and holds
 	 * act on
 	 */
@@ -797,13 +813,19 @@ std::string CChokeMap::DescribeRelaxed() const
 {
 	const CRegionGraph::SParams& used = graph.GetUsedParams();
 	const CRegionGraph::SParams base = GetGraphParams();
-	if ((used.merge == base.merge) && (used.minArea == base.minArea)) {
-		return "";
-	}
+	std::string out;
 	char buf[160];
-	snprintf(buf, sizeof(buf), "; relaxed to merge %.2f, min_area %.2f for min_count %i", used.merge,
-			used.minArea / SQUARE(mainRange / GRAPH_CELL), config.minCount);
-	return buf;
+	if ((used.merge != base.merge) || (used.minArea != base.minArea)) {
+		snprintf(buf, sizeof(buf), "; relaxed to merge %.2f, min_area %.2f for min_count %i", used.merge,
+				used.minArea / SQUARE(mainRange / GRAPH_CELL), config.minCount);
+		out += buf;
+	}
+	if (graph.GetSplitCount() > 0) {
+		snprintf(buf, sizeof(buf), "; open ground cut into %i more regions for min_count %i", graph.GetSplitCount(),
+				config.minCount);
+		out += buf;
+	}
+	return out;
 }
 
 std::vector<float> CChokeMap::GetTrafficShares(const std::vector<int>& chokes) const
