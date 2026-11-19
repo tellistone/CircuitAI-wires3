@@ -21,6 +21,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Escalation waits for game time** (`escalation.since`, default 480 s): escalation mode can't turn on before
+  8 minutes of game time, whatever the army ratio, enemy tech and terraform checks say. 0 = from the start.
 - **Turret budget multipliers by map size and map control** (`porcupine.budget.map`, `porcupine.budget.mex`): the
   account's fill rate (and so its bank cap) is also multiplied by a curve of map area per player on our team (as
   `prevent_map`, fixed for the game; default `[[64, 1.00], [256, 0.66]]`) and a curve of the ally team's share of

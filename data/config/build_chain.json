@@ -86,6 +86,7 @@
 },
 
 // Escalation mode: superweapons and singus instead of army. Checked every <interval> s. Turns on when all hold:
+//   - at least <since> s of game time have passed (0 = from the start)
 //   - the allied team's mobile army (finished, no constructors or commanders; ours included) is at least
 //     <army_ratio>[0] x the known enemy mobile army (quota.enemy_half_life fading, as economy.ms_pull_army)
 //   - an enemy unit of <enemy> is known (seen and not seen dying)
@@ -114,6 +115,7 @@
 	"interval": 2,
 	"army_ratio": [2.0, 1.5],  // [<on>, <off>]
 	"min_on": 60,
+	"since": 480,
 	"max_build_sec": 420,
 	"builder_share": 0.7,
 	"singu_share": 0.34,

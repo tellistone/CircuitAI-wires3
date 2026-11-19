@@ -871,6 +871,7 @@ private:
 		float armyOff = 1.5f;  // ... below which it turns off, min_on or not
 		int minOnFrames = FRAMES_PER_SEC * 60;  // shortest time on
 		int onFrame = -1;  // when it last turned on
+		int sinceFrame = 0;  // never on before this game frame
 		float maxBuildSec = 420.f;  // affordability of a superweapon
 		float builderShare = 0.7f;
 		float singuShare = 0.34f;  // most of builderShare on singus
