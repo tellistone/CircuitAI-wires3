@@ -3,7 +3,8 @@
 // Build special units when enemy_metal*ratio*income_mult*density_mult > response_metal
 //   density_mult = "density_curve" at the map player density = shortest side * 0.5 * longest side / allied team size,
 //   sides in map units (16x16 etc.): 16x16 1v1 = 128, 8x8 5v5 = 6.4. Linear between points, first/last value outside.
-//   Smaller = less response. A role's own "density_curve" overrides the shared one. Replaces eps_step
+//   Smaller = less response. Alone on the ally team (1v1, FFA) it is always 1. A role's own "density_curve"
+//   overrides the shared one. Replaces eps_step
 //
 // Optional per role (all off when missing):
 //   "density_curve": [[density, mult], ...]  replaces the shared density_curve for this role
