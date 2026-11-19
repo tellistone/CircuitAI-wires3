@@ -7,6 +7,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Planner off: no small radar under an Advanced Radar.** `MakeDefence` queued a Radar Tower behind a cluster unless
+  another Radar Tower stood nearby; now any static radar whose view holds all of the small one's counts.
 - **Preventive towers: the roll is the cluster's total, thrown once.** A cluster's preventive count
   (`porcupine.prevent`) was handed to each of its defence points: every finished mex, sighting and sweep visit gave
   that mex's point the count again, so nearly every mex got a tower. Each re-roll and sighting also threw fresh dice
@@ -21,6 +23,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Radar planner: the Advanced Radar.** With `choke.radar.enable` on, the planner now builds `staticheavyradar`
+  (`choke.radar.heavy`) once an AI's average income reaches `choke.radar.heavy_income` (40 metal/s) and it isn't short
+  of energy, from its own budget, where one would add `heavy_min_gain` (15%) of the map's weight and stands
+  `heavy_depth` (1500 elmos) from enemy ground. A lost one is rebuilt. Build-chain hub `radar` steps
+  (`choke.radar.chain`) now go through the planner: skipped where covered, placed at the best spot near the offset,
+  or built as the heavy with `"upgrade": true` (set on the big guns' and the nuke's hubs). Every radar job counts as
+  pending, so none goes up beside a half-built one. While the planner places it, the porc lists leave the heavy out.
 - **Escalation waits for game time** (`escalation.since`, default 480 s): escalation mode can't turn on before
   8 minutes of game time, whatever the army ratio, enemy tech and terraform checks say. 0 = from the start.
 - **Turret budget multipliers by map size and map control** (`porcupine.budget.map`, `porcupine.budget.mex`): the

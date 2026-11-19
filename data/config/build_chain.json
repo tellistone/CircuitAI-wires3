@@ -139,6 +139,9 @@
 "build_chain": {
 	// WARNING: Avoid recursion
 	// <category>: factory, nano, store, pylon, energy, defence, bunker, big_gun, radar, sonar, mex, repair
+	// A "radar" step goes through the radar planner while choke.radar.enable and choke.radar.chain are on: to the
+	// highest free spot within 300 elmos of its offset, or skipped where its view would add too little; with
+	// "upgrade": true it builds choke.radar.heavy there instead once that AI's heavy gates pass
 	"energy": {
 		// <UnitDef>: {<elements>}
 		"energysingu": {
@@ -216,7 +219,7 @@
 	"big_gun": {
 		"staticheavyarty": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretemp", "category": "defence", "offset": {"front": 60}},
@@ -229,7 +232,7 @@
 		},
 		"raveparty": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretemp", "category": "defence", "offset": {"front": 60}},
@@ -244,7 +247,7 @@
 		},
 		"mahlazer": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretlaser", "category": "defence", "offset": [80, -80]},
@@ -258,7 +261,7 @@
 		},
 		"zenith": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretlaser", "category": "defence", "offset": [80, -80]},
@@ -278,7 +281,7 @@
 		},
 		"staticnuke": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretmissile", "category": "defence", "offset": [80, 80]},

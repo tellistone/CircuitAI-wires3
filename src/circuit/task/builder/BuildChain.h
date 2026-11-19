@@ -34,6 +34,7 @@ struct SBuildInfo {
 	springai::AIFloat3 offset;
 	Direction direction;
 	Condition condition;
+	bool isUpgrade = false;  // "upgrade": a radar step the planner may build as choke.radar.heavy
 };
 
 struct SBuildChain {

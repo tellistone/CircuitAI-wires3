@@ -480,6 +480,7 @@ void CBuilderManager::ReadConfig()
 							bi.condition = it->second;
 						}
 					}
+					bi.isUpgrade = part.get("upgrade", false).asBool();
 
 					queue.push_back(bi);
 				}
@@ -1152,6 +1153,13 @@ IBuilderTask* CBuilderManager::AddTask(IBuilderTask::Priority priority,
 
 	if ((type == IBuilderTask::BuildType::DEFENCE) && (circuit->GetMilitaryManager() != nullptr)) {
 		circuit->GetMilitaryManager()->ChargeTurret(static_cast<CBDefenceTask*>(task));  // porcupine.budget
+	}
+	// choke.radar.enable: every radar job's view counts as pending, so no radar goes up beside a half-built one
+	if ((type == IBuilderTask::BuildType::RADAR) && (circuit->GetChokeMap() != nullptr)) {
+		CCircuitAI* authority = circuit->GetChokeMap()->GetAuthority();
+		if ((authority != nullptr) && (authority->GetMilitaryManager() != nullptr)) {
+			authority->GetMilitaryManager()->GetSensorPlanner()->NotePending(buildDef, task->GetTaskPos());
+		}
 	}
 	if (isActive) {
 		buildTasks[static_cast<IBuilderTask::BT>(type)].insert(task);

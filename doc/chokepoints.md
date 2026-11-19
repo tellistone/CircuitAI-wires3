@@ -118,6 +118,13 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | `choke.radar.inside` | `0.25` | A builder standing in coverage builds a radar only if at least this share of its view (by weight) is new. |
 | `choke.radar.guard` | `"turretmissile"` | Tower queued once a new radar stands, at the best spot near it. `""` turns it off. |
 | `choke.radar.guard_radius` | `300` | Elmos from the radar the guard tower may stand. |
+| `choke.radar.heavy` | `"staticheavyradar"` | Long-range radar the planner builds when one sees a lot that is still dark, offered to a builder before a small radar. It stands within 1500 elmos of the builder, gets no guard tower, and is rebuilt once lost (its `behaviour.json` limit counts living ones). While the planner is on, the porc lists leave it out. `""` turns it off. |
+| `choke.radar.heavy_income` | `40` | Metal/s of average income before an AI considers one; it must also not be short of energy (3 E upkeep). |
+| `choke.radar.heavy_share` | `0.03` | Share of income the AI's heavy budget grows by past `heavy_income`. It holds one. |
+| `choke.radar.heavy_min_gain` | `0.15` | Share of the map's weight a heavy must add to the coverage. |
+| `choke.radar.heavy_depth` | `1500` | Elmos a heavy must stand from the nearest enemy ground cell. |
+| `choke.radar.heavy_risk` | `2.0` | Weight of radars lost near a heavy's spot (small radars: 1). |
+| `choke.radar.chain` | `true` | A build_chain hub `radar` step goes to the highest free spot within 300 elmos of its offset, or is skipped where its view would add less than `min_gain`. With `"upgrade": true` on the step it builds the heavy there instead, when that AI's heavy gates pass and its view adds `heavy_min_gain`. Every radar job, from any source, counts as pending in the planner. |
 
 The turret picker has its own top-level `"turret"` block, so the two pickers are tuned apart. Sizes are in elmos.
 
