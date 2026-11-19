@@ -645,6 +645,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - Following the army, it walks a route to its safety spot to the end instead of stopping the moment it is covered
     again (all artillery), so it doesn't stop and start at the edge of cover.
   - Lance retreats at 65% health, not 99%: standing under cover in fights, any hit sent it home.
+  - Going idle (after our own stop orders, or a finished attack) no longer replaces its task with a new one: it
+    decides again on the next update, keeping its route, its walk to safety and its flee timer.
 
   These units no longer count as artillery escorts. Ultimatum, Scorpion, Widow, Skuttle and aircraft keep the
   anti-heavy squads, whose overkill check now counts these units' ready shots too (`CMilitaryManager::GetAhReadyDamage`,

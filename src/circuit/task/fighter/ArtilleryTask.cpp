@@ -113,10 +113,17 @@ void CArtilleryTask::Update()
 
 void CArtilleryTask::OnUnitIdle(CCircuitUnit* unit)
 {
-	IFighterTask::OnUnitIdle(unit);
-	if (units.find(unit) != units.end()) {
-		RemoveAssignee(unit);
+	IFighterTask::OnUnitIdle(unit);  // a coward leaves for its retreat
+	if (units.find(unit) == units.end()) {
+		return;
 	}
+	// Anti-heavy mode: our own Stops (StopAttack, HoldHere) and a finished attack make the unit idle. Keep the task
+	// (route, safety walk, flee timer) and decide again on the next Update, not from within the engine's idle event
+	if (isAntiHeavy) {
+		unit->ForceUpdate(manager->GetCircuit()->GetLastFrame());
+		return;
+	}
+	RemoveAssignee(unit);
 }
 
 const CMilitaryManager::SArtilleryCfg& CArtilleryTask::GetCfg() const
