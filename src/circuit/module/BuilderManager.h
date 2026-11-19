@@ -301,6 +301,7 @@ public:
 	virtual void FallbackTask(CCircuitUnit* unit) override;
 
 	SBuildChain* GetBuildChain(IBuilderTask::BuildType buildType, CCircuitDef* cdef);
+	void NoteRadarJob(const IBuilderTask* task, bool isStart);  // choke.radar: the radar planner's pending jobs
 
 	bool IsReclaimed(CAllyUnit* unit) const { return reclaimedUnits.find(unit) != reclaimedUnits.end(); }
 

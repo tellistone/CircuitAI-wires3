@@ -14,6 +14,7 @@
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
+#include "module/SensorPlanner.h"
 #include "module/SpotScorer.h"
 #include "resource/MetalManager.h"
 #include "resource/EnergyGrid.h"
@@ -736,13 +737,15 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 		const CChokeMap* chokeMap = circuit->GetChokeMap();
 		const bool isSpot = chokeMap->GetConfig().isSpot;
 		CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
+		CSensorPlanner* sensorPlanner = circuit->GetMilitaryManager()->GetSensorPlanner();
 
 		for (auto& queue : chain->hub) {
 			IBuilderTask* parent = nullptr;
 
 			for (const SBuildInfo& bi : queue) {
-				if (!bi.cdef->IsAvailable(circuit->GetLastFrame())) {
-					continue;
+				const bool isRadar = (bi.buildType == IBuilderTask::BuildType::RADAR);
+				if (!isRadar && !bi.cdef->IsAvailable(circuit->GetLastFrame())) {
+					continue;  // a radar step: the def the planner picks must be
 				}
 				bool isValid = true;
 				switch (bi.condition) {
@@ -779,16 +782,28 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 							break;
 					}
 				}
+				// choke.radar.chain: a radar step goes to the planner's spot near its offset, as the heavy if it upgrades,
+				// or is skipped where it would see too little new
+				CCircuitDef* buildDef = bi.cdef;
+				AIFloat3 radarPos = -RgtVector;
+				if (isRadar) {
+					radarPos = buildPos + offset;
+					CTerrainManager::CorrectPosition(radarPos);
+					buildDef = sensorPlanner->PlaceChainRadar(bi.cdef, bi.isUpgrade, bdef, radarPos);
+					if ((buildDef == nullptr) || !buildDef->IsAvailable(circuit->GetLastFrame())) {
+						continue;
+					}
+				}
 				AIFloat3 pos = (isSpot && (bi.buildType == IBuilderTask::BuildType::DEFENCE))
 						? spotScorer->FindGuardSpot(bi.cdef, buildPos, chokeMap->GetConfig().spotRadius) : -RgtVector;
 				const bool isScored = utils::is_valid(pos);
 				if (!isScored) {
-					pos = buildPos + offset;
+					pos = utils::is_valid(radarPos) ? radarPos : buildPos + offset;
 					CTerrainManager::CorrectPosition(pos);
 					pos = terrainMgr->GetBuildPosition(bdef, pos);
 				}
 
-				IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, bi.cdef, pos, bi.buildType, 0.f,
+				IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, buildDef, pos, bi.buildType, 0.f,
 						parent == nullptr, 0);
 				if (isScored) {  // its site on the blocking map now, as the picker's: the next tower's spot moves on
 					task->SetFacing(UNIT_FACING_SOUTH);  // before SetBuildPos: the blocker uses it

@@ -7,6 +7,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Planner off: no small radar under an Advanced Radar.** `MakeDefence` queued a Radar Tower behind a cluster unless
+  another Radar Tower stood nearby; now any static radar whose view holds all of the small one's counts.
 - **Preventive towers: the roll is the cluster's total, thrown once.** A cluster's preventive count
   (`porcupine.prevent`) was handed to each of its defence points: every finished mex, sighting and sweep visit gave
   that mex's point the count again, so nearly every mex got a tower. Each re-roll and sighting also threw fresh dice
@@ -35,6 +37,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   too. All on by default. `turret.enemy_reach` goes from 600 to 700. The short-choke caller reads the frontline's
   short chokes, so those are now computed whenever it is on (the enemy-held rankings only while the overlay is);
   the choke callers ask for the choke analysis once a constructor could order.
+- **Radar planner: the Advanced Radar.** With `choke.radar.enable` on, the planner now builds `staticheavyradar`
+  (`choke.radar.heavy`) once the ally team's metal income reaches `choke.radar.heavy_income` (40 metal/s), where one
+  would add `heavy_min_gain` (15%) of the map's weight and stands `heavy_depth` (1500 elmos) from enemy ground. Not by
+  a commander; one job per AI at a time; rebuilt 90 s after a loss, with losses within 1500 elmos counting against a
+  spot. Its two-tower build_chain hub moved from `big_gun` to `radar`, so it now fires for it. Build-chain hub `radar`
+  steps (`choke.radar.chain`) go through the planner: skipped where covered, placed at the best spot near the offset,
+  or built as the heavy with `"upgrade": true` (set on the big guns' and the nuke's hubs). While the planner places
+  it, the porc lists leave the heavy out.
+- **Radar planner: coverage is finished radars plus live radar jobs.** Every active radar job of the ally team's AIs
+  (the planner's, a hub's) covers its view until the job ends, instead of for 90 s, so a slow LOW job keeps its area;
+  a nanoframe whose job was dropped no longer holds an area dark, though it still keeps radars 500 elmos off.
 - **Escalation waits for game time** (`escalation.since`, default 480 s): escalation mode can't turn on before
   8 minutes of game time, whatever the army ratio, enemy tech and terraform checks say. 0 = from the start.
 - **Turret budget multipliers by map size and map control** (`porcupine.budget.map`, `porcupine.budget.mex`): the

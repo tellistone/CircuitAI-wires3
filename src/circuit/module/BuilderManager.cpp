@@ -483,6 +483,7 @@ void CBuilderManager::ReadConfig()
 							bi.condition = it->second;
 						}
 					}
+					bi.isUpgrade = part.get("upgrade", false).asBool();
 
 					queue.push_back(bi);
 				}
@@ -693,9 +694,28 @@ void CBuilderManager::ActivateTask(IBuilderTask* task)
 	if ((task->GetType() == IUnitTask::Type::BUILDER) && (task->GetBuildType() < IBuilderTask::BuildType::_SIZE_)) {
 		buildTasks[static_cast<IBuilderTask::BT>(task->GetBuildType())].insert(task);
 		buildTasksCount++;
+		NoteRadarJob(task, true);
 	}
 	buildUpdates.push_back(task);
 	task->Activate();
+}
+
+void CBuilderManager::NoteRadarJob(const IBuilderTask* task, bool isStart)
+{
+	// choke.radar.enable: an active radar job's view counts as covered, so no radar goes up beside it
+	if (task->GetBuildType() != IBuilderTask::BuildType::RADAR) {
+		return;
+	}
+	CCircuitAI* authority = (circuit->GetChokeMap() != nullptr) ? circuit->GetChokeMap()->GetAuthority() : nullptr;
+	if ((authority == nullptr) || (authority->GetMilitaryManager() == nullptr)) {
+		return;
+	}
+	CSensorPlanner* planner = authority->GetMilitaryManager()->GetSensorPlanner();
+	if (isStart) {
+		planner->NotePending(task);
+	} else {
+		planner->EndPending(task);
+	}
 }
 
 IBuilderTask* CBuilderManager::EnqueueTask(IBuilderTask::Priority priority,
@@ -1160,6 +1180,7 @@ IBuilderTask* CBuilderManager::AddTask(IBuilderTask::Priority priority,
 		buildTasks[static_cast<IBuilderTask::BT>(type)].insert(task);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
+		NoteRadarJob(task, true);
 	} else {
 		task->Deactivate();
 	}
@@ -1198,6 +1219,7 @@ void CBuilderManager::DequeueTask(IUnitTask* task, bool done)
 			}
 			tasks.erase(it);
 			buildTasksCount--;
+			NoteRadarJob(taskB, false);
 		} break;
 		default: break;
 	}
