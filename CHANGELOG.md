@@ -7,6 +7,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Relaxing the threat graph no longer cuts open ground into regions** (`choke.region.min_count`). On an open map the
+  first build has few regions, so the build ran again with `merge` raised up to 1, which splits regions wherever the
+  distance to the nearest wall dips. On Conquest of Paradise that split the map in two down its mirror line, then into
+  37 regions whose chokes ran across open ground. A relaxed build now
+  still merges across any choke wider than `choke.defensible`, so it only finds the narrow chokes the first build
+  merged away. On a synthetic open map with two lakes per side, `min_count` 12 gave 9 regions and 12 chokes up to
+  2,656 elmos wide; now it keeps the 1 region it has. A corridor map still relaxes from 4 regions to 16, all its
+  chokes narrow.
+
 - **Planner off: no small radar under an Advanced Radar.** `MakeDefence` queued a Radar Tower behind a cluster unless
   another Radar Tower stood nearby; now any static radar whose view holds all of the small one's counts.
 - **Preventive towers: the roll is the cluster's total, thrown once.** A cluster's preventive count

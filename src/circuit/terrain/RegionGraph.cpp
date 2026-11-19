@@ -85,6 +85,7 @@ void CRegionGraph::Build(const SCellMask& m, const SParams& params)
 		SParams relaxed = params;
 		relaxed.merge = params.merge + (std::max(params.merge, RELAX_MERGE) - params.merge) * t;
 		relaxed.minArea = params.minArea * (1.f - (1.f - RELAX_AREA) * t);
+		relaxed.mergeWidth = params.defensibleWidth;  // a relaxed choke must be one towers can close
 		CRegionGraph attempt;
 		attempt.BuildOnce(m, relaxed);
 		if (attempt.regions.size() > regions.size()) {
@@ -205,7 +206,8 @@ void CRegionGraph::BuildOnce(const SCellMask& m, const SParams& params)
 	}
 
 	/*
-	 * Merge: wide chokes first, then regions too small to hold, until nothing changes
+	 * Merge: wide chokes first (as wide as the smaller region nearly, or wider than mergeWidth), then regions too small
+	 * to hold, until nothing changes
 	 */
 	CUnion regionSet(seedAltitude, seedArea);
 	std::vector<int> wideFirst(meetings.size());
@@ -222,7 +224,8 @@ void CRegionGraph::BuildOnce(const SCellMask& m, const SParams& params)
 			const int ra = regionSet.Find(meeting.a);
 			const int rb = regionSet.Find(meeting.b);
 			if ((ra != rb)
-				&& (meeting.maxAltitude >= params.merge * std::min(regionSet.Altitude(ra), regionSet.Altitude(rb))))
+				&& ((meeting.maxAltitude >= params.merge * std::min(regionSet.Altitude(ra), regionSet.Altitude(rb)))
+					|| ((params.mergeWidth > 0.f) && (2.f * ToElmos(meeting.maxAltitude) > params.mergeWidth))))
 			{
 				regionSet.Unite(ra, rb);
 				isChanged = true;
@@ -388,8 +391,13 @@ void CRegionGraph::ComputeAltitude()
 
 float CRegionGraph::GetAltitude(int cell) const
 {
+	return ToElmos(altitude[cell]);
+}
+
+float CRegionGraph::ToElmos(int chamfer) const
+{
 	// Chamfer units are thirds of a cell, from cell centre to wall centre: half a cell less to the wall's edge
-	return (altitude[cell] > 0) ? (altitude[cell] / 3.f - 0.5f) * mask.cellSize : 0.f;
+	return (chamfer > 0) ? (chamfer / 3.f - 0.5f) * mask.cellSize : 0.f;
 }
 
 float CRegionGraph::GetLineDist(const SChoke& choke, float x, float z) const

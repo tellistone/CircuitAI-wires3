@@ -96,8 +96,8 @@ All in the top-level `"choke"` block of `behaviour.json`. Sizes are in main-towe
 | Key | Default | Meaning |
 |---|---|---|
 | `choke.region.min_area` | `0.5` | Smallest region, in main-tower ranges squared. A smaller one merges into a neighbour. |
-| `choke.region.merge` | `0.7` | Two regions merge when the choke's altitude reaches this share of the smaller region's highest. |
-| `choke.region.min_count` | `12` | Fewest regions wanted. A build with fewer runs again up to 4 times, `merge` raised a step towards 1 and `min_area` lowered a step towards a quarter of its value each time, until it has this many; the build with the most regions is kept. The graph log line and the overlay say when it relaxed and to what. 0 turns it off. |
+| `choke.region.merge` | `0.7` | Two regions merge when the choke's altitude reaches this share of the smaller region's highest. Near 1, open ground splits wherever the distance to the nearest wall dips (on a mirrored map, down the mirror line), into chokes as wide as the regions. |
+| `choke.region.min_count` | `12` | Fewest regions wanted. A build with fewer runs again up to 4 times, `merge` raised a step towards 1 and `min_area` lowered a step towards a quarter of its value each time, until it has this many; the build with the most regions is kept. A relaxed build still merges across any choke wider than `choke.defensible`, so on an open map it finds no new regions rather than lines across open ground. The graph log line and the overlay say when it relaxed and to what. 0 turns it off. |
 | `choke.defensible` | `2.0` | Widest choke that towers try to close. |
 | `choke.entrances` | `3` | Most entrances before a cluster counts as open. |
 | `choke.near` | `2.5` | Furthest useful entrance from a defence point. |
