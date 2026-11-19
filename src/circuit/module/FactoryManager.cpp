@@ -583,6 +583,14 @@ void CFactoryManager::ReadConfig()
 	 */
 	const bool warnProb = root.get("warn_probability", true).asBool();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	// income_tier_density: [[map player density, mult], ...] scales every factory's income_tier thresholds (and
+	// nothing else); missing = x1
+	std::vector<std::pair<float, float>> tierCurve;
+	CMilitaryManager::ReadCurve(circuit, root["income_tier_density"], "income_tier_density", "density", tierCurve);
+	const float tierMult = utils::eval_curve(tierCurve, CMilitaryManager::GetMapDensity(circuit));
+	if (!tierCurve.empty()) {
+		circuit->LOG("FACTORY: income_tier x%.3f (map player density %.2f)", tierMult, CMilitaryManager::GetMapDensity(circuit));
+	}
 	const Json::Value& factories = root["factory"];
 	for (const std::string& fac : factories.getMemberNames()) {
 		CCircuitDef* cdef = circuit->GetCircuitDef(fac.c_str());
@@ -689,7 +697,7 @@ void CFactoryManager::ReadConfig()
 		};
 		unsigned i = 0;
 		for (; i < tierSize; ++i) {
-			facDef.incomes.push_back(tiers[i].asFloat());
+			facDef.incomes.push_back(tiers[i].asFloat() * tierMult);
 			fillProbs(i, "air", facDef.airTiers);
 			fillProbs(i, "land", facDef.landTiers);
 			fillProbs(i, "water", facDef.waterTiers);

@@ -56,9 +56,14 @@ private:
 	void ReadConfig();
 	// [[x, multiplier], ...] config curve (quota.*_map_size, response.<role>.income_curve) for utils::eval_curve
 	void ReadCurve(const Json::Value& value, const std::string& key, const char* xName,
-			std::vector<std::pair<float, float>>& curve) const;
+			std::vector<std::pair<float, float>>& curve) const { ReadCurve(circuit, value, key, xName, curve); }
 	void Init();
 public:
+	static void ReadCurve(CCircuitAI* circuit, const Json::Value& value, const std::string& key, const char* xName,
+			std::vector<std::pair<float, float>>& curve);
+	// Map player density = map area / 2 / allied team size, sides in map units (512 elmos, the 16x16 players quote):
+	// 16x16 1v1 = 128, 8x8 5v5 = 6.4. x of response.<role>.density_curve and factory.json income_tier_density
+	static float GetMapDensity(CCircuitAI* circuit);
 	void Release();
 
 	virtual int UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder) override;

@@ -353,8 +353,14 @@ CMilitaryManager::~CMilitaryManager()
 	}
 }
 
-void CMilitaryManager::ReadCurve(const Json::Value& value, const std::string& key, const char* xName,
-		std::vector<std::pair<float, float>>& curve) const
+float CMilitaryManager::GetMapDensity(CCircuitAI* circuit)
+{
+	return (circuit->GetMap()->GetWidth() / 64.f) * (circuit->GetMap()->GetHeight() / 64.f) * 0.5f
+			/ std::max(circuit->GetAllyTeam()->GetSize(), 1);
+}
+
+void CMilitaryManager::ReadCurve(CCircuitAI* circuit, const Json::Value& value, const std::string& key, const char* xName,
+		std::vector<std::pair<float, float>>& curve)
 {
 	// [[x, multiplier >= 0], ...], sorted by x; bad points are logged and skipped; missing = empty
 	if (value.isNull()) {
@@ -383,10 +389,7 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& responses = root["response"];
 	const float teamSize = circuit->GetAllyTeam()->GetSize();
-	// Map player density = map area / 2 / allied team size, sides in map units (512 elmos, the 16x16 players quote):
-	// 16x16 1v1 = 128, 8x8 5v5 = 6.4. A role's density_curve maps it to a multiplier of the response amount
-	const float density = (circuit->GetMap()->GetWidth() / 64.f) * (circuit->GetMap()->GetHeight() / 64.f) * 0.5f
-			/ std::max(teamSize, 1.f);
+	const float density = GetMapDensity(circuit);  // a role's density_curve maps it to a response multiplier
 	circuit->LOG("RESPONSE: %g allies, map player density %.2f", teamSize, density);
 	roleInfos.resize(roleNames.size(), {.0f});
 	isResponseGates = false;
