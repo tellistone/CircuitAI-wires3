@@ -85,6 +85,13 @@ public:
 		float afterFleeSince = 0.f;  // seconds of game time before the after-flee caller starts
 		float defendedRadius = 600.f;  // after a flee, a defence this near where it started means no turret
 		bool isNearEnemy = true;
+		bool isShortChoke = true;  // near a short choke of our current line (CFrontline::SFront::IsShort)
+		float shortChokeReach = 600.f;
+		bool isEnemyLine = true;  // near a choke of the enemy line
+		float enemyLineReach = 800.f;
+		bool isArtillery = true;  // near our artillery shooting a target in its range, no turret by it
+		float artilleryReach = 600.f;
+		float artilleryDefended = 600.f;  // a turret this near the artillery means none
 		std::vector<CCircuitDef*> light;
 		// Heavier defs, each tier unlocked once our ally team holds mexShare of the map's metal spots; by mexShare up
 		struct STier {
@@ -92,7 +99,7 @@ public:
 			std::vector<CCircuitDef*> defs;
 		};
 		std::vector<STier> tiers;
-		float enemyReach = 600.f;
+		float enemyReach = 700.f;
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
 	};
@@ -157,7 +164,10 @@ public:
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }
 	const SLast& GetLast() const { return last; }
-	bool IsAnyCaller() const { return config.isAfterFlee || config.isNearEnemy; }
+	bool IsAnyCaller() const {
+		return config.isAfterFlee || config.isNearEnemy || config.isShortChoke || config.isEnemyLine || config.isArtillery;
+	}
+	bool IsChokeCaller() const { return config.isShortChoke || config.isEnemyLine; }  // read the lines
 
 private:
 	// Gathered once per order

@@ -220,15 +220,23 @@
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
 	// the callers. Claw mines and missiles are left out too, by customParams.mobilebuilding
 	"not_defence": ["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"],  // Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity, Antinuke
-	// Callers, once a second, each turret at NORMAL priority. Both share the light list and the limits: a
-	// constructor helps a turret of ours being built (or a picker job) within radius instead of ordering one, orders
-	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and only once the turret account
-	// (build_chain.json porcupine.budget, shared with porc) covers the dearest light def it might pick: none in the
-	// opening before it has
+	// Callers, once a second, each turret at NORMAL priority; in the field the first that holds for a constructor, in
+	// this order. All share the light list and the limits: a constructor helps a turret of ours being built (or a
+	// picker job) within radius instead of ordering one, orders once per cooldown, not while metal stalls, not off a
+	// HIGH or NOW job, and only once the turret account (build_chain.json porcupine.budget, shared with porc) covers
+	// the dearest light def it might pick: none in the opening before it has. The choke callers read the choke
+	// analysis, built for them from the first constructor that could order
 	"after_flee": true,  // a constructor whose flee ended clear or covered orders one where the flee started, of the light defs that hit what it fled from, unless a defence that hits it (ours or an ally's, being built or queued too) stands within defended_radius (the commander's flee is on by default; other builders' with retreat.builder_flee)
 	"after_flee_since": 0,  // seconds of game time before after_flee starts
 	"defended_radius": 600,  // after a flee, a defence this near where it started means no turret
 	"near_enemy": true,  // a mobile ground constructor with a known enemy building (seen in the last 3 minutes) within enemy_reach and no armed ally within ally_radius orders one around itself
+	"short_choke": true,  // a mobile ground constructor within short_choke_reach of a short choke of our current line (one our ground-hitting towers don't cover all of, or that are short of 1.2x the enemy army outside it, as quota.hold_choke reads it) orders one centred on the choke's gap
+	"short_choke_reach": 600,
+	"enemy_line": true,  // a mobile ground constructor within enemy_line_reach of a choke of the enemy line orders one around itself
+	"enemy_line_reach": 800,
+	"artillery": true,  // a mobile ground constructor within artillery_reach of our artillery shooting a target in its range, with no ground-hitting turret (ours or an ally's, being built or queued too) within artillery_defended of it, orders one centred on the artillery
+	"artillery_reach": 600,
+	"artillery_defended": 600,
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
 	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots. An order
 	// tries the heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier,
@@ -237,7 +245,7 @@
 		{"mex": 0.4, "defs": ["turretriot", "turretgauss"]},  // Stardust, Gauss
 		{"mex": 0.55, "defs": ["turretheavylaser"]}  // HLT
 	],
-	"enemy_reach": 600,
+	"enemy_reach": 700,
 	"ally_radius": 500,
 	"cooldown": 30  // seconds between one constructor's orders, whatever the result
 },

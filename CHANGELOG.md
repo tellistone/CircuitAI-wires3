@@ -21,6 +21,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Turret picker: three more callers, and a longer near-enemy reach.** Under the same gates as the near-enemy
+  caller (free mobile ground constructor, cooldown, no metal stall, the turret account, one order a second,
+  helping a turret already within `turret.radius`), a constructor now also orders a turret when it is within
+  `turret.short_choke_reach` (600) of a short choke of our current line, centred on the choke's gap
+  (`turret.short_choke`); within `turret.enemy_line_reach` (800) of a choke of the enemy line, around itself
+  (`turret.enemy_line`); or within `turret.artillery_reach` (600) of our artillery shooting a target in its range
+  with no ground-hitting turret within `turret.artillery_defended` (600) of it, centred on the artillery
+  (`turret.artillery`). All on by default. `turret.enemy_reach` goes from 600 to 700. The short-choke caller reads
+  the frontline's short chokes, so those are now computed whenever it is on; the choke callers ask for the choke
+  analysis once a constructor could order.
 - **Escalation waits for game time** (`escalation.since`, default 480 s): escalation mode can't turn on before
   8 minutes of game time, whatever the army ratio, enemy tech and terraform checks say. 0 = from the start.
 - **Turret budget multipliers by map size and map control** (`porcupine.budget.map`, `porcupine.budget.mex`): the

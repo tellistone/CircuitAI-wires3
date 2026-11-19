@@ -325,9 +325,12 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 		{"choke_enemy", &c.chokeEnemy}, {"choke_cap", &c.chokeCap},
 		{"enemy_reach", &c.enemyReach}, {"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown},
 		{"share", circuit->GetMilitaryManager()->GetTurretShare()}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
+		{"short_choke_reach", &c.shortChokeReach}, {"enemy_line_reach", &c.enemyLineReach},
+		{"artillery_reach", &c.artilleryReach}, {"artillery_defended", &c.artilleryDefended},
 	};
 	const std::map<std::string, bool*> flags = {
-		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy},
+		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy}, {"short_choke", &c.isShortChoke},
+		{"enemy_line", &c.isEnemyLine}, {"artillery", &c.isArtillery},
 	};
 	std::istringstream in(value);
 	auto floatIt = floats.find(key);
