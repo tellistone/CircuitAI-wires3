@@ -567,6 +567,7 @@ private:
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
+	void UpdateAllyResponse();
 	void UpdateEscalation();
 	void LogRaidStats();  // the RAID log, every minute
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
@@ -683,7 +684,8 @@ private:
 	std::vector<SRaidPoint> raidPath;  // list of cluster ids
 
 	struct SRoleInfo {
-		float cost;
+		float cost;  // this AI's finished army and builders of the response role
+		float allyCost = 0.f;  // allied teams' finished mobile units of the role (UpdateAllyResponse, every 2 s)
 		float maxPerc;
 		float densityMult;  // density_curve at the map player density: scales the response amount (replaced eps_step)
 		std::set<CCircuitUnit*> units;

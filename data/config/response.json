@@ -1,6 +1,8 @@
 // Mono-space font required
 {
-// Build special units when enemy_metal*ratio*income_mult*density_mult > response_metal
+// Build special units when enemy_metal*ratio*income_mult*density_mult > team_response_metal
+//   enemy_metal = the whole enemy team's seen units of the vs role; team_response_metal = finished mobile units of the
+//   role from this AI and all its allies (humans too, refreshed every 2 s). max_percent still caps this AI's own army
 //   density_mult = "density_curve" at the map player density = shortest side * 0.5 * longest side / allied team size,
 //   sides in map units (16x16 etc.): 16x16 1v1 = 128, 8x8 5v5 = 6.4. Linear between points, first/last value outside.
 //   Smaller = less response. Alone on the ally team (1v1, FFA) it is always 1. A role's own "density_curve"
