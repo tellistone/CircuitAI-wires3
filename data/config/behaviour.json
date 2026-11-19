@@ -164,7 +164,7 @@
 	"region": {
 		"min_area": 0.5,  // smallest region, in main-tower ranges squared
 		"merge": 0.7,  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
-		"min_count": 12  // fewer regions than this: merge rises towards 1 and min_area falls towards a quarter, in 4 steps, until there are this many (or the most it gets); a relaxed build never splits regions at a choke wider than defensible
+		"min_count": 20  // fewer regions than this: merge rises towards 1 and min_area falls towards a quarter, in 4 steps, until there are this many (a relaxed build never splits regions at a choke wider than defensible); still fewer (open ground), the biggest region is cut in two until there are this many; 0 = off
 	},
 	"defensible": 2.0,  // widest choke towers try to close
 	"entrances": 3,  // most entrances before a cluster counts as open

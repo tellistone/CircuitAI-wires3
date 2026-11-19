@@ -10,6 +10,8 @@
 
 #include "terrain/CellMask.h"
 
+#include <map>
+#include <utility>
 #include <vector>
 
 namespace circuit {
@@ -25,7 +27,9 @@ namespace circuit {
  * - too few: under minCount regions, the build runs again with merge raised towards 1 and minArea lowered towards a
  *   quarter, in steps, until there are enough; the build with the most regions is kept (GetUsedParams). A relaxed
  *   build still merges across any choke wider than defensibleWidth (mergeWidth), so it finds the narrow chokes the
- *   first build merged away, never a line across open ground.
+ *   first build merged away, never a line across open ground;
+ * - still too few (open ground, with no choke to split at): the biggest region is cut in two, again and again, at the
+ *   middle between its two cells furthest apart (SplitOpen, GetSplitCount).
  * Every step breaks ties by cell index, so allied AIs and reruns get the same graph.
  *
  * Regions and chokes are used by index (0..n-1) within one build. Their ids stay the same across rebuilds where
@@ -70,6 +74,7 @@ public:
 
 	void Build(const SCellMask& mask, const SParams& params);
 	const SParams& GetUsedParams() const { return usedParams; }  // as relaxed for minCount
+	int GetSplitCount() const { return splitCount; }  // regions cut in two for minCount (SplitOpen)
 	// Ids from the previous build where the shape is the same: a region keeps the id of the old region holding at
 	// least half its cells, a choke the id (and bornFrame) of the old choke whose line runs within a cell of at least
 	// half of its own. Everything else gets a new id and bornFrame = frame
@@ -102,6 +107,8 @@ public:
 
 private:
 	void BuildOnce(const SCellMask& mask, const SParams& params);
+	void MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& cellsOfPair, const SParams& params);
+	void SplitOpen(const SParams& params);
 	void ComputeAltitude();
 	float GetAltitude(int cell) const;  // elmos to the nearest wall
 	float ToElmos(int chamfer) const;  // an altitude in elmos
@@ -112,6 +119,7 @@ private:
 	std::vector<SRegion> regions;
 	std::vector<SChoke> chokes;
 	SParams usedParams;
+	int splitCount;
 	int nextRegionId;
 	int nextChokeId;
 };

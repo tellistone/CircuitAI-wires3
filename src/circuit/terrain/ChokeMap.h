@@ -84,7 +84,7 @@ public:
 		bool isExpand = false;  // choke.expand: expansion bonus behind a defended cut
 		float minArea = 0.5f;  // choke.region.min_area: main-tower ranges squared
 		float merge = 0.7f;  // choke.region.merge
-		int minCount = 12;  // choke.region.min_count: fewer regions relax merge and min_area (CRegionGraph::Build)
+		int minCount = 20;  // choke.region.min_count: too few regions relax, then open ground is cut (CRegionGraph)
 		float defensible = 2.f;  // choke.defensible: main-tower ranges
 		int entrances = 3;  // choke.entrances
 		float nearRanges = 2.5f;  // choke.near: main-tower ranges (not "near": a macro on Windows)
@@ -171,7 +171,7 @@ public:
 	CCircuitDef* GetMainDef() const;
 	float GetMainRange() const { return mainRange; }
 	CRegionGraph::SParams GetGraphParams() const;  // from the tuning keys
-	std::string DescribeRelaxed() const;  // "" unless the graph relaxed merge and min_area for min_count
+	std::string DescribeRelaxed() const;  // "" unless the graph relaxed or cut regions for min_count
 	const CRegionGraph& GetGraph() const { return graph; }
 	const CTrafficField& GetTraffic() const { return traffic; }
 	const SCellMask& GetReachMask() const { return reachMask; }  // cells any movement type in the game can cross

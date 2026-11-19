@@ -75,6 +75,7 @@ struct CChokeMap::SBuildJob {
 	std::vector<SCellMask> masks;  // the current ones: compared with, or used as they are
 	SCellMask prevGraphMask;
 	std::vector<int> prevRegionOf;  // per cell, the graph's regions: only while the terrain check isn't due
+	std::vector<std::pair<int, int>> prevPairs;  // the graph's regions with a choke between them, ascending
 	CRegionGraph::SParams graphParams;
 	std::vector<int> trafficClasses;  // never naval: ships get no layer
 	std::vector<MoveKey> keys;  // per class
@@ -438,6 +439,10 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 		for (int i = 0; i < job->prevGraphMask.Size(); ++i) {
 			job->prevRegionOf[i] = graph.GetRegionAt(i);
 		}
+		for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
+			job->prevPairs.emplace_back(choke.regionA, choke.regionB);
+		}
+		std::sort(job->prevPairs.begin(), job->prevPairs.end());
 	}
 	job->graphParams = GetGraphParams();
 	job->trafficClasses = trafficClasses;
@@ -451,9 +456,12 @@ namespace {
 
 /*
  * The cells passable in after and not in before, in connected groups (ForEachNeighbour on after): does a group touch
- * two of the old graph's regions? Then the enemy has a way between them the old graph has no choke for
+ * two of the old graph's regions with no choke between them (pairs: those with one, ascending)? Then the enemy has a
+ * way between them the old graph has no choke for. A crater widening a choke, or on a cut across open ground, touches
+ * two regions that have one
  */
-bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf, const SCellMask& after)
+bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf,
+		const std::vector<std::pair<int, int>>& pairs, const SCellMask& after)
 {
 	if ((before.Size() != after.Size()) || ((int)regionOf.size() != after.Size())) {
 		return true;
@@ -465,7 +473,7 @@ bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf, co
 		if (isDone[start] || !isNew(start)) {
 			continue;
 		}
-		int touched = CRegionGraph::NO_REGION;
+		std::vector<int> touched;  // regions the group touches
 		bool isCrossing = false;
 		isDone[start] = true;
 		stack.assign(1, start);
@@ -478,9 +486,15 @@ bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf, co
 						isDone[next] = true;
 						stack.push_back(next);
 					}
-				} else if (regionOf[next] != CRegionGraph::NO_REGION) {
-					isCrossing |= (touched != CRegionGraph::NO_REGION) && (regionOf[next] != touched);
-					touched = regionOf[next];
+				} else if ((regionOf[next] != CRegionGraph::NO_REGION)
+					&& (std::find(touched.begin(), touched.end(), regionOf[next]) == touched.end()))
+				{
+					const int r = regionOf[next];
+					for (int t : touched) {
+						const std::pair<int, int> pair(std::min(r, t), std::max(r, t));
+						isCrossing |= !std::binary_search(pairs.begin(), pairs.end(), pair);
+					}
+					touched.push_back(r);
 				}
 			});
 		}
@@ -582,7 +596,7 @@ void CChokeMap::RunJob(SBuildJob& job)
 		}
 		const bool isChanged = job.isGraph || (threatMask != job.prevGraphMask);
 		if (isChanged && (job.isGraph || job.isTerrainDue || job.prevRegionOf.empty()
-			|| IsNewCrossing(job.prevGraphMask, job.prevRegionOf, threatMask)))
+			|| IsNewCrossing(job.prevGraphMask, job.prevRegionOf, job.prevPairs, threatMask)))
 		{
 			job.graph.Build(threatMask, job.graphParams);
 			job.isGraphBuilt = true;
@@ -797,13 +811,19 @@ std::string CChokeMap::DescribeRelaxed() const
 {
 	const CRegionGraph::SParams& used = graph.GetUsedParams();
 	const CRegionGraph::SParams base = GetGraphParams();
-	if ((used.merge == base.merge) && (used.minArea == base.minArea)) {
-		return "";
-	}
+	std::string out;
 	char buf[160];
-	snprintf(buf, sizeof(buf), "; relaxed to merge %.2f, min_area %.2f for min_count %i", used.merge,
-			used.minArea / SQUARE(mainRange / GRAPH_CELL), config.minCount);
-	return buf;
+	if ((used.merge != base.merge) || (used.minArea != base.minArea)) {
+		snprintf(buf, sizeof(buf), "; relaxed to merge %.2f, min_area %.2f for min_count %i", used.merge,
+				used.minArea / SQUARE(mainRange / GRAPH_CELL), config.minCount);
+		out += buf;
+	}
+	if (graph.GetSplitCount() > 0) {
+		snprintf(buf, sizeof(buf), "; %i open regions cut in two for min_count %i", graph.GetSplitCount(),
+				config.minCount);
+		out += buf;
+	}
+	return out;
 }
 
 std::vector<float> CChokeMap::GetTrafficShares(const std::vector<int>& chokes) const

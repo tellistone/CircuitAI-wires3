@@ -7,14 +7,22 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
-- **Relaxing the threat graph no longer cuts open ground into regions** (`choke.region.min_count`). On an open map the
-  first build has few regions, so the build ran again with `merge` raised up to 1, which splits regions wherever the
-  distance to the nearest wall dips. On Conquest of Paradise that split the map in two down its mirror line, then into
-  37 regions whose chokes ran across open ground. A relaxed build now
-  still merges across any choke wider than `choke.defensible`, so it only finds the narrow chokes the first build
-  merged away. On a synthetic open map with two lakes per side, `min_count` 12 gave 9 regions and 12 chokes up to
-  2,656 elmos wide; now it keeps the 1 region it has. A corridor map still relaxes from 4 regions to 16, all its
-  chokes narrow.
+- **Open maps get at least 20 regions, cut evenly, not along the distance to the walls** (`choke.region.min_count`,
+  now 20, was 12). On an open map the first build has few regions, so the build ran again with `merge` raised up to
+  1, which splits regions wherever the distance to the nearest wall dips. On Conquest of Paradise that split the map
+  in two down its mirror line, then into 37 regions whose chokes ran across open ground at random. Now:
+  - A relaxed build still merges across any choke wider than `choke.defensible`, so relaxing only finds the narrow
+    chokes the first build merged away.
+  - With still too few regions, the biggest one is cut in two at the middle between its two cells furthest apart
+    (walking), again and again until there are `min_count`. Three Lloyd rounds then even out the pieces: each
+    piece's seed moves to its cell nearest its middle, and the region it came from is shared out to the nearest
+    seed. A cut is a choke as wide as the ground it crosses. The `CHOKE graph` log line and the overlay say how many
+    regions were cut.
+  - A crater rebuilds the graph at once only when it joins two regions with no choke between them yet, so craters
+    along a cut, or widening any choke, wait for the 5 minute terrain rebuild.
+  - On a synthetic open 16x16 map with two lakes per side, `min_count` 20 gives 20 pieces of 2,569 to 4,040 cells
+    (it gave 9 regions from the relaxation with `min_count` 12). A corridor map still relaxes from 4 regions to 16 at
+    narrow chokes, then cuts 4 more.
 
 - **Planner off: no small radar under an Advanced Radar.** `MakeDefence` queued a Radar Tower behind a cluster unless
   another Radar Tower stood nearby; now any static radar whose view holds all of the small one's counts.
