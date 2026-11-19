@@ -325,10 +325,11 @@ private:
 	// built, or a picker job, within turret.radius instead (isHelpNear: of the constructor too); after a flee
 	// (isDefendedSkip), no other defence that hits it within turret.defended_radius; the choke analysis (asked for now,
 	// waited for while an after-flee ask lasts); the budget; one order a second. true: done (ordered, helped, or
-	// nothing to have), false: try again next second
+	// nothing to have), false: try again next second. budgetMod: x the balance the budget asks for (the charge is
+	// the full cost)
 	bool TryTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit, bool isDefendedSkip, bool isHelpNear,
-			const char* caller, bool& isOrdered);
+			const char* caller, bool& isOrdered, float budgetMod = 1.f);
 	std::vector<CCircuitDef*> GetTurretDefs(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit) const;
 	bool AssistTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,

@@ -89,6 +89,7 @@ public:
 		float shortChokeReach = 600.f;
 		bool isEnemyLine = true;  // near a choke of the enemy line
 		float enemyLineReach = 800.f;
+		float enemyLineBudget = 0.5f;  // x the balance the turret account must hold for an enemy-line order
 		bool isArtillery = true;  // near our artillery shooting a target in its range, no turret within defendedRadius
 		float artilleryReach = 600.f;
 		std::vector<CCircuitDef*> light;

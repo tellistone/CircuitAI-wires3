@@ -2755,7 +2755,9 @@ void CBuilderManager::UpdateTurrets()
 		const std::vector<int>& chokes;
 		float reach;
 		const char* caller;
-	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke"}, {lineChokes, cfg.enemyLineReach, "enemy line"}};
+		float budgetMod;  // enemy line: enemy_line_budget x the balance the account must hold
+	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke", 1.f},
+		{lineChokes, cfg.enemyLineReach, "enemy line", cfg.enemyLineBudget}};
 	// Artillery: ours shooting a target in range (an artillery unit; an engaged anti-heavy squad with a unit in range,
 	// not mines or aircraft), only a building in anti-heavy mode; centred on it (a squad: its leader), unless a turret
 	// that hits ground (ours or an ally's, being built or queued too) stands within defended_radius of it
@@ -2798,7 +2800,8 @@ void CBuilderManager::UpdateTurrets()
 		for (const auto& l : lines) {
 			const int c = nearChoke(l.chokes, pos, l.reach);
 			if (c >= 0) {
-				TryTurret(unit, chokeMap->GetCellPos(graph.GetChokes()[c].centre), nullptr, false, true, l.caller, isOrdered);
+				TryTurret(unit, chokeMap->GetCellPos(graph.GetChokes()[c].centre), nullptr, false, true, l.caller, isOrdered,
+						l.budgetMod);
 				isLine = true;
 				break;
 			}
@@ -2818,7 +2821,7 @@ void CBuilderManager::UpdateTurrets()
 
 bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
 		const std::function<bool (const CCircuitDef*)>& canHit, bool isDefendedSkip, bool isHelpNear,
-		const char* caller, bool& isOrdered)
+		const char* caller, bool& isOrdered, float budgetMod)
 {
 	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, canHit);
 	if (defs.empty() || AssistTurret(unit, centre, canHit, isHelpNear, caller)) {
@@ -2848,7 +2851,7 @@ bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
 	}
 	// porcupine.budget: the turret account covers the dearest it might pick, so the opening's income isn't spent on
 	// towers before the account has filled
-	if (isOrdered || !circuit->GetMilitaryManager()->CanAffordTurret(maxCost)) {
+	if (isOrdered || !circuit->GetMilitaryManager()->CanAffordTurret(maxCost * budgetMod)) {
 		return false;
 	}
 	isOrdered = true;

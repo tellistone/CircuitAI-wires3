@@ -326,6 +326,7 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 		{"enemy_reach", &c.enemyReach}, {"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown},
 		{"share", circuit->GetMilitaryManager()->GetTurretShare()}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
 		{"short_choke_reach", &c.shortChokeReach}, {"enemy_line_reach", &c.enemyLineReach},
+		{"enemy_line_budget", &c.enemyLineBudget},
 		{"artillery_reach", &c.artilleryReach},
 	};
 	const std::map<std::string, bool*> flags = {

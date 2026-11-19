@@ -25,7 +25,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   caller (free mobile ground constructor, cooldown, no metal stall, the turret account, one order a second,
   helping a turret already within `turret.radius`), a constructor now also orders a turret when it is within
   `turret.short_choke_reach` (600) of a short choke of our current line (`turret.short_choke`); within
-  `turret.enemy_line_reach` (800) of a choke of the enemy line (`turret.enemy_line`), both centred on the nearest
+  `turret.enemy_line_reach` (800) of a choke of the enemy line (`turret.enemy_line`; the turret account need hold only
+  `turret.enemy_line_budget`, 0.5, x the cost, though the full cost is charged), both centred on the nearest
   such choke's gap and only for defensible chokes that are settled and free of enemy artillery (as the picker's C);
   or within `turret.artillery_reach` (600) of our artillery shooting a target in its range or of an anti-heavy
   squad engaged with a unit in range of its target (not mines or aircraft; anti-heavy only against a building),

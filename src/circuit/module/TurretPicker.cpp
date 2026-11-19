@@ -87,6 +87,7 @@ void CTurretPicker::ReadConfig()
 	c.shortChokeReach = turret.get("short_choke_reach", c.shortChokeReach).asFloat();
 	c.isEnemyLine = turret.get("enemy_line", c.isEnemyLine).asBool();
 	c.enemyLineReach = turret.get("enemy_line_reach", c.enemyLineReach).asFloat();
+	c.enemyLineBudget = turret.get("enemy_line_budget", c.enemyLineBudget).asFloat();
 	c.isArtillery = turret.get("artillery", c.isArtillery).asBool();
 	c.artilleryReach = turret.get("artillery_reach", c.artilleryReach).asFloat();
 	c.enemyReach = turret.get("enemy_reach", c.enemyReach).asFloat();
