@@ -61,56 +61,9 @@ void CCombatTask::Update()
 	}
 }
 
-void CCombatTask::OnUnitIdle(CCircuitUnit* unit)
+CRetreatTask* CCombatTask::EnqueueRetreat()
 {
-	auto it = cowards.find(unit);
-	if (it != cowards.end()) {
-		cowards.erase(it);
-		CRetreatTask* task = manager->GetCircuit()->GetBuilderManager()->EnqueueRetreat();
-		manager->AssignTask(unit, task);
-	} else {
-		unit->SetTaskFrame(manager->GetCircuit()->GetLastFrame());
-	}
-}
-
-void CCombatTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	const float healthPerc = unit->GetHealthPercent();
-	// Two separate reasons to retreat: health at or below "retreat" (or disarmed), and shield charge at or below
-	// "retreat_shield". Neither one's threshold affects the other
-	const bool isHealthLow = (healthPerc <= cdef->GetRetreat()) || unit->IsDisarmed(frame);
-	const bool isShieldLow = circuit->GetSetupManager()->IsShieldLow(unit);
-	if (!isHealthLow && !isShieldLow) {
-		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
-			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
-		}
-		return;
-	}
-	if (isHealthLow && (healthPerc < 0.2f)) {  // stuck units workaround: they don't shoot and don't see distant threat
-		CRetreatTask* task = circuit->GetBuilderManager()->EnqueueRetreat();
-		manager->AssignTask(unit, task);
-		return;
-	}
-
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	const float range = cdef->GetMaxRange();
-	if ((target == nullptr) || !target->IsInLOS()) {
-		CRetreatTask* task = circuit->GetBuilderManager()->EnqueueRetreat();
-		manager->AssignTask(unit, task);
-		return;
-	}
-	const AIFloat3& pos = unit->GetPos(frame);
-	if ((target->GetPos().SqDistance2D(pos) > SQUARE(range)) ||
-		(threatMap->GetThreatAt(unit, pos) * 2 > threatMap->GetUnitThreat(unit)))
-	{
-		CRetreatTask* task = circuit->GetBuilderManager()->EnqueueRetreat();
-		manager->AssignTask(unit, task);
-		return;
-	}
-	cowards.insert(unit);
+	return manager->GetCircuit()->GetBuilderManager()->EnqueueRetreat();
 }
 
 void CCombatTask::Execute(CCircuitUnit* unit)

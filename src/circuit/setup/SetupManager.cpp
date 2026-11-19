@@ -7,7 +7,6 @@
 
 #include "setup/SetupManager.h"
 #include "setup/SetupData.h"
-#include "unit/CircuitUnit.h"
 #include "module/EconomyManager.h"  // only for GetMexDef
 #include "module/MilitaryManager.h"  // only for CalcLanePos
 #include "resource/MetalManager.h"
@@ -299,25 +298,10 @@ bool CSetupManager::PickCommander()
 	return true;
 }
 
-float CSetupManager::GetRetreatShield(const CCircuitDef* cdef) const
+float CSetupManager::GetRetreatShield(float value) const
 {
-	const float value = cdef->GetRetreatShield();
-	return (value < 0.f) ? emptyShield : value;
-}
-
-float CSetupManager::GetReturnShield(const CCircuitDef* cdef) const
-{
-	const float retShield = GetRetreatShield(cdef);
-	return (retShield > 0.f) ? std::min(retShield + std::max(fullShield - emptyShield, 0.f), 1.f) : 0.f;
-}
-
-bool CSetupManager::IsShieldLow(CCircuitUnit* unit) const
-{
-	if (!unit->HasShield()) {
-		return false;
-	}
-	const float retShield = GetRetreatShield(unit->GetCircuitDef());
-	return (retShield > 0.f) && !unit->IsShieldCharged(retShield);
+	// Capped below 1: a unit retreating at a full shield could never recharge past it to come back
+	return utils::clamp((value < 0.f) ? emptyShield : value, 0.f, 0.9f);
 }
 
 CAllyTeam* CSetupManager::GetAllyTeam() const

@@ -188,11 +188,11 @@ void CRetreatTask::Update()
 			continue;
 		}
 		const float healthPerc = unit->GetHealthPercent();
-		// Back once healed, and recharged past its return shield if it retreats for its shield at all: else it
-		// would be sent straight back here
-		const float returnShield = unit->HasShield()
-				? circuit->GetSetupManager()->GetReturnShield(unit->GetCircuitDef()) : 0.f;
-		bool isRepaired = (healthPerc > 0.98f) && ((returnShield <= 0.f) || unit->IsShieldCharged(returnShield));
+		// Back once healed and, if it retreats for its shield at all, recharged past retreat.shield[1] (at least its
+		// retreat_shield + 0.05): a gap well over one shot's drain (Felon), so it isn't sent straight back here
+		const float retShield = unit->GetCircuitDef()->GetRetreatShield();
+		bool isRepaired = (healthPerc > 0.98f) && (!unit->HasShield() || (retShield <= 0.f)
+				|| unit->IsShieldCharged(std::max(circuit->GetSetupManager()->GetFullShield(), retShield + 0.05f)));
 		// Waited at haven too long without a repairer: return to duty.
 		// A builder working on it restarts the wait, so the timeout never cuts a repair short.
 		bool isWaitOver = false;

@@ -97,8 +97,6 @@ void CFGuardTask::Start(CCircuitUnit* unit)
 
 void CFGuardTask::Update()
 {
-	IFighterTask::Update();
-
 	CCircuitUnit* vip = manager->GetCircuit()->GetTeamUnit(vipId);
 	if (vip == nullptr) {
 		// Normally the builder's destroyed handler removes the slot first; if not, don't leave guards stuck

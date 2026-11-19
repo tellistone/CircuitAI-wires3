@@ -328,10 +328,6 @@ void CAttackTask::Update()
 	bool isForced = false;  // a unit asked for a re-plan (unsafe path ahead, sudden threat)
 	if (isDecision) {
 		isReplanForced = false;  // a forced re-plan is allowed again
-		ISquadTask::Update();
-		if (leader == nullptr) {  // task aborted
-			return;
-		}
 		// Only looked at, not cleared: this decision may plan no route (one still being worked out, or engaging),
 		// so the request still re-plans at the next update; but this decision doesn't reuse a route either
 		for (CCircuitUnit* unit : units) {
@@ -1065,12 +1061,6 @@ bool CAttackTask::UpdateEscape(int frame)
 	// follow us, and is then the one to fight). Not while running already, holding ground or cornered
 	const bool isMismatch = isDanger && !isHoldGround && (frame >= fleeFrame) && IsFightOn(frame);
 	if (IsInFleeGrace(frame, isMismatch, GetMilitaryMgr()->GetAttackFleeGrace(), GetMilitaryMgr()->GetAttackFleeShare())) {
-		if (updCount % 2 == 0) {
-			ISquadTask::Update();  // units with empty shields still retreat (normally done at each decision)
-			if (leader == nullptr) {  // task aborted
-				return true;
-			}
-		}
 		if (frame == graceFrame) {
 			attackFrame = frame - attackRepeat;  // orders again now, not at the 3 s repeat: spots avoid the new danger
 		}
@@ -1098,11 +1088,7 @@ bool CAttackTask::UpdateEscape(int frame)
 		PullBackEndangered(frame);
 	}
 	if (isFleeing || (frame < fleeFrame)) {
-		// keep running along the escape path for a moment instead of turning straight back;
-		// still send units with empty shields to retreat (normally done at each decision)
-		if (updCount % 2 == 0) {
-			ISquadTask::Update();
-		}
+		// keep running along the escape path for a moment instead of turning straight back
 		return true;
 	}
 	// One forced re-plan per normal decision interval (~2 s): if the new route is still unsafe ahead

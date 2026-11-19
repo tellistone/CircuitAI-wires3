@@ -287,6 +287,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 			} else {
 				cdef.SetRetreat(cdef.GetRetreat() * retMod);
 			}
+			cdef.SetRetreatShield(circuit->GetSetupManager()->GetRetreatShield(cdef.GetRetreatShield()));
 		} else {
 //			damagedHandler[unitDefId] = structDamagedHandler;
 			if (cdef.IsAttacker()) {

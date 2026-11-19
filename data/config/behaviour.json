@@ -140,7 +140,7 @@
 "retreat": {
 	"builder": [0.70, 1.0],  // [<default>, <UnitDef modifier>] for all builders
 	"fighter": [0.45, 1.0],  // [<default>, <UnitDef modifier>] for all not-builder units
-	"shield": [0.25, 0.275],  // [<empty>, <full>] shield power: <empty> = default per-unit "retreat_shield"; a unit back from retreat needs its retreat_shield + (<full> - <empty>) shield. Health ("retreat") and shield retreat are independent
+	"shield": [0.25, 0.6],  // [<empty>, <full>] shield power: <empty> = default per-unit "retreat_shield"; a unit that retreats for its shield comes back above <full> (at least its retreat_shield + 0.05). Health ("retreat") and shield retreat are independent; a low shield retreats only when hit, by the same threat test as low health
         "repair_safe_static": true,  // same as repair_safe, for static units with prio_repair
 	"wait_timeout": 120,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
 	"repair_safe": true,  // true = builders skip priority repair (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs, and leave a mobile unit's repair (priority or retreat) once it leads them into such an area
@@ -431,7 +431,7 @@
 //		"retreat": 0.8,
 
 		// Shielded units: retreat when shield charge is at or below this share of max shield, whatever the
-		// health; unset = retreat.shield[0], 0 = never retreat for the shield
+		// health; unset = retreat.shield[0], 0 = never retreat for the shield, at most 0.9
 //		"retreat_shield": 0.25,
 
 		// Builders other than commanders: overrides retreat.builder_flee's margin, -1 = no flee
@@ -794,7 +794,7 @@
 		// threat 11.42 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "support", "shieldball"],
 		"attribute": ["prio_repair"],
-		"retreat": 1.1,
+		"retreat": 0.9,
 		"since": 180,
 		"pwr_mod": 0.4,
 		"thr_mod": 0.5
@@ -814,7 +814,8 @@
 		"role": ["heavy", "shieldball", "snipe_target"],
 		"attribute": ["prio_repair"],
 		"since": 300,
-		"retreat": 1.1,
+		"retreat": 0.9,
+		"retreat_shield": 0.1,  // its shield is its ammo (shield_drain): only an empty one sends it back
 		"pwr_mod": 0.7,
 		"thr_mod": 0.66
 	},
@@ -836,6 +837,7 @@
 		"since": 540,
 		"attribute": ["support", "prio_repair"],
 		"retreat": 0.36,
+		"retreat_shield": 0,  // soaks for the ball and recharges on the spot: leaving takes the cover away
 		"pwr_mod": 1.0,
 		"thr_mod": 0.25
 	},
