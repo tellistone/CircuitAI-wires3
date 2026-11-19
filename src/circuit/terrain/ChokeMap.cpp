@@ -75,7 +75,6 @@ struct CChokeMap::SBuildJob {
 	std::vector<SCellMask> masks;  // the current ones: compared with, or used as they are
 	SCellMask prevGraphMask;
 	std::vector<int> prevRegionOf;  // per cell, the graph's regions: only while the terrain check isn't due
-	std::vector<std::pair<int, int>> prevPairs;  // the graph's regions with a choke between them, ascending
 	CRegionGraph::SParams graphParams;
 	std::vector<int> trafficClasses;  // never naval: ships get no layer
 	std::vector<MoveKey> keys;  // per class
@@ -439,10 +438,7 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 		for (int i = 0; i < job->prevGraphMask.Size(); ++i) {
 			job->prevRegionOf[i] = graph.GetRegionAt(i);
 		}
-		for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
-			job->prevPairs.emplace_back(choke.regionA, choke.regionB);
-		}
-		std::sort(job->prevPairs.begin(), job->prevPairs.end());
+
 	}
 	job->graphParams = GetGraphParams();
 	job->trafficClasses = trafficClasses;
@@ -456,12 +452,11 @@ namespace {
 
 /*
  * The cells passable in after and not in before, in connected groups (ForEachNeighbour on after): does a group touch
- * two of the old graph's regions with no choke between them (pairs: those with one, ascending)? Then the enemy has a
- * way between them the old graph has no choke for. A crater widening a choke, or on a cut across open ground, touches
- * two regions that have one
+ * two of the old graph's regions and no cell of either that the other is next to? Then the enemy has a new way between
+ * them (a wall blown through, a ramp). A group on their border (a crater widening a choke, or on a cut across open
+ * ground) is no new way
  */
-bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf,
-		const std::vector<std::pair<int, int>>& pairs, const SCellMask& after)
+bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf, const SCellMask& after)
 {
 	if ((before.Size() != after.Size()) || ((int)regionOf.size() != after.Size())) {
 		return true;
@@ -474,32 +469,39 @@ bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf,
 			continue;
 		}
 		std::vector<int> touched;  // regions the group touches
-		bool isCrossing = false;
+		std::vector<std::pair<int, int>> met;  // regions that meet at a cell it touches, lower first
 		isDone[start] = true;
 		stack.assign(1, start);
-		while (!stack.empty() && !isCrossing) {
+		while (!stack.empty()) {
 			const int cell = stack.back();
 			stack.pop_back();
 			ForEachNeighbour(after, cell, [&](int next, int) {
+				const int r = regionOf[next];
 				if (isNew(next)) {
 					if (!isDone[next]) {
 						isDone[next] = true;
 						stack.push_back(next);
 					}
-				} else if ((regionOf[next] != CRegionGraph::NO_REGION)
-					&& (std::find(touched.begin(), touched.end(), regionOf[next]) == touched.end()))
-				{
-					const int r = regionOf[next];
-					for (int t : touched) {
-						const std::pair<int, int> pair(std::min(r, t), std::max(r, t));
-						isCrossing |= !std::binary_search(pairs.begin(), pairs.end(), pair);
-					}
+				} else if (r != CRegionGraph::NO_REGION) {
 					touched.push_back(r);
+					ForEachNeighbour(before, next, [&](int beyond, int) {
+						const int t = regionOf[beyond];
+						if ((t != CRegionGraph::NO_REGION) && (t != r)) {
+							met.emplace_back(std::min(r, t), std::max(r, t));
+						}
+					});
 				}
 			});
 		}
-		if (isCrossing) {
-			return true;
+		std::sort(touched.begin(), touched.end());
+		touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+		std::sort(met.begin(), met.end());
+		for (size_t i = 0; i < touched.size(); ++i) {
+			for (size_t j = i + 1; j < touched.size(); ++j) {
+				if (!std::binary_search(met.begin(), met.end(), std::make_pair(touched[i], touched[j]))) {
+					return true;
+				}
+			}
 		}
 	}
 	return false;
@@ -579,8 +581,8 @@ void CChokeMap::RunJob(SBuildJob& job)
 
 	/*
 	 * The threat graph, from the union of the gating classes. Rebuilt when the gating classes changed, and when the
-	 * terrain changed that union: at once when it opened a way between two of the graph's regions that no choke of
-	 * it has (a wall blown through, or a ramp), else at most every TERRAIN_GRAPH_COOLDOWN: craters and ground
+	 * terrain changed that union: at once when it opened a way between two of the graph's regions away from their
+	 * border (a wall blown through, or a ramp), else at most every TERRAIN_GRAPH_COOLDOWN: craters and ground
 	 * levelled under buildings change it through every fight, and each rebuild can move chokes the defence and holds
 	 * act on
 	 */
@@ -596,7 +598,7 @@ void CChokeMap::RunJob(SBuildJob& job)
 		}
 		const bool isChanged = job.isGraph || (threatMask != job.prevGraphMask);
 		if (isChanged && (job.isGraph || job.isTerrainDue || job.prevRegionOf.empty()
-			|| IsNewCrossing(job.prevGraphMask, job.prevRegionOf, job.prevPairs, threatMask)))
+			|| IsNewCrossing(job.prevGraphMask, job.prevRegionOf, threatMask)))
 		{
 			job.graph.Build(threatMask, job.graphParams);
 			job.isGraphBuilt = true;
@@ -819,7 +821,7 @@ std::string CChokeMap::DescribeRelaxed() const
 		out += buf;
 	}
 	if (graph.GetSplitCount() > 0) {
-		snprintf(buf, sizeof(buf), "; %i open regions cut in two for min_count %i", graph.GetSplitCount(),
+		snprintf(buf, sizeof(buf), "; open ground cut into %i more regions for min_count %i", graph.GetSplitCount(),
 				config.minCount);
 		out += buf;
 	}

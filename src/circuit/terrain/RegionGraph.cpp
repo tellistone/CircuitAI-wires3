@@ -11,16 +11,14 @@
 #include <cmath>
 #include <deque>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <map>
-#include <queue>
-#include <tuple>
 #include <utility>
 
 #define RELAX_STEPS		4  // builds after the first, at most, for SParams::minCount
 #define RELAX_MERGE		1.f  // merge relaxes up to this (a choke as wide as the smaller region's highest)
 #define RELAX_AREA		0.25f  // and minArea down to this share of its value
-#define SPLIT_ROUNDS	3  // Lloyd rounds that round off the pieces of regions cut for minCount
 
 namespace circuit {
 
@@ -67,39 +65,6 @@ private:
 	std::vector<int> altitude;
 	std::vector<int> area;
 };
-
-/*
- * Each cell of a group to the nearest seed of its own group, walking (2 straight, 3 diagonal), ties to the lower seed;
- * -1 for cells of no group (-1) and cells no seed of their group reaches
- */
-void FloodLabels(const SCellMask& mask, const std::vector<int>& seeds, const std::vector<int>& group,
-		std::vector<int>& outLabel)
-{
-	using SStep = std::tuple<int, int, int>;  // distance, seed, cell: the lowest first
-	std::priority_queue<SStep, std::vector<SStep>, std::greater<SStep>> open;
-	std::vector<int> dist(mask.Size(), std::numeric_limits<int>::max());
-	outLabel.assign(mask.Size(), -1);
-	for (int s = 0; s < (int)seeds.size(); ++s) {
-		dist[seeds[s]] = 0;
-		open.emplace(0, s, seeds[s]);
-	}
-	while (!open.empty()) {
-		const auto [d, s, cell] = open.top();
-		open.pop();
-		if (outLabel[cell] >= 0) {
-			continue;
-		}
-		outLabel[cell] = s;
-		ForEachNeighbour(mask, cell, [&](int next, int cost) {
-			if ((outLabel[next] < 0) && (group[next] >= 0) && (group[next] == group[seeds[s]])
-				&& (d + cost <= dist[next]))
-			{
-				dist[next] = d + cost;
-				open.emplace(d + cost, s, next);
-			}
-		});
-	}
-}
 
 constexpr float INF_CAPACITY = 1e30f;
 constexpr float EPS_CAPACITY = 1e-4f;
@@ -403,6 +368,7 @@ void CRegionGraph::MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& c
 			}
 			choke.width = 2.f * GetAltitude(choke.centre);
 			choke.isDefensible = (choke.width <= params.defensibleWidth);
+			choke.isCut = false;
 			regions[choke.regionA].chokes.push_back(chokes.size());
 			regions[choke.regionB].chokes.push_back(chokes.size());
 			chokes.push_back(std::move(choke));
@@ -413,129 +379,140 @@ void CRegionGraph::MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& c
 }
 
 /*
- * Open ground has no choke to split at. While there are fewer than minCount regions, the biggest one with room for
- * two of minArea is cut in two: its cells go to the nearer (walking) of its two cells furthest apart. Then a few
- * Lloyd rounds round the pieces off: each piece's seed moves to its cell nearest its middle, and the cells of the
- * region it came from go to the nearest seed (walking), so the first cuts' long slivers come out as compact pieces.
- * A cut is a choke as wide as the ground it crosses, so never defensible on open ground. Chokes are then remade from
- * the regions' borders: each pair's line is the cells of the lower region touching the other
+ * Open ground has no choke to split at. Seeds go on a grid of the map, cell-centred and mirror-symmetric, so a mirrored
+ * map gets mirrored pieces and a crater moves no seed. The grid gains a column or a row, across its wider spacing,
+ * until the regions with room for two of minArea hold minCount pieces in all, one per seed in them. Each cell of those
+ * regions goes to its region's nearest seed (walking); a piece under minArea gives up its seed, so its neighbours take
+ * its cells. Chokes are then remade from the regions' borders (each pair's line is the cells of the lower region
+ * touching the other), and a choke between two pieces of one region is a cut (isCut)
  */
 void CRegionGraph::SplitOpen(const SParams& params)
 {
 	const int n = mask.Size();
-	constexpr int FAR = std::numeric_limits<int>::max() / 2;
-	SCellMask part = mask;  // the region being cut, alone
-	std::vector<int> fromCentre, fromA, fromB;
-	auto furthest = [n](const std::vector<int>& dist) {
-		int best = -1;
-		for (int i = 0; i < n; ++i) {
-			if ((dist[i] != CDistanceFlood::UNREACHED) && ((best < 0) || (dist[i] > dist[best]))) {
-				best = i;
+	auto gridOf = [&](int nx, int nz) {  // the grid's cells in regions with room for two pieces
+		std::vector<int> seeds;
+		for (int j = 0; j < nz; ++j) {
+			for (int i = 0; i < nx; ++i) {
+				const int x = (2 * i + 1) * mask.width / (2 * nx);  // the middle of its column
+				const int z = (2 * j + 1) * mask.height / (2 * nz);
+				const int cell = z * mask.width + x;
+				const int r = regionOf[cell];
+				if ((r != NO_REGION) && (regions[r].area >= 2.f * params.minArea)) {
+					seeds.push_back(cell);
+				}
 			}
 		}
-		return best;
+		return seeds;
 	};
-	splitCount = 0;
-	std::vector<int> origin(regions.size());  // per region, the one it was cut from
-	for (int r = 0; r < (int)regions.size(); ++r) {
-		origin[r] = r;
-	}
-	while ((int)regions.size() < params.minCount) {
-		int biggest = -1;
+	std::vector<int> seedsIn;  // per region
+	auto countOf = [&](const std::vector<int>& seeds) {  // the regions there would be
+		seedsIn.assign(regions.size(), 0);
+		for (int s : seeds) {
+			++seedsIn[regionOf[s]];
+		}
+		int count = 0;
+		for (int k : seedsIn) {
+			count += std::max(k, 1);
+		}
+		return count;
+	};
+	std::vector<int> group(n, -1);  // per cell, its region if that is cut
+	std::vector<int> label;  // per cell, the index of its nearest seed in its group
+	SCellMask part = mask;  // one group alone
+	std::vector<int> dist, reached;
+	auto flood = [&](const std::vector<int>& seeds) {
+		label.assign(n, -1);
+		for (size_t k = 0; k < seeds.size(); ++k) {
+			label[seeds[k]] = k;
+		}
 		for (int r = 0; r < (int)regions.size(); ++r) {
-			if ((regions[r].area >= 2.f * params.minArea)
-				&& ((biggest < 0) || (regions[r].area > regions[biggest].area)))
-			{
-				biggest = r;
-			}
-		}
-		if (biggest < 0) {
-			break;
-		}
-		for (int i = 0; i < n; ++i) {
-			part.cells[i] = (regionOf[i] == biggest) ? 1 : 0;
-		}
-		CDistanceFlood::Run(part, {regions[biggest].centre}, FAR, fromCentre);
-		const int a = furthest(fromCentre);
-		CDistanceFlood::Run(part, {a}, FAR, fromA);
-		const int b = furthest(fromA);
-		CDistanceFlood::Run(part, {b}, FAR, fromB);
-		const int cut = regions.size();
-		regions.push_back({nextRegionId++, 0, b, {}});
-		origin.push_back(origin[biggest]);
-		SRegion& stays = regions[biggest];
-		stays.area = 0;
-		stays.centre = a;
-		for (int i = 0; i < n; ++i) {
-			if (!part.cells[i]) {
+			std::vector<int> inR;
+			std::copy_if(seeds.begin(), seeds.end(), std::back_inserter(inR), [&](int s) { return group[s] == r; });
+			if (inR.empty()) {
 				continue;
 			}
-			SRegion& region = (fromB[i] < fromA[i]) ? regions[cut] : regions[biggest];
-			regionOf[i] = (fromB[i] < fromA[i]) ? cut : biggest;
-			++region.area;
-			if (altitude[i] > altitude[region.centre]) {
-				region.centre = i;
+			for (int i = 0; i < n; ++i) {
+				part.cells[i] = (group[i] == r) ? 1 : 0;
+			}
+			CDistanceFlood::Rerun(part, inR, std::numeric_limits<int>::max() / 2, dist, reached);
+			for (int cell : reached) {  // in the order settled, so a cell's nearer neighbours have their label: ties low
+				ForEachNeighbour(part, cell, [&](int next, int cost) {
+					if ((dist[next] < dist[cell]) && (dist[next] + cost == dist[cell])
+						&& ((label[cell] < 0) || (label[next] < label[cell])))
+					{
+						label[cell] = label[next];
+					}
+				});
 			}
 		}
-		++splitCount;
+	};
+	std::vector<int> seeds;
+	for (int nx = 1, nz = 1; float(n) / (nx * nz) >= params.minArea;) {
+		std::vector<int> grid = gridOf(nx, nz);
+		if (mask.width * nz >= mask.height * nx) {  // the next grid: one more across its wider spacing
+			++nx;
+		} else {
+			++nz;
+		}
+		if (countOf(grid) < params.minCount) {
+			continue;
+		}
+		for (int i = 0; i < n; ++i) {
+			group[i] = ((regionOf[i] != NO_REGION) && (seedsIn[regionOf[i]] > 1)) ? regionOf[i] : -1;
+		}
+		grid.erase(std::remove_if(grid.begin(), grid.end(), [&](int s) { return group[s] < 0; }), grid.end());
+		flood(grid);
+		std::vector<int> area(grid.size(), 0);
+		for (int i = 0; i < n; ++i) {
+			if (label[i] >= 0) {
+				++area[label[i]];
+			}
+		}
+		seeds.clear();
+		for (size_t k = 0; k < grid.size(); ++k) {
+			if (area[k] >= params.minArea) {
+				seeds.push_back(grid[k]);
+			}
+		}
+		if (seeds.size() < grid.size()) {
+			flood(seeds);
+		}
+		if (countOf(seeds) >= params.minCount) {
+			break;
+		}
 	}
-	if (splitCount == 0) {
+	if (seeds.empty()) {
 		return;
 	}
 
-	std::vector<int> pieces(regions.size(), 0);  // per original region
-	for (int r = 0; r < (int)regions.size(); ++r) {
-		++pieces[origin[r]];
+	// A region's first seed keeps its index, the others are new regions
+	std::vector<int> origin(regions.size());  // per region, the one it was cut from
+	for (size_t r = 0; r < regions.size(); ++r) {
+		origin[r] = r;
 	}
-	std::vector<int> group(n, -1);  // per cell, its original region if that was cut
+	std::vector<int> indexOfSeed(seeds.size());
+	std::vector<bool> isKept(regions.size(), false);
+	for (size_t k = 0; k < seeds.size(); ++k) {
+		const int r = group[seeds[k]];
+		if (!isKept[r]) {
+			isKept[r] = true;
+			indexOfSeed[k] = r;
+		} else {
+			indexOfSeed[k] = regions.size();
+			regions.push_back({nextRegionId++, 0, seeds[k], {}});
+			origin.push_back(r);
+			++splitCount;
+		}
+		regions[indexOfSeed[k]].area = 0;
+		regions[indexOfSeed[k]].centre = seeds[k];
+	}
 	for (int i = 0; i < n; ++i) {
-		if ((regionOf[i] != NO_REGION) && (pieces[origin[regionOf[i]]] > 1)) {
-			group[i] = origin[regionOf[i]];
-		}
-	}
-	std::vector<int> label;
-	for (int round = 0; round < SPLIT_ROUNDS; ++round) {
-		std::vector<double> sumX(regions.size(), 0.0), sumZ(regions.size(), 0.0);
-		for (int i = 0; i < n; ++i) {
-			if (group[i] >= 0) {
-				sumX[regionOf[i]] += i % mask.width;
-				sumZ[regionOf[i]] += i / mask.width;
-			}
-		}
-		std::vector<int> seedOf(regions.size(), -1);
-		std::vector<double> bestSq(regions.size(), std::numeric_limits<double>::max());
-		for (int i = 0; i < n; ++i) {
-			if (group[i] < 0) {
-				continue;
-			}
-			const int r = regionOf[i];
-			const double dx = (i % mask.width) - sumX[r] / regions[r].area;
-			const double dz = (i / mask.width) - sumZ[r] / regions[r].area;
-			if (dx * dx + dz * dz < bestSq[r]) {
-				bestSq[r] = dx * dx + dz * dz;
-				seedOf[r] = i;
-			}
-		}
-		std::vector<int> seeds, regionOfSeed;
-		for (int r = 0; r < (int)regions.size(); ++r) {
-			if (seedOf[r] >= 0) {
-				seeds.push_back(seedOf[r]);
-				regionOfSeed.push_back(r);
-			}
-		}
-		FloodLabels(mask, seeds, group, label);
-		for (int r : regionOfSeed) {
-			regions[r].area = 0;
-			regions[r].centre = seedOf[r];
-		}
-		for (int i = 0; i < n; ++i) {
-			if ((group[i] >= 0) && (label[i] >= 0)) {
-				SRegion& region = regions[regionOfSeed[label[i]]];
-				regionOf[i] = regionOfSeed[label[i]];
-				++region.area;
-				if (altitude[i] > altitude[region.centre]) {
-					region.centre = i;
-				}
+		if (label[i] >= 0) {
+			SRegion& region = regions[indexOfSeed[label[i]]];
+			regionOf[i] = indexOfSeed[label[i]];
+			++region.area;
+			if (altitude[i] > altitude[region.centre]) {
+				region.centre = i;
 			}
 		}
 	}
@@ -559,6 +536,7 @@ void CRegionGraph::SplitOpen(const SParams& params)
 	MakeChokes(cellsOfPair, params);
 	for (SChoke& choke : chokes) {
 		choke.id = nextChokeId++;
+		choke.isCut = (origin[choke.regionA] == origin[choke.regionB]);
 	}
 }
 

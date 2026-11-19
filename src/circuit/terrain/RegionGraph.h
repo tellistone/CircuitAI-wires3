@@ -28,8 +28,9 @@ namespace circuit {
  *   quarter, in steps, until there are enough; the build with the most regions is kept (GetUsedParams). A relaxed
  *   build still merges across any choke wider than defensibleWidth (mergeWidth), so it finds the narrow chokes the
  *   first build merged away, never a line across open ground;
- * - still too few (open ground, with no choke to split at): the biggest region is cut in two, again and again, at the
- *   middle between its two cells furthest apart (SplitOpen, GetSplitCount).
+ * - still too few (open ground, with no choke to split at): seeds on a grid of the map, made finer until there are
+ *   enough, cut the big regions into pieces nearest each seed (SplitOpen, GetSplitCount). A choke between two pieces
+ *   of one region is a cut (SChoke::isCut), as wide as the ground it crosses.
  * Every step breaks ties by cell index, so allied AIs and reruns get the same graph.
  *
  * Regions and chokes are used by index (0..n-1) within one build. Their ids stay the same across rebuilds where
@@ -57,6 +58,7 @@ public:
 		float width;  // elmos, twice the centre's altitude
 		std::vector<int> line;  // its meeting cells, ascending
 		bool isDefensible;
+		bool isCut;  // between two pieces SplitOpen cut from one region: a line across open ground
 		int bornFrame;  // first build it was found in (kept by CarryIdsFrom)
 	};
 	static constexpr int NO_REGION = -1;
@@ -74,7 +76,7 @@ public:
 
 	void Build(const SCellMask& mask, const SParams& params);
 	const SParams& GetUsedParams() const { return usedParams; }  // as relaxed for minCount
-	int GetSplitCount() const { return splitCount; }  // regions cut in two for minCount (SplitOpen)
+	int GetSplitCount() const { return splitCount; }  // pieces SplitOpen added for minCount
 	// Ids from the previous build where the shape is the same: a region keeps the id of the old region holding at
 	// least half its cells, a choke the id (and bornFrame) of the old choke whose line runs within a cell of at least
 	// half of its own. Everything else gets a new id and bornFrame = frame
