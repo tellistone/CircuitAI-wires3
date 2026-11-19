@@ -26,6 +26,9 @@
 
 #include "AISCommands.h"
 
+#include <limits>
+#include <tuple>
+
 namespace circuit {
 
 using namespace springai;
@@ -155,12 +158,16 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	if (bestTarget != nullptr) {
 		// ally_threat: don't stay behind shooting once the escort has moved on
 		if (isNeedCover && !HasCover(unit, pos)) {
+			SetTarget(nullptr);
 			if (IsQueryReady(unit)) {
 				FallbackNoSpot(unit, isUpdating);
 			}
 			return;
 		}
 		ahActivity = CMilitaryManager::AhNote::ENGAGE;
+		if (isAntiHeavy) {
+			SetTarget(bestTarget);  // for the other anti-heavy units' overkill check (GetOthersReadyDamage)
+		}
 		unit->GetTravelAct()->StateWait();
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Attack(bestTarget->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
@@ -168,6 +175,7 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 		)
 		return;
 	}
+	SetTarget(nullptr);
 
 	if (!IsQueryReady(unit)) {
 		return;
@@ -232,12 +240,17 @@ CEnemyInfo* CArtilleryTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 	if (isAntiHeavy && (posThreat > THREAT_MIN)) {
 		posThreat -= GetIgnoredThreatAt(unit, pos);  // a heavy we can shoot now doesn't keep us from shooting
 	}
-	const bool isPosSafe = (posThreat <= THREAT_MIN) || cdef->IsPlane();
+	// Anti-heavy: also where our cover outweighs the threat (IsThreatOk), so it shoots behind the army in a fight
+	const bool isPosSafe = cdef->IsPlane() || IsThreatOk(unit, pos, posThreat, false);
 	// Anti-heavy: a long-reload weapon fires at what we see, not at a radar blip (a blip is still walked to)
 	const bool isSeenOnly = isAntiHeavy && CAntiHeavyTask::IsLongReload(cdef);
 
 	// Трубка 15, прицел 120, бац, бац …и мимо!
-	// In range: builders first, then the strongest, each only if closer than the current pick; then anything
+	// In range: builders first, then the strongest, each only if closer than the current pick; then anything.
+	// Anti-heavy: mobile first, then builders (commanders), the strongest, the nearest; not one the other anti-heavy
+	// units' ready shots will kill
+	using Rank = std::tuple<bool, bool, float, float>;
+	Rank bestRank(true, true, 0.f, std::numeric_limits<float>::max());
 	float minSqDist = sqRange;
 	float maxPower = 0.f;
 	CEnemyInfo* bestTarget = nullptr;
@@ -266,7 +279,24 @@ CEnemyInfo* CArtilleryTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 
 		const float sqDist = pos.SqDistance2D(enemy->GetPos());
 		if (sqDist < sqRange) {
-			if (!isPosSafe || (sqDist >= minSqDist) || (isSeenOnly && !enemy->IsInLOS())) {
+			if (!isPosSafe) {
+				continue;
+			}
+			if (isAntiHeavy) {
+				if ((isSeenOnly && !enemy->IsInLOS())
+					|| (GetOthersReadyDamage(enemy) > 1.1f * (enemy->GetHealth() + enemy->GetShieldPower())))
+				{
+					continue;
+				}
+				const Rank rank(!edef->IsMobile(), !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::BUILDER),
+						-edef->GetPower(), sqDist);
+				if ((bestTarget == nullptr) || (rank < bestRank)) {
+					bestRank = rank;
+					bestTarget = enemy;
+				}
+				continue;
+			}
+			if (sqDist >= minSqDist) {
 				continue;
 			}
 			if (edef->IsEnemyRoleAny(CCircuitDef::RoleMask::BUILDER)) {
@@ -307,7 +337,8 @@ void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdati
 	CCircuitUnit* unit = query->GetUnit();
 
 	if (!pPath->posPath.empty()
-		&& (manager->GetCircuit()->GetThreatMap()->GetThreatAt(unit, pPath->posPath.back()) <= THREAT_MIN))  // this unit's threat layer
+		&& IsThreatOk(unit, pPath->posPath.back(),  // this unit's threat layer
+				manager->GetCircuit()->GetThreatMap()->GetThreatAt(unit, pPath->posPath.back()), true))
 	{
 		position = pPath->posPath.back();
 		unit->GetTravelAct()->SetPath(pPath);
@@ -374,10 +405,10 @@ bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
 
 bool CArtilleryTask::IsFireSpotValid(CCircuitUnit* unit, const AIFloat3& spot)
 {
-	// Threat-free; with ally_threat on, also covered and not where the flee would fire on arrival.
-	// FillCoveredSpots applies the same rules to many cells at once with grids
+	// Threat-free (anti-heavy: or IsThreatOk); with ally_threat on, also covered and not where the flee would fire on
+	// arrival. FillCoveredSpots applies the same rules to many cells at once with grids
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (circuit->GetThreatMap()->GetThreatAt(unit, spot) > THREAT_MIN) {
+	if (!IsThreatOk(unit, spot, circuit->GetThreatMap()->GetThreatAt(unit, spot), true)) {
 		return false;
 	}
 	if (GetCfg().allyThreat < 0.f) {
@@ -416,11 +447,14 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 	const float sqFireRange = SQUARE(fireRange);
 	const int fireRad = int(fireRange / cellSize) + 1;
 
-	// Escorts: mobile ones cover a firing spot; against the flee static defences count too, as in CheckFlee
+	// Escorts: mobile ones cover a firing spot; against the flee static defences count too, as in CheckFlee.
+	// Anti-heavy: a cell with threat is fine where that cover outweighs it, up to the route cap (IsThreatOk)
 	const bool isCoverNeeded = (artyCfg.allyThreat > 0.f);
 	const float fleeMargin = GetFleeMargin(unit);
 	const bool isFleeOn = (fleeMargin >= 0.f);
-	if (isCoverNeeded || isFleeOn) {
+	const bool isThreatCover = isAntiHeavy && (artyCfg.allyThreat >= 0.f);
+	const float maxCellThreat = isThreatCover ? GetMaxPathThreat(unit) : THREAT_MIN;
+	if (isCoverNeeded || isFleeOn || isThreatCover) {
 		CollectEscorts(unit, isFleeOn);
 	} else {
 		escorts.clear();
@@ -462,11 +496,12 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 		dangers.clear();
 	}
 	const bool isFleeCheck = !dangers.empty();
+	const bool isFleeGrid = isFleeCheck || isThreatCover;
 
 	// Escort power per cell, by cell centre
-	if (isCoverNeeded || isFleeCheck) {
+	if (isCoverNeeded || isFleeGrid) {
 		coverGrid.assign(width * height, 0.f);
-		fleeCoverGrid.assign(isFleeCheck ? width * height : 0, 0.f);
+		fleeCoverGrid.assign(isFleeGrid ? width * height : 0, 0.f);
 		for (const SEscort& escort : escorts) {
 			const int ax = int(escort.pos.x) / cellSize;
 			const int az = int(escort.pos.z) / cellSize;
@@ -479,7 +514,7 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 					if (escort.isMobile) {
 						coverGrid[index] += escort.power;
 					}
-					if (isFleeCheck) {
+					if (isFleeGrid) {
 						fleeCoverGrid[index] += escort.power;
 					}
 				}
@@ -526,9 +561,14 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 					continue;
 				}
 				CTerrainManager::CorrectPosition(cellPos);
-				// Only threat-free cells the unit can reach: otherwise the nearest goal may be one that
-				// gets rejected afterwards (threat), or the search may sweep the whole map (unreachable)
-				if ((threatMap->GetThreatAt(unit, cellPos) <= THREAT_MIN) && terrainMgr->CanMoveToPos(area, cellPos)) {
+				// Only threat-free (anti-heavy: covered, within the route cap) cells the unit can reach: otherwise the
+				// nearest goal may be one that gets rejected afterwards (threat), or the search may sweep the whole map
+				// (unreachable)
+				const float cellThreat = threatMap->GetThreatAt(unit, cellPos);
+				const bool isThreatOk = (cellThreat <= THREAT_MIN)
+						|| (isThreatCover && (cellThreat <= maxCellThreat)
+							&& (fleeCoverGrid[index] - cellThreat >= artyCfg.allyThreat));
+				if (isThreatOk && terrainMgr->CanMoveToPos(area, cellPos)) {
 					firePositions.push_back(cellPos);
 				}
 			}
@@ -563,11 +603,12 @@ void CArtilleryTask::FallbackNoSpot(CCircuitUnit* unit, bool isUpdating)
 
 void CArtilleryTask::FallbackStay(CCircuitUnit* unit, bool isUpdating)
 {
-	// Stay put while the spot is threat-free and (ally_threat) still covered, otherwise move to safety.
+	// Stay put while the spot is threat-free (anti-heavy: or IsThreatOk) and (ally_threat) still covered, otherwise
+	// move to safety.
 	// Re-checked every few updates by Execute
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
-	const bool isSafe = (circuit->GetThreatMap()->GetThreatAt(unit, pos) <= THREAT_MIN);
+	const bool isSafe = IsThreatOk(unit, pos, circuit->GetThreatMap()->GetThreatAt(unit, pos), false);
 	if (isSafe && ((GetCfg().allyThreat < 0.f) || HasCover(unit, pos))) {
 		HoldHere(unit);
 	} else {
@@ -799,6 +840,7 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 	// On the way: a flee planned in the last 2 s, or a flee path still being planned (also after a moment of
 	// cover). Any other path still being planned (Execute's: it may lead towards the enemy) is replaced at once
 	ahActivity = CMilitaryManager::AhNote::FLEE;
+	SetTarget(nullptr);  // not attacking: no ready shot for the others' overkill check
 	const bool isRecentFlee = (frame < fleeFrame);
 	if ((isFleeing && isRecentFlee) || ((isFleeing || isRecentFlee) && !IsQueryReady(unit))) {
 		return true;
@@ -944,6 +986,41 @@ float CArtilleryTask::GetIgnoredThreatAt(CCircuitUnit* unit, const AIFloat3& pos
 		}
 	}
 	return threat;
+}
+
+bool CArtilleryTask::IsThreatOk(CCircuitUnit* unit, const AIFloat3& spot, float threat, bool isWalk)
+{
+	if (threat <= THREAT_MIN) {
+		return true;
+	}
+	if (!isAntiHeavy || (GetCfg().allyThreat < 0.f) || (isWalk && (threat > GetMaxPathThreat(unit)))) {
+		return false;
+	}
+	return HasCover(unit, spot, threat, true);
+}
+
+float CArtilleryTask::GetOthersReadyDamage(CEnemyInfo* enemy) const
+{
+	// Anti-heavy artillery tasks and anti-heavy squads that target it (IFighterTask::SetTarget)
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const AIFloat3& ePos = enemy->GetPos();
+	float damage = 0.f;
+	for (IFighterTask* task : enemy->GetTasks()) {
+		if ((task == this) || !((task->GetFightType() == FightType::AH)
+			|| ((task->GetFightType() == FightType::ARTY) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy())))
+		{
+			continue;
+		}
+		for (CCircuitUnit* unit : task->GetAssignees()) {
+			CCircuitDef* udef = unit->GetCircuitDef();
+			if (unit->HasWeapon() && unit->IsWeaponReady(frame)
+				&& (unit->GetPos(frame).SqDistance2D(ePos) <= SQUARE(udef->GetMaxRange())))
+			{
+				damage += udef->GetShotDamage();
+			}
+		}
+	}
+	return damage;
 }
 
 /*

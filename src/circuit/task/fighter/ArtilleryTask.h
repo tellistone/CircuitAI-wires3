@@ -20,7 +20,8 @@ namespace circuit {
  * Artillery: shoot known enemy buildings from threat-free (and covered) spots, walk to such spots, otherwise stay behind
  * the army; flee from approaching enemies. Anti-heavy mode (isAntiHeavy, CMilitaryManager::IsAhArty: Lance, Merlin):
  * the same, with the heavies and commanders anti-heavy units hunt (CAntiHeavyTask::IsQuarryFor) as targets instead
- * of buildings, see IsQuarryIgnored
+ * of buildings (mobile first, no overkill: GetOthersReadyDamage), and covered spots with threat are fine too
+ * (IsThreatOk), see IsQuarryIgnored
  */
 class CArtilleryTask: public IFighterTask {
 public:
@@ -90,6 +91,11 @@ private:
 	// counts like any other enemy, so the unit steps back after a shot
 	bool IsQuarryIgnored(CCircuitUnit* unit, CEnemyInfo* enemy);
 	float GetIgnoredThreatAt(CCircuitUnit* unit, const springai::AIFloat3& pos);  // their threat where their ring reaches
+	// A spot with this much threat is fine: threat-free, or (anti-heavy mode) our cover there, net of the threat, still
+	// reaches ally_threat, as the flee judges it. isWalk: a spot to walk to, also no more threat than the route cap
+	bool IsThreatOk(CCircuitUnit* unit, const springai::AIFloat3& spot, float threat, bool isWalk);
+	// The damage the ready shots of other anti-heavy units that target enemy and have it in range would do
+	float GetOthersReadyDamage(CEnemyInfo* enemy) const;
 
 	// Cover (ally_threat, ally_radius)
 	struct SEscort {

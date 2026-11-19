@@ -7,6 +7,7 @@
 
 #include "task/fighter/AntiHeavyTask.h"
 #include "task/fighter/AttackTask.h"
+#include "task/fighter/ArtilleryTask.h"
 #include "task/TaskManager.h"
 #include "map/ThreatMap.h"
 #include "module/AllyCover.h"
@@ -844,7 +845,10 @@ float CAntiHeavyTask::GetOthersReadyDamage(CEnemyInfo* enemy) const
 	const AIFloat3& ePos = enemy->GetPos();
 	float damage = 0.f;
 	for (IFighterTask* task : enemy->GetTasks()) {
-		if ((task == this) || (task->GetFightType() != FightType::AH)) {
+		// Anti-heavy squads, and anti-heavy units with artillery behaviour
+		if ((task == this) || !((task->GetFightType() == FightType::AH)
+			|| ((task->GetFightType() == FightType::ARTY) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy())))
+		{
 			continue;
 		}
 		for (CCircuitUnit* unit : task->GetAssignees()) {
