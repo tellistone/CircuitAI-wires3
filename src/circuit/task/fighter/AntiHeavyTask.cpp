@@ -29,6 +29,7 @@
 
 #include "AISCommands.h"
 
+#include <algorithm>
 #include <limits>
 #include <tuple>
 
@@ -318,6 +319,20 @@ CMilitaryManager::AhNote CAntiHeavyTask::GetActivity() const
 		: (State::ENGAGE == state) ? CMilitaryManager::AhNote::ENGAGE
 		: isParking ? CMilitaryManager::AhNote::PARK
 		: CMilitaryManager::AhNote::HUNT;
+}
+
+bool CAntiHeavyTask::IsAttacking() const
+{
+	if ((State::ENGAGE != state) || (target == nullptr) || (leader == nullptr)
+		|| leader->GetCircuitDef()->IsAbleToFly() || leader->GetCircuitDef()->IsRoleMine())
+	{
+		return false;
+	}
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const AIFloat3& tPos = target->GetPos();
+	return std::any_of(units.begin(), units.end(), [&](CCircuitUnit* u) {
+		return u->GetPos(frame).SqDistance2D(tPos) <= SQUARE(u->GetCircuitDef()->GetMaxRange());
+	});
 }
 
 const CMilitaryManager::SAntiHeavyCfg& CAntiHeavyTask::GetCfg() const

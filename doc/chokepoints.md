@@ -87,7 +87,7 @@ anything acts on it.
 | `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. |
 | `turret.short_choke` | `true` | **Turret picker (G), at a short choke.** A mobile ground constructor within `turret.short_choke_reach` of a short choke of our current line (as C judges it, below) orders one centred on the choke's gap. |
 | `turret.enemy_line` | `true` | **Turret picker (G), near the enemy line.** A mobile ground constructor within `turret.enemy_line_reach` of a choke of the enemy line orders one around itself. |
-| `turret.artillery` | `true` | **Turret picker (G), by our artillery.** A mobile ground constructor within `turret.artillery_reach` of our artillery shooting a target in its range, with no ground-hitting turret within `turret.artillery_defended` of it, orders one centred on the artillery. |
+| `turret.artillery` | `true` | **Turret picker (G), by our artillery.** A mobile ground constructor within `turret.artillery_reach` of our artillery shooting a target in its range, or of an engaged anti-heavy squad with a unit in range of its target (not mines or aircraft), with no ground-hitting turret within `turret.artillery_defended` of it, orders one centred on the artillery (an anti-heavy squad: its leader). |
 
 The rankings of enemy-held chokes and the enemy line's (E) feed only the overlay. They are computed when C is on,
 when `turret.short_choke` is on (which reads C's short chokes), or when the overlay is on.
@@ -441,9 +441,10 @@ once our share of the map's mexes unlocks it, at NORMAL priority:
 4. A mobile ground constructor within `turret.enemy_line_reach` of the line of a choke of the enemy line, centred
    on itself.
 5. A mobile ground constructor within `turret.artillery_reach` of our artillery (its artillery task, anti-heavy
-   included) that is shooting a target in its range and isn't fleeing, with no turret that hits ground (ours or an
+   artillery included) that is shooting a target in its range and isn't fleeing, or of an anti-heavy squad that is
+   engaged with a unit in range of its target (not mines or aircraft), with no turret that hits ground (ours or an
    ally's, finished, being built or queued; Claw mines, missiles and `turret.not_defence` left out) within
-   `turret.artillery_defended` of it, centred on the artillery.
+   `turret.artillery_defended` of it, centred on the artillery or the squad's leader.
 
 A constructor takes the first of 2 to 5 that holds for it; one that fails 2 only for allied power around may still
 take 3 to 5. 3 and 4 wait for the choke analysis, which they ask for.

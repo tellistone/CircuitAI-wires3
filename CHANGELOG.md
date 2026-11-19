@@ -27,8 +27,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `turret.short_choke_reach` (600) of a short choke of our current line, centred on the choke's gap
   (`turret.short_choke`); within `turret.enemy_line_reach` (800) of a choke of the enemy line, around itself
   (`turret.enemy_line`); or within `turret.artillery_reach` (600) of our artillery shooting a target in its range
-  with no ground-hitting turret within `turret.artillery_defended` (600) of it, centred on the artillery
-  (`turret.artillery`). All on by default. `turret.enemy_reach` goes from 600 to 700. The short-choke caller reads
+  or of an anti-heavy squad engaged with a unit in range of its target (not mines or aircraft), with no
+  ground-hitting turret within `turret.artillery_defended` (600) of it, centred on the artillery or the squad's
+  leader (`turret.artillery`). All on by default. `turret.enemy_reach` goes from 600 to 700. The short-choke caller reads
   the frontline's short chokes, so those are now computed whenever it is on; the choke callers ask for the choke
   analysis once a constructor could order.
 - **Escalation waits for game time** (`escalation.since`, default 480 s): escalation mode can't turn on before

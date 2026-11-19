@@ -48,6 +48,7 @@
 #include "task/builder/EscortTask.h"
 #include "task/fighter/SquadTask.h"
 #include "task/fighter/ArtilleryTask.h"
+#include "task/fighter/AntiHeavyTask.h"
 #include "task/builder/CombatTask.h"
 #include "task/builder/BuildChain.h"
 #include "CircuitAI.h"
@@ -2740,19 +2741,28 @@ void CBuilderManager::UpdateTurrets()
 		}
 		return -1;
 	};
-	// Artillery: ours shooting a target in its range, with no turret of ours or an ally's that hits ground (being
-	// built or queued too) within artillery_defended of it; centred on it
+	// Artillery and anti-heavy squads: ours shooting a target in range (an artillery unit; an engaged anti-heavy squad
+	// with a unit in range of its target, not mines or aircraft), with no turret of ours or an ally's that hits ground
+	// (being built or queued too) within artillery_defended of it; centred on it (an anti-heavy squad: its leader)
 	std::vector<AIFloat3> artillery;
 	if (cfg.isArtillery) {
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 		auto isGround = [](const CCircuitDef* d) { return d->HasAntiLand(); };
-		for (const IFighterTask* t : circuit->GetMilitaryManager()->GetTasks(IFighterTask::FightType::ARTY)) {
-			if (t->GetAssignees().empty() || !static_cast<const CArtilleryTask*>(t)->IsAttacking()) {
-				continue;
-			}
-			const AIFloat3& apos = (*t->GetAssignees().begin())->GetPos(frame);
+		auto add = [&](const AIFloat3& apos) {
 			AIFloat3 defencePos;
 			if (utils::is_valid(apos) && !HasTurretDefence(apos, cfg.artilleryDefended, isGround, defencePos)) {
 				artillery.push_back(apos);
+			}
+		};
+		for (const IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::ARTY)) {
+			if (!t->GetAssignees().empty() && static_cast<const CArtilleryTask*>(t)->IsAttacking()) {
+				add((*t->GetAssignees().begin())->GetPos(frame));
+			}
+		}
+		for (const IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::AH)) {
+			const CAntiHeavyTask* ah = static_cast<const CAntiHeavyTask*>(t);
+			if (ah->IsAttacking()) {
+				add(ah->GetLeader()->GetPos(frame));
 			}
 		}
 	}
