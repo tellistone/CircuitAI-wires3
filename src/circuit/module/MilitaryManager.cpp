@@ -984,6 +984,7 @@ void CMilitaryManager::ReadConfig()
 	antiHeavy.keepFrames = (keepSec < 0.f) ? std::numeric_limits<int>::max() : std::max(1, int(keepSec * FRAMES_PER_SEC));
 	antiHeavy.spacing = std::max(0.f, ahCfg.get("spacing", 150.f).asFloat());
 	antiHeavy.maxGroup = std::max(0, ahCfg.get("max_group", 2).asInt());
+	antiHeavy.isArtillery = ahCfg.get("as_artillery", false).asBool();
 
 	const Json::Value& resignCfg = root["resign"];
 	const float resignTime = resignCfg.get("time", 480.f).asFloat();  // on by default, even with an older behaviour.json
@@ -1443,6 +1444,16 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 		}
 	}
 
+	return AddFightTask(type, task);
+}
+
+IFighterTask* CMilitaryManager::EnqueueAhArty()
+{
+	return AddFightTask(IFighterTask::FightType::ARTY, new CArtilleryTask(this, true));
+}
+
+IFighterTask* CMilitaryManager::AddFightTask(IFighterTask::FightType type, IFighterTask* task)
+{
 	fightTasks[static_cast<IFighterTask::FT>(type)].insert(task);
 	fightUpdates.push_back(task);
 	return task;
@@ -3909,14 +3920,16 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	if (IsQuotaScout(cdef) && IsScoutSlotFree(cdef)) {
 		task = EnqueueTask(IFighterTask::FightType::SCOUT);
 	}
-	// While a hunt is on, new and repaired anti-heavy units join it, those with the support attribute (Lance) too
-	const bool isAhHunt = (it != types.end()) && (it->second == IFighterTask::FightType::AH)
-			&& (cdef->IsRoleMine() || IsAhHunting());
+	// While a hunt is on, new and repaired anti-heavy units join it, those with the support attribute too. Those with
+	// artillery behaviour (as_artillery: Lance, Merlin, Phantom, Racketeer) always get their own artillery task, after a free guard slot
+	const bool isAhUnit = (it != types.end()) && (it->second == IFighterTask::FightType::AH);
+	const bool isAhArty = isAhUnit && IsAhArty(cdef);
+	const bool isAhHunt = isAhUnit && !isAhArty && (cdef->IsRoleMine() || IsAhHunting());
 	if (task != nullptr) {
 		// scout picked above
 	} else if (isAhHunt) {
 		task = EnqueueAntiHeavy(unit);
-	} else if (cdef->IsRoleSupport()) {
+	} else if (cdef->IsRoleSupport() && !isAhArty) {
 		if (/*cdef->IsAttacker() && */GetTasks(IFighterTask::FightType::ATTACK).empty() && GetTasks(IFighterTask::FightType::DEFEND).empty()) {
 			task = EnqueueDefend(IFighterTask::FightType::ATTACK,
 								 IFighterTask::FightType::SUPPORT, minAttackers);
@@ -3936,7 +3949,9 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 					}
 				} break;
 				case IFighterTask::FightType::AH: {
-					task = EnqueueAttackBound(unit);  // no hunt (see above); UpdateAhPull takes it out once a heavy is seen
+					// Artillery behaviour: its own task. Else no hunt (see above): the army; UpdateAhPull takes it out
+					// once a heavy is seen
+					task = isAhArty ? EnqueueAhArty() : EnqueueAttackBound(unit);
 				} break;
 				case IFighterTask::FightType::DEFEND: {
 					task = EnqueueAttackBound(unit);  // see below
@@ -3997,8 +4012,10 @@ void CMilitaryManager::UpdateAhPull()
 		return;
 	}
 	for (CCircuitUnit* unit : army) {
-		if (circuit->GetBindedRole(unit->GetCircuitDef()->GetMainRole()) != ROLE_TYPE(AH)) {
-			continue;
+		if ((circuit->GetBindedRole(unit->GetCircuitDef()->GetMainRole()) != ROLE_TYPE(AH))
+			|| IsAhArty(unit->GetCircuitDef()))
+		{
+			continue;  // not anti-heavy, or artillery behaviour (its own task)
 		}
 		IUnitTask* task = unit->GetTask();
 		if (task->GetType() != IUnitTask::Type::FIGHTER) {
@@ -4032,12 +4049,44 @@ bool CMilitaryManager::IsQuarryWithin(CCircuitUnit* unit, float range) const
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= SQUARE(range))
-			&& CAntiHeavyTask::IsQuarryFor(cdef, enemy))
+			&& cdef->IsQuarry(enemy->GetCircuitDef()))
 		{
 			return true;
 		}
 	}
 	return false;
+}
+
+bool CMilitaryManager::IsAhArty(const CCircuitDef* cdef) const
+{
+	return antiHeavy.isArtillery && (circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(AH))
+			&& !cdef->IsAbleToFly() && !cdef->IsRoleMine() && !cdef->IsAttrMelee() && cdef->IsLongReload();
+}
+
+float CMilitaryManager::GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* skip) const
+{
+	// Anti-heavy squads and anti-heavy units with artillery behaviour that target it (IFighterTask::SetTarget):
+	// their units with a ready weapon and it in range
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& ePos = enemy->GetPos();
+	float damage = 0.f;
+	for (IFighterTask* task : enemy->GetTasks()) {
+		const IFighterTask::FightType type = task->GetFightType();
+		if ((task == skip) || !((type == IFighterTask::FightType::AH)
+			|| ((type == IFighterTask::FightType::ARTY) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy())))
+		{
+			continue;
+		}
+		for (CCircuitUnit* unit : task->GetAssignees()) {
+			CCircuitDef* udef = unit->GetCircuitDef();
+			if (unit->HasWeapon() && unit->IsWeaponReady(frame)
+				&& (unit->GetPos(frame).SqDistance2D(ePos) <= SQUARE(udef->GetMaxRange())))
+			{
+				damage += udef->GetShotDamage();
+			}
+		}
+	}
+	return damage;
 }
 
 IFighterTask* CMilitaryManager::EnqueueAntiHeavy(CCircuitUnit* unit)
@@ -4102,8 +4151,7 @@ void CMilitaryManager::UpdateAhStats()
 	// A shot: the weapon was ready a second ago and isn't now (anti-heavy reloads are long)
 	const int frame = circuit->GetLastFrame();
 	std::set<int> ready;
-	for (IFighterTask* t : GetTasks(IFighterTask::FightType::AH)) {
-		const AhNote activity = static_cast<CAntiHeavyTask*>(t)->GetActivity();
+	auto note = [this, frame, &ready](IFighterTask* t, AhNote activity) {
 		for (CCircuitUnit* unit : t->GetAssignees()) {
 			NoteAh(unit->GetCircuitDef(), activity);
 			if (unit->HasWeapon() && unit->IsWeaponReady(frame)) {
@@ -4111,6 +4159,15 @@ void CMilitaryManager::UpdateAhStats()
 			} else if (ahReady.find(unit->GetId()) != ahReady.end()) {
 				NoteAh(unit->GetCircuitDef(), AhNote::SHOT);
 			}
+		}
+	};
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::AH)) {
+		note(t, static_cast<CAntiHeavyTask*>(t)->GetActivity());
+	}
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ARTY)) {  // anti-heavy units with artillery behaviour
+		const CArtilleryTask* arty = static_cast<CArtilleryTask*>(t);
+		if (arty->IsAntiHeavy()) {
+			note(t, arty->GetAhActivity());
 		}
 	}
 	ahReady.swap(ready);

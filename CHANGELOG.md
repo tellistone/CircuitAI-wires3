@@ -656,6 +656,41 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Lance, Merlin, Phantom and Racketeer behave as artillery, with heavies as targets** (`antiheavy.as_artillery`, shipped on; missing =
+  off). Anti-heavy units on the ground with a long reload (5 s or more) that are not mines or melee units (main role
+  anti_heavy, or snipe_target and disarm_target, which `role.as` binds to it) now get
+  the artillery task (one unit each) instead of anti-heavy squads, the army or support tasks, always, not only while
+  a heavy is around. It works as artillery does (`artillery` block): shoot from where it stands when that spot is
+  safe and covered, otherwise walk to a covered safe firing spot within range, otherwise stay put while safe and
+  covered or move behind the nearest attack or defend group (`follow_dist`), and flee from enemies within their
+  range + `artillery_flee_margin` (Lance: 150, its own `artillery_flee_margin`). Differences from artillery:
+  - Its targets are the heavies and commanders anti-heavy squads hunt, mobile or not, instead of buildings, and it
+    fires only at those in LOS (radar blips are still walked to). In range: mobile first, then one its shot kills,
+    commanders, the strongest, the nearest. Out of range, it walks only to mobile heavies while any is known, and to
+    static ones (Stinger, Faraday, fusions, ...) otherwise. A target that the ready shots of other anti-heavy units targeting it would kill (over 1.1x
+    its health and shield) is left to them, so several Lances don't spend their shots on one small heavy.
+  - Safe is not only threat-free: also where our cover there (mobile armed units and static defences within
+    `ally_radius`, as the flee counts them), minus the threat there, still reaches `ally_threat`, so it shoots from
+    behind the army in a fight instead of waiting for a lone heavy. A spot to walk to also stays within the route cap
+    (`max_path_threat`).
+  - A heavy it hunts is neither a flee danger nor makes its spot unsafe to shoot from while its weapon is ready and
+    it out-ranges the heavy or the heavy is within its range; while it reloads that heavy counts like any other enemy,
+    so it steps back after a shot.
+  - No hold fire: the attack order fires at the target, and it fires at will otherwise. The attack order is cancelled
+    as soon as it no longer attacks (no target, no cover, fleeing): the engine would otherwise follow a heavy that walks
+    away, whatever the move state, and fire at it once only radar sees it.
+  - Following the army, it walks a route to its safety spot to the end instead of stopping the moment it is covered
+    again (all artillery), so it doesn't stop and start at the edge of cover.
+  - Lance retreats at 65% health, not 99%: standing under cover in fights, any hit sent it home.
+  - Going idle (after our own stop orders, or a finished attack) no longer replaces its task with a new one: it
+    decides again on the next update, keeping its route, its walk to safety and its flee timer.
+
+  These units no longer count as artillery escorts. Ultimatum, Scorpion, Widow, Skuttle and aircraft keep the
+  anti-heavy squads, whose overkill check now counts these units' ready shots too (`CMilitaryManager::GetAhReadyDamage`,
+  shared). The squads' safe-spot test takes the target's threat off as the threat map drew it
+  (`CThreatMap::GetEnemyThreatAt`), not its full threat inside its ring, so no other threat hides behind it. The ANTIHEAVY log line covers them
+  too (hunting = walking to a firing spot, parked = holding or following).
+
 - **The choke lines go round who owns the ground, armies included.** The current, enemy and front lines were cut
   between territory, which only buildings make, so our line could run through ground the enemy army held and behind
   ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
@@ -784,13 +819,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     map doesn't cover, our units around count instead. No walk-in for 30 s after a flee, nor for 15 s after no route
     to any heavy was found. With nothing to do, squads look at the way to the army every 5 s (was: every second).
   - Parking (snipers, cover map on): with nothing to attack or walk to, a squad parks at the best covered, safe spot
-    no other squad claims: a third of the range back from a group of towers, or `follow_dist` behind an attack
-    group, never within 256 of our base. Scored by cover (at most 3x `flee_ally_threat`) x recent heavy sightings
-    near it, / (1 + minutes of walking) (half at one minute, a third at two), and halved for 60 s where one of ours
-    was sent for repair; kept 30 s, then until another scores
-    1.3x more. Snipers flee to such a spot and stay. Parked, they hold position; the others stand on alternate sides of the leader.
-    Snipers hold fire while a mobile heavy is within 1.25x weapon range (and 5 s after) or is their target; the
-    attack on their target still fires.
+    no other squad claims, at the front: `follow_dist` behind an attack group (straight back or one of four side
+    slots, so several squads fit behind one group). Only when no group offers a spot, a third of the range back from
+    a group of towers. Never within 256 of our base. Scored by cover (at most 3x `flee_ally_threat`) x recent heavy
+    sightings near it, / (1 + minutes of walking) (half at one minute, a third at two), and halved for 60 s where one
+    of ours was sent for repair; kept 30 s, then until another scores 1.3x more. A spot behind a group is kept while
+    the group lives, also while it is briefly off the list (the group falls back, an enemy comes near). Parked, units
+    hold position, the others on alternate sides of the leader, and walk back only once the squad is more than
+    max(256, 2x `spacing`) from its spot.
+  - Snipers flee like the others, towards the army, and stop once out of reach; they drop their park spot and pick
+    one afresh after the flee (they no longer run back to a park spot, possibly at our base, and stay there).
+  - Snipers hold fire only while they attack a heavy (not during the LOS grace, nor while fleeing), and fire at will
+    otherwise; the attack on their target still fires.
   - Scoot: no new scoot out of the target's reach (was: out of all ground threat); parked units step back towards
     their spot.
   - An `ANTIHEAVY` log line per unit type every minute: unit-seconds hunting, parked, engaged and fleeing; shots,

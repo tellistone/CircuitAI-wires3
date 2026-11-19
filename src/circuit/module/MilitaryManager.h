@@ -73,6 +73,8 @@ public:
 	}
 
 	IFighterTask* EnqueueTask(IFighterTask::FightType type);
+	// Registers a new fight task under type for updates and GetTasks
+	IFighterTask* AddFightTask(IFighterTask::FightType type, IFighterTask* task);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType check, IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
@@ -97,6 +99,13 @@ public:
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
 	// Mines always get a new one (each lays its field somewhere else)
 	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
+	// antiheavy.as_artillery: anti-heavy units (main role) on the ground with a long reload (5 s or more), not mines or
+	// melee (Lance, Merlin, Phantom, Racketeer), use the artillery task with heavies as targets (EnqueueAhArty) instead of squads
+	bool IsAhArty(const CCircuitDef* cdef) const;
+	IFighterTask* EnqueueAhArty();
+	// Overkill check: the damage the ready shots of anti-heavy units (squads and IsAhArty) targeting enemy would do,
+	// those of task skip aside
+	float GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* skip) const;
 	// A mobile enemy heavy (enemy role, as GetEnemyCost; buildings don't count, they stay targets) in radar or LOS within
 	// the last frames (CEnemyUnit::IsRecentlySeen). The army pull starts on a fresh sighting (AH_HUNT_FRAMES), and the hunt
 	// lasts until none has been seen for antiheavy.keep_sec (IsAhHunting: squads disband, new units go to the army), so a
@@ -276,6 +285,7 @@ public:
 		int keepFrames;  // keep_sec: the hunt lasts this long after the last mobile heavy sighting (max: while one is known)
 		float spacing;  // the two units of a squad stand at least this far apart
 		int maxGroup;  // units in a squad when its type has no antiheavy_max_group; 0 = no limit
+		bool isArtillery;  // as_artillery: IsAhArty
 	};
 	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
 	struct SResignCfg {

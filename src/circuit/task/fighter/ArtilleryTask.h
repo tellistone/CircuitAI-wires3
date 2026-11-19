@@ -16,9 +16,15 @@
 
 namespace circuit {
 
+/*
+ * Artillery: shoot known enemy buildings from threat-free (and covered) spots, walk to such spots, otherwise stay behind
+ * the army; flee from approaching enemies. Anti-heavy mode (isAntiHeavy, CMilitaryManager::IsAhArty: Lance, Merlin, Phantom, Racketeer):
+ * the same, with the heavies and commanders anti-heavy units hunt (CCircuitDef::IsQuarry) as targets instead
+ * of buildings (FindHeavyTarget), and covered spots with threat are fine too (IsThreatOk), see IsQuarryIgnored
+ */
 class CArtilleryTask: public IFighterTask {
 public:
-	CArtilleryTask(ITaskManager* mgr);
+	CArtilleryTask(ITaskManager* mgr, bool isAntiHeavy = false);
 	virtual ~CArtilleryTask();
 
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;
@@ -28,7 +34,10 @@ public:
 	virtual void Start(CCircuitUnit* unit) override;
 	virtual void Update() override;
 
-	virtual void OnUnitIdle(CCircuitUnit* unit) override;
+	virtual void OnUnitIdle(CCircuitUnit* unit) override;  // zk artillery: a new task; anti-heavy mode: keeps it
+
+	bool IsAntiHeavy() const { return isAntiHeavy; }
+	CMilitaryManager::AhNote GetAhActivity() const;  // for the ANTIHEAVY log line
 
 private:
 	const CMilitaryManager::SArtilleryCfg& GetCfg() const;  // artillery block of behaviour.json
@@ -38,6 +47,8 @@ private:
 	// Shooting and walking to firing spots
 	void Execute(CCircuitUnit* unit, bool isUpdating);
 	CEnemyInfo* FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);  // in range, else fills enemyPositions
+	CEnemyInfo* FindHeavyTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);  // FindTarget, anti-heavy mode
+	void StopAttack(CCircuitUnit* unit);  // cancel our attack order, if one is live
 	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating);
 	// Walking to a firing spot: keep the route between full re-plans (every 6 s) while it's still good
 	bool IsFireRouteValid(CCircuitUnit* unit, float range);
@@ -68,12 +79,21 @@ private:
 		float threat;
 	};
 	bool CheckFlee(CCircuitUnit* unit);  // true while fleeing
-	// Fills dangers: flee zones (IsGroundDanger, reach = weapon range + margin) that touch the x/z rectangle
-	void CollectDangers(float margin, const springai::AIFloat3& minPos, const springai::AIFloat3& maxPos);
+	// Fills dangers: flee zones (IsGroundDanger, reach = weapon range + margin) that touch the x/z rectangle;
+	// not the heavies IsQuarryIgnored passes
+	void CollectDangers(CCircuitUnit* unit, float margin, const springai::AIFloat3& minPos, const springai::AIFloat3& maxPos);
 	// The nearest flee zone in dangers that reaches pos, nullptr if none; outThreat: all of them that reach it
 	static const SDanger* FindDanger(const springai::AIFloat3& pos, float& outThreat);
 	void Flee(CCircuitUnit* unit, const springai::AIFloat3& dangerPos);
 	void ApplyFleePath(const CQueryPathSingle* query);
+
+	// Anti-heavy mode. A heavy we hunt is no danger (flee, firing spots) and its threat doesn't make where we stand
+	// unsafe to shoot from while our weapon is ready and we out-range it or it is within our range. While we reload it
+	// counts like any other enemy, so the unit steps back after a shot
+	bool IsQuarryIgnored(CCircuitUnit* unit, CEnemyInfo* enemy);
+	// A spot with this much threat is fine: threat-free, or (anti-heavy mode) our cover there, net of the threat, still
+	// reaches ally_threat, as the flee judges it. isWalk: a spot to walk to, also no more threat than the route cap
+	bool IsThreatOk(CCircuitUnit* unit, const springai::AIFloat3& spot, float threat, bool isWalk);
 
 	// Cover (ally_threat, ally_radius)
 	struct SEscort {
@@ -81,7 +101,7 @@ private:
 		float power;
 		bool isMobile;  // only mobile escorts cover a firing spot; static defences only count against the flee
 	};
-	static bool IsEscort(CCircuitUnit* unit, CAllyUnit* ally, bool isFlee);  // isFlee: static defences count too
+	bool IsEscort(CCircuitUnit* unit, CAllyUnit* ally, bool isFlee) const;  // isFlee: static defences count too
 	void CollectEscorts(CCircuitUnit* unit, bool isFlee);  // fills escorts
 	// Escort power near spot, net of enemyThreat, reaches ally_threat
 	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot, float enemyThreat = 0.f, bool isFlee = false);
@@ -90,10 +110,15 @@ private:
 	int replanFrame = 0;  // re-plan that route in full after this frame
 	bool isFleeing = false;
 	int fleeFrame = 0;  // re-plan the flee after this frame
+	const bool isAntiHeavy;  // heavies instead of buildings
+	bool isAttacking = false;  // our attack order is live (StopAttack)
+	std::shared_ptr<PathInfo> safePath;  // route to the current safety spot (FallbackStay walks it to the end)
 
 	// Scratch shared by all artillery tasks (micro-opt, as IFighterTask::enemyPositions)
 	static F3Vec safePositions;
 	static F3Vec firePositions;  // covered firing cells
+	static F3Vec staticPositions;  // FindHeavyTarget: static heavies to walk to, used only while no mobile one is known
+	static std::vector<CEnemyInfo*> candidates;  // FindHeavyTarget: heavies in range
 	static std::vector<SEscort> escorts;
 	static std::vector<SDanger> dangers;
 	static std::vector<float> coverGrid;  // FillCoveredSpots: mobile escort power per cell of the escorts' area
