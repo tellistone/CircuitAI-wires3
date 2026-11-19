@@ -97,8 +97,15 @@ void CBDefenceTask::Cancel()
 void CBDefenceTask::SetTarget(CCircuitUnit* unit)
 {
 	IBuilderTask::SetTarget(unit);
-	if (isOffPoints && (unit != nullptr)) {
-		manager->GetCircuit()->GetMilitaryManager()->AddOffPointsTower(unit->GetId());
+	if (unit == nullptr) {
+		return;
+	}
+	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	if (isOffPoints) {
+		militaryMgr->AddOffPointsTower(unit->GetId());
+	}
+	if (charged > 0.f) {
+		militaryMgr->AddChargedTower(unit->GetId(), charged);  // porcupine.budget.loss_refund
 	}
 }
 

@@ -74,8 +74,12 @@ public:
 	springai::AIFloat3 GetClosestHaven(const springai::AIFloat3& position) const;
 
 	CRecruitTask* UpdateBuildPower(CCircuitUnit* unit);
-	// Any of the economy.json constructor rules asks for one more (buildDef from its factory at pos)
-	bool IsBuilderNeeded(CCircuitDef* buildDef, const springai::AIFloat3& pos) const;
+	// Why a constructor was queued, for the once-a-minute BUILDERS log line
+	enum class BuilderWhy: int {INCOME = 0, ARMY, RECLAIM, ROLL, OPENER, _SIZE_};
+	void CountBuilder(BuilderWhy why) { ++builderCounts[static_cast<int>(why)]; }
+	// Any of the economy.json constructor rules asks for one more (buildDef from its factory at pos); outWhy: the
+	// first rule that asked
+	bool IsBuilderNeeded(CCircuitDef* buildDef, const springai::AIFloat3& pos, BuilderWhy* outWhy = nullptr) const;
 	CRecruitTask* UpdateFirePower(CCircuitUnit* unit);
 	// While paused for escalation (CBuilderManager::IsEscalationBusy): anti-air the response wants (RoleProbability),
 	// one at a time, queued as RecruitType::AA, which the pause lets through
@@ -168,6 +172,11 @@ private:
 	SBuilderRatio bpArmy;  // to the mobile army's metal value
 	SBuilderRatio bpReclaim;  // to the reclaim a factory's constructor can safely reach
 	float reWeight;
+	// BUILDERS log: constructors queued since the last line, by BuilderWhy; the last reclaim the rule saw
+	int builderCounts[static_cast<int>(BuilderWhy::_SIZE_)] = {};
+	int builderLogFrame = -1;
+	mutable float lastReclaim = -1.f;
+	void LogBuilders();
 };
 
 } // namespace circuit
