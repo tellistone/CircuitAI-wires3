@@ -64,7 +64,9 @@ void CFrontline::Update()
 {
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CChokeMap::SConfig& config = chokeMap->GetConfig();
-	if (!chokeMap->IsReady() || !(config.isHold || chokeMap->GetOverlay()->IsOn())) {
+	// C feeds the turret picker's short-choke caller too
+	const bool isShortCaller = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().isShortChoke;
+	if (!chokeMap->IsReady() || !(config.isHold || isShortCaller || chokeMap->GetOverlay()->IsOn())) {
 		holds.clear();
 		return;
 	}
@@ -80,7 +82,9 @@ void CFrontline::Update()
 					enemy->GetCost()});
 		}
 	}
-	UpdateRanks(armed);
+	if (chokeMap->GetOverlay()->IsOn()) {
+		UpdateRanks(armed);  // only the overlay reads them
+	}
 	UpdateFront(armed);
 	UpdateHolds();
 	Fortify();

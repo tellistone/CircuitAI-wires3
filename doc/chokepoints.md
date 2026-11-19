@@ -3,12 +3,13 @@
 CircuitAI can learn the shape of each map: which gaps in the terrain are chokes, which mex clusters sit behind which
 chokes, where the enemy is likely to walk, and how open the map is. Several features use that to place towers, radar
 and the army. Every choke feature is off by default, so with them off the AI places towers, radar and the army as
-it did before. The exception is the turret picker's two callers (`turret.after_flee`, `turret.near_enemy`), which are
-on: they add light turrets for constructors in the field, and read the analysis for it. The `choke_overlay` chat
+it did before. The exception is the turret picker's callers (`turret.after_flee`, `turret.near_enemy`, `turret.short_choke`,
+`turret.enemy_line`, `turret.artillery`), which are on: they add light turrets for constructors in the field, and read the analysis for it. The `choke_overlay` chat
 command draws what the AI found, so you can check a map before you turn anything on.
 
 The analysis is shared by allied AIs and runs on the area worker thread. It is built only when a feature reads it,
-when `choke_overlay` asks for it, or when the turret picker's first order comes (which waits up to 10 s for it).
+when `choke_overlay` asks for it, when the turret picker's first order comes (which waits up to 10 s for it), or,
+with `turret.short_choke` or `turret.enemy_line` on, once a constructor could order a turret.
 
 ## The analysis
 
@@ -84,9 +85,11 @@ choke waits 20 s before anything acts on it.
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
 | `turret.after_flee` | `true` | **Turret picker (G), after a flee.** A constructor whose flee from nearby enemies ends clear or covered orders a light turret where the flee started. |
 | `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. |
+| `turret.short_choke` | `true` | **Turret picker (G), at a short choke.** A mobile ground constructor within `turret.short_choke_reach` of a short choke of our current line (as C judges it, below) orders one centred on the choke's gap. Only defensible chokes, settled and with no enemy artillery on them, as for C. |
+| `turret.enemy_line` | `true` | **Turret picker (G), near the enemy line.** A mobile ground constructor within `turret.enemy_line_reach` of a choke of the enemy line orders one centred on the choke's gap. The same chokes as `turret.short_choke`. |
+| `turret.artillery` | `true` | **Turret picker (G), by our artillery.** A mobile ground constructor within `turret.artillery_reach` of our artillery shooting a target in its range, or of an engaged anti-heavy squad with a unit in range of its target (not mines or aircraft), with no ground-hitting turret within `turret.defended_radius` of it, orders one centred on the artillery (an anti-heavy squad: its leader). Anti-heavy squads and anti-heavy artillery count only against a building. |
 
-The rankings of enemy-held chokes and the enemy line's (E) feed only the overlay. They are computed when C is on, or
-when the overlay is on.
+The rankings of enemy-held chokes and the enemy line's (E) feed only the overlay. They are computed only while the overlay is on.
 
 ## Tuning keys
 
@@ -144,10 +147,14 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.choke_depth` | `1.0` | C × (1 − this × the choke's distance ÷ range). At 1, a choke is worth all of its C right under the turret and nothing at the edge of its range; at 0, the same anywhere in range. A tower covering the choke halves its C for the next by as much: fully when it stands on it, by a quarter when the choke is halfway out at 1. |
 | `turret.not_defence` | `["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"]` | Armed statics that defend nothing in the field: Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity and the Antinuke. They never cover a target, and the callers don't count them as a defence or as allied power. Claw mines and missiles are left out the same way, by their `mobilebuilding` mark. |
 | `turret.after_flee_since` | `0` | Seconds of game time before the after-flee caller starts. |
-| `turret.defended_radius` | `600` | After a flee, a defence this near where it started means no turret. |
+| `turret.defended_radius` | `600` | A defence this near where a flee started means no after-flee turret; a ground-hitting one (ours or an ally's, finished, being built or queued) this near our artillery means no artillery turret. |
 | `turret.light` | `["turretlaser", "turretmissile"]` | The light turrets both callers may build: Lotus and Picket. |
 | `turret.tiers` | `[{"mex": 0.4, "defs": ["turretriot", "turretgauss"]}, {"mex": 0.55, "defs": ["turretheavylaser"]}]` | Heavier turrets, by map control. A tier is unlocked once our ally team's finished mexes hold `mex` of the map's metal spots: Stardust and Gauss at 40%, HLT at 55%. An order tries the heaviest unlocked tier first and builds from it if any of its defs has a spot worth its cost; otherwise it drops a tier, down to `turret.light`. Within a tier the most value per metal wins. |
-| `turret.enemy_reach` | `600` | Distance to a known enemy building that starts the near-enemy caller. |
+| `turret.enemy_reach` | `700` | Distance to a known enemy building that starts the near-enemy caller. |
+| `turret.short_choke_reach` | `600` | Distance from a short choke's line that starts the short-choke caller. |
+| `turret.enemy_line_reach` | `800` | Distance from an enemy line choke's line that starts the enemy-line caller. |
+| `turret.enemy_line_budget` | `0.5` | An order at a choke of the enemy line (taken by either choke caller) needs only this × the dearest def's cost in the turret account; 0 to 1, 0 = never refused. The turret is still charged its full cost, which may take the account below zero, ahead of every other spender. |
+| `turret.artillery_reach` | `600` | Distance to our attacking artillery that starts the artillery caller. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
 | `turret.share` | — | Removed: the picker spends from the turret account, `porcupine.budget` in build_chain.json. `choke_overlay set turret.share` sets the account's share. |
@@ -419,7 +426,7 @@ does, so the next order looks elsewhere. Picker and cornered towers
 (`MakeCommDefence`) stay out of the defence points' counts, so a forward picker turret dying doesn't make the porc
 sweep rebuild a home tower.
 
-**Callers.** One update a second runs both, each turret from `turret.light`, or a heavier tier of `turret.tiers`
+**Callers.** One update a second runs them, each turret from `turret.light`, or a heavier tier of `turret.tiers`
 once our share of the map's mexes unlocks it, at NORMAL priority:
 
 1. After a flee that ends clear or covered, centred where the flee started, with only the light defs that hit what
@@ -432,6 +439,25 @@ once our share of the map's mexes unlocks it, at NORMAL priority:
    missile) within `turret.enemy_reach`, and no armed ally (a mobile or a finished tower, its own power, Claw mines,
    missiles and `turret.not_defence` left out) within `turret.ally_radius`, centred on itself. A finished picker
    turret counts as allied power, so it stops once its turret stands.
+3. A mobile ground constructor within `turret.short_choke_reach` of the line of a short choke of our current line
+   (our towers that hit ground don't cover all of its gap, or are short of 1.2 × the enemy army outside it: C's
+   reading, every 10 s), centred on the choke's gap.
+4. A mobile ground constructor within `turret.enemy_line_reach` of the line of a choke of the enemy line, centred
+   on the choke's gap.
+
+   3 and 4 take only defensible chokes (`choke.defensible`: a gap towers can close), settled for 20 s since a
+   rebuild and with no enemy artillery seen in range of them in the last 5 minutes, the chokes C counts; the nearest
+   in reach.
+5. A mobile ground constructor within `turret.artillery_reach` of our artillery (its artillery task, anti-heavy
+   artillery included) that is shooting a target in its range and isn't fleeing, or of an anti-heavy squad that is
+   engaged with a unit in range of its target (not mines or aircraft), with no turret that hits ground (ours or an
+   ally's, finished, being built or queued; Claw mines, missiles and `turret.not_defence` left out) within
+   `turret.defended_radius` of it, centred on the artillery or the squad's leader. Anti-heavy squads and anti-heavy
+   artillery count only while their target is a building: a fight with a mobile heavy is over before a turret is up.
+
+A constructor takes the first of 2 to 5 that holds for it; one that fails 2 only for allied power around may still
+take 3 to 5. 3 and 4 wait for the choke analysis, which they ask for. In 3 to 5, centred away from the
+constructor, it helps only a job within `turret.radius` of itself too.
 
 Gates, in order: the caller's switch; the constructor isn't player-led, retreating, fighting, morphing, on a
 defence job or on a HIGH or NOW one; its `turret.cooldown`; metal isn't stalling; the trigger; a light def it can
