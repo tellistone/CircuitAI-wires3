@@ -153,7 +153,8 @@ public:
 	/*
 	 * porcupine.budget: one turret account for every armed defence the AI queues (CTurretPicker::IsDefence: no
 	 * shields, storages, caretakers, radars, Claw mines, missiles or turret.not_defence statics), but preventive ones.
-	 * It fills at share x avg metal income x min(economy ms_pull, 1), up to bank_sec seconds of that (or the dearest
+	 * It fills at share x avg metal income x min(economy ms_pull, 1) x map x mex (curves of map area per player and
+	 * of ally mex share), up to bank_sec seconds of that (or the dearest
 	 * tower a waiting spender asked for in the last 2 minutes). Every armed DEFENCE job is charged as it is queued
 	 * (CBuilderManager::AddTask), by the spender a TurretScope names (OTHER when none does), and refunded if it is
 	 * called off before it starts. Porc (porc-mode towers of a cluster or its chokes) and the picker wait for the
@@ -833,7 +834,13 @@ private:
 	struct STurretBudget {
 		float share = 0.1f;
 		float bankSec = 60.f;
-		float lossRefund = 2.f;  // x the cost of a finished turret of ours that dies
+		float lossRefund = 2.f;  // x the charge of a finished turret of ours that dies
+		float mapX = 0.f;  // map area in 512-elmo squares / players on our team
+		float mapMult = 1.f;  // budget.map at mapX, fixed for the game
+		std::vector<std::pair<float, float>> mexCurve;  // budget.mex: x = ally-team finished mexes / all spots
+		float mexMult = 1.f;  // budget.mex now, refreshed every 10 s
+		float mexX = 0.f;
+		int mexFrame = -1;
 		float lost = 0.f;  // since the last log line: what the lost turrets cost, and what they paid back
 		float lossPaid = 0.f;
 		float balance = 0.f;

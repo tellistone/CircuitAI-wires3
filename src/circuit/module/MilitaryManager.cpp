@@ -1076,8 +1076,16 @@ void CMilitaryManager::ReadConfig()
 	tb.share = std::max(budget.get("share", tb.share).asFloat(), 0.f);
 	tb.bankSec = std::max(budget.get("bank_sec", tb.bankSec).asFloat(), 1.f);
 	tb.lossRefund = std::max(budget.get("loss_refund", tb.lossRefund).asFloat(), 0.f);
-	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1), bank %.0f s, loss refund x%.1f",
-			tb.share, tb.bankSec, tb.lossRefund);
+	// Missing or [] = x1
+	std::vector<std::pair<float, float>> budgetMap;
+	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);
+	ReadCurve(budget["mex"], "porcupine.budget.mex", "mex share", tb.mexCurve);
+	tb.mapX = mapSize / std::max(teamSize, 1.f);
+	tb.mapMult = utils::eval_curve(budgetMap, tb.mapX);
+	tb.mexMult = utils::eval_curve(tb.mexCurve, 0.f);
+	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1) x map %.2f (%.0f per player on our team)"
+			" x mex curve (%u points), bank %.0f s, loss refund x%.1f",
+			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), tb.bankSec, tb.lossRefund);
 
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
@@ -2052,7 +2060,16 @@ void CMilitaryManager::UpdateTurretBudget()
 	const int frame = circuit->GetLastFrame();
 	CEconomyManager* em = circuit->GetEconomyManager();
 	const float pull = std::min(em->GetPullMtoS(), 1.f);
-	const float rate = b.share * em->GetAvgMetalIncome() * pull;  // metal/s
+	// budget.mex: ally-team finished mexes over all metal spots, as prevent_mex (MarkAllyMexes walks every spot)
+	if (!b.mexCurve.empty() && (frame >= b.mexFrame)) {
+		b.mexFrame = frame + FRAMES_PER_SEC * 10;
+		CMetalManager* mm = circuit->GetMetalManager();
+		mm->MarkAllyMexes();
+		const size_t spotCount = mm->GetSpots().size();
+		b.mexX = (spotCount > 0) ? float(mm->GetMexCount()) / spotCount : 0.f;
+		b.mexMult = utils::eval_curve(b.mexCurve, b.mexX);
+	}
+	const float rate = b.share * em->GetAvgMetalIncome() * pull * b.mapMult * b.mexMult;  // metal/s
 	if ((b.askFrame >= 0) && (frame - b.askFrame > FRAMES_PER_SEC * 120)) {
 		b.askCost = 0.f;  // nobody waiting asked lately
 		b.askFrame = -1;
@@ -2079,8 +2096,9 @@ void CMilitaryManager::UpdateTurretBudget()
 			}
 			b.spent[i] = 0.f;
 		}
-		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f), last minute charged %.0f,"
-				" refunded %.0f, lost %.0f (paid back %.0f): %s", b.balance, rate, b.share, em->GetAvgMetalIncome(), pull,
+		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f x map %.2f x mex %.2f (%.0f%%)),"
+				" last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f): %s", b.balance, rate, b.share,
+				em->GetAvgMetalIncome(), pull, b.mapMult, b.mexMult, b.mexX * 100.f,
 				total, b.refunded, b.lost, b.lossPaid, spent.empty() ? "nothing" : spent.c_str());
 		b.refunded = b.lost = b.lossPaid = 0.f;
 	}

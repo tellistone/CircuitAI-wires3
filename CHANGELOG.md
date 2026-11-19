@@ -21,6 +21,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Turret budget multipliers by map size and map control** (`porcupine.budget.map`, `porcupine.budget.mex`): the
+  account's fill rate (and so its bank cap) is also multiplied by a curve of map area per player on our team (as
+  `prevent_map`, fixed for the game; default `[[64, 1.00], [256, 0.66]]`) and a curve of the ally team's share of
+  metal spots with finished mexes (as `prevent_mex`, every 10 s; default flat x1). Missing or [] = x1. TURRET BUDGET
+  lines show both.
 - **BUILDERS log line, once a minute**: the constructors queued in the last minute by the rule that asked (income,
   army, reclaim, a factory's tier-weight roll, the opener), and where each rule stands now (workers and their metal,
   build power against income x buildpower, army x buildpower_army, reclaim x buildpower_reclaim).
