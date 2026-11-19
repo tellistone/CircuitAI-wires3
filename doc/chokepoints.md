@@ -86,7 +86,7 @@ anything acts on it.
 | `turret.after_flee` | `true` | **Turret picker (G), after a flee.** A constructor whose flee from nearby enemies ends clear or covered orders a light turret where the flee started. |
 | `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. |
 | `turret.short_choke` | `true` | **Turret picker (G), at a short choke.** A mobile ground constructor within `turret.short_choke_reach` of a short choke of our current line (as C judges it, below) orders one centred on the choke's gap. |
-| `turret.enemy_line` | `true` | **Turret picker (G), near the enemy line.** A mobile ground constructor within `turret.enemy_line_reach` of a choke of the enemy line orders one around itself. |
+| `turret.enemy_line` | `true` | **Turret picker (G), near the enemy line.** A mobile ground constructor within `turret.enemy_line_reach` of a choke of the enemy line orders one centred on the choke's gap. |
 | `turret.artillery` | `true` | **Turret picker (G), by our artillery.** A mobile ground constructor within `turret.artillery_reach` of our artillery shooting a target in its range, or of an engaged anti-heavy squad with a unit in range of its target (not mines or aircraft), with no ground-hitting turret within `turret.artillery_defended` of it, orders one centred on the artillery (an anti-heavy squad: its leader). |
 
 The rankings of enemy-held chokes and the enemy line's (E) feed only the overlay. They are computed when C is on,
@@ -439,7 +439,7 @@ once our share of the map's mexes unlocks it, at NORMAL priority:
    (our towers that hit ground don't cover all of its gap, or are short of 1.2 × the enemy army outside it: C's
    reading, every 10 s), centred on the choke's gap.
 4. A mobile ground constructor within `turret.enemy_line_reach` of the line of a choke of the enemy line, centred
-   on itself.
+   on the choke's gap.
 5. A mobile ground constructor within `turret.artillery_reach` of our artillery (its artillery task, anti-heavy
    artillery included) that is shooting a target in its range and isn't fleeing, or of an anti-heavy squad that is
    engaged with a unit in range of its target (not mines or aircraft), with no turret that hits ground (ours or an

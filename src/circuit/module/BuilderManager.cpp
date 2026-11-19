@@ -2713,8 +2713,8 @@ void CBuilderManager::UpdateTurrets()
 		return d->IsMobile() || picker->IsDefence(d);
 	};
 	// Short choke: one of our current line our ground-hitting towers don't cover all of, or that are short of the
-	// enemy army outside it (CFrontline, every 10 s), within short_choke_reach of its line; centred on its gap.
-	// Enemy line: a choke of it within enemy_line_reach of its line; centred on the constructor
+	// enemy army outside it (CFrontline, every 10 s), within short_choke_reach of its line. Enemy line: a choke of it
+	// within enemy_line_reach of its line. Both centred on the choke's gap
 	CChokeMap* chokeMap = circuit->GetChokeMap();
 	const std::vector<CRegionGraph::SChoke>* chokes = nullptr;
 	std::vector<int> shortChokes;
@@ -2733,13 +2733,16 @@ void CBuilderManager::UpdateTurrets()
 			}
 		}
 	}
-	auto nearChoke = [&](const std::vector<int>& list, const AIFloat3& pos, float reach) {
+	auto nearChoke = [&](const std::vector<int>& list, const AIFloat3& pos, float reach) {  // the nearest in reach
+		int best = -1;
 		for (int c : list) {
-			if (chokeMap->GetGraph().GetLineDist((*chokes)[c], pos.x, pos.z) <= reach) {
-				return c;
+			const float dist = chokeMap->GetGraph().GetLineDist((*chokes)[c], pos.x, pos.z);
+			if (dist <= reach) {
+				best = c;
+				reach = dist;
 			}
 		}
-		return -1;
+		return best;
 	};
 	// Artillery and anti-heavy squads: ours shooting a target in range (an artillery unit; an engaged anti-heavy squad
 	// with a unit in range of its target, not mines or aircraft), with no turret of ours or an ally's that hits ground
@@ -2785,8 +2788,10 @@ void CBuilderManager::UpdateTurrets()
 			TryTurret(unit, chokeMap->GetCellPos((*chokes)[shortChoke].centre), nullptr, false, "short choke", isOrdered);
 			continue;
 		}
-		if ((chokes != nullptr) && cfg.isEnemyLine && (nearChoke(chokeMap->GetEnemyLine(), pos, cfg.enemyLineReach) >= 0)) {
-			TryTurret(unit, pos, nullptr, false, "enemy line", isOrdered);
+		const int lineChoke = ((chokes != nullptr) && cfg.isEnemyLine)
+				? nearChoke(chokeMap->GetEnemyLine(), pos, cfg.enemyLineReach) : -1;
+		if (lineChoke >= 0) {
+			TryTurret(unit, chokeMap->GetCellPos((*chokes)[lineChoke].centre), nullptr, false, "enemy line", isOrdered);
 			continue;
 		}
 		auto arty = std::find_if(artillery.begin(), artillery.end(), [&](const AIFloat3& a) {
