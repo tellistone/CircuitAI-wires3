@@ -1076,8 +1076,16 @@ void CMilitaryManager::ReadConfig()
 	tb.share = std::max(budget.get("share", tb.share).asFloat(), 0.f);
 	tb.bankSec = std::max(budget.get("bank_sec", tb.bankSec).asFloat(), 1.f);
 	tb.lossRefund = std::max(budget.get("loss_refund", tb.lossRefund).asFloat(), 0.f);
-	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1), bank %.0f s, loss refund x%.1f",
-			tb.share, tb.bankSec, tb.lossRefund);
+	// Missing or [] = x1
+	std::vector<std::pair<float, float>> budgetMap;
+	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);
+	ReadCurve(budget["mex"], "porcupine.budget.mex", "mex share", tb.mexCurve);
+	tb.mapX = mapSize / std::max(teamSize, 1.f);
+	tb.mapMult = utils::eval_curve(budgetMap, tb.mapX);
+	tb.mexMult = utils::eval_curve(tb.mexCurve, 0.f);
+	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1) x map %.2f (%.0f per player on our team)"
+			" x mex curve (%u points), bank %.0f s, loss refund x%.1f",
+			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), tb.bankSec, tb.lossRefund);
 
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
@@ -1341,16 +1349,23 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
 	scoutStints.erase(unit->GetId());  // ids get reused
-	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays its
-	// rebuild back. Captures and the garbage path have no attacker
+	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays back
+	// loss_refund x what the account charged for it, so a lost position can be rebuilt. Free (preventive) towers
+	// were never charged and pay nothing: they used to pay 2x their cost into the account, past its cap.
+	// Captures and the garbage path have no attacker
+	float charged = 0.f;
+	auto chargedIt = chargedTowers.find(unit->GetId());
+	if (chargedIt != chargedTowers.end()) {
+		charged = chargedIt->second;
+		chargedTowers.erase(chargedIt);
+	}
 	const CCircuitDef* tdef = unit->GetCircuitDef();
 	if (turretPicker->IsDefence(tdef) && !unit->GetUnit()->IsBeingBuilt()) {
-		const float cost = tdef->GetCostM();
-		turretBudget.lost += cost;
+		turretBudget.lost += tdef->GetCostM();
 		const CCircuitDef* kdef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
-		if ((kdef != nullptr) && CanFightBack(tdef, kdef)) {
-			turretBudget.balance += turretBudget.lossRefund * cost;
-			turretBudget.lossPaid += turretBudget.lossRefund * cost;
+		if ((charged > 0.f) && (kdef != nullptr) && CanFightBack(tdef, kdef)) {
+			turretBudget.balance += turretBudget.lossRefund * charged;
+			turretBudget.lossPaid += turretBudget.lossRefund * charged;
 		}
 	}
 
@@ -1963,7 +1978,24 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	const bool isSpot = chokeMap->GetConfig().isSpot && chokeMap->IsReady() && !closestPoint->isGeo;
 	CSpotScorer::SGoal clusterGoal;
 	clusterGoal.asset = closestPoint->position;
-	QueueTowers(closestPoint, plan.clusterList, maxCost, isPorc, isSpot ? &clusterGoal : nullptr);
+	// Preventive towers: the roll is the cluster's total over its mex points (towers of porc mode count too), not
+	// each point's. Asked once per finished mex, sighting and sweep visit, every point of a cluster got the count
+	float clusterCap = maxCost;
+	if (!isPorc && !closestPoint->isGeo) {
+		float clusterCost = 0.f;
+		for (const CDefenceMatrix::SDefPoint& p : points) {
+			if (!p.isGeo) {
+				clusterCost += p.cost;
+			}
+		}
+		float preventCost = 0.f;
+		for (const CCircuitDef* d : picked) {
+			preventCost += d->GetCostM();
+		}
+		// QueueTowers stops at a tower that brings the point's list total to the cap: + 1 lets one that just fills it go
+		clusterCap = std::min(maxCost, closestPoint->cost + std::max(preventCost - clusterCost, 0.f) + 1.f);
+	}
+	QueueTowers(closestPoint, plan.clusterList, clusterCap, isPorc, isSpot ? &clusterGoal : nullptr);
 	// NOTE: The chain abort above leaves a choke's chain: other points of the pocket may still be in porc mode
 	if (plan.chokePoint != nullptr) {
 		CSpotScorer::SGoal chokeGoal;
@@ -2028,7 +2060,16 @@ void CMilitaryManager::UpdateTurretBudget()
 	const int frame = circuit->GetLastFrame();
 	CEconomyManager* em = circuit->GetEconomyManager();
 	const float pull = std::min(em->GetPullMtoS(), 1.f);
-	const float rate = b.share * em->GetAvgMetalIncome() * pull;  // metal/s
+	// budget.mex: ally-team finished mexes over all metal spots, as prevent_mex (MarkAllyMexes walks every spot)
+	if (!b.mexCurve.empty() && (frame >= b.mexFrame)) {
+		b.mexFrame = frame + FRAMES_PER_SEC * 10;
+		CMetalManager* mm = circuit->GetMetalManager();
+		mm->MarkAllyMexes();
+		const size_t spotCount = mm->GetSpots().size();
+		b.mexX = (spotCount > 0) ? float(mm->GetMexCount()) / spotCount : 0.f;
+		b.mexMult = utils::eval_curve(b.mexCurve, b.mexX);
+	}
+	const float rate = b.share * em->GetAvgMetalIncome() * pull * b.mapMult * b.mexMult;  // metal/s
 	if ((b.askFrame >= 0) && (frame - b.askFrame > FRAMES_PER_SEC * 120)) {
 		b.askCost = 0.f;  // nobody waiting asked lately
 		b.askFrame = -1;
@@ -2055,8 +2096,9 @@ void CMilitaryManager::UpdateTurretBudget()
 			}
 			b.spent[i] = 0.f;
 		}
-		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f), last minute charged %.0f,"
-				" refunded %.0f, lost %.0f (paid back %.0f): %s", b.balance, rate, b.share, em->GetAvgMetalIncome(), pull,
+		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f x map %.2f x mex %.2f (%.0f%%)),"
+				" last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f): %s", b.balance, rate, b.share,
+				em->GetAvgMetalIncome(), pull, b.mapMult, b.mexMult, b.mexX * 100.f,
 				total, b.refunded, b.lost, b.lossPaid, spent.empty() ? "nothing" : spent.c_str());
 		b.refunded = b.lost = b.lossPaid = 0.f;
 	}
@@ -2327,7 +2369,12 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	const float mexMult = utils::eval_curve(prevent.mexCurve, mexX);
 	const float chance = prevent.base * prevent.mapMult * mexMult;
 	const float whole = std::floor(chance);
-	const float dice = (float)rand() / ((float)RAND_MAX + 1.f);  // [0, 1)
+	// One throw per cluster: fresh dice on every re-roll and sighting, with towers never called off, gave nearly
+	// every cluster the best of many throws
+	if (roll.dice < 0.f) {
+		roll.dice = (float)rand() / ((float)RAND_MAX + 1.f);  // [0, 1)
+	}
+	const float dice = roll.dice;
 	int count = std::min(int(whole) + ((dice < chance - whole) ? 1 : 0), 64);
 	const int prevCount = roll.count;
 	if ((sightDef != nullptr) && !isFirst) {
@@ -2337,9 +2384,9 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	roll.rollFrame = frame;
 
 	const char* why = (sightDef != nullptr) ? "sight" : isFirst ? "first" : "timer";
-	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f -> %i (was %i)%s",
+	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f, dice %.2f -> %i (was %i)%s",
 			cluster, why, (sightDef != nullptr) ? " " : "", (sightDef != nullptr) ? sightDef->GetDef()->GetName() : "",
-			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, count, prevCount,
+			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, dice, count, prevCount,
 			outIsAir ? ", air: first slot is prevent_air" : "");
 	return count;
 }

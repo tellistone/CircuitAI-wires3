@@ -153,13 +153,14 @@ public:
 	/*
 	 * porcupine.budget: one turret account for every armed defence the AI queues (CTurretPicker::IsDefence: no
 	 * shields, storages, caretakers, radars, Claw mines, missiles or turret.not_defence statics), but preventive ones.
-	 * It fills at share x avg metal income x min(economy ms_pull, 1), up to bank_sec seconds of that (or the dearest
+	 * It fills at share x avg metal income x min(economy ms_pull, 1) x map x mex (curves of map area per player and
+	 * of ally mex share), up to bank_sec seconds of that (or the dearest
 	 * tower a waiting spender asked for in the last 2 minutes). Every armed DEFENCE job is charged as it is queued
 	 * (CBuilderManager::AddTask), by the spender a TurretScope names (OTHER when none does), and refunded if it is
 	 * called off before it starts. Porc (porc-mode towers of a cluster or its chokes) and the picker wait for the
 	 * balance to cover a tower (CanAffordTurret); the rest are charged but never refused and may take it below zero.
 	 * Preventive towers (a cluster outside porc mode) are free, and only logged. A finished armed defence of ours that
-	 * dies to a known mobile killer that doesn't outrange it (CanFightBack) pays loss_refund x its cost back, past the
+	 * dies to a known mobile killer that doesn't outrange it (CanFightBack) pays loss_refund x its charge back, past the
 	 * cap if need be (the account then stops filling until it is spent below the cap), so a lost position can be
 	 * rebuilt
 	 */
@@ -186,6 +187,9 @@ public:
 	CTurretPicker* GetTurretPicker() const { return turretPicker.get(); }
 	// A picker or cornered tower (CBDefenceTask::IsOffPoints): its death takes no cost off a defence point
 	void AddOffPointsTower(int unitId) { offPointsTowers.insert(unitId); }
+	// porcupine.budget: a tower whose job the turret account charged (CBDefenceTask::SetTarget). Only these pay
+	// loss_refund back when they die, and only on what they were charged: a free preventive tower pays nothing
+	void AddChargedTower(int unitId, float charged) { chargedTowers[unitId] = charged; }
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	// Best spot by score (near the enemy, unseen for longest, not defended by known static enemies, not on our side);
 	// -RgtVector if none. Scouts (quota.scout_spot) and raid groups (quota.raider_spot) score the same spots but
@@ -626,6 +630,7 @@ private:
 	std::unique_ptr<CFrontline> frontline;
 	std::unique_ptr<CTurretPicker> turretPicker;
 	std::set<int> offPointsTowers;  // unit ids
+	std::unordered_map<int, float> chargedTowers;  // unit id: what the turret account charged its job
 
 	std::vector<unsigned int> scoutPath;  // list of spot ids
 	unsigned int scoutIdx;
@@ -800,9 +805,10 @@ private:
 	BuildVector baseDefence;
 	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of landDefenders/waterDefenders.
 	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction.
-	// Each cluster rolls the first time it is defended, again once prevent_reroll[0] s have passed (the new count
-	// replaces the old), and on a sighting (an enemy that can hit ground within mex LOS of our mex there, at most
-	// once per prevent_reroll[1] s since its last roll or sighting; that roll can only raise the count).
+	// The count is the cluster's total, over all its defence points. Each cluster throws its dice once, the first
+	// time it is defended; later rolls (every prevent_reroll[0] s, and on a sighting: an enemy that can hit ground
+	// within mex LOS of our mex there, at most once per prevent_reroll[1] s since its last roll or sighting) reuse
+	// it, so the count only moves with the chance (the mex share). A sighting's roll can only raise the count.
 	// A roll never cancels a tower already queued or built.
 	struct SPrevent {
 		float base;  // prevent
@@ -816,6 +822,7 @@ private:
 	} prevent;
 	struct SPreventRoll {
 		int count = -1;  // -1 = never rolled
+		float dice = -1.f;  // [0, 1), thrown once per cluster on its first roll; every later roll reuses it
 		int rollFrame = -1;
 		int sightFrame = -1;  // last sighting acted on
 	};
@@ -827,7 +834,13 @@ private:
 	struct STurretBudget {
 		float share = 0.1f;
 		float bankSec = 60.f;
-		float lossRefund = 2.f;  // x the cost of a finished turret of ours that dies
+		float lossRefund = 2.f;  // x the charge of a finished turret of ours that dies
+		float mapX = 0.f;  // map area in 512-elmo squares / players on our team
+		float mapMult = 1.f;  // budget.map at mapX, fixed for the game
+		std::vector<std::pair<float, float>> mexCurve;  // budget.mex: x = ally-team finished mexes / all spots
+		float mexMult = 1.f;  // budget.mex now, refreshed every 10 s
+		float mexX = 0.f;
+		int mexFrame = -1;
 		float lost = 0.f;  // since the last log line: what the lost turrets cost, and what they paid back
 		float lossPaid = 0.f;
 		float balance = 0.f;
