@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Crash in target claims after a group merged.** A raid or attack group that merges into another is aborted at once
+  but deleted only when the staggered fight update reaches it, up to a second later. Until then it stayed bound to its
+  target and kept its old leader. If that unit died in the meantime, another group's `IsClaimedByNearer` read the
+  freed unit (`CAllyUnit::GetPos`, access violation, seen at 13 minutes on TitanDuel). A fighter task now lets go of
+  its target when it ends (`CMilitaryManager::DequeueTask`), a merged group drops its leader, and the claim check
+  skips dead tasks.
+
 - **Open maps get at least 20 regions, cut evenly, not along the distance to the walls** (`choke.region.min_count`,
   now 20, was 12). On an open map the first build has few regions, so the build ran again with `merge` raised up to
   1, which splits regions wherever the distance to the nearest wall dips. On Conquest of Paradise that split the map

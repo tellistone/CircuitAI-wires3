@@ -1850,6 +1850,11 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 	}
 	task->Dead();
 	task->Stop(done);
+	if (task->GetType() == IUnitTask::Type::FIGHTER) {
+		// A dead task waits in fightUpdates to be deleted: it lets go of its target now, so nothing that reads an
+		// enemy's tasks (IsClaimedByNearer, GetAhReadyDamage) finds it and its units, which may die in the meantime
+		static_cast<IFighterTask*>(task)->ReleaseTarget();
+	}
 }
 
 IUnitTask* CMilitaryManager::MakeTask(CCircuitUnit* unit)
