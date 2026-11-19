@@ -3867,7 +3867,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		task = EnqueueTask(IFighterTask::FightType::SCOUT);
 	}
 	// While a hunt is on, new and repaired anti-heavy units join it, those with the support attribute too. Those with
-	// artillery behaviour (as_artillery: Lance, Merlin) always get their own artillery task, after a free guard slot
+	// artillery behaviour (as_artillery: Lance, Merlin, Phantom, Racketeer) always get their own artillery task, after a free guard slot
 	const bool isAhUnit = (it != types.end()) && (it->second == IFighterTask::FightType::AH);
 	const bool isAhArty = isAhUnit && IsAhArty(cdef);
 	const bool isAhHunt = isAhUnit && !isAhArty && (cdef->IsRoleMine() || IsAhHunting());

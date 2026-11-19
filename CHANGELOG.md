@@ -619,8 +619,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
-- **Lance and Merlin behave as artillery, with heavies as targets** (`antiheavy.as_artillery`, shipped on; missing =
-  off). Anti-heavy units on the ground with a long reload (5 s or more) that are not mines or melee units now get
+- **Lance, Merlin, Phantom and Racketeer behave as artillery, with heavies as targets** (`antiheavy.as_artillery`, shipped on; missing =
+  off). Anti-heavy units on the ground with a long reload (5 s or more) that are not mines or melee units (main role
+  anti_heavy, or snipe_target and disarm_target, which `role.as` binds to it) now get
   the artillery task (one unit each) instead of anti-heavy squads, the army or support tasks, always, not only while
   a heavy is around. It works as artillery does (`artillery` block): shoot from where it stands when that spot is
   safe and covered, otherwise walk to a covered safe firing spot within range, otherwise stay put while safe and

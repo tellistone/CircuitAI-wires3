@@ -98,7 +98,7 @@ public:
 	// Mines always get a new one (each lays its field somewhere else)
 	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
 	// antiheavy.as_artillery: anti-heavy units (main role) on the ground with a long reload (5 s or more), not mines or
-	// melee (Lance, Merlin), use the artillery task with heavies as targets (EnqueueAhArty) instead of squads
+	// melee (Lance, Merlin, Phantom, Racketeer), use the artillery task with heavies as targets (EnqueueAhArty) instead of squads
 	bool IsAhArty(const CCircuitDef* cdef) const;
 	IFighterTask* EnqueueAhArty();
 	// A mobile enemy heavy (enemy role, as GetEnemyCost; buildings don't count, they stay targets) in radar or LOS within

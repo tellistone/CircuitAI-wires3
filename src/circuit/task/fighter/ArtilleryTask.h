@@ -18,7 +18,7 @@ namespace circuit {
 
 /*
  * Artillery: shoot known enemy buildings from threat-free (and covered) spots, walk to such spots, otherwise stay behind
- * the army; flee from approaching enemies. Anti-heavy mode (isAntiHeavy, CMilitaryManager::IsAhArty: Lance, Merlin):
+ * the army; flee from approaching enemies. Anti-heavy mode (isAntiHeavy, CMilitaryManager::IsAhArty: Lance, Merlin, Phantom, Racketeer):
  * the same, with the heavies and commanders anti-heavy units hunt (CAntiHeavyTask::IsQuarryFor) as targets instead
  * of buildings (mobile first, no overkill: GetOthersReadyDamage), and covered spots with threat are fine too
  * (IsThreatOk), see IsQuarryIgnored
