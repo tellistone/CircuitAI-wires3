@@ -73,6 +73,8 @@ public:
 	}
 
 	IFighterTask* EnqueueTask(IFighterTask::FightType type);
+	// Registers a new fight task under type for updates and GetTasks
+	IFighterTask* AddFightTask(IFighterTask::FightType type, IFighterTask* task);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType check, IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
@@ -101,6 +103,9 @@ public:
 	// melee (Lance, Merlin, Phantom, Racketeer), use the artillery task with heavies as targets (EnqueueAhArty) instead of squads
 	bool IsAhArty(const CCircuitDef* cdef) const;
 	IFighterTask* EnqueueAhArty();
+	// Overkill check: the damage the ready shots of anti-heavy units (squads and IsAhArty) targeting enemy would do,
+	// those of task skip aside
+	float GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* skip) const;
 	// A mobile enemy heavy (enemy role, as GetEnemyCost; buildings don't count, they stay targets) in radar or LOS within
 	// the last frames (CEnemyUnit::IsRecentlySeen). The army pull starts on a fresh sighting (AH_HUNT_FRAMES), and the hunt
 	// lasts until none has been seen for antiheavy.keep_sec (IsAhHunting: squads disband, new units go to the army), so a

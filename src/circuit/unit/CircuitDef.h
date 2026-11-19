@@ -276,6 +276,9 @@ public:
 	bool IsShieldLinked() const { return isShieldLinked; }  // its shield shares charge with touching ones (not "unlinked")
 	int GetFireState() const { return fireState; }
 	int GetReloadTime() const { return reloadTime; }
+	bool IsLongReload() const;  // 5 s or more (anti-heavy: fires at what it sees, steps back while reloading)
+	// A heavy or commander a unit of this type can shoot: role, target category, anti-static, air
+	bool IsQuarry(const CCircuitDef* edef) const;
 	int GetCategory() const { return category; }
 	int GetTargetCategory() const { return targetCategory; }
 	int GetNoChaseCategory() const { return noChaseCategory; }

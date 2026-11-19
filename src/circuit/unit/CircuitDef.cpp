@@ -664,4 +664,19 @@ bool CCircuitDef::IsYTargetable(float elevation, float posY) {
 	return (elevation > -height || posY > -topOffset);
 }
 
+bool CCircuitDef::IsLongReload() const
+{
+	return reloadTime >= FRAMES_PER_SEC * 5;
+}
+
+bool CCircuitDef::IsQuarry(const CCircuitDef* edef) const
+{
+	if ((edef == nullptr) || !edef->IsEnemyRoleAny(RoleMask::HEAVY | RoleMask::COMM)) {
+		return false;
+	}
+	return !(IsAttrAntiStat() && edef->IsMobile())
+		&& ((edef->GetCategory() & targetCategory) != 0)
+		&& !(edef->IsAbleToFly() && !HasAntiAir());
+}
+
 } // namespace circuit

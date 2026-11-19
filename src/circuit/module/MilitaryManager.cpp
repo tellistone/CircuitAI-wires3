@@ -1425,15 +1425,17 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 		}
 	}
 
-	fightTasks[static_cast<IFighterTask::FT>(type)].insert(task);
-	fightUpdates.push_back(task);
-	return task;
+	return AddFightTask(type, task);
 }
 
 IFighterTask* CMilitaryManager::EnqueueAhArty()
 {
-	IFighterTask* task = new CArtilleryTask(this, true);
-	fightTasks[static_cast<IFighterTask::FT>(IFighterTask::FightType::ARTY)].insert(task);
+	return AddFightTask(IFighterTask::FightType::ARTY, new CArtilleryTask(this, true));
+}
+
+IFighterTask* CMilitaryManager::AddFightTask(IFighterTask::FightType type, IFighterTask* task)
+{
+	fightTasks[static_cast<IFighterTask::FT>(type)].insert(task);
 	fightUpdates.push_back(task);
 	return task;
 }
@@ -3995,7 +3997,7 @@ bool CMilitaryManager::IsQuarryWithin(CCircuitUnit* unit, float range) const
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= SQUARE(range))
-			&& CAntiHeavyTask::IsQuarryFor(cdef, enemy))
+			&& cdef->IsQuarry(enemy->GetCircuitDef()))
 		{
 			return true;
 		}
@@ -4006,7 +4008,33 @@ bool CMilitaryManager::IsQuarryWithin(CCircuitUnit* unit, float range) const
 bool CMilitaryManager::IsAhArty(const CCircuitDef* cdef) const
 {
 	return antiHeavy.isArtillery && (circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(AH))
-			&& !cdef->IsAbleToFly() && !cdef->IsRoleMine() && !cdef->IsAttrMelee() && CAntiHeavyTask::IsLongReload(cdef);
+			&& !cdef->IsAbleToFly() && !cdef->IsRoleMine() && !cdef->IsAttrMelee() && cdef->IsLongReload();
+}
+
+float CMilitaryManager::GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* skip) const
+{
+	// Anti-heavy squads and anti-heavy units with artillery behaviour that target it (IFighterTask::SetTarget):
+	// their units with a ready weapon and it in range
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& ePos = enemy->GetPos();
+	float damage = 0.f;
+	for (IFighterTask* task : enemy->GetTasks()) {
+		const IFighterTask::FightType type = task->GetFightType();
+		if ((task == skip) || !((type == IFighterTask::FightType::AH)
+			|| ((type == IFighterTask::FightType::ARTY) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy())))
+		{
+			continue;
+		}
+		for (CCircuitUnit* unit : task->GetAssignees()) {
+			CCircuitDef* udef = unit->GetCircuitDef();
+			if (unit->HasWeapon() && unit->IsWeaponReady(frame)
+				&& (unit->GetPos(frame).SqDistance2D(ePos) <= SQUARE(udef->GetMaxRange())))
+			{
+				damage += udef->GetShotDamage();
+			}
+		}
+	}
+	return damage;
 }
 
 IFighterTask* CMilitaryManager::EnqueueAntiHeavy(CCircuitUnit* unit)

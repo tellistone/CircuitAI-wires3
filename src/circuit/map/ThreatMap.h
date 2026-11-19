@@ -48,6 +48,9 @@ public:
 	void SetThreatType(CCircuitUnit* unit);
 	float GetThreatAt(const springai::AIFloat3& position) const;
 	float GetThreatAt(CCircuitUnit* unit, const springai::AIFloat3& position) const;
+	// What the map draws for one enemy at position on the unit's layer (plain view, from where the enemy is now):
+	// to take a single enemy's threat off GetThreatAt without hiding any other threat there
+	float GetEnemyThreatAt(CCircuitUnit* unit, CEnemyInfo* enemy, const springai::AIFloat3& position) const;
 	// The plain view whatever the unit's task (CMilitaryManager::GetTakeableContested's builder wall)
 	float GetPlainThreatAt(CCircuitUnit* unit, const springai::AIFloat3& position) const;
 	/*

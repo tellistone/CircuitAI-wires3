@@ -7,7 +7,6 @@
 
 #include "task/fighter/AntiHeavyTask.h"
 #include "task/fighter/AttackTask.h"
-#include "task/fighter/ArtilleryTask.h"
 #include "task/TaskManager.h"
 #include "map/ThreatMap.h"
 #include "module/AllyCover.h"
@@ -241,7 +240,7 @@ void CAntiHeavyTask::Update()
 	// until it's back, else the whole squad would be routed in again while it reloads. A long-reload weapon fires only
 	// at what we see: a target just out of LOS is kept a moment with no new orders, rather than dropped and picked again
 	const bool isEngaged = (State::ENGAGE == state) && (target != nullptr);
-	const bool isLosGrace = isEngaged && IsLongReload(leader->GetCircuitDef()) && !target->IsInLOS()
+	const bool isLosGrace = isEngaged && leader->GetCircuitDef()->IsLongReload() && !target->IsInLOS()
 			&& (frame < targetSeenFrame + LOS_GRACE_FRAMES);
 	const bool isTargetsFound = (isEngaged && IsScooting(leader)) || isLosGrace || FindTarget();
 
@@ -369,12 +368,7 @@ float CAntiHeavyTask::GetDangerStart(const CEnemyInfo* enemy) const
 bool CAntiHeavyTask::IsReloading(int frame) const
 {
 	CCircuitDef* cdef = leader->GetCircuitDef();
-	return !cdef->IsRoleMine() && IsLongReload(cdef) && !leader->IsWeaponReady(frame);
-}
-
-bool CAntiHeavyTask::IsLongReload(const CCircuitDef* cdef)
-{
-	return cdef->GetReloadTime() >= FRAMES_PER_SEC * 5;
+	return !cdef->IsRoleMine() && cdef->IsLongReload() && !leader->IsWeaponReady(frame);
 }
 
 float CAntiHeavyTask::GetHuntReach(const CCircuitDef* cdef)
@@ -401,7 +395,7 @@ bool CAntiHeavyTask::IsUnitReloading(CCircuitUnit* unit, int frame) const
 	if (cdef->IsReloadScoot()) {
 		return ISquadTask::IsUnitReloading(unit, frame);
 	}
-	return IsLongReload(cdef) && unit->HasWeapon() && !unit->IsWeaponReady(frame);
+	return cdef->IsLongReload() && unit->HasWeapon() && !unit->IsWeaponReady(frame);
 }
 
 void CAntiHeavyTask::OnScootStart(CCircuitUnit* unit)
@@ -476,18 +470,7 @@ void CAntiHeavyTask::AttackDirect(CCircuitUnit* unit, int frame, float& minePowe
 
 bool CAntiHeavyTask::IsQuarry(CEnemyInfo* enemy) const
 {
-	return IsQuarryFor(leader->GetCircuitDef(), enemy);
-}
-
-bool CAntiHeavyTask::IsQuarryFor(const CCircuitDef* cdef, CEnemyInfo* enemy)
-{
-	CCircuitDef* edef = enemy->GetCircuitDef();
-	if ((edef == nullptr) || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY | CCircuitDef::RoleMask::COMM)) {
-		return false;
-	}
-	return !(cdef->IsAttrAntiStat() && edef->IsMobile())
-		&& ((edef->GetCategory() & cdef->GetTargetCategory()) != 0)
-		&& !(edef->IsAbleToFly() && !cdef->HasAntiAir());
+	return leader->GetCircuitDef()->IsQuarry(enemy->GetCircuitDef());
 }
 
 bool CAntiHeavyTask::IsFleeIgnored(CEnemyInfo* enemy) const
@@ -500,7 +483,7 @@ bool CAntiHeavyTask::IsFleeIgnored(CEnemyInfo* enemy) const
 	CCircuitDef* cdef = leader->GetCircuitDef();
 	const float range = cdef->GetMaxRange();
 	float eRange;
-	if (!IsLongReload(cdef) || !IsGroundDangerDef(enemy->GetCircuitDef(), true, eRange) || (eRange < range)) {
+	if (!cdef->IsLongReload() || !IsGroundDangerDef(enemy->GetCircuitDef(), true, eRange) || (eRange < range)) {
 		return true;
 	}
 	const int frame = manager->GetCircuit()->GetLastFrame();
@@ -678,9 +661,9 @@ void CAntiHeavyTask::CollectDangers()
 
 bool CAntiHeavyTask::IsSpotSafe(const AIFloat3& spot, CEnemyInfo* excl, bool isKept) const
 {
-	// Its threat is taken off only where its ring reaches: elsewhere that would hide other threat (turrets) there
-	const float exclThreat = ((excl != nullptr) && (spot.SqDistance2D(excl->GetPos()) <= SQUARE(GetStandOff(excl, 0.f))))
-			? excl->GetThreat() : 0.f;
+	// Its threat is taken off as the map drew it there (CThreatMap::GetEnemyThreatAt), so no other threat is hidden
+	const float exclThreat = (excl != nullptr)
+			? manager->GetCircuit()->GetThreatMap()->GetEnemyThreatAt(leader, excl, spot) : 0.f;
 	const AIFloat3& leaderPos = leader->GetPos(manager->GetCircuit()->GetLastFrame());
 	if (GetTaskThreatExcl(leader, spot, exclThreat) > GetPathThreatAllowance(leader, leaderPos, {spot})) {
 		return false;
@@ -752,7 +735,7 @@ bool CAntiHeavyTask::FindTarget()
 		const AIFloat3& ePos = enemy->GetPos();
 		const float sqDist = pos.SqDistance2D(ePos);
 		// A long-reload weapon fires at what we see, not at a radar blip
-		const bool isSeen = !IsLongReload(cdef) || enemy->IsInLOS();
+		const bool isSeen = !cdef->IsLongReload() || enemy->IsInLOS();
 		isRadarOnly |= !isSeen && (sqDist <= SQUARE(weaponRange));
 		// Already within weapon range (pulled from a fight; or out-ranging it): attack from here, no walk in, so its
 		// escorts don't rule it out; the flee still guards the squad. The current target keeps it a bit further out,
@@ -811,7 +794,7 @@ bool CAntiHeavyTask::FindTarget()
 			continue;
 		}
 		// Shots the other squads have ready at it would kill it: theirs
-		const float ready = GetOthersReadyDamage(enemy);
+		const float ready = circuit->GetMilitaryManager()->GetAhReadyDamage(enemy, this);
 		if (ready > 1.1f * (enemy->GetHealth() + enemy->GetShieldPower())) {
 			continue;
 		}
@@ -837,28 +820,6 @@ bool CAntiHeavyTask::IsHeld(CEnemyInfo* enemy, int frame) const
 {
 	auto it = helds.find(enemy->GetId());
 	return (it != helds.end()) && (frame < it->second.until);
-}
-
-float CAntiHeavyTask::GetOthersReadyDamage(CEnemyInfo* enemy) const
-{
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	const AIFloat3& ePos = enemy->GetPos();
-	float damage = 0.f;
-	for (IFighterTask* task : enemy->GetTasks()) {
-		// Anti-heavy squads, and anti-heavy units with artillery behaviour
-		if ((task == this) || !((task->GetFightType() == FightType::AH)
-			|| ((task->GetFightType() == FightType::ARTY) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy())))
-		{
-			continue;
-		}
-		for (CCircuitUnit* unit : task->GetAssignees()) {
-			CCircuitDef* udef = unit->GetCircuitDef();
-			if (unit->IsWeaponReady(frame) && (unit->GetPos(frame).SqDistance2D(ePos) <= SQUARE(udef->GetMaxRange()))) {
-				damage += udef->GetShotDamage();
-			}
-		}
-	}
-	return damage;
 }
 
 bool CAntiHeavyTask::TakePath(const std::shared_ptr<PathInfo>& path)
