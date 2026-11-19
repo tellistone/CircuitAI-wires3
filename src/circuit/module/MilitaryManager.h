@@ -441,6 +441,14 @@ public:
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
 	// quota.attack_melee_spot: melee units pick a firing spot this many elmos beyond both units' bodies; < 0: off
 	float GetAttackMeleeSpot() const { return attackMeleeSpot; }
+	// quota.attack_melee_max: at most this many melee units of a group close in on one target (fewer if its ring
+	// around the target has room for fewer); the rest take other targets near it. 0: off (all on the group's target)
+	int GetAttackMeleeMax() const { return attackMeleeMax; }
+	// quota.attack_melee_spread: other targets for those melee units, within this many elmos of the group's target
+	float GetAttackMeleeSpread() const { return attackMeleeSpread; }
+	// quota.attack_melee_blast: a target whose death explosion deals at least this x a melee unit's health is a
+	// blast for it: the unit fires from a normal firing spot within weapon range, not right next to it; < 0: off
+	float GetAttackMeleeBlast() const { return attackMeleeBlast; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other
 	struct SAttackMerge {
 		float speedRatio;  // leaders' speeds within this factor of each other
@@ -755,6 +763,9 @@ private:
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
 	float attackMeleeSpot;  // quota.attack_melee_spot
+	int attackMeleeMax;  // quota.attack_melee_max
+	float attackMeleeSpread;  // quota.attack_melee_spread
+	float attackMeleeBlast;  // quota.attack_melee_blast
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SRally attackRally;  // quota.attack_merge.rally
 	SRally raidRally;  // quota.raid_rally

@@ -256,6 +256,11 @@ public:
 	float GetFireAoe() const { return fireAoe; }
 	// A shot's damage averaged over its weapons, manual fire (D-gun) and shields left out, paralyzers 0
 	float GetShotDamage() const { return shotDmg; }
+	// Death explosion (explodeAs): radius, and full damage at its centre (the worst over armour types); 0: none
+	float GetDeathAoe() const { return deathAoe; }
+	float GetDeathDamage() const { return deathDmg; }
+	// A mobile unit with no weapon of its own: its death explosion is its weapon (skuttle, imp, snitch)
+	bool IsDeathBomb() const { return isDeathBomb; }
 	float GetPower() const { return power; }
 	float GetThreat() const { return threat; }
 	// How much one enemy of this type counts in the threat map's enemy unit count (CThreatMap squad layers):
@@ -425,6 +430,9 @@ private:
 	float aoe;  // radius
 	float fireAoe;  // radius: GetFireAoe
 	float shotDmg;  // GetShotDamage
+	float deathAoe;  // radius: GetDeathAoe
+	float deathDmg;  // GetDeathDamage
+	bool isDeathBomb;  // IsDeathBomb
 	float power;  // ally max threat
 	float threat;  // enemy max threat
 	float minRange;
