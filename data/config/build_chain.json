@@ -216,6 +216,15 @@
 			"porc": true
 		}
 	},
+	"radar": {
+		// A radar job of this type that finished (the radar planner's, a hub step's)
+		"staticheavyradar": {
+			"hub": [[
+					{"unit": "turretlaser", "category": "defence", "offset": [80, -80]},
+					{"unit": "turretmissile", "category": "defence", "offset": [-80, 80]}
+				]]
+		}
+	},
 	"big_gun": {
 		"staticheavyarty": {
 			"hub": [[
@@ -271,12 +280,6 @@
 					{"unit": "turretriot", "category": "defence", "offset": [80, 80]},
 					{"unit": "turretriot", "category": "defence", "offset": [-80, -80]},
 					{"unit": "turretmissile", "category": "defence", "offset": [-80, -80]}
-				]]
-		},
-		"staticheavyradar": {
-			"hub": [[
-					{"unit": "turretlaser", "category": "defence", "offset": [80, -80]},
-					{"unit": "turretmissile", "category": "defence", "offset": [-80, 80]}
 				]]
 		},
 		"staticnuke": {

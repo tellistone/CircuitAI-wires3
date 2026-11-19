@@ -743,8 +743,9 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 			IBuilderTask* parent = nullptr;
 
 			for (const SBuildInfo& bi : queue) {
-				if (!bi.cdef->IsAvailable(circuit->GetLastFrame())) {
-					continue;
+				const bool isRadar = (bi.buildType == IBuilderTask::BuildType::RADAR);
+				if (!isRadar && !bi.cdef->IsAvailable(circuit->GetLastFrame())) {
+					continue;  // a radar step: the def the planner picks must be
 				}
 				bool isValid = true;
 				switch (bi.condition) {
@@ -785,11 +786,11 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				// or is skipped where it would see too little new
 				CCircuitDef* buildDef = bi.cdef;
 				AIFloat3 radarPos = -RgtVector;
-				if (bi.buildType == IBuilderTask::BuildType::RADAR) {
+				if (isRadar) {
 					radarPos = buildPos + offset;
 					CTerrainManager::CorrectPosition(radarPos);
 					buildDef = sensorPlanner->PlaceChainRadar(bi.cdef, bi.isUpgrade, bdef, radarPos);
-					if (buildDef == nullptr) {
+					if ((buildDef == nullptr) || !buildDef->IsAvailable(circuit->GetLastFrame())) {
 						continue;
 					}
 				}

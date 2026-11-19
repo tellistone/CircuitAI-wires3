@@ -38,13 +38,16 @@ using namespace springai;
 #define DEATH_HALF		(FRAMES_PER_SEC * 300)  // a lost radar's penalty halves every 5 minutes
 #define DEATH_NEAR		512.f  // elmos: a loss counts against spots this close
 #define TARGET_LIFT		20.f  // sight rays end this high above a cell's ground
-#define PENDING_TIME	(FRAMES_PER_SEC * 90)  // a radar a builder was sent to build counts this long until one stands
+#define PENDING_TIME	(FRAMES_PER_SEC * 600)  // a radar job counts this long at most (a job dropped without its end)
 #define ORPHAN_TIMEOUT	(FRAMES_PER_SEC * 3)  // a radar job its builder left goes then: any builder takes a NOW job
 #define REACH			600.f  // elmos: a builder out of coverage builds its radar this close
-#define RADAR_NEAR		500.f  // elmos: ISensorTask drops a job this close to a radar of its kind; a pending one ends
-#define HEAVY_REACH		1500.f  // elmos: a builder builds the heavy this close
+#define RADAR_NEAR		500.f  // elmos: ISensorTask drops a job this close to a radar of its kind
+#define HEAVY_REACH		1500.f  // elmos: a builder builds the heavy this close; losses this close count against it
 #define HEAVY_TRIES		16  // heavy candidates scored by their viewshed, of those with the most uncovered weight
+#define HEAVY_FRESH		4  // new heavy viewsheds per search at most (the rest wait for the next)
 #define HEAVY_RETRY		(FRAMES_PER_SEC * 10)  // a builder of this AI looks for a heavy spot at most this often
+#define HEAVY_REBUILD	(FRAMES_PER_SEC * 90)  // no heavy for this long after the ally team lost one
+#define HEAVY_LOG		(FRAMES_PER_SEC * 60)  // a failed heavy search is logged at most this often per AI
 #define CHAIN_RADIUS	300.f  // elmos: a hub radar step's spot from its offset
 
 CSensorPlanner::CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef, CCircuitDef* heavyDef)
@@ -55,9 +58,8 @@ CSensorPlanner::CSensorPlanner(CCircuitAI* circuit, CCircuitDef* radarDef, CCirc
 		, coveredWeight(0.f)
 		, budget((radarDef != nullptr) ? radarDef->GetCostM() : 0.f)  // the first radar goes up in the opening
 		, budgetFrame(0)
-		, heavyBudget(0.f)
-		, heavyBudgetFrame(0)
 		, heavySearchFrame(-HEAVY_RETRY)
+		, heavyLogFrame(-HEAVY_LOG)
 {
 }
 
@@ -77,15 +79,15 @@ void CSensorPlanner::Update()
 	UpdateRadars();
 	UpdateCandidates();
 	const CTrafficField& traffic = chokeMap->GetTraffic();
-	std::set<int> cached;
+	std::set<std::pair<int, int>> cached;
 	for (const AIFloat3& pos : candidates) {
-		cached.insert(traffic.IndexAt(pos.x, pos.z) * 2);
+		cached.insert({traffic.IndexAt(pos.x, pos.z), radarDef->GetId()});
 	}
 	for (const AIFloat3& pos : heavyCands) {
-		cached.insert(traffic.IndexAt(pos.x, pos.z) * 2 + 1);
+		cached.insert({traffic.IndexAt(pos.x, pos.z), heavyDef->GetId()});
 	}
 	for (const SEvent& p : pending) {
-		cached.insert(traffic.IndexAt(p.pos.x, p.pos.z) * 2 + ((p.cdef == radarDef) ? 0 : 1));
+		cached.insert({traffic.IndexAt(p.pos.x, p.pos.z), p.cdef->GetId()});
 	}
 	for (auto it = viewsheds.begin(); it != viewsheds.end();) {
 		it = (cached.count(it->first) == 0) ? viewsheds.erase(it) : std::next(it);
@@ -109,17 +111,25 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 	};
 	CSensorPlanner* planner = chokeMap->GetAuthority()->GetMilitaryManager()->GetSensorPlanner();
 
-	// The heavy first: it covers what many small ones would
-	if (IsHeavyReady(unit->GetCircuitDef()) && (frame - heavySearchFrame >= HEAVY_RETRY)) {
+	// The heavy first: it covers what many small ones would. Not the commander's job, nor a front builder's
+	const AIFloat3 pos = unit->GetPos(frame);
+	if (!unit->GetCircuitDef()->IsRoleComm() && (frame - heavySearchFrame >= HEAVY_RETRY)
+		&& planner->IsDeepReach(pos) && IsHeavyReady(unit->GetCircuitDef()))
+	{
 		heavySearchFrame = frame;
-		const AIFloat3 spot = planner->TakeHeavySpot(unit, isOk);
+		float best;
+		const AIFloat3 spot = planner->TakeHeavySpot(unit, isOk, best);
 		if (utils::is_valid(spot)) {
-			const float cost = heavyDef->GetCostM();
-			heavyBudget -= cost;
 			circuit->LOG("RADAR HEAVY by %s at (%.0f, %.0f): %.0f%% covered with it",
 					unit->GetCircuitDef()->GetDef()->GetName(), spot.x, spot.z, planner->GetCoveredShare() * 100.f);
+			// Its guard is the build_chain "radar" hub of its type
 			return circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NOW, heavyDef, spot,
-					IBuilderTask::BuildType::RADAR, cost, 0.f, true, ORPHAN_TIMEOUT);  // no guard: it stands deep
+					IBuilderTask::BuildType::RADAR, heavyDef->GetCostM(), 0.f, true, ORPHAN_TIMEOUT);
+		}
+		if (frame - heavyLogFrame >= HEAVY_LOG) {
+			heavyLogFrame = frame;
+			circuit->LOG("RADAR HEAVY none near (%.0f, %.0f): best %.1f%% new, %.0f%% needed", pos.x, pos.z,
+					best * 100.f, circuit->GetChokeMap()->GetConfig().heavyGain * 100.f);
 		}
 	}
 
@@ -146,20 +156,23 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 	return task;
 }
 
-bool CSensorPlanner::IsHeavyReady(CCircuitDef* builderDef)
+bool CSensorPlanner::IsHeavyReady(CCircuitDef* builderDef) const
 {
 	const int frame = circuit->GetLastFrame();
-	const CChokeMap::SConfig& config = circuit->GetChokeMap()->GetConfig();
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const float income = economyMgr->GetAvgMetalIncome();
-	if ((heavyDef != nullptr) && (income >= config.heavyIncome)) {
-		heavyBudget = std::min(heavyBudget + config.heavyShare * income * (frame - heavyBudgetFrame) / FRAMES_PER_SEC,
-				heavyDef->GetCostM());
+	if ((heavyDef == nullptr) || !heavyDef->IsAvailable(frame) || !builderDef->CanBuild(heavyDef)
+		|| (circuit->GetEconomyManager()->GetTeamMetalIncome() < circuit->GetChokeMap()->GetConfig().heavyIncome))
+	{
+		return false;
 	}
-	heavyBudgetFrame = frame;
-	return (heavyDef != nullptr) && config.isRadar && (income >= config.heavyIncome)
-		&& (heavyBudget >= heavyDef->GetCostM()) && heavyDef->IsAvailable(frame) && builderDef->CanBuild(heavyDef)
-		&& !economyMgr->IsEnergyShort();  // its upkeep
+	for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::RADAR)) {
+		if (t->GetBuildDef() == heavyDef) {
+			return false;  // one at a time
+		}
+	}
+	const CSensorPlanner* planner = circuit->GetChokeMap()->GetAuthority()->GetMilitaryManager()->GetSensorPlanner();
+	return std::none_of(planner->deaths.begin(), planner->deaths.end(), [this, frame](const SEvent& d) {
+		return (d.cdef == heavyDef) && (frame - d.frame < HEAVY_REBUILD);
+	});
 }
 
 CCircuitDef* CSensorPlanner::PlaceChainRadar(CCircuitDef* askDef, bool isUpgrade, CCircuitDef* builderDef,
@@ -174,62 +187,56 @@ CCircuitDef* CSensorPlanner::PlaceChainRadar(CCircuitDef* askDef, bool isUpgrade
 	if (planner->weights.empty()) {
 		return askDef;  // no map yet
 	}
-	float share;
 	if (isUpgrade && IsHeavyReady(builderDef)) {
 		const AIFloat3 spot = planner->FindChainSpot(heavyDef, inOutPos);
-		if (utils::is_valid(spot)) {
-			const float gain = planner->GetGain(spot, heavyDef, share)
-					/ (1.f + config.heavyRisk * planner->GetRisk(spot));
-			if (gain >= config.heavyGain * planner->totalWeight) {
-				heavyBudget -= heavyDef->GetCostM();
-				planner->AddPending(heavyDef, spot);
-				circuit->LOG("RADAR CHAIN upgrade at (%.0f, %.0f): %.0f%% covered with it", spot.x, spot.z,
-						planner->GetCoveredShare() * 100.f);
-				inOutPos = spot;
-				return heavyDef;
-			}
+		if (utils::is_valid(spot) && (planner->ScoreHeavy(spot) >= config.heavyGain * planner->totalWeight)) {
+			circuit->LOG("RADAR CHAIN upgrade at (%.0f, %.0f)", spot.x, spot.z);
+			inOutPos = spot;
+			return heavyDef;
 		}
 	}
 	AIFloat3 spot = planner->FindChainSpot(askDef, inOutPos);
 	if (!utils::is_valid(spot)) {
 		spot = inOutPos;
 	}
+	float share;
 	const float gain = planner->GetGain(spot, askDef, share);
 	if (gain < config.radarGain * planner->totalWeight) {
 		circuit->LOG("RADAR CHAIN skip %s at (%.0f, %.0f): %.1f%% new", askDef->GetDef()->GetName(), spot.x, spot.z,
 				(planner->totalWeight > 0.f) ? gain / planner->totalWeight * 100.f : 0.f);
 		return nullptr;
 	}
-	planner->AddPending(askDef, spot);
-	circuit->LOG("RADAR CHAIN place %s at (%.0f, %.0f): %.0f%% covered with it", askDef->GetDef()->GetName(),
-			spot.x, spot.z, planner->GetCoveredShare() * 100.f);
+	circuit->LOG("RADAR CHAIN place %s at (%.0f, %.0f)", askDef->GetDef()->GetName(), spot.x, spot.z);
 	inOutPos = spot;
 	return askDef;
 }
 
-void CSensorPlanner::NotePending(CCircuitDef* cdef, const AIFloat3& pos)
+void CSensorPlanner::NotePending(const IBuilderTask* task)
 {
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	CCircuitDef* cdef = task->GetBuildDef();
 	if (!chokeMap->GetConfig().isRadar || !chokeMap->IsReady() || (cdef == nullptr)
 		|| (cdef->GetDef()->GetRadarRadius() <= 0.f))
 	{
 		return;
 	}
-	const bool isKnown = std::any_of(pending.begin(), pending.end(), [cdef, &pos](const SEvent& p) {
-		return (p.cdef == cdef) && (p.pos.SqDistance2D(pos) < SQUARE(RADAR_NEAR));
-	});
-	if (!isKnown) {  // the planner's own and the hub steps it placed are known already
-		AddPending(cdef, pos);
+	pending.push_back({task->GetTaskPos(), circuit->GetLastFrame(), cdef, task});
+	if (!isCovered.empty()) {  // else UpdateRadars counts it
+		Cover(GetViewshed(task->GetTaskPos(), cdef));
 	}
 }
 
-void CSensorPlanner::AddPending(CCircuitDef* cdef, const AIFloat3& pos)
+void CSensorPlanner::EndPending(const IBuilderTask* task)
 {
-	pending.push_back({pos, circuit->GetLastFrame(), cdef});
-	if (isCovered.empty()) {
-		return;  // no map yet: UpdateRadars counts it
-	}
-	for (int cell : GetViewshed(pos, cdef)) {
+	// Its view stays covered until UpdateRadars: a finished radar covers it, an aborted job frees it then
+	pending.erase(std::remove_if(pending.begin(), pending.end(), [task](const SEvent& p) {
+		return p.task == task;
+	}), pending.end());
+}
+
+void CSensorPlanner::Cover(const std::vector<int>& cells)
+{
+	for (int cell : cells) {
 		coveredWeight += isCovered[cell] ? 0.f : weights[cell];
 		isCovered[cell] = 1;
 	}
@@ -315,7 +322,7 @@ AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(c
 	float bestScore = 0.f;
 	for (const AIFloat3& c : spots) {
 		float share;
-		const float score = GetGain(c, radarDef, share) / (1.f + GetRisk(c));  // where radars die, it must see more
+		const float score = GetGain(c, radarDef, share) / (1.f + GetRisk(c, DEATH_NEAR));  // where radars die, see more
 		if ((score < minGain) || (share < minShare)) {
 			continue;
 		}
@@ -324,35 +331,29 @@ AIFloat3 CSensorPlanner::TakeSpot(CCircuitUnit* unit, const std::function<bool(c
 			bestPos = c;
 		}
 	}
-	if (!utils::is_valid(bestPos)) {
-		return -RgtVector;
-	}
-	AddPending(radarDef, bestPos);
-	return bestPos;
+	return bestPos;  // its job's NotePending covers its view
 }
 
-AIFloat3 CSensorPlanner::TakeHeavySpot(CCircuitUnit* unit, const std::function<bool(const AIFloat3&)>& isOk)
+AIFloat3 CSensorPlanner::TakeHeavySpot(CCircuitUnit* unit, const std::function<bool(const AIFloat3&)>& isOk,
+		float& outBest)
 {
+	outBest = 0.f;
 	if (weights.empty() || (heavyDef == nullptr)) {
 		return -RgtVector;  // no map yet
 	}
 	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const CChokeMap::SConfig& config = circuit->GetChokeMap()->GetConfig();
 	const AIFloat3 pos = unit->GetPos(circuit->GetLastFrame());
 	const float minGain = config.heavyGain * totalWeight;
 	const float range = heavyDef->GetDef()->GetRadarRadius();
-	// Candidates near it, deep in our ground, free; ranked by the uncovered weight in their range disc
+	// Candidates near it and deep in our ground, ranked by the uncovered weight in their range disc (a viewshed is a
+	// part of its disc, so that is an upper bound of its gain)
 	std::vector<std::pair<float, AIFloat3>> ranked;
 	for (const AIFloat3& c : candidates) {
-		if ((c.SqDistance2D(pos) > SQUARE(HEAVY_REACH)) || (enemyDist[traffic.IndexAt(c.x, c.z)] < config.heavyDepth)
-			|| !IsFree(c))
+		if ((c.SqDistance2D(pos) <= SQUARE(HEAVY_REACH))
+			&& (enemyDist[traffic.IndexAt(c.x, c.z)] >= config.heavyDepth))
 		{
-			continue;
-		}
-		const float bound = GetDiscGain(c, range);
-		if (bound >= minGain) {
-			ranked.push_back({bound, c});
+			ranked.push_back({GetDiscGain(c, range), c});
 		}
 	}
 	const int tries = std::min<int>(ranked.size(), HEAVY_TRIES);
@@ -362,25 +363,46 @@ AIFloat3 CSensorPlanner::TakeHeavySpot(CCircuitUnit* unit, const std::function<b
 	});
 	heavyCands.clear();
 	AIFloat3 bestPos = -RgtVector;
-	float bestScore = 0.f;
+	float bestScore = minGain;
+	int fresh = 0;
 	for (int i = 0; i < tries; ++i) {
 		const AIFloat3& c = ranked[i].second;
-		heavyCands.push_back(c);
-		if (ranked[i].first < std::max(minGain, bestScore)) {
-			break;  // sorted: no later one can beat it
+		if ((i > 0) && (ranked[i].first < bestScore)) {
+			break;  // sorted: no later one can pass or beat it (the first is scored for the log)
 		}
-		float share;
-		const float score = GetGain(c, heavyDef, share) / (1.f + config.heavyRisk * GetRisk(c));
-		if ((score >= minGain) && (score > bestScore) && terrainMgr->CanBuildAt(heavyDef, c) && isOk(c)) {
+		if (!IsCached(c, heavyDef) && (++fresh > HEAVY_FRESH)) {
+			break;  // the rest next time
+		}
+		heavyCands.push_back(c);
+		const float score = ScoreHeavy(c);
+		outBest = std::max(outBest, (totalWeight > 0.f) ? score / totalWeight : 0.f);
+		if ((score >= bestScore) && isOk(c)) {
 			bestScore = score;
 			bestPos = c;
 		}
 	}
-	if (!utils::is_valid(bestPos)) {
-		return -RgtVector;
+	return bestPos;  // its job's NotePending covers its view
+}
+
+float CSensorPlanner::ScoreHeavy(const AIFloat3& pos)
+{
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
+	if ((enemyDist[traffic.IndexAt(pos.x, pos.z)] < circuit->GetChokeMap()->GetConfig().heavyDepth) || !IsFree(pos)
+		|| !circuit->GetTerrainManager()->CanBuildAt(heavyDef, pos))
+	{
+		return -1.f;
 	}
-	AddPending(heavyDef, bestPos);
-	return bestPos;
+	float share;
+	return GetGain(pos, heavyDef, share) / (1.f + GetRisk(pos, HEAVY_REACH));
+}
+
+bool CSensorPlanner::IsDeepReach(const AIFloat3& pos) const
+{
+	if (enemyDist.empty()) {
+		return false;  // no map yet
+	}
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
+	return enemyDist[traffic.IndexAt(pos.x, pos.z)] + HEAVY_REACH >= circuit->GetChokeMap()->GetConfig().heavyDepth;
 }
 
 void CSensorPlanner::UpdateWeights()
@@ -478,20 +500,21 @@ void CSensorPlanner::UpdateRadars()
 			continue;
 		}
 		if (cdef->GetDef()->GetRadarRadius() <= 0.f) {
-			continue;  // a nanoframe counts: no second radar goes over it
+			continue;
 		}
 		auto it = radars.find(kv.first);
 		if (it != radars.end()) {
 			seen[kv.first] = std::move(it->second);
 		} else {
 			const AIFloat3& pos = unit->GetPos(frame);
-			seen[kv.first] = {pos, MakeViewshed(pos, cdef)};
+			seen[kv.first] = {pos, MakeViewshed(pos, cdef), cdef, false};
 		}
+		seen[kv.first].isBuilt = !unit->GetUnit()->IsBeingBuilt();  // a nanoframe only keeps others off (IsFree)
 	}
 	// One that is gone was most likely killed: building there again costs more
 	for (const auto& kv : radars) {
 		if (seen.find(kv.first) == seen.end()) {
-			deaths.push_back({kv.second.pos, frame});
+			deaths.push_back({kv.second.pos, frame, kv.second.cdef, nullptr});
 		}
 	}
 	deaths.erase(std::remove_if(deaths.begin(), deaths.end(), [frame](const SEvent& d) {
@@ -501,16 +524,15 @@ void CSensorPlanner::UpdateRadars()
 
 	isCovered.assign(traffic.GetWidth() * traffic.GetHeight(), 0);
 	for (const auto& kv : radars) {
-		for (int cell : kv.second.cells) {
-			isCovered[cell] = 1;
+		if (kv.second.isBuilt) {
+			for (int cell : kv.second.cells) {
+				isCovered[cell] = 1;
+			}
 		}
 	}
-	// Pending ones count until a radar stands there (its own view counts then), or for PENDING_TIME
-	pending.erase(std::remove_if(pending.begin(), pending.end(), [this, frame](const SEvent& p) {
-		return (frame - p.frame > PENDING_TIME) || std::any_of(radars.begin(), radars.end(),
-				[&p](const std::pair<const ICoreUnit::Id, SRadar>& kv) {
-			return kv.second.pos.SqDistance2D(p.pos) < SQUARE(RADAR_NEAR);  // it, or one that ends its job
-		});
+	// Active jobs count until they end (EndPending), or for PENDING_TIME
+	pending.erase(std::remove_if(pending.begin(), pending.end(), [frame](const SEvent& p) {
+		return frame - p.frame > PENDING_TIME;
 	}), pending.end());
 	for (const SEvent& p : pending) {
 		for (int cell : GetViewshed(p.pos, p.cdef)) {
@@ -573,7 +595,7 @@ AIFloat3 CSensorPlanner::FindHighest(CCircuitDef* cdef, float x0, float z0, floa
 const std::vector<int>& CSensorPlanner::GetViewshed(const AIFloat3& pos, CCircuitDef* cdef)
 {
 	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
-	const int key = traffic.IndexAt(pos.x, pos.z) * 2 + ((cdef == radarDef) ? 0 : 1);
+	const std::pair<int, int> key(traffic.IndexAt(pos.x, pos.z), cdef->GetId());
 	auto it = viewsheds.find(key);
 	if (it == viewsheds.end()) {
 		it = viewsheds.emplace(key, MakeViewshed(pos, cdef)).first;
@@ -657,12 +679,18 @@ float CSensorPlanner::GetDiscGain(const AIFloat3& pos, float range) const
 	return gain;
 }
 
-float CSensorPlanner::GetRisk(const AIFloat3& pos) const
+bool CSensorPlanner::IsCached(const AIFloat3& pos, CCircuitDef* cdef) const
+{
+	const CTrafficField& traffic = circuit->GetChokeMap()->GetTraffic();
+	return viewsheds.count({traffic.IndexAt(pos.x, pos.z), cdef->GetId()}) > 0;
+}
+
+float CSensorPlanner::GetRisk(const AIFloat3& pos, float radius) const
 {
 	float risk = 0.f;
 	const int frame = circuit->GetLastFrame();
 	for (const SEvent& d : deaths) {
-		if (d.pos.SqDistance2D(pos) < SQUARE(DEATH_NEAR)) {
+		if (d.pos.SqDistance2D(pos) < SQUARE(radius)) {
 			risk += std::exp2(-float(frame - d.frame) / DEATH_HALF);
 		}
 	}

@@ -191,12 +191,10 @@
 		"guard": "turretmissile",  // tower queued once a new radar stands, at the best spot near it; "" = none
 		"guard_radius": 300,  // elmos from the radar the guard tower may stand
 		"share": 0.05,  // share of metal income the radar budget grows by (it starts with one radar, holds two)
-		"heavy": "staticheavyradar",  // long-range radar the planner builds late, when it sees a lot that is still dark; "" = none
-		"heavy_income": 40,  // metal/s of average income before one is considered (and not short of energy: it costs 3 E upkeep)
-		"heavy_share": 0.03,  // share of metal income its own budget grows by past heavy_income; holds one
+		"heavy": "staticheavyradar",  // long-range radar the planner builds when one sees a lot that is still dark, before a small one; not by a commander; guarded by its build_chain "radar" hub; rebuilt 90 s after a loss; "" = none
+		"heavy_income": 40,  // metal/s of the ally team's income (mex, overdrive, misc) before one is considered
 		"heavy_min_gain": 0.15,  // it must add at least this share of the map's weight to the coverage
-		"heavy_depth": 1500,  // elmos it must stand from the nearest enemy ground cell
-		"heavy_risk": 2.0,  // weight of radars lost near its spot (small radars: 1)
+		"heavy_depth": 1500,  // elmos it must stand from the nearest enemy ground cell (within 1500 of its builder)
 		"chain": true  // build_chain hub "radar" steps go through the planner: skipped where they'd see too little new, else at its best spot near the offset; "upgrade": true on a step builds the heavy instead when it passes
 	},
 	"expand": false  // mex expansion favours clusters behind a defended cut (needs mex_front)

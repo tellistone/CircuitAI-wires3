@@ -106,11 +106,9 @@ public:
 		std::string radarGuard;  // choke.radar.guard: the tower def that guards a new radar, "" = none
 		float radarGuardRadius = 300.f;  // choke.radar.guard_radius
 		std::string radarHeavy = "staticheavyradar";  // choke.radar.heavy: the long-range radar def, "" = none
-		float heavyIncome = 40.f;  // choke.radar.heavy_income: metal/s of average income before one is considered
-		float heavyShare = 0.03f;  // choke.radar.heavy_share: share of income its budget grows by past that
+		float heavyIncome = 40.f;  // choke.radar.heavy_income: metal/s of the ally team's income before one is considered
 		float heavyGain = 0.15f;  // choke.radar.heavy_min_gain: share of the map's weight it must add
 		float heavyDepth = 1500.f;  // choke.radar.heavy_depth: elmos from the nearest enemy ground cell
-		float heavyRisk = 2.f;  // choke.radar.heavy_risk: weight of radars lost near its spot
 		bool isRadarChain = true;  // choke.radar.chain: build_chain hub radar steps go through the planner
 		bool IsAnyOn() const { return isChoke || isSpot || isRadar || isHold || isExpand; }
 	};
