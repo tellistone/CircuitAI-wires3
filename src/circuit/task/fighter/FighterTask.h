@@ -94,34 +94,40 @@ protected:
 		springai::AIFloat3 pos;
 		float power;
 	};
-	float GetFireRange(CCircuitUnit* unit) const { return GetFireRange(unit, target); }  // max range against the current target's kind
-	float GetFireRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const;  // the same against this enemy
-	// Where its firing spots go: GetFireRange; melee: both bodies + quota.attack_melee_spot (never beyond the fire
-	// range), 0 if that is < 0 (no spot)
+	// Max range against the current target's kind, or against this enemy's
+	float GetFireRange(CCircuitUnit* unit) const { return GetFireRange(unit, target); }
+	float GetFireRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const;
+	// Where its firing spots go: GetFireRange; melee: GetCloseRange, or GetFireRange on a blast it can fire at from
+	// outside (IsCloseSpot); 0 with melee spots off (no spot)
 	float GetSpotRange(CCircuitUnit* unit) const { return GetSpotRange(unit, target); }
 	float GetSpotRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const;
-	// A melee unit closes in on this enemy (close spots, GetSpotRange) unless its death explosion is a blast for it:
-	// then it picks a normal firing spot within weapon range, as ranged units do
-	bool IsCloseSpot(CCircuitUnit* unit, const CEnemyInfo* enemy) const;
-	// Is enemy's death explosion a blast for this melee unit (quota.attack_melee_blast): deals at least that x its
-	// health (never for a mobile bomb, whose own death is its weapon)
+	// Melee close spots: both bodies + quota.attack_melee_spot (never beyond the fire range); 0 if that is < 0 (off)
+	float GetCloseRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const;
+	// Is enemy's death explosion a blast for this melee unit (quota.attack_melee_blast): it deals at least that x the
+	// unit's health and reaches its close spots. Never for a mobile bomb, whose own death is its weapon
 	bool IsMeleeBlast(CCircuitUnit* unit, const CEnemyInfo* enemy) const;
-	// How many melee units of this kind may close in on enemy at once: room on half its close-spot ring, at most
+	// Does a melee unit close in on this enemy (close spots, with melee spots on)? Not on a blast its weapon reaches
+	// past (a normal firing spot, as ranged units pick); on a blast it can't fire at from outside it still does
+	bool IsCloseSpot(CCircuitUnit* unit, const CEnemyInfo* enemy) const;
+	// How many melee units of this kind may close in on enemy at once: bodies round its close-spot ring, at most
 	// quota.attack_melee_max
 	int GetMeleeCap(CCircuitUnit* unit, const CEnemyInfo* enemy) const;
-	// The melee units that Attack sends elsewhere than the group's target: the nearest ones closing in on it (those
-	// already on it first) keep it up to its cap, each of the rest takes the nearest other enemy in sight within
-	// attack_melee_spread of it that has room, isn't a blast for it and had a safe spot by it lately. Melee units
-	// left out (no such enemy) attack the target as before, over its cap
-	// Attack's order for a melee unit AssignMeleeTargets sent to another enemy: to a safe close spot next to it, the
-	// same search as on the group's target. false: none (remembered in meleeAltFails), Attack orders it on the target
-	bool AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self, float safeThreat, CEnemyInfo* enemy,
-			int timeout);
+	// The melee units that Attack sends elsewhere than the group's target (quota.attack_melee_max). Kept: one at its
+	// close spot by another enemy, until that dies. Then the nearest ones closing in on the target (those already on
+	// it first) take it up to its cap, each of the rest the nearest other enemy in sight within attack_melee_spread
+	// of it that it can hit and may chase, isn't a blast for it, has room and isn't banned (meleeBans). Units left
+	// out (no such enemy) attack the target as before, over its cap
 	void AssignMeleeTargets(const std::vector<SFireClaim>& claims, int frame,
 			std::map<CCircuitUnit*, CEnemyInfo*>& outTargets) const;
-	// isClose (melee's close spots): 0-0.95x GetSpotRange from the target; else 0.6-0.95x GetFireRange
-	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isClose) const;
-	bool GetKeptFireSpot(CCircuitUnit* unit, bool isClose, springai::AIFloat3& outPos) const;  // last spot, if still in that band
+	// Attack's order for a melee unit AssignMeleeTargets sent to another enemy: to a safe close spot next to it, the
+	// same search as on the group's target. false: none (the enemy is banned for all our melee units a while), and
+	// Attack orders the unit on the group's target instead
+	bool AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self, float safeThreat, CEnemyInfo* enemy,
+			int timeout);
+	// isClose (melee's close spots): 0-0.95x GetCloseRange from the enemy; else 0.6-0.95x GetFireRange
+	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isClose, const CEnemyInfo* enemy) const;
+	// Its last spot, if still in that band
+	bool GetKeptFireSpot(CCircuitUnit* unit, bool isClose, const CEnemyInfo* enemy, springai::AIFloat3& outPos) const;
 	// After Attack: every unit with spots (melee too) holds without one (HOLD: every spot dangerous, or none in sight)
 	// and the target is out of their weapon range, or out of sight (GetUnitSightLifts). The group would stand still for
 	// as long as it keeps this target
@@ -142,7 +148,7 @@ protected:
 	// (nullptr: none), then the unit's own and kept spots count only if on that arc. isClose: melee's close spots
 	// (GetSpotRange), else within weapon range (Attack tries this for melee too when no close spot is safe)
 	FireSpot FindFireSpot(const std::vector<SFireClaim>& claims, size_t self, float safeThreat,
-			const float* arcBearing, bool isClose, springai::AIFloat3& outPos) const;
+			const float* arcBearing, bool isClose, const CEnemyInfo* enemy, springai::AIFloat3& outPos) const;
 
 	// Each unit's health-scaled power (pwr_mod power x sqrt(health %)), in the order of 'units'. With shields in
 	// the group, power has the unit's share of their charges (GetShieldShares) in place of its own full shield.
@@ -182,8 +188,8 @@ protected:
 		bool isRisky;
 	};
 	std::map<CCircuitUnit*, SFireSpot> fireSpots;
-	// Per melee unit: the last other enemy it found no safe spot by, and when (pointer only compared)
-	std::map<CCircuitUnit*, std::pair<const CEnemyInfo*, int>> meleeAltFails;
+	// Other enemies with no safe close spot by them lately, until when (AttackMeleeOther; pointers only compared)
+	std::map<const CEnemyInfo*, int> meleeBans;
 	// Threat allowed at a spot for this strength (tasks with an escape override it)
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const {
 		return std::numeric_limits<float>::max();
