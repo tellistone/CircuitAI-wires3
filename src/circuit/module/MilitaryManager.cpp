@@ -383,22 +383,11 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& responses = root["response"];
 	const float teamSize = circuit->GetAllyTeam()->GetSize();
-	// Map player density = shortest side * 0.5 * longest side / allied team size, sides in map units (512 elmos,
-	// the 16x16 players quote). 16x16 1v1 = 128, 8x8 5v5 = 6.4. response.density_curve maps it to a multiplier of the
-	// response amount (a role's own density_curve overrides it); missing = [[6, 0.1], [128, 1.0]]. Alone on the
-	// ally team (1v1, FFA) it is always x1, as eps was
-	const bool isSolo = teamSize <= 1.f;
-	const float mapW = circuit->GetMap()->GetWidth() / 64.f;
-	const float mapH = circuit->GetMap()->GetHeight() / 64.f;
-	const float density = std::min(mapW, mapH) * 0.5f * std::max(mapW, mapH) / std::max(teamSize, 1.f);
-	std::vector<std::pair<float, float>> densityCurve;
-	if (responses["density_curve"].isNull()) {
-		densityCurve = {{6.f, 0.1f}, {128.f, 1.f}};
-	} else {
-		ReadCurve(responses["density_curve"], "response.density_curve", "density", densityCurve);
-	}
-	const float densityMult = isSolo ? 1.f : utils::eval_curve(densityCurve, density);
-	circuit->LOG("RESPONSE: map %gx%g, %g allies, density %.2f, density_curve x%.3f", mapW, mapH, teamSize, density, densityMult);
+	// Map player density = map area / 2 / allied team size, sides in map units (512 elmos, the 16x16 players quote):
+	// 16x16 1v1 = 128, 8x8 5v5 = 6.4. A role's density_curve maps it to a multiplier of the response amount
+	const float density = (circuit->GetMap()->GetWidth() / 64.f) * (circuit->GetMap()->GetHeight() / 64.f) * 0.5f
+			/ std::max(teamSize, 1.f);
+	circuit->LOG("RESPONSE: %g allies, map player density %.2f", teamSize, density);
 	roleInfos.resize(roleNames.size(), {.0f});
 	isResponseGates = false;
 	for (const auto& pair : roleNames) {
@@ -408,7 +397,7 @@ void CMilitaryManager::ReadConfig()
 
 		if (response.isNull()) {
 			info.maxPerc = 1.0f;
-			info.densityMult = densityMult;
+			info.densityMult = 1.0f;
 			continue;
 		}
 
@@ -416,11 +405,10 @@ void CMilitaryManager::ReadConfig()
 		if (!response["eps_step"].isNull()) {
 			circuit->LOG("CONFIG %s: response.%s.eps_step is no longer read, use density_curve", cfgName.c_str(), pair.first.c_str());
 		}
-		info.densityMult = densityMult;
-		if (!isSolo && !response["density_curve"].isNull()) {
-			std::vector<std::pair<float, float>> roleCurve;
-			ReadCurve(response["density_curve"], "response." + pair.first + ".density_curve", "density", roleCurve);
-			info.densityMult = utils::eval_curve(roleCurve, density, densityMult);
+		std::vector<std::pair<float, float>> densityCurve;  // missing = x1
+		ReadCurve(response["density_curve"], "response." + pair.first + ".density_curve", "density", densityCurve);
+		info.densityMult = utils::eval_curve(densityCurve, density);
+		if (!densityCurve.empty()) {
 			circuit->LOG("RESPONSE: %s density_curve x%.3f", pair.first.c_str(), info.densityMult);
 		}
 

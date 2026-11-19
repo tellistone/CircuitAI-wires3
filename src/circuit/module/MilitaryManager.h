@@ -687,7 +687,7 @@ private:
 		float cost;  // this AI's finished army and builders of the response role
 		float allyCost = 0.f;  // allied teams' finished mobile units of the role (UpdateAllyResponse, every 2 s)
 		float maxPerc;
-		float densityMult;  // density_curve at the map player density: scales the response amount (replaced eps_step)
+		float densityMult;  // density_curve at the map player density (missing = 1): scales the response amount
 		std::set<CCircuitUnit*> units;
 		std::string name;  // response.<name>, for logs
 		// Response gates (UpdateResponseGates). Share = finished ally mexes / map spots; income = factory income_tier

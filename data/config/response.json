@@ -3,13 +3,12 @@
 // Build special units when enemy_metal*ratio*income_mult*density_mult > team_response_metal
 //   enemy_metal = the whole enemy team's seen units of the vs role; team_response_metal = finished mobile units of the
 //   role from this AI and all its allies (humans too, refreshed every 2 s). max_percent still caps this AI's own army
-//   density_mult = "density_curve" at the map player density = shortest side * 0.5 * longest side / allied team size,
-//   sides in map units (16x16 etc.): 16x16 1v1 = 128, 8x8 5v5 = 6.4. Linear between points, first/last value outside.
-//   Smaller = less response. Alone on the ally team (1v1, FFA) it is always 1. A role's own "density_curve"
-//   overrides the shared one. Replaces eps_step
+//   density_mult = the role's "density_curve" at the map player density = map area / 2 / allied team size, sides in
+//   map units (16x16 etc.): 16x16 1v1 = 128, 8x8 1v1 = 32, 8x8 5v5 = 6.4. Replaces eps_step
 //
 // Optional per role (all off when missing):
-//   "density_curve": [[density, mult], ...]  replaces the shared density_curve for this role
+//   "density_curve": [[density, mult], ...]  scales the amount wanted (density_mult above), linear between points,
+//       first/last value outside them. Applies in 1v1 too. Missing = x1
 //   "income_curve": [[income, mult], ...]  scales the amount of the role wanted (income_mult above), linear between
 //       points, first/last value outside them. 0 = no response at that income (tier weights may still pick it)
 //   "territory_max": 0.6  not built while ally mexes / map spots > this
@@ -26,7 +25,6 @@
 // armjeth probability for tier 1: (0.00+10.00)*enemy_air_metal*600.0
 "response": {
 	"_weight_": 70.0,  // base weight of response probability, default=0.5
-	"density_curve": [[6, 0.1], [128, 1.0]],  // [density, multiplier]; missing = this
 
 	"assault": {
 		"vs":         ["riot", "static", "assault", "commander", "heavy", "super", "missileskirm", "turtle"],
