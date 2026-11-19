@@ -8,13 +8,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Added
 
 - **Melee units spread over targets and keep out of death explosions** (`quota.attack_melee_max`,
-  `attack_melee_spread`, `attack_melee_blast`). In attack, defend, anti-air and raid groups, at most 3 melee units (fewer
+  `attack_melee_spread`, `attack_melee_blast`). In attack, defend, anti-air and raid groups, at most 6 melee units (fewer
   if there isn't room round the target) close in on the group's target; they pick spots a body's width apart over the
   half ring facing them, not the old 45 degree arc, where every spot crowded every other. The rest take the nearest
-  other enemy in sight within 400 elmos. A target whose death explosion deals at least 0.1 x a melee unit's health is a
-  blast for it: one melee unit at a time goes in, the others take targets outside its blast or stand by at its edge, so
-  a fusion, turret or commander going up no longer hits the whole bunched group. Unit defs now read their death
-  explosion's radius and damage (`CCircuitDef::GetDeathAoe`, `GetDeathDamage`).
+  other enemy in sight within 400 elmos that has a safe firing spot next to it; with none around they bunch on the
+  group's target as before. A target whose death explosion deals at least 0.1 x a melee unit's health is a blast for
+  it: the unit fires from a normal firing spot within 90% of its weapon range, as ranged units do, instead of right
+  next to it, so a fusion, turret or commander going up no longer hits the whole bunched group. Unit defs now read their
+  death explosion's radius and damage (`CCircuitDef::GetDeathAoe`, `GetDeathDamage`).
 
 - **`choke_overlay sides`: who owns each region and choke.** A new overlay layer colours each region and choke by
   its owner (enemy mobiles seen in the last minute, enemy buildings until seen dead). A region is the side's with

@@ -44,6 +44,7 @@ const float WALK_CLIMB    = 40.f;   // with lifts (GetUnitSightLifts): a spot th
 const int   ARC_STEPS_CLOSE = 12;   // melee close spots: spots each side of our bearing, PI/24 apart (+-90 degrees)
 const float ARC_SPAN_CLOSE  = 0.5f; // melee close spots: half the arc, x PI (room round the target to spread out)
 const float MELEE_STICK   = 100.f;  // a melee unit already on an enemy counts as this much nearer it (AssignMeleeTargets)
+const int   ALT_FAIL_SKIP = FRAMES_PER_SEC * 5;  // another target with no safe spot by it is passed over this long
 }
 
 F3Vec IFighterTask::urgentPositions;  // NOTE: micro-opt
@@ -101,7 +102,7 @@ void IFighterTask::RemoveAssignee(CCircuitUnit* unit)
 	}
 	cowards.erase(unit);
 	fireSpots.erase(unit);
-	meleeStandBy.erase(unit);
+	meleeAltFails.erase(unit);
 	if (unit->HasShield()) {
 		shields.erase(unit);
 	}
@@ -214,14 +215,13 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		const bool isKept = GetKeptFireSpot(s.unit, isMelee, keptPos) || (isMelee && GetKeptFireSpot(s.unit, false, keptPos));
 		claims.push_back({s.unit, isKept ? keptPos : s.unit->GetPos(frame), s.power});
 	}
-	// Melee spread: some melee units go for other enemies near the target, or stand by outside its blast
+	// Melee spread: past the target's cap, melee units go for other enemies near it
 	std::map<CCircuitUnit*, CEnemyInfo*> meleeTargets;
 	AssignMeleeTargets(claims, frame, meleeTargets);
 	struct SOrder {
 		size_t claim;  // index in claims
 		float range;
 		CEnemyInfo* enemy;  // its target: the group's, or another for melee (AssignMeleeTargets)
-		bool isStandBy;  // melee kept out of the target's blast
 	};
 	std::vector<SOrder> orders;  // units to order
 	for (size_t i = 0; i < claims.size(); ++i) {
@@ -235,14 +235,12 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		unit->GetTravelAct()->StateWait();
 
 		auto mit = meleeTargets.find(unit);
-		const bool isStandBy = (mit != meleeTargets.end()) && (mit->second == nullptr);
-		CEnemyInfo* enemy = ((mit != meleeTargets.end()) && (mit->second != nullptr)) ? mit->second : target;
+		CEnemyInfo* enemy = (mit != meleeTargets.end()) ? mit->second : target;
 		if (isRepeatAttack
 			|| (unit->GetTarget() != enemy)
-			|| (isStandBy != (meleeStandBy.find(unit) != meleeStandBy.end()))  // into or out of standing by
 			|| ((enemy == target) && (unit->GetTargetTile() != targetTile) && isTileMoveOrder))
 		{
-			orders.push_back({i, GetSpotRange(unit, enemy), enemy, isStandBy});
+			orders.push_back({i, GetSpotRange(unit, enemy), enemy});
 		}
 	}
 	if (orders.empty()) {
@@ -258,17 +256,12 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		SFireClaim& claim = claims[order.claim];
 		CCircuitUnit* unit = claim.unit;
 		AIFloat3 firePos;
-		if (order.isStandBy) {
-			meleeStandBy.insert(unit);
-			StandByMelee(claims, order.claim, safeThreat, arc, targetTile, frame, timeout);
+		if ((order.enemy != target) && AttackMeleeOther(claims, order.claim, safeThreat, order.enemy, timeout)) {
 			continue;
-		}
-		meleeStandBy.erase(unit);
-		if (order.enemy != target) {
-			AttackMeleeOther(claims, order.claim, safeThreat, order.enemy, timeout);
-			continue;
-		}
-		const bool isMelee = unit->GetCircuitDef()->IsAttrMelee();
+		}  // else no safe spot by that enemy: the group's target after all
+		// Melee: a close spot right next to the target, unless its death explosion is a blast for the unit, then a
+		// normal firing spot within weapon range as ranged units pick
+		const bool isMelee = IsCloseSpot(unit, target);
 		FireSpot spot = FindFireSpot(claims, order.claim, safeThreat, arc, isMelee, firePos);
 		// Melee with no safe spot next to the target: a safe spot within weapon range (the ranged search) before it
 		// holds or walks in anyway. Units without a real gun find nothing new there (their range is as short)
@@ -311,44 +304,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	}
 }
 
-void IFighterTask::StandByMelee(std::vector<SFireClaim>& claims, size_t self, float safeThreat, const float* arc,
-		int targetTile, int frame, int timeout)
-{
-	SFireClaim& claim = claims[self];
-	CCircuitUnit* unit = claim.unit;
-	const AIFloat3& tPos = target->GetPos();
-	const float keepOut = target->GetCircuitDef()->GetDeathAoe() + unit->GetCircuitDef()->GetRadius() + SQUARE_SIZE * 4;
-	// A real gun that reaches past the blast: a safe spot within weapon range, if its band is all outside the blast
-	AIFloat3 firePos;
-	if ((GetFireRange(unit) * FIRE_BAND_MIN > keepOut)
-		&& (FindFireSpot(claims, self, safeThreat, arc, false, firePos) == FireSpot::SPOT))
-	{
-		claim.pos = firePos;
-		fireSpots[unit] = {firePos, frame, false};
-		unit->FightFrom(firePos, target, targetTile, timeout);
-		return;
-	}
-	// Else wait at the blast's edge on its side (or where it stands, if that's outside already)
-	const AIFloat3& uPos = unit->GetPos(frame);
-	AIFloat3 dir = uPos - tPos;
-	dir.y = 0.f;
-	const float dist = dir.Length2D();
-	AIFloat3 pos = uPos;
-	if (dist < keepOut) {
-		if (dist > 1.f) {
-			dir /= dist;
-		} else {
-			dir = AIFloat3(1.f, 0.f, 0.f);
-		}
-		pos = tPos + dir * keepOut;
-		CTerrainManager::CorrectPosition(pos);
-	}
-	claim.pos = pos;
-	fireSpots.erase(unit);
-	unit->StandBy(pos, target, targetTile, timeout);
-}
-
-void IFighterTask::AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self, float safeThreat, CEnemyInfo* enemy,
+bool IFighterTask::AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self, float safeThreat, CEnemyInfo* enemy,
 		int timeout)
 {
 	SFireClaim& claim = claims[self];
@@ -363,23 +319,20 @@ void IFighterTask::AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self
 	AIFloat3 firePos;
 	const FireSpot spot = FindFireSpot(claims, self, safeThreat, nullptr, true, firePos);
 	target = groupTarget;
-	if (FireSpot::SPOT == spot) {
-		claim.pos = firePos;
-		fireSpots[unit] = {firePos, frame, false};
-		if (isFireSpotChase) {
-			unit->AttackFrom(firePos, enemy, tile, timeout);
-		} else {
-			unit->FightFrom(firePos, enemy, tile, timeout);
-		}
-	} else if (FireSpot::NONE == spot) {
-		fireSpots.erase(unit);
-		unit->Attack(enemy, tile, timeout);
-	} else {
-		// No safe spot there: hold where it stands (as the group's target would), fight what comes into range
-		claim.pos = unit->GetPos(frame);
-		fireSpots.erase(unit);
-		unit->HoldFire(claim.pos, enemy, tile, timeout);
+	if (FireSpot::SPOT != spot) {
+		// No safe spot next to it (or none it can stand on): not a valid target for now (AssignMeleeTargets skips
+		// it for a while, so the unit isn't re-ordered at it every update)
+		meleeAltFails[unit] = {enemy, frame};
+		return false;
 	}
+	claim.pos = firePos;
+	fireSpots[unit] = {firePos, frame, false};
+	if (isFireSpotChase) {
+		unit->AttackFrom(firePos, enemy, tile, timeout);
+	} else {
+		unit->FightFrom(firePos, enemy, tile, timeout);
+	}
+	return true;
 }
 
 bool IFighterTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
@@ -401,8 +354,8 @@ float IFighterTask::GetSpotRange(CCircuitUnit* unit, const CEnemyInfo* enemy) co
 {
 	const float range = GetFireRange(unit, enemy);
 	CCircuitDef* cdef = unit->GetCircuitDef();
-	if (!cdef->IsAttrMelee()) {
-		return range;
+	if (!IsCloseSpot(unit, enemy)) {
+		return range;  // ranged, or melee on a blast: a normal firing spot
 	}
 	const float gap = manager->GetCircuit()->GetMilitaryManager()->GetAttackMeleeSpot();
 	if (gap < 0.f) {
@@ -412,6 +365,11 @@ float IFighterTask::GetSpotRange(CCircuitUnit* unit, const CEnemyInfo* enemy) co
 	CCircuitDef* edef = enemy->GetCircuitDef();
 	const float bodies = cdef->GetRadius() + ((edef != nullptr) ? edef->GetRadius() : 0.f);
 	return std::min(range, bodies + gap);
+}
+
+bool IFighterTask::IsCloseSpot(CCircuitUnit* unit, const CEnemyInfo* enemy) const
+{
+	return unit->GetCircuitDef()->IsAttrMelee() && !IsMeleeBlast(unit, enemy);
 }
 
 bool IFighterTask::IsMeleeBlast(CCircuitUnit* unit, const CEnemyInfo* enemy) const
@@ -425,9 +383,6 @@ bool IFighterTask::IsMeleeBlast(CCircuitUnit* unit, const CEnemyInfo* enemy) con
 
 int IFighterTask::GetMeleeCap(CCircuitUnit* unit, const CEnemyInfo* enemy) const
 {
-	if (IsMeleeBlast(unit, enemy)) {
-		return 1;  // one unit at a time takes the blast
-	}
 	const int maxCount = manager->GetCircuit()->GetMilitaryManager()->GetAttackMeleeMax();
 	if (maxCount <= 0) {
 		return std::numeric_limits<int>::max();
@@ -444,10 +399,11 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	if ((militaryMgr->GetAttackMeleeMax() <= 0) && (militaryMgr->GetAttackMeleeBlast() < 0.f)) {
+	if (militaryMgr->GetAttackMeleeMax() <= 0) {
 		return;  // off: every melee unit on the group's target
 	}
-	// Melee units Attack may order, with close spots, nearest the target first; already on it: a head start, so
+	// Melee units Attack may order, with close spots (not on a blast: those fire from a normal spot), nearest the
+	// target first; already on it: a head start, so
 	// they keep it rather than swap with one that walked a little closer
 	const AIFloat3& tPos = target->GetPos();
 	struct SMelee {
@@ -457,7 +413,7 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 	std::vector<SMelee> melees;
 	for (const SFireClaim& c : claims) {
 		CCircuitUnit* unit = c.unit;
-		if (!unit->GetCircuitDef()->IsAttrMelee() || (GetSpotRange(unit) < SQUARE_SIZE * 4)
+		if (!IsCloseSpot(unit, target) || (GetSpotRange(unit) < SQUARE_SIZE * 4)
 			|| (unit->Blocker() != nullptr) || IsScooting(unit) || IsOutOfReach(unit, frame))
 		{
 			continue;
@@ -502,19 +458,19 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 		if (!isOthersRead) {
 			readOthers();
 		}
-		const bool isBlast = IsMeleeBlast(unit, target);
-		const float keepOut = isBlast ? target->GetCircuitDef()->GetDeathAoe() + unit->GetCircuitDef()->GetRadius() : 0.f;
+		auto fit = meleeAltFails.find(unit);
+		const CEnemyInfo* failed = ((fit != meleeAltFails.end()) && (frame < fit->second.second + ALT_FAIL_SKIP))
+				? fit->second.first : nullptr;
 		const AIFloat3& uPos = unit->GetPos(frame);
 		const int targetCat = unit->GetCircuitDef()->GetTargetCategory();
 		CEnemyInfo* best = nullptr;
 		float bestDist = std::numeric_limits<float>::max();
 		for (CEnemyInfo* enemy : others) {
 			const AIFloat3& ePos = enemy->GetPos();
-			if ((isBlast && (ePos.SqDistance2D(tPos) <= SQUARE(keepOut)))
-				|| !(targetCat & enemy->GetCircuitDef()->GetCategory())
+			if ((enemy == failed) || !(targetCat & enemy->GetCircuitDef()->GetCategory()) || IsMeleeBlast(unit, enemy)
 				|| (load[enemy] >= GetMeleeCap(unit, enemy)))
 			{
-				continue;  // in the target's blast, not one it can hit, or full
+				continue;  // no safe spot there lately, not one it can hit, a blast (no melee there), or full
 			}
 			const float dist = ePos.distance2D(uPos) - ((unit->GetTarget() == enemy) ? MELEE_STICK : 0.f);
 			if ((dist < bestDist) && circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), ePos)) {
@@ -525,9 +481,7 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 		if (best != nullptr) {
 			++load[best];
 			outTargets[unit] = best;
-		} else if (isBlast) {
-			outTargets[unit] = nullptr;  // stand by outside the blast
-		}  // else: nothing else to take, the group's target over its cap (crowding still spreads the spots)
+		}  // else: no other valid target around, the group's target over its cap as before
 	}
 }
 

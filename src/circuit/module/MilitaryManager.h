@@ -447,7 +447,7 @@ public:
 	// quota.attack_melee_spread: other targets for those melee units, within this many elmos of the group's target
 	float GetAttackMeleeSpread() const { return attackMeleeSpread; }
 	// quota.attack_melee_blast: a target whose death explosion deals at least this x a melee unit's health is a
-	// blast for it: one melee unit at a time closes in, the others keep out of the blast; < 0: off
+	// blast for it: the unit fires from a normal firing spot within weapon range, not right next to it; < 0: off
 	float GetAttackMeleeBlast() const { return attackMeleeBlast; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other
 	struct SAttackMerge {

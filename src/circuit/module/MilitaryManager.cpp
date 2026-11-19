@@ -658,7 +658,7 @@ void CMilitaryManager::ReadConfig()
 	}
 	attackSpotThreat = (qspotThreat.isNumeric() && (qspotThreat.asFloat() >= 0.f)) ? qspotThreat.asFloat() : 1.f;
 	attackMeleeSpot = readAttackNum("attack_melee_spot", 32.f, -1.f, noMax);
-	attackMeleeMax = static_cast<int>(readAttackNum("attack_melee_max", 3.f, 0.f, 64.f));
+	attackMeleeMax = static_cast<int>(readAttackNum("attack_melee_max", 6.f, 0.f, 64.f));
 	attackMeleeSpread = readAttackNum("attack_melee_spread", 400.f, 0.f, noMax);
 	attackMeleeBlast = readAttackNum("attack_melee_blast", 0.1f, -1.f, noMax);
 	// quota.attack_merge.rally, quota.raid_rally: {match, margin, range, seen_sec}; not an object (or match 0) = off
