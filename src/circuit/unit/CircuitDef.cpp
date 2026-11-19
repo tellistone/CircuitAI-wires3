@@ -115,6 +115,9 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, aoe(.0f)
 		, fireAoe(.0f)
 		, shotDmg(.0f)
+		, deathAoe(.0f)
+		, deathDmg(.0f)
+		, isDeathBomb(false)
 		, power(.0f)
 		, threat(.0f)
 		, minRange(.0f)
@@ -487,6 +490,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 
 	isAttacker = dps > .1f;
 	if (IsMobile() && !IsAttacker()) {  // mobile bomb?
+		isDeathBomb = true;
 		WeaponDef* wd = def->GetDeathExplosion();
 		aoe = fireAoe = wd->GetAreaOfEffect();
 		if (aoe > 64.0f) {
@@ -521,6 +525,20 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 			category |= circuit->GetBadCategory();  // do not chase bombs
 		}
 		delete wd;
+	}
+
+	// Death explosion (explodeAs): its radius and its worst damage over armour types (CCircuitDef::GetDeathDamage)
+	{
+		WeaponDef* wd = def->GetDeathExplosion();
+		if (wd != nullptr) {
+			deathAoe = wd->GetAreaOfEffect();
+			Damage* damage = wd->GetDamage();
+			for (float d : damage->GetTypes()) {
+				deathDmg = std::max(deathDmg, d);
+			}
+			delete damage;
+			delete wd;
+		}
 	}
 
 	// NOTE: isTracks filters units with slow weapon (hermit, recluse, rocko)
