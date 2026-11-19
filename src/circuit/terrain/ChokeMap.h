@@ -179,6 +179,8 @@ public:
 	bool IsChokeSettled(int choke, int frame) const;
 	// Enemy artillery seen in range of the choke within the last 5 minutes: no new towers there
 	bool IsArtilleryNear(int choke, int frame) const;
+	// Settled and no enemy artillery near: what choke defence, the picker's C and its choke callers act on
+	bool IsChokeLive(int choke, int frame) const { return IsChokeSettled(choke, frame) && !IsArtilleryNear(choke, frame); }
 
 	const std::vector<SMoveClass>& GetMoveClasses() const { return moveClasses; }
 	const SCellMask& GetClassMask(int classIdx) const { return classMasks[classIdx]; }

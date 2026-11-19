@@ -37,7 +37,6 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;  // zk artillery: a new task; anti-heavy mode: keeps it
 
 	bool IsAntiHeavy() const { return isAntiHeavy; }
-	bool IsAttacking() const { return isAttacking && !isFleeing; }  // shooting a target in its range
 	CMilitaryManager::AhNote GetAhActivity() const;  // for the ANTIHEAVY log line
 
 private:

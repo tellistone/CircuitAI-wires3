@@ -323,7 +323,7 @@ CMilitaryManager::AhNote CAntiHeavyTask::GetActivity() const
 
 bool CAntiHeavyTask::IsAttacking() const
 {
-	if ((State::ENGAGE != state) || (target == nullptr) || (leader == nullptr)
+	if ((GetActivity() != CMilitaryManager::AhNote::ENGAGE) || (target == nullptr) || (leader == nullptr)
 		|| leader->GetCircuitDef()->IsAbleToFly() || leader->GetCircuitDef()->IsRoleMine())
 	{
 		return false;

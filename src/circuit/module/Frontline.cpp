@@ -82,7 +82,9 @@ void CFrontline::Update()
 					enemy->GetCost()});
 		}
 	}
-	UpdateRanks(armed);
+	if (chokeMap->GetOverlay()->IsOn()) {
+		UpdateRanks(armed);  // only the overlay reads them
+	}
 	UpdateFront(armed);
 	UpdateHolds();
 	Fortify();

@@ -89,7 +89,6 @@ void CTurretPicker::ReadConfig()
 	c.enemyLineReach = turret.get("enemy_line_reach", c.enemyLineReach).asFloat();
 	c.isArtillery = turret.get("artillery", c.isArtillery).asBool();
 	c.artilleryReach = turret.get("artillery_reach", c.artilleryReach).asFloat();
-	c.artilleryDefended = turret.get("artillery_defended", c.artilleryDefended).asFloat();
 	c.enemyReach = turret.get("enemy_reach", c.enemyReach).asFloat();
 	c.allyRadius = turret.get("ally_radius", c.allyRadius).asFloat();
 	c.cooldown = turret.get("cooldown", c.cooldown).asFloat();
@@ -432,7 +431,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		const std::vector<CRegionGraph::SChoke>& chokes = chokeMap->GetGraph().GetChokes();
 		auto isChoke = [&chokes](int c) { return (c >= 0) && (c < (int)chokes.size()); };
 		auto isLive = [&](int c) {
-			return isChoke(c) && chokeMap->IsChokeSettled(c, frame) && !chokeMap->IsArtilleryNear(c, frame);
+			return isChoke(c) && chokeMap->IsChokeLive(c, frame);
 		};
 		std::vector<int> line;  // shared over all of it: a shelled pass's part isn't moved onto the others
 		const std::vector<int>& current = chokeMap->GetCurrentLine();

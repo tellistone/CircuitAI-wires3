@@ -35,7 +35,7 @@ class IFighterTask;
  *   for its spot in a minute. A claimed slot keeps its choke until 30 s after it was last short, unless another is
  *   1.3x as short as it was in the last 30 s; then it moves to the most short one, or ends if none is short. With
  *   choke.enable, the top-ranked short choke's pocket is fortified (MakeDefence).
- * The rankings only feed the overlay.
+ * The rankings only feed the overlay, and are made only while it is on.
  */
 class CFrontline {
 public:

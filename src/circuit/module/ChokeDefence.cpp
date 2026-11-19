@@ -129,7 +129,7 @@ CChokeDefence::SPlan CChokeDefence::Plan(int cluster, const CDefenceMatrix::SDef
 	float bestRoom = 0.f;
 	for (size_t i = 0; i < pocket.chokes.size(); ++i) {
 		const int c = pocket.chokes[i];
-		if (!chokeMap->IsChokeSettled(c, frame) || chokeMap->IsArtilleryNear(c, frame)) {
+		if (!chokeMap->IsChokeLive(c, frame)) {
 			isWaiting = true;
 			continue;
 		}
