@@ -685,7 +685,7 @@ private:
 	struct SRoleInfo {
 		float cost;
 		float maxPerc;
-		float factor;
+		float densityMult;  // density_curve at the map player density: scales the response amount (replaced eps_step)
 		std::set<CCircuitUnit*> units;
 		std::string name;  // response.<name>, for logs
 		// Response gates (UpdateResponseGates). Share = finished ally mexes / map spots; income = factory income_tier

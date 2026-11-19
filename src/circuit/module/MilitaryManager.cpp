@@ -65,7 +65,6 @@ namespace circuit {
 
 using namespace springai;
 
-#define RESPONSE_EPS_MIN	0.1f  // response eps floor
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
 #define SPOT_GIVE_UP		(FRAMES_PER_SEC * 600)  // choke.spot.enable: two failures this close give a type up this long
@@ -384,6 +383,20 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& responses = root["response"];
 	const float teamSize = circuit->GetAllyTeam()->GetSize();
+	// Map player density = shortest side * 0.5 * longest side / allied team size, sides in map units (512 elmos,
+	// the 16x16 players quote). 16x16 1v1 = 128, 8x8 5v5 = 6.4. response.density_curve maps it to a multiplier of the
+	// response amount (a role's own density_curve overrides it); missing = [[6, 0.1], [128, 1.0]]
+	const float mapW = circuit->GetMap()->GetWidth() / 64.f;
+	const float mapH = circuit->GetMap()->GetHeight() / 64.f;
+	const float density = std::min(mapW, mapH) * 0.5f * std::max(mapW, mapH) / std::max(teamSize, 1.f);
+	std::vector<std::pair<float, float>> densityCurve;
+	if (responses["density_curve"].isNull()) {
+		densityCurve = {{6.f, 0.1f}, {128.f, 1.f}};
+	} else {
+		ReadCurve(responses["density_curve"], "response.density_curve", "density", densityCurve);
+	}
+	const float densityMult = utils::eval_curve(densityCurve, density);
+	circuit->LOG("RESPONSE: map %gx%g, %g allies, density %.2f, density_curve x%.3f", mapW, mapH, teamSize, density, densityMult);
 	roleInfos.resize(roleNames.size(), {.0f});
 	isResponseGates = false;
 	for (const auto& pair : roleNames) {
@@ -393,20 +406,20 @@ void CMilitaryManager::ReadConfig()
 
 		if (response.isNull()) {
 			info.maxPerc = 1.0f;
-			info.factor  = teamSize;
+			info.densityMult = densityMult;
 			continue;
 		}
 
 		info.maxPerc = response.get("max_percent", 1.0f).asFloat();
-		// eps = 1 + (teamSize - 1) * eps_step. Enemy metal is the whole enemy team's, our role metal this AI's own:
-		// eps_step 1 = each AI answers its 1/teamSize share, > 1 less, < 1 (or negative) more. Floored: at 0 one
-		// sighting would let the role grow to max_percent whatever the enemy amount
-		const float step = response.get("eps_step", 1.0f).asFloat();
-		info.factor  = (teamSize - 1.0f) * step + 1.0f;
-		if (info.factor < RESPONSE_EPS_MIN) {
-			circuit->LOG("CONFIG %s: response.%s eps %g clamped to %g (teamSize %g, eps_step %g)", cfgName.c_str(),
-					pair.first.c_str(), info.factor, RESPONSE_EPS_MIN, teamSize, step);
-			info.factor = RESPONSE_EPS_MIN;
+		if (!response["eps_step"].isNull()) {
+			circuit->LOG("CONFIG %s: response.%s.eps_step is no longer read, use density_curve", cfgName.c_str(), pair.first.c_str());
+		}
+		info.densityMult = densityMult;
+		if (!response["density_curve"].isNull()) {
+			std::vector<std::pair<float, float>> roleCurve;
+			ReadCurve(response["density_curve"], "response." + pair.first + ".density_curve", "density", roleCurve);
+			info.densityMult = utils::eval_curve(roleCurve, density, densityMult);
+			circuit->LOG("RESPONSE: %s density_curve x%.3f", pair.first.c_str(), info.densityMult);
 		}
 
 		// Number in [lo, hi] or the default, logged
@@ -3495,9 +3508,9 @@ float CMilitaryManager::RoleProbability(const CCircuitDef* cdef) const
 		const float enemyMetal = enemyMgr->GetEnemyCost(vs.role);
 		const float nextMetal = info.cost + cdef->GetCostM();
 		const float prob = enemyMetal / (info.cost + 1.f) * vs.importance;
-		// income_curve scales the amount wanted (not the roll weight); max_percent still caps it
+		// income_curve and density_curve scale the amount wanted (not the roll weight); max_percent still caps it
 		if ((prob > maxProb) &&
-			(enemyMetal * vs.ratio * info.incomeMult >= nextMetal * info.factor) &&
+			(enemyMetal * vs.ratio * info.incomeMult * info.densityMult >= nextMetal) &&
 			(nextMetal <= (armyCost + cdef->GetCostM()) * info.maxPerc))
 		{
 			maxProb = prob;
