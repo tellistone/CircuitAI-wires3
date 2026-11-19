@@ -168,6 +168,11 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.radarInside = radar.get("inside", config.radarInside).asFloat();
 	config.radarGuard = radar.get("guard", "").asString();
 	config.radarGuardRadius = radar.get("guard_radius", config.radarGuardRadius).asFloat();
+	config.radarHeavy = radar.get("heavy", config.radarHeavy).asString();
+	config.heavyIncome = radar.get("heavy_income", config.heavyIncome).asFloat();
+	config.heavyGain = radar.get("heavy_min_gain", config.heavyGain).asFloat();
+	config.heavyDepth = radar.get("heavy_depth", config.heavyDepth).asFloat();
+	config.isRadarChain = radar.get("chain", config.isRadarChain).asBool();
 	config.isHold = root["quota"].get("hold_choke", false).asBool();
 }
 

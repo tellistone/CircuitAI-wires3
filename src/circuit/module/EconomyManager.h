@@ -75,6 +75,7 @@ public:
 	// Metal income without reclaim: our share of the ally team's mex, overdrive and constructor metal, from ZK's
 	// overdrive gadget (GetAvgMetalIncome when the gadget doesn't report it)
 	float GetEcoMetalIncome() const;
+	float GetTeamMetalIncome() const;  // the ally team's mex, overdrive and misc metal (ZK's overdrive gadget), else ours
 	float GetAvgEnergyIncome() const { return energyIncome; }
 	float GetEcoFactor() const { return ecoFactor; }
 	float GetPullMtoS() const { return pullMtoS; }

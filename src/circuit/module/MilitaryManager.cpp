@@ -333,7 +333,14 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 	defence = circuit->GetAllyTeam()->GetDefenceMatrix().get();
 	chokeDefence = std::make_unique<CChokeDefence>(circuit);
 	spotScorer = std::make_unique<CSpotScorer>(circuit);
-	sensorPlanner = std::make_unique<CSensorPlanner>(circuit, radarDef);
+	// choke.radar.heavy: the radar planner's long-range radar
+	const std::string& heavyName = circuit->GetChokeMap()->GetConfig().radarHeavy;
+	CCircuitDef* heavyDef = heavyName.empty() ? nullptr : circuit->GetCircuitDef(heavyName.c_str());
+	if (!heavyName.empty() && (heavyDef == nullptr)) {
+		circuit->LOG("CONFIG %s: choke.radar.heavy has unknown UnitDef '%s'",
+				circuit->GetSetupManager()->GetConfigName().c_str(), heavyName.c_str());
+	}
+	sensorPlanner = std::make_unique<CSensorPlanner>(circuit, radarDef, heavyDef);
 	frontline = std::make_unique<CFrontline>(circuit);
 	turretPicker = std::make_unique<CTurretPicker>(circuit);
 
@@ -1979,9 +1986,13 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	const int frame = circuit->GetLastFrame();
 	std::vector<CCircuitDef*> picked;
+	// choke.radar.enable: the planner places its heavy radar, the porc lists leave it out
+	const CCircuitDef* plannedDef = circuit->GetChokeMap()->GetConfig().isRadar ? sensorPlanner->GetHeavyDef() : nullptr;
 	for (unsigned i = 0; i < num; ++i) {
 		CCircuitDef* defDef = (isAirSlot && (i == 0) && prevent.airDef->IsAvailable(frame)) ? prevent.airDef : defenders[i];
-		if (!defDef->IsAvailable(frame) || (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))) {
+		if (!defDef->IsAvailable(frame) || (defDef == plannedDef)
+			|| (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f)))
+		{
 			continue;
 		}
 		picked.push_back(defDef);
@@ -2020,15 +2031,19 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 
 	// Build sensors
 	auto checkSensor = [this, &backPos, builderMgr](IBuilderTask::BuildType type, CCircuitDef* cdef, float range) {
+		// One of its type within range, or a static one of any type whose view holds all of cdef's (an Advanced Radar)
+		auto radiusOf = [type](CCircuitDef* d) {
+			return (type == IBuilderTask::BuildType::RADAR) ? d->GetDef()->GetRadarRadius() : d->GetDef()->GetSonarRadius();
+		};
+		const float radius = radiusOf(cdef);
+		const int frame = circuit->GetLastFrame();
 		bool isBuilt = false;
-		COOAICallback* clb = circuit->GetCallback();
-		auto friendlies = clb->GetFriendlyUnitIdsIn(backPos, range);
-		for (int auId : friendlies) {
-			if (auId == -1) {
-				continue;
-			}
-			CCircuitDef::Id defId = clb->Unit_GetDefId(auId);
-			if (defId == cdef->GetId()) {
+		for (const auto& kv : circuit->GetFriendlyUnits()) {
+			CCircuitDef* udef = kv.second->GetCircuitDef();
+			const float sqDist = kv.second->GetPos(frame).SqDistance2D(backPos);
+			if (((udef == cdef) && (sqDist < SQUARE(range)))
+				|| (!udef->IsMobile() && (radiusOf(udef) > radius) && (sqDist < SQUARE(radiusOf(udef) - radius))))
+			{
 				isBuilt = true;
 				break;
 			}
