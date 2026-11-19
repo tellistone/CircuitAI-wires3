@@ -83,6 +83,13 @@ void CTurretPicker::ReadConfig()
 	c.afterFleeSince = turret.get("after_flee_since", c.afterFleeSince).asFloat();
 	c.defendedRadius = turret.get("defended_radius", c.defendedRadius).asFloat();
 	c.isNearEnemy = turret.get("near_enemy", c.isNearEnemy).asBool();
+	c.isShortChoke = turret.get("short_choke", c.isShortChoke).asBool();
+	c.shortChokeReach = turret.get("short_choke_reach", c.shortChokeReach).asFloat();
+	c.isEnemyLine = turret.get("enemy_line", c.isEnemyLine).asBool();
+	c.enemyLineReach = turret.get("enemy_line_reach", c.enemyLineReach).asFloat();
+	c.enemyLineBudget = turret.get("enemy_line_budget", c.enemyLineBudget).asFloat();
+	c.isArtillery = turret.get("artillery", c.isArtillery).asBool();
+	c.artilleryReach = turret.get("artillery_reach", c.artilleryReach).asFloat();
 	c.enemyReach = turret.get("enemy_reach", c.enemyReach).asFloat();
 	c.allyRadius = turret.get("ally_radius", c.allyRadius).asFloat();
 	c.cooldown = turret.get("cooldown", c.cooldown).asFloat();
@@ -425,7 +432,7 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		const std::vector<CRegionGraph::SChoke>& chokes = chokeMap->GetGraph().GetChokes();
 		auto isChoke = [&chokes](int c) { return (c >= 0) && (c < (int)chokes.size()); };
 		auto isLive = [&](int c) {
-			return isChoke(c) && chokeMap->IsChokeSettled(c, frame) && !chokeMap->IsArtilleryNear(c, frame);
+			return isChoke(c) && chokeMap->IsChokeLive(c, frame);
 		};
 		std::vector<int> line;  // shared over all of it: a shelled pass's part isn't moved onto the others
 		const std::vector<int>& current = chokeMap->GetCurrentLine();

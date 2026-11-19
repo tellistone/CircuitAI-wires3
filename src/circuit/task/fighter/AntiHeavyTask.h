@@ -43,6 +43,8 @@ public:
 
 	// For the ANTIHEAVY log: fleeing, engaged, parked (or walking to its park spot), else hunting
 	CMilitaryManager::AhNote GetActivity() const;
+	// Engaged, and a unit of the squad has its target within its weapon range; never mines or aircraft
+	bool IsAttacking() const;
 	const springai::AIFloat3& GetParkPos() const { return park.pos; }  // invalid: none
 	// Weapon range + 30 s of walking: snipers walk in to heavies this near, and the army pull (UpdateAhPull) takes
 	// units for them

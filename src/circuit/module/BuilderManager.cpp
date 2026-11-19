@@ -10,6 +10,7 @@
 #include "module/MilitaryManager.h"
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
+#include "module/Frontline.h"
 #include "module/TurretPicker.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -46,6 +47,8 @@
 #include "task/builder/GuardTask.h"
 #include "task/builder/EscortTask.h"
 #include "task/fighter/SquadTask.h"
+#include "task/fighter/ArtilleryTask.h"
+#include "task/fighter/AntiHeavyTask.h"
 #include "task/builder/CombatTask.h"
 #include "task/builder/BuildChain.h"
 #include "CircuitAI.h"
@@ -2704,8 +2707,9 @@ void CBuilderManager::UpdateTurrets()
 		}
 	}
 
-	// Near a known enemy building seen lately, with no armed ally around: centred on itself
-	if (!cfg.isNearEnemy || isStalling) {
+	// In the field, the first that holds for a constructor orders. Away from it (a choke, our artillery), it only helps
+	// a job near itself too
+	if (isStalling || !(cfg.isNearEnemy || cfg.isShortChoke || cfg.isEnemyLine || cfg.isArtillery)) {
 		return;
 	}
 	std::vector<CCircuitUnit*> builders;
@@ -2718,41 +2722,141 @@ void CBuilderManager::UpdateTurrets()
 	if (builders.empty()) {
 		return;
 	}
+	// Near enemy: a known enemy building seen lately within enemy_reach, with no armed ally around; centred on itself
 	std::vector<AIFloat3> enemyBuildings;
-	for (const auto& kv : circuit->GetEnemyInfos()) {
-		if (picker->IsEnemyBuilding(kv.second, true)) {
-			enemyBuildings.push_back(kv.second->GetPos());
+	if (cfg.isNearEnemy) {
+		for (const auto& kv : circuit->GetEnemyInfos()) {
+			if (picker->IsEnemyBuilding(kv.second, true)) {
+				enemyBuildings.push_back(kv.second->GetPos());
+			}
 		}
 	}
 	const float sqReach = SQUARE(cfg.enemyReach);
 	auto isCover = [picker](const CCircuitDef* d) {  // mobiles, and statics that defend the field
 		return d->IsMobile() || picker->IsDefence(d);
 	};
+	// Short choke: one of our current line our ground-hitting towers don't cover all of, or that are short of the
+	// enemy army outside it (CFrontline, every 10 s). Enemy line: any of it. Each live (settled, no enemy artillery on
+	// it: as the picker's C) and defensible (towers can close it), within its reach of the line; centred on its gap
+	CChokeMap* chokeMap = circuit->GetChokeMap();
+	const CRegionGraph& graph = chokeMap->GetGraph();
+	std::vector<int> shortChokes, lineChokes;
+	std::vector<bool> isOnEnemyLine;  // enemy_line_budget for a choke on it, whichever caller takes it
+	if (cfg.isShortChoke || cfg.isEnemyLine) {
+		if (chokeMap->IsReady()) {
+			isOnEnemyLine.assign(graph.GetChokes().size(), false);
+			for (int c : chokeMap->GetEnemyLine()) {
+				isOnEnemyLine[c] = true;
+			}
+			auto isUsable = [&](int c) {
+				return (c >= 0) && graph.GetChokes()[c].isDefensible && chokeMap->IsChokeLive(c, frame);
+			};
+			if (cfg.isShortChoke) {
+				for (const CFrontline::SFront& f : circuit->GetMilitaryManager()->GetFrontline()->GetFront()) {
+					const int c = graph.FindChoke(f.chokeId);
+					if (f.IsShort() && isUsable(c)) {
+						shortChokes.push_back(c);
+					}
+				}
+			}
+			if (cfg.isEnemyLine) {
+				const std::vector<int>& line = chokeMap->GetEnemyLine();
+				std::copy_if(line.begin(), line.end(), std::back_inserter(lineChokes), isUsable);
+			}
+		} else {
+			chokeMap->Request();
+		}
+	}
+	auto nearChoke = [&](const std::vector<int>& list, const AIFloat3& pos, float reach) {  // the nearest in reach
+		int best = -1;
+		for (int c : list) {
+			const float dist = graph.GetLineDist(graph.GetChokes()[c], pos.x, pos.z);
+			if (dist <= reach) {
+				best = c;
+				reach = dist;
+			}
+		}
+		return best;
+	};
+	const struct {
+		const std::vector<int>& chokes;
+		float reach;
+		const char* caller;
+	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke"}, {lineChokes, cfg.enemyLineReach, "enemy line"}};
+	const float lineBudget = utils::clamp(cfg.enemyLineBudget, 0.f, 1.f);  // x the balance the account must hold
+	// Artillery: ours shooting a target in range (an artillery unit; an engaged anti-heavy squad with a unit in range,
+	// not mines or aircraft), only a building in anti-heavy mode; centred on it (a squad: its leader), unless a turret
+	// that hits ground (ours or an ally's, being built or queued too) stands within defended_radius of it
+	std::vector<AIFloat3> artillery;
+	if (cfg.isArtillery) {
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		auto isBuilding = [](const CEnemyInfo* e) {
+			return (e != nullptr) && (e->GetCircuitDef() != nullptr) && !e->GetCircuitDef()->IsMobile();
+		};
+		for (const IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::ARTY)) {
+			const CArtilleryTask* arty = static_cast<const CArtilleryTask*>(t);
+			if (!t->GetAssignees().empty() && (arty->GetAhActivity() == CMilitaryManager::AhNote::ENGAGE)
+				&& (!arty->IsAntiHeavy() || isBuilding(arty->GetTarget())))
+			{
+				artillery.push_back((*t->GetAssignees().begin())->GetPos(frame));
+			}
+		}
+		for (const IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::AH)) {
+			const CAntiHeavyTask* ah = static_cast<const CAntiHeavyTask*>(t);
+			if (ah->IsAttacking() && isBuilding(ah->GetTarget())) {
+				artillery.push_back(ah->GetLeader()->GetPos(frame));
+			}
+		}
+	}
+	const float sqArtilleryReach = SQUARE(cfg.artilleryReach);
+	auto isGround = [](const CCircuitDef* d) { return d->HasAntiLand(); };
+
 	for (CCircuitUnit* unit : builders) {
 		const AIFloat3& pos = unit->GetPos(frame);
-		if (std::none_of(enemyBuildings.begin(), enemyBuildings.end(), [&](const AIFloat3& b) {
-			return b.SqDistance2D(pos) <= sqReach;
-		})) {
+		if (std::any_of(enemyBuildings.begin(), enemyBuildings.end(), [&](const AIFloat3& b) {
+				return b.SqDistance2D(pos) <= sqReach;
+			})
+			// allied power around (a finished picker turret counts; a Claw minefield or an Antinuke doesn't)
+			&& (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, isCover) <= 0.f))
+		{
+			TryTurret(unit, pos, nullptr, false, "near enemy", isOrdered);
 			continue;
 		}
-		if (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, isCover) > 0.f) {
-			continue;  // allied power around (a finished picker turret counts; a Claw minefield or an Antinuke doesn't)
+		auto tryLines = [&]() {
+			for (const auto& l : lines) {
+				const int c = nearChoke(l.chokes, pos, l.reach);
+				if (c >= 0) {
+					TryTurret(unit, chokeMap->GetCellPos(graph.GetChokes()[c].centre), nullptr, false, l.caller, isOrdered,
+							isOnEnemyLine[c] ? lineBudget : 1.f);
+					return true;
+				}
+			}
+			return false;
+		};
+		if (tryLines()) {
+			continue;
 		}
-		TryTurret(unit, pos, nullptr, false, "near enemy", isOrdered);
+		AIFloat3 defencePos;
+		auto arty = std::find_if(artillery.begin(), artillery.end(), [&](const AIFloat3& a) {
+			return (a.SqDistance2D(pos) <= sqArtilleryReach) && !HasTurretDefence(a, cfg.defendedRadius, isGround, defencePos);
+		});
+		if (arty != artillery.end()) {
+			TryTurret(unit, *arty, nullptr, false, "artillery", isOrdered);
+		}
 	}
 }
 
 bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit, bool isDefendedSkip, const char* caller,
-		bool& isOrdered)
+		const std::function<bool (const CCircuitDef*)>& canHit, bool isAfterFlee, const char* caller, bool& isOrdered,
+		float budgetMod)
 {
 	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, canHit);
-	if (defs.empty() || AssistTurret(unit, centre, canHit, caller)) {
+	if (defs.empty() || AssistTurret(unit, centre, canHit, !isAfterFlee, caller)) {
 		return true;
 	}
 	const CTurretPicker::SConfig& cfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
 	AIFloat3 defencePos;
-	if (isDefendedSkip && HasTurretDefence(centre, cfg.defendedRadius, canHit, defencePos)) {
+	if (isAfterFlee && HasTurretDefence(centre, cfg.defendedRadius, canHit, defencePos)) {
 		circuit->LOG("TURRET %s, by %s %i: nothing, a defence at (%.0f, %.0f) within %.0f of (%.0f, %.0f)", caller,
 				unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), defencePos.x, defencePos.z,
 				cfg.defendedRadius, centre.x, centre.z);
@@ -2774,7 +2878,7 @@ bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
 	}
 	// porcupine.budget: the turret account covers the dearest it might pick, so the opening's income isn't spent on
 	// towers before the account has filled
-	if (isOrdered || !circuit->GetMilitaryManager()->CanAffordTurret(maxCost)) {
+	if (isOrdered || !circuit->GetMilitaryManager()->CanAffordTurret(maxCost * budgetMod)) {
 		return false;
 	}
 	isOrdered = true;
@@ -2844,7 +2948,7 @@ std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, con
 }
 
 bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit, const char* caller)
+		const std::function<bool (const CCircuitDef*)>& canHit, bool isHelpNear, const char* caller)
 {
 	// Whoever queued it: the porc sweep, a cornered builder or the picker. A started one, or a picker job not
 	// started yet, of a defence that hits what canHit asks for. The nearest the builder may take
@@ -2866,7 +2970,8 @@ bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
 		}
 		const AIFloat3& tpos = t->GetPosition();
 		const float sqDist = tpos.SqDistance2D(pos);
-		if ((tpos.SqDistance2D(centre) > SQUARE(cfg.radius)) || (sqDist >= bestSqDist) || !t->CanAssignTo(unit)
+		if ((tpos.SqDistance2D(centre) > SQUARE(cfg.radius)) || (isHelpNear && (sqDist > SQUARE(cfg.radius)))
+			|| (sqDist >= bestSqDist) || !t->CanAssignTo(unit)
 			|| !terrainMgr->CanReachAt(unit, tpos, buildDist) || !IsCommJobSafe(state, tpos, t))
 		{
 			continue;

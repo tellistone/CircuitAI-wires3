@@ -23,6 +23,20 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Turret picker: three more callers, and a longer near-enemy reach.** Under the same gates as the near-enemy
+  caller (free mobile ground constructor, cooldown, no metal stall, the turret account, one order a second,
+  helping a turret already within `turret.radius`), a constructor now also orders a turret when it is within
+  `turret.short_choke_reach` (600) of a short choke of our current line (`turret.short_choke`); within
+  `turret.enemy_line_reach` (800) of a choke of the enemy line (`turret.enemy_line`; the turret account need hold only
+  `turret.enemy_line_budget`, 0.5, x the cost, though the full cost is charged), both centred on the nearest
+  such choke's gap and only for defensible chokes that are settled and free of enemy artillery (as the picker's C);
+  or within `turret.artillery_reach` (600) of our artillery shooting a target in its range or of an anti-heavy
+  squad engaged with a unit in range of its target (not mines or aircraft; anti-heavy only against a building),
+  with no ground-hitting turret within `turret.defended_radius` of it, centred on the artillery or the squad's
+  leader (`turret.artillery`). Away from the constructor, it only helps a job within `turret.radius` of itself
+  too. All on by default. `turret.enemy_reach` goes from 600 to 700. The short-choke caller reads the frontline's
+  short chokes, so those are now computed whenever it is on (the enemy-held rankings only while the overlay is);
+  the choke callers ask for the choke analysis once a constructor could order.
 - **Radar planner: the Advanced Radar.** With `choke.radar.enable` on, the planner now builds `staticheavyradar`
   (`choke.radar.heavy`) once the ally team's metal income reaches `choke.radar.heavy_income` (40 metal/s), where one
   would add `heavy_min_gain` (15%) of the map's weight and stands `heavy_depth` (1500 elmos) from enemy ground. Not by
