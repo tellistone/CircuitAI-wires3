@@ -7,6 +7,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Escalation waits for game time** (`escalation.since`, default 480 s): escalation mode can't turn on before
+  8 minutes of game time, whatever the army ratio, enemy tech and terraform checks say. 0 = from the start.
 - **Melee units spread over targets and keep out of death explosions** (`quota.attack_melee_max`,
   `attack_melee_spread`, `attack_melee_blast`). In attack, defend, anti-air and raid groups, at most 6 melee units (fewer
   if there isn't room round the target) close in on the group's target. Close spots span the half ring facing them

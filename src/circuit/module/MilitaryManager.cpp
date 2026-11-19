@@ -1126,6 +1126,7 @@ void CMilitaryManager::ReadConfig()
 		escalation.armyOn = escalation.armyOff = escRatio.asFloat();
 	}
 	escalation.minOnFrames = std::max(esc.get("min_on", 60.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	escalation.sinceFrame = std::max(esc.get("since", 0.f).asFloat(), 0.f) * FRAMES_PER_SEC;
 	escalation.maxBuildSec = esc.get("max_build_sec", 420.f).asFloat();
 	escalation.builderShare = utils::clamp(esc.get("builder_share", 0.7f).asFloat(), 0.f, 1.f);
 	escalation.isComm = esc.get("comm", false).asBool();
@@ -3634,7 +3635,8 @@ void CMilitaryManager::UpdateEscalation()
 	const bool isArmy = (allyArmy > 0.f) && (allyArmy >= ratio * enemyArmy);
 	const bool isTerra = !escalation.isNeedTerra || circuit->GetAllyTeam()->IsTerraSeen();
 
-	bool isOn = isArmy && isTerra && isEnemyTech;
+	const bool isTime = (frame >= escalation.sinceFrame);  // since: not before this much game time
+	bool isOn = isTime && isArmy && isTerra && isEnemyTech;
 	if (!isOn && escalation.isOn && isArmy && (frame < escalation.onFrame + escalation.minOnFrames)) {
 		isOn = true;  // min_on: not off this soon after it turned on, unless the army fell below armyOff
 	}
