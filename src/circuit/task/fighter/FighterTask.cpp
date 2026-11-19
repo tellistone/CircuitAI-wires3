@@ -108,27 +108,12 @@ void IFighterTask::RemoveAssignee(CCircuitUnit* unit)
 	}
 }
 
-void IFighterTask::Update()
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const float minShield = circuit->GetSetupManager()->GetEmptyShield();
-	decltype(units) tmpUnits = shields;
-	for (CCircuitUnit* unit : tmpUnits) {
-		if (!unit->IsShieldCharged(minShield)) {
-			CRetreatTask* task = militaryMgr->EnqueueRetreat();
-			manager->AssignTask(unit, task);
-		}
-	}
-}
-
 void IFighterTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	auto it = cowards.find(unit);
 	if (it != cowards.end()) {
 		cowards.erase(it);
-		CRetreatTask* task = manager->GetCircuit()->GetMilitaryManager()->EnqueueRetreat();
-		manager->AssignTask(unit, task);
+		manager->AssignTask(unit, EnqueueRetreat());
 	} else {
 		unit->SetTaskFrame(manager->GetCircuit()->GetLastFrame());
 	}
@@ -141,41 +126,33 @@ void IFighterTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	const int frame = circuit->GetLastFrame();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float healthPerc = unit->GetHealthPercent();
-	if (unit->HasShield()) {
-		const float minShield = circuit->GetSetupManager()->GetEmptyShield();
-		if ((healthPerc > cdef->GetRetreat()) && unit->IsShieldCharged(minShield)) {
-			if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
-				circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
-			}
-			return;
-		}
-	} else if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
+	// Two separate reasons to retreat: health at or below "retreat" (or disarmed), and shield charge at or below
+	// "retreat_shield". Neither one's threshold affects the other
+	const bool isHurt = (healthPerc <= cdef->GetRetreat()) || unit->IsDisarmed(frame);
+	if (!isHurt && !unit->IsShieldLow()) {
 		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
 			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
 		}
 		return;
-	} else if (healthPerc < 0.2f) {  // stuck units workaround: they don't shoot and don't see distant threat
-		CRetreatTask* task = circuit->GetMilitaryManager()->EnqueueRetreat();
-		manager->AssignTask(unit, task);
-		return;
 	}
-
+	// Retreat now: stuck units workaround (low health: they don't shoot and don't see distant threat), no target
+	// in sight, the target out of range, or the threat here over half its own. Else it retreats once idle
 	CThreatMap* threatMap = circuit->GetThreatMap();
-	const float range = cdef->GetMaxRange();
-	if ((target == nullptr) || !target->IsInLOS()) {
-		CRetreatTask* task = circuit->GetMilitaryManager()->EnqueueRetreat();
-		manager->AssignTask(unit, task);
-		return;
-	}
 	const AIFloat3& pos = unit->GetPos(frame);
-	if ((target->GetPos().SqDistance2D(pos) > SQUARE(range)) ||
-		(threatMap->GetThreatAt(unit, pos) * 2 > threatMap->GetUnitThreat(unit)))
+	if ((isHurt && (healthPerc < 0.2f))
+		|| (target == nullptr) || !target->IsInLOS()
+		|| (target->GetPos().SqDistance2D(pos) > SQUARE(cdef->GetMaxRange()))
+		|| (threatMap->GetThreatAt(unit, pos) * 2 > threatMap->GetUnitThreat(unit)))
 	{
-		CRetreatTask* task = circuit->GetMilitaryManager()->EnqueueRetreat();
-		manager->AssignTask(unit, task);
+		manager->AssignTask(unit, EnqueueRetreat());
 		return;
 	}
 	cowards.insert(unit);
+}
+
+CRetreatTask* IFighterTask::EnqueueRetreat()
+{
+	return manager->GetCircuit()->GetMilitaryManager()->EnqueueRetreat();
 }
 
 void IFighterTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
@@ -803,7 +780,7 @@ std::vector<float> IFighterTask::GetShieldShares(int frame) const
 	// Each group shield's full charge shared by the group's armed units inside it, as CThreatMap::AddShields shares
 	// an enemy shield: an area shield (Aspis, unarmed) counts for the units it covers, and once. Full, not current:
 	// Felon spends its shield to fire, and a strength that dips with every shot would flip the escape; shields
-	// below retreat.shield leave the group (Update). Empty: no shields in the group
+	// at or below their retreat_shield retreat when hit (OnUnitDamaged). Empty: no shields in the group
 	std::vector<float> shares;
 	if (shields.empty()) {
 		return shares;

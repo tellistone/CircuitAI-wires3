@@ -265,6 +265,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 				} else {
 					cdef.SetRetreat(cdef.GetRetreat() * retMod);
 				}
+				cdef.SetRetreatShield(circuit->GetSetupManager()->GetRetreatShield(cdef.GetRetreatShield()));
 //			} else if (cdef->GetCostM() > 999.0f) {
 //				createdHandler[unitDefId] = heavyCreatedHandler;
 			}

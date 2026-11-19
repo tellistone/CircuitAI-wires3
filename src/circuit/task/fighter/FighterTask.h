@@ -17,6 +17,7 @@
 namespace circuit {
 
 class CEnemyInfo;
+class CRetreatTask;
 class CAllyUnit;
 class CCircuitDef;
 
@@ -33,11 +34,15 @@ public:
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
 
-	virtual void Update() override;
+	virtual void Update() override {}
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 	virtual void OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
+protected:
+	// The retreat task its damaged units go to (fighters: military's, combat builders: builder's)
+	virtual CRetreatTask* EnqueueRetreat();
+public:
 
 	FightType GetFightType() const { return fightType; }
 	const springai::AIFloat3& GetPosition() const { return position; }
