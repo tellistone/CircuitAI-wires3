@@ -144,6 +144,7 @@ void ISquadTask::Merge(ISquadTask* task)
 	shields.insert(sh.begin(), sh.end());
 
 	FindLeader(rookies.begin(), rookies.end());
+	task->leader = nullptr;  // its units are ours now, and it is aborted: no pointer left to one that may die first
 }
 
 const AIFloat3& ISquadTask::GetLeaderPos(int frame) const
@@ -169,7 +170,9 @@ bool ISquadTask::IsClaimedByNearer(const CEnemyInfo* enemy, const AIFloat3& pos,
 	const float sqClaimDist = sqDist * SQUARE(CLAIM_NEARER);
 	for (const IFighterTask* t : enemy->GetTasks()) {
 		const FightType ft = t->GetFightType();
-		if ((t == this) || !((isRaidClaim && (ft == FightType::RAID)) || (isAttackClaim && (ft == FightType::ATTACK)))) {
+		if ((t == this) || t->IsDead()
+			|| !((isRaidClaim && (ft == FightType::RAID)) || (isAttackClaim && (ft == FightType::ATTACK))))
+		{
 			continue;
 		}
 		CCircuitUnit* other = static_cast<const ISquadTask*>(t)->GetLeader();

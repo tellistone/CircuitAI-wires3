@@ -73,6 +73,7 @@ public:
 	float GetTaskThreatExcl(CCircuitUnit* unit, const springai::AIFloat3& pos, float exclThreat) const;
 	CEnemyInfo* GetTarget() const { return target; }
 	void ClearTarget() { target = nullptr; }  // Only for ~CEnemyUnit
+	void ReleaseTarget() { SetTarget(nullptr); }  // unbound too: for a task that ends (CMilitaryManager::DequeueTask)
 
 	const std::set<CCircuitUnit*>& GetShields() const { return shields; }
 
