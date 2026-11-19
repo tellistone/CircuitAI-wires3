@@ -2263,6 +2263,7 @@ void CEconomyManager::OpenStrategy(const CCircuitDef* facDef, const AIFloat3& po
 		if (type == ROLE_TYPE(BUILDER)) {
 			priotiry = CRecruitTask::Priority::NORMAL;
 			recruit  = CRecruitTask::RecruitType::BUILDPOWER;
+			factoryMgr->CountBuilder(CFactoryManager::BuilderWhy::OPENER);
 		} else {
 			priotiry = CRecruitTask::Priority::HIGH;
 			recruit  = CRecruitTask::RecruitType::FIREPOWER;

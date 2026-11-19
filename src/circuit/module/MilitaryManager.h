@@ -159,7 +159,7 @@ public:
 	 * called off before it starts. Porc (porc-mode towers of a cluster or its chokes) and the picker wait for the
 	 * balance to cover a tower (CanAffordTurret); the rest are charged but never refused and may take it below zero.
 	 * Preventive towers (a cluster outside porc mode) are free, and only logged. A finished armed defence of ours that
-	 * dies to a known mobile killer that doesn't outrange it (CanFightBack) pays loss_refund x its cost back, past the
+	 * dies to a known mobile killer that doesn't outrange it (CanFightBack) pays loss_refund x its charge back, past the
 	 * cap if need be (the account then stops filling until it is spent below the cap), so a lost position can be
 	 * rebuilt
 	 */
@@ -186,6 +186,9 @@ public:
 	CTurretPicker* GetTurretPicker() const { return turretPicker.get(); }
 	// A picker or cornered tower (CBDefenceTask::IsOffPoints): its death takes no cost off a defence point
 	void AddOffPointsTower(int unitId) { offPointsTowers.insert(unitId); }
+	// porcupine.budget: a tower whose job the turret account charged (CBDefenceTask::SetTarget). Only these pay
+	// loss_refund back when they die, and only on what they were charged: a free preventive tower pays nothing
+	void AddChargedTower(int unitId, float charged) { chargedTowers[unitId] = charged; }
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	// Best spot by score (near the enemy, unseen for longest, not defended by known static enemies, not on our side);
 	// -RgtVector if none. Scouts (quota.scout_spot) and raid groups (quota.raider_spot) score the same spots but
@@ -626,6 +629,7 @@ private:
 	std::unique_ptr<CFrontline> frontline;
 	std::unique_ptr<CTurretPicker> turretPicker;
 	std::set<int> offPointsTowers;  // unit ids
+	std::unordered_map<int, float> chargedTowers;  // unit id: what the turret account charged its job
 
 	std::vector<unsigned int> scoutPath;  // list of spot ids
 	unsigned int scoutIdx;
@@ -800,9 +804,10 @@ private:
 	BuildVector baseDefence;
 	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of landDefenders/waterDefenders.
 	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction.
-	// Each cluster rolls the first time it is defended, again once prevent_reroll[0] s have passed (the new count
-	// replaces the old), and on a sighting (an enemy that can hit ground within mex LOS of our mex there, at most
-	// once per prevent_reroll[1] s since its last roll or sighting; that roll can only raise the count).
+	// The count is the cluster's total, over all its defence points. Each cluster throws its dice once, the first
+	// time it is defended; later rolls (every prevent_reroll[0] s, and on a sighting: an enemy that can hit ground
+	// within mex LOS of our mex there, at most once per prevent_reroll[1] s since its last roll or sighting) reuse
+	// it, so the count only moves with the chance (the mex share). A sighting's roll can only raise the count.
 	// A roll never cancels a tower already queued or built.
 	struct SPrevent {
 		float base;  // prevent
@@ -816,6 +821,7 @@ private:
 	} prevent;
 	struct SPreventRoll {
 		int count = -1;  // -1 = never rolled
+		float dice = -1.f;  // [0, 1), thrown once per cluster on its first roll; every later roll reuses it
 		int rollFrame = -1;
 		int sightFrame = -1;  // last sighting acted on
 	};

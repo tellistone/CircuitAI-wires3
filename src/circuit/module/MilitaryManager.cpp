@@ -1341,16 +1341,23 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
 	scoutStints.erase(unit->GetId());  // ids get reused
-	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays its
-	// rebuild back. Captures and the garbage path have no attacker
+	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays back
+	// loss_refund x what the account charged for it, so a lost position can be rebuilt. Free (preventive) towers
+	// were never charged and pay nothing: they used to pay 2x their cost into the account, past its cap.
+	// Captures and the garbage path have no attacker
+	float charged = 0.f;
+	auto chargedIt = chargedTowers.find(unit->GetId());
+	if (chargedIt != chargedTowers.end()) {
+		charged = chargedIt->second;
+		chargedTowers.erase(chargedIt);
+	}
 	const CCircuitDef* tdef = unit->GetCircuitDef();
 	if (turretPicker->IsDefence(tdef) && !unit->GetUnit()->IsBeingBuilt()) {
-		const float cost = tdef->GetCostM();
-		turretBudget.lost += cost;
+		turretBudget.lost += tdef->GetCostM();
 		const CCircuitDef* kdef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
-		if ((kdef != nullptr) && CanFightBack(tdef, kdef)) {
-			turretBudget.balance += turretBudget.lossRefund * cost;
-			turretBudget.lossPaid += turretBudget.lossRefund * cost;
+		if ((charged > 0.f) && (kdef != nullptr) && CanFightBack(tdef, kdef)) {
+			turretBudget.balance += turretBudget.lossRefund * charged;
+			turretBudget.lossPaid += turretBudget.lossRefund * charged;
 		}
 	}
 
@@ -1963,7 +1970,24 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	const bool isSpot = chokeMap->GetConfig().isSpot && chokeMap->IsReady() && !closestPoint->isGeo;
 	CSpotScorer::SGoal clusterGoal;
 	clusterGoal.asset = closestPoint->position;
-	QueueTowers(closestPoint, plan.clusterList, maxCost, isPorc, isSpot ? &clusterGoal : nullptr);
+	// Preventive towers: the roll is the cluster's total over its mex points (towers of porc mode count too), not
+	// each point's. Asked once per finished mex, sighting and sweep visit, every point of a cluster got the count
+	float clusterCap = maxCost;
+	if (!isPorc && !closestPoint->isGeo) {
+		float clusterCost = 0.f;
+		for (const CDefenceMatrix::SDefPoint& p : points) {
+			if (!p.isGeo) {
+				clusterCost += p.cost;
+			}
+		}
+		float preventCost = 0.f;
+		for (const CCircuitDef* d : picked) {
+			preventCost += d->GetCostM();
+		}
+		// QueueTowers stops at a tower that brings the point's list total to the cap: + 1 lets one that just fills it go
+		clusterCap = std::min(maxCost, closestPoint->cost + std::max(preventCost - clusterCost, 0.f) + 1.f);
+	}
+	QueueTowers(closestPoint, plan.clusterList, clusterCap, isPorc, isSpot ? &clusterGoal : nullptr);
 	// NOTE: The chain abort above leaves a choke's chain: other points of the pocket may still be in porc mode
 	if (plan.chokePoint != nullptr) {
 		CSpotScorer::SGoal chokeGoal;
@@ -2327,7 +2351,12 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	const float mexMult = utils::eval_curve(prevent.mexCurve, mexX);
 	const float chance = prevent.base * prevent.mapMult * mexMult;
 	const float whole = std::floor(chance);
-	const float dice = (float)rand() / ((float)RAND_MAX + 1.f);  // [0, 1)
+	// One throw per cluster: fresh dice on every re-roll and sighting, with towers never called off, gave nearly
+	// every cluster the best of many throws
+	if (roll.dice < 0.f) {
+		roll.dice = (float)rand() / ((float)RAND_MAX + 1.f);  // [0, 1)
+	}
+	const float dice = roll.dice;
 	int count = std::min(int(whole) + ((dice < chance - whole) ? 1 : 0), 64);
 	const int prevCount = roll.count;
 	if ((sightDef != nullptr) && !isFirst) {
@@ -2337,9 +2366,9 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	roll.rollFrame = frame;
 
 	const char* why = (sightDef != nullptr) ? "sight" : isFirst ? "first" : "timer";
-	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f -> %i (was %i)%s",
+	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f, dice %.2f -> %i (was %i)%s",
 			cluster, why, (sightDef != nullptr) ? " " : "", (sightDef != nullptr) ? sightDef->GetDef()->GetName() : "",
-			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, count, prevCount,
+			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, dice, count, prevCount,
 			outIsAir ? ", air: first slot is prevent_air" : "");
 	return count;
 }

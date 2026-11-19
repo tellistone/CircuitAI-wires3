@@ -5,8 +5,25 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ## Unreleased
 
+### Fixed
+
+- **Preventive towers: the roll is the cluster's total, thrown once.** A cluster's preventive count
+  (`porcupine.prevent`) was handed to each of its defence points: every finished mex, sighting and sweep visit gave
+  that mex's point the count again, so nearly every mex got a tower. Each re-roll and sighting also threw fresh dice
+  while towers are never called off, so a cluster ended with the best of many throws. Now the count is the cluster's
+  total over its mex points (towers already there count, porc ones too; a vent's point is still its own), and each
+  cluster keeps the dice of its first roll, so the count only moves with the chance (the mex share). The PREVENT log
+  line shows the dice.
+- **Turret budget: a lost tower pays back only what it was charged.** `porcupine.budget.loss_refund` paid 2x the cost
+  of any lost armed defence, free preventive towers included, which pushed the account past its cap and funded
+  porc and picker towers. Now it pays loss_refund x what the account charged the tower's job; a free tower pays
+  nothing.
+
 ### Added
 
+- **BUILDERS log line, once a minute**: the constructors queued in the last minute by the rule that asked (income,
+  army, reclaim, a factory's tier-weight roll, the opener), and where each rule stands now (workers and their metal,
+  build power against income x buildpower, army x buildpower_army, reclaim x buildpower_reclaim).
 - **Melee units spread over targets and keep out of death explosions** (`quota.attack_melee_max`,
   `attack_melee_spread`, `attack_melee_blast`). In attack, defend, anti-air and raid groups, at most 6 melee units (fewer
   if there isn't room round the target) close in on the group's target. Close spots span the half ring facing them
