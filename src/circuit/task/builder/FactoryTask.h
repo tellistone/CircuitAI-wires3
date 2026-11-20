@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_TASK_FACTORYTASK_H_
 
 #include "task/builder/BuilderTask.h"
+#include "unit/CoreUnit.h"
 
 #include <vector>
 
@@ -26,20 +27,23 @@ public:
 protected:
 	virtual void Cancel() override;
 
-public:
-	virtual void OnUnitIdle(CCircuitUnit* unit) override;
-
 private:
 	virtual void FindBuildSite(CCircuitUnit* builder, const springai::AIFloat3& pos, float searchRadius) override;
 
-	// Plop: a mobile friendly unit (often an allied commander, busy with its own orders) stands in the footprint
-	bool IsOccupied(const springai::AIFloat3& pos, int face) const;
-	// Plop: give up the current site, if the build order hasn't started on it, and pick another
-	void ReplaceSite(CCircuitUnit* unit);
+	// A mobile friendly unit, other than builder, stands in the footprint at pos (plop: it may never step aside)
+	bool IsOccupied(const springai::AIFloat3& pos, int face, CCircuitUnit* builder);
 
 	bool isPlop;
-	int stallFrame;  // plop: frame the commander was first seen in build range without a frame placed; -1 = not yet
-	std::vector<springai::AIFloat3> badSites;  // plop: sites where the build order stalled
+	int stallFrame;  // plop: frame the commander was first seen in range of its site with a unit in it; -1 = no
+	int checkFrame;  // plop: next stall check
+
+	struct SBlocker {
+		ICoreUnit::Id id;
+		springai::AIFloat3 pos;
+		float radius;
+	};
+	std::vector<SBlocker> blockers;  // friendly mobile units, snapshot of blockersFrame
+	int blockersFrame;
 };
 
 } // namespace circuit
