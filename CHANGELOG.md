@@ -7,6 +7,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Commanders leave storage, pylon and energy jobs to constructors after 3 minutes.** New `jobs` block per
+  commander in `commander.json`: once `time` seconds have passed (180 shipped; -1 or missing = off) the commander no
+  longer takes jobs of the kinds in `skip` (`store`, `pylon`, `energy` shipped), except the kinds in `stall`
+  (`energy` shipped) while energy stalls. The check is in `IBuilderTask::CanAssignTo` (`CBuilderManager::IsCommJobOff`),
+  so it holds in both job searches (normal and hide mode), and the idle fallback (`CreateBuilderTask`) leaves an
+  energy job it queued for constructors instead of handing it to the commander. A commander walking to such a job
+  when the time passes drops it at its next re-plan; one already building in range finishes it.
+
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
   shoot and scoot.**
   - Walk goals are every known heavy and commander, mobile or static, also those already in range. The route query

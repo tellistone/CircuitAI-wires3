@@ -45,6 +45,13 @@ public:
 			float fleeAllyThreat;
 			float fleeAllyRadius;
 		} hide;
+		// Jobs a commander stops taking once "time" has passed (commander.json "jobs"): bit i = IBuilderTask::BuildType i.
+		// stallMask: of those, the ones it takes again while energy stalls
+		struct SJobs {
+			int frame = -1;  // < 0 = off
+			unsigned skipMask = 0;
+			unsigned stallMask = 0;
+		} jobs;
 	};
 	using StartFunc = std::function<void (const springai::AIFloat3& pos)>;
 
@@ -88,6 +95,7 @@ public:
 	int GetMorphFrame(const CCircuitDef* cdef) const;
 	const std::vector<CCircuitDef::RoleT>* GetOpener(const CCircuitDef* facDef) const;
 	const SCommInfo::SHide* GetHide(const CCircuitDef* cdef) const;
+	const SCommInfo::SJobs* GetCommJobs(const CCircuitDef* cdef) const;  // nullptr: not a configured commander
 
 	void Welcome() const;
 

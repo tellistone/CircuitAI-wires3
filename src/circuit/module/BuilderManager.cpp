@@ -1710,9 +1710,10 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 
 	CEconomyManager* ecoMgr = circuit->GetEconomyManager();
 	IBuilderTask* task = ecoMgr->UpdateEnergyTasks(position, unit);
-	if (task != nullptr) {
+	if ((task != nullptr) && task->CanAssignTo(unit)) {  // a commander past jobs.time: left queued for constructors
 		return task;
 	}
+	task = nullptr;
 	task = ecoMgr->UpdateReclaimTasks(position, unit, false);
 //	if (task != nullptr) {
 //		return task;
@@ -1729,7 +1730,7 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 		}
 		if ((buildDef != nullptr) && (buildDef->GetCount() < 10) && buildDef->IsAvailable(circuit->GetLastFrame())) {
 			task = ecoMgr->EnqueueCheapEnergy(buildDef, position, unit, IBuilderTask::Priority::NORMAL, SQUARE_SIZE * 32.0f);
-			if (task != nullptr) {
+			if ((task != nullptr) && task->CanAssignTo(unit)) {
 				return task;
 			}
 		}
@@ -2181,6 +2182,24 @@ bool CBuilderManager::IsHomeFight(CCircuitUnit* unit)
 	}
 	SCommState* state = GetCommState(unit);
 	return (state == nullptr) || !state->IsExposed(state->wideZone, COMM_END_COVER_MOD) || !HasCommEscape(unit, state);
+}
+
+bool CBuilderManager::IsCommJobOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const
+{
+	const CCircuitDef* cdef = unit->GetCircuitDef();
+	if (!cdef->IsRoleComm()) {
+		return false;
+	}
+	auto it = commJobs.find(cdef->GetId());
+	if (it == commJobs.end()) {
+		it = commJobs.emplace(cdef->GetId(), circuit->GetSetupManager()->GetCommJobs(cdef)).first;
+	}
+	const CSetupManager::SCommInfo::SJobs* jobs = it->second;
+	const unsigned bit = 1u << static_cast<IBuilderTask::BT>(type);
+	if ((jobs == nullptr) || (jobs->frame < 0) || !(jobs->skipMask & bit) || (circuit->GetLastFrame() < jobs->frame)) {
+		return false;
+	}
+	return !((jobs->stallMask & bit) && circuit->GetEconomyManager()->IsEnergyStalling());
 }
 
 bool CBuilderManager::IsCommInDanger(CCircuitUnit* unit)

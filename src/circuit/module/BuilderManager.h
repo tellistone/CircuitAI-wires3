@@ -17,6 +17,7 @@
 #include <array>
 #include <functional>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <string>
 #include <vector>
@@ -340,6 +341,9 @@ public:
 	DefenceFound FindTurretDefence(const springai::AIFloat3& centre, float radius,
 			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos) const;
 	bool IsCommHiding() const { return isCommHide || isCommHideAir; }  // hide mode: no commander pusher
+	// commander.json jobs: a commander past jobs.time no longer takes this kind of job (jobs.skip), except the
+	// jobs.stall kinds while energy stalls. false for any other builder
+	bool IsCommJobOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const;
 private:
 	// Once a second: a constructor whose flee ended clear or covered (centred where the flee started), then each
 	// mobile ground constructor by the first field trigger that holds for it: near enemy, short choke, enemy line,
@@ -419,6 +423,8 @@ private:
 		float allyRadius = 500.f;  // flee_ally_radius
 	};
 	// A ground builder with the flee on: its flee settings, and its view of the dangers (GetCommState)
+	// commander.json jobs per commander def, looked up once (GetCommJobs reads the def name)
+	mutable std::unordered_map<CCircuitDef::Id, const CSetupManager::SCommInfo::SJobs*> commJobs;
 	struct SCommState {
 		const CSetupManager::SCommInfo::SHide* hide = nullptr;  // commanders only: hide mode and morph
 		ICoreUnit::Id id = -1;
