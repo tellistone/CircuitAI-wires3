@@ -13,8 +13,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   than the current pick, so a turret found first stayed ahead of a nano tower behind it. Now the pick in range ranks
   shut pop-up turrets last, then builders (nano towers, factories), armed buildings by power, unarmed ones, no-chase
   ones, the nearest first within each.
-  - The AI can't read an enemy's armoured state, so a pop-up turret (`CCircuitDef::IsPopup`: an armed building with
-    `damageModifier` < 1) counts as shut while no allied unit of a layer it can hit is within its range + 64 elmos.
+  - The AI can't read an enemy's armoured state, so it guesses (`CArtilleryTask::IsPopupShut`). A pop-up turret
+    (`CCircuitDef::IsPopup`) is an armed building with `damageModifier` < 1:
+    - Desolator and Lucifer open by their on/off switch (`onoffable`): shut while off or `lowpower`, read in LOS;
+      out of LOS they count as open.
+    - Faraday, Gauss and Hacksaw open to aim: open while an allied unit of a layer it can hit is within its range
+      + 64 elmos, and for 3 s after (the turrets' own restore delay is 2 to 5 s), so a unit at the range edge doesn't
+      swap the group's target back and forth.
   - Anti-heavy artillery is unchanged.
 - **Regions stay put through a fight: a rebuild for terrain keeps the last build's choices while they still work.**
   With too few regions for `choke.region.min_count`, each rebuild chose afresh whether to keep the merge-1 rebuild
