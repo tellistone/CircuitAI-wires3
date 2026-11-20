@@ -413,22 +413,16 @@ void CSetupManager::ReadConfig()
 		SCommInfo::SJobs& jobs = commInfo.jobs;
 		jobs.frame = jbs.get("time", -1).asInt();
 		jobs.frame = (jobs.frame < 0) ? -1 : jobs.frame * FRAMES_PER_SEC;
-		auto readMask = [&](const char* key) {
-			unsigned mask = 0;
-			const IBuilderTask::BuildName& names = IBuilderTask::GetBuildNames();
-			for (const Json::Value& name : jbs[key]) {
-				auto it = names.find(name.asString());
-				if (it == names.end()) {
-					circuit->LOG("CONFIG %s: commander '%s' jobs.%s has unknown job type '%s'", cfgName.c_str(),
-							commName.c_str(), key, name.asCString());
-					continue;
-				}
-				mask |= 1u << static_cast<IBuilderTask::BT>(it->second);
+		const IBuilderTask::BuildName& names = IBuilderTask::GetBuildNames();
+		for (const Json::Value& name : jbs["skip"]) {
+			auto it = names.find(name.asString());
+			if (it == names.end()) {
+				circuit->LOG("CONFIG %s: commander '%s' jobs.skip has unknown job type '%s'", cfgName.c_str(),
+						commName.c_str(), name.asCString());
+				continue;
 			}
-			return mask;
-		};
-		jobs.skipMask = readMask("skip");
-		jobs.stallMask = readMask("stall") & jobs.skipMask;
+			jobs.skipMask |= 1u << static_cast<IBuilderTask::BT>(it->second);
+		}
 	}
 
 	if (!commChoices.empty()) {

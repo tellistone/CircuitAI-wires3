@@ -81,7 +81,7 @@ IBuilderTask::~IBuilderTask()
 bool IBuilderTask::CanAssignTo(CCircuitUnit* unit) const
 {
 	return ((target != nullptr) || unit->GetCircuitDef()->CanBuild(buildDef)) && (cost > buildPower * MIN_BUILD_SEC)
-		&& !manager->GetCircuit()->GetBuilderManager()->IsCommJobOff(unit, buildType);  // commander.json jobs
+		&& !manager->GetCircuit()->GetBuilderManager()->IsCommJobOff(unit, this);  // commander.json jobs
 }
 
 void IBuilderTask::AssignTo(CCircuitUnit* unit)

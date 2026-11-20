@@ -115,13 +115,13 @@
 				"flee_ally_radius": 500.0
 			},
 
-			// Jobs: once "time" (seconds) has passed the commander stops taking these kinds of job ("skip"), leaving them to
-			// constructors, except the "stall" kinds while energy stalls. Kinds: factory, nano, store, pylon, energy, defence,
-			// bunker, big_gun, radar, sonar, mex, repair. Missing or "time" -1 = off
+			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
+			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
+			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
+			// radar, sonar, mex, repair. Missing or "time" -1 = off
 			"jobs": {
 				"time": 180,
-				"skip": ["store", "pylon", "energy"],
-				"stall": ["energy"]
+				"skip": ["store", "pylon", "energy"]
 			}
 		},
 		"recon": {
@@ -232,13 +232,13 @@
 				"flee_ally_radius": 500.0
 			},
 
-			// Jobs: once "time" (seconds) has passed the commander stops taking these kinds of job ("skip"), leaving them to
-			// constructors, except the "stall" kinds while energy stalls. Kinds: factory, nano, store, pylon, energy, defence,
-			// bunker, big_gun, radar, sonar, mex, repair. Missing or "time" -1 = off
+			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
+			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
+			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
+			// radar, sonar, mex, repair. Missing or "time" -1 = off
 			"jobs": {
 				"time": 180,
-				"skip": ["store", "pylon", "energy"],
-				"stall": ["energy"]
+				"skip": ["store", "pylon", "energy"]
 			}
 		},
 		"assault": {
@@ -351,13 +351,13 @@
 				"flee_ally_radius": 500.0
 			},
 
-			// Jobs: once "time" (seconds) has passed the commander stops taking these kinds of job ("skip"), leaving them to
-			// constructors, except the "stall" kinds while energy stalls. Kinds: factory, nano, store, pylon, energy, defence,
-			// bunker, big_gun, radar, sonar, mex, repair. Missing or "time" -1 = off
+			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
+			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
+			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
+			// radar, sonar, mex, repair. Missing or "time" -1 = off
 			"jobs": {
 				"time": 180,
-				"skip": ["store", "pylon", "energy"],
-				"stall": ["energy"]
+				"skip": ["store", "pylon", "energy"]
 			}
 		},
 		"strike": {
@@ -469,13 +469,13 @@
 				"flee_ally_radius": 500.0
 			},
 
-			// Jobs: once "time" (seconds) has passed the commander stops taking these kinds of job ("skip"), leaving them to
-			// constructors, except the "stall" kinds while energy stalls. Kinds: factory, nano, store, pylon, energy, defence,
-			// bunker, big_gun, radar, sonar, mex, repair. Missing or "time" -1 = off
+			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
+			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
+			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
+			// radar, sonar, mex, repair. Missing or "time" -1 = off
 			"jobs": {
 				"time": 180,
-				"skip": ["store", "pylon", "energy"],
-				"stall": ["energy"]
+				"skip": ["store", "pylon", "energy"]
 			}
 		}
 	}

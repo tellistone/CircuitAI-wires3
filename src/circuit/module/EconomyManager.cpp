@@ -949,7 +949,10 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	// Mex and reclaim are both searched on every pass (reclaim costs no energy, so a stall doesn't stop it);
 	// the job picker then chooses between them by travel and priority.
 	// Geo isn't only a stall fix: a free vent is the cheapest energy there is, so look for one on every pass
-	IBuilderTask* task = IsEnergyShort() ? UpdateEnergyTasks(position, unit) : UpdateGeoTasks(position, unit);
+	// A commander past commander.json jobs.time queues no energy where it stands for constructors, bar a stall fix
+	const bool isEnergy = IsEnergyShort() && !((unit != nullptr) && !IsEnergyStall()
+			&& circuit->GetBuilderManager()->IsCommJobOff(unit, IBuilderTask::BuildType::ENERGY));
+	IBuilderTask* task = isEnergy ? UpdateEnergyTasks(position, unit) : UpdateGeoTasks(position, unit);
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
 	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);
 

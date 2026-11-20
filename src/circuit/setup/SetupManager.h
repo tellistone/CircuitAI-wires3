@@ -45,12 +45,10 @@ public:
 			float fleeAllyThreat;
 			float fleeAllyRadius;
 		} hide;
-		// Jobs a commander stops taking once "time" has passed (commander.json "jobs"): bit i = IBuilderTask::BuildType i.
-		// stallMask: of those, the ones it takes again while energy stalls
+		// Jobs a commander stops taking once "time" has passed (commander.json "jobs"): bit i = IBuilderTask::BuildType i
 		struct SJobs {
 			int frame = -1;  // < 0 = off
 			unsigned skipMask = 0;
-			unsigned stallMask = 0;
 		} jobs;
 	};
 	using StartFunc = std::function<void (const springai::AIFloat3& pos)>;
