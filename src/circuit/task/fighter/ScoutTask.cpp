@@ -112,6 +112,11 @@ void CScoutTask::Update()
 				position = -RgtVector;  // pick a fresh destination
 				lastAttackId = -1;
 			}
+			if (!IsFleeing(frame)) {
+				// Still working the area of its pick (on the way, or fighting there): others keep off its spot and
+				// cluster (quota.scout_spot.mex) even after claim_time
+				circuit->GetMilitaryManager()->HoldScoutSpot(unit);
+			}
 			Execute(unit, !isStalled);
 		}
 	} else {
@@ -387,9 +392,6 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 			OnNoSafeRoute(unit);
 			return;
 		}
-	} else {
-		// Still on the way: keep the spot reserved, so other scouts don't pick it once claim_time runs out
-		manager->GetCircuit()->GetMilitaryManager()->HoldScoutSpot(unit, position);
 	}
 
 	RunScoutQuery(unit);

@@ -11,9 +11,9 @@
 		"travel": 0.2,      // penalty for distance from the scout (default 0.5)
 		"home_ratio": 0.5,  // skip spots nearer our base than this x their distance to the enemy (default 0.5)
 		"stale_time": 90,   // seconds until a seen spot counts as fully stale (default 90)
-		"claim_time": 20,   // seconds a picked spot stays reserved for that scout; a scout still heading there keeps renewing it (default 20)
+		"claim_time": 20,   // seconds a picked spot stays reserved for that scout; renewed until it picks again, flees or stops scouting (default 20)
 		"static_range_mult": 1.0,  // scales enemy defence ranges when judging if a spot is defended (default 1.0)
-		"mex": 1.0          // bonus for a known enemy mex no known enemy defence covers, in a metal cluster no other scout is heading to; scaled like "stale", so a just-seen mex gets none; armed scouts only (default 0 = off)
+		"mex": 1.0          // bonus for a known enemy mex no known enemy defence covers, in a metal cluster no other scout is heading to, not given up on for danger in the last block + claim_time; scaled like "stale", so a just-seen mex gets none; scouts that can hit land targets only (default 0 = off)
 	},  
 	// Raider production floor: while we have fewer raider units (main role "raider" or a role bound to it, e.g.
 	// "cloaked_raider"; alive and not scouting, plus queued in factories) than "raider" + bonus, a factory that can build a raider

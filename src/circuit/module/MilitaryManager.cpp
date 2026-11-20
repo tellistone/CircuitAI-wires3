@@ -2800,9 +2800,9 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 	// Points that mark where the enemy is: known enemy buildings and enemy groups
 	std::vector<AIFloat3> anchors;
 	// quota.<kind>_spot.mex: metal spots a known enemy mex stands on (finished or not). Only for a picker that can
-	// shoot it: to a weaponless scout a known mex is no better than any other spot
+	// shoot it: to a weaponless or anti-air-only scout a known mex is no better than any other spot
 	CMetalManager* metalMgr = circuit->GetMetalManager();
-	const bool isMexBonus = (cfg.mex > 0.f) && cdef->IsAttacker();
+	const bool isMexBonus = (cfg.mex > 0.f) && cdef->HasAntiLand();
 	std::vector<bool> isEnemyMex(isMexBonus ? scoutMetalCount : 0, false);
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -2869,12 +2869,14 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 			isClusterTaken[cluster] = true;
 		}
 	}
-	auto isMexFree = [&](unsigned i) {  // a known enemy mex in a cluster nobody else is heading to
-		if ((i >= scoutMetalCount) || !isEnemyMex[i]) {
+	// A known enemy mex in a cluster nobody else is heading to, and not given up on for danger lately (blocked, plus
+	// claim_time after the block ends): no bonus pulls pickers straight back to a mex mobile enemies guard
+	auto isMexFree = [&](unsigned i) {
+		if ((i >= scoutMetalCount) || !isEnemyMex[i] || (frame < claims.blocked[i] + cfg.claimTime)) {
 			return false;
 		}
 		const int cluster = metalMgr->GetCluster(i);
-		return (cluster < 0) ? !isClaimed(i) : !isClusterTaken[cluster];
+		return (cluster < 0) || !isClusterTaken[cluster];
 	};
 
 	// Best unclaimed spot, else the best claimed one (every safe spot is taken: share it)
@@ -2944,6 +2946,11 @@ void CMilitaryManager::ReleaseSpot(SSpotClaims& claims, int unitId)
 	}
 }
 
+void CMilitaryManager::HoldScoutSpot(const CCircuitUnit* unit)
+{
+	HoldSpot(scoutClaims, unit->GetId());
+}
+
 void CMilitaryManager::ReleaseScoutSpot(const CCircuitUnit* unit)
 {
 	ReleaseSpot(scoutClaims, unit->GetId());
@@ -2954,32 +2961,26 @@ void CMilitaryManager::ReleaseRaidSpot(const CCircuitUnit* leader)
 	ReleaseSpot(raidClaims, leader->GetId());
 }
 
-int CMilitaryManager::FindSpot(const SSpotClaims& claims, const AIFloat3& spot) const
+void CMilitaryManager::BlockSpot(SSpotClaims& claims, const AIFloat3& spot, int frames)
 {
 	if (claims.blocked.size() != scoutSpots.size()) {
-		return -1;
+		return;
 	}
 	for (unsigned i = 0; i < scoutSpots.size(); ++i) {
 		if ((scoutSpots[i].x == spot.x) && (scoutSpots[i].z == spot.z)) {
-			return i;
+			claims.blocked[i] = circuit->GetLastFrame() + frames;
+			return;
 		}
 	}
-	return -1;
 }
 
-void CMilitaryManager::BlockSpot(SSpotClaims& claims, const AIFloat3& spot, int frames)
+void CMilitaryManager::HoldSpot(SSpotClaims& claims, int unitId)
 {
-	const int i = FindSpot(claims, spot);
-	if (i >= 0) {
-		claims.blocked[i] = circuit->GetLastFrame() + frames;
-	}
-}
-
-void CMilitaryManager::HoldSpot(SSpotClaims& claims, const CCircuitUnit* unit, const AIFloat3& spot)
-{
-	const int i = FindSpot(claims, spot);
-	if ((i >= 0) && (claims.unitId[i] == unit->GetId())) {
-		claims.frame[i] = circuit->GetLastFrame();
+	for (unsigned i = 0; i < claims.unitId.size(); ++i) {
+		if (claims.unitId[i] == unitId) {
+			claims.frame[i] = circuit->GetLastFrame();  // a picker holds one claim (PickSpot)
+			return;
+		}
 	}
 }
 

@@ -223,9 +223,9 @@ public:
 	// Gave up on this spot (danger at it or no safe route): nobody of that kind picks it for a while
 	void BlockScoutSpot(const springai::AIFloat3& spot, int frames) { BlockSpot(scoutClaims, spot, frames); }
 	void BlockRaidSpot(const springai::AIFloat3& spot, int frames) { BlockSpot(raidClaims, spot, frames); }
-	// A scout still heading to the spot it picked keeps its claim fresh (claim_time counts from the last call), and
-	// gives it up when it leaves its scout task
-	void HoldScoutSpot(const CCircuitUnit* unit, const springai::AIFloat3& spot) { HoldSpot(scoutClaims, unit, spot); }
+	// A scout keeps its claim fresh while it works the area of its pick (claim_time counts from the last call: it
+	// lapses while the scout flees), and gives it up when it picks again (PickSpot) or leaves its scout task
+	void HoldScoutSpot(const CCircuitUnit* unit);
 	void ReleaseScoutSpot(const CCircuitUnit* unit);
 	// The raid group led by leader no longer heads for its spot (a raid rally joiner): free its claim for others
 	void ReleaseRaidSpot(const CCircuitUnit* leader);
@@ -691,15 +691,14 @@ private:
 		float rangeMult;  // static enemy weapon range multiplier for danger
 		float homeRatio;  // skip spots nearer to our base than this fraction of their distance to the enemy
 		float mex;        // bonus x stale term: a known enemy mex no known defence covers, in a cluster nobody else of
-		                  // this kind is heading to; only for pickers with a weapon (0 = off)
+		                  // this kind is heading to; only for pickers that can hit land targets (0 = off)
 	} scoutSpot, raiderSpot;
 	bool isRaiderSpot = false;  // quota.raider_spot given
 	springai::AIFloat3 PickSpot(CCircuitUnit* unit, float safeThreat, const SSpotCfg& cfg, IFighterTask::FightType type,
 			SSpotClaims& claims);
 	void ReleaseSpot(SSpotClaims& claims, int unitId);  // the picker's claim, if any
-	int FindSpot(const SSpotClaims& claims, const springai::AIFloat3& spot) const;  // -1 = not a spot
 	void BlockSpot(SSpotClaims& claims, const springai::AIFloat3& spot, int frames);
-	void HoldSpot(SSpotClaims& claims, const CCircuitUnit* unit, const springai::AIFloat3& spot);
+	void HoldSpot(SSpotClaims& claims, int unitId);  // renew the picker's claim, if any
 
 	struct SRaidPoint {
 		unsigned int idx;
