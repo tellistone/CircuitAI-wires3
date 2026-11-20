@@ -27,12 +27,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
-- **No crash when a morphing building takes damage.** Builds from 2 to 13 November (0.1.6 among them) crashed the game
-  (SIGSEGV in `CCircuitUnit::IsUpgradable`) when a geothermal the AI was morphing to an advanced geo dropped under half
-  health: the commander rule in `CEconomyManager::UnitDamaged` stopped its morph and offered it to the commander morph
-  list, which read the unit's manager, and buildings have none. The geo was already left out of that rule on
-  13 November; now `IsUpgradable` is false for a unit without a manager, and `AddMorphee` checks for a task first, so
-  no other unmanaged unit can reach it either. Commanders are re-queued for their upgrade as before.
+- **No crash when a damaged unit stops a morph and has no manager.** Wires 0.1.6 crashed the game (SIGSEGV in
+  `CCircuitUnit::IsUpgradable`) when a unit it had sent to morph dropped under half health and had no manager:
+  `CEconomyManager::UnitDamaged` stops the morph and offers the unit to the commander morph list, which read the
+  manager. A geothermal (no manager) morphing to an advanced geo does this; it was left out of that rule on
+  13 November. `IsUpgradable` is now false for any unit without a manager, so nothing else can reach it either.
+  Commanders are re-queued for their upgrade as before.
+
+- **Units an ally gives us are counted by the economy again.** Since 11 November (grid links) the economy skipped its
+  own created and finished handlers for given units, so a given commander was never queued for its upgrade, a given
+  geothermal never morphed, a given factory wasn't its cluster's, and given mexes and energy didn't add to income.
+  Given units go through those handlers again, as before; a given consumer is still linked to the grid.
 
 - **Artillery groups shoot any other building before a shut pop-up turret, and nano towers before turrets.** A
   closed Faraday, Gauss, Desolator, Lucifer or Hacksaw takes a third of the damage, yet artillery shot at it like any
