@@ -16,8 +16,6 @@
 #include <map>
 #include <utility>
 
-#define RELAX_MERGE		1.f  // merge of the build for SParams::minCount: a choke as wide as the smaller region's highest
-
 namespace circuit {
 
 namespace {
@@ -93,9 +91,12 @@ void CRegionGraph::Build(const SCellMask& m, const SParams& params)
 	for (const SRegion& region : regions) {
 		ground += region.area;
 	}
+	if (ground == 0) {
+		return;
+	}
 	SParams relaxed = params;
-	relaxed.merge = std::max(params.merge, RELAX_MERGE);
-	relaxed.minArea = std::max(params.minArea, params.minShare * ground / params.minCount);
+	relaxed.merge = std::max(params.merge, 1.f);  // keeps a choke unless it is as wide as the smaller region's highest
+	relaxed.minArea = std::max({params.minArea, params.minShare * ground / params.minCount, 1.f});  // 1: no empty piece
 	relaxed.mergeWidth = params.defensibleWidth;  // a relaxed choke must be one towers can close
 	CRegionGraph attempt;
 	attempt.BuildOnce(m, relaxed);
@@ -389,9 +390,10 @@ void CRegionGraph::MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& c
  * Open ground has no choke to split at. Seeds go on a grid of the map, cell-centred and mirror-symmetric, so a mirrored
  * map gets mirrored pieces and a crater moves no seed. The grid gains a column or a row, across its wider spacing,
  * until the regions with room for two of minArea hold minCount pieces in all, one per seed in them. Each cell of those
- * regions goes to its region's nearest seed (walking); a piece under minArea gives up its seed, so its neighbours take
- * its cells (minArea is Build's floor: minShare of the ground per minCount region). Chokes are then remade from the regions' borders (each pair's line is the cells of the lower region
- * touching the other), and a choke between two pieces of one region is a cut (isCut)
+ * regions goes to its region's nearest seed (walking); a piece under minArea (Build's floor: minShare of the ground per
+ * minCount region) gives up its seed, so its neighbours take its cells. With no grid cutting minCount pieces, the one
+ * cutting the most is kept. Chokes are then remade from the regions' borders (each pair's line is the cells of the
+ * lower region touching the other), and a choke between two pieces of one region is a cut (isCut)
  */
 void CRegionGraph::SplitOpen(const SParams& params)
 {
@@ -454,16 +456,8 @@ void CRegionGraph::SplitOpen(const SParams& params)
 		}
 	};
 	std::vector<int> seeds;
-	for (int nx = 1, nz = 1; float(n) / (nx * nz) >= params.minArea;) {
-		std::vector<int> grid = gridOf(nx, nz);
-		if (mask.width * nz >= mask.height * nx) {  // the next grid: one more across its wider spacing
-			++nx;
-		} else {
-			++nz;
-		}
-		if (countOf(grid) < params.minCount) {
-			continue;
-		}
+	auto cutBy = [&](std::vector<int> grid) {  // seeds: the grid's in regions it cuts, less those of pieces under minArea
+		countOf(grid);
 		for (int i = 0; i < n; ++i) {
 			group[i] = ((regionOf[i] != NO_REGION) && (seedsIn[regionOf[i]] > 1)) ? regionOf[i] : -1;
 		}
@@ -484,9 +478,32 @@ void CRegionGraph::SplitOpen(const SParams& params)
 		if (seeds.size() < grid.size()) {
 			flood(seeds);
 		}
-		if (countOf(seeds) >= params.minCount) {
+		return countOf(seeds);
+	};
+	std::vector<int> best;  // the grid that cut the most pieces, while none has cut minCount
+	int bestCount = 0;
+	for (int nx = 1, nz = 1; float(n) / (nx * nz) >= params.minArea;) {
+		const std::vector<int> grid = gridOf(nx, nz);
+		if (mask.width * nz >= mask.height * nx) {  // the next grid: one more across its wider spacing
+			++nx;
+		} else {
+			++nz;
+		}
+		if (countOf(grid) < params.minCount) {
+			continue;
+		}
+		const int count = cutBy(grid);
+		if (count >= params.minCount) {
+			best.clear();
 			break;
 		}
+		if (count > bestCount) {
+			bestCount = count;
+			best = grid;
+		}
+	}
+	if (!best.empty()) {  // finer grids only lost pieces under minArea: back to the best
+		cutBy(best);
 	}
 	if (seeds.empty()) {
 		return;

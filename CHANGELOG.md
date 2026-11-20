@@ -16,6 +16,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - Neither the rebuild nor the grid cut makes a region under `min_share` of the ground per `min_count` region; they
     use that as `min_area` where it is bigger. A first build that already has `min_count` regions keeps `min_area`,
     so pockets behind narrow gaps stay.
+  - A grid cut that can't reach `min_count` (a `min_share` above 0.6, or ground in small islands) keeps the grid
+    that made the most regions, not the last one tried. With `min_area` 0 and no ground at all, the cut no longer
+    loops forever.
   - On a trace of Red Comet: 20 regions of 0.6 to 1.5 times the average, was 25 of 0.03 to 4 times. Over 180 random
     crater maps at `min_count` 12, 20 and 30, the biggest region is on average 1.2 to 1.8 times the average, was 1.4
     to 13 times; the regions under 0.4 times the average left are pockets of the first build.
