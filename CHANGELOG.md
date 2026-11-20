@@ -7,6 +7,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **A hiding commander no longer guards a factory.** In hide mode, with no safe job in range, it used to guard the
+  nearest factory for a minute (60 s locked there, and walking back to it from wherever it was). Now it reclaims
+  nearby, safe and inside the hide range (the near search and the flee-zone test, as it already did while stalling),
+  else patrols where it stands for 5 s, which helps any frame in reach, and then asks again.
 - **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
   unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and
   energy they were meant to push past. Near-enemy orders and orders at a choke of the enemy line (a short choke on

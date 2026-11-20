@@ -1532,23 +1532,16 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	if ((task == nullptr) &&
 		((unit->GetTask()->GetType() != IUnitTask::Type::BUILDER) || (static_cast<IBuilderTask*>(unit->GetTask())->GetBuildType() != IBuilderTask::BuildType::GUARD)))
 	{
-		CCircuitUnit* vip = circuit->GetFactoryManager()->GetClosestFactory(pos);
-		// Guarding the factory adds build power to it, and a patrol helps any frame in reach: while stalling, reclaim
-		// nearby first and patrol only if there is none that is safe and inside the hide range (as the loop above)
-		if (isStalling) {
-			task = economyMgr->UpdateReclaimTasks(pos, unit, true);
-			if ((task != nullptr) && (!IsCommJobSafe(commState, task->GetPosition())
-				|| ((sqMaxBaseRange > 0.f) && (basePos.SqDistance2D(task->GetPosition()) > sqMaxBaseRange))))
-			{
-				task = nullptr;  // left queued for constructors
-			}
+		// No factory guard (it held the commander there for a minute): reclaim nearby, safe and inside the hide range
+		// (as the loop above), else patrol where it stands, which helps any frame in reach and asks again in 5 s
+		task = economyMgr->UpdateReclaimTasks(pos, unit, true);
+		if ((task != nullptr) && (!IsCommJobSafe(commState, task->GetPosition())
+			|| ((sqMaxBaseRange > 0.f) && (basePos.SqDistance2D(task->GetPosition()) > sqMaxBaseRange))))
+		{
+			task = nullptr;  // left queued for constructors
 		}
 		if (task == nullptr) {
-			if ((vip != nullptr) && !isStalling && IsCommJobSafe(commState, vip->GetPos(frame))) {
-				task = EnqueueGuard(IBuilderTask::Priority::NORMAL, vip, FRAMES_PER_SEC * 60);
-			} else {
-				task = EnqueuePatrol(IBuilderTask::Priority::LOW, pos, .0f, FRAMES_PER_SEC * 5);
-			}
+			task = EnqueuePatrol(IBuilderTask::Priority::LOW, pos, .0f, FRAMES_PER_SEC * 5);
 		}
 	}
 
