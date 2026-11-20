@@ -39,7 +39,7 @@ CBMexTask::~CBMexTask()
 
 bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!IBuilderTask::CanAssignTo(unit)) {
+	if (!IBuilderTask::CanAssignTo(unit) || IsSpotTaken()) {  // an allied AI's builder heads there already
 		return false;
 	}
 	if (unit->GetCircuitDef()->IsAttacker()) {
@@ -58,15 +58,97 @@ bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 			|| (circuit->GetLastFrame() > circuit->GetEconomyManager()->GetMexEscortFrame());
 }
 
+bool CBMexTask::IsSpotTaken() const
+{
+	if ((target != nullptr) || (reservedSpot >= 0) || !utils::is_valid(buildPos)) {
+		return false;
+	}
+	CMetalManager* metalMgr = manager->GetCircuit()->GetMetalManager();
+	const int index = metalMgr->FindNearestSpot(buildPos);
+	return (index >= 0) && !metalMgr->IsOpenSpot(index);
+}
+
+void CBMexTask::AssignTo(CCircuitUnit* unit)
+{
+	IBuilderTask::AssignTo(unit);
+
+	// Claim the spot for the whole ally team as soon as a builder heads for it, not on arrival (Execute): allied AIs
+	// share the metal manager, so their searches skip it and they don't all walk to the same spot
+	if ((target != nullptr) || (reservedSpot >= 0) || !utils::is_valid(buildPos)) {
+		return;
+	}
+	CMetalManager* metalMgr = manager->GetCircuit()->GetMetalManager();
+	const int index = metalMgr->FindNearestSpot(buildPos);
+	if ((index >= 0) && metalMgr->IsOpenSpot(index)) {  // CanAssignTo rejects a taken spot; else Execute picks another
+		Reserve(index);
+	}
+}
+
+void CBMexTask::RemoveAssignee(CCircuitUnit* unit)
+{
+	IBuilderTask::RemoveAssignee(unit);
+
+	// Nobody walks there any more (retreat, a nearer job) and nothing is placed yet: let an ally have the spot.
+	// The next builder of ours to take the job claims it again
+	if (units.empty() && (target == nullptr)) {
+		Release();
+	}
+}
+
+void CBMexTask::SetTarget(CCircuitUnit* unit)
+{
+	IBuilderTask::SetTarget(unit);
+	if (unit != nullptr) {
+		reservedSpot = -1;  // the frame holds the spot now; the mex destroyed handler reopens it
+	}
+}
+
+void CBMexTask::Reserve(int index)
+{
+	if (reservedSpot == index) {
+		return;
+	}
+	Release();
+	manager->GetCircuit()->GetMetalManager()->SetOpenSpot(index, false);
+	reservedSpot = index;
+}
+
+void CBMexTask::Release()
+{
+	if (reservedSpot < 0) {
+		return;
+	}
+	manager->GetCircuit()->GetMetalManager()->SetOpenSpot(reservedSpot, true);
+	reservedSpot = -1;
+}
+
+int CBMexTask::FindOpenSpot(CCircuitUnit* unit) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const CMetalData::Metals& spots = metalMgr->GetSpots();
+	CMap* map = circuit->GetMap();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CCircuitDef* mexDef = buildDef;
+	CMetalData::PointPredicate predicate = [&spots, economyMgr, map, mexDef, terrainMgr, unit](const int index) {
+		return (economyMgr->IsAllyOpenSpot(index)
+				&& terrainMgr->CanBeBuiltAtSafe(mexDef, spots[index].position)  // hostile environment
+				&& terrainMgr->CanReachAtSafe(unit, spots[index].position, unit->GetCircuitDef()->GetBuildDistance())
+				&& map->IsPossibleToBuildAt(mexDef->GetDef(), spots[index].position, UNIT_COMMAND_BUILD_NO_FACING));
+	};
+	return metalMgr->FindNearestSpot(position, predicate);
+}
+
 void CBMexTask::Cancel()
 {
 	if ((target == nullptr) && utils::is_valid(buildPos)) {
 		CCircuitAI* circuit = manager->GetCircuit();
 		int index = circuit->GetMetalManager()->FindNearestSpot(buildPos);
-		circuit->GetMetalManager()->SetOpenSpot(index, true);
 		circuit->GetEconomyManager()->SetOpenSpot(index, true);
 		SetBuildPos(-RgtVector);
 	}
+	Release();  // only our own claim: a spot an ally heads for stays closed
 }
 
 void CBMexTask::Execute(CCircuitUnit* unit)
@@ -90,9 +172,8 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 		int index = metalMgr->FindNearestSpot(buildPos);
 		if (index >= 0) {
 			if (circuit->GetMap()->IsPossibleToBuildAt(buildUDef, buildPos, facing)) {
-				if ((State::ENGAGE == state) || metalMgr->IsOpenSpot(index)) {  // !isFirstTry
-					state = State::ENGAGE;  // isFirstTry = false
-					metalMgr->SetOpenSpot(index, false);
+				if ((reservedSpot == index) || metalMgr->IsOpenSpot(index)) {
+					Reserve(index);
 					TRY_UNIT(circuit, unit,
 						unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 					)
@@ -101,29 +182,20 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 					economyMgr->SetOpenSpot(index, true);
 				}
 			} else {
-				metalMgr->SetOpenSpot(index, true);
+				Release();
 				economyMgr->SetOpenSpot(index, true);
 			}
 		}
 	}
 
 	// NOTE: Unsafe fallback expansion (mex can be behind enemy lines)
-	const CMetalData::Metals& spots = metalMgr->GetSpots();
-	CMap* map = circuit->GetMap();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CCircuitDef* mexDef = buildDef;
 	circuit->GetThreatMap()->SetThreatType(unit);
-	CMetalData::PointPredicate predicate = [&spots, economyMgr, map, mexDef, terrainMgr, unit](const int index) {
-		return (economyMgr->IsAllyOpenSpot(index)
-				&& terrainMgr->CanBeBuiltAtSafe(mexDef, spots[index].position)  // hostile environment
-				&& terrainMgr->CanReachAtSafe(unit, spots[index].position, unit->GetCircuitDef()->GetBuildDistance())
-				&& map->IsPossibleToBuildAt(mexDef->GetDef(), spots[index].position, UNIT_COMMAND_BUILD_NO_FACING));
-	};
-	int index = metalMgr->FindNearestSpot(position, predicate);
+	int index = FindOpenSpot(unit);
 
 	if (index >= 0) {
-		SetBuildPos(spots[index].position);
+		SetBuildPos(metalMgr->GetSpots()[index].position);
 		economyMgr->SetOpenSpot(index, false);
+		Reserve(index);  // for the ally team too, or allied builders walk here meanwhile
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)
