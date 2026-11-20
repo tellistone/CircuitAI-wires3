@@ -27,6 +27,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **No crash when a morphing building takes damage.** Builds from 2 to 13 November (0.1.6 among them) crashed the game
+  (SIGSEGV in `CCircuitUnit::IsUpgradable`) when a geothermal the AI was morphing to an advanced geo dropped under half
+  health: the commander rule in `CEconomyManager::UnitDamaged` stopped its morph and offered it to the commander morph
+  list, which read the unit's manager, and buildings have none. The geo was already left out of that rule on
+  13 November; now `IsUpgradable` is false for a unit without a manager, and `AddMorphee` checks for a task first, so
+  no other unmanaged unit can reach it either. Commanders are re-queued for their upgrade as before.
+
 - **Artillery groups shoot any other building before a shut pop-up turret, and nano towers before turrets.** A
   closed Faraday, Gauss, Desolator, Lucifer or Hacksaw takes a third of the damage, yet artillery shot at it like any
   other turret. The pick in range was also order-dependent: builders and the strongest building won only if closer

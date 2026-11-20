@@ -2203,7 +2203,7 @@ IBuilderTask* CEconomyManager::FindGridPylonTask(const AIFloat3& pos) const
 
 void CEconomyManager::AddMorphee(CCircuitUnit* unit)
 {
-	if (!unit->IsUpgradable() || (unit->GetTask() == nullptr)) {
+	if ((unit->GetTask() == nullptr) || !unit->IsUpgradable()) {
 		return;
 	}
 	morphees.insert(unit);
