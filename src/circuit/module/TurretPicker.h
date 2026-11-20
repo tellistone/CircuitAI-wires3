@@ -38,7 +38,7 @@ struct STurretOrder {
 	// work (builder: whom the spot is searched for)
 	int creepLane = -1;
 	bool isAlly = true;  // false: no A (near enemy, enemy line), so the turret goes for the enemy, not to cover ours
-	bool isCrowdCheck = true;  // false: a person's test order, never refused for turret.crowd_count
+	bool isCrowdCheck = true;  // false: never refused for turret.crowd_count (a person's test order, the creep's steps)
 	bool IsCreep() const { return creepLane >= 0; }
 };
 
@@ -188,8 +188,8 @@ public:
 	int GetTier(const CCircuitDef* def) const;
 	bool IsLight(const CCircuitDef* def) const;
 	// turret.crowd_count: true when def is light and pos has that many other light turrets within turret.crowd_radius:
-	// the caller doesn't place it. Logs the refusal and, with isCredit, credits the turret account turret.crowd_credit
-	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller, bool isCredit);
+	// the caller doesn't place it. Logs the refusal and credits the turret account turret.crowd_credit
+	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
 
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }

@@ -3106,6 +3106,7 @@ int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre
 	order.defs = defs;
 	order.priority = IBuilderTask::Priority::HIGH;
 	order.caller = "creep";
+	order.isCrowdCheck = false;  // the creep steps on regardless
 	order.creepLane = lane;
 	CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::CREEP);
 	return (militaryMgr->GetTurretPicker()->Order(order) != nullptr) ? 1 : -1;
