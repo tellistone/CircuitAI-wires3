@@ -162,14 +162,15 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 		isOn = false;  // the leader is far off its path (e.g. a new leader that just merged in), or too few units
 		return;
 	}
-	MeasureMembers(frame, path, supportSpeed);
+	const int widest = MeasureMembers(frame, path, supportSpeed);
 	// Facing: the anchor stands at the line's end
 	const float frontArc = !isOn ? 0.f : (isFacing ? arcs.back() : Project(anchorPos, 0.f));
-	const int cols = FitColumns(frame, frontArc, count, baseSpacing, cfg.gap);
-	if (cols < 2) {
+	const int fit = FitColumns(frame, frontArc, widest, baseSpacing, cfg.gap);
+	if (fit < 2) {
 		isOn = false;  // no line fits: follow the path as before
 		return;
 	}
+	const int cols = std::min(fit, widest);  // no row is wider than its rank
 
 	const bool isSwitchOn = !isOn;
 	if (isSwitchOn) {
@@ -236,11 +237,13 @@ float CFormation::AddMembers(int frame)
 	return supportSpeed;
 }
 
-void CFormation::MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed)
+int CFormation::MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed)
 {
 	// The line's top speed: the slowest unit that keeps up with it (or will follow it), the leader at least
 	slowest = std::min(leaderM->maxSpeed, supportSpeed);
 	maxFoot = 0.f;
+	std::map<std::pair<bool, int>, int> rankCounts;  // units per row group (Rematch)
+	int widest = 0;
 	for (auto& kv : members) {
 		CCircuitUnit* unit = kv.first;
 		SMember& m = kv.second;
@@ -252,10 +255,12 @@ void CFormation::MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path
 		if (m.isSteered && !m.isStraggler) {
 			slowest = std::min(slowest, m.maxSpeed);
 		}
+		widest = std::max(widest, ++rankCounts[{m.isStraggler, m.rank}]);
 	}
+	return widest;
 }
 
-int CFormation::FitColumns(int frame, float frontArc, int count, float baseSpacing, float gap)
+int CFormation::FitColumns(int frame, float frontArc, int widest, float baseSpacing, float gap)
 {
 	// Free width across the line where the front row walks in the next few seconds: the narrowest spot sets the
 	// columns, so the line narrows before a choke (or a gap between threats), not in it
@@ -277,14 +282,14 @@ int CFormation::FitColumns(int frame, float frontArc, int count, float baseSpaci
 	if ((freeWidth < heldWidth) || (frame >= widenFrame + WIDEN_FRAMES)) {
 		heldWidth = freeWidth;
 	}
-	// Columns: half the widest footprint + gap clear at each end; spacing squeezes before a second row is added. Fitted
-	// with the widest unit's pitch (LayOut), so no row comes out wider than the room
+	// Columns: half the widest footprint + gap clear at each end; spacing squeezes before the widest rank (Rematch)
+	// takes a second row. Fitted with the widest unit's pitch (LayOut), so no row comes out wider than the room
 	const float room = std::max(heldWidth - maxFoot - 2 * gap, 0.f);
 	spacing = baseSpacing;
-	if ((count - 1) * spacing > room) {
-		spacing = std::max(room / (count - 1), std::max(COMPRESS * baseSpacing, splashPitch));
+	if ((widest - 1) * spacing > room) {
+		spacing = std::max(room / (widest - 1), std::max(COMPRESS * baseSpacing, splashPitch));
 	}
-	return std::min(count, int(room / std::max(spacing, maxFoot + gap) + 1e-3f) + 1);
+	return int(room / std::max(spacing, maxFoot + gap) + 1e-3f) + 1;
 }
 
 void CFormation::SwitchOn(int frame)
@@ -303,8 +308,9 @@ void CFormation::SwitchOn(int frame)
 void CFormation::Rematch(int cols)
 {
 	// Rows front to back: stragglers last, then by row order (reversed while running away); within a rank, units
-	// further along first. Within a row, left to right as the units stand, so none walk across each other; the leader
-	// takes the middle column of its row
+	// further along first. Each rank in rows of its own, cols units at most, so unit types walk apart at any size
+	// (stragglers too, behind). Within a row, left to right as the units stand, so none walk across each other; the
+	// leader takes the middle column of its row
 	order.clear();
 	for (auto& kv : members) {
 		order.push_back(&kv.second);
@@ -313,10 +319,19 @@ void CFormation::Rematch(int cols)
 	std::sort(order.begin(), order.end(), [sign](const SMember* a, const SMember* b) {
 		return std::make_tuple(a->isStraggler, sign * a->rank, b->arc) < std::make_tuple(b->isStraggler, sign * b->rank, a->arc);
 	});
-	rows.resize((order.size() + cols - 1) / cols);
+	std::vector<size_t> starts;  // each row's first unit in order
+	for (size_t i = 0; i < order.size(); ++i) {
+		if (starts.empty() || (i - starts.back() == (size_t)cols) || (order[i]->rank != order[i - 1]->rank)
+			|| (order[i]->isStraggler != order[i - 1]->isStraggler))
+		{
+			starts.push_back(i);
+		}
+	}
+	starts.push_back(order.size());
+	rows.resize(starts.size() - 1);
 	for (size_t r = 0; r < rows.size(); ++r) {
 		std::vector<SMember*>& units = rows[r].units;
-		units.assign(order.begin() + r * cols, order.begin() + std::min((r + 1) * cols, order.size()));
+		units.assign(order.begin() + starts[r], order.begin() + starts[r + 1]);
 		std::sort(units.begin(), units.end(), [](const SMember* a, const SMember* b) { return a->side < b->side; });
 		auto it = std::find(units.begin(), units.end(), leaderM);
 		if (it != units.end()) {
@@ -390,7 +405,10 @@ void CFormation::LayOut(float gap)
 			row.units[c]->x = (c - mid) * pitch;
 		}
 	}
-	width = rows.front().units.back()->x - rows.front().units.front()->x;
+	width = 0.f;  // of the widest row
+	for (const SRow& row : rows) {
+		width = std::max(width, row.units.back()->x - row.units.front()->x);
+	}
 	depth = offset;
 }
 

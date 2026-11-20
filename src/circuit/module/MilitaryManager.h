@@ -244,7 +244,7 @@ public:
 
 	struct SFormationCfg {  // behaviour.json "formation" (CFormation)
 		bool isEnable;  // missing block or false: squads walk as before
-		int minUnits;  // land or sea members needed to form a line (off again below 2)
+		int minUnits;  // land or sea members needed to form a line, 2 at least (off again below 2)
 		float spacing, spacingUnits, spacingExp;  // spacing(n) = spacing * (spacingUnits / max(n, spacingUnits))^spacingExp
 		float gap;  // elmos between footprints, and clearance at the line's ends
 		float widthRange;  // max width = this x the squad's fire range

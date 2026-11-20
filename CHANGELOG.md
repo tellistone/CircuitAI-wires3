@@ -7,6 +7,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Line formations keep each unit type in rows of its own, and form from 2 units** (`formation.min_units` 3 to
+  2). Rows filled front to back by `row_order` only once the line ran out of width, so a small group walked as one
+  mixed row, riots beside skirmishers and artillery. Now each place in `row_order` (or `formation_row`) gets rows of
+  its own, as wide as the columns allow, so types stay apart at any size: two units of different types walk one
+  behind the other. Spacing squeezes before a type takes a second row, as it did before the line did. Stragglers
+  still walk at the back, in rows by type. A group of 2 land or sea units now forms a line (it was 3).
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
   shoot and scoot.**
   - Walk goals are every known heavy and commander, mobile or static, also those already in range. The route query
