@@ -2799,8 +2799,8 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 	std::vector<SDefence> defences;
 	// Points that mark where the enemy is: known enemy buildings and enemy groups
 	std::vector<AIFloat3> anchors;
-	// quota.<kind>_spot.mex: metal spots a known enemy mex stands on (finished or not). Only for a picker that can
-	// shoot it: to a weaponless or anti-air-only scout a known mex is no better than any other spot
+	// quota.<kind>_spot.mex: metal spots a known enemy mex stands on (finished or not); empty = no mex bonus. Only for a
+	// picker that can shoot it: to a weaponless or anti-air-only scout a known mex is no better than any other spot
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	const bool isMexBonus = (cfg.mex > 0.f) && cdef->HasAntiLand();
 	std::vector<bool> isEnemyMex(isMexBonus ? scoutMetalCount : 0, false);
@@ -2812,8 +2812,8 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 		}
 		anchors.push_back(enemy->GetPos());
 		if (isMexBonus && edef->IsMex()) {
-			const int idx = metalMgr->FindNearestSpot(enemy->GetPos());  // a metal spot: idx < scoutMetalCount
-			if ((idx >= 0) && (spots[idx].SqDistance2D(enemy->GetPos()) < SQUARE(SQUARE_SIZE * 8))) {
+			const int idx = metalMgr->FindNearestSpot(enemy->GetPos());  // as MarkAllyMexes: idx < scoutMetalCount
+			if (idx >= 0) {
 				isEnemyMex[idx] = true;
 			}
 		}
@@ -2863,7 +2863,7 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 	// Metal clusters another picker of this kind is heading to (ours was released above): no mex bonus there, so
 	// pickers spread over the enemy's mexes instead of all going for the best one
 	std::vector<bool> isClusterTaken(isMexBonus ? metalMgr->GetClusters().size() : 0, false);
-	for (unsigned i = 0; isMexBonus && (i < scoutMetalCount); ++i) {
+	for (unsigned i = 0; i < isEnemyMex.size(); ++i) {
 		const int cluster = metalMgr->GetCluster(i);  // -1 until clusterized
 		if ((cluster >= 0) && isClaimed(i)) {
 			isClusterTaken[cluster] = true;
@@ -2872,7 +2872,7 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 	// A known enemy mex in a cluster nobody else is heading to, and not given up on for danger lately (blocked, plus
 	// claim_time after the block ends): no bonus pulls pickers straight back to a mex mobile enemies guard
 	auto isMexFree = [&](unsigned i) {
-		if ((i >= scoutMetalCount) || !isEnemyMex[i] || (frame < claims.blocked[i] + cfg.claimTime)) {
+		if ((i >= isEnemyMex.size()) || !isEnemyMex[i] || (frame < claims.blocked[i] + cfg.claimTime)) {
 			return false;
 		}
 		const int cluster = metalMgr->GetCluster(i);
@@ -2907,7 +2907,7 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 		float score = cfg.enemy * enemyTerm + cfg.stale * staleTerm - cfg.travel * travelTerm;
 		// A free enemy mex: a bonus that grows as the spot goes stale, as the stale term does. Just seen = no bonus,
 		// so a scout doesn't bounce between two known mexes instead of looking around
-		const float mexBonus = (isMexBonus && isMexFree(i)) ? cfg.mex * staleTerm : 0.f;
+		const float mexBonus = isMexFree(i) ? cfg.mex * staleTerm : 0.f;
 
 		const int c = isClaimed(i) ? 1 : 0;
 		// The costlier checks only for a spot that would become the best: same pick, far fewer checks
