@@ -32,7 +32,8 @@ CBDefenceTask::CBDefenceTask(ITaskManager* mgr, Priority priority,
 		, isUrgent(false)
 		, isOffPoints(false)
 		, isPicker(false)
-		, isCreep(false)
+		, isAlly(true)
+		, creepLane(-1)
 		, normalCost(cost)
 		, charged(0.f)
 		, spend(0)
@@ -53,8 +54,8 @@ void CBDefenceTask::Update()
 		&& !militaryMgr->GetTurretPicker()->IsStillWorth(this, *traveled.begin()))
 	{
 		militaryMgr->GetSpotScorer()->MaskFailed(buildPos);
-		if (isCreep) {
-			militaryMgr->GetCreepPlanner()->OnDropped(*traveled.begin(), buildPos);  // a failed step, not a success
+		if (IsCreep()) {
+			militaryMgr->GetCreepPlanner()->OnDropped(creepLane);  // a failed step, not a success
 		}
 		manager->AbortTask(this);
 		return;

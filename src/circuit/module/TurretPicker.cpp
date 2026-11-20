@@ -195,8 +195,8 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3 centre = utils::is_valid(order.centre) ? order.centre : builder->GetPos(frame);
 	const float radius = (order.radius >= 0.f) ? order.radius : config.radius;
-	const std::string who = std::string(order.caller) + ", by " + builder->GetCircuitDef()->GetDef()->GetName()
-			+ utils::int_to_string(builder->GetId(), " %i");
+	const std::string who = std::string(order.caller) + (order.IsCreep() ? ", queued, searched for " : ", by ")
+			+ builder->GetCircuitDef()->GetDef()->GetName() + utils::int_to_string(builder->GetId(), " %i");
 	last = SLast();
 	last.frame = frame;
 	last.centre = centre;
@@ -218,7 +218,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	}
 	SGather gather = Gather(centre, radius, maxRange, -RgtVector);
 	gather.isAlly = order.isAlly;
-	if (order.isCreep) {
+	if (order.IsCreep()) {
 		GatherGuns(gather);
 	}
 	last.grid = MakeGrid(builder, gather);
@@ -281,11 +281,13 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	IBuilderTask* task = builderMgr->EnqueueTask(order.priority, def, spot, IBuilderTask::BuildType::DEFENCE,
 			def->GetCostM(), 0.f /*shake*/, true, JOB_TIMEOUT);
-	static_cast<CBDefenceTask*>(task)->SetPicker(order.isCreep);
+	static_cast<CBDefenceTask*>(task)->SetPicker(order.creepLane, order.isAlly);
 	// Its footprint goes on the blocking map now: no other job (a picker's included) takes the spot meanwhile
 	task->SetFacing(UNIT_FACING_SOUTH);
 	task->SetBuildPos(spot);
-	builderMgr->AssignTask(builder, task);
+	if (!order.IsCreep()) {  // the creep's waits in the queue for whoever takes it
+		builderMgr->AssignTask(builder, task);
+	}
 
 	const CTurretValue::STerms& t = pick.terms;
 	const float cost = std::max(def->GetCostM(), 1.f);
@@ -313,8 +315,9 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 				spot.x, spot.z);
 		return false;
 	}
-	// Its own tower (queued at the spot) left out of the halving
-	const SGather gather = Gather(spot, 0.f, def->GetMaxRange(), spot);
+	// Its own tower (queued at the spot) left out of the halving; A only if the order counted it
+	SGather gather = Gather(spot, 0.f, def->GetMaxRange(), spot);
+	gather.isAlly = task->IsAlly();
 	const CTurretValue::SParams params = MakeParams(def);
 	const CTurretValue::SCandidate c = {{spot.x, circuit->GetTerrainManager()->GetHeightAt(spot.x, spot.z), spot.z},
 			0.f, 0.f};

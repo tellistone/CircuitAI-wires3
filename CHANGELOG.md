@@ -9,9 +9,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
   unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and
-  energy they were meant to push past. Their orders now count no A (`STurretOrder::isAlly`); with less value, a
-  spot also needs more enemy traffic, enemy buildings or choke worth to reach `turret.min_value`. The other
-  callers, the creep and porc keep A.
+  energy they were meant to push past. Their orders, and the check on arrival, now count no A
+  (`STurretOrder::isAlly`). With less value, a spot also needs more enemy traffic, enemy buildings or choke worth to
+  reach `turret.min_value`. The other callers, the creep and porc keep A.
 
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
   shoot and scoot.**
@@ -150,18 +150,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     landing on it once within one; pulled back to a half, then a quarter, out of every known enemy static's range +
     `turret.creep_margin` (64). The picker searches half a step about its end, so it lands ahead. Light defs on
     the way; the unlocked tiers too only at the enemy's line (onto the target, or pulled back by their range). A job
-    of ours already there, by any caller, is helped, never doubled; an ally's turret being built there takes the
-    step.
+    of ours already there, by any caller, goes up to NORMAL priority, never doubled; an ally's turret being built
+    there takes the step.
   - Rests: `turret.creep_losses` (2) of our turrets lost in the lane, or two failed steps within 2 minutes (no spot,
     or dropped on arrival), rest it 2 minutes, doubling up to 16 while it keeps failing. A step's end under threat
     only waits.
-  - Steps as jobs: up to `turret.creep_builders` (1) steps under way at once, plus one per `turret.creep_income`
-    (30) metal/s, and one at a time in a lane. Each goes to whichever mobile ground builder is free: the commander
-    first unless hide mode holds it (on the highest-ranked of the three lanes nearest it), else the free constructor
-    nearest the highest-ranked lane's step. It orders a picker turret about the step's end (`turret.creep_radius`,
-    250), a lane at most every `turret.creep_interval` (10) s. It shares the turret account: it needs
+  - Steps as jobs: up to `turret.creep_builders` (1) steps queued or under way at once, plus one per
+    `turret.creep_income` (30) metal/s, and one at a time in a lane. Each is a picker turret about the step's end
+    (`turret.creep_radius`, 250) queued at HIGH for any constructor looking for work to take; nobody is pulled off
+    another job. A job whose builder dies stays queued for the next; one nobody is on for 30 s is refunded. A lane
+    takes an order at most every `turret.creep_interval` (10) s. It shares the turret account: it needs
     `turret.creep_budget` (0.5) x the dearest def it would choose from there and is charged the full cost (the
-    `creep` spender). Once the turret is up the builder works as any other; the next step goes to whoever is free.
+    `creep` spender).
   - The picker's threat rule for a creep order, at the order and on arrival: no spot inside any known enemy static's
     land range + `creep_margin`; mobile threat passes only where our guns' power covering the spot exceeds it.
   - A `CREEP` log line each minute with why lanes were skipped; all keys settable with `choke_overlay set

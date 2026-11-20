@@ -33,8 +33,12 @@ struct STurretOrder {
 	std::vector<CCircuitDef*> defs;  // empty: the porcupine list's land or water towers, AA left out
 	IBuilderTask::Priority priority = IBuilderTask::Priority::NORMAL;
 	const char* caller = "test";  // "after flee", "near enemy" or "test", for the log
-	bool isCreep = false;  // turret.creep: enemy statics' range + creep_margin is the threat rule, mobiles under cover pass
+	// turret.creep (CCreepPlanner): the lane's line choke id; -1: not the creep's. Enemy statics' range + creep_margin
+	// is the threat rule, mobiles under cover pass, and the job is left queued at priority for any builder looking for
+	// work (builder: whom the spot is searched for)
+	int creepLane = -1;
 	bool isAlly = true;  // false: no A (near enemy, enemy line), so the turret goes for the enemy, not to cover ours
+	bool IsCreep() const { return creepLane >= 0; }
 };
 
 /*
@@ -106,7 +110,7 @@ public:
 		float cooldown = 30.f;  // seconds
 		// The creep (CCreepPlanner): builders step turrets forward to just outside enemy static range
 		bool isCreep = true;
-		int creepBuilders = 1;  // steps under way at once (a free builder each, the commander first)
+		int creepBuilders = 1;  // steps queued or under way at once, each a HIGH job for any builder
 		float creepIncome = 30.f;  // metal/s of income per extra step at once; 0 = none
 		float creepInterval = 10.f;  // seconds between orders on one lane
 		float creepStep = 0.7f;  // x the forward turret's range

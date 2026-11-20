@@ -22,8 +22,8 @@ class CCircuitUnit;
 class IBuilderTask;
 
 /*
- * turret.creep: our builders walk our turrets out along the choke analysis, lane by lane, up to just outside the
- * enemy's static range. Once a second (doc/chokepoints.md, "The creep"):
+ * turret.creep: walks our turrets out along the choke analysis, lane by lane, up to just outside the enemy's static
+ * range, as jobs for our builders. Once a second (doc/chokepoints.md, "The creep"):
  * - Lanes: the live chokes of our current line, as CFrontline ranks them (income behind x traffic). The target: the
  *   outer region's choke (no enemy artillery on it) nearest the enemy's held ground beyond it, kept until another is
  *   20% nearer, or its centre if it has none (or is the enemy's last ground); enemy-held ground too: the step stops at
@@ -34,17 +34,18 @@ class IBuilderTask;
  *   turret.creep_margin. None that doesn't bring the anchor nearer the enemy. Light defs on the way; the unlocked
  *   tiers too at the line (on the target, or pulled back by their range).
  * - Claimed: a finished ground defence (ours or an ally's) within turret.creep_radius of the target, or within half
- *   the step of its end, or an ally's being built there. A creep step of ours under way within turret.creep_radius
- *   of the end: one at a time. Another job of ours being built or queued there: help it (assist only, never a second
- *   one).
+ *   the step of its end, or an ally's being built there. One step at a time: a lane with a creep job of its own
+ *   waits for it. Another job of ours being built or queued at the end: help it, by raising it to NORMAL (never a
+ *   second turret beside it).
  * - Rests: turret.creep_losses of our turrets lost in the outer region or a step of the end, or two failed steps
  *   within 2 minutes, rest a lane 2 minutes, doubling (up to 16 minutes) while it keeps failing within 10 minutes of
  *   its last rest. A step's end under threat (the picker's creep rule) only waits.
- * - Orders: up to turret.creep_builders steps under way at once, plus one per turret.creep_income metal/s. Each step
- *   is a job for a free mobile ground builder (CBuilderManager::OrderCreepTurret): the commander first, while hide
- *   mode doesn't hold it, on the highest-ranked of the three lanes nearest it; else the highest-ranked lane left
- *   takes the free constructor nearest its step. A lane takes an order every turret.creep_interval at most. Between
- *   steps a builder works as any other
+ * - Orders: up to turret.creep_builders steps queued or under way at once, plus one per turret.creep_income metal/s,
+ *   highest-ranked lane first. Each step is a job queued at HIGH (CBuilderManager::OrderCreepTurret) that any builder
+ *   looking for work may take, as it ranks jobs by priority and walk (MakeBuilderTask): nobody is pulled off another
+ *   job. The spot is searched for the mobile ground builder nearest the step that can reach it. A job holds its lane
+ *   and its place in the count until it is built or times out (30 s with no builder on it; refunded), so one whose
+ *   builder died stays queued for the next. A lane takes an order every turret.creep_interval at most
  */
 class CCreepPlanner {
 public:
@@ -54,8 +55,7 @@ public:
 	void Update();  // every second
 
 	void OnGunLost(const springai::AIFloat3& pos);  // a finished ground-hitting turret of ours died
-	// A creep job dropped on arrival: its lane's step failed (the builder's lane, else the nearest to pos)
-	void OnDropped(const CCircuitUnit* builder, const springai::AIFloat3& pos);
+	void OnDropped(int lane);  // a creep job of lane dropped on arrival: its step failed
 
 private:
 	struct SLane {
@@ -63,7 +63,7 @@ private:
 		springai::AIFloat3 end;  // the step's end, or the job to help
 		float radius;  // the picker's about end
 		ICoreUnit::Id anchorId;  // the turret it steps from
-		bool isHelp;  // a defence of ours is queued or being built at end: assist only
+		bool isHelp;  // a defence of ours is queued or being built at end: raise it, never a second one
 		bool isAtLine;  // on the target or pulled back by enemy range: the unlocked tiers too
 	};
 	struct SMemo {  // a lane's, kept over seconds
@@ -85,7 +85,10 @@ private:
 
 	void Gather();  // this second's guns, creep jobs, enemy reach and enemy ground
 	void MakeLanes();
-	void OrderSteps(int most);  // to free builders, while fewer than most steps are under way
+	void OrderSteps(int most);  // queues steps while fewer than most are queued or under way, raises help lanes' jobs
+	// The mobile ground builder nearest pos that can reach it (not a commander hide mode holds): whom a step's spot is
+	// searched for
+	CCircuitUnit* FindPlanner(const springai::AIFloat3& pos) const;
 	// The outer region's exit nearest the enemy (memo.targetId kept until another is 20% nearer), else its centre
 	springai::AIFloat3 ChooseTarget(int choke, int outer, SMemo& memo) const;
 	const SGun* ChooseAnchor(int inner, int outer, const springai::AIFloat3& target) const;
@@ -94,19 +97,16 @@ private:
 			float& outLen) const;
 	float EnemySqDist(const springai::AIFloat3& pos, int skipRegion) const;  // to the enemy's ground beyond skipRegion
 	bool IsInEnemyReach(const springai::AIFloat3& pos) const;
-	// The highest-ranked (first) among the three nearest pos not taken
-	const SLane* PickLane(const springai::AIFloat3& pos, const std::vector<bool>* isTaken = nullptr) const;
 	void AddFail(int chokeId);
 	void Rest(SMemo& m);
 
 	CCircuitAI* circuit;
-	std::map<ICoreUnit::Id, int> laneOf;  // builder -> the line choke id of its last creep order (OnDropped)
 	std::vector<SLane> lanes;  // this second's, highest rank first
 	std::vector<std::pair<springai::AIFloat3, int>> losses;  // our ground-hitting turrets lost, when
 	std::map<int, SMemo> memos;  // line choke id -> its rests and target
 	// This second's (Gather)
 	std::vector<SGun> guns;  // our finished ground-hitting turrets: the anchors
-	std::vector<springai::AIFloat3> jobs;  // our creep steps under way (queued or being built)
+	std::vector<int> jobLanes;  // the lanes of our creep jobs, queued or being built
 	std::vector<std::pair<springai::AIFloat3, float>> enemyReach;  // known enemy ones: land range + creep_margin
 	std::vector<std::pair<int, springai::AIFloat3>> enemyAt;  // the enemy's held ground (its side if none): region, centre
 	int skips[Skip::_SIZE_];  // this second's, for the log
