@@ -34,8 +34,6 @@ namespace circuit {
 
 using namespace springai;
 
-#define POPUP_HOLD	(FRAMES_PER_SEC * 3)  // IsPopupShut: an aim-opened pop-up stays open this long after a target
-
 // Scratch shared by all artillery tasks: only used within one synchronous call (path queries copy their goals)
 F3Vec CArtilleryTask::safePositions;
 F3Vec CArtilleryTask::firePositions;
@@ -376,22 +374,17 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 bool CArtilleryTask::IsPopupShut(CEnemyInfo* enemy, int frame) const
 {
 	CCircuitDef* edef = enemy->GetCircuitDef();
-	if (!edef->IsPopup()) {
-		return false;
+	if (!edef->IsPopup() || enemy->IsBeingBuilt()) {
+		return false;  // a nanoframe is never armoured
 	}
-	// Desolator, Lucifer: open while switched on and powered; readable only in LOS, else open (activateWhenBuilt)
+	// Desolator, Lucifer: armoured only while switched off (lowpower stalls them, doesn't close them); readable
+	// only in LOS, else open (activateWhenBuilt)
 	if (edef->IsPopupSwitch()) {
-		Unit* u = enemy->GetUnit();
-		return enemy->IsInLOS() && (!u->IsActivated() || (u->GetRulesParamFloat("lowpower", 0.f) > 0.f));
+		return enemy->IsInLOS() && !enemy->GetUnit()->IsActivated();
 	}
-	// Faraday, Gauss, Hacksaw: open while an ally unit of a layer it hits is in its range (+ margin), and for
-	// POPUP_HOLD after, as the turret itself is (restore delay 2-5 s)
-	if (IsPopupTargetNear(enemy, frame)) {
-		enemy->SetPopupOpenFrame(frame);
-		return false;
-	}
-	const int openFrame = enemy->GetPopupOpenFrame();
-	return (openFrame < 0) || (frame - openFrame > POPUP_HOLD);
+	// Faraday, Gauss, Hacksaw: open while it has a target. They close 2-5 s after the last one, under a unit's
+	// re-pick period (every 4th update, ~4 s), so no hold is needed
+	return !IsPopupTargetNear(enemy, frame);
 }
 
 bool CArtilleryTask::IsPopupTargetNear(CEnemyInfo* enemy, int frame) const

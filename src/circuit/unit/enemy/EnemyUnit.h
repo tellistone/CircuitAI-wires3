@@ -248,15 +248,10 @@ public:
 
 	CEnemyUnit* GetData() const { return data; }
 
-	// CArtilleryTask::IsPopupShut: the last frame an aim-opened pop-up turret was guessed open, -1: never
-	void SetPopupOpenFrame(int frame) { popupOpenFrame = frame; }
-	int GetPopupOpenFrame() const { return popupOpenFrame; }
-
 private:
 	std::set<IFighterTask*> tasks;
 
 	CEnemyUnit* data;
-	int popupOpenFrame;
 };
 
 /*

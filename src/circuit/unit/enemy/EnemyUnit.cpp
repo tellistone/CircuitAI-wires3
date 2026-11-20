@@ -172,7 +172,6 @@ void CEnemyUnit::UpdateInLosData()
 
 CEnemyInfo::CEnemyInfo(CEnemyUnit* data)
 		: data(data)
-		, popupOpenFrame(-1)
 {
 }
 
