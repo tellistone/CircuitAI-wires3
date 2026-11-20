@@ -101,7 +101,7 @@ public:
 		float artilleryReach = 600.f;
 		std::vector<CCircuitDef*> light;
 		// A light def that would stand within crowdRadius of crowdCount light turrets of the ally team (finished or
-		// being built, and our jobs not started yet) isn't placed, by the picker or as a preventive tower; the turret
+		// being built, and our jobs not started yet) isn't placed, by the picker (not the creep) or as a preventive tower; the turret
 		// account (porcupine.budget) gets crowdCredit instead, each time. crowdCount 0 = off
 		float crowdRadius = 600.f;
 		int crowdCount = 3;

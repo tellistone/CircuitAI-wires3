@@ -9,7 +9,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **No light turret where three already stand: its metal goes back to the turret account** (`turret.crowd_radius`
   600, `turret.crowd_count` 3, `turret.crowd_credit` 90, new). A light def (`turret.light`: Lotus, Picket) that a
-  picker order (the creep's too) or a preventive tower would place within 600 elmos of 3 other light turrets of the
+  picker order (not the creep's) or a preventive tower would place within 600 elmos of 3 other light turrets of the
   ally team (finished or being built, and our jobs not started yet) isn't placed; the account (`porcupine.budget`)
   gets 90 metal instead, past its cap if need be, each time it happens (a cluster's sweep visit may credit it again).
   The `TURRET BUDGET` log line sums it as "crowd credit".

@@ -316,7 +316,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	CCircuitDef* def = res.def;
 	const CTurretValue::SScored& pick = res.search.scored.front();
 	const AIFloat3 spot(pick.cand.pos.x, pick.cand.pos.y, pick.cand.pos.z);
-	if (order.isCrowdCheck && IsLightCrowded(def, spot, order.caller)) {
+	if (order.isCrowdCheck && !order.IsCreep() && IsLightCrowded(def, spot, order.caller)) {  // the creep steps on
 		last.isFound = false;
 		return nullptr;
 	}
