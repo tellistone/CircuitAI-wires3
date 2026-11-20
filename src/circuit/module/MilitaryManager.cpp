@@ -2255,11 +2255,15 @@ void CMilitaryManager::RefundTurret(CBDefenceTask* task)
 	task->SetCharge(0.f, task->GetSpend());
 }
 
-void CMilitaryManager::CreditTurret(float metal)
+float CMilitaryManager::CreditTurret(float metal)
 {
 	UpdateTurretBudget();
-	turretBudget.balance += metal;
-	turretBudget.crowdCredit += metal;
+	STurretBudget& b = turretBudget;
+	const float cap = std::max(b.rate * b.bankSec, b.askCost);  // as UpdateTurretBudget fills it
+	const float credit = std::max(std::min(metal, cap - b.balance), 0.f);
+	b.balance += credit;
+	b.crowdCredit += credit;
+	return credit;
 }
 
 AIFloat3 CMilitaryManager::GetBackPos(const AIFloat3& pos) const
@@ -2278,6 +2282,7 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 	float totalCost = .0f;
 	IBuilderTask* parentTask = nullptr;
 	std::set<int> usedSpots;  // this call's (a chained task isn't in the task lists yet)
+	bool isCrowdCredited = false;  // turret.crowd_credit: once a call, though a pooled list is walked up to POOL_COPIES times
 	// A choke point's list (its share of its pocket's towers) is walked again while its cap has room; there a tower
 	// that brings the total exactly to the cap still goes, so the one-tower floor of a choke's share is met
 	const bool isPooled = (point->chokeId >= 0);
@@ -2316,8 +2321,9 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 				backPos = GetBackPos(spot);  // the support towers after it cover it
 			}
 			// turret.crowd_count: a preventive light tower among enough light turrets isn't placed (the account gets
-			// turret.crowd_credit instead). Not booked on the point, so the next visit asks again, and credits again
-			if (!isPorc && turretPicker->IsLightCrowded(defDef, buildPos, "prevent")) {
+			// turret.crowd_credit instead, once a call). Not booked on the point, so the next visit asks again
+			if (!isPorc && turretPicker->RefuseCrowdedLight(defDef, buildPos, "prevent", !isCrowdCredited)) {
+				isCrowdCredited = true;
 				point->cost -= defCost;
 				continue;
 			}

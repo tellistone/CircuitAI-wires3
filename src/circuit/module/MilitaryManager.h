@@ -192,8 +192,9 @@ public:
 	bool CanAffordTurret(float cost);
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
-	// turret.crowd_credit: a light turret not placed for its crowd (CTurretPicker::IsLightCrowded), past the cap if need be
-	void CreditTurret(float metal);
+	// turret.crowd_credit: a light turret not placed for its crowd (CTurretPicker::RefuseCrowdedLight). Never past the
+	// account's cap; returns what it credited
+	float CreditTurret(float metal);
 	void UpdateTurretBudget();  // accrues; logs the spend once a minute
 	float* GetTurretShare() { return &turretBudget.share; }  // choke_overlay set turret.share
 

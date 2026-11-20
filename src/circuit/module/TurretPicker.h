@@ -101,8 +101,8 @@ public:
 		float artilleryReach = 600.f;
 		std::vector<CCircuitDef*> light;
 		// A light def that would stand within crowdRadius of crowdCount light turrets of the ally team (finished or
-		// being built, and our jobs not started yet) isn't placed, by the picker (not the creep) or as a preventive tower; the turret
-		// account (porcupine.budget) gets crowdCredit instead, each time. crowdCount 0 = off
+		// being built, and our jobs not started yet) isn't placed, by the picker (not the creep) or as a preventive
+		// tower; the turret account (porcupine.budget) gets crowdCredit instead, up to its cap. crowdCount 0 = off
 		float crowdRadius = 600.f;
 		int crowdCount = 3;
 		float crowdCredit = 90.f;  // metal
@@ -187,9 +187,9 @@ public:
 	// The turret.tiers entry def is in, from 1; 0 if none (turret.light)
 	int GetTier(const CCircuitDef* def) const;
 	bool IsLight(const CCircuitDef* def) const;
-	// turret.crowd_count: def is light and pos has that many other light turrets within turret.crowd_radius; true also
-	// credits the turret account turret.crowd_credit and logs who (caller) was refused
-	bool IsLightCrowded(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
+	// turret.crowd_count: true when def is light and pos has that many other light turrets within turret.crowd_radius:
+	// the caller doesn't place it. Logs the refusal and, with isCredit, credits the turret account turret.crowd_credit
+	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller, bool isCredit);
 
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }

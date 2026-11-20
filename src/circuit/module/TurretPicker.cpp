@@ -165,32 +165,34 @@ bool CTurretPicker::IsLight(const CCircuitDef* def) const
 	return std::find(config.light.begin(), config.light.end(), def) != config.light.end();
 }
 
-bool CTurretPicker::IsLightCrowded(const CCircuitDef* def, const AIFloat3& pos, const char* caller)
+bool CTurretPicker::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3& pos, const char* caller, bool isCredit)
 {
 	if ((config.crowdCount <= 0) || !IsLight(def)) {
 		return false;
 	}
-	// The ally team's light turrets, finished or being built, then our jobs not started yet
+	// The ally team's light turrets, finished or being built, then our jobs not started yet; enough is enough
 	int count = 0;
 	COOAICallback* clb = circuit->GetCallback();
 	for (int id : clb->GetFriendlyUnitIdsIn(pos, config.crowdRadius)) {
 		const CCircuitDef* cdef = (id != -1) ? circuit->GetCircuitDef(clb->Unit_GetDefId(id)) : nullptr;
-		if ((cdef != nullptr) && IsLight(cdef)) {
-			++count;
+		if ((cdef != nullptr) && IsLight(cdef) && (++count >= config.crowdCount)) {
+			break;
 		}
 	}
-	const float sqRadius = SQUARE(config.crowdRadius);
-	circuit->GetBuilderManager()->ForEachQueuedTower([this, &count, &pos, sqRadius](IBuilderTask* t) {
-		if (IsLight(t->GetBuildDef()) && (t->GetTaskPos().SqDistance2D(pos) < sqRadius)) {
-			++count;
-		}
-	});
 	if (count < config.crowdCount) {
-		return false;
+		const float sqRadius = SQUARE(config.crowdRadius);
+		circuit->GetBuilderManager()->ForEachQueuedTower([this, &count, &pos, sqRadius](IBuilderTask* t) {
+			if (IsLight(t->GetBuildDef()) && (t->GetTaskPos().SqDistance2D(pos) < sqRadius)) {
+				++count;
+			}
+		});
+		if (count < config.crowdCount) {
+			return false;
+		}
 	}
-	circuit->GetMilitaryManager()->CreditTurret(config.crowdCredit);
-	circuit->LOG("TURRET %s: no %s at (%.0f, %.0f), %i light turrets within %.0f; +%.0f to the turret account", caller,
-			def->GetDef()->GetName(), pos.x, pos.z, count, config.crowdRadius, config.crowdCredit);
+	const float credit = isCredit ? circuit->GetMilitaryManager()->CreditTurret(config.crowdCredit) : 0.f;
+	circuit->LOG("TURRET %s: no %s at (%.0f, %.0f), %i+ light turrets within %.0f; +%.0f to the turret account", caller,
+			def->GetDef()->GetName(), pos.x, pos.z, count, config.crowdRadius, credit);
 	return true;
 }
 
@@ -316,7 +318,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	CCircuitDef* def = res.def;
 	const CTurretValue::SScored& pick = res.search.scored.front();
 	const AIFloat3 spot(pick.cand.pos.x, pick.cand.pos.y, pick.cand.pos.z);
-	if (order.isCrowdCheck && !order.IsCreep() && IsLightCrowded(def, spot, order.caller)) {  // the creep steps on
+	if (order.isCrowdCheck && !order.IsCreep() && RefuseCrowdedLight(def, spot, order.caller, true)) {  // the creep steps on
 		last.isFound = false;
 		return nullptr;
 	}
