@@ -69,6 +69,7 @@ void CScoutTask::AssignTo(CCircuitUnit* unit)
 
 void CScoutTask::RemoveAssignee(CCircuitUnit* unit)
 {
+	manager->GetCircuit()->GetMilitaryManager()->ReleaseScoutSpot(unit);  // other scouts may pick its spot now
 	IFighterTask::RemoveAssignee(unit);
 	if (units.empty()) {
 		manager->AbortTask(this);
@@ -110,6 +111,11 @@ void CScoutTask::Update()
 			if (isStalled) {
 				position = -RgtVector;  // pick a fresh destination
 				lastAttackId = -1;
+			}
+			if (!IsFleeing(frame)) {
+				// Still working the area of its pick (on the way, or fighting there): others keep off its spot and
+				// cluster (quota.scout_spot.mex) even after claim_time
+				circuit->GetMilitaryManager()->HoldScoutSpot(unit);
 			}
 			Execute(unit, !isStalled);
 		}
