@@ -14,7 +14,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   behind the other. Spacing squeezes before a type takes a second row, as it did before the line did. Stragglers
   still walk at the back, in rows by type. A group of 2 land or sea units now forms a line (it was 3). Riots walk
   near the back: `row_order` is now assault, heavy, raider, skirmish, riot, anti-heavy, anti-air, artillery (riots
-  were in front), so a group running away has its assaults at the back.
+  were in front), so a group running away has its assaults at the back. Rows keep apart for splash only as far as
+  the line stays no deeper than its width cap (`width_range` x its fire range, at most 900), so a line of many types
+  doesn't reach past the group radius, where front units would count as stragglers.
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
   shoot and scoot.**
   - Walk goals are every known heavy and commander, mobile or static, also those already in range. The route query

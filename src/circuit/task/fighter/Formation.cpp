@@ -242,7 +242,7 @@ int CFormation::MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path,
 	// The line's top speed: the slowest unit that keeps up with it (or will follow it), the leader at least
 	slowest = std::min(leaderM->maxSpeed, supportSpeed);
 	maxFoot = 0.f;
-	std::map<std::pair<bool, int>, int> rankCounts;  // units per row group (Rematch)
+	std::map<int, int> rankCounts;  // units per rank, stragglers too: straggling doesn't change the columns
 	int widest = 0;
 	for (auto& kv : members) {
 		CCircuitUnit* unit = kv.first;
@@ -255,7 +255,7 @@ int CFormation::MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path,
 		if (m.isSteered && !m.isStraggler) {
 			slowest = std::min(slowest, m.maxSpeed);
 		}
-		widest = std::max(widest, ++rankCounts[{m.isStraggler, m.rank}]);
+		widest = std::max(widest, ++rankCounts[m.rank]);
 	}
 	return widest;
 }
@@ -319,19 +319,25 @@ void CFormation::Rematch(int cols)
 	std::sort(order.begin(), order.end(), [sign](const SMember* a, const SMember* b) {
 		return std::make_tuple(a->isStraggler, sign * a->rank, b->arc) < std::make_tuple(b->isStraggler, sign * b->rank, a->arc);
 	});
-	std::vector<size_t> starts;  // each row's first unit in order
-	for (size_t i = 0; i < order.size(); ++i) {
-		if (starts.empty() || (i - starts.back() == (size_t)cols) || (order[i]->rank != order[i - 1]->rank)
-			|| (order[i]->isStraggler != order[i - 1]->isStraggler))
-		{
-			starts.push_back(i);
+	// A new row for a new group (rank, stragglers apart) or once the row is full
+	auto group = [](const SMember* m) { return std::make_pair(m->isStraggler, m->rank); };
+	int r = -1;
+	for (size_t i = 0, inRow = cols; i < order.size(); ++i, ++inRow) {
+		if ((inRow == (size_t)cols) || (group(order[i]) != group(order[i - 1]))) {
+			++r;
+			inRow = 0;
 		}
+		order[i]->row = r;
 	}
-	starts.push_back(order.size());
-	rows.resize(starts.size() - 1);
-	for (size_t r = 0; r < rows.size(); ++r) {
-		std::vector<SMember*>& units = rows[r].units;
-		units.assign(order.begin() + starts[r], order.begin() + starts[r + 1]);
+	rows.resize(r + 1);
+	for (SRow& row : rows) {
+		row.units.clear();
+	}
+	for (SMember* m : order) {
+		rows[m->row].units.push_back(m);
+	}
+	for (SRow& row : rows) {
+		std::vector<SMember*>& units = row.units;
 		std::sort(units.begin(), units.end(), [](const SMember* a, const SMember* b) { return a->side < b->side; });
 		auto it = std::find(units.begin(), units.end(), leaderM);
 		if (it != units.end()) {
@@ -341,9 +347,6 @@ void CFormation::Rematch(int cols)
 			} else {
 				std::rotate(mid, it, it + 1);
 			}
-		}
-		for (SMember* m : units) {
-			m->row = r;
 		}
 	}
 	matchCols = cols;
@@ -383,30 +386,39 @@ void CFormation::SwapPlaces(float startArc)
 
 void CFormation::LayOut(float gap)
 {
-	// Rows their widest footprint + ROW_GAPS gaps apart. In a row, one pitch: spacing, or the widest footprint + gap if
-	// more; the row centred, or on the leader in its row
-	float offset = 0.f;
-	float prevFoot = 0.f;
+	// Rows their widest footprint + ROW_GAPS gaps apart, or splashPitch if more; but the splash part shrinks so the
+	// block is no deeper than maxWidth: with a row per type it could reach past the group radius from the leader
+	// (CAttackTask::GetGroupRadius). In a row, one pitch: spacing, or the widest footprint + gap if more; the row
+	// centred, or on the leader in its row
+	auto baseGap = [&](size_t r) { return (rows[r - 1].foot + rows[r].foot) / 2 + ROW_GAPS * gap; };
+	float baseDepth = 0.f;
+	float splashDepth = 0.f;  // splash's share of the depth
 	for (size_t r = 0; r < rows.size(); ++r) {
 		SRow& row = rows[r];
-		float foot = 0.f;
+		row.foot = 0.f;
 		for (SMember* m : row.units) {
-			foot = std::max(foot, m->foot);
+			row.foot = std::max(row.foot, m->foot);
 		}
 		if (r > 0) {
-			offset += std::max((prevFoot + foot) / 2 + ROW_GAPS * gap, splashPitch);
+			baseDepth += baseGap(r);
+			splashDepth += std::max(splashPitch - baseGap(r), 0.f);
+		}
+	}
+	const float splashShare = (splashDepth > 0.f) ? utils::clamp((maxWidth - baseDepth) / splashDepth, 0.f, 1.f) : 0.f;
+	float offset = 0.f;
+	width = 0.f;  // of the widest row
+	for (size_t r = 0; r < rows.size(); ++r) {
+		SRow& row = rows[r];
+		if (r > 0) {
+			offset += baseGap(r) + std::max(splashPitch - baseGap(r), 0.f) * splashShare;
 		}
 		row.offset = offset;
-		prevFoot = foot;
-		const float pitch = std::max(spacing, foot + gap);
+		const float pitch = std::max(spacing, row.foot + gap);
 		auto itLeader = std::find(row.units.begin(), row.units.end(), leaderM);
 		const float mid = (itLeader != row.units.end()) ? float(itLeader - row.units.begin()) : (row.units.size() - 1) / 2.f;
 		for (size_t c = 0; c < row.units.size(); ++c) {
 			row.units[c]->x = (c - mid) * pitch;
 		}
-	}
-	width = 0.f;  // of the widest row
-	for (const SRow& row : rows) {
 		width = std::max(width, row.units.back()->x - row.units.front()->x);
 	}
 	depth = offset;

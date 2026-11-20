@@ -42,7 +42,8 @@ struct SFormationOrder {
  *   one it crosses. Each row shifts sideways to fit, and a slot never lies past the first spot that isn't free, seen
  *   from the line. Spacing shrinks as the squad grows, and squeezes to 0.7 of that before a type takes a second row.
  *   With splash near (armed enemies' largest weapon area of effect or bomb blast, within their range + 600, held
- *   10 s), neighbours and rows stay at least splash_spacing x its radius apart (at most 256).
+ *   10 s), neighbours and rows stay at least splash_spacing x its radius apart (at most 256); rows less where the
+ *   block would get deeper than the width cap, so it doesn't reach past the group radius.
  *   Below 2 columns the formation lets go and the units follow the path as before, until 2 fit again for a few
  *   seconds.
  * - Slots: rows front to back by row_order, each place in it (rank) in rows of its own, as wide as the columns
@@ -126,6 +127,7 @@ private:
 	struct SRow {
 		std::vector<SMember*> units;  // left to right
 		float offset;  // behind the front row, along the line
+		float foot;  // widest footprint (LayOut)
 		float shift;  // sideways, to fit between obstacles
 	};
 
