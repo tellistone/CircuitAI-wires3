@@ -33,6 +33,7 @@ struct STurretOrder {
 	std::vector<CCircuitDef*> defs;  // empty: the porcupine list's land or water towers, AA left out
 	IBuilderTask::Priority priority = IBuilderTask::Priority::NORMAL;
 	const char* caller = "test";  // "after flee", "near enemy" or "test", for the log
+	bool isCreep = false;  // turret.creep: enemy statics' range + creep_margin is the threat rule, mobiles under cover pass
 };
 
 /*
@@ -40,11 +41,17 @@ struct STurretOrder {
  * (CSpotScorer guards one asset; this weighs everything around the spot). Each term is in metal, so a spot's worth
  * compares with the turret's cost (see CTurretValue):
  *   T, traffic: the traffic field over the cells in range, per cell length of its range across (2 x range / cell),
- *      is the income whose enemy routes pass under it in metal/s; x turret.horizon s
- *   A, our and allied unarmed buildings in range, at cost
+ *      is the income whose enemy routes pass under it in metal/s; x turret.horizon s. None while spiders and jumpers
+ *      are choke.gate_share of the enemy army (until they fall below half of that)
+ *   A, our and allied unarmed buildings in range, at cost; our economy there (ECON) only above what C carries of it
  *   E, known enemy buildings in range seen in the last 3 minutes, at cost; an enemy mex at its income x
  *      turret.horizon. Mobiles don't count: they move on, and their routes are in T already
- *   C, turret.choke when a choke of our current line or the enemy line has its middle in range
+ *   C, turret.choke when a choke of our current line or the enemy line has its middle in range; a current line
+ *      choke adds turret.choke_econ x our economy (energy, pylons, factories on our held ground) split among the
+ *      current line's chokes by the traffic through each, an enemy line choke turret.choke_enemy (one on both lines, both),
+ *      at most turret.choke_cap, none for a choke not settled or with enemy artillery on it;
+ *      x (1 - turret.choke_depth x its distance / range): worth the most on the choke, so a turret stands at it, not
+ *      just reaching it with its outer range
  * each one the def hits, in a clear line of fire (high-arc: any), and halved for every tower of ours or an ally's,
  * queued too, that covers it already and hits it. F, the front, is the known enemy buildings' influence at the spot,
  * 2 x (1 - d / 2048) each (the enemy territory layer's), over the highest among the candidates. V, the view
@@ -68,13 +75,24 @@ public:
 		float view = 1.f;
 		float height = 0.5f;
 		float choke = 100.f;  // metal
+		float chokeDepth = 1.f;  // C x (1 - this x the choke's distance / range)
+		float chokeEcon = 1.f;  // x our economy, split among the current line chokes by traffic, added to C
+		float chokeEnemy = 400.f;  // metal an enemy line choke adds to C
+		float chokeCap = 1000.f;  // the most C one choke carries; 0 = no cap
 		// Armed statics that defend nothing in the field: no tower covering a target, nor a defence to the callers
 		std::vector<CCircuitDef*> notDefence;
 		// Callers (CBuilderManager::UpdateTurrets)
 		bool isAfterFlee = true;
 		float afterFleeSince = 0.f;  // seconds of game time before the after-flee caller starts
-		float defendedRadius = 600.f;  // after a flee, a defence this near where it started means no turret
+		float defendedRadius = 600.f;  // a defence this near where a flee started (or our artillery) means no turret
 		bool isNearEnemy = true;
+		bool isShortChoke = true;  // near a short choke of our current line (CFrontline::SFront::IsShort)
+		float shortChokeReach = 600.f;
+		bool isEnemyLine = true;  // near a choke of the enemy line
+		float enemyLineReach = 800.f;
+		float enemyLineBudget = 0.5f;  // x the balance the account must hold for a choke on the enemy line (0 to 1)
+		bool isArtillery = true;  // near our artillery shooting a target in its range, no turret within defendedRadius
+		float artilleryReach = 600.f;
 		std::vector<CCircuitDef*> light;
 		// Heavier defs, each tier unlocked once our ally team holds mexShare of the map's metal spots; by mexShare up
 		struct STier {
@@ -82,11 +100,21 @@ public:
 			std::vector<CCircuitDef*> defs;
 		};
 		std::vector<STier> tiers;
-		float enemyReach = 600.f;
+		float enemyReach = 700.f;
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
+		// The creep (CCreepPlanner): pushers step turrets forward to just outside enemy static range
+		bool isCreep = true;
+		int creepBuilders = 1;  // pushers: the commander first, then constructors
+		float creepIncome = 30.f;  // metal/s of income per extra pusher; 0 = none
+		float creepInterval = 10.f;  // seconds between one pusher's steps
+		float creepStep = 0.7f;  // x the forward turret's range
+		float creepMargin = 64.f;  // elmos kept outside enemy static range
+		float creepRadius = 250.f;  // the picker's radius about the step's end
+		int creepLosses = 2;  // turrets lost near a step within 2 minutes stop it
+		float creepBudget = 0.5f;  // x the balance the turret account must hold (0 to 1); the full cost is charged
 	};
-	enum class Reject: char {NONE, RADIUS, MASK, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
+	enum class Reject: char {NONE, RADIUS, MASK, LANE, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
 	// The cheap hard rules over the candidate grid of one order: the same for every def
 	struct SGrid {
 		std::vector<CTurretValue::SCandidate> passed;
@@ -121,6 +149,9 @@ public:
 	// A static that defends the ground around it: armed, not a Claw mine or a missile (customParams.mobilebuilding), not
 	// in turret.not_defence
 	bool IsDefence(const CCircuitDef* cdef) const;
+	bool IsGroundGun(const CCircuitDef* cdef) const;  // IsDefence and hits ground: what the creep steps and fears
+	// The creep's threat rule at pos for builder (as its orders and their arrival use it): the creep waits on it
+	bool IsCreepThreatened(CCircuitUnit* builder, const springai::AIFloat3& pos) const;
 	// A known enemy building: not a fake, a Claw mine or a missile. isFresh: and in radar or sight in the last 3
 	// minutes, so the ghost of one that died out of sight drops out
 	bool IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const;
@@ -132,19 +163,38 @@ public:
 	// E before its weight: known enemy buildings within reach of centre seen in the last 3 minutes, at cost, an enemy mex
 	// at its income x turret.horizon. Shared with CSpotScorer::FindSpot
 	std::vector<CTurretValue::STarget> GetEnemyTargets(const springai::AIFloat3& centre, float reach) const;
+	// A and C for CSpotScorer::FindSpot, as an order counts them for def at a spot within radius of centre (weighed,
+	// line-tested for what def hits, halved for covering towers), and the known enemy buildings F reads there
+	struct SSpotShare {
+		std::vector<CTurretValue::STarget> targets;  // A and C
+		std::vector<springai::AIFloat3> enemyBuildings;  // within radius + defence.infl_rad
+	};
+	SSpotShare GetSpotShare(CCircuitDef* def, const springai::AIFloat3& centre, float radius) const;
+	// F before it is normalised (CTurretValue::SCandidate::enemyInfl): 2 x (1 - d / defence.infl_rad) per building
+	float GetEnemyInfl(const std::vector<springai::AIFloat3>& enemyBuildings, const springai::AIFloat3& pos) const;
 	// The turret.tiers entry def is in, from 1; 0 if none (turret.light)
 	int GetTier(const CCircuitDef* def) const;
 
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }
 	const SLast& GetLast() const { return last; }
-	bool IsAnyCaller() const { return config.isAfterFlee || config.isNearEnemy; }
+	bool IsAnyCaller() const {
+		return config.isAfterFlee || config.isNearEnemy || config.isShortChoke || config.isEnemyLine || config.isArtillery;
+	}
 
 private:
 	// Gathered once per order
+	struct SGun {  // an armed static for the creep's threat rule
+		springai::AIFloat3 pos;
+		float sqReach;
+		float power;
+	};
 	struct SGather {
 		springai::AIFloat3 centre;
 		float radius;
+		bool isCreep = false;
+		std::vector<SGun> enemyGuns;  // known enemy statics that hit ground, reach = range + creep_margin
+		std::vector<SGun> ourGuns;  // finished ones of ours and allies' that hit ground, reach = range
 		// Within radius + the longest range, before they are weighed for a def (metal: traffic in metal/s, the rest in
 		// metal), halved per covering tower
 		std::vector<CTurretValue::STarget> raws;
@@ -155,7 +205,7 @@ private:
 	void ReadConfig();
 	std::vector<CCircuitDef*> GetDefs(const STurretOrder& order, const springai::AIFloat3& centre) const;
 	SGather Gather(const springai::AIFloat3& centre, float radius, float maxRange,
-			const springai::AIFloat3& skipTower) const;
+			const springai::AIFloat3& skipTower, bool isTraffic = true) const;
 	std::vector<CTurretValue::STarget> MakeTargets(CCircuitDef* def, const SGather& gather) const;
 	SGrid MakeGrid(CCircuitUnit* builder, const SGather& gather) const;
 	// The cheap hard rules at (x, z): NONE and out filled, or the first rule it fails
@@ -171,6 +221,9 @@ private:
 			const std::vector<CTurretValue::SCandidate>& candidates) const;
 	CTurretValue::SParams MakeParams(CCircuitDef* def) const;
 	float GetNearestOurs(const SGather& gather, const springai::AIFloat3& pos) const;
+	void GatherGuns(SGather& gather) const;  // the creep's: enemyGuns and ourGuns about the radius
+	// Threat at pos for builder: above THREAT_MIN; for the creep (gather.isCreep), its own rule
+	bool IsThreatened(const SGather& gather, CCircuitUnit* builder, const springai::AIFloat3& pos) const;
 
 	CCircuitAI* circuit;
 	SConfig config;

@@ -256,6 +256,11 @@ public:
 	float GetFireAoe() const { return fireAoe; }
 	// A shot's damage averaged over its weapons, manual fire (D-gun) and shields left out, paralyzers 0
 	float GetShotDamage() const { return shotDmg; }
+	// Death explosion (explodeAs): radius, and full damage at its centre (the worst over armour types); 0: none
+	float GetDeathAoe() const { return deathAoe; }
+	float GetDeathDamage() const { return deathDmg; }
+	// A mobile unit with no weapon of its own: its death explosion is its weapon (skuttle, imp, snitch)
+	bool IsDeathBomb() const { return isDeathBomb; }
 	float GetPower() const { return power; }
 	float GetThreat() const { return threat; }
 	// How much one enemy of this type counts in the threat map's enemy unit count (CThreatMap squad layers):
@@ -276,6 +281,10 @@ public:
 	bool IsShieldLinked() const { return isShieldLinked; }  // its shield shares charge with touching ones (not "unlinked")
 	int GetFireState() const { return fireState; }
 	int GetReloadTime() const { return reloadTime; }
+	bool IsLongReload() const;  // 5 s or more (anti-heavy: fires at what it sees, steps back while reloading)
+	int GetBurstFrames() const { return burstFrames; }  // frames from a burst's first shot to its last, longest weapon
+	// A heavy or commander a unit of this type can shoot: role, target category, anti-static, air
+	bool IsQuarry(const CCircuitDef* edef) const;
 	int GetCategory() const { return category; }
 	int GetTargetCategory() const { return targetCategory; }
 	int GetNoChaseCategory() const { return noChaseCategory; }
@@ -326,6 +335,11 @@ public:
 	bool IsPylon() const { return isPylon; }
 	void SetIsAssist(bool value) { isAssist = value; }
 	bool IsAssist() const { return isAssist; }
+	// An armed building that is armoured (takes armoredMultiple damage) while closed: Zero-K's pop-up turrets.
+	// The AI can't read an enemy's armoured state; CArtilleryTask::IsPopupShut guesses it
+	bool IsPopup() const { return isPopup; }
+	// A pop-up opened by its on/off switch (onoffable: Desolator, Lucifer), not by aiming (Faraday, Gauss, Hacksaw)
+	bool IsPopupSwitch() const { return isPopupSwitch; }
 
 	float GetHealth()    const { return health; }
 	float GetSpeed()     const { return speed; }
@@ -339,7 +353,12 @@ public:
 	float GetJumpRange() const { return jumpRange; }
 
 	void SetRetreat(float value) { retreat = value; }
-	float GetRetreat()   const { return retreat; }
+	float GetRetreat()   const { return retreat; }  // health share, nothing to do with the shield
+	// behaviour.json per unit "retreat_shield": share of max shield at or below which it retreats, whatever its
+	// health; unset = retreat.shield[0], 0 = never retreats for its shield. Resolved and clamped to [0, 0.9] at
+	// load (CMilitaryManager, CBuilderManager)
+	void SetRetreatShield(float value) { retreatShield = value; }
+	float GetRetreatShield() const { return retreatShield; }
 	// behaviour.json per unit "artillery_flee_margin"; unset = use the "artillery" block's value
 	void SetArtyFleeMargin(float value) { artyFleeMargin = value; isArtyFleeMarginSet = true; }
 	float GetArtyFleeMargin(float defaultValue) const { return isArtyFleeMarginSet ? artyFleeMargin : defaultValue; }
@@ -425,6 +444,9 @@ private:
 	float aoe;  // radius
 	float fireAoe;  // radius: GetFireAoe
 	float shotDmg;  // GetShotDamage
+	float deathAoe;  // radius: GetDeathAoe
+	float deathDmg;  // GetDeathDamage
+	bool isDeathBomb;  // IsDeathBomb
 	float power;  // ally max threat
 	float threat;  // enemy max threat
 	float minRange;
@@ -438,6 +460,7 @@ private:
 	bool isShieldLinked;
 	FireType fireState;
 	int reloadTime;  // frames in ticks
+	int burstFrames = 0;  // GetBurstFrames
 	int category;
 	int targetCategory;
 	int noChaseCategory;
@@ -476,6 +499,8 @@ private:
 	bool isMex : 1;
 	bool isPylon : 1;
 	bool isAssist : 1;
+	bool isPopup : 1;
+	bool isPopupSwitch : 1;
 	// ---- Bit fields ---- END
 
 	float health;
@@ -489,6 +514,7 @@ private:
 //	float altitude;
 	float jumpRange;
 	float retreat;
+	float retreatShield = -1.f;
 	float artyFleeMargin = -1.f;
 	bool isArtyFleeMarginSet = false;
 	float ahFleeMargin = -1.f;

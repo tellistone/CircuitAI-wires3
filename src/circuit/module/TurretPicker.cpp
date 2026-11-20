@@ -8,7 +8,9 @@
 #include "module/TurretPicker.h"
 #include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
+#include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
+#include "resource/EnergyGrid.h"
 #include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
 #include "task/builder/DefenceTask.h"
@@ -32,6 +34,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iterator>
+#include <map>
 
 namespace circuit {
 
@@ -71,13 +75,33 @@ void CTurretPicker::ReadConfig()
 	c.view = turret.get("view", c.view).asFloat();
 	c.height = turret.get("height", c.height).asFloat();
 	c.choke = turret.get("choke", c.choke).asFloat();
+	c.chokeDepth = turret.get("choke_depth", c.chokeDepth).asFloat();
+	c.chokeEcon = turret.get("choke_econ", c.chokeEcon).asFloat();
+	c.chokeEnemy = turret.get("choke_enemy", c.chokeEnemy).asFloat();
+	c.chokeCap = turret.get("choke_cap", c.chokeCap).asFloat();
 	c.isAfterFlee = turret.get("after_flee", c.isAfterFlee).asBool();
 	c.afterFleeSince = turret.get("after_flee_since", c.afterFleeSince).asFloat();
 	c.defendedRadius = turret.get("defended_radius", c.defendedRadius).asFloat();
 	c.isNearEnemy = turret.get("near_enemy", c.isNearEnemy).asBool();
+	c.isShortChoke = turret.get("short_choke", c.isShortChoke).asBool();
+	c.shortChokeReach = turret.get("short_choke_reach", c.shortChokeReach).asFloat();
+	c.isEnemyLine = turret.get("enemy_line", c.isEnemyLine).asBool();
+	c.enemyLineReach = turret.get("enemy_line_reach", c.enemyLineReach).asFloat();
+	c.enemyLineBudget = turret.get("enemy_line_budget", c.enemyLineBudget).asFloat();
+	c.isArtillery = turret.get("artillery", c.isArtillery).asBool();
+	c.artilleryReach = turret.get("artillery_reach", c.artilleryReach).asFloat();
 	c.enemyReach = turret.get("enemy_reach", c.enemyReach).asFloat();
 	c.allyRadius = turret.get("ally_radius", c.allyRadius).asFloat();
 	c.cooldown = turret.get("cooldown", c.cooldown).asFloat();
+	c.isCreep = turret.get("creep", c.isCreep).asBool();
+	c.creepBuilders = turret.get("creep_builders", c.creepBuilders).asInt();
+	c.creepIncome = turret.get("creep_income", c.creepIncome).asFloat();
+	c.creepInterval = turret.get("creep_interval", c.creepInterval).asFloat();
+	c.creepStep = turret.get("creep_step", c.creepStep).asFloat();
+	c.creepMargin = turret.get("creep_margin", c.creepMargin).asFloat();
+	c.creepRadius = turret.get("creep_radius", c.creepRadius).asFloat();
+	c.creepLosses = turret.get("creep_losses", c.creepLosses).asInt();
+	c.creepBudget = turret.get("creep_budget", c.creepBudget).asFloat();
 	// A list of def names (the defaults when the key is missing); a name that isn't a unit, or a turret, is logged
 	auto readDefs = [&](const std::string& key, const Json::Value& list, std::vector<std::string> names, bool isTurret) {
 		if (list.isArray()) {
@@ -149,6 +173,11 @@ bool CTurretPicker::IsDefence(const CCircuitDef* cdef) const
 		&& (std::find(config.notDefence.begin(), config.notDefence.end(), cdef) == config.notDefence.end());
 }
 
+bool CTurretPicker::IsGroundGun(const CCircuitDef* cdef) const
+{
+	return IsDefence(cdef) && cdef->HasAntiLand();
+}
+
 bool CTurretPicker::IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const
 {
 	const CCircuitDef* edef = enemy->GetCircuitDef();
@@ -187,7 +216,10 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	for (CCircuitDef* def : defs) {
 		maxRange = std::max(maxRange, def->GetMaxRange());
 	}
-	const SGather gather = Gather(centre, radius, maxRange, -RgtVector);
+	SGather gather = Gather(centre, radius, maxRange, -RgtVector);
+	if (order.isCreep) {
+		GatherGuns(gather);
+	}
 	last.grid = MakeGrid(builder, gather);
 
 	// The heaviest tier with a spot worth its cost, and in it the def whose best spot has the most value per metal;
@@ -232,6 +264,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 				+ utils::int_to_string(count(Reject::SITE), ", %i not buildable")
 				+ utils::int_to_string(count(Reject::REACH), ", %i out of reach")
 				+ utils::int_to_string(count(Reject::UNSAFE), ", %i unsafe")
+				+ utils::int_to_string(count(Reject::LANE), ", %i on a lane")
 				+ utils::int_to_string(count(Reject::MASK), ", %i masked)"));
 	}
 	if (last.res.search.scored.size() > MAX_SHOWN) {
@@ -247,7 +280,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	IBuilderTask* task = builderMgr->EnqueueTask(order.priority, def, spot, IBuilderTask::BuildType::DEFENCE,
 			def->GetCostM(), 0.f /*shake*/, true, JOB_TIMEOUT);
-	static_cast<CBDefenceTask*>(task)->SetPicker();
+	static_cast<CBDefenceTask*>(task)->SetPicker(order.isCreep);
 	// Its footprint goes on the blocking map now: no other job (a picker's included) takes the spot meanwhile
 	task->SetFacing(UNIT_FACING_SOUTH);
 	task->SetBuildPos(spot);
@@ -273,7 +306,8 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	if ((def == nullptr) || !utils::is_valid(spot)) {
 		return false;
 	}
-	if (circuit->GetThreatMap()->GetThreatAt(builder, spot) > THREAT_MIN) {  // the order's test
+	SGather plain;  // the order's test (the creep's: its own rule)
+	if (task->IsCreep() ? IsCreepThreatened(builder, spot) : IsThreatened(plain, builder, spot)) {
 		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), threat reached it", def->GetDef()->GetName(),
 				spot.x, spot.z);
 		return false;
@@ -323,7 +357,7 @@ std::vector<CCircuitDef*> CTurretPicker::GetDefs(const STurretOrder& order, cons
  * halved here for each tower (ours and allies', queued too) already covering them, skipTower's left out
  */
 CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radius, float maxRange,
-		const AIFloat3& skipTower) const
+		const AIFloat3& skipTower, bool isTraffic) const
 {
 	SGather g;
 	g.centre = centre;
@@ -342,7 +376,9 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	// T: the heaviest traffic cells within reach
 	std::vector<CTurretValue::STarget> traffic;
 	const CTrafficField& field = chokeMap->GetTraffic();
-	if (isChokeReady && !field.IsEmpty()) {
+	// None while a spider or jumper type is a big part of the enemy's army: the threat graph walks them as kbots, and
+	// their routes over cliffs aren't the turret's to cover
+	if (isTraffic && isChokeReady && !field.IsEmpty() && (config.traffic > 0.f) && !chokeMap->IsCliffCrosserArmy()) {
 		const int cellSize = field.GetCellSize();
 		ForEachCellIn(field.GetWidth(), field.GetHeight(), cellSize, centre.x - reach, centre.z - reach,
 				centre.x + reach, centre.z + reach, [&](int x, int z) {
@@ -364,7 +400,11 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	keepBest(traffic, MAX_TRAFFIC * 4);  // the line-of-fire tests of the halving only for those that may make it
 
 	// A, and our buildings for the influence rule (armed or not, nanoframes too; constructors, Claw mines and missiles
-	// left out)
+	// left out). With turret.choke_econ, for C: the cost of our and allied economy on our held ground (energy, pylons,
+	// factories; mexes steer the traffic, which splits it among the chokes)
+	const bool isEcon = isChokeReady && (config.chokeEcon > 0.f);
+	float econ = 0.f;
+	const CEnergyGrid* energyGrid = circuit->GetEconomyManager()->GetEnergyGrid();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
 		if ((cdef == nullptr) || cdef->IsMobile() || cdef->IsMobileBuilding()) {
@@ -374,12 +414,21 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 		if (!utils::is_valid(pos)) {
 			continue;
 		}
+		bool isEconHere = false;  // in the economy C splits among the current line chokes
+		if (isEcon && (cdef->IsPylon() || energyGrid->IsEnergyDef(cdef->GetId())
+			|| (cdef->IsBuilder() && !cdef->IsAssist())))
+		{
+			const int region = chokeMap->GetRegionAt(pos);
+			isEconHere = (region != CRegionGraph::NO_REGION) && chokeMap->IsOurGround(region);
+			econ += isEconHere ? cdef->GetCostM() : 0.f;
+		}
 		const float sqDist = pos.SqDistance2D(centre);
 		if (sqDist <= sqInflReach) {
 			g.ourBuildings.push_back(pos);
 		}
 		if (!cdef->IsAttacker() && (sqDist <= sqReach)) {
-			g.raws.push_back({ground(pos), cdef->GetCostM(), CTurretValue::Kind::ALLY});
+			const CTurretValue::Kind kind = isEconHere ? CTurretValue::Kind::ECON : CTurretValue::Kind::ALLY;
+			g.raws.push_back({ground(pos), cdef->GetCostM(), kind});
 		}
 	}
 
@@ -392,20 +441,42 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	const std::vector<CTurretValue::STarget> enemies = GetEnemyTargets(centre, reach);
 	g.raws.insert(g.raws.end(), enemies.begin(), enemies.end());
 
-	// C: the middles of the chokes on our current line and the enemy line
+	// C: the middles of the chokes on our current line and the enemy line, turret.choke each. A current line choke adds
+	// turret.choke_econ x our economy, split among the current line's chokes by the traffic through each (evenly with
+	// none): the routes to what we hold show which pass shuts it in. An enemy line choke adds turret.choke_enemy (a
+	// choke on both lines, both). At most turret.choke_cap; and none for a choke not settled since a rebuild or with
+	// enemy artillery on it, as choke defence waits
 	if (isChokeReady) {
 		const std::vector<CRegionGraph::SChoke>& chokes = chokeMap->GetGraph().GetChokes();
-		std::vector<int> ids = chokeMap->GetCurrentLine();
-		ids.insert(ids.end(), chokeMap->GetEnemyLine().begin(), chokeMap->GetEnemyLine().end());
-		std::sort(ids.begin(), ids.end());
-		ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-		for (int c : ids) {
-			if ((c < 0) || (c >= (int)chokes.size())) {
-				continue;
+		auto isChoke = [&chokes](int c) { return (c >= 0) && (c < (int)chokes.size()); };
+		auto isLive = [&](int c) {
+			return isChoke(c) && chokeMap->IsChokeLive(c, frame);
+		};
+		std::vector<int> line;  // shared over all of it: a shelled pass's part isn't moved onto the others
+		const std::vector<int>& current = chokeMap->GetCurrentLine();
+		std::copy_if(current.begin(), current.end(), std::back_inserter(line), isChoke);
+		const std::vector<float> shares = chokeMap->GetTrafficShares(line);
+		struct SWorth {
+			float metal = 0.f;
+			float econ = 0.f;
+		};
+		std::map<int, SWorth> worth;  // choke -> C before halving
+		for (size_t i = 0; i < line.size(); ++i) {
+			if (isLive(line[i])) {
+				const float share = config.chokeEcon * econ * shares[i];
+				worth[line[i]] = {config.choke + share, share};
 			}
+		}
+		for (int c : chokeMap->GetEnemyLine()) {
+			if (isLive(c)) {
+				worth.emplace(c, SWorth{config.choke, 0.f}).first->second.metal += config.chokeEnemy;
+			}
+		}
+		for (const auto& [c, w] : worth) {
 			const AIFloat3 pos = chokeMap->GetCellPos(chokes[c].centre);
-			if (pos.SqDistance2D(centre) <= sqReach) {
-				g.raws.push_back({ground(pos), config.choke, CTurretValue::Kind::CHOKE});
+			if ((w.metal > 0.f) && (pos.SqDistance2D(centre) <= sqReach)) {
+				const float metal = (config.chokeCap > 0.f) ? std::min(w.metal, config.chokeCap) : w.metal;
+				g.raws.push_back({ground(pos), metal, CTurretValue::Kind::CHOKE, w.econ / w.metal});
 			}
 		}
 	}
@@ -448,6 +519,34 @@ std::vector<CTurretValue::STarget> CTurretPicker::GetEnemyTargets(const AIFloat3
 	return targets;
 }
 
+CTurretPicker::SSpotShare CTurretPicker::GetSpotShare(CCircuitDef* def, const AIFloat3& centre, float radius) const
+{
+	// The scorer has its own traffic (the goal's approach) and E (choke.spot.enemy)
+	const SGather gather = Gather(centre, radius, def->GetMaxRange(), -RgtVector, false);
+	SSpotShare share;
+	for (const CTurretValue::STarget& t : MakeTargets(def, gather)) {
+		if ((t.kind == CTurretValue::Kind::ALLY) || (t.kind == CTurretValue::Kind::ECON)
+			|| (t.kind == CTurretValue::Kind::CHOKE))
+		{
+			share.targets.push_back(t);
+		}
+	}
+	share.enemyBuildings = gather.enemyBuildings;
+	return share;
+}
+
+float CTurretPicker::GetEnemyInfl(const std::vector<AIFloat3>& enemyBuildings, const AIFloat3& pos) const
+{
+	float infl = 0.f;
+	for (const AIFloat3& b : enemyBuildings) {
+		const float d = b.distance2D(pos);
+		if (d < inflRadius) {
+			infl += 2.f * (1.f - d / inflRadius);
+		}
+	}
+	return infl;
+}
+
 float CTurretPicker::TrafficMetal(float amount, float range, float weight) const
 {
 	// The traffic field carries the income across every cross-section of its routes: summed over the cells in range,
@@ -471,12 +570,13 @@ std::vector<CTurretValue::STarget> CTurretPicker::MakeTargets(CCircuitDef* def, 
 		float metal = 0.f;
 		switch (r.kind) {
 			case CTurretValue::Kind::TRAFFIC: metal = TrafficMetal(r.metal, range, config.traffic); break;
-			case CTurretValue::Kind::ALLY: metal = r.metal * config.ally; break;
+			case CTurretValue::Kind::ALLY:
+			case CTurretValue::Kind::ECON: metal = r.metal * config.ally; break;
 			case CTurretValue::Kind::ENEMY: metal = r.metal * config.enemy; break;
 			case CTurretValue::Kind::CHOKE: metal = r.metal; break;
 		}
 		if (metal > 0.f) {
-			targets.push_back({r.pos, metal, r.kind});
+			targets.push_back({r.pos, metal, r.kind, r.econPart});
 		}
 	}
 	return targets;
@@ -522,13 +622,16 @@ CTurretPicker::Reject CTurretPicker::MakeCandidate(CCircuitUnit* builder, const 
 	if (circuit->GetMilitaryManager()->GetSpotScorer()->IsMasked(pos)) {
 		return Reject::MASK;
 	}
+	if (circuit->GetChokeMap()->IsOnLane(pos)) {  // a narrow choke's path (choke.lane): our army walks it
+		return Reject::LANE;
+	}
 	const float sqInfl = SQUARE(inflRadius);
 	if (std::none_of(gather.ourBuildings.begin(), gather.ourBuildings.end(), [&](const AIFloat3& b) {
 		return b.SqDistance2D(pos) <= sqInfl;
 	})) {
 		return Reject::INFLUENCE;
 	}
-	if (circuit->GetThreatMap()->GetThreatAt(builder, pos) > THREAT_MIN) {
+	if (IsThreatened(gather, builder, pos)) {
 		return Reject::THREAT;
 	}
 	if (!circuit->GetTerrainManager()->CanReachAt(builder, pos, builder->GetCircuitDef()->GetBuildDistance())) {
@@ -559,13 +662,7 @@ void CTurretPicker::FillCandidate(CCircuitUnit* builder, const SGather& gather, 
 		CTurretValue::SCandidate& out) const
 {
 	out.pos = {pos.x, circuit->GetTerrainManager()->GetHeightAt(pos.x, pos.z), pos.z};
-	out.enemyInfl = 0.f;
-	for (const AIFloat3& b : gather.enemyBuildings) {
-		const float d = b.distance2D(pos);
-		if (d < inflRadius) {
-			out.enemyInfl += 2.f * (1.f - d / inflRadius);
-		}
-	}
+	out.enemyInfl = GetEnemyInfl(gather.enemyBuildings, pos);
 	out.walk = builder->GetPos(circuit->GetLastFrame()).distance2D(pos);
 }
 
@@ -599,6 +696,7 @@ CTurretValue::SParams CTurretPicker::MakeParams(CCircuitDef* def) const
 	p.heightBonus = config.height;
 	p.front = config.front;
 	p.view = config.view;
+	p.chokeDepth = config.chokeDepth;
 	p.minBase = config.minValue * def->GetCostM();
 	p.refineStep = CELL * 0.25f;
 	return p;
@@ -611,6 +709,61 @@ float CTurretPicker::GetNearestOurs(const SGather& gather, const AIFloat3& pos) 
 		minSq = std::min(minSq, b.SqDistance2D(pos));
 	}
 	return gather.ourBuildings.empty() ? -1.f : std::sqrt(minSq);
+}
+
+bool CTurretPicker::IsCreepThreatened(CCircuitUnit* builder, const AIFloat3& pos) const
+{
+	SGather guns;
+	guns.centre = pos;
+	guns.radius = 0.f;
+	GatherGuns(guns);
+	return IsThreatened(guns, builder, pos);
+}
+
+bool CTurretPicker::IsThreatened(const SGather& gather, CCircuitUnit* builder, const AIFloat3& pos) const
+{
+	const float threat = circuit->GetThreatMap()->GetThreatAt(builder, pos);
+	if (!gather.isCreep) {
+		return threat > THREAT_MIN;
+	}
+	// The creep: out of every known enemy static's range + creep_margin; mobiles' threat only where our guns covering
+	// the spot outweigh it, so a raider passing doesn't stall the step
+	auto isIn = [&pos](const SGun& g) { return g.pos.SqDistance2D(pos) <= g.sqReach; };
+	if (std::any_of(gather.enemyGuns.begin(), gather.enemyGuns.end(), isIn)) {
+		return true;
+	}
+	float cover = 0.f;
+	for (const SGun& g : gather.ourGuns) {
+		cover += isIn(g) ? g.power : 0.f;
+	}
+	return (threat > THREAT_MIN) && (threat > cover);
+}
+
+void CTurretPicker::GatherGuns(SGather& gather) const
+{
+	// Statics that hit ground (IsDefence: not a Bertha, a Claw mine or a missile), any whose reach may touch the
+	// radius. Enemy ones as known (until seen dead), at their land range + creep_margin; ours and allies' finished
+	gather.isCreep = true;
+	const int frame = circuit->GetLastFrame();
+	auto add = [&gather](std::vector<SGun>& out, const AIFloat3& pos, float reach, float power) {
+		if (pos.SqDistance2D(gather.centre) <= SQUARE(gather.radius + reach)) {
+			out.push_back({pos, SQUARE(reach), power});
+		}
+	};
+	for (const auto& kv : circuit->GetEnemyInfos()) {
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if (IsEnemyBuilding(kv.second, false) && IsGroundGun(edef)) {
+			add(gather.enemyGuns, kv.second->GetPos(),
+					edef->GetMaxRange(CCircuitDef::RangeType::LAND) + config.creepMargin, edef->GetPower());
+		}
+	}
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if (IsGroundGun(cdef) && !kv.second->GetUnit()->IsBeingBuilt()) {
+			add(gather.ourGuns, kv.second->GetPos(frame), cdef->GetMaxRange(CCircuitDef::RangeType::LAND),
+					cdef->GetPower());
+		}
+	}
 }
 
 } // namespace circuit

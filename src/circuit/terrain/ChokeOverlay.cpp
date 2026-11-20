@@ -44,12 +44,14 @@ namespace circuit {
 using namespace springai;
 
 #define LIVE_FRAMES		(FRAMES_PER_SEC * 10)  // layers fed by other modules redraw this often
+#define SIDES_FRAMES	(FRAMES_PER_SEC * 4)  // the sides layer follows units moving: it costs a few short messages
 #define TRAFFIC_SHOWN	1500  // busiest traffic cells drawn
 #define COMMAND			"choke_overlay"
 
 namespace {
 
-const char* LAYER_NAMES[] = {"chokes", "pockets", "lines", "ranks", "traffic", "spots", "radar", "regions", "turrets"};
+const char* LAYER_NAMES[] = {"chokes", "pockets", "lines", "ranks", "traffic", "spots", "radar", "regions", "sides",
+		"turrets"};
 
 AIColor ColourOf(int colour)
 {
@@ -80,6 +82,9 @@ CChokeOverlay::CChokeOverlay(CChokeMap* chokeMap)
 		, drawnVersion(-1)
 		, drawnFrame(-1)
 		, commandFrame(-1)
+		, isWidgetDrawn(false)
+		, isGridSent(false)
+		, isWidgetHinted(false)
 {
 	isLabels = !IsHumanIn(true);
 }
@@ -91,6 +96,8 @@ CChokeOverlay::~CChokeOverlay()
 void CChokeOverlay::SetAuthority(CCircuitAI* authority)
 {
 	circuit = authority;
+	isWidgetDrawn = false;  // the new authority may run on another machine
+	isGridSent = false;
 }
 
 bool CChokeOverlay::OnChat(CCircuitAI* ai, int playerId, const char* message)
@@ -152,29 +159,32 @@ void CChokeOverlay::Update()
 		return;
 	}
 	const bool isLive = (layer == Layer::LINES) || (layer == Layer::RANKS) || (layer == Layer::SPOTS)
-			|| (layer == Layer::RADAR) || (layer == Layer::TURRETS);
+			|| (layer == Layer::RADAR) || (layer == Layer::TURRETS) || (layer == Layer::SIDES);
+	const int liveFrames = (layer == Layer::SIDES) ? SIDES_FRAMES : LIVE_FRAMES;
 	const int frame = circuit->GetLastFrame();
-	if ((drawnVersion != chokeMap->GetVersion()) || (isLive && (frame >= drawnFrame + LIVE_FRAMES))) {
+	if ((drawnVersion != chokeMap->GetVersion()) || (isLive && (frame >= drawnFrame + liveFrames))) {
 		Draw();
 	}
 }
 
 void CChokeOverlay::OnGraphBuilt()
 {
+	isGridSent = false;
 	if (isOn) {
 		Say("threat graph rebuilt: " + DescribeGraph());
 	}
 }
 
 /*
- * Its size and the enemy types it was built from: a leak type promoted to gating (choke.gate_share, spiders say)
- * opens most of the walls the old graph had, so its chokes move a long way
+ * Its size and the enemy types it was built from: a mask that starts or stops gating (choke.gate_share) opens or
+ * closes walls the old graph had, so its chokes can move a long way
  */
 std::string CChokeOverlay::DescribeGraph() const
 {
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	return utils::int_to_string(graph.GetRegions().size(), "%i regions, ")
-			+ utils::int_to_string(graph.GetChokes().size(), "%i chokes; enemy types: ") + chokeMap->DescribeTypeSet()
+			+ utils::int_to_string(graph.GetChokes().size(), "%i chokes") + chokeMap->DescribeRelaxed()
+			+ "; enemy types: " + chokeMap->DescribeTypeSet()
 			+ "; '" COMMAND " <class>' shows one class's own graph";
 }
 
@@ -183,6 +193,7 @@ void CChokeOverlay::Toggle()
 	isOn = !isOn;
 	if (!isOn) {
 		Clear();
+		ClearWidget();
 		Say("off");
 		return;
 	}
@@ -250,17 +261,17 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 	}
 	CChokeMap::SConfig& c = chokeMap->GetConfig();
 	const std::map<std::string, float*> floats = {
-		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"defensible", &c.defensible},
-		{"near", &c.nearRanges}, {"lane", &c.lane}, {"gate_share", &c.gateShare}, {"traffic.spread", &c.spread},
+		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"region.min_share", &c.minShare},
+		{"defensible", &c.defensible}, {"near", &c.nearRanges}, {"lane", &c.lane}, {"gate_share", &c.gateShare},
+		{"traffic.spread", &c.spread},
 		{"spot.radius", &c.spotRadius}, {"spot.height", &c.spotHeight}, {"spot.height_cap", &c.spotHeightCap},
 		{"spot.enemy", &c.spotEnemy}, {"spot.forward", &c.spotForward}, {"spot.view", &c.spotView},
 		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare}, {"radar.enemy", &c.radarEnemy},
 		{"radar.inside", &c.radarInside}, {"radar.guard_radius", &c.radarGuardRadius},
-		{"objective.gain", &c.objGain}, {"objective.power", &c.objPower},
 	};
 	const std::map<std::string, bool*> flags = {
 		{"enable", &c.isChoke}, {"spot.enable", &c.isSpot}, {"radar.enable", &c.isRadar},
-		{"objective.enable", &c.isObjective}, {"expand", &c.isExpand}, {"hold_choke", &c.isHold},
+		{"expand", &c.isExpand}, {"hold_choke", &c.isHold},
 	};
 	// Read into copies, so a bad value changes nothing
 	std::istringstream in(value);
@@ -279,11 +290,11 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 		if (isRead) {
 			*flagIt->second = v;
 		}
-	} else if (key == "entrances") {
+	} else if ((key == "entrances") || (key == "region.min_count")) {
 		int v;
 		isRead = bool(in >> v);
 		if (isRead) {
-			c.entrances = v;
+			((key == "entrances") ? c.entrances : c.minCount) = v;
 		}
 	} else if (key == "setback") {
 		float a, b;
@@ -311,16 +322,27 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 	const std::map<std::string, float*> floats = {
 		{"radius", &c.radius}, {"min_value", &c.minValue}, {"traffic", &c.traffic}, {"horizon", &c.horizon},
 		{"ally", &c.ally}, {"enemy", &c.enemy}, {"front", &c.front}, {"view", &c.view},
-		{"height", &c.height}, {"choke", &c.choke},
+		{"height", &c.height}, {"choke", &c.choke}, {"choke_depth", &c.chokeDepth}, {"choke_econ", &c.chokeEcon},
+		{"choke_enemy", &c.chokeEnemy}, {"choke_cap", &c.chokeCap},
 		{"enemy_reach", &c.enemyReach}, {"ally_radius", &c.allyRadius}, {"cooldown", &c.cooldown},
 		{"share", circuit->GetMilitaryManager()->GetTurretShare()}, {"after_flee_since", &c.afterFleeSince}, {"defended_radius", &c.defendedRadius},
+		{"short_choke_reach", &c.shortChokeReach}, {"enemy_line_reach", &c.enemyLineReach},
+		{"enemy_line_budget", &c.enemyLineBudget},
+		{"artillery_reach", &c.artilleryReach},
+		{"creep_income", &c.creepIncome}, {"creep_interval", &c.creepInterval}, {"creep_step", &c.creepStep},
+		{"creep_margin", &c.creepMargin}, {"creep_radius", &c.creepRadius}, {"creep_budget", &c.creepBudget},
+	};
+	const std::map<std::string, int*> ints = {
+		{"creep_builders", &c.creepBuilders}, {"creep_losses", &c.creepLosses},
 	};
 	const std::map<std::string, bool*> flags = {
-		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy},
+		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy}, {"short_choke", &c.isShortChoke},
+		{"enemy_line", &c.isEnemyLine}, {"artillery", &c.isArtillery}, {"creep", &c.isCreep},
 	};
 	std::istringstream in(value);
 	auto floatIt = floats.find(key);
 	auto flagIt = flags.find(key);
+	auto intIt = ints.find(key);
 	if (floatIt != floats.end()) {
 		float v;
 		if (in >> v) {
@@ -331,6 +353,12 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 		bool v;
 		if (in >> std::boolalpha >> v) {
 			*flagIt->second = v;
+			return true;
+		}
+	} else if (intIt != ints.end()) {
+		int v;
+		if (in >> v) {
+			*intIt->second = v;
 			return true;
 		}
 	}
@@ -421,6 +449,9 @@ void CChokeOverlay::Draw()
 	Clear();
 	drawnVersion = chokeMap->GetVersion();
 	drawnFrame = circuit->GetLastFrame();
+	if (!isOn || (layer != Layer::SIDES)) {
+		ClearWidget();
+	}
 	if (!isOn || !chokeMap->IsReady()) {
 		return;
 	}
@@ -437,6 +468,7 @@ void CChokeOverlay::Draw()
 		case Layer::SPOTS: DrawSpots(); break;
 		case Layer::RADAR: DrawRadar(); break;
 		case Layer::REGIONS: DrawRegions(graph); break;
+		case Layer::SIDES: DrawSides(); break;
 		case Layer::TURRETS: DrawTurrets(); break;
 		default: break;
 	}
@@ -457,28 +489,19 @@ void CChokeOverlay::Clear()
 }
 
 /*
- * Defensible chokes green, wider ones grey, each from end to end of its line
+ * Defensible chokes green, wider ones grey, each from end to end of its line; a cut across open ground is labelled so
  */
 void CChokeOverlay::DrawChokes(const CRegionGraph& graph)
 {
 	const SCellMask& mask = graph.GetMask();
 	for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
-		int a = choke.line.front(), b = choke.line.front();
-		float bestSq = -1.f;
-		for (int i : choke.line) {
-			for (int j : choke.line) {
-				const float sq = SQUARE(mask.CentreX(i) - mask.CentreX(j)) + SQUARE(mask.CentreZ(i) - mask.CentreZ(j));
-				if (sq > bestSq) {
-					bestSq = sq;
-					a = i;
-					b = j;
-				}
-			}
-		}
+		AIFloat3 a, b;
+		GetChokeEnds(graph, choke, a, b);
 		const Colour colour = choke.isDefensible ? Colour::GREEN : Colour::GREY;
-		AddLine(OnGround(mask.CentreX(a), mask.CentreZ(a)), OnGround(mask.CentreX(b), mask.CentreZ(b)), colour, 24.f);
+		AddLine(OnGround(a.x, a.z), OnGround(b.x, b.z), colour, 24.f);
 		AddLabel(OnGround(mask.CentreX(choke.centre), mask.CentreZ(choke.centre)),
-				utils::int_to_string(choke.id, "choke %i") + utils::int_to_string(choke.width, ", %i wide"));
+				utils::int_to_string(choke.id, choke.isCut ? "cut %i" : "choke %i")
+				+ utils::int_to_string(choke.width, ", %i wide"));
 	}
 }
 
@@ -534,8 +557,7 @@ void CChokeOverlay::DrawPockets()
 }
 
 /*
- * Current line orange, forward line yellow, enemy line red, front line white, objective magenta; hold slots cyan,
- * with their spots
+ * Current line orange, enemy line red, front line white; hold slots cyan, with their spots
  */
 void CChokeOverlay::DrawLines()
 {
@@ -544,9 +566,6 @@ void CChokeOverlay::DrawLines()
 	auto drawChoke = [&](int c, Colour colour, float size) {
 		AddCross(chokeMap->GetCellPos(chokes[c].centre), colour, size);
 	};
-	for (int c : chokeMap->GetForwardLine()) {
-		drawChoke(c, Colour::YELLOW, 128.f);
-	}
 	for (int c : chokeMap->GetCurrentLine()) {
 		drawChoke(c, Colour::ORANGE, 96.f);
 	}
@@ -557,17 +576,12 @@ void CChokeOverlay::DrawLines()
 		drawChoke(c, Colour::WHITE, 192.f);
 	}
 	const CFrontline* frontline = circuit->GetMilitaryManager()->GetFrontline();
-	for (int id : frontline->GetObjectiveChokes()) {
-		const int c = graph.FindChoke(id);
-		if (c >= 0) {
-			drawChoke(c, Colour::MAGENTA, 160.f);
-		}
-	}
 	for (const CFrontline::SFront& f : frontline->GetFront()) {
 		const int c = graph.FindChoke(f.chokeId);
 		if (c >= 0) {
 			AddLabel(chokeMap->GetCellPos(chokes[c].centre), utils::float_to_string(f.rank, "front: rank %.1f")
-					+ utils::float_to_string(f.wanted, ", wants %.0f") + utils::float_to_string(f.towers, ", towers %.0f"));
+					+ utils::float_to_string(f.wanted, ", wants %.0f") + utils::float_to_string(f.towers, ", towers %.0f")
+					+ utils::float_to_string(f.cover * 100.f, ", cover %.0f%%"));
 		}
 	}
 	for (const CFrontline::SHold& hold : frontline->GetHolds()) {
@@ -759,10 +773,30 @@ void CChokeOverlay::DrawRegions(const CRegionGraph& graph)
 		}
 		std::string text = utils::int_to_string(region.id, "region %i") + utils::int_to_string(region.area, ", %i cells");
 		if (isThreatGraph) {
-			text += chokeMap->IsOurTerritory(r) ? ", our territory" : chokeMap->IsEnemyTerritory(r) ? ", enemy territory" : "";
+			text += chokeMap->IsOurGround(r) ? ", our ground" : chokeMap->IsEnemyGround(r) ? ", enemy ground" : "";
 		}
 		AddLabel(centre, text);
 	}
+}
+
+void CChokeOverlay::GetChokeEnds(const CRegionGraph& graph, const CRegionGraph::SChoke& choke,
+		AIFloat3& outA, AIFloat3& outB) const
+{
+	const SCellMask& mask = graph.GetMask();
+	int a = choke.line.front(), b = choke.line.front();
+	float bestSq = -1.f;
+	for (int i : choke.line) {
+		for (int j : choke.line) {
+			const float sq = SQUARE(mask.CentreX(i) - mask.CentreX(j)) + SQUARE(mask.CentreZ(i) - mask.CentreZ(j));
+			if (sq > bestSq) {
+				bestSq = sq;
+				a = i;
+				b = j;
+			}
+		}
+	}
+	outA = AIFloat3(mask.CentreX(a), 0.f, mask.CentreZ(a));
+	outB = AIFloat3(mask.CentreX(b), 0.f, mask.CentreZ(b));
 }
 
 void CChokeOverlay::AddLine(const AIFloat3& from, const AIFloat3& to, Colour colour, float width)

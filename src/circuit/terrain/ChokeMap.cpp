@@ -39,6 +39,8 @@ using namespace springai;
 #define SCAN_RATE			(FRAMES_PER_SEC * 5)
 #define ANALYSIS_RATE		(FRAMES_PER_SEC * 10)
 #define MASK_COOLDOWN		(FRAMES_PER_SEC * 30)
+// Terrain alone (craters, levelled ground) rebuilds the graph at most this often, unless it opened a new crossing
+#define TERRAIN_GRAPH_COOLDOWN	(FRAMES_PER_SEC * 300)
 #define TRAFFIC_COOLDOWN	(FRAMES_PER_SEC * 60)
 #define SOURCE_COOLDOWN		(FRAMES_PER_SEC * 120)
 #define SETTLE_FRAMES		(FRAMES_PER_SEC * 20)
@@ -67,10 +69,14 @@ struct CChokeMap::SBuildJob {
 	FloatVec heightMap, slopeMap;
 	bool waterIsHarmful = false, waterIsAVoid = false;
 	std::vector<SClassParams> classes;
-	std::vector<bool> isGating;  // per class
+	std::vector<bool> isGating;  // per class: its mask is in the threat graph
+	bool isTerrainCheck = false;  // rebuild the graph if the masks changed it: when due, or for a new crossing
+	bool isTerrainDue = false;  // TERRAIN_GRAPH_COOLDOWN has passed
 	std::vector<SCellMask> masks;  // the current ones: compared with, or used as they are
 	SCellMask prevGraphMask;
+	std::vector<int> prevRegionOf;  // per cell, the graph's regions: only while the terrain check isn't due
 	CRegionGraph::SParams graphParams;
+	CRegionGraph::SChoice prevChoice;  // the graph's, kept while it works: none for new gating classes or a key set
 	std::vector<int> trafficClasses;  // never naval: ships get no layer
 	std::vector<MoveKey> keys;  // per class
 	std::vector<std::vector<int>> sourceCells;  // per source group, traffic cells
@@ -79,6 +85,7 @@ struct CChokeMap::SBuildJob {
 	// Outputs
 	bool isMasksChanged = false;
 	bool isGraphBuilt = false;
+	bool isTerrainDeferred = false;  // the masks changed the graph's, but opened no new crossing: not due yet
 	CRegionGraph graph;
 	std::vector<CTrafficField::SType> trafficTypes;
 	std::vector<int> doneClasses;  // trafficClasses that got their layer
@@ -100,6 +107,8 @@ CChokeMap::CChokeMap(CCircuitAI* circuit)
 		, laneVersion(0)
 		, heightVersion(-1)
 		, maskFrame(-MASK_COOLDOWN)
+		, graphFrame(-TERRAIN_GRAPH_COOLDOWN)
+		, isTerrainPending(false)
 		, trafficFrame(-TRAFFIC_COOLDOWN)
 		, sourceFrame(-SOURCE_COOLDOWN)
 		, nextScanFrame(0)
@@ -129,6 +138,8 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	const Json::Value& region = choke["region"];
 	config.minArea = region.get("min_area", config.minArea).asFloat();
 	config.merge = region.get("merge", config.merge).asFloat();
+	config.minCount = region.get("min_count", config.minCount).asInt();
+	config.minShare = region.get("min_share", config.minShare).asFloat();
 	config.defensible = choke.get("defensible", config.defensible).asFloat();
 	config.entrances = choke.get("entrances", config.entrances).asInt();
 	config.nearRanges = choke.get("near", config.nearRanges).asFloat();
@@ -159,11 +170,11 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.radarInside = radar.get("inside", config.radarInside).asFloat();
 	config.radarGuard = radar.get("guard", "").asString();
 	config.radarGuardRadius = radar.get("guard_radius", config.radarGuardRadius).asFloat();
-	const Json::Value& objective = choke["objective"];
-	config.isObjective = objective.get("enable", false).asBool();
-	config.objGain = objective.get("gain", config.objGain).asFloat();
-	config.objPower = objective.get("power", config.objPower).asFloat();
-	config.objRetryFrames = objective.get("retry", config.objRetryFrames / FRAMES_PER_SEC).asFloat() * FRAMES_PER_SEC;
+	config.radarHeavy = radar.get("heavy", config.radarHeavy).asString();
+	config.heavyIncome = radar.get("heavy_income", config.heavyIncome).asFloat();
+	config.heavyGain = radar.get("heavy_min_gain", config.heavyGain).asFloat();
+	config.heavyDepth = radar.get("heavy_depth", config.heavyDepth).asFloat();
+	config.isRadarChain = radar.get("chain", config.isRadarChain).asBool();
 	config.isHold = root["quota"].get("hold_choke", false).asBool();
 }
 
@@ -233,7 +244,7 @@ void CChokeMap::Reanalyze()
 {
 	if (isReady) {
 		nextAnalysisFrame = circuit->GetLastFrame() + ANALYSIS_RATE;
-		UpdateTerritory();
+		UpdateHeld();
 		Analyze();
 	}
 }
@@ -345,6 +356,38 @@ void CChokeMap::InitMoveClasses()
 	std::sort(moveClasses.begin(), moveClasses.end(), [](const SMoveClass& a, const SMoveClass& b) {
 		return a.key < b.key;
 	});
+	// Spiders and jumpers shape the threat graph as kbots: a jumper as its own type walking, a spider as the ground
+	// type that climbs the steepest (bots), so their share never opens the cliffs they cross. Vehicles are the
+	// ground types that climb the least: the most restrictive, which the threat graph assumes until an enemy army is
+	// seen
+	auto slopeOf = [terrainMgr](const SMoveClass& mc) {
+		return terrainMgr->GetMobileTypeById(mc.mobileId)->maxSlope;
+	};
+	int kbot = -1, vehicle = -1;
+	for (size_t c = 0; c < moveClasses.size(); ++c) {
+		if (moveClasses[c].kind != MoveKind::GROUND) {
+			continue;
+		}
+		if ((kbot < 0) || (slopeOf(moveClasses[c]) > slopeOf(moveClasses[kbot]))) {
+			kbot = c;
+		}
+		if ((vehicle < 0) || (slopeOf(moveClasses[c]) < slopeOf(moveClasses[vehicle]))) {
+			vehicle = c;
+		}
+	}
+	for (size_t c = 0; c < moveClasses.size(); ++c) {
+		SMoveClass& mc = moveClasses[c];
+		mc.isVehicle = (vehicle >= 0) && (mc.kind == MoveKind::GROUND) && (slopeOf(mc) == slopeOf(moveClasses[vehicle]));
+		mc.graphClass = c;
+		if (mc.kind == MoveKind::JUMPER) {
+			const auto walker = std::find_if(moveClasses.begin(), moveClasses.end(), [&mc](const SMoveClass& o) {
+				return o.key == mc.key - 1;
+			});
+			mc.graphClass = (walker != moveClasses.end()) ? int(walker - moveClasses.begin()) : (kbot >= 0) ? kbot : c;
+		} else if ((mc.kind == MoveKind::CLIMBER) && (kbot >= 0)) {
+			mc.graphClass = kbot;
+		}
+	}
 	classMasks.resize(moveClasses.size());
 	classParts.resize(moveClasses.size());
 
@@ -352,6 +395,12 @@ void CChokeMap::InitMoveClasses()
 	text << "CHOKE move classes:";
 	for (const SMoveClass& mc : moveClasses) {
 		text << " " << mc.name << ((mc.role == MoveRole::GATING) ? "(gating)" : (mc.role == MoveRole::LEAK) ? "(leak)" : "(naval)");
+		if (mc.graphClass != (int)(&mc - &moveClasses.front())) {
+			text << "[graph as " << moveClasses[mc.graphClass].name << "]";
+		}
+		if (mc.isVehicle) {
+			text << "[vehicle]";
+		}
 	}
 	circuit->LOG("%s", text.str().c_str());
 }
@@ -382,15 +431,86 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 	for (size_t c = 0; c < moveClasses.size(); ++c) {
 		job->isGating.push_back(IsGating(c));
 	}
+	job->isTerrainCheck = isTerrainPending || job->isMasks;
+	job->isTerrainDue = circuit->GetLastFrame() >= graphFrame + TERRAIN_GRAPH_COOLDOWN;
 	job->masks = classMasks;
 	job->prevGraphMask = graph.GetMask();
+	if (job->isTerrainCheck && !job->isTerrainDue && !isGraph) {
+		job->prevRegionOf.resize(job->prevGraphMask.Size());
+		for (int i = 0; i < job->prevGraphMask.Size(); ++i) {
+			job->prevRegionOf[i] = graph.GetRegionAt(i);
+		}
+
+	}
 	job->graphParams = GetGraphParams();
+	job->prevChoice = isGraph ? CRegionGraph::SChoice() : graph.GetChoice();
 	job->trafficClasses = trafficClasses;
 	job->sourceCells = GetSourceCells();
 	job->destinations = destinations;
 	job->trafficParams = {config.spread, mainRange * 0.5f};
 	return job;
 }
+
+namespace {
+
+/*
+ * The cells passable in after and not in before, in connected groups (ForEachNeighbour on after): does a group touch
+ * two of the old graph's regions and no cell of either that the other is next to? Then the enemy has a new way between
+ * them (a wall blown through, a ramp). A group on their border (a crater widening a choke, or on a cut across open
+ * ground) is no new way
+ */
+bool IsNewCrossing(const SCellMask& before, const std::vector<int>& regionOf, const SCellMask& after)
+{
+	if ((before.Size() != after.Size()) || ((int)regionOf.size() != after.Size())) {
+		return true;
+	}
+	auto isNew = [&](int i) { return after.IsPassable(i) && !before.IsPassable(i); };
+	std::vector<bool> isDone(after.Size(), false);
+	std::vector<int> stack;
+	for (int start = 0; start < after.Size(); ++start) {
+		if (isDone[start] || !isNew(start)) {
+			continue;
+		}
+		std::vector<int> touched;  // regions the group touches
+		std::vector<std::pair<int, int>> met;  // regions that meet at a cell it touches, lower first
+		isDone[start] = true;
+		stack.assign(1, start);
+		while (!stack.empty()) {
+			const int cell = stack.back();
+			stack.pop_back();
+			ForEachNeighbour(after, cell, [&](int next, int) {
+				const int r = regionOf[next];
+				if (isNew(next)) {
+					if (!isDone[next]) {
+						isDone[next] = true;
+						stack.push_back(next);
+					}
+				} else if (r != CRegionGraph::NO_REGION) {
+					touched.push_back(r);
+					ForEachNeighbour(before, next, [&](int beyond, int) {
+						const int t = regionOf[beyond];
+						if ((t != CRegionGraph::NO_REGION) && (t != r)) {
+							met.emplace_back(std::min(r, t), std::max(r, t));
+						}
+					});
+				}
+			});
+		}
+		std::sort(touched.begin(), touched.end());
+		touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+		std::sort(met.begin(), met.end());
+		for (size_t i = 0; i < touched.size(); ++i) {
+			for (size_t j = i + 1; j < touched.size(); ++j) {
+				if (!std::binary_search(met.begin(), met.end(), std::make_pair(touched[i], touched[j]))) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+}  // namespace
 
 void CChokeMap::RunJob(SBuildJob& job)
 {
@@ -463,9 +583,13 @@ void CChokeMap::RunJob(SBuildJob& job)
 	}
 
 	/*
-	 * The threat graph, from the union of the gating classes. Rebuilt only when that union changed
+	 * The threat graph, from the union of the gating classes. Rebuilt when the gating classes changed, and when the
+	 * terrain changed that union: at once when it opened a way between two of the graph's regions away from their
+	 * border (a wall blown through, or a ramp), else at most every TERRAIN_GRAPH_COOLDOWN: craters and ground
+	 * levelled under buildings change it through every fight, and each rebuild can move chokes the defence and holds
+	 * act on
 	 */
-	if (job.isGraph || job.isMasksChanged) {
+	if (job.isGraph || job.isTerrainCheck) {
 		const clock::time_point t0 = clock::now();
 		const SCellMask& any = job.masks.front();
 		SCellMask threatMask;
@@ -475,9 +599,14 @@ void CChokeMap::RunJob(SBuildJob& job)
 				threatMask.Unite(job.masks[ci]);
 			}
 		}
-		if (job.isGraph || (threatMask != job.prevGraphMask)) {
-			job.graph.Build(threatMask, job.graphParams);
+		const bool isChanged = job.isGraph || (threatMask != job.prevGraphMask);
+		if (isChanged && (job.isGraph || job.isTerrainDue || job.prevRegionOf.empty()
+			|| IsNewCrossing(job.prevGraphMask, job.prevRegionOf, threatMask)))
+		{
+			job.graph.Build(threatMask, job.graphParams, job.prevChoice);
 			job.isGraphBuilt = true;
+		} else {
+			job.isTerrainDeferred = isChanged;
 		}
 		job.graphMs = ms(t0);
 	}
@@ -547,7 +676,11 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 		}
 		circuit->LOG("CHOKE masks: %.1f ms%s", job.maskMs, job.isMasksChanged ? ", changed" : "");
 	}
+	if (job.isGraph || job.isTerrainCheck) {
+		isTerrainPending = job.isTerrainDeferred;  // the graph was checked against these masks
+	}
 	if (job.isGraphBuilt) {
+		graphFrame = frame;
 		if (isReady) {
 			job.graph.CarryIdsFrom(graph, frame);
 		}
@@ -561,8 +694,9 @@ void CChokeMap::ApplyJob(SBuildJob& job)
 			MakeDestinations();
 		}
 		nextAnalysisFrame = frame;
-		circuit->LOG("CHOKE graph: %i regions, %i chokes, %.1f ms on %ix%i cells", (int)graph.GetRegions().size(),
-				(int)graph.GetChokes().size(), job.graphMs, graph.GetMask().width, graph.GetMask().height);
+		circuit->LOG("CHOKE graph: %i regions, %i chokes, %.1f ms on %ix%i cells%s", (int)graph.GetRegions().size(),
+				(int)graph.GetChokes().size(), job.graphMs, graph.GetMask().width, graph.GetMask().height,
+				DescribeRelaxed().c_str());
 		overlay->OnGraphBuilt();
 	}
 	if (!job.trafficTypes.empty()) {
@@ -592,6 +726,7 @@ void CChokeMap::ScheduleBuilds()
 	const int terrainVersion = circuit->GetGameAttribute()->GetTerrainData().GetHeightVersion();
 	const bool isMasks = (terrainVersion != heightVersion) && (frame >= maskFrame + MASK_COOLDOWN);
 	const bool isGraph = isGraphDirty || graph.IsEmpty();
+	const bool isTerrainDue = isTerrainPending && (frame >= graphFrame + TERRAIN_GRAPH_COOLDOWN);
 	const bool isTraffic = isReady && !destinations.empty();
 	if (isTraffic && ((isTrafficDirty && (frame >= trafficFrame + TRAFFIC_COOLDOWN))
 		|| (isSourceDirty && (frame >= sourceFrame + SOURCE_COOLDOWN))))
@@ -601,7 +736,7 @@ void CChokeMap::ScheduleBuilds()
 		trafficFrame = sourceFrame = frame;
 	}
 	const std::vector<int> trafficClasses = isTraffic ? pendingTraffic : std::vector<int>();
-	if (!isMasks && !isGraph && trafficClasses.empty()) {
+	if (!isMasks && !isGraph && !isTerrainDue && trafficClasses.empty()) {
 		return;
 	}
 	isGraphDirty = false;  // the job takes it: a change from now on (gating, a key set) dirties it again
@@ -628,45 +763,44 @@ void CChokeMap::QueueAllTraffic()
 
 /*
  * Lanes: a corridor choke.lane wide along the path through every choke narrower than three lanes, out to one lane
- * length either side of its line. Only with choke.enable, so building placement stays as it was without it
+ * length either side of its line. The turret picker and the spot scorer keep off them always; only with choke.enable
+ * are they kept free of every building on the blocking map (CChokeDefence)
  */
 void CChokeMap::MakeLanes()
 {
 	std::vector<SLane> newLanes;
 	const SCellMask& mask = graph.GetMask();
-	if (config.isChoke) {
-		for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
-			if (choke.width >= 3.f * config.lane) {
-				continue;
-			}
-			// Across the line: from region A's cells beside it to region B's
-			float ax = 0.f, az = 0.f, bx = 0.f, bz = 0.f;
-			int na = 0, nb = 0;
-			for (int c : choke.line) {
-				ForEachNeighbour(mask, c, [&](int next, int) {
-					const int r = graph.GetRegionAt(next);
-					if (r == choke.regionA) {
-						ax += mask.CentreX(next); az += mask.CentreZ(next); ++na;
-					} else if (r == choke.regionB) {
-						bx += mask.CentreX(next); bz += mask.CentreZ(next); ++nb;
-					}
-				});
-			}
-			AIFloat3 dir(1.f, 0.f, 0.f);
-			if ((na > 0) && (nb > 0)) {
-				const AIFloat3 d(bx / nb - ax / na, 0.f, bz / nb - az / na);
-				if (d.SqLength2D() > 1.f) {
-					dir = d / d.Length2D();
-				}
-			}
-			SLane lane;
-			lane.chokeId = choke.id;
-			lane.centre = AIFloat3(mask.CentreX(choke.centre), 0.f, mask.CentreZ(choke.centre));
-			lane.dir = dir;
-			lane.halfLength = config.lane + GRAPH_CELL;
-			lane.halfWidth = config.lane * 0.5f;
-			newLanes.push_back(lane);
+	for (const CRegionGraph::SChoke& choke : graph.GetChokes()) {
+		if (choke.width >= 3.f * config.lane) {
+			continue;
 		}
+		// Across the line: from region A's cells beside it to region B's
+		float ax = 0.f, az = 0.f, bx = 0.f, bz = 0.f;
+		int na = 0, nb = 0;
+		for (int c : choke.line) {
+			ForEachNeighbour(mask, c, [&](int next, int) {
+				const int r = graph.GetRegionAt(next);
+				if (r == choke.regionA) {
+					ax += mask.CentreX(next); az += mask.CentreZ(next); ++na;
+				} else if (r == choke.regionB) {
+					bx += mask.CentreX(next); bz += mask.CentreZ(next); ++nb;
+				}
+			});
+		}
+		AIFloat3 dir(1.f, 0.f, 0.f);
+		if ((na > 0) && (nb > 0)) {
+			const AIFloat3 d(bx / nb - ax / na, 0.f, bz / nb - az / na);
+			if (d.SqLength2D() > 1.f) {
+				dir = d / d.Length2D();
+			}
+		}
+		SLane lane;
+		lane.chokeId = choke.id;
+		lane.centre = AIFloat3(mask.CentreX(choke.centre), 0.f, mask.CentreZ(choke.centre));
+		lane.dir = dir;
+		lane.halfLength = config.lane + GRAPH_CELL;
+		lane.halfWidth = config.lane * 0.5f;
+		newLanes.push_back(lane);
 	}
 	auto isSame = [](const SLane& a, const SLane& b) {
 		return (a.chokeId == b.chokeId) && (a.centre.SqDistance2D(b.centre) < 1.f) && (a.dir.SqDistance2D(b.dir) < 1e-4f)
@@ -678,11 +812,46 @@ void CChokeMap::MakeLanes()
 	}
 }
 
+std::string CChokeMap::DescribeRelaxed() const
+{
+	const CRegionGraph::SParams& used = graph.GetUsedParams();
+	const CRegionGraph::SParams base = GetGraphParams();
+	std::string out;
+	char buf[160];
+	if ((used.merge != base.merge) || (used.minArea != base.minArea)) {
+		snprintf(buf, sizeof(buf), "; rebuilt with merge %.2f, min_area %.2f for min_count %i", used.merge,
+				used.minArea / SQUARE(mainRange / GRAPH_CELL), config.minCount);
+		out += buf;
+	}
+	if (graph.GetSplitCount() > 0) {
+		snprintf(buf, sizeof(buf), "; open ground cut into %i more regions for min_count %i", graph.GetSplitCount(),
+				config.minCount);
+		out += buf;
+	}
+	return out;
+}
+
+std::vector<float> CChokeMap::GetTrafficShares(const std::vector<int>& chokes) const
+{
+	float total = 0.f;
+	for (int c : chokes) {
+		total += chokeTraffic[c];
+	}
+	std::vector<float> shares;
+	shares.reserve(chokes.size());
+	for (int c : chokes) {
+		shares.push_back((total > 0.f) ? chokeTraffic[c] / total : 1.f / chokes.size());
+	}
+	return shares;
+}
+
 CRegionGraph::SParams CChokeMap::GetGraphParams() const
 {
 	CRegionGraph::SParams params;
 	params.minArea = config.minArea * SQUARE(mainRange / GRAPH_CELL);  // cells
 	params.merge = config.merge;
+	params.minCount = config.minCount;
+	params.minShare = config.minShare;
 	params.defensibleWidth = config.defensible * mainRange;
 	return params;
 }
@@ -776,8 +945,7 @@ const std::vector<int>& CChokeMap::GetClassParts(int classIdx) const
 
 bool CChokeMap::IsGating(int classIdx) const
 {
-	const STypeState& ts = typeStates[classIdx];
-	return ts.isInSet && ((moveClasses[classIdx].role == MoveRole::GATING) || ts.isPromoted);
+	return typeStates[classIdx].isGating;
 }
 
 const CChokeMap::SPointInfo* CChokeMap::GetPointInfo(int cluster, int index) const

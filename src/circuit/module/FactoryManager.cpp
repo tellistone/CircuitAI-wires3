@@ -30,6 +30,9 @@
 #include "Feature.h"
 #include "Log.h"
 
+#include <algorithm>
+#include <iterator>
+
 namespace circuit {
 
 using namespace springai;
@@ -397,10 +400,13 @@ void CFactoryManager::ReadConfig()
 
 		const Json::Value& since = behaviour["since"];
 		if (!since.isNull()) {
-			cdef->SetSinceFrame(since.asInt() * FRAMES_PER_SEC);
+			// Divided by the allied team size: 1v1 as set, 4v4 a quarter of it
+			const float allies = std::max(circuit->GetAllyTeam()->GetSize(), 1);
+			cdef->SetSinceFrame(int(since.asFloat() / allies * FRAMES_PER_SEC));
 		}
 
 		cdef->SetRetreat(behaviour.get("retreat", cdef->GetRetreat()).asFloat());
+		cdef->SetRetreatShield(behaviour.get("retreat_shield", cdef->GetRetreatShield()).asFloat());
 
 		cdef->SetCaptureHide(behaviour.get("capture_hide", cdef->GetCaptureHide()).asFloat());
 
@@ -579,6 +585,14 @@ void CFactoryManager::ReadConfig()
 	 */
 	const bool warnProb = root.get("warn_probability", true).asBool();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	// income_tier_density: [[map player density, mult], ...] scales every factory's income_tier thresholds (and
+	// nothing else); missing = x1
+	std::vector<std::pair<float, float>> tierCurve;
+	CMilitaryManager::ReadCurve(circuit, root["income_tier_density"], "income_tier_density", "density", tierCurve);
+	const float tierMult = utils::eval_curve(tierCurve, CMilitaryManager::GetMapDensity(circuit));
+	if (!tierCurve.empty()) {
+		circuit->LOG("FACTORY: income_tier x%.3f (map player density %.2f)", tierMult, CMilitaryManager::GetMapDensity(circuit));
+	}
 	const Json::Value& factories = root["factory"];
 	for (const std::string& fac : factories.getMemberNames()) {
 		CCircuitDef* cdef = circuit->GetCircuitDef(fac.c_str());
@@ -685,7 +699,7 @@ void CFactoryManager::ReadConfig()
 		};
 		unsigned i = 0;
 		for (; i < tierSize; ++i) {
-			facDef.incomes.push_back(tiers[i].asFloat());
+			facDef.incomes.push_back(tiers[i].asFloat() * tierMult);
 			fillProbs(i, "air", facDef.airTiers);
 			fillProbs(i, "land", facDef.landTiers);
 			fillProbs(i, "water", facDef.waterTiers);
@@ -1045,6 +1059,7 @@ AIFloat3 CFactoryManager::GetClosestHaven(const AIFloat3& position) const
 
 CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 {
+	LogBuilders();
 	// Coin flip first: every other factory job is left to UpdateFirePower whatever the rules say
 	if (!CanEnqueueTask() || (rand() >= RAND_MAX / 2)) {
 		return nullptr;
@@ -1061,32 +1076,74 @@ CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 	}
 
 	const AIFloat3& pos = unit->GetPos(frame);
-	if (!IsBuilderNeeded(buildDef, pos)
+	BuilderWhy why = BuilderWhy::INCOME;
+	if (!IsBuilderNeeded(buildDef, pos, &why)
 		|| !circuit->GetTerrainManager()->CanBeBuiltAt(buildDef, pos, unit->GetCircuitDef()->GetBuildDistance()))
 	{
 		return nullptr;
 	}
-	return EnqueueTask(CRecruitTask::Priority::NORMAL, buildDef, pos, CRecruitTask::RecruitType::BUILDPOWER, 64.f);
+	CRecruitTask* task = EnqueueTask(CRecruitTask::Priority::NORMAL, buildDef, pos, CRecruitTask::RecruitType::BUILDPOWER, 64.f);
+	if (task != nullptr) {
+		CountBuilder(why);
+	}
+	return task;
 }
 
-bool CFactoryManager::IsBuilderNeeded(CCircuitDef* buildDef, const AIFloat3& pos) const
+bool CFactoryManager::IsBuilderNeeded(CCircuitDef* buildDef, const AIFloat3& pos, BuilderWhy* outWhy) const
 {
 	// Cheapest rule first; the reclaim rule's feature scan (cached) runs only when the others are met
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	const float metalIncome = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome());
-	if (builderMgr->GetBuildPower() < metalIncome * bpRatio) {
+	auto ask = [outWhy](BuilderWhy why) {
+		if (outWhy != nullptr) {
+			*outWhy = why;
+		}
 		return true;
+	};
+	if (builderMgr->GetBuildPower() < metalIncome * bpRatio) {
+		return ask(BuilderWhy::INCOME);
 	}
 
 	// A ratio of 0 never asks: workerCost >= 0
 	const int frame = circuit->GetLastFrame();
 	const float workerCost = builderMgr->GetWorkerCost();
 	if ((frame >= bpArmy.frame) && (workerCost < circuit->GetMilitaryManager()->GetArmyCost() * bpArmy.ratio)) {
-		return true;
+		return ask(BuilderWhy::ARMY);
 	}
-	return (bpReclaim.ratio > 0.f) && (frame >= bpReclaim.frame)
-		&& (workerCost < economyMgr->GetReclaimMetal(buildDef, pos) * bpReclaim.ratio);
+	if ((bpReclaim.ratio <= 0.f) || (frame < bpReclaim.frame)) {
+		return false;
+	}
+	lastReclaim = economyMgr->GetReclaimMetal(buildDef, pos);
+	return (workerCost < lastReclaim * bpReclaim.ratio) && ask(BuilderWhy::RECLAIM);
+}
+
+void CFactoryManager::LogBuilders()
+{
+	// Once a minute: the constructors queued since the last line, by the rule that asked (ROLL: picked by a factory's
+	// tier weights in UpdateFirePower, outside every rule), and where each rule stands now
+	const int frame = circuit->GetLastFrame();
+	if (builderLogFrame < 0) {
+		builderLogFrame = frame + FRAMES_PER_SEC * 60;
+		return;
+	}
+	if (frame < builderLogFrame) {
+		return;
+	}
+	builderLogFrame = frame + FRAMES_PER_SEC * 60;
+	CEconomyManager* em = circuit->GetEconomyManager();
+	CBuilderManager* bm = circuit->GetBuilderManager();
+	const float income = std::min(em->GetAvgMetalIncome(), em->GetAvgEnergyIncome());
+	const float armyCost = circuit->GetMilitaryManager()->GetArmyCost();
+	const int* c = builderCounts;
+	circuit->LOG("BUILDERS last minute queued: income %i, army %i, reclaim %i, roll %i, opener %i | now %u workers"
+			" (%.0f m, commanders not counted), build power %.0f vs income %.1f x %.2f = %.0f, army %.0f m x %.2f = %.0f%s,"
+			" reclaim %.0f m x %.2f = %.0f%s",
+			c[0], c[1], c[2], c[3], c[4], bm->GetWorkerCount(), bm->GetWorkerCost(), bm->GetBuildPower(),
+			income, bpRatio, income * bpRatio, armyCost, bpArmy.ratio, armyCost * bpArmy.ratio,
+			(frame < bpArmy.frame) ? " (not yet)" : "", lastReclaim, bpReclaim.ratio, lastReclaim * bpReclaim.ratio,
+			(frame < bpReclaim.frame) ? " (not yet)" : "");
+	std::fill(std::begin(builderCounts), std::end(builderCounts), 0);
 }
 
 // Weighted random pick (weights >= 0; all 0 = an even pick). nullptr if there are no candidates, or (rarely)
@@ -1241,7 +1298,11 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 	candidates.clear();
 
 	if ((buildDef != nullptr) && buildDef->IsAvailable(frame)) {
-		return enqueue(buildDef, isResponse ? CRecruitTask::Priority::HIGH : CRecruitTask::Priority::NORMAL);
+		CRecruitTask* task = enqueue(buildDef, isResponse ? CRecruitTask::Priority::HIGH : CRecruitTask::Priority::NORMAL);
+		if ((task != nullptr) && (buildDef->GetMainRole() == ROLE_TYPE(BUILDER))) {
+			CountBuilder(BuilderWhy::ROLL);
+		}
+		return task;
 	}
 	return nullptr;
 }

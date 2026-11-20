@@ -8,6 +8,7 @@
 #ifndef SRC_CIRCUIT_TERRAIN_CHOKEOVERLAY_H_
 #define SRC_CIRCUIT_TERRAIN_CHOKEOVERLAY_H_
 
+#include "terrain/ChokeMap.h"
 #include "terrain/RegionGraph.h"
 
 #include "AIFloat3.h"
@@ -15,6 +16,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace circuit {
@@ -29,7 +31,7 @@ class CChokeMap;
  */
 class CChokeOverlay {
 public:
-	enum class Layer: char {CHOKES, POCKETS, LINES, RANKS, TRAFFIC, SPOTS, RADAR, REGIONS, TURRETS, COUNT};
+	enum class Layer: char {CHOKES, POCKETS, LINES, RANKS, TRAFFIC, SPOTS, RADAR, REGIONS, SIDES, TURRETS, COUNT};
 
 	CChokeOverlay(CChokeMap* chokeMap);
 	virtual ~CChokeOverlay();
@@ -67,6 +69,30 @@ private:
 	void DrawRadar();
 	void DrawLanes();
 	void DrawTurrets();
+	void DrawSides();
+
+	/*
+	 * The sides layer (ChokeSides.cpp): who owns each region (by the units in it) and each choke (by the guns that
+	 * reach it), and the lines by tower cover and shortfall; drawn by the dbg_circuit_sides LuaUI widget when the machine
+	 * running the AI has it (util/LuaUI/Widgets), else the lines layer
+	 */
+	using Side = CChokeMap::Side;
+	using SStrength = CChokeMap::SStrength;
+	struct SView {
+		Side side = Side::NONE;
+		SStrength ours, enemy;
+		bool isHeld = false;  // a region the lines take as its owner's ground (CChokeMap::IsOurGround, IsEnemyGround)
+		float ourCover = 0.f, enemyCover = 0.f;  // a choke: share of its line in range of each side's ground-hitting towers
+	};
+	void MakeViews(std::vector<SView>& regionViews, std::vector<SView>& chokeViews) const;
+	std::string MakeInfo(const std::vector<SView>& regionViews, const std::vector<SView>& chokeViews) const;
+	std::string MakeKnownEnemies() const;
+	void SendWidgetData();
+	std::string CallWidget(const std::string& verb, const std::string& body) const;  // the widget's answer
+	void ClearWidget();
+	// The two cells of its line farthest apart
+	void GetChokeEnds(const CRegionGraph& graph, const CRegionGraph::SChoke& choke,
+			springai::AIFloat3& outA, springai::AIFloat3& outB) const;
 
 	// One figure group per colour
 	enum class Colour: char {GREEN, GREY, RED, ORANGE, YELLOW, BLUE, CYAN, WHITE, MAGENTA, DARK_RED};
@@ -88,6 +114,9 @@ private:
 	std::string command;
 	std::map<Colour, int> groups;  // figure group ids
 	std::vector<springai::AIFloat3> labels;
+	bool isWidgetDrawn;  // the sides widget holds our data
+	bool isGridSent;  // since the last graph build
+	bool isWidgetHinted;  // said that the layer needs the widget
 };
 
 } // namespace circuit

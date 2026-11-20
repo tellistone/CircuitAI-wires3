@@ -15,6 +15,7 @@
 #include "unit/CircuitDef.h"
 
 #include <algorithm>
+#include <array>
 #include <vector>
 #include <functional>
 #include <map>
@@ -37,6 +38,7 @@ class CRaidTask;
 class ISquadTask;
 class CChokeDefence;
 class CSensorPlanner;
+class CCreepPlanner;
 class CAllyCover;
 class CAttackBalance;
 class CFrontline;
@@ -56,9 +58,14 @@ private:
 	void ReadConfig();
 	// [[x, multiplier], ...] config curve (quota.*_map_size, response.<role>.income_curve) for utils::eval_curve
 	void ReadCurve(const Json::Value& value, const std::string& key, const char* xName,
-			std::vector<std::pair<float, float>>& curve) const;
+			std::vector<std::pair<float, float>>& curve) const { ReadCurve(circuit, value, key, xName, curve); }
 	void Init();
 public:
+	static void ReadCurve(CCircuitAI* circuit, const Json::Value& value, const std::string& key, const char* xName,
+			std::vector<std::pair<float, float>>& curve);
+	// Map player density = map area / 2 / allied team size, sides in map units (512 elmos, the 16x16 players quote):
+	// 16x16 1v1 = 128, 8x8 5v5 = 6.4. x of response.<role>.density_curve and factory.json income_tier_density
+	static float GetMapDensity(CCircuitAI* circuit);
 	void Release();
 
 	virtual int UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder) override;
@@ -73,6 +80,8 @@ public:
 	}
 
 	IFighterTask* EnqueueTask(IFighterTask::FightType type);
+	// Registers a new fight task under type for updates and GetTasks
+	IFighterTask* AddFightTask(IFighterTask::FightType type, IFighterTask* task);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType check, IFighterTask::FightType promote, float power);
 	IFighterTask* EnqueueGuard(CCircuitUnit* vip);
@@ -97,13 +106,37 @@ public:
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
 	// Mines always get a new one (each lays its field somewhere else)
 	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
-	// An enemy heavy (enemy role, as GetEnemyCost) in radar or LOS within the last frames (CEnemyUnit::IsRecentlySeen).
-	// Anti-heavy hunting starts on a fresh sighting (AH_HUNT_FRAMES: new units, the army pull) and stops once none
-	// has been seen for much longer (AH_KEEP_FRAMES: squads disband), so a heavy dipping in and out of radar can't
-	// send the units back and forth
+	// antiheavy.as_artillery: anti-heavy units (main role) on the ground with a long reload (5 s or more), not mines or
+	// melee (Lance, Merlin, Phantom, Racketeer), use the artillery task with heavies as targets (EnqueueAhArty) instead of squads
+	bool IsAhArty(const CCircuitDef* cdef) const;
+	IFighterTask* EnqueueAhArty();
+	// Overkill check: the damage the ready shots of anti-heavy units (squads and IsAhArty) targeting enemy would do,
+	// those of task skip aside
+	float GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* skip) const;
+	// A mobile enemy heavy (enemy role, as GetEnemyCost; buildings don't count, they stay targets) in radar or LOS within
+	// the last frames (CEnemyUnit::IsRecentlySeen). The army pull starts on a fresh sighting (AH_HUNT_FRAMES), and the hunt
+	// lasts until none has been seen for antiheavy.keep_sec (IsAhHunting: squads disband, new units go to the army), so a
+	// heavy dipping in and out of radar can't send the units back and forth
 	static constexpr int AH_HUNT_FRAMES = FRAMES_PER_SEC * 10;
-	static constexpr int AH_KEEP_FRAMES = FRAMES_PER_SEC * 60;
 	bool IsEnemyHeavySeen(int frames);
+	bool IsAhHunting() { return IsEnemyHeavySeen(antiHeavy.keepFrames); }
+	// Every known mobile enemy heavy: where it was last seen, and how long ago (frames)
+	struct SHeavySeen {
+		springai::AIFloat3 pos;
+		int age;
+	};
+	const std::vector<SHeavySeen>& GetHeavySightings() { IsEnemyHeavySeen(0); return heavySightings; }
+	// A quarry of this unit (CAntiHeavyTask::IsQuarryFor) in radar or LOS within range
+	bool IsQuarryWithin(CCircuitUnit* unit, float range) const;
+	// Where an anti-heavy unit was sent home for repair: a park spot near it scores lower for a while (CAntiHeavyTask)
+	void NoteAhRetreat(const springai::AIFloat3& pos);
+	bool IsNearAhRetreat(const springai::AIFloat3& pos, float radius);
+	/*
+	 * The ANTIHEAVY log, every minute, per anti-heavy unit type: unit-seconds by activity (CAntiHeavyTask::GetActivity,
+	 * sampled every second) and event counts, for comparing builds
+	 */
+	enum class AhNote: int {HUNT = 0, PARK, ENGAGE, FLEE, SHOT, RADAR_ONLY, FLEE_END, RETREAT, SCOOT, DROP, _SIZE_};
+	void NoteAh(const CCircuitDef* cdef, AhNote note) { ++ahStats[cdef->GetId()][static_cast<int>(note)]; }
 	CRetreatTask* EnqueueRetreat();
 	// Static artillery with behaviour.json "target_tiers" (CPriorityArtyTask)
 	IFighterTask* EnqueuePriorityArty();
@@ -136,17 +169,18 @@ public:
 	/*
 	 * porcupine.budget: one turret account for every armed defence the AI queues (CTurretPicker::IsDefence: no
 	 * shields, storages, caretakers, radars, Claw mines, missiles or turret.not_defence statics), but preventive ones.
-	 * It fills at share x avg metal income x min(economy ms_pull, 1), up to bank_sec seconds of that (or the dearest
+	 * It fills at share x avg metal income x min(economy ms_pull, 1) x map x mex (curves of map area per player and
+	 * of ally mex share), up to bank_sec seconds of that (or the dearest
 	 * tower a waiting spender asked for in the last 2 minutes). Every armed DEFENCE job is charged as it is queued
 	 * (CBuilderManager::AddTask), by the spender a TurretScope names (OTHER when none does), and refunded if it is
 	 * called off before it starts. Porc (porc-mode towers of a cluster or its chokes) and the picker wait for the
 	 * balance to cover a tower (CanAffordTurret); the rest are charged but never refused and may take it below zero.
 	 * Preventive towers (a cluster outside porc mode) are free, and only logged. A finished armed defence of ours that
-	 * dies to a known mobile killer that doesn't outrange it (CanFightBack) pays loss_refund x its cost back, past the
+	 * dies to a known mobile killer that doesn't outrange it (CanFightBack) pays loss_refund x its charge back, past the
 	 * cap if need be (the account then stops filling until it is spent below the cap), so a lost position can be
 	 * rebuilt
 	 */
-	enum class TurretSpend: int {OTHER = 0, PORC, PREVENT, PICKER, CORNERED, BASE, GUARD, ESCORT, HUB, _SIZE_};
+	enum class TurretSpend: int {OTHER = 0, PORC, PREVENT, PICKER, CORNERED, BASE, GUARD, ESCORT, HUB, CREEP, _SIZE_};
 	class TurretScope {  // the spender of the DEFENCE jobs queued while it lives
 	public:
 		TurretScope(CMilitaryManager* mgr, TurretSpend spend) : mgr(mgr), prev(mgr->turretSpend) { mgr->turretSpend = spend; }
@@ -156,6 +190,8 @@ public:
 		TurretSpend prev;
 	};
 	bool CanAffordTurret(float cost);
+	// Seconds until the turret account holds cost at its current fill rate: 0 now, a big number when it doesn't fill
+	float GetTurretWait(float cost) const;
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
 	void UpdateTurretBudget();  // accrues; logs the spend once a minute
@@ -165,10 +201,14 @@ public:
 	CChokeDefence* GetChokeDefence() const { return chokeDefence.get(); }
 	CSpotScorer* GetSpotScorer() const { return spotScorer.get(); }
 	CSensorPlanner* GetSensorPlanner() const { return sensorPlanner.get(); }
+	CCreepPlanner* GetCreepPlanner() const { return creepPlanner.get(); }
 	CFrontline* GetFrontline() const { return frontline.get(); }
 	CTurretPicker* GetTurretPicker() const { return turretPicker.get(); }
 	// A picker or cornered tower (CBDefenceTask::IsOffPoints): its death takes no cost off a defence point
 	void AddOffPointsTower(int unitId) { offPointsTowers.insert(unitId); }
+	// porcupine.budget: a tower whose job the turret account charged (CBDefenceTask::SetTarget). Only these pay
+	// loss_refund back when they die, and only on what they were charged: a free preventive tower pays nothing
+	void AddChargedTower(int unitId, float charged) { chargedTowers[unitId] = charged; }
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	// Best spot by score (near the enemy, unseen for longest, not defended by known static enemies, not on our side);
 	// -RgtVector if none. Scouts (quota.scout_spot) and raid groups (quota.raider_spot) score the same spots but
@@ -249,9 +289,14 @@ public:
 	const SAntiAirCfg& GetAntiAirCfg() const { return antiAir; }
 	struct SAntiHeavyCfg {
 		float pathThreat;  // routes may not cross threat above this x the squad's allowance (as anti-air's cap); < 0 = no cap
-		float fleeMargin;  // flee when an armed mobile enemy (not the heavy being hunted, unless reloading) is within its range + this; < 0 = off
-		float fleeAllyThreat;  // no flee while escorts within fleeAllyRadius of the leader, net of the enemies, have this much power; < 0 = always flee
-		float fleeAllyRadius;
+		float fleeMargin;  // flee and pick-zone margins (CAntiHeavyTask::GetDangerStart, GetPickMargin); < 0 = off
+		float fleeAllyThreat;  // no flee while cover at the leader, net of the enemies, has this much power; < 0 = always flee
+		float fleeAllyRadius;  // escorts counted within this, while the cover map is off
+		int keepFrames;  // keep_sec: the hunt lasts this long after the last mobile heavy sighting (max: while one is known)
+		float spacing;  // the two units of a squad stand at least this far apart
+		int maxGroup;  // units in a squad when its type has no antiheavy_max_group; 0 = no limit
+		bool isArtillery;  // as_artillery: IsAhArty
+		float artyScoot;  // artillery_scoot: elmos an IsAhArty unit steps back after each shot; 0 = off
 	};
 	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
 	struct SResignCfg {
@@ -423,6 +468,14 @@ public:
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
 	// quota.attack_melee_spot: melee units pick a firing spot this many elmos beyond both units' bodies; < 0: off
 	float GetAttackMeleeSpot() const { return attackMeleeSpot; }
+	// quota.attack_melee_max: at most this many melee units of a group close in on one target (fewer if its ring
+	// around the target has room for fewer); the rest take other targets near it. 0: off (all on the group's target)
+	int GetAttackMeleeMax() const { return attackMeleeMax; }
+	// quota.attack_melee_spread: other targets for those melee units, within this many elmos of the group's target
+	float GetAttackMeleeSpread() const { return attackMeleeSpread; }
+	// quota.attack_melee_blast: a target whose death explosion deals at least this x a melee unit's health is a
+	// blast for it: the unit fires from a normal firing spot within weapon range, not right next to it; < 0: off
+	float GetAttackMeleeBlast() const { return attackMeleeBlast; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other
 	struct SAttackMerge {
 		float speedRatio;  // leaders' speeds within this factor of each other
@@ -517,10 +570,12 @@ private:
 	void UpdateFight();
 	void UpdateCaptureHide();
 	// An enemy heavy seen within AH_HUNT_FRAMES: anti-heavy units in attack and gathering groups (where they go while
-	// there is none) and support tasks leave for anti-heavy squads, every 2 s; not while their group is fleeing, nor
-	// while it is fighting unless such a heavy is within the unit's weapon range (IsQuarryInRange)
+	// there is none) and support tasks leave for anti-heavy squads, every 2 s, if a heavy they can shoot is within their
+	// weapon range + 30 s of walking (CAntiHeavyTask::GetHuntReach); not while their group is fleeing, and while it is fighting
+	// only for one within their weapon range
 	void UpdateAhPull();
-	bool IsQuarryInRange(CCircuitUnit* unit) const;
+	void UpdateAhStats();  // every second (NoteAh)
+	void LogAhStats();
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
@@ -528,6 +583,7 @@ private:
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
+	void UpdateAllyResponse();
 	void UpdateEscalation();
 	void LogRaidStats();  // the RAID log, every minute
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
@@ -598,9 +654,11 @@ private:
 	std::unique_ptr<CChokeDefence> chokeDefence;
 	std::unique_ptr<CSpotScorer> spotScorer;
 	std::unique_ptr<CSensorPlanner> sensorPlanner;
+	std::unique_ptr<CCreepPlanner> creepPlanner;  // turret.creep
 	std::unique_ptr<CFrontline> frontline;
 	std::unique_ptr<CTurretPicker> turretPicker;
 	std::set<int> offPointsTowers;  // unit ids
+	std::unordered_map<int, float> chargedTowers;  // unit id: what the turret account charged its job
 
 	std::vector<unsigned int> scoutPath;  // list of spot ids
 	unsigned int scoutIdx;
@@ -643,9 +701,10 @@ private:
 	std::vector<SRaidPoint> raidPath;  // list of cluster ids
 
 	struct SRoleInfo {
-		float cost;
+		float cost;  // this AI's finished army and builders of the response role
+		float allyCost = 0.f;  // allied teams' finished mobile units of the role (UpdateAllyResponse, every 2 s)
 		float maxPerc;
-		float factor;
+		float densityMult;  // density_curve at the map player density (missing = 1): scales the response amount
 		std::set<CCircuitUnit*> units;
 		std::string name;  // response.<name>, for logs
 		// Response gates (UpdateResponseGates). Share = finished ally mexes / map spots; income = factory income_tier
@@ -739,6 +798,9 @@ private:
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
 	float attackMeleeSpot;  // quota.attack_melee_spot
+	int attackMeleeMax;  // quota.attack_melee_max
+	float attackMeleeSpread;  // quota.attack_melee_spread
+	float attackMeleeBlast;  // quota.attack_melee_blast
 	SAttackMerge attackMerge;  // quota.attack_merge
 	SRally attackRally;  // quota.attack_merge.rally
 	SRally raidRally;  // quota.raid_rally
@@ -750,6 +812,10 @@ private:
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at
 	int heavySeenAge;  // frames since an enemy heavy was last in radar or LOS; max = none
+	std::vector<SHeavySeen> heavySightings;  // GetHeavySightings, for heavySeenFrame
+	std::vector<std::pair<springai::AIFloat3, int>> ahRetreats;  // NoteAhRetreat: where and when
+	std::map<CCircuitDef::Id, std::array<int, static_cast<int>(AhNote::_SIZE_)>> ahStats;  // NoteAh since the last log
+	std::set<int> ahReady;  // anti-heavy units whose weapon was ready at the last UpdateAhStats (shots)
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
 	SAttackCells attackCells;  // quota.attack_static_cells
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
@@ -769,9 +835,11 @@ private:
 	BuildVector baseDefence;
 	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of landDefenders/waterDefenders.
 	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction.
-	// Each cluster rolls the first time it is defended, again once prevent_reroll[0] s have passed (the new count
-	// replaces the old), and on a sighting (an enemy that can hit ground within mex LOS of our mex there, at most
-	// once per prevent_reroll[1] s since its last roll or sighting; that roll can only raise the count).
+	// The count is the cluster's total, over all its defence points. Each cluster throws its dice once for the whole
+	// ally team (CMetalManager::GetClusterDice), the first
+	// time it is defended; later rolls (every prevent_reroll[0] s, and on a sighting: an enemy that can hit ground
+	// within mex LOS of our mex there, at most once per prevent_reroll[1] s since its last roll or sighting) reuse
+	// it, so the count only moves with the chance (the mex share). A sighting's roll can only raise the count.
 	// A roll never cancels a tower already queued or built.
 	struct SPrevent {
 		float base;  // prevent
@@ -782,7 +850,14 @@ private:
 		std::vector<std::pair<float, float>> mexCurve;  // prevent_mex: x = ally-team finished mexes / all spots
 		CCircuitDef* airDef;  // prevent_air: first tower after a sighting of a flying enemy, nullptr = off
 		bool isGeo;  // porcupine.geo: geothermal vents are defended like mex clusters
+		bool isOwnOnly;  // porcupine.own_clusters: team games, towers only on clusters we own (IsOurCluster)
+		bool isAllyCover;  // porcupine.ally_cover: built towers near a cluster count towards its preventive total
 	} prevent;
+	// porcupine.own_clusters: in team games only clusters we own (CMetalManager::GetClusterOwner) get towers
+	bool IsOurCluster(int cluster) const;
+	// porcupine.ally_cover, team games: metal of the towers of the ally team (ours too, nanoframes and stunned ones
+	// included) that can hit ground (water when isWater) within range of a mex point of the cluster; 0 when off
+	float GetBuiltCoverCost(int cluster, bool isWater) const;
 	struct SPreventRoll {
 		int count = -1;  // -1 = never rolled
 		int rollFrame = -1;
@@ -796,10 +871,17 @@ private:
 	struct STurretBudget {
 		float share = 0.1f;
 		float bankSec = 60.f;
-		float lossRefund = 2.f;  // x the cost of a finished turret of ours that dies
+		float lossRefund = 2.f;  // x the charge of a finished turret of ours that dies
+		float mapX = 0.f;  // map area in 512-elmo squares / players on our team
+		float mapMult = 1.f;  // budget.map at mapX, fixed for the game
+		std::vector<std::pair<float, float>> mexCurve;  // budget.mex: x = ally-team finished mexes / all spots
+		float mexMult = 1.f;  // budget.mex now, refreshed every 10 s
+		float mexX = 0.f;
+		int mexFrame = -1;
 		float lost = 0.f;  // since the last log line: what the lost turrets cost, and what they paid back
 		float lossPaid = 0.f;
 		float balance = 0.f;
+		float rate = 0.f;  // metal/s, as last filled
 		int frame = -1;
 		float askCost = 0.f;  // the dearest tower a gated spender asked for and couldn't afford
 		int askFrame = -1;
@@ -827,6 +909,7 @@ private:
 		float armyOff = 1.5f;  // ... below which it turns off, min_on or not
 		int minOnFrames = FRAMES_PER_SEC * 60;  // shortest time on
 		int onFrame = -1;  // when it last turned on
+		int sinceFrame = 0;  // never on before this game frame
 		float maxBuildSec = 420.f;  // affordability of a superweapon
 		float builderShare = 0.7f;
 		float singuShare = 0.34f;  // most of builderShare on singus

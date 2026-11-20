@@ -10,6 +10,8 @@
 
 #include "terrain/CellMask.h"
 
+#include <map>
+#include <utility>
 #include <vector>
 
 namespace circuit {
@@ -22,7 +24,17 @@ namespace circuit {
  *   each pair. Meeting cells of a pair that don't touch are separate chokes;
  * - merge: two regions merge when a choke between them is nearly as wide as the smaller one (choke altitude >=
  *   merge x its highest altitude), and a region under minArea merges across its widest choke. Until nothing changes.
- * Every step breaks ties by cell index, so allied AIs and reruns get the same graph.
+ * - too few: under minCount regions, the build runs once more with merge 1, kept if it has more regions
+ *   (GetUsedParams), with one region of slack towards the last build's choice (GetChoice). It still merges across
+ *   any choke wider than defensibleWidth (mergeWidth), so it finds the narrow chokes the first build merged away,
+ *   never a line across open ground;
+ * - still too few (open ground, with no choke to split at): seeds on a grid of the map, made finer until there are
+ *   enough, cut the big regions into pieces nearest each seed (SplitOpen, GetSplitCount). The last build's grid is
+ *   tried first, and kept while it still cuts enough. A choke between two pieces of one region is a cut
+ *   (SChoke::isCut), as wide as the ground it crosses.
+ *   Neither step makes a region under minShare of the ground per minCount region (minArea is raised to it), so the
+ *   regions they make are of a size: a shard between two lines is of no use as a region.
+ * Every step breaks ties by cell index, so allied AIs and reruns get the same graph from the same mask and choice.
  *
  * Regions and chokes are used by index (0..n-1) within one build. Their ids stay the same across rebuilds where
  * the shape stays the same (CarryIdsFrom), for anything kept between builds
@@ -33,6 +45,15 @@ public:
 		float minArea = 0.f;  // cells: a smaller region merges into a neighbour
 		float merge = 0.7f;  // share of the smaller region's highest altitude
 		float defensibleWidth = 0.f;  // elmos: towers try to close chokes up to this wide
+		int minCount = 0;  // fewer regions: merge relaxes, then open ground is cut (Build)
+		float minShare = 0.f;  // the regions made for minCount are at least this share of the ground / minCount
+		float mergeWidth = 0.f;  // elmos: a choke wider than this merges its regions whatever the altitudes; 0 = off
+	};
+	// How Build reached minCount. The next build, given it, keeps each choice while it still works, so a crater
+	// doesn't flip the rebuild or move every cut
+	struct SChoice {
+		int rebuild = -1;  // -1: none tried, 0: tried and dropped, 1: kept
+		int nx = 0, nz = 0;  // the grid SplitOpen cut by; 0: none
 	};
 	struct SRegion {
 		int id;
@@ -47,6 +68,7 @@ public:
 		float width;  // elmos, twice the centre's altitude
 		std::vector<int> line;  // its meeting cells, ascending
 		bool isDefensible;
+		bool isCut;  // between two pieces SplitOpen cut from one region: a line across open ground
 		int bornFrame;  // first build it was found in (kept by CarryIdsFrom)
 	};
 	static constexpr int NO_REGION = -1;
@@ -62,7 +84,11 @@ public:
 public:
 	CRegionGraph();
 
-	void Build(const SCellMask& mask, const SParams& params);
+	void Build(const SCellMask& mask, const SParams& params) { Build(mask, params, SChoice()); }
+	void Build(const SCellMask& mask, const SParams& params, const SChoice& prev);
+	const SParams& GetUsedParams() const { return usedParams; }  // as relaxed for minCount (merge, minArea)
+	const SChoice& GetChoice() const { return choice; }  // for the next Build with the same params
+	int GetSplitCount() const { return splitCount; }  // pieces SplitOpen added for minCount
 	// Ids from the previous build where the shape is the same: a region keeps the id of the old region holding at
 	// least half its cells, a choke the id (and bornFrame) of the old choke whose line runs within a cell of at least
 	// half of its own. Everything else gets a new id and bornFrame = frame
@@ -94,14 +120,21 @@ public:
 	std::vector<bool> ReachableFrom(const std::vector<int>& sources, const std::vector<bool>& isChokeBlocked) const;
 
 private:
+	void BuildOnce(const SCellMask& mask, const SParams& params);
+	void MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& cellsOfPair, const SParams& params);
+	void SplitOpen(const SParams& params, const SChoice& prev);
 	void ComputeAltitude();
 	float GetAltitude(int cell) const;  // elmos to the nearest wall
+	float ToElmos(int chamfer) const;  // an altitude in elmos
 
 	SCellMask mask;
 	std::vector<int> altitude;  // chamfer units: 3 per cell, 0 on walls
 	std::vector<int> regionOf;  // region index per cell, NO_REGION on walls
 	std::vector<SRegion> regions;
 	std::vector<SChoke> chokes;
+	SParams usedParams;
+	SChoice choice;
+	int splitCount;
 	int nextRegionId;
 	int nextChokeId;
 };

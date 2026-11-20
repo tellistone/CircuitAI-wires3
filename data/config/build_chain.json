@@ -13,12 +13,14 @@
 	// Actual number of defences per cluster bounded by income
 	"land":  [0, 0, 1, 3, 5, 1, 2, 14, 1, 9, 5, 6, 2, 3, 5, 0, 8, 9, 14, 1, 3, 6, 16, 12, 11, 13],
 	"water": [4, 1, 6, 4, 4, 3, 5, 9, 16],
-	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of "land"/"water".
+	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of "land"/"water", in total over
+	// all the cluster's mex points (towers already there, porc ones too, count; a geothermal vent's point is its own).
 	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction
-	// (0.5 = a 50% chance of 1 tower, 1.5 = 1 tower and a 50% chance of a 2nd). Each cluster rolls the first time
-	// it is defended, again every prevent_reroll[0] s (the new count replaces the old), and on a sighting: an enemy
-	// in LOS that can hit ground (air included) within mex LOS of our mex there, at most once per prevent_reroll[1] s
-	// since the last roll; a sighting's roll can only raise the count. A roll never cancels a queued or built tower.
+	// (0.5 = a 50% chance of 1 tower, 1.5 = 1 tower and a 50% chance of a 2nd). Each cluster throws its dice once, the
+	// first time it is defended; it rolls again with the same dice every prevent_reroll[0] s (the new count replaces
+	// the old) and on a sighting: an enemy in LOS that can hit ground (air included) within mex LOS of our mex there,
+	// at most once per prevent_reroll[1] s since the last roll; a sighting's roll can only raise the count. So the
+	// count moves only with the chance (the mex share). A roll never cancels a queued or built tower.
 	// Missing keys: prevent 1, prevent_reroll [180, 30], curves x1 (missing or []), prevent_air off.
 	"prevent": 0.5,
 	"prevent_reroll": [180, 30],  // [seconds between rolls, min seconds since the last roll for a sighting to force one]
@@ -26,6 +28,16 @@
 	"prevent_map": [[32, 1.5], [128, 0.7]],  // x = map area in 512-elmo squares (16x16 = 256) / players on our team
 	"prevent_mex": [[0.2, 0.6], [0.5, 1.2]],  // x = ally-team finished mexes / all metal spots
 	"prevent_air": "turretmissile",  // first tower after a sighting of a flying enemy; "" = off
+	// Team games. own_clusters: towers (preventive and porc) only on clusters we own: the ally with the most finished
+	// mexes there owns it (the lower team id on a tie) and keeps it until another has strictly more, or it has none
+	// left; a cluster with no finished mex is no one's; our geo's vent always counts. The owner answers sightings at
+	// every ally's mex in its clusters. The preventive dice are shared by the ally team, so a new owner rolls the same
+	// count. ally_cover: a cluster's preventive total counts the larger of the towers booked on its points (queued and
+	// built, by every Wires ally) and the metal of the ally team's towers, ours too, nanoframes and stunned ones
+	// included, that can hit ground (water on a water point) within range of one of its mex points (off-point and
+	// human towers; range halved past 1000, as for attack cover). Missing = true
+	"own_clusters": true,
+	"ally_cover": true,
 	// Geothermal vents as clusters: a vent that no mex defence point covers gets its own point (in its nearest
 	// cluster's list, sharing that cluster's preventive roll). Our geo there is defended like a mex: when it finishes
 	// and on a sighting (prevent_reroll[1]); towers for a vent stay at the vent. Vent points never count as the
@@ -39,22 +51,28 @@
 	},
 	// The turret account: one budget for every armed defence the AI queues (shields, storages, caretakers, radars,
 	// Claw mines, missiles and behaviour.json turret.not_defence aren't turrets here), but preventive ones. It fills at
-	// <share> x avg metal income x min(economy.json ms_pull, 1), up to <bank_sec> seconds of that (or the dearest tower
-	// a waiting spender asked for in the last 2 minutes), and starts empty. A tower is charged as it is queued and
-	// refunded if called off before it starts.
+	// <share> x avg metal income x min(economy.json ms_pull, 1) x <map> x <mex>, up to <bank_sec> seconds of that (or
+	// the dearest tower a waiting spender asked for in the last 2 minutes), and starts empty. A tower is charged as it
+	// is queued and refunded if called off before it starts.
 	//   - wait for the balance to cover a tower: porc mode (a cluster's towers and its chokes'), and the turret picker
 	//     (behaviour.json turret.after_flee / near_enemy, which checks the dearest light def it might pick)
 	//   - charged but never refused, the balance may go below zero: a cornered builder's tower, the base timetable
 	//     below, choke.radar.guard, a mex job's tower against an enemy mex, build_chain hubs, anything else
 	//   - free: preventive towers (a cluster outside porc mode, as many as the prevent roll gives)
-	// A finished armed defence of ours that dies pays <loss_refund> x its cost back if it could fight back: its killer
-	// known and mobile (an enemy turret stays, and a rebuild in its reach dies again), and its longest range no longer
-	// than the turret's against the killer's kind (a ship, hover or amphibian: the turret's longer of land and water
-	// range, so an Urchin counts against ships). Not artillery or skirmishers that outrange it, a flier over a Lotus,
-	// an unseen killer or a capture. Past the cap if need be (the account then stops filling until spending brings it
-	// below), so a lost position can be rebuilt. The per-point cap (amount x income) still bounds each defence point.
-	// Missing keys: 0.1, 60 s and 2. Logged once a minute as TURRET BUDGET, with the spend by spender and turrets lost
-	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2},
+	// A finished armed defence of ours that dies pays <loss_refund> x what it was charged back (a free one pays
+	// nothing) if it could fight back: its killer known and mobile (an enemy turret stays, and a rebuild in its reach
+	// dies again), and its longest range no longer than the turret's against the killer's kind (a ship, hover or
+	// amphibian: the turret's longer of land and water range, so an Urchin counts against ships). Not artillery or
+	// skirmishers that outrange it, a flier over a Lotus, an unseen killer or a capture. Past the cap if need be (the
+	// account then stops filling until spending brings it below), so a lost position can be rebuilt. The per-point cap (amount x income) still bounds each defence point.
+	// <map> and <mex>: multiplier curves [[<x>, <multiplier>], ...] as prevent_map and prevent_mex (linear between
+	// points, flat beyond the ends; missing or [] = x1): map x = map area in 512-elmo squares (16x16 = 256) / players
+	// on our team, fixed for the game; mex x = ally-team finished mexes / all metal spots, every 10 s.
+	// Missing keys: 0.1, 60 s, 2 and x1 curves. Logged once a minute as TURRET BUDGET, with the spend by spender and
+	// turrets lost
+	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2,
+		"map": [[64, 1.00], [256, 0.66]],
+		"mex": [[0.33, 1.00], [0.66, 1.00]]},
 
 
 	// Base defence and time to build it, in seconds
@@ -78,6 +96,7 @@
 },
 
 // Escalation mode: superweapons and singus instead of army. Checked every <interval> s. Turns on when all hold:
+//   - at least <since> s of game time have passed (0 = from the start)
 //   - the allied team's mobile army (finished, no constructors or commanders; ours included) is at least
 //     <army_ratio>[0] x the known enemy mobile army (quota.enemy_half_life fading, as economy.ms_pull_army)
 //   - an enemy unit of <enemy> is known (seen and not seen dying)
@@ -106,6 +125,7 @@
 	"interval": 2,
 	"army_ratio": [2.0, 1.5],  // [<on>, <off>]
 	"min_on": 60,
+	"since": 480,
 	"max_build_sec": 420,
 	"builder_share": 0.7,
 	"singu_share": 0.34,
@@ -129,6 +149,9 @@
 "build_chain": {
 	// WARNING: Avoid recursion
 	// <category>: factory, nano, store, pylon, energy, defence, bunker, big_gun, radar, sonar, mex, repair
+	// A "radar" step goes through the radar planner while choke.radar.enable and choke.radar.chain are on: to the
+	// highest free spot within 300 elmos of its offset, or skipped where its view would add too little; with
+	// "upgrade": true it builds choke.radar.heavy there instead once that AI's heavy gates pass
 	"energy": {
 		// <UnitDef>: {<elements>}
 		"energysingu": {
@@ -203,10 +226,19 @@
 			"porc": true
 		}
 	},
+	"radar": {
+		// A radar job of this type that finished (the radar planner's, a hub step's)
+		"staticheavyradar": {
+			"hub": [[
+					{"unit": "turretlaser", "category": "defence", "offset": [80, -80]},
+					{"unit": "turretmissile", "category": "defence", "offset": [-80, 80]}
+				]]
+		}
+	},
 	"big_gun": {
 		"staticheavyarty": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretemp", "category": "defence", "offset": {"front": 60}},
@@ -219,7 +251,7 @@
 		},
 		"raveparty": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretemp", "category": "defence", "offset": {"front": 60}},
@@ -234,7 +266,7 @@
 		},
 		"mahlazer": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretlaser", "category": "defence", "offset": [80, -80]},
@@ -248,7 +280,7 @@
 		},
 		"zenith": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretlaser", "category": "defence", "offset": [80, -80]},
@@ -260,15 +292,9 @@
 					{"unit": "turretmissile", "category": "defence", "offset": [-80, -80]}
 				]]
 		},
-		"staticheavyradar": {
-			"hub": [[
-					{"unit": "turretlaser", "category": "defence", "offset": [80, -80]},
-					{"unit": "turretmissile", "category": "defence", "offset": [-80, 80]}
-				]]
-		},
 		"staticnuke": {
 			"hub": [[
-					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}},
+					{"unit": "staticradar", "category": "radar", "offset": {"back": 40}, "upgrade": true},
 					{"unit": "turretaafar", "category": "defence", "offset": {"left": 120}, "condition": "air"},
 					{"unit": "turretlaser", "category": "defence", "offset": [-80, 80]},
 					{"unit": "turretmissile", "category": "defence", "offset": [80, 80]},

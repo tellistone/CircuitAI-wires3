@@ -334,6 +334,11 @@ private:
 	// Lines of fire (pick, firing spots): aimed from cell_aim_height or half the leader's height above our units at
 	// half the enemy's height (8-32 elmos) above it. None for flying or underwater enemies, or a flying group
 	virtual bool GetSightLifts(const CEnemyInfo* enemy, float& outAimLift, float& outTargetLift) const override;
+public:
+	// The same for a group of cdef (CAntiHeavyTask)
+	static bool GetSightLiftsFor(CMilitaryManager* militaryMgr, CCircuitDef* cdef, const CEnemyInfo* enemy,
+			float& outAimLift, float& outTargetLift);
+private:
 	float GetGroundFireRange() const { return std::max(fireRangeLand, fireRangeWater); }
 	/*
 	 * Contact: an enemy we are already fighting. Within its contact reach (GetContactReach) of one of our units that

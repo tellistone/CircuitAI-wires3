@@ -110,6 +110,8 @@ public:
 	int GetWeaponReloadLeft(int frame);  // frames until the main weapon is ready; 0 if ready or none (planes: 0)
 	bool IsDGunReady(int frame, float energy);
 	bool IsShieldCharged(float percent);
+	// It has a shield, retreats for it ("retreat_shield" > 0), and the charge is at or below that share
+	bool IsShieldLow();
 	bool IsJumpReady();
 	bool IsJumping();
 	float GetDamage();

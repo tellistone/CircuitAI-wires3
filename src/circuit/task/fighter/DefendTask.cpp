@@ -153,11 +153,6 @@ void CDefendTask::Update()
 		if (!isExecute) {
 			return;
 		}
-	} else {
-		ISquadTask::Update();
-		if (leader == nullptr) {  // task aborted
-			return;
-		}
 	}
 
 	/*

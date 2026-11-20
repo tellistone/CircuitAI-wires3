@@ -79,6 +79,8 @@ public:
 	void ReadConfig();
 	float GetEmptyShield() const { return emptyShield; }
 	float GetFullShield() const { return fullShield; }
+	// Per-unit "retreat_shield" when unset (retreat.shield[0]), clamped to [0, 0.9]
+	float GetRetreatShield(float value) const;
 	int GetRetreatWait() const { return retreatWait; }
 
 	bool HasModules(const CCircuitDef* cdef, unsigned level) const;

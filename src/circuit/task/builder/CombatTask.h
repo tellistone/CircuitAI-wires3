@@ -22,8 +22,8 @@ public:
 	virtual void Start(CCircuitUnit* unit) override;
 	virtual void Update() override;
 
-	virtual void OnUnitIdle(CCircuitUnit* unit) override;
-	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
+protected:
+	virtual CRetreatTask* EnqueueRetreat() override;  // the builder's retreat
 
 private:
 	void Execute(CCircuitUnit* unit);

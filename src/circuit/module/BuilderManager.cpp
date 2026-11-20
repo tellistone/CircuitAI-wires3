@@ -8,8 +8,10 @@
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
+#include "module/CreepPlanner.h"
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
+#include "module/Frontline.h"
 #include "module/TurretPicker.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -46,6 +48,8 @@
 #include "task/builder/GuardTask.h"
 #include "task/builder/EscortTask.h"
 #include "task/fighter/SquadTask.h"
+#include "task/fighter/ArtilleryTask.h"
+#include "task/fighter/AntiHeavyTask.h"
 #include "task/builder/CombatTask.h"
 #include "task/builder/BuildChain.h"
 #include "CircuitAI.h"
@@ -265,6 +269,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 				} else {
 					cdef.SetRetreat(cdef.GetRetreat() * retMod);
 				}
+				cdef.SetRetreatShield(circuit->GetSetupManager()->GetRetreatShield(cdef.GetRetreatShield()));
 //			} else if (cdef->GetCostM() > 999.0f) {
 //				createdHandler[unitDefId] = heavyCreatedHandler;
 			}
@@ -479,6 +484,7 @@ void CBuilderManager::ReadConfig()
 							bi.condition = it->second;
 						}
 					}
+					bi.isUpgrade = part.get("upgrade", false).asBool();
 
 					queue.push_back(bi);
 				}
@@ -689,9 +695,28 @@ void CBuilderManager::ActivateTask(IBuilderTask* task)
 	if ((task->GetType() == IUnitTask::Type::BUILDER) && (task->GetBuildType() < IBuilderTask::BuildType::_SIZE_)) {
 		buildTasks[static_cast<IBuilderTask::BT>(task->GetBuildType())].insert(task);
 		buildTasksCount++;
+		NoteRadarJob(task, true);
 	}
 	buildUpdates.push_back(task);
 	task->Activate();
+}
+
+void CBuilderManager::NoteRadarJob(const IBuilderTask* task, bool isStart)
+{
+	// choke.radar.enable: an active radar job's view counts as covered, so no radar goes up beside it
+	if (task->GetBuildType() != IBuilderTask::BuildType::RADAR) {
+		return;
+	}
+	CCircuitAI* authority = (circuit->GetChokeMap() != nullptr) ? circuit->GetChokeMap()->GetAuthority() : nullptr;
+	if ((authority == nullptr) || (authority->GetMilitaryManager() == nullptr)) {
+		return;
+	}
+	CSensorPlanner* planner = authority->GetMilitaryManager()->GetSensorPlanner();
+	if (isStart) {
+		planner->NotePending(task);
+	} else {
+		planner->EndPending(task);
+	}
 }
 
 IBuilderTask* CBuilderManager::EnqueueTask(IBuilderTask::Priority priority,
@@ -1156,6 +1181,7 @@ IBuilderTask* CBuilderManager::AddTask(IBuilderTask::Priority priority,
 		buildTasks[static_cast<IBuilderTask::BT>(type)].insert(task);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
+		NoteRadarJob(task, true);
 	} else {
 		task->Deactivate();
 	}
@@ -1194,6 +1220,7 @@ void CBuilderManager::DequeueTask(IUnitTask* task, bool done)
 			}
 			tasks.erase(it);
 			buildTasksCount--;
+			NoteRadarJob(taskB, false);
 		} break;
 		default: break;
 	}
@@ -1306,6 +1333,9 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	}
 	if (IsHomeFight(unit)) {
 		return EnqueueCombat(1.5f);
+	}
+	if (IBuilderTask* hold = circuit->GetMilitaryManager()->GetCreepPlanner()->MakeHoldTask(unit)) {
+		return hold;  // a pusher between creep steps stays by the front turret
 	}
 
 	const auto it = costQueries.find(unit);
@@ -2681,8 +2711,9 @@ void CBuilderManager::UpdateTurrets()
 		}
 	}
 
-	// Near a known enemy building seen lately, with no armed ally around: centred on itself
-	if (!cfg.isNearEnemy || isStalling) {
+	// In the field, the first that holds for a constructor orders. Away from it (a choke, our artillery), it only helps
+	// a job near itself too
+	if (isStalling || !(cfg.isNearEnemy || cfg.isShortChoke || cfg.isEnemyLine || cfg.isArtillery)) {
 		return;
 	}
 	std::vector<CCircuitUnit*> builders;
@@ -2695,41 +2726,141 @@ void CBuilderManager::UpdateTurrets()
 	if (builders.empty()) {
 		return;
 	}
+	// Near enemy: a known enemy building seen lately within enemy_reach, with no armed ally around; centred on itself
 	std::vector<AIFloat3> enemyBuildings;
-	for (const auto& kv : circuit->GetEnemyInfos()) {
-		if (picker->IsEnemyBuilding(kv.second, true)) {
-			enemyBuildings.push_back(kv.second->GetPos());
+	if (cfg.isNearEnemy) {
+		for (const auto& kv : circuit->GetEnemyInfos()) {
+			if (picker->IsEnemyBuilding(kv.second, true)) {
+				enemyBuildings.push_back(kv.second->GetPos());
+			}
 		}
 	}
 	const float sqReach = SQUARE(cfg.enemyReach);
 	auto isCover = [picker](const CCircuitDef* d) {  // mobiles, and statics that defend the field
 		return d->IsMobile() || picker->IsDefence(d);
 	};
+	// Short choke: one of our current line our ground-hitting towers don't cover all of, or that are short of the
+	// enemy army outside it (CFrontline, every 10 s). Enemy line: any of it. Each live (settled, no enemy artillery on
+	// it: as the picker's C) and defensible (towers can close it), within its reach of the line; centred on its gap
+	CChokeMap* chokeMap = circuit->GetChokeMap();
+	const CRegionGraph& graph = chokeMap->GetGraph();
+	std::vector<int> shortChokes, lineChokes;
+	std::vector<bool> isOnEnemyLine;  // enemy_line_budget for a choke on it, whichever caller takes it
+	if (cfg.isShortChoke || cfg.isEnemyLine) {
+		if (chokeMap->IsReady()) {
+			isOnEnemyLine.assign(graph.GetChokes().size(), false);
+			for (int c : chokeMap->GetEnemyLine()) {
+				isOnEnemyLine[c] = true;
+			}
+			auto isUsable = [&](int c) {
+				return (c >= 0) && graph.GetChokes()[c].isDefensible && chokeMap->IsChokeLive(c, frame);
+			};
+			if (cfg.isShortChoke) {
+				for (const CFrontline::SFront& f : circuit->GetMilitaryManager()->GetFrontline()->GetFront()) {
+					const int c = graph.FindChoke(f.chokeId);
+					if (f.IsShort() && isUsable(c)) {
+						shortChokes.push_back(c);
+					}
+				}
+			}
+			if (cfg.isEnemyLine) {
+				const std::vector<int>& line = chokeMap->GetEnemyLine();
+				std::copy_if(line.begin(), line.end(), std::back_inserter(lineChokes), isUsable);
+			}
+		} else {
+			chokeMap->Request();
+		}
+	}
+	auto nearChoke = [&](const std::vector<int>& list, const AIFloat3& pos, float reach) {  // the nearest in reach
+		int best = -1;
+		for (int c : list) {
+			const float dist = graph.GetLineDist(graph.GetChokes()[c], pos.x, pos.z);
+			if (dist <= reach) {
+				best = c;
+				reach = dist;
+			}
+		}
+		return best;
+	};
+	const struct {
+		const std::vector<int>& chokes;
+		float reach;
+		const char* caller;
+	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke"}, {lineChokes, cfg.enemyLineReach, "enemy line"}};
+	const float lineBudget = utils::clamp(cfg.enemyLineBudget, 0.f, 1.f);  // x the balance the account must hold
+	// Artillery: ours shooting a target in range (an artillery unit; an engaged anti-heavy squad with a unit in range,
+	// not mines or aircraft), only a building in anti-heavy mode; centred on it (a squad: its leader), unless a turret
+	// that hits ground (ours or an ally's, being built or queued too) stands within defended_radius of it
+	std::vector<AIFloat3> artillery;
+	if (cfg.isArtillery) {
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		auto isBuilding = [](const CEnemyInfo* e) {
+			return (e != nullptr) && (e->GetCircuitDef() != nullptr) && !e->GetCircuitDef()->IsMobile();
+		};
+		for (const IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::ARTY)) {
+			const CArtilleryTask* arty = static_cast<const CArtilleryTask*>(t);
+			if (!t->GetAssignees().empty() && (arty->GetAhActivity() == CMilitaryManager::AhNote::ENGAGE)
+				&& (!arty->IsAntiHeavy() || isBuilding(arty->GetTarget())))
+			{
+				artillery.push_back((*t->GetAssignees().begin())->GetPos(frame));
+			}
+		}
+		for (const IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::AH)) {
+			const CAntiHeavyTask* ah = static_cast<const CAntiHeavyTask*>(t);
+			if (ah->IsAttacking() && isBuilding(ah->GetTarget())) {
+				artillery.push_back(ah->GetLeader()->GetPos(frame));
+			}
+		}
+	}
+	const float sqArtilleryReach = SQUARE(cfg.artilleryReach);
+	auto isGround = [](const CCircuitDef* d) { return d->HasAntiLand(); };
+
 	for (CCircuitUnit* unit : builders) {
 		const AIFloat3& pos = unit->GetPos(frame);
-		if (std::none_of(enemyBuildings.begin(), enemyBuildings.end(), [&](const AIFloat3& b) {
-			return b.SqDistance2D(pos) <= sqReach;
-		})) {
+		if (std::any_of(enemyBuildings.begin(), enemyBuildings.end(), [&](const AIFloat3& b) {
+				return b.SqDistance2D(pos) <= sqReach;
+			})
+			// allied power around (a finished picker turret counts; a Claw minefield or an Antinuke doesn't)
+			&& (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, isCover) <= 0.f))
+		{
+			TryTurret(unit, pos, nullptr, false, "near enemy", isOrdered);
 			continue;
 		}
-		if (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, isCover) > 0.f) {
-			continue;  // allied power around (a finished picker turret counts; a Claw minefield or an Antinuke doesn't)
+		auto tryLines = [&]() {
+			for (const auto& l : lines) {
+				const int c = nearChoke(l.chokes, pos, l.reach);
+				if (c >= 0) {
+					TryTurret(unit, chokeMap->GetCellPos(graph.GetChokes()[c].centre), nullptr, false, l.caller, isOrdered,
+							isOnEnemyLine[c] ? lineBudget : 1.f);
+					return true;
+				}
+			}
+			return false;
+		};
+		if (tryLines()) {
+			continue;
 		}
-		TryTurret(unit, pos, nullptr, false, "near enemy", isOrdered);
+		AIFloat3 defencePos;
+		auto arty = std::find_if(artillery.begin(), artillery.end(), [&](const AIFloat3& a) {
+			return (a.SqDistance2D(pos) <= sqArtilleryReach) && !HasTurretDefence(a, cfg.defendedRadius, isGround, defencePos);
+		});
+		if (arty != artillery.end()) {
+			TryTurret(unit, *arty, nullptr, false, "artillery", isOrdered);
+		}
 	}
 }
 
 bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit, bool isDefendedSkip, const char* caller,
-		bool& isOrdered)
+		const std::function<bool (const CCircuitDef*)>& canHit, bool isAfterFlee, const char* caller, bool& isOrdered,
+		float budgetMod)
 {
 	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, canHit);
-	if (defs.empty() || AssistTurret(unit, centre, canHit, caller)) {
+	if (defs.empty() || AssistTurret(unit, centre, canHit, !isAfterFlee, caller)) {
 		return true;
 	}
 	const CTurretPicker::SConfig& cfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
 	AIFloat3 defencePos;
-	if (isDefendedSkip && HasTurretDefence(centre, cfg.defendedRadius, canHit, defencePos)) {
+	if (isAfterFlee && HasTurretDefence(centre, cfg.defendedRadius, canHit, defencePos)) {
 		circuit->LOG("TURRET %s, by %s %i: nothing, a defence at (%.0f, %.0f) within %.0f of (%.0f, %.0f)", caller,
 				unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), defencePos.x, defencePos.z,
 				cfg.defendedRadius, centre.x, centre.z);
@@ -2751,7 +2882,7 @@ bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
 	}
 	// porcupine.budget: the turret account covers the dearest it might pick, so the opening's income isn't spent on
 	// towers before the account has filled
-	if (isOrdered || !circuit->GetMilitaryManager()->CanAffordTurret(maxCost)) {
+	if (isOrdered || !circuit->GetMilitaryManager()->CanAffordTurret(maxCost * budgetMod)) {
 		return false;
 	}
 	isOrdered = true;
@@ -2787,7 +2918,7 @@ bool CBuilderManager::IsHitFor(const CCircuitDef* def, bool isAir, bool isWater)
 }
 
 std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit) const
+		const std::function<bool (const CCircuitDef*)>& canHit, bool isLightOnly) const
 {
 	// Land or water by the def's own depths at the centre, as the terrain data sorts buildings; the footprint is the
 	// picker's (FindSiteAt, spot by spot)
@@ -2810,6 +2941,9 @@ std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, con
 		}
 	};
 	add(cfg.light);
+	if (isLightOnly) {
+		return defs;
+	}
 	// The tiers our share of the map's mexes has unlocked (the picker tries the heaviest first)
 	const float mexShare = cfg.tiers.empty() ? 0.f : picker->GetMexShare();
 	for (const CTurretPicker::SConfig::STier& tier : cfg.tiers) {
@@ -2821,10 +2955,11 @@ std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, con
 }
 
 bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit, const char* caller)
+		const std::function<bool (const CCircuitDef*)>& canHit, bool isHelpNear, const char* caller, bool isAnyJob)
 {
 	// Whoever queued it: the porc sweep, a cornered builder or the picker. A started one, or a picker job not
-	// started yet, of a defence that hits what canHit asks for. The nearest the builder may take
+	// started yet (isAnyJob: any job not started yet), of a defence that hits what canHit asks for. The nearest the
+	// builder may take
 	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const CTurretPicker::SConfig& cfg = picker->GetConfig();
 	const int frame = circuit->GetLastFrame();
@@ -2837,13 +2972,14 @@ bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
 	for (IBuilderTask* t : GetTasks(IBuilderTask::BuildType::DEFENCE)) {
 		const CCircuitDef* tdef = t->GetBuildDef();
 		if ((t == unit->GetTask()) || !picker->IsDefence(tdef) || (canHit && !canHit(tdef))
-			|| ((t->GetTarget() == nullptr) && !static_cast<CBDefenceTask*>(t)->IsPicker()))
+			|| ((t->GetTarget() == nullptr) && !isAnyJob && !static_cast<CBDefenceTask*>(t)->IsPicker()))
 		{
 			continue;
 		}
 		const AIFloat3& tpos = t->GetPosition();
 		const float sqDist = tpos.SqDistance2D(pos);
-		if ((tpos.SqDistance2D(centre) > SQUARE(cfg.radius)) || (sqDist >= bestSqDist) || !t->CanAssignTo(unit)
+		if ((tpos.SqDistance2D(centre) > SQUARE(cfg.radius)) || (isHelpNear && (sqDist > SQUARE(cfg.radius)))
+			|| (sqDist >= bestSqDist) || !t->CanAssignTo(unit)
 			|| !terrainMgr->CanReachAt(unit, tpos, buildDist) || !IsCommJobSafe(state, tpos, t))
 		{
 			continue;
@@ -2859,11 +2995,12 @@ bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
 	const AIFloat3& tpos = best->GetPosition();
 	circuit->LOG("TURRET %s, by %s %i: helps the %s %s at (%.0f, %.0f)", caller,
 			unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), best->GetBuildDef()->GetDef()->GetName(),
-			(best->GetTarget() != nullptr) ? "being built" : "picker job", tpos.x, tpos.z);
+			(best->GetTarget() != nullptr) ? "being built"
+				: static_cast<CBDefenceTask*>(best)->IsPicker() ? "picker job" : "job", tpos.x, tpos.z);
 	return true;
 }
 
-bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
+CBuilderManager::DefenceFound CBuilderManager::FindTurretDefence(const AIFloat3& centre, float radius,
 		const std::function<bool (const CCircuitDef*)>& canHit, AIFloat3& outPos) const
 {
 	// Finished or being built, ours or an ally's; and our jobs not started yet (the porc sweep's, say). As
@@ -2874,26 +3011,36 @@ bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
 	auto isDefence = [picker, &canHit](const CCircuitDef* d) {
 		return picker->IsDefence(d) && canHit(d);
 	};
+	DefenceFound found = DefenceFound::NONE;
+	auto take = [&](DefenceFound f, const AIFloat3& pos) {
+		if (f > found) {
+			found = f;
+			outPos = pos;
+		}
+	};
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const AIFloat3& pos = kv.second->GetPos(frame);
-		if (utils::is_valid(pos) && (pos.SqDistance2D(centre) <= sqRadius) && isDefence(kv.second->GetCircuitDef())) {
-			outPos = pos;
-			return true;
+		if (!utils::is_valid(pos) || (pos.SqDistance2D(centre) > sqRadius) || !isDefence(kv.second->GetCircuitDef())) {
+			continue;
 		}
+		if (!kv.second->GetUnit()->IsBeingBuilt()) {
+			outPos = pos;
+			return DefenceFound::FINISHED;
+		}
+		take((circuit->GetTeamUnit(kv.first) != nullptr) ? DefenceFound::OURS_PENDING : DefenceFound::ALLY_PENDING, pos);
 	}
 	for (const IBuilderTask* t : GetTasks(IBuilderTask::BuildType::DEFENCE)) {
 		if ((t->GetTarget() == nullptr) && (t->GetPosition().SqDistance2D(centre) <= sqRadius)
 			&& isDefence(t->GetBuildDef()))
 		{
-			outPos = t->GetPosition();
-			return true;
+			take(DefenceFound::OURS_PENDING, t->GetPosition());
 		}
 	}
-	return false;
+	return found;
 }
 
 IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::vector<CCircuitDef*>& defs, const char* caller)
+		const std::vector<CCircuitDef*>& defs, const char* caller, float radius, bool isCreep)
 {
 	CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const int frame = circuit->GetLastFrame();
@@ -2903,8 +3050,48 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	order.centre = centre;
 	order.defs = defs;
 	order.caller = caller;
-	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::PICKER);
+	order.radius = radius;
+	order.isCreep = isCreep;
+	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(),
+			isCreep ? CMilitaryManager::TurretSpend::CREEP : CMilitaryManager::TurretSpend::PICKER);
 	return picker->Order(order);
+}
+
+int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius, bool isHelpOnly,
+		bool isLightOnly)
+{
+	if (IsMetalStalling()) {
+		return 0;
+	}
+	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, nullptr, isLightOnly);
+	if (defs.empty()) {
+		return -2;
+	}
+	if (AssistTurret(unit, centre, nullptr, true, "creep", true)) {
+		return 1;
+	}
+	if (isHelpOnly) {
+		return -2;  // not one it may take (out of reach, unsafe): never a second turret beside it
+	}
+	if (!circuit->GetMilitaryManager()->CanAffordTurret(GetCreepCost(defs))) {
+		return 0;
+	}
+	return (OrderTurret(unit, centre, defs, "creep", radius, true) != nullptr) ? 1 : -1;
+}
+
+float CBuilderManager::GetCreepCost(CCircuitUnit* unit, const AIFloat3& centre, bool isLightOnly) const
+{
+	return GetCreepCost(GetTurretDefs(unit, centre, nullptr, isLightOnly));
+}
+
+float CBuilderManager::GetCreepCost(const std::vector<CCircuitDef*>& defs) const
+{
+	float maxCost = -1.f;
+	for (const CCircuitDef* d : defs) {
+		maxCost = std::max(maxCost, d->GetCostM());
+	}
+	const float share = utils::clamp(circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().creepBudget, 0.f, 1.f);
+	return (maxCost < 0.f) ? -1.f : maxCost * share;
 }
 
 std::string CBuilderManager::OrderTurretAt(const AIFloat3& pos, CCircuitDef* def)

@@ -5,7 +5,231 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ## Unreleased
 
+### Changed
+
+- **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
+  shoot and scoot.**
+  - Walk goals are every known heavy and commander, mobile or static, also those already in range. The route query
+    takes the nearest covered firing spot. Before, a heavy in range that it couldn't shoot from where it stood (no
+    cover, reloading, radar only) was no goal at all, and static heavies were goals only while no mobile one was
+    known anywhere, so it walked off to far heavies past nearby ones it could hit from a step away.
+  - `antiheavy.artillery_scoot` (new, 200 shipped; 0 or missing = off): after each shot, once its burst is over
+    (`CCircuitDef::GetBurstFrames`, for Merlin's rockets), the unit steps this far back from the target, whether it
+    is threatened or not, holds there and turns back in time to be in place when its weapon is ready. It goes
+    straight back, else up to 90 degrees to a side, to the first spot it can reach that is no hotter than where it
+    fired; with none, or no time to get there and back, it doesn't scoot. The flee still comes first.
+  - A heavy in range is shot from a firing spot picked as attack groups pick theirs (`IFighterTask::Attack`,
+    `FindFireSpot`, weighted by `quota.attack_spot_threat`): on an arc at 90% of the unit's range facing it, or where
+    it stands while at 60-95% of the range, the cheapest by threat and walking distance among the spots it may shoot
+    from (`CArtilleryTask::IsFireSpotAllowed`: the rules of a spot it walks to, without the threat of the heavies it
+    may shoot now). The pick is renewed every 3 s and when the target moves a tile, so the unit keeps its distance and
+    backs off from a heavy that closes in. Before, it shot from wherever it stood. With no such spot it still does.
+
+### Fixed
+
+- **Artillery groups shoot any other building before a shut pop-up turret, and nano towers before turrets.** A
+  closed Faraday, Gauss, Desolator, Lucifer or Hacksaw takes a third of the damage, yet artillery shot at it like any
+  other turret. The pick in range was also order-dependent: builders and the strongest building won only if closer
+  than the current pick, so a turret found first stayed ahead of a nano tower behind it. Now the pick in range ranks
+  shut pop-up turrets last, then builders (nano towers, factories), armed buildings by power, unarmed ones, no-chase
+  ones, the nearest first within each.
+  - The AI can't read an enemy's armoured state, so it guesses (`CArtilleryTask::IsPopupShut`). A pop-up turret
+    (`CCircuitDef::IsPopup`) is an armed building with `damageModifier` < 1. One under construction is never
+    armoured.
+    - Desolator and Lucifer open by their on/off switch (`onoffable`): shut while switched off, read in LOS; out of
+      LOS they count as open. Low power doesn't armour them (their close stalls while unpowered), so an unpowered
+      one, which can't shoot back, ranks as any other armed building.
+    - Faraday, Gauss and Hacksaw open to aim: open while an allied unit of a layer it can hit is within its range
+      + 64 elmos. They close 2 to 5 s after their last target, under a unit's ~4 s re-pick period.
+  - Anti-heavy artillery is unchanged.
+- **Regions stay put through a fight: a rebuild for terrain keeps the last build's choices while they still work.**
+  With too few regions for `choke.region.min_count`, each rebuild chose afresh whether to keep the merge-1 rebuild
+  and which grid to cut by. The grid picked is the first that reaches `min_count`, often just, so a crater that cost
+  it one piece moved every cut to the next grid; a region more or less flipped the rebuild and its chokes. Now a
+  rebuild for terrain tries the last grid first and keeps it while it still cuts `min_count` pieces, and keeps or
+  drops the merge-1 rebuild as last time unless that is more than a region off. The first build, a key set and new
+  gating classes choose afresh.
+  - Over 5 rebuilds of 8 more small craters each on 60 test maps, a choice changes on 5 to 16% of rebuilds, was 21
+    to 40%, and 66 to 83% of the ground keeps its region through all five, was 60 to 78%. The openness band changes
+    on 18 of 900 rebuilds, was 25.
+  - It never makes fewer than `min_count` regions. Keeping a grid a fresh pick would have made coarser gives 21.5 to
+    22.3 regions on average at `min_count` 20, was 20.7 to 21.2; the biggest region is no bigger.
+- **Team games: no more towers in allies' bases** (`porcupine.own_clusters` and `porcupine.ally_cover`, both new,
+  default true). Every Wires AI swept every cluster the ally team held, each with its own preventive dice and income
+  cap, so a cluster got the highest roll and the richest cap among them, inside allies' bases too. Now:
+  - Each cluster has one owner for the ally team (`CMetalManager::GetClusterOwner`): the team with the most finished
+    mexes there (the lower team id on a tie), kept until another has strictly more or it has none left. A resign or a
+    share moves it to the new holder. Only the owner's sweeps, mex chain and sightings put towers there (porc ones
+    too); the sweeps skip other clusters without spending a tick. Our geo's vent always counts.
+  - The owner answers sightings at every ally's mex in its clusters, not only at its own.
+  - The preventive dice are thrown once per cluster for the ally team, so a new owner rolls the same count.
+  - A cluster's preventive total is the larger of the towers booked on its points (every Wires ally's) and the metal
+    of the ally team's towers within range of its mex points (off-point and human towers; nanoframes and stunned
+    ones count), so towers the matrix never booked count without counting any twice.
+
+- **No more shard regions on open maps: the regions made for `min_count` are of a size** (`choke.region.min_share`,
+  new, 0.5). With too few regions, the build ran again up to 4 times with `merge` raised to 1 and `min_area` lowered
+  to a quarter, and kept the build with the most regions. On an open map with craters (Red Comet) that reached
+  `min_count` by keeping every small basin between craters: slivers between two lines and regions about 200 elmos across
+  beside ones a hundred times their size, so the grid cut never ran. Now:
+  - The rebuild runs once, with `merge` at 1. It still merges across any choke wider than `choke.defensible`.
+  - Neither the rebuild nor the grid cut makes a region under `min_share` of the ground per `min_count` region; they
+    use that as `min_area` where it is bigger. A first build that already has `min_count` regions keeps `min_area`,
+    so pockets behind narrow gaps stay.
+  - A grid cut that can't reach `min_count` (a `min_share` above 0.6, or ground in small islands) keeps the grid
+    that made the most regions, not the last one tried. With `min_area` 0 and no ground at all, the cut no longer
+    loops forever.
+  - The cut's grid is now exactly mirror-symmetric: a column whose middle fell on a cell border took the cell to
+    its right on both halves, one cell off its mirror. A 256-cell-wide open map cut in two now gives two halves of
+    32,768 cells each, was 32,512 and 33,024; on point-mirrored test maps 1 to 2 more points of cells mirror.
+  - On a trace of Red Comet: 20 regions of 0.6 to 1.5 times the average, was 25 of 0.03 to 4 times. Over 180 random
+    crater maps at `min_count` 12, 20 and 30, the biggest region is on average 1.2 to 1.8 times the average, was 1.4
+    to 13 times; the regions under 0.4 times the average left are pockets of the first build.
+  - Steadier and faster: with 40 small craters on the 16x16 test masks, 91 to 93% of region ids carry over, was 42
+    to 53%. A build with cuts takes 11 ms on 256x256 cells and 45 ms on 512x512, was 22 and 114 ms.
+  - The `CHOKE graph` log line says "rebuilt with merge 1.00, min_area ..." when the rebuild was kept.
+
+- **Crash in target claims after a group merged.** A raid or attack group that merges into another is aborted at once
+  but deleted only when the staggered fight update reaches it, up to a second later. Until then it stayed bound to its
+  target and kept its old leader. If that unit died in the meantime, another group's `IsClaimedByNearer` read the
+  freed unit (`CAllyUnit::GetPos`, access violation, seen at 13 minutes on TitanDuel). A fighter task now lets go of
+  its target when it ends (`CMilitaryManager::DequeueTask`), a merged group drops its leader, and the claim check
+  skips dead tasks.
+
+- **Open maps get at least 20 regions, cut evenly, not along the distance to the walls** (`choke.region.min_count`,
+  now 20, was 12). On an open map the first build has few regions, so the build ran again with `merge` raised up to
+  1, which splits regions wherever the distance to the nearest wall dips. On Conquest of Paradise that split the map
+  in two down its mirror line, then into 37 regions whose chokes ran across open ground at random. Now:
+  - A relaxed build still merges across any choke wider than `choke.defensible`, so relaxing only finds the narrow
+    chokes the first build merged away.
+  - With still too few regions, seeds go on a grid of the map that gets a column or a row finer until there are
+    `min_count`, and each big region's cells go to its nearest seed (walking); a piece under `min_area` goes to its
+    neighbours. The grid depends only on the map's size and is centred, so a crater moves no seed and a mirrored map
+    gets mirrored pieces. The `CHOKE graph` log line and the overlay say how many regions were added.
+  - A line between two pieces of one region is a cut (`SChoke::isCut`), a choke as wide as the ground it crosses. It
+    counts like any other choke; the overlay labels it `cut`.
+  - A crater rebuilds the graph at once only when it joins two regions away from where they already meet, so craters
+    on a cut, or widening a choke, wait for the 5 minute terrain rebuild, while a ramp terraformed into a base still
+    rebuilds it at once.
+  - On synthetic 16x16 masks, `min_count` 20 gives 20 to 23 regions of 1,511 to 3,705 cells, and 98 to 99% of region
+    ids and 70 to 80% of choke ids carry over 5 craters. A corridor map still relaxes from 4 regions to 16 at narrow
+    chokes, then cuts 4 more. A build with cuts takes 29 ms on 256x256 cells and 130 ms on 512x512.
+
+- **Planner off: no small radar under an Advanced Radar.** `MakeDefence` queued a Radar Tower behind a cluster unless
+  another Radar Tower stood nearby; now any static radar whose view holds all of the small one's counts.
+- **Preventive towers: the roll is the cluster's total, thrown once.** A cluster's preventive count
+  (`porcupine.prevent`) was handed to each of its defence points: every finished mex, sighting and sweep visit gave
+  that mex's point the count again, so nearly every mex got a tower. Each re-roll and sighting also threw fresh dice
+  while towers are never called off, so a cluster ended with the best of many throws. Now the count is the cluster's
+  total over its mex points (towers already there count, porc ones too; a vent's point is still its own), and each
+  cluster keeps the dice of its first roll, so the count only moves with the chance (the mex share). The PREVENT log
+  line shows the dice.
+- **Turret budget: a lost tower pays back only what it was charged.** `porcupine.budget.loss_refund` paid 2x the cost
+  of any lost armed defence, free preventive towers included, which pushed the account past its cap and funded
+  porc and picker towers. Now it pays loss_refund x what the account charged the tower's job; a free tower pays
+  nothing.
+
 ### Added
+
+- **The creep: turrets walk out along our line's chokes, up to just outside the enemy's static range**
+  (`turret.creep`, on by default; new `CCreepPlanner`). Our turrets stayed where they were first placed, often far
+  back. Now, once a second, along the choke analysis:
+  - Lanes: the live chokes of our current line, highest `CFrontline` rank first (it now runs while the creep is on).
+    Each heads for its outer region's choke nearest the enemy's held ground (its centre if it is all they hold),
+    kept until another is 20% nearer, into
+    enemy-held ground too, stopping at their turrets' range. A finished ground defence by the target claims the lane:
+    held ground turns the region ours and the line, and the creep, move on to its exits. It starts from a first
+    ground turret another caller built.
+  - A step: from our ground-hitting turret nearest the target in the lane's two regions (else anywhere), only if it
+    brings us nearer the enemy; `turret.creep_step` (0.7) x its range through the lane's gap, then toward the target,
+    landing on it once within one; pulled back to a half, then a quarter, out of every known enemy static's range +
+    `turret.creep_margin` (64). The picker searches half a step about its end, so it lands ahead. Light defs on
+    the way; the unlocked tiers too only at the enemy's line (onto the target, or pulled back by their range). A job
+    of ours already there, by any caller, is helped, never doubled; an ally's turret being built there takes the
+    step.
+  - Rests: `turret.creep_losses` (2) of our turrets lost in the lane, or two failed steps within 2 minutes (no spot,
+    or dropped on arrival), rest it 2 minutes, doubling up to 16 while it keeps failing. A step's end under threat
+    only waits.
+  - Pushers: `turret.creep_builders` (1) plus one per `turret.creep_income` (30) metal/s, with hysteresis; the
+    commander first unless hide mode holds it, then the free mobile ground constructors nearest a lane (one swapped
+    for a free one at under half its distance, one a second). Each, every
+    `turret.creep_interval` (10) s at most, takes the highest-ranked of the three lanes nearest it and orders a picker
+    turret about its step's end (`turret.creep_radius`, 250). It shares the turret account: it needs
+    `turret.creep_budget` (0.5) x the dearest def it would choose from there and is charged the full cost (the
+    `creep` spender).
+  - The picker's threat rule for a creep order, at the order and on arrival: no spot inside any known enemy static's
+    land range + `creep_margin`; mobile threat passes only where our guns' power covering the spot exceeds it.
+  - Between steps a pusher guards its lane's turret, if its step's end isn't under threat, the account fills for
+    its next order within two intervals and metal isn't stalling, instead of taking a job elsewhere.
+  - A `CREEP` log line each minute with why lanes were skipped; all keys settable with `choke_overlay set
+    turret.<key>`.
+
+- **Turret picker: three more callers, and a longer near-enemy reach.** Under the same gates as the near-enemy
+  caller (free mobile ground constructor, cooldown, no metal stall, the turret account, one order a second,
+  helping a turret already within `turret.radius`), a constructor now also orders a turret when it is within
+  `turret.short_choke_reach` (600) of a short choke of our current line (`turret.short_choke`); within
+  `turret.enemy_line_reach` (800) of a choke of the enemy line (`turret.enemy_line`; the turret account need hold only
+  `turret.enemy_line_budget`, 0.5, x the cost, though the full cost is charged), both centred on the nearest
+  such choke's gap and only for defensible chokes that are settled and free of enemy artillery (as the picker's C);
+  or within `turret.artillery_reach` (600) of our artillery shooting a target in its range or of an anti-heavy
+  squad engaged with a unit in range of its target (not mines or aircraft; anti-heavy only against a building),
+  with no ground-hitting turret within `turret.defended_radius` of it, centred on the artillery or the squad's
+  leader (`turret.artillery`). Away from the constructor, it only helps a job within `turret.radius` of itself
+  too. All on by default. `turret.enemy_reach` goes from 600 to 700. The short-choke caller reads the frontline's
+  short chokes, so those are now computed whenever it is on (the enemy-held rankings only while the overlay is);
+  the choke callers ask for the choke analysis once a constructor could order.
+- **Radar planner: the Advanced Radar.** With `choke.radar.enable` on, the planner now builds `staticheavyradar`
+  (`choke.radar.heavy`) once the ally team's metal income reaches `choke.radar.heavy_income` (40 metal/s), where one
+  would add `heavy_min_gain` (15%) of the map's weight and stands `heavy_depth` (1500 elmos) from enemy ground. Not by
+  a commander; one job per AI at a time; rebuilt 90 s after a loss, with losses within 1500 elmos counting against a
+  spot. Its two-tower build_chain hub moved from `big_gun` to `radar`, so it now fires for it. Build-chain hub `radar`
+  steps (`choke.radar.chain`) go through the planner: skipped where covered, placed at the best spot near the offset,
+  or built as the heavy with `"upgrade": true` (set on the big guns' and the nuke's hubs). While the planner places
+  it, the porc lists leave the heavy out.
+- **Radar planner: coverage is finished radars plus live radar jobs.** Every active radar job of the ally team's AIs
+  (the planner's, a hub's) covers its view until the job ends, instead of for 90 s, so a slow LOW job keeps its area;
+  a nanoframe whose job was dropped no longer holds an area dark, though it still keeps radars 500 elmos off.
+- **Escalation waits for game time** (`escalation.since`, default 480 s): escalation mode can't turn on before
+  8 minutes of game time, whatever the army ratio, enemy tech and terraform checks say. 0 = from the start.
+- **Turret budget multipliers by map size and map control** (`porcupine.budget.map`, `porcupine.budget.mex`): the
+  account's fill rate (and so its bank cap) is also multiplied by a curve of map area per player on our team (as
+  `prevent_map`, fixed for the game; default `[[64, 1.00], [256, 0.66]]`) and a curve of the ally team's share of
+  metal spots with finished mexes (as `prevent_mex`, every 10 s; default flat x1). Missing or [] = x1. TURRET BUDGET
+  lines show both.
+- **BUILDERS log line, once a minute**: the constructors queued in the last minute by the rule that asked (income,
+  army, reclaim, a factory's tier-weight roll, the opener), and where each rule stands now (workers and their metal,
+  build power against income x buildpower, army x buildpower_army, reclaim x buildpower_reclaim).
+- **Melee units spread over targets and keep out of death explosions** (`quota.attack_melee_max`,
+  `attack_melee_spread`, `attack_melee_blast`). In attack, defend, anti-air and raid groups, at most 6 melee units (fewer
+  if there isn't room round the target) close in on the group's target. Close spots span the half ring facing them
+  (was a 45 degree arc) and a spot within a body's width of another unit's costs a walk of about 4 arc steps, so they
+  spread round it instead of stacking. The rest take the nearest other enemy in sight within 400 elmos that they can
+  hit and may chase and that has a safe firing spot next to it (an enemy without one is passed over by the group's
+  melee units for 5 s); a unit fighting at another enemy keeps it until it dies; with nothing valid around they bunch
+  on the group's target as before. A target whose death explosion deals at least 0.1 x a melee unit's health and
+  reaches its close spots is a blast for it: if its weapon reaches past the blast it fires from a normal firing spot
+  within 90% of its range, as ranged units do, so a fusion, turret or commander going up no longer hits the bunched
+  group. Unit defs now read their death explosion's radius and damage (`CCircuitDef::GetDeathAoe`,
+  `GetDeathDamage`).
+
+- **`choke_overlay sides`: who owns each region and choke.** A new overlay layer colours each region and choke by
+  its owner (enemy mobiles seen in the last minute, enemy buildings until seen dead). A region is the side's with
+  buildings in it, contested when both sides have buildings there or the other side's threat is at least a third of
+  the owner's, and nobody's with no buildings, whatever armies stand in it. A choke is defended by a side whose
+  ground-hitting towers cover all of its gap, contested when both do, when the other side's towers reach any of it or
+  its mobiles there are a third of the defender's threat, and nobody's when no side covers all of it.
+  Regions are blue, red, striped or clear, stronger where the lines take them as that side's ground (see Changed).
+  Each choke is a gate across its gap: its
+  core coloured by owner, posts at its ends when towers reach part of it, and a casing when it is on a line (white front line,
+  green or orange our current line by whether its towers cover what it wants, the enemy line by tower cover, yellow forward
+  line). Info boxes show the numbers behind each owner: hostile and allied threat (total, mobile, static) and eco, for
+  the region and choke at the cursor and, zoomed in, for owned ones near the camera. Each enemy the AI counts is
+  marked where it believes it is (filled while seen, an outline where last seen), so a spectator with full view can
+  tell which enemies it knows of; the legend says in red when the AI's LOS cheating option is on, and the infolog
+  says `LOS cheating: on` or `off` at start. A legend is printed bottom left.
+  It is drawn by a LuaUI widget, `util/LuaUI/Widgets/dbg_circuit_sides.lua`, which the AI reaches through
+  `Lua_callUI` on the machine that runs it, never in games with human opponents; without the widget the layer shows
+  the `lines` layer. The choke lines go round the ground it shows each side owning (see Changed).
 
 - **Build chain hub towers get scored spots** (with `choke.spot.enable`). An armed hub tower that shoots the ground goes
   to `FindSpot`'s best spot guarding the building that started the chain, within `choke.spot.radius`, instead of its
@@ -211,11 +435,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   400 elmos), ahead of the leader only.
 
 - **Chokepoints** ([doc/chokepoints.md](doc/chokepoints.md)). Every feature is off by default (`choke.enable`,
-  `choke.spot.enable`, `choke.radar.enable`, `choke.objective.enable`, `choke.expand`, `quota.hold_choke`), and with
+  `choke.spot.enable`, `choke.radar.enable`, `choke.expand`, `quota.hold_choke`), and with
   all of them off the AI plays as before.
   - Each ally team learns the map's shape, shared by allied AIs and built on the area worker. It finds the chokes
-    between regions the enemy's walkers can cross, the pockets of clusters behind them, the current and forward
-    lines, the enemy line (the current line's cut nearest the enemy) and the front line where the two touch. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
+    between regions the enemy's walkers can cross, the pockets of clusters behind them, our (current) line, the
+    enemy line and the front line between them. A cell is crossable when 3 of its 4 finer parts are, so thin cliffs and spike sides stay walls, and two cells only meet where their parts do, so a thin diagonal cliff does too. It also maps where enemy traffic goes, blended by the enemy's army mix, and how open the map is.
   - Choke defence (A): each cluster of a qualified pocket keeps its AA and its first tower, and the rest goes to the
     pocket's entrances, from a budget of what its held clusters would spend anyway. Modes switch at most every 3
     minutes. Narrow chokes keep a lane free of buildings.
@@ -234,8 +458,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     view must be new. So radar follows the builders as they expand. The first goes up once the first factory
     stands. Once a radar stands, a `choke.radar.guard` tower (turretmissile) goes at the best spot within
     `choke.radar.guard_radius` (300 elmos), unless a tower already reaches it.
-  - Holding the line (C), forward objectives (D) and rankings of enemy-held and enemy line chokes, with undefended
-    ones flagged (E).
+  - Holding the line (C) and rankings of enemy-held and enemy line chokes, with undefended ones flagged (E).
   - Expansion bonus for clusters behind a defended cut.
   - `choke_overlay` chat command: draws chokes, pockets, lines, rankings, traffic, spots, radar and regions with map
     figures, and announces each threat-graph rebuild with the enemy types behind it. In games with no human
@@ -600,6 +823,186 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `behaviour.json` gains `energygeo` and `energyheavygeo` entries.
 
 ### Changed
+
+- **Lance, Merlin, Phantom and Racketeer behave as artillery, with heavies as targets** (`antiheavy.as_artillery`, shipped on; missing =
+  off). Anti-heavy units on the ground with a long reload (5 s or more) that are not mines or melee units (main role
+  anti_heavy, or snipe_target and disarm_target, which `role.as` binds to it) now get
+  the artillery task (one unit each) instead of anti-heavy squads, the army or support tasks, always, not only while
+  a heavy is around. It works as artillery does (`artillery` block): shoot from where it stands when that spot is
+  safe and covered, otherwise walk to a covered safe firing spot within range, otherwise stay put while safe and
+  covered or move behind the nearest attack or defend group (`follow_dist`), and flee from enemies within their
+  range + `artillery_flee_margin` (Lance: 150, its own `artillery_flee_margin`). Differences from artillery:
+  - Its targets are the heavies and commanders anti-heavy squads hunt, mobile or not, instead of buildings, and it
+    fires only at those in LOS (radar blips are still walked to). In range: mobile first, then one its shot kills,
+    commanders, the strongest, the nearest. Out of range, it walks only to mobile heavies while any is known, and to
+    static ones (Stinger, Faraday, fusions, ...) otherwise. A target that the ready shots of other anti-heavy units targeting it would kill (over 1.1x
+    its health and shield) is left to them, so several Lances don't spend their shots on one small heavy.
+  - Safe is not only threat-free: also where our cover there (mobile armed units and static defences within
+    `ally_radius`, as the flee counts them), minus the threat there, still reaches `ally_threat`, so it shoots from
+    behind the army in a fight instead of waiting for a lone heavy. A spot to walk to also stays within the route cap
+    (`max_path_threat`).
+  - A heavy it hunts is neither a flee danger nor makes its spot unsafe to shoot from while its weapon is ready and
+    it out-ranges the heavy or the heavy is within its range; while it reloads that heavy counts like any other enemy,
+    so it steps back after a shot.
+  - No hold fire: the attack order fires at the target, and it fires at will otherwise. The attack order is cancelled
+    as soon as it no longer attacks (no target, no cover, fleeing): the engine would otherwise follow a heavy that walks
+    away, whatever the move state, and fire at it once only radar sees it.
+  - Following the army, it walks a route to its safety spot to the end instead of stopping the moment it is covered
+    again (all artillery), so it doesn't stop and start at the edge of cover.
+  - Lance retreats at 65% health, not 99%: standing under cover in fights, any hit sent it home.
+  - Going idle (after our own stop orders, or a finished attack) no longer replaces its task with a new one: it
+    decides again on the next update, keeping its route, its walk to safety and its flee timer.
+
+  These units no longer count as artillery escorts. Ultimatum, Scorpion, Widow, Skuttle and aircraft keep the
+  anti-heavy squads, whose overkill check now counts these units' ready shots too (`CMilitaryManager::GetAhReadyDamage`,
+  shared). The squads' safe-spot test takes the target's threat off as the threat map drew it
+  (`CThreatMap::GetEnemyThreatAt`), not its full threat inside its ring, so no other threat hides behind it. The ANTIHEAVY log line covers them
+  too (hunting = walking to a firing spot, parked = holding or following).
+
+- **The choke lines go round who owns the ground, armies included.** The current, enemy and front lines were cut
+  between territory, which only buildings make, so our line could run through ground the enemy army held and behind
+  ground ours had taken, and against a scouted enemy outpost the enemy line left the enemy's unscouted
+  base outside it. Now they go round held ground: each region's owner as the `sides` tint shows it (the side
+  with buildings there; contested by both sides' buildings, each side's worth a third of the other's metal there, or
+  by the other side's threat at a third of the owner's;
+  nobody's with no buildings), once it has owned it for 20 s, with the enemy's side of the map counting as theirs
+  where nobody owns it. Enemy mobiles count for a minute after they were seen, enemy buildings until seen dead,
+  neither once the AI has seen their spot empty. Contested and nobody's ground between the sides keeps our line and
+  theirs apart, so an enemy army in our ground pulls our line back behind it. Each side's ground counts only where it
+  joins that side's main ground (on its side of the map) without crossing the other's, so an enemy outpost deep in
+  our ground doesn't wrap our line round it. Held ground replaces territory (20 s to join, 60 or 120 s to leave)
+  everywhere: pockets qualify when the ground right outside them isn't the enemy's, and the radar planner weighs and
+  places by it.
+  - The lines were each one cheapest cut, which could leave an entrance off a line when a cheaper set of chokes
+    further out also split the sides. Our line is now every choke out of our ground into a region the enemy can
+    walk to without crossing our ground, and the enemy line its mirror round theirs. The front line was the chokes
+    both cuts shared; it is now the chokes where our ground meets theirs, neither side contested.
+  - The forward line and forward objectives (D: `choke.objective.enable`, `gain`, `power`, `retry`) are gone. The
+    objectives were the forward line's only reader, and were off by default.
+  - Our line and the ranked enemy chokes count the enemies held ground counts: armed mobiles seen in the last
+    minute, not the last 3 minutes, aircraft aside, and none whose spot was seen empty. What we saw of a ranked choke
+    counts for a minute too, so a choke seen 2 minutes ago with its army since forgotten isn't undefended.
+  - A ranked enemy choke counts as seen (and so can be undefended) only for the lower of the shares of its gap and of
+    the ground a main-tower range beyond it on the enemy's side in our LOS lately, not the gap alone.
+  - The `sides` widget draws the front line as a white rim round the other casings, so a front choke that is short
+    shows orange (the front line hid it). It draws an enemy line choke dark red (defended) when enemy ground-hitting
+    towers cover all of its gap and pink (undefended) when they don't, and no longer marks unranked or enemy-held
+    chokes off the lines. A region's info box says when the lines still take it otherwise.
+  - A choke of our line is short (orange, and what hold slots and fortifying go for) also when our ground-hitting
+    towers don't cover all of its gap, not only when its towers are short of the enemy army outside it.
+  - Hold slots go to the most short choke, not the top-ranked short one: the biggest shortfall (the enemy army
+    outside it over its towers), and where no choke has one, the least covered, the higher rank on a tie. A slot
+    moves once another choke is 1.3× as short (it was 1.3× the rank).
+  - Only finished towers the turret picker counts as defence (`CTurretPicker::IsDefence`) arm a region or cover a
+    choke, for both sides. One Big Bertha covered every choke in its range, so none of our line was short, and a
+    nanoframe covered its choke from its first second. Claw mines, missiles and other mobile buildings no longer count
+    at all, and a cheap building in a region the other side owns (an enemy radar by our base) contests it only when it
+    is worth a third of the owner's buildings there.
+
+- **Scored tower spots weigh what the turret picker does** (with `choke.spot.enable`). `FindSpot` scored a tower's
+  spot by its goal's approach traffic, enemy buildings, height and view only, so a defence point's or a choke's tower
+  ignored our buildings, the line chokes and the front that a picker turret weighs. Now it adds the picker's A (our
+  and allies' unarmed buildings in range, at cost × `turret.ally`), C (the best line choke in range, by its depth in
+  range and with its economy share, as the picker's C) and F (`turret.front` × the known enemy buildings' influence at the spot), as an order counts them
+  (`CTurretPicker::GetSpotShare`), so those keys tune scored spots too. Hold spots don't take them.
+
+- **The threat graph follows the enemy army's mix.** Walkers, tanks and hovers gated the graph as soon as one of
+  them was seen. In a logged game, a bot factory seen at 10:08 (2% of the enemy army) turned a tanks-only graph of
+  122 regions into 38, moving every choke. Now the graph is built from a few masks, one per way of walking (each
+  ground type's, the amphibious bots', the hovers'), and a mask gates by its share of the enemy army seen plus a
+  300-metal prior: on at `choke.gate_share`, or as the biggest once the army reaches 300 metal, off below half of
+  `choke.gate_share`. A mask that stops being a big part of the army stops shaping the graph, so the first type seen
+  (the only one, and so the biggest) no longer gates for the rest of the game, and a mix near the line doesn't flip
+  it back and forth. Until a mask first gates, the graph assumes vehicles (the ground types that climb the least)
+  instead of the opening default's walkers, tanks and hovers together, which gated until the opening ended (a
+  factory scouted for every enemy team, or 5 minutes): the graph started with the bots' few regions and snapped to
+  the tanks' many minutes after the first enemy units were sighted. After that, an army that died or faded under the
+  prior keeps the masks it had.
+
+- **Spiders and jumpers count for the kbots' mask.** A promoted spider type added the cells spiders climb to, which
+  on most maps joined every region into one; a promoted jumper type opened every wall a jump crosses. Now a jumper
+  type's cost counts for its own type walking, and a spider type's for the ground type that climbs the steepest
+  (bots), so their chokes are where kbots' are. Their traffic and reach still use their own cells.
+
+- **The turret picker leaves traffic out against spiders and jumpers.** While spiders and jumpers are
+  `choke.gate_share` of the enemy army (until they fall below half of that), the picker drops T, the enemy routes
+  under the turret, so a turret pays for itself in our buildings, known enemy buildings or line chokes in range.
+  Scored tower spots (`choke.spot`) still weigh traffic.
+
+- **The threat graph keeps at least 12 regions where the map allows** (`choke.region.min_count`). Gated by bots,
+  some maps merged into 2 or 3 big regions, with few chokes left to defend. A build with fewer regions now runs
+  again up to 4 times, `choke.region.merge` raised towards 1 and `choke.region.min_area` lowered towards a quarter,
+  and keeps the build with the most regions. The `CHOKE graph` log line says when it relaxed and to what.
+
+- **Terrain alone rebuilds the threat graph at most every 5 minutes.** Zero-K's craters and the ground levelled under
+  buildings change which cells the gating types can cross through every fight. The graph was rebuilt each time the
+  30 s mask check found a change, 10 times in 13 minutes in one logged game, and each rebuild could move
+  chokes and regions that choke defence and holds act on. A terrain change now waits until 5 minutes have
+  passed since the last rebuild, unless it opens a new crossing: newly crossable cells joining two of the graph's
+  regions (a wall blown through, a terraformed ramp), which rebuilds it at the next mask check (at most 30 s). A
+  change in the gating masks still rebuilds at once.
+
+- **The turret picker's choke bonus grows with how deep the choke is in range** (`turret.choke_depth`, default 1).
+  C was worth all of `turret.choke` anywhere in range, as every target is, so a turret only had to reach the choke
+  with its outer range, and walk, threat, view and the targets behind it kept it there. Now C is `turret.choke` ×
+  (1 − depth × the choke's distance ÷ range): all of it on the choke, nothing at the edge. 0 keeps the old flat bonus.
+  A choke of our current line also adds `turret.choke_econ` (default 1) × our economy: the cost of our and allied
+  energy, pylons and factories in our territory, split among the current line's chokes by the traffic through each
+  (mexes steer the traffic, so they aren't counted again). A pass that shuts in the base is worth far more than one
+  no route uses. A choke of the enemy line adds a flat `turret.choke_enemy` (400); one on both lines, both. A tower
+  covering a choke halves its C for the next one by as much as it covers it (fully standing on it, less reaching it
+  with its outer range), and the search's upper bound counts the depth too, so it stays exact. One choke carries at
+  most `turret.choke_cap` (1000) of C. A choke gets none until it has settled after a graph rebuild or while enemy
+  artillery is on it, as choke defence waits. A spot counting a choke's economy share doesn't count those buildings in
+  A again. Choke defence and the picker split by traffic through one `CChokeMap::GetTrafficShares`.
+- **Lanes are found without `choke.enable` too**, and the turret picker and the spot scorer never put a tower on one,
+  so a turret drawn onto a choke doesn't close a narrow pass to our army. Only with `choke.enable` are they also kept
+  free of every building on the blocking map.
+
+- **Anti-heavy squads hunt, park and fire more** (`antiheavy` block: new `keep_sec` 30, `spacing` 150, `max_group` 2).
+  They ignored heavies they could shoot, idled in small groups at base, flip-flopped at the front and spent little time
+  firing. Now:
+  - Hunt: only mobile heavies start and keep it (buildings stay targets); it lasts `keep_sec` after the last sighting,
+    and new or repaired anti-heavy units (Lance with its support attribute too) join squads meanwhile. The army pull
+    takes a unit for a heavy within its weapon range + 30 s of walking (in a fight: weapon range).
+  - Squads: at most `max_group` units of a type (or its `antiheavy_max_group`), never merged, units `spacing` apart.
+  - Targets: a long-reload weapon (5 s or more) walks in to 0.9x weapon range of a heavy we see; one only on radar
+    draws it only to its LOS, and only if that is outside the heavy's threat. Snipers (weapon range over LOS: Lance,
+    Merlin) walk in only to a heavy within weapon range + 30 s of walking. Mobile first, then the current target,
+    then one other squads have shots ready for, then the nearest; one the ready shots of other squads' units in range
+    would kill is left to them. Units attack from the shared firing spots (`IFighterTask::Attack`). One spot test
+    for stand-off points, firing spots and park spots: outside the pick zones (or covered), and no hotter than the
+    squad's route allowance (not loosened by hot ground where it stands), the heavy's own threat aside where it
+    reaches (elsewhere that would hide turrets). The current
+    target, the heavy the squad already walks to and their firing spots use the flee end zones instead. With no such
+    firing spot a unit in range fires from where it stands, else holds; after the kill it stays (no walk to where the
+    heavy died). A target the whole squad holds off from out of range is skipped 10 s (doubling, up to 60 s; each
+    target its own). A long-reload squad keeps its target 3 s after it leaves LOS, standing without firing at its
+    radar blip. Units still ordered on a dropped target are stopped, so a parked squad (no new route) doesn't go on
+    shooting or chasing it. Mines and aircraft keep the escort check at the heavy. Ground units travel on plain moves.
+  - Flee: per danger, it starts at its range + max(M/2, its speed x 1 s) and ends M/4 further (M = `flee_margin`);
+    pick zones reach start + M/2. Heavies are no danger, except one that out-ranges a long-reload weapon
+    while it reloads or is out of reach. With the cover map on, `flee_ally_threat` is weighed against its cover (on
+    the attack groups' scale), and an enemy standing outside all cover is never covered; on water, which the cover
+    map doesn't cover, our units around count instead. No walk-in for 30 s after a flee, nor for 15 s after no route
+    to any heavy was found. With nothing to do, squads look at the way to the army every 5 s (was: every second).
+  - Parking (snipers, cover map on): with nothing to attack or walk to, a squad parks at the best covered, safe spot
+    no other squad claims, at the front: `follow_dist` behind an attack group (straight back or one of four side
+    slots, so several squads fit behind one group). Only when no group offers a spot, a third of the range back from
+    a group of towers. Never within 256 of our base. Scored by cover (at most 3x `flee_ally_threat`) x recent heavy
+    sightings near it, / (1 + minutes of walking) (half at one minute, a third at two), and halved for 60 s where one
+    of ours was sent for repair; kept 30 s, then until another scores 1.3x more. A spot behind a group is kept while
+    the group lives, also while it is briefly off the list (the group falls back, an enemy comes near). Parked, units
+    hold position, the others on alternate sides of the leader, and walk back only once the squad is more than
+    max(256, 2x `spacing`) from its spot.
+  - Snipers flee like the others, towards the army, and stop once out of reach; they drop their park spot and pick
+    one afresh after the flee (they no longer run back to a park spot, possibly at our base, and stay there).
+  - Snipers hold fire only while they attack a heavy (not during the LOS grace, nor while fleeing), and fire at will
+    otherwise; the attack on their target still fires.
+  - Scoot: no new scoot out of the target's reach (was: out of all ground threat); parked units step back towards
+    their spot.
+  - An `ANTIHEAVY` log line per unit type every minute: unit-seconds hunting, parked, engaged and fleeing; shots,
+    radar-only heavies in range, flees, retreats, scoots and dropped targets.
 
 - **Scouts raid while cut off.** When a scout has no safe route to its picked spot (e.g. it fled into a pocket and
   the danger sits between it and everything else), or nothing could be picked, an armed ground scout goes raiding on a

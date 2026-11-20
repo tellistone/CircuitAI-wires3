@@ -12,6 +12,7 @@
 #include "module/ChokeDefence.h"
 #include "module/Frontline.h"
 #include "module/SensorPlanner.h"
+#include "module/CreepPlanner.h"
 #include "module/TurretPicker.h"
 #include "module/EconomyManager.h"
 #include "map/InfluenceMap.h"
@@ -66,7 +67,6 @@ namespace circuit {
 
 using namespace springai;
 
-#define RESPONSE_EPS_MIN	0.1f  // response eps floor
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
 #define SPOT_GIVE_UP		(FRAMES_PER_SEC * 600)  // choke.spot.enable: two failures this close give a type up this long
@@ -288,6 +288,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 			} else {
 				cdef.SetRetreat(cdef.GetRetreat() * retMod);
 			}
+			cdef.SetRetreatShield(circuit->GetSetupManager()->GetRetreatShield(cdef.GetRetreatShield()));
 		} else {
 //			damagedHandler[unitDefId] = structDamagedHandler;
 			if (cdef.IsAttacker()) {
@@ -333,7 +334,15 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 	defence = circuit->GetAllyTeam()->GetDefenceMatrix().get();
 	chokeDefence = std::make_unique<CChokeDefence>(circuit);
 	spotScorer = std::make_unique<CSpotScorer>(circuit);
-	sensorPlanner = std::make_unique<CSensorPlanner>(circuit, radarDef);
+	// choke.radar.heavy: the radar planner's long-range radar
+	const std::string& heavyName = circuit->GetChokeMap()->GetConfig().radarHeavy;
+	CCircuitDef* heavyDef = heavyName.empty() ? nullptr : circuit->GetCircuitDef(heavyName.c_str());
+	if (!heavyName.empty() && (heavyDef == nullptr)) {
+		circuit->LOG("CONFIG %s: choke.radar.heavy has unknown UnitDef '%s'",
+				circuit->GetSetupManager()->GetConfigName().c_str(), heavyName.c_str());
+	}
+	sensorPlanner = std::make_unique<CSensorPlanner>(circuit, radarDef, heavyDef);
+	creepPlanner = std::make_unique<CCreepPlanner>(circuit);
 	frontline = std::make_unique<CFrontline>(circuit);
 	turretPicker = std::make_unique<CTurretPicker>(circuit);
 
@@ -347,8 +356,14 @@ CMilitaryManager::~CMilitaryManager()
 	}
 }
 
-void CMilitaryManager::ReadCurve(const Json::Value& value, const std::string& key, const char* xName,
-		std::vector<std::pair<float, float>>& curve) const
+float CMilitaryManager::GetMapDensity(CCircuitAI* circuit)
+{
+	return (circuit->GetMap()->GetWidth() / 64.f) * (circuit->GetMap()->GetHeight() / 64.f) * 0.5f
+			/ std::max(circuit->GetAllyTeam()->GetSize(), 1);
+}
+
+void CMilitaryManager::ReadCurve(CCircuitAI* circuit, const Json::Value& value, const std::string& key, const char* xName,
+		std::vector<std::pair<float, float>>& curve)
 {
 	// [[x, multiplier >= 0], ...], sorted by x; bad points are logged and skipped; missing = empty
 	if (value.isNull()) {
@@ -377,6 +392,8 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& responses = root["response"];
 	const float teamSize = circuit->GetAllyTeam()->GetSize();
+	const float density = GetMapDensity(circuit);  // a role's density_curve maps it to a response multiplier
+	circuit->LOG("RESPONSE: %g allies, map player density %.2f", teamSize, density);
 	roleInfos.resize(roleNames.size(), {.0f});
 	isResponseGates = false;
 	for (const auto& pair : roleNames) {
@@ -386,20 +403,19 @@ void CMilitaryManager::ReadConfig()
 
 		if (response.isNull()) {
 			info.maxPerc = 1.0f;
-			info.factor  = teamSize;
+			info.densityMult = 1.0f;
 			continue;
 		}
 
 		info.maxPerc = response.get("max_percent", 1.0f).asFloat();
-		// eps = 1 + (teamSize - 1) * eps_step. Enemy metal is the whole enemy team's, our role metal this AI's own:
-		// eps_step 1 = each AI answers its 1/teamSize share, > 1 less, < 1 (or negative) more. Floored: at 0 one
-		// sighting would let the role grow to max_percent whatever the enemy amount
-		const float step = response.get("eps_step", 1.0f).asFloat();
-		info.factor  = (teamSize - 1.0f) * step + 1.0f;
-		if (info.factor < RESPONSE_EPS_MIN) {
-			circuit->LOG("CONFIG %s: response.%s eps %g clamped to %g (teamSize %g, eps_step %g)", cfgName.c_str(),
-					pair.first.c_str(), info.factor, RESPONSE_EPS_MIN, teamSize, step);
-			info.factor = RESPONSE_EPS_MIN;
+		if (!response["eps_step"].isNull()) {
+			circuit->LOG("CONFIG %s: response.%s.eps_step is no longer read, use density_curve", cfgName.c_str(), pair.first.c_str());
+		}
+		std::vector<std::pair<float, float>> densityCurve;  // missing = x1
+		ReadCurve(response["density_curve"], "response." + pair.first + ".density_curve", "density", densityCurve);
+		info.densityMult = utils::eval_curve(densityCurve, density);
+		if (!densityCurve.empty()) {
+			circuit->LOG("RESPONSE: %s density_curve x%.3f", pair.first.c_str(), info.densityMult);
 		}
 
 		// Number in [lo, hi] or the default, logged
@@ -694,6 +710,9 @@ void CMilitaryManager::ReadConfig()
 	}
 	attackSpotThreat = (qspotThreat.isNumeric() && (qspotThreat.asFloat() >= 0.f)) ? qspotThreat.asFloat() : 1.f;
 	attackMeleeSpot = readAttackNum("attack_melee_spot", 32.f, -1.f, noMax);
+	attackMeleeMax = static_cast<int>(readAttackNum("attack_melee_max", 6.f, 0.f, 64.f));
+	attackMeleeSpread = readAttackNum("attack_melee_spread", 400.f, 0.f, noMax);
+	attackMeleeBlast = readAttackNum("attack_melee_blast", 0.1f, -1.f, noMax);
 	// quota.attack_merge.rally, quota.raid_rally: {match, margin, range, seen_sec}; not an object (or match 0) = off
 	auto readRallyCfg = [&](const Json::Value& q, const char* name, float defRange, SRallyCfg& outCfg) {
 		if (!q.isNull() && !q.isObject()) {
@@ -1013,6 +1032,12 @@ void CMilitaryManager::ReadConfig()
 	antiHeavy.fleeMargin = ahCfg.get("flee_margin", -1.f).asFloat();
 	antiHeavy.fleeAllyThreat = ahCfg.get("flee_ally_threat", (antiHeavy.fleeMargin >= 0.f) ? 10.f : -1.f).asFloat();
 	antiHeavy.fleeAllyRadius = std::max(0.f, ahCfg.get("flee_ally_radius", 500.f).asFloat());
+	const float keepSec = ahCfg.get("keep_sec", 30.f).asFloat();
+	antiHeavy.keepFrames = (keepSec < 0.f) ? std::numeric_limits<int>::max() : std::max(1, int(keepSec * FRAMES_PER_SEC));
+	antiHeavy.spacing = std::max(0.f, ahCfg.get("spacing", 150.f).asFloat());
+	antiHeavy.maxGroup = std::max(0, ahCfg.get("max_group", 2).asInt());
+	antiHeavy.isArtillery = ahCfg.get("as_artillery", false).asBool();
+	antiHeavy.artyScoot = std::max(0.f, ahCfg.get("artillery_scoot", 0.f).asFloat());
 
 	const Json::Value& resignCfg = root["resign"];
 	const float resignTime = resignCfg.get("time", 480.f).asFloat();  // on by default, even with an older behaviour.json
@@ -1069,6 +1094,8 @@ void CMilitaryManager::ReadConfig()
 		prevent.rerollFrames = int(std::max(rerollSec, 1.f) * FRAMES_PER_SEC);
 		prevent.sightFrames = int(std::max(sightSec, 1.f) * FRAMES_PER_SEC);
 		prevent.isGeo = porc.get("geo", false).asBool();
+		prevent.isOwnOnly = porc.get("own_clusters", true).asBool();
+		prevent.isAllyCover = porc.get("ally_cover", true).asBool();
 		// Missing or [] = x1
 		std::vector<std::pair<float, float>> mapCurve;
 		ReadCurve(porc["prevent_map"], "porcupine.prevent_map", "map area per player", mapCurve);
@@ -1081,9 +1108,10 @@ void CMilitaryManager::ReadConfig()
 		if (!airName.empty() && (prevent.airDef == nullptr)) {
 			circuit->LOG("CONFIG %s: porcupine.prevent_air has unknown UnitDef '%s'", cfgName.c_str(), airName.c_str());
 		}
-		circuit->LOG("PREVENT config: %.2f per cluster x map %.2f (%.0f per player on our team), reroll %.0f s, sighting %.0f s, air %s",
+		circuit->LOG("PREVENT config: %.2f per cluster x map %.2f (%.0f per player on our team), reroll %.0f s, sighting %.0f s, air %s, own clusters %s, ally cover %s",
 				prevent.base, prevent.mapMult, prevent.mapX, rerollSec, sightSec,
-				(prevent.airDef != nullptr) ? prevent.airDef->GetDef()->GetName() : "off");
+				(prevent.airDef != nullptr) ? prevent.airDef->GetDef()->GetName() : "off",
+				prevent.isOwnOnly ? "on" : "off", prevent.isAllyCover ? "on" : "off");
 	}
 	const Json::Value& amount = porc["amount"];
 	const Json::Value& amOff = amount["offset"];
@@ -1105,8 +1133,16 @@ void CMilitaryManager::ReadConfig()
 	tb.share = std::max(budget.get("share", tb.share).asFloat(), 0.f);
 	tb.bankSec = std::max(budget.get("bank_sec", tb.bankSec).asFloat(), 1.f);
 	tb.lossRefund = std::max(budget.get("loss_refund", tb.lossRefund).asFloat(), 0.f);
-	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1), bank %.0f s, loss refund x%.1f",
-			tb.share, tb.bankSec, tb.lossRefund);
+	// Missing or [] = x1
+	std::vector<std::pair<float, float>> budgetMap;
+	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);
+	ReadCurve(budget["mex"], "porcupine.budget.mex", "mex share", tb.mexCurve);
+	tb.mapX = mapSize / std::max(teamSize, 1.f);
+	tb.mapMult = utils::eval_curve(budgetMap, tb.mapX);
+	tb.mexMult = utils::eval_curve(tb.mexCurve, 0.f);
+	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1) x map %.2f (%.0f per player on our team)"
+			" x mex curve (%u points), bank %.0f s, loss refund x%.1f",
+			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), tb.bankSec, tb.lossRefund);
 
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
@@ -1155,6 +1191,7 @@ void CMilitaryManager::ReadConfig()
 		escalation.armyOn = escalation.armyOff = escRatio.asFloat();
 	}
 	escalation.minOnFrames = std::max(esc.get("min_on", 60.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	escalation.sinceFrame = std::max(esc.get("since", 0.f).asFloat(), 0.f) * FRAMES_PER_SEC;
 	escalation.maxBuildSec = esc.get("max_build_sec", 420.f).asFloat();
 	escalation.builderShare = utils::clamp(esc.get("builder_share", 0.7f).asFloat(), 0.f, 1.f);
 	escalation.isComm = esc.get("comm", false).asBool();
@@ -1252,12 +1289,15 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CChokeDefence::Update, chokeDefence.get()), FRAMES_PER_SEC * 2, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CFrontline::Update, frontline.get()), FRAMES_PER_SEC * 10, offset + 2);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CSensorPlanner::Update, sensorPlanner.get()), FRAMES_PER_SEC * 15, offset + 3);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CCreepPlanner::Update, creepPlanner.get()), FRAMES_PER_SEC, offset + 1);
 		if ((scoutQuota.perMex > 0.f) || (raiderQuota.perMex > 0.f)) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateScoutQuota, this), FRAMES_PER_SEC * 15, offset + 3);
 		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateCaptureHide, this), FRAMES_PER_SEC, offset + 3);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhPull, this), FRAMES_PER_SEC * 2, offset + 1);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhStats, this), FRAMES_PER_SEC, offset + 2);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogAhStats, this), FRAMES_PER_SEC * 60, offset + 3);
 		if (attackRally.cfg.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
 		}
@@ -1276,6 +1316,9 @@ void CMilitaryManager::Init()
 		}
 		if (isResponseGates) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResponseGates, this), FRAMES_PER_SEC * 2, offset + 3);
+		}
+		if (circuit->GetAllyTeam()->GetSize() > 1) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAllyResponse, this), FRAMES_PER_SEC * 2, offset + 4);
 		}
 		if (escalation.isEnabled) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateEscalation, this), escalation.interval, offset + 2);
@@ -1373,16 +1416,26 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	scoutStints.erase(unit->GetId());  // ids get reused
 	// quota.attack_balance outcome log: counted for the fight the unit was in, also after it left its group to retreat
 	attackBalance->NoteUnitLost(unit->GetId(), unit->GetCircuitDef()->GetCostM());
-	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays its
-	// rebuild back. Captures and the garbage path have no attacker
+	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays back
+	// loss_refund x what the account charged for it, so a lost position can be rebuilt. Free (preventive) towers
+	// were never charged and pay nothing: they used to pay 2x their cost into the account, past its cap.
+	// Captures and the garbage path have no attacker
+	float charged = 0.f;
+	auto chargedIt = chargedTowers.find(unit->GetId());
+	if (chargedIt != chargedTowers.end()) {
+		charged = chargedIt->second;
+		chargedTowers.erase(chargedIt);
+	}
 	const CCircuitDef* tdef = unit->GetCircuitDef();
 	if (turretPicker->IsDefence(tdef) && !unit->GetUnit()->IsBeingBuilt()) {
-		const float cost = tdef->GetCostM();
-		turretBudget.lost += cost;
+		turretBudget.lost += tdef->GetCostM();
+		if (tdef->HasAntiLand()) {
+			creepPlanner->OnGunLost(unit->GetPos(circuit->GetLastFrame()));  // turret.creep_losses
+		}
 		const CCircuitDef* kdef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
-		if ((kdef != nullptr) && CanFightBack(tdef, kdef)) {
-			turretBudget.balance += turretBudget.lossRefund * cost;
-			turretBudget.lossPaid += turretBudget.lossRefund * cost;
+		if ((charged > 0.f) && (kdef != nullptr) && CanFightBack(tdef, kdef)) {
+			turretBudget.balance += turretBudget.lossRefund * charged;
+			turretBudget.lossPaid += turretBudget.lossRefund * charged;
 		}
 	}
 
@@ -1459,6 +1512,16 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 		}
 	}
 
+	return AddFightTask(type, task);
+}
+
+IFighterTask* CMilitaryManager::EnqueueAhArty()
+{
+	return AddFightTask(IFighterTask::FightType::ARTY, new CArtilleryTask(this, true));
+}
+
+IFighterTask* CMilitaryManager::AddFightTask(IFighterTask::FightType type, IFighterTask* task)
+{
 	fightTasks[static_cast<IFighterTask::FT>(type)].insert(task);
 	fightUpdates.push_back(task);
 	return task;
@@ -1847,6 +1910,11 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 	}
 	task->Dead();
 	task->Stop(done);
+	if (task->GetType() == IUnitTask::Type::FIGHTER) {
+		// A dead task waits in fightUpdates to be deleted: it lets go of its target now, so nothing that reads an
+		// enemy's tasks (IsClaimedByNearer, GetAhReadyDamage) finds it and its units, which may die in the meantime
+		static_cast<IFighterTask*>(task)->ReleaseTarget();
+	}
 }
 
 IUnitTask* CMilitaryManager::MakeTask(CCircuitUnit* unit)
@@ -1927,6 +1995,12 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	bool isWater = circuit->GetTerrainManager()->IsDeepWaterAt(pos);
 	std::vector<CCircuitDef*>& defenders = isWater ? waterDefenders : landDefenders;
 
+	// porcupine.own_clusters (the sweeps skip the rest already). A vent's point is asked only for our geo there,
+	// or a sighting at it: never someone else's
+	if (!closestPoint->isGeo && !IsOurCluster(cluster)) {
+		return;
+	}
+
 	// Front-line porc
 	bool isPorc = mm->GetMaxIncome() > mm->GetAvgIncome() + 1.f;
 	if (isPorc) {
@@ -1983,9 +2057,13 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	const int frame = circuit->GetLastFrame();
 	std::vector<CCircuitDef*> picked;
+	// choke.radar.enable: the planner places its heavy radar, the porc lists leave it out
+	const CCircuitDef* plannedDef = circuit->GetChokeMap()->GetConfig().isRadar ? sensorPlanner->GetHeavyDef() : nullptr;
 	for (unsigned i = 0; i < num; ++i) {
 		CCircuitDef* defDef = (isAirSlot && (i == 0) && prevent.airDef->IsAvailable(frame)) ? prevent.airDef : defenders[i];
-		if (!defDef->IsAvailable(frame) || (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))) {
+		if (!defDef->IsAvailable(frame) || (defDef == plannedDef)
+			|| (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f)))
+		{
 			continue;
 		}
 		picked.push_back(defDef);
@@ -1995,7 +2073,30 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	const bool isSpot = chokeMap->GetConfig().isSpot && chokeMap->IsReady() && !closestPoint->isGeo;
 	CSpotScorer::SGoal clusterGoal;
 	clusterGoal.asset = closestPoint->position;
-	QueueTowers(closestPoint, plan.clusterList, maxCost, isPorc, isSpot ? &clusterGoal : nullptr);
+	// Preventive towers: the roll is the cluster's total over its mex points (towers of porc mode count too), not
+	// each point's. Asked once per finished mex, sighting and sweep visit, every point of a cluster got the count
+	float clusterCap = maxCost;
+	if (!isPorc && !closestPoint->isGeo) {
+		float clusterCost = 0.f;
+		for (const CDefenceMatrix::SDefPoint& p : points) {
+			if (!p.isGeo) {
+				clusterCost += p.cost;
+			}
+		}
+		float preventCost = 0.f;
+		for (const CCircuitDef* d : picked) {
+			preventCost += d->GetCostM();
+		}
+		// porcupine.ally_cover: the larger of what the shared matrix booked (queued and built on points, by every
+		// Wires ally) and every tower near the cluster (off-point ones and other allies' too): never both. Only
+		// looked up when the booked towers fall short of the roll
+		if (preventCost > clusterCost) {
+			clusterCost = std::max(clusterCost, GetBuiltCoverCost(cluster, isWater));
+		}
+		// QueueTowers stops at a tower that brings the point's list total to the cap: + 1 lets one that just fills it go
+		clusterCap = std::min(maxCost, closestPoint->cost + std::max(preventCost - clusterCost, 0.f) + 1.f);
+	}
+	QueueTowers(closestPoint, plan.clusterList, clusterCap, isPorc, isSpot ? &clusterGoal : nullptr);
 	// NOTE: The chain abort above leaves a choke's chain: other points of the pocket may still be in porc mode
 	if (plan.chokePoint != nullptr) {
 		CSpotScorer::SGoal chokeGoal;
@@ -2007,15 +2108,19 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 
 	// Build sensors
 	auto checkSensor = [this, &backPos, builderMgr](IBuilderTask::BuildType type, CCircuitDef* cdef, float range) {
+		// One of its type within range, or a static one of any type whose view holds all of cdef's (an Advanced Radar)
+		auto radiusOf = [type](CCircuitDef* d) {
+			return (type == IBuilderTask::BuildType::RADAR) ? d->GetDef()->GetRadarRadius() : d->GetDef()->GetSonarRadius();
+		};
+		const float radius = radiusOf(cdef);
+		const int frame = circuit->GetLastFrame();
 		bool isBuilt = false;
-		COOAICallback* clb = circuit->GetCallback();
-		auto friendlies = clb->GetFriendlyUnitIdsIn(backPos, range);
-		for (int auId : friendlies) {
-			if (auId == -1) {
-				continue;
-			}
-			CCircuitDef::Id defId = clb->Unit_GetDefId(auId);
-			if (defId == cdef->GetId()) {
+		for (const auto& kv : circuit->GetFriendlyUnits()) {
+			CCircuitDef* udef = kv.second->GetCircuitDef();
+			const float sqDist = kv.second->GetPos(frame).SqDistance2D(backPos);
+			if (((udef == cdef) && (sqDist < SQUARE(range)))
+				|| (!udef->IsMobile() && (radiusOf(udef) > radius) && (sqDist < SQUARE(radiusOf(udef) - radius))))
+			{
 				isBuilt = true;
 				break;
 			}
@@ -2060,7 +2165,17 @@ void CMilitaryManager::UpdateTurretBudget()
 	const int frame = circuit->GetLastFrame();
 	CEconomyManager* em = circuit->GetEconomyManager();
 	const float pull = std::min(em->GetPullMtoS(), 1.f);
-	const float rate = b.share * em->GetAvgMetalIncome() * pull;  // metal/s
+	// budget.mex: ally-team finished mexes over all metal spots, as prevent_mex (MarkAllyMexes walks every spot)
+	if (!b.mexCurve.empty() && (frame >= b.mexFrame)) {
+		b.mexFrame = frame + FRAMES_PER_SEC * 10;
+		CMetalManager* mm = circuit->GetMetalManager();
+		mm->MarkAllyMexes();
+		const size_t spotCount = mm->GetSpots().size();
+		b.mexX = (spotCount > 0) ? float(mm->GetMexCount()) / spotCount : 0.f;
+		b.mexMult = utils::eval_curve(b.mexCurve, b.mexX);
+	}
+	const float rate = b.share * em->GetAvgMetalIncome() * pull * b.mapMult * b.mexMult;  // metal/s
+	b.rate = rate;
 	if ((b.askFrame >= 0) && (frame - b.askFrame > FRAMES_PER_SEC * 120)) {
 		b.askCost = 0.f;  // nobody waiting asked lately
 		b.askFrame = -1;
@@ -2077,7 +2192,7 @@ void CMilitaryManager::UpdateTurretBudget()
 	} else if (frame >= b.logFrame) {
 		b.logFrame = frame + FRAMES_PER_SEC * 60;
 		static const char* names[] = {"other", "porc", "prevent (free)", "picker", "cornered", "base", "guard",
-				"escort", "hub"};
+				"escort", "hub", "creep"};
 		std::string spent;
 		float total = 0.f;
 		for (int i = 0; i < static_cast<int>(TurretSpend::_SIZE_); ++i) {
@@ -2087,11 +2202,21 @@ void CMilitaryManager::UpdateTurretBudget()
 			}
 			b.spent[i] = 0.f;
 		}
-		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f), last minute charged %.0f,"
-				" refunded %.0f, lost %.0f (paid back %.0f): %s", b.balance, rate, b.share, em->GetAvgMetalIncome(), pull,
+		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f x map %.2f x mex %.2f (%.0f%%)),"
+				" last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f): %s", b.balance, rate, b.share,
+				em->GetAvgMetalIncome(), pull, b.mapMult, b.mexMult, b.mexX * 100.f,
 				total, b.refunded, b.lost, b.lossPaid, spent.empty() ? "nothing" : spent.c_str());
 		b.refunded = b.lost = b.lossPaid = 0.f;
 	}
+}
+
+float CMilitaryManager::GetTurretWait(float cost) const
+{
+	const STurretBudget& b = turretBudget;
+	if (b.balance >= cost) {
+		return 0.f;
+	}
+	return (b.rate > 0.f) ? (cost - b.balance) / b.rate : std::numeric_limits<float>::max();
 }
 
 bool CMilitaryManager::CanAffordTurret(float cost)
@@ -2121,7 +2246,7 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 	}
 	b.balance -= cost;
 	task->SetCharge(cost, static_cast<int>(turretSpend));
-	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER)) {
+	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER) || (turretSpend == TurretSpend::CREEP)) {
 		b.askCost = 0.f;  // a waiting spender got its tower
 		b.askFrame = -1;
 	}
@@ -2288,7 +2413,7 @@ void CMilitaryManager::SweepByTraffic()
 	const float maxCost = GetDefenceCap();
 	auto isWanted = [&](int cluster, const CDefenceMatrix::SDefPoint& point) {
 		return mm->IsClusterHeld(cluster) && !point.isGeo && (point.cost < maxCost)
-				&& !terrainMgr->IsZoneAlly(point.position);
+				&& !terrainMgr->IsZoneAlly(point.position) && IsOurCluster(cluster);
 	};
 	for (int round = 0; round < 2; ++round) {
 		while (sweepIdx < sweepOrder.size()) {
@@ -2336,6 +2461,53 @@ void CMilitaryManager::SweepByTraffic()
 	}
 }
 
+bool CMilitaryManager::IsOurCluster(int cluster) const
+{
+	if (!prevent.isOwnOnly || (circuit->GetAllyTeam()->GetSize() <= 1)) {
+		return true;
+	}
+	CMetalManager* mm = circuit->GetMetalManager();
+	mm->MarkAllyMexes();  // the owner is as of the last mark
+	return mm->GetClusterOwner(cluster) == circuit->GetTeamId();
+}
+
+float CMilitaryManager::GetBuiltCoverCost(int cluster, bool isWater) const
+{
+	if (!prevent.isAllyCover || (circuit->GetAllyTeam()->GetSize() <= 1)) {
+		return 0.f;
+	}
+	const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(cluster);
+	const CCircuitDef::RangeType rangeType = isWater ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
+	const int frame = circuit->GetLastFrame();
+	float cost = 0.f;
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* ally = kv.second;
+		const CCircuitDef* adef = ally->GetCircuitDef();
+		// Its weapon's real reach, halved for a long-ranged static, as the threat map's cover layer
+		// (CThreatMap::PrepareCover); turret.not_defence statics aren't turrets. Unlike that layer, nanoframes and
+		// stunned towers count: the matrix books a tower once queued, and a stun mid-raid mustn't leave a spare one
+		if ((adef == nullptr) || !turretPicker->IsDefence(adef) || !(isWater ? adef->HasAntiWater() : adef->HasAntiLand())) {
+			continue;
+		}
+		float range = adef->GetMaxRange(rangeType);
+		if (range <= 0.f) {
+			continue;
+		}
+		if (adef->GetMaxRange() > 1000.f) {
+			range /= 2;
+		}
+		const AIFloat3& pos = ally->GetPos(frame);
+		for (const CDefenceMatrix::SDefPoint& p : points) {
+			if (!p.isGeo && (p.position.SqDistance2D(pos) < SQUARE(range))) {
+				cost += adef->GetCostM();
+				break;
+			}
+		}
+	}
+	return cost;
+}
+
 unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, bool& outIsAir)
 {
 	// Preventive towers for a cluster outside porc mode (see SPrevent)
@@ -2359,7 +2531,9 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	const float mexMult = utils::eval_curve(prevent.mexCurve, mexX);
 	const float chance = prevent.base * prevent.mapMult * mexMult;
 	const float whole = std::floor(chance);
-	const float dice = (float)rand() / ((float)RAND_MAX + 1.f);  // [0, 1)
+	// One throw per cluster: fresh dice on every re-roll and sighting, with towers never called off, gave nearly
+	// every cluster the best of many throws. Shared by the ally team, so a new owner rolls the same count
+	const float dice = mm->GetClusterDice(cluster);
 	int count = std::min(int(whole) + ((dice < chance - whole) ? 1 : 0), 64);
 	const int prevCount = roll.count;
 	if ((sightDef != nullptr) && !isFirst) {
@@ -2369,9 +2543,9 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	roll.rollFrame = frame;
 
 	const char* why = (sightDef != nullptr) ? "sight" : isFirst ? "first" : "timer";
-	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f -> %i (was %i)%s",
+	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f, dice %.2f -> %i (was %i)%s",
 			cluster, why, (sightDef != nullptr) ? " " : "", (sightDef != nullptr) ? sightDef->GetDef()->GetName() : "",
-			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, count, prevCount,
+			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, dice, count, prevCount,
 			outIsAir ? ", air: first slot is prevent_air" : "");
 	return count;
 }
@@ -2382,7 +2556,8 @@ void CMilitaryManager::UpdatePreventSight()
 	// mex LOS of a finished mex of ours, makes that mex's cluster roll (raise only) and defend at that mex, at most
 	// once per prevent_reroll[1] s since its last roll or sighting. Half-taken clusters count. Polled, not on
 	// EnemyEnterLOS: that fires once on entering the ally team's LOS, so a raider seen at the front that walks on to
-	// a rear mex inside our LOS would never fire again
+	// a rear mex inside our LOS would never fire again. porcupine.own_clusters, team games: the mexes are every ally's
+	// in the clusters we own (no one else answers for those), and none of ours elsewhere (the owner answers)
 	struct SSighted {
 		AIFloat3 pos;
 		CCircuitDef* cdef;
@@ -2409,11 +2584,23 @@ void CMilitaryManager::UpdatePreventSight()
 	CCircuitDef* mexDef = em->GetMexDef();
 	const float sqLos = SQUARE((mexDef != nullptr) ? mexDef->GetLosRadius() : 0.f);
 	const int frame = circuit->GetLastFrame();
-	for (const auto& kv : circuit->GetTeamUnits()) {
-		CCircuitUnit* unit = kv.second;
-		// Geothermals too (porcupine.geo), by the nearest cluster as their vent's point is (CDefenceMatrix::AddGeoPoints)
-		const bool isGeo = prevent.isGeo && em->IsGeoDef(unit->GetCircuitDef());
-		if (!unit->GetCircuitDef()->IsMex() && !isGeo) {
+	const int teamId = circuit->GetTeamId();
+	const bool isAllyMexes = prevent.isOwnOnly && (circuit->GetAllyTeam()->GetSize() > 1);
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* unit = kv.second;
+		CCircuitDef* udef = unit->GetCircuitDef();
+		if (udef == nullptr) {
+			continue;
+		}
+		// Geothermals too (porcupine.geo), ours only, by the nearest cluster as their vent's point is
+		// (CDefenceMatrix::AddGeoPoints)
+		const bool isGeo = prevent.isGeo && em->IsGeoDef(udef);
+		if (!udef->IsMex() && !isGeo) {
+			continue;
+		}
+		const bool isOurs = (unit->GetUnit()->GetTeam() == teamId);
+		if (!isOurs && (isGeo || !isAllyMexes)) {
 			continue;
 		}
 		const AIFloat3& mexPos = unit->GetPos(frame);
@@ -2434,7 +2621,8 @@ void CMilitaryManager::UpdatePreventSight()
 		}
 		for (const SSighted& s : sighted) {
 			if (mexPos.SqDistance2D(s.pos) <= sqLos) {
-				if (!unit->GetUnit()->IsBeingBuilt()) {
+				// A vent's point is ours whoever owns its cluster (MakeDefence)
+				if (!unit->GetUnit()->IsBeingBuilt() && (isGeo || IsOurCluster(cluster))) {
 					roll.sightFrame = frame;  // also when MakeDefence returns before rolling (ally zone, income cap)
 					MakeDefence(cluster, mexPos, s.cdef);
 				}
@@ -3062,25 +3250,11 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 {
 	outPositions.clear();
 
-	// quota.hold_choke: the attack group holding a frontline choke goes to its spot; choke.objective.enable: idle
-	// attack groups go to the objective's chokes
+	// quota.hold_choke: the attack group holding a frontline choke goes to its spot
 	const AIFloat3 holdSpot = frontline->GetHoldSpot(unit);
 	if (utils::is_valid(holdSpot)) {
 		outPositions.push_back(holdSpot);
 		return;
-	}
-	IUnitTask* task = unit->GetTask();
-	const bool isAttack = (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
-			&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK);
-	if (isAttack) {
-		for (const AIFloat3& pos : frontline->GetObjective()) {
-			if (circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), pos)) {
-				outPositions.push_back(pos);
-			}
-		}
-		if (!outPositions.empty()) {
-			return;
-		}
 	}
 
 	CInfluenceMap* inflMap = circuit->GetInflMap();
@@ -3449,6 +3623,34 @@ void CMilitaryManager::UpdateResponseGates()
 	++responseSamples;
 }
 
+void CMilitaryManager::UpdateAllyResponse()
+{
+	// Allies' response metal, so the response check weighs the enemy against the whole ally team's units of the role.
+	// Counted as AddResponse counts ours (every response role of the def), finished mobile units only: our own
+	// count has no turrets or nanoframes either
+	for (SRoleInfo& info : roleInfos) {
+		info.allyCost = 0.f;
+	}
+	circuit->UpdateFriendlyUnits();
+	const int teamId = circuit->GetTeamId();
+	const CCircuitDef::RoleT roleSize = roleInfos.size();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if ((cdef == nullptr) || !cdef->IsMobile()) {
+			continue;
+		}
+		Unit* u = kv.second->GetUnit();
+		if ((u->GetTeam() == teamId) || u->IsBeingBuilt()) {
+			continue;
+		}
+		for (CCircuitDef::RoleT type = 0; type < roleSize; ++type) {
+			if (cdef->IsRespRoleAny(CCircuitDef::GetMask(type))) {
+				roleInfos[type].allyCost += cdef->GetCostM();
+			}
+		}
+	}
+}
+
 float CMilitaryManager::RoleProbability(const CCircuitDef* cdef) const
 {
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
@@ -3459,11 +3661,13 @@ float CMilitaryManager::RoleProbability(const CCircuitDef* cdef) const
 	float maxProb = 0.f;
 	for (const SRoleInfo::SVsInfo& vs : info.vs) {
 		const float enemyMetal = enemyMgr->GetEnemyCost(vs.role);
+		// Enemy team's metal vs the ally team's (ours + allies'); max_percent caps our own share of our own army
+		const float teamMetal = info.cost + info.allyCost;
 		const float nextMetal = info.cost + cdef->GetCostM();
-		const float prob = enemyMetal / (info.cost + 1.f) * vs.importance;
-		// income_curve scales the amount wanted (not the roll weight); max_percent still caps it
+		const float prob = enemyMetal / (teamMetal + 1.f) * vs.importance;
+		// income_curve and density_curve scale the amount wanted (not the roll weight)
 		if ((prob > maxProb) &&
-			(enemyMetal * vs.ratio * info.incomeMult >= nextMetal * info.factor) &&
+			(enemyMetal * vs.ratio * info.incomeMult * info.densityMult >= teamMetal + cdef->GetCostM()) &&
 			(nextMetal <= (armyCost + cdef->GetCostM()) * info.maxPerc))
 		{
 			maxProb = prob;
@@ -3680,7 +3884,8 @@ void CMilitaryManager::UpdateEscalation()
 	const bool isArmy = (allyArmy > 0.f) && (allyArmy >= ratio * enemyArmy);
 	const bool isTerra = !escalation.isNeedTerra || circuit->GetAllyTeam()->IsTerraSeen();
 
-	bool isOn = isArmy && isTerra && isEnemyTech;
+	const bool isTime = (frame >= escalation.sinceFrame);  // since: not before this much game time
+	bool isOn = isTime && isArmy && isTerra && isEnemyTech;
 	if (!isOn && escalation.isOn && isArmy && (frame < escalation.onFrame + escalation.minOnFrames)) {
 		isOn = true;  // min_on: not off this soon after it turned on, unless the army fell below armyOff
 	}
@@ -3775,7 +3980,7 @@ void CMilitaryManager::UpdateDefenceTasks()
 	decltype(defenceIdx) prevIdx = defenceIdx;
 	while (defenceIdx < clusters.size()) {
 		int index = defenceIdx++;
-		if (mm->IsClusterQueued(index) || mm->IsClusterFinished(index)) {
+		if ((mm->IsClusterQueued(index) || mm->IsClusterFinished(index)) && IsOurCluster(index)) {
 			MakeDefence(index);
 			return;
 		}
@@ -3783,7 +3988,7 @@ void CMilitaryManager::UpdateDefenceTasks()
 	defenceIdx = 0;
 	while (defenceIdx < prevIdx) {
 		int index = defenceIdx++;
-		if (mm->IsClusterQueued(index) || mm->IsClusterFinished(index)) {
+		if ((mm->IsClusterQueued(index) || mm->IsClusterFinished(index)) && IsOurCluster(index)) {
 			MakeDefence(index);
 			return;
 		}
@@ -3911,9 +4116,16 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	if (IsQuotaScout(cdef) && IsScoutSlotFree(cdef)) {
 		task = EnqueueTask(IFighterTask::FightType::SCOUT);
 	}
+	// While a hunt is on, new and repaired anti-heavy units join it, those with the support attribute too. Those with
+	// artillery behaviour (as_artillery: Lance, Merlin, Phantom, Racketeer) always get their own artillery task, after a free guard slot
+	const bool isAhUnit = (it != types.end()) && (it->second == IFighterTask::FightType::AH);
+	const bool isAhArty = isAhUnit && IsAhArty(cdef);
+	const bool isAhHunt = isAhUnit && !isAhArty && (cdef->IsRoleMine() || IsAhHunting());
 	if (task != nullptr) {
 		// scout picked above
-	} else if (cdef->IsRoleSupport()) {
+	} else if (isAhHunt) {
+		task = EnqueueAntiHeavy(unit);
+	} else if (cdef->IsRoleSupport() && !isAhArty) {
 		if (/*cdef->IsAttacker() && */GetTasks(IFighterTask::FightType::ATTACK).empty() && GetTasks(IFighterTask::FightType::DEFEND).empty()) {
 			task = EnqueueDefend(IFighterTask::FightType::ATTACK,
 								 IFighterTask::FightType::SUPPORT, minAttackers);
@@ -3933,11 +4145,9 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 					}
 				} break;
 				case IFighterTask::FightType::AH: {
-					if (!cdef->IsRoleMine() && !IsEnemyHeavySeen(AH_HUNT_FRAMES)) {
-						task = EnqueueAttackBound(unit);  // see below; UpdateAhPull takes it out once a heavy is seen
-					} else {
-						task = EnqueueAntiHeavy(unit);
-					}
+					// Artillery behaviour: its own task. Else no hunt (see above): the army; UpdateAhPull takes it out
+					// once a heavy is seen
+					task = isAhArty ? EnqueueAhArty() : EnqueueAttackBound(unit);
 				} break;
 				case IFighterTask::FightType::DEFEND: {
 					task = EnqueueAttackBound(unit);  // see below
@@ -3998,8 +4208,10 @@ void CMilitaryManager::UpdateAhPull()
 		return;
 	}
 	for (CCircuitUnit* unit : army) {
-		if (circuit->GetBindedRole(unit->GetCircuitDef()->GetMainRole()) != ROLE_TYPE(AH)) {
-			continue;
+		if ((circuit->GetBindedRole(unit->GetCircuitDef()->GetMainRole()) != ROLE_TYPE(AH))
+			|| IsAhArty(unit->GetCircuitDef()))
+		{
+			continue;  // not anti-heavy, or artillery behaviour (its own task)
 		}
 		IUnitTask* task = unit->GetTask();
 		if (task->GetType() != IUnitTask::Type::FIGHTER) {
@@ -4014,29 +4226,63 @@ void CMilitaryManager::UpdateAhPull()
 		if (task->GetState() == IUnitTask::State::DISENGAGE) {
 			continue;  // fleeing: the next pass takes it
 		}
-		if ((task->GetState() == IUnitTask::State::ENGAGE) && !IsQuarryInRange(unit)) {
-			continue;  // fighting with no heavy in reach: losing it now could tip the fight; the next pass takes it
+		// Fighting: only for a heavy in weapon range (the group's targets are chaff to a long-reload anti-heavy weapon;
+		// losing it now could tip the fight). Else one it reaches within 30 s, so a heavy across the map doesn't
+		// empty the army. The next pass takes the others
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		const float reach = (task->GetState() == IUnitTask::State::ENGAGE) ? cdef->GetMaxRange()
+				: CAntiHeavyTask::GetHuntReach(cdef);
+		if (IsQuarryWithin(unit, reach)) {
+			AssignTask(unit, EnqueueAntiHeavy(unit));
 		}
-		AssignTask(unit, EnqueueAntiHeavy(unit));
 	}
 }
 
-bool CMilitaryManager::IsQuarryInRange(CCircuitUnit* unit) const
+bool CMilitaryManager::IsQuarryWithin(CCircuitUnit* unit, float range) const
 {
-	// A heavy (or commander) it can shoot, in radar or LOS now, within its weapon range: in a fight the group's
-	// targets are chaff to a long-reload anti-heavy weapon
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
-	const float sqRange = SQUARE(cdef->GetMaxRange());
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
-		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= sqRange)
-			&& CAntiHeavyTask::IsQuarryFor(cdef, enemy))
+		if (!enemy->IsHidden() && enemy->IsInRadarOrLOS() && (pos.SqDistance2D(enemy->GetPos()) <= SQUARE(range))
+			&& cdef->IsQuarry(enemy->GetCircuitDef()))
 		{
 			return true;
 		}
 	}
 	return false;
+}
+
+bool CMilitaryManager::IsAhArty(const CCircuitDef* cdef) const
+{
+	return antiHeavy.isArtillery && (circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(AH))
+			&& !cdef->IsAbleToFly() && !cdef->IsRoleMine() && !cdef->IsAttrMelee() && cdef->IsLongReload();
+}
+
+float CMilitaryManager::GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* skip) const
+{
+	// Anti-heavy squads and anti-heavy units with artillery behaviour that target it (IFighterTask::SetTarget):
+	// their units with a ready weapon and it in range
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& ePos = enemy->GetPos();
+	float damage = 0.f;
+	for (IFighterTask* task : enemy->GetTasks()) {
+		const IFighterTask::FightType type = task->GetFightType();
+		if ((task == skip) || !((type == IFighterTask::FightType::AH)
+			|| ((type == IFighterTask::FightType::ARTY) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy())))
+		{
+			continue;
+		}
+		for (CCircuitUnit* unit : task->GetAssignees()) {
+			CCircuitDef* udef = unit->GetCircuitDef();
+			if (unit->HasWeapon() && unit->IsWeaponReady(frame)
+				&& (unit->GetPos(frame).SqDistance2D(ePos) <= SQUARE(udef->GetMaxRange())))
+			{
+				damage += udef->GetShotDamage();
+			}
+		}
+	}
+	return damage;
 }
 
 IFighterTask* CMilitaryManager::EnqueueAntiHeavy(CCircuitUnit* unit)
@@ -4057,25 +4303,86 @@ bool CMilitaryManager::IsEnemyHeavySeen(int frames)
 	if (heavySeenFrame != frame) {  // once a frame: MakeTask asks for every new anti-heavy unit
 		heavySeenFrame = frame;
 		heavySeenAge = std::numeric_limits<int>::max();
+		heavySightings.clear();
 		if (circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(HEAVY)) >= 1.f) {  // else none is known: no scan
 			for (auto& kv : circuit->GetEnemyInfos()) {
 				const CEnemyInfo* enemy = kv.second;
 				CCircuitDef* edef = enemy->GetCircuitDef();
-				if ((edef == nullptr) || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY)) {
+				if ((edef == nullptr) || !edef->IsMobile() || !edef->IsEnemyRoleAny(CCircuitDef::RoleMask::HEAVY)) {
 					continue;
 				}
-				if (enemy->IsInRadarOrLOS()) {
-					heavySeenAge = 0;
-					break;
-				}
 				const int lastSeen = enemy->GetData()->GetLastSeen();  // the frame it left radar
-				if (lastSeen >= 0) {
-					heavySeenAge = std::min(heavySeenAge, frame - lastSeen);
+				const int age = enemy->IsInRadarOrLOS() ? 0 : (lastSeen >= 0) ? frame - lastSeen : -1;
+				if (age >= 0) {
+					heavySeenAge = std::min(heavySeenAge, age);
+					heavySightings.push_back({enemy->GetPos(), age});
 				}
 			}
 		}
 	}
 	return heavySeenAge < frames;
+}
+
+void CMilitaryManager::NoteAhRetreat(const AIFloat3& pos)
+{
+	ahRetreats.push_back({pos, circuit->GetLastFrame()});
+}
+
+bool CMilitaryManager::IsNearAhRetreat(const AIFloat3& pos, float radius)
+{
+	static constexpr int RETREAT_FRAMES = FRAMES_PER_SEC * 60;
+	const int frame = circuit->GetLastFrame();
+	ahRetreats.erase(std::remove_if(ahRetreats.begin(), ahRetreats.end(),
+			[frame](const std::pair<AIFloat3, int>& r) { return frame >= r.second + RETREAT_FRAMES; }), ahRetreats.end());
+	for (const auto& r : ahRetreats) {
+		if (r.first.SqDistance2D(pos) < SQUARE(radius)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void CMilitaryManager::UpdateAhStats()
+{
+	// A shot: the weapon was ready a second ago and isn't now (anti-heavy reloads are long)
+	const int frame = circuit->GetLastFrame();
+	std::set<int> ready;
+	auto note = [this, frame, &ready](IFighterTask* t, AhNote activity) {
+		for (CCircuitUnit* unit : t->GetAssignees()) {
+			NoteAh(unit->GetCircuitDef(), activity);
+			if (unit->HasWeapon() && unit->IsWeaponReady(frame)) {
+				ready.insert(unit->GetId());
+			} else if (ahReady.find(unit->GetId()) != ahReady.end()) {
+				NoteAh(unit->GetCircuitDef(), AhNote::SHOT);
+			}
+		}
+	};
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::AH)) {
+		note(t, static_cast<CAntiHeavyTask*>(t)->GetActivity());
+	}
+	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ARTY)) {  // anti-heavy units with artillery behaviour
+		const CArtilleryTask* arty = static_cast<CArtilleryTask*>(t);
+		if (arty->IsAntiHeavy()) {
+			note(t, arty->GetAhActivity());
+		}
+	}
+	ahReady.swap(ready);
+}
+
+void CMilitaryManager::LogAhStats()
+{
+	for (const auto& kv : ahStats) {
+		const std::array<int, static_cast<int>(AhNote::_SIZE_)>& n = kv.second;
+		auto at = [&n](AhNote note) { return n[static_cast<int>(note)]; };
+		const int total = at(AhNote::HUNT) + at(AhNote::PARK) + at(AhNote::ENGAGE) + at(AhNote::FLEE);
+		const float pct = (total > 0) ? 100.f / total : 0.f;
+		circuit->LOG("ANTIHEAVY last 60 s, %s: %i unit-s, hunting %.0f%%, parked %.0f%%, engaged %.0f%%, fleeing %.0f%%;"
+				" %i shots, %i s with a radar-only heavy in range, %i flees, %i retreats, %i scoots, %i targets dropped",
+				circuit->GetCircuitDef(kv.first)->GetDef()->GetName(), total, at(AhNote::HUNT) * pct,
+				at(AhNote::PARK) * pct, at(AhNote::ENGAGE) * pct, at(AhNote::FLEE) * pct, at(AhNote::SHOT),
+				at(AhNote::RADAR_ONLY), at(AhNote::FLEE_END), at(AhNote::RETREAT), at(AhNote::SCOOT), at(AhNote::DROP));
+	}
+	ahStats.clear();
 }
 
 void CMilitaryManager::Watchdog()

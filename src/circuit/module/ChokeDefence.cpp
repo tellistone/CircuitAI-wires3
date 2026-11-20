@@ -123,20 +123,17 @@ CChokeDefence::SPlan CChokeDefence::Plan(int cluster, const CDefenceMatrix::SDef
 	// gets this call's towers. Unsettled ones and those enemy artillery covers wait, and while one does, a point
 	// with nowhere else to send its towers keeps them
 	plan.clusterList = keep;
-	float totalTraffic = 0.f;
-	for (int c : pocket.chokes) {
-		totalTraffic += chokeMap->GetChokeTraffic(c);
-	}
+	const std::vector<float> shares = chokeMap->GetTrafficShares(pocket.chokes);
 	const int frame = circuit->GetLastFrame();
 	bool isWaiting = false;
 	float bestRoom = 0.f;
-	for (int c : pocket.chokes) {
-		if (!chokeMap->IsChokeSettled(c, frame) || chokeMap->IsArtilleryNear(c, frame)) {
+	for (size_t i = 0; i < pocket.chokes.size(); ++i) {
+		const int c = pocket.chokes[i];
+		if (!chokeMap->IsChokeLive(c, frame)) {
 			isWaiting = true;
 			continue;
 		}
-		const float share = (totalTraffic > 0.f) ? chokeMap->GetChokeTraffic(c) / totalTraffic : 1.f / pocket.chokes.size();
-		const float cap = std::max(rest.front()->GetCostM(), budget * share);
+		const float cap = std::max(rest.front()->GetCostM(), budget * shares[i]);
 		const int inner = pocket.isInner[chokes[c].regionA] ? chokes[c].regionA : chokes[c].regionB;
 		CDefenceMatrix::SDefPoint* chokePoint = GetChokePoint(c, inner, mainDef);
 		const float room = cap - chokePoint->cost;

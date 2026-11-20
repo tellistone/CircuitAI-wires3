@@ -66,6 +66,9 @@
 
 	"attack_spot_threat": 0.33,  // ranged units in attack, defend and anti-air groups fire from a spot within 90% of their range of the target: score = this x (threat there / unit strength + 0.5 per other unit's spot within 80 elmos) + walking distance / range; 0 = nearest spot, higher = more cover-seeking. Attack groups need a line of fire to the target (from the higher of attack_static_cells.cell_aim_height and half the leader's height, at half the target's height, 8..32 elmos, over the highest point of each path square in between): a firing spot from the ground there, and, if more than 40 elmos above or below the unit or across water, a straight walk there over ground the unit can move on, else it is dropped, and a unit with none holds where it stands; the pick, for a target in range or in contact, from one of our units near it, else it is routed to; the current target needs none while engaged. No test for flying or underwater targets, flying groups, or units whose weapon arcs over terrain (Rogue, Recluse)
 	"attack_melee_spot": 32,  // "melee" units in those groups (and raids) pick their firing spot the same way, scored by the same threat, crowding and walking distance, but right next to the target: on a ring this many elmos beyond both units' bodies (never beyond the weapon's range). Danger there: first a safe spot within weapon range (the ranged search; nothing new for units without a real gun), else they hold or take the least dangerous spot like ranged units do, instead of walking straight in; jumpers jump to a spot more than 400 elmos away when the jump is ready. When every unit of a group holds off its target out of range (melee or ranged; attack groups: or out of sight, see attack_spot_threat), raids pass on it for 10 s and attack groups for 6, 12, 24 s (as attack_static_cells bans). < 0 = off (melee walks straight onto the target as before)
+	"attack_melee_max": 6,  // at most this many "melee" units of a group close in on one target at a time (fewer when its ring has room for fewer bodies), spread round it: on close spots a claim within a body's width costs as much as a walk of the close range (about 4 arc steps). A unit at its close spot by another enemy keeps that enemy until it dies; then the nearest ones (those already on it first) take the group's target, and each of the rest the nearest other enemy in sight within attack_melee_spread elmos of it that it can hit and may chase (no_chase), isn't a blast for it (below) and has room. One with no safe close spot next to it (judged as on the group's target) is passed over by all the group's melee units for 5 s. No aircraft, nothing under water. With no such enemy around they attack the group's target anyway, bunched as before. 0 = off (every melee unit on the group's target)
+	"attack_melee_spread": 400,  // elmos from the group's target in which those other targets are looked for; 0 = none
+	"attack_melee_blast": 0.1,  // a target whose death explosion (explodeAs) deals at least this x a melee unit's health and reaches its close spots is a blast for that unit. If its weapon reaches past the blast (90% of its range beyond the blast radius), it picks a normal firing spot within 90% of its range, as ranged units do (see attack_spot_threat), instead of one right next to the target; if not (Jack, Dirtbag on a commander) it closes in as usual, with the cap above. A blast is never one of the other targets above. Mobile bombs never mind blasts. Radii (elmos) and damage: medium buildings 130/200, large buildings 170/600, commanders 210/885, fusion 240/2400. E.g. 0.1: a Pyro (690 hp, 240 range) fires at turrets and commanders from range but closes in on a fusion (its 240 is beyond it), a Jack (6000 hp, 122 range) only minds commanders, fusions, storage and large buildings, and closes in anyway. < 0 = off
 "attack_group_radius": [2.0, 800],  // [<x the group's highest weapon/LOS range>, <min elmos>]: attack group units farther than this from their leader are stragglers: while the group fights they walk to the leader instead of straight to a firing spot
 	"attack_static_cells": {"on": true, "rings": [0.9, 0.7], "angles": 16, "sectors": 8, "threat_weight": 1.0, "score_slack": 0.5, "cell_aim_height": 16, "parked_sec": 5},  // attack groups route to a static target beyond LOS range by its safe firing cells: points on rings at these x the group's fire range (power-weighted median weapon range; the second ring only if the first yields nothing), reachable, below the usual threat allowance and with line of sight to the target (aimed cell_aim_height elmos up at half the target's height, 8..32 elmos, over the highest point of each path square in between; the pick and firing spots test the same way, see attack_spot_threat); best point per sector (the sectors facing us first), score = threat_weight x threat / group strength + distance / fire range, cells more than score_slack worse than the best are left out. The route then ends in a wedge of a cell's sector at about LOS range. Undefended targets, melee groups, and targets with no line of sight anywhere are routed to as before; targets with no cell below the allowance are skipped for 6, 12, 24 s (beyond LOS range only). Parked mobiles: a mobile target seen standing on one spot in LOS for parked_sec seconds (0 = off), no faster than 1.25 x the group's slowest unit and not a nanoframe, gets cells too (the sectors facing us only), around that spot, until it leaves it. Optional "siege_bonus": <x> (default 1 = off): a mobile type no faster than 1.25 x the group's slowest unit and with at least 1.2 x our fire range against ground (artillery) ranks x times closer, parked or not, while in radar or LOS or out of both for under parked_sec. Only in addition to the usual check at the target's own spot; on: false = as before
 	"group_count_power": 0.025,  // Lanchester's square law, on both sides wherever a group (attack, raid, defend, anti-air, anti-heavy) weighs its power against enemy threat: its own power counts (1 + this x its unit count), and enemy threat (1 + this x the number of enemies that can fire at that spot), each enemy counted as its type's thr_mod, at most 1 (artillery and bombers barely count; nanoframes, stunned or disarmed units and unknown radar blips don't). Equal numbers cancel out; 10 of ours against 5 is 1.25x against 1.125x. Targets, escape, routes, firing spots (there only the units supporting that spot count), the attack rally vs enemy blobs, raid spots vs static defences. Scouts, bombers, artillery and builders are judged alone, without it. 0..0.1; 0 = off. Allied AIs share one threat map: the value of the AI that made it counts for all (a different one is logged)
@@ -138,7 +141,7 @@
 "retreat": {
 	"builder": [0.70, 1.0],  // [<default>, <UnitDef modifier>] for all builders
 	"fighter": [0.45, 1.0],  // [<default>, <UnitDef modifier>] for all not-builder units
-	"shield": [0.25, 0.275],  // [<empty>, <full>] shield power
+	"shield": [0.25, 0.6],  // [<empty>, <full>] shield power: <empty> = default per-unit "retreat_shield"; a unit that retreats for its shield comes back above <full> (at least its retreat_shield + 0.05). Health ("retreat") and shield retreat are independent; a low shield retreats only when hit, by the same threat test as low health
         "repair_safe_static": true,  // same as repair_safe, for static units with prio_repair
 	"wait_timeout": 120,  // seconds a retreated unit waits at haven with no repairer before returning to duty, 0 = no limit
 	"repair_safe": true,  // true = builders skip priority repair (heavy/prio_repair) where threat exceeds their strength in enemy-held area, like regular jobs, and leave a mobile unit's repair (priority or retreat) once it leads them into such an area
@@ -161,14 +164,16 @@
 	"enable": false,  // choke defence: a pocket's towers beyond each cluster's first go to its entrances; defence points split by region; lanes kept free of buildings
 	"region": {
 		"min_area": 0.5,  // smallest region, in main-tower ranges squared
-		"merge": 0.7  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
+		"merge": 0.7,  // two regions merge when the choke's altitude reaches this share of the smaller one's highest
+		"min_count": 20,  // fewer regions than this: one more build with merge 1 (it never splits regions at a choke wider than defensible); still fewer (open ground), a grid of seeds, made finer until there are this many, cuts the big regions; 0 = off
+		"min_share": 0.5  // neither step of min_count makes a region under this share of the ground per min_count region (min_area is raised to it): no shards between two lines. Above 0.6 the cut often falls short of min_count
 	},
 	"defensible": 2.0,  // widest choke towers try to close
 	"entrances": 3,  // most entrances before a cluster counts as open
 	"near": 2.5,  // furthest useful entrance from a defence point
 	"setback": [0.6, 0.8],  // ideal tower distance behind a choke's line, in the tower's weapon ranges
-	"lane": 96.0,  // elmos: corridor kept free of buildings (but mexes) through chokes under 3x this wide
-	"gate_share": 0.25,  // a leak type (amphibious, spiders, jumpers) starts gating once its cost reaches this share of the enemy army seen + 300 metal
+	"lane": 96.0,  // elmos: corridor through chokes under 3x this wide; the turret picker and scored spots never put a tower on it, and with enable it is kept free of buildings (but mexes)
+	"gate_share": 0.25,  // a graph mask (a way of walking: spiders and jumpers count as kbots) shapes the threat graph once its cost reaches this share of the enemy army seen + 300 metal (or it is the biggest of 300 metal), until it falls below half of this
 	"traffic": {"spread": 0.15},  // width of the enemy's traffic corridors, as a share of the route's length
 	"openness": {"bands": [0.35, 0.65, 0.05]},  // [<chokepointed below>, <open above>, <margin around them>]
 	"spot": {
@@ -187,13 +192,12 @@
 		"inside": 0.25,  // a builder standing in coverage builds one only if at least this share of its view is new
 		"guard": "turretmissile",  // tower queued once a new radar stands, at the best spot near it; "" = none
 		"guard_radius": 300,  // elmos from the radar the guard tower may stand
-		"share": 0.05  // share of metal income the radar budget grows by (it starts with one radar, holds two)
-	},
-	"objective": {
-		"enable": false,  // forward objectives for idle attack groups
-		"gain": 1.5,  // gain over cost
-		"power": 1.3,  // our attack power over their defence
-		"retry": 180  // seconds before a failed objective may be tried again
+		"share": 0.05,  // share of metal income the radar budget grows by (it starts with one radar, holds two)
+		"heavy": "staticheavyradar",  // long-range radar the planner builds when one sees a lot that is still dark, before a small one; not by a commander; guarded by its build_chain "radar" hub; rebuilt 90 s after a loss; "" = none
+		"heavy_income": 40,  // metal/s of the ally team's income (mex, overdrive, misc) before one is considered
+		"heavy_min_gain": 0.15,  // it must add at least this share of the map's weight to the coverage
+		"heavy_depth": 1500,  // elmos it must stand from the nearest enemy ground cell (within 1500 of its builder)
+		"chain": true  // build_chain hub "radar" steps go through the planner: skipped where they'd see too little new, else at its best spot near the offset; "upgrade": true on a step builds the heavy instead when it passes
 	},
 	"expand": false  // mex expansion favours clusters behind a defended cut (needs mex_front)
 },
@@ -208,7 +212,7 @@
 "turret": {
 	"radius": 600,  // elmos from the centre a turret may stand
 	"min_value": 1.0,  // a spot's value (T + A + E + C, x height) must reach this x the turret's cost
-	"traffic": 1.0,  // weight of T
+	"traffic": 1.0,  // weight of T, the enemy traffic in range; none while spiders and jumpers are choke.gate_share of the enemy army (until under half of it)
 	"horizon": 120,  // seconds of threatened income that T counts (and an enemy mex in E)
 	"ally": 1.0,  // weight of A
 	"enemy": 1.0,  // weight of E
@@ -216,18 +220,41 @@
 	"view": 1.0,  // a spot ranks up to 1 + this x its value by the share of its range circle's ground in a clear line of fire (V), so a cliff top over the ground below beats its foot; ranks only, never decides worth; 0 = off
 	"height": 0.5,  // the most a spot's height adds to its value (all of it 150 elmos above its targets)
 	"choke": 100,  // metal a choke of our current line (or the enemy line) in range adds (C)
+	"choke_econ": 1.0,  // a choke of our current line adds this x our economy (the cost of our and allied energy, pylons and factories on our held ground), split among the current line chokes by the traffic through each; 0 = off
+	"choke_enemy": 400,  // metal a choke of the enemy line adds to C, on top of choke (and of the economy share for a choke on both lines)
+	"choke_cap": 1000,  // the most C one choke carries (before depth and halving); 0 = no cap
+	"choke_depth": 1.0,  // C x (1 - this x the choke's distance / range): 1 = full on the choke, nothing at the edge of range; 0 = flat anywhere in range. A tower covering a choke cuts its C for the next one by as much: halved standing on it, by a quarter with it halfway out, not at all at the edge of range (at 1)
 	// Armed statics that defend nothing in the field: never a tower covering a target, nor a defence or allied power to
 	// the callers. Claw mines and missiles are left out too, by customParams.mobilebuilding
 	"not_defence": ["staticheavyarty", "zenith", "mahlazer", "starlight_satellite", "raveparty", "staticnuke", "staticantinuke"],  // Big Bertha, Zenith, Starlight and its Glint, Disco Rave Party, Trinity, Antinuke
-	// Callers, once a second, each turret at NORMAL priority. Both share the light list and the limits: a
-	// constructor helps a turret of ours being built (or a picker job) within radius instead of ordering one, orders
-	// once per cooldown, not while metal stalls, not off a HIGH or NOW job, and only once the turret account
-	// (build_chain.json porcupine.budget, shared with porc) covers the dearest light def it might pick: none in the
-	// opening before it has
+	// Callers, once a second, each turret at NORMAL priority; in the field the first that holds for a constructor, in
+	// this order. All share the light list and the limits: a constructor helps a turret of ours being built (or a
+	// picker job) within radius instead of ordering one, orders once per cooldown, not while metal stalls, not off a
+	// HIGH or NOW job, and only once the turret account (build_chain.json porcupine.budget, shared with porc) covers
+	// the dearest light def it might pick: none in the opening before it has. Callers away from the constructor (a
+	// choke, our artillery) only help a job within radius of the constructor too. The choke callers read the choke
+	// analysis, built for them from the first constructor that could order
 	"after_flee": true,  // a constructor whose flee ended clear or covered orders one where the flee started, of the light defs that hit what it fled from, unless a defence that hits it (ours or an ally's, being built or queued too) stands within defended_radius (the commander's flee is on by default; other builders' with retreat.builder_flee)
 	"after_flee_since": 0,  // seconds of game time before after_flee starts
-	"defended_radius": 600,  // after a flee, a defence this near where it started means no turret
+	"defended_radius": 600,  // a defence this near where a flee started, or our artillery (artillery), means no turret
 	"near_enemy": true,  // a mobile ground constructor with a known enemy building (seen in the last 3 minutes) within enemy_reach and no armed ally within ally_radius orders one around itself
+	"short_choke": true,  // a mobile ground constructor within short_choke_reach of a short choke of our current line (one our ground-hitting towers don't cover all of, or that are short of 1.2x the enemy army outside it, as quota.hold_choke reads it) orders one centred on the choke's gap; only defensible chokes (choke.defensible), settled 20 s and with no enemy artillery on them in the last 5 minutes (as C)
+	"short_choke_reach": 600,
+	"enemy_line": true,  // a mobile ground constructor within enemy_line_reach of a choke of the enemy line orders one centred on the choke's gap; the same chokes as short_choke
+	"enemy_line_reach": 800,
+	"enemy_line_budget": 0.5,  // an order at a choke of the enemy line (by enemy_line or short_choke) needs this x the dearest def's cost in the turret account (0 to 1; the default halves it, 0 = never refused); it is still charged the full cost, which may take the account below zero
+	"artillery": true,  // a mobile ground constructor within artillery_reach of our artillery shooting a target in its range, or of an engaged anti-heavy squad with a unit in range of its target (not mines or aircraft), only a building for anti-heavy squads and anti-heavy artillery, with no ground-hitting turret (ours or an ally's, being built or queued too) within defended_radius of it, orders one centred on the artillery (an anti-heavy squad: its leader)
+	"artillery_reach": 600,
+	// The creep: pushers walk our turrets out along our line's chokes, lane by lane, up to just outside the enemy's static range (CCreepPlanner, once a second; doc/chokepoints.md)
+	"creep": true,  // lanes: the live chokes of our current line, highest frontline rank first. Each steps from our nearest ground-hitting turret in its two regions, through its gap, toward the region beyond's exit nearest the enemy (enemy-held ground too), stopping at their turrets' range, and only if that brings us nearer the enemy. Light defs on the way, the unlocked tiers too at their line. A finished ground defence by the target or the step, or an ally's being built at the step, claims the lane; one of ours being built or queued at the step is helped. A step's end under threat waits. creep_losses of our turrets lost there, or two failed steps in 2 minutes, rest the lane 2 minutes, doubling while it keeps failing. Starts from a first ground turret another caller builds. Between steps a pusher guards its lane's turret while its step's end isn't under threat and the account fills for its next order
+	"creep_builders": 1,  // pushers: the commander first (not while hide mode holds it), then the free mobile ground constructors nearest a lane (swapped for one at under half the distance); each takes the highest-ranked of the three lanes nearest it
+	"creep_income": 30,  // one more pusher per this much metal/s of income (half a pusher of hysteresis); 0 = none
+	"creep_interval": 10,  // seconds between one pusher's steps at the least
+	"creep_step": 0.7,  // a step's length, x the turret it steps from's land range; onto the target once within one, halved (then quartered) out of every enemy static's range + creep_margin; shorter than a quarter of one: the lane is at their line
+	"creep_margin": 64,  // elmos kept outside enemy static range; the picker rejects a creep spot inside any known enemy static's land range + this, and mobile threat there unless our guns' power covering the spot exceeds it
+	"creep_radius": 250,  // the picker's radius about a step's end on the target (half the step if less, short of it); a finished defence within it of the target claims the lane; past the gap once within it
+	"creep_losses": 2,  // our ground-hitting turrets lost in a lane's outer region, or within a step of its end, that rest the lane (2 minutes, doubling up to 16 while it keeps failing); 0 = never
+	"creep_budget": 0.5,  // a creep order needs this x the dearest def it would choose from (light defs short of the enemy's line, the unlocked tiers too at it) in the shared turret account (0 to 1; the default halves it); it is still charged the full cost
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
 	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots. An order
 	// tries the heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier,
@@ -236,7 +263,7 @@
 		{"mex": 0.4, "defs": ["turretriot", "turretgauss"]},  // Stardust, Gauss
 		{"mex": 0.55, "defs": ["turretheavylaser"]}  // HLT
 	],
-	"enemy_reach": 600,
+	"enemy_reach": 700,
 	"ally_radius": 500,
 	"cooldown": 30  // seconds between one constructor's orders, whatever the result
 },
@@ -292,26 +319,52 @@
 
 // Anti-heavy squads (main role anti_heavy: Lance, Ultimatum, Scorpion, Merlin, ...)
 "antiheavy": {
-	"path_threat": 1.0,  // routes (to a heavy, to safety, home) may not cross enemy threat above this x the squad's allowance: its strength (power x sqrt(health %)) x the task's power mod x base_bonus / thr_mod.distance at the strictest end, as anti-air's routes. The route to a heavy ends at its stand-off point (on our side, the first walkable spot from just outside the heavy's own threat ring, never nearer than the squad's LOS, whose threat is under the cap; a heavy with no such spot within a few cells isn't walked to), so the cap meets only its escorts; from there the squad attacks it. Never below the threat where the squad stands; the way home tries once more through any threat; -1 = no cap and the old routes straight to the heavy (threat is only avoided where cheap). Aircraft never get the cap
-	"flee_margin": 200.0,  // checked every update: flee when an armed mobile enemy we see now (mobile bombs and gunships included, not planes or AA-only units; unidentified radar blips while they move and sit low) is within its ground weapon range + this of a squad unit. The heavies and commanders the squad hunts don't count. Shoot and scoot: after a shot with a long reload (5 s or more), each unit on its own steps straight away from the target to just outside its ground range + this (it stays put if it is already out of reach) and attacks again once its weapon is ready, while the rest of the squad fights on; such a unit doesn't count for regrouping. It runs towards the nearest attack/defend group, defended mex cluster or base further from the enemy, and stops where it is once nothing is within range + margin x 1.25 (at least +50). A heavy is only picked as a target if the spots the squad would attack it from and walk to are outside these flee zones, or escorts cover them (flee_ally_threat), so an escorted heavy waits for the army. Mines and aircraft never flee; -1 = off. A unit type can override it with its own antiheavy_flee_margin in its "behaviour" entry
-	"flee_ally_threat": 10.0,  // no flee while our and allied mobile armed units (not anti-heavy, not aircraft) and static defences that can hit ground, within flee_ally_radius of the squad leader, minus the threat of the enemies that set off the flee, add up to at least this power (pwr_mod included, scaled by sqrt(health %)); -1 = flee regardless of escorts; missing = 10 when flee_margin is set
-	"flee_ally_radius": 500.0  // see flee_ally_threat
+	"artillery_scoot": 200.0,  // as_artillery units: after each shot (its burst over) step this many elmos back, away from the target, threatened or not (straight back, else up to 90 degrees to a side: the first spot no hotter than where it fired), hold there, and turn back in time to be in place when the weapon is ready. No scoot when there isn't time to get there and back, or no spot back is that safe. 0 or missing = off (it then steps back only while threatened)
+	"as_artillery": true,  // anti-heavy units on the ground with a long reload (5 s or more), not mines or melee (Lance, Merlin, and through role binds Phantom and Racketeer), use the artillery task (the "artillery" block, one unit each, always) with the heavies and commanders below as targets instead of buildings, fired at only in LOS; the rest of this block is then only for Ultimatum, Scorpion, Widow, Skuttle and aircraft. Unlike artillery, a spot with threat is fine to shoot from, stay at or walk to where our cover there (artillery ally_radius; mobile armed units and static defences, as the flee counts them), minus that threat, still reaches artillery ally_threat; walking, only up to the route cap (max_path_threat). Targets in range: mobile first, then one the shot kills, commanders, the strongest, the nearest, shot from a firing spot picked as for attack groups (quota.attack_spot_threat: on an arc at 90% of the range facing us, or where it stands while at 60-95% of the range, the cheapest by threat and walk among spots fine to shoot from as below, re-picked every 3 s and when the target moves a tile, so it backs off from a heavy that closes in; none: from where it stands); otherwise it walks to the nearest covered firing spot (by route) on any known heavy, mobile or static, in range too; one that the ready shots of other anti-heavy units targeting it would kill (over 1.1x its health and shield) is left to them. A hunted heavy is no flee danger, and doesn't make the spot unsafe to shoot from, while the weapon is ready and out-ranges it or it is within range; while reloading it counts like any other enemy, so the unit steps back after a shot. They don't count as artillery escorts. Lance has its own artillery_flee_margin (150). false or missing = they use the squads below
+	"path_threat": 1.0,  // routes (to a heavy, to safety, home) may not cross enemy threat above this x the squad's allowance: its strength (power x sqrt(health %)) x the task's power mod x base_bonus / thr_mod.distance at the strictest end, as anti-air's routes. The route to a heavy ends at its stand-off point (on our side, the first walkable spot from just outside the heavy's own threat ring, never nearer than 0.9x weapon range of a heavy we see, nor than LOS for a long-reload weapon and a heavy only on radar (mines and aircraft: LOS), whose threat is under the cap; a heavy with no such spot within a few cells isn't walked to), so the cap meets only its escorts; from there the squad attacks it. Never below the threat where the squad stands; the way home tries once more through any threat; -1 = no cap and the old routes straight to the heavy (threat is only avoided where cheap). Aircraft never get the cap
+	"flee_margin": 200.0,  // M, checked every update: flee when an armed mobile enemy we see now (mobile bombs and gunships included, not planes or AA-only units; unidentified radar blips while they move and sit low) is within its ground weapon range + its start margin, max(M / 2, its speed x 1 s), of a squad unit; the flee ends once all are a further M / 4 away. The heavies and commanders the squad hunts don't count, except one that out-ranges a long-reload weapon (5 s or more) while that weapon isn't ready or the heavy is out of its reach. Pick zones (range + start margin + M / 2): no stand-off point, firing spot or park spot inside one unless cover there covers it (flee_ally_threat), so an escorted heavy waits for the army; for the current target and the heavy the squad already walks to (and their firing spots), flee end zones (range + start margin + M / 4) instead, so the squad doesn't turn back at a small shift. Those spots must also be no hotter than the squad's route allowance (path_threat), the heavy's own threat aside where it reaches. Squads run towards the nearest attack/defend group, defended mex cluster or base further from the enemy, and stop once out of reach; snipers (Lance, Merlin) drop their park spot and pick one afresh after the flee. No walk in to a heavy for 30 s after a flee, nor for 15 s after no route to any heavy was found. Shoot and scoot: after a shot with a long reload, each unit on its own steps away from the target (towards its park spot when that is within its weapon range) to just outside the target's ground range + M (it stays put if it is already out of reach) and attacks again once its weapon is ready, while the rest of the squad fights on; such a unit doesn't count for regrouping. Mines and aircraft never flee; -1 = off. A unit type can override it with its own antiheavy_flee_margin in its "behaviour" entry
+	"flee_ally_threat": 10.0,  // cover that calls off the flee and makes a spot in a pick zone safe: the cover there, minus the threat of the enemies that reach it, is at least this. Cover map on (quota.attack_ally_cover > 0): its cover (defences, attack groups, commander; on the attack groups' scale), and an enemy standing where there is no cover is never covered. On water, which the cover map doesn't cover, the cover-map-off rule. Cover map off: our and allied mobile armed units (not anti-heavy, not aircraft) and static defences that can hit ground within flee_ally_radius (power with pwr_mod, scaled by sqrt(health %)). -1 = flee regardless of cover; missing = 10 when flee_margin is set
+	"flee_ally_radius": 500.0,  // see flee_ally_threat (cover map off only)
+	"keep_sec": 30.0,  // the hunt lasts this long after the last radar or LOS sighting of a mobile enemy heavy: new anti-heavy units form squads and squads keep going; after it squads disband and new units join the army. < 0 = while one is known; 0 = one frame
+	"spacing": 150.0,  // the units of a squad stand at least this far apart: a firing spot this close to another unit's is crowded, and parked, the others stand on alternate sides of the leader, this far apart (0 = they stay where they stop). Squads park at least max(256, 2x this) apart
+	"max_group": 2  // units of one type in a squad when the type has no antiheavy_max_group; 0 = no limit. Squads never merge: spread out, one volley can't kill them all
 	// Per unit type, in its "behaviour" entry: "antiheavy_max_group": <n> = at most n units of that type in one
-	// anti-heavy squad (squads only grow by merging; a merge that would go over is skipped); missing or 0 = no limit
+	// anti-heavy squad; missing or 0 = max_group
 	// "attribute": ["cloak_route"] = while cloaked it routes on the decloak layer with no path_threat cap, and its
 	// stand-off spot isn't checked against threat (the old behaviour: it trusts the cloak). Without it (default) a
 	// cloaked anti-heavy (Ultimatum, Widow, ...) routes, picks its stand-off spot and flees on the normal threat map
 	// like the others, so a decloak (firing, splash, a close enemy, energy stall) doesn't leave it deep in enemy fire.
 	// Mines (Skuttle: "mine" attribute) always route as with cloak_route. Under water (no sonar stealth) cloak doesn't count
-	// Fixed rules (no keys): once an enemy heavy is seen, anti-heavy units leave attack, gathering and support tasks for
-	// a squad every 2 s; not while their group flees, and while it fights only if a heavy they can shoot is in their
-	// weapon range. A heavy already in weapon range (x1.2 for the current target) is attacked from where the squad
-	// stands, whatever escorts it. Squad units keep their own fire state
-	// (fire_state, default fire at will); cloakers are no longer held to return fire
+	// Fixed rules (no keys): once a mobile enemy heavy is seen, anti-heavy units leave attack, gathering and support tasks
+	// for a squad every 2 s; not while their group flees, and while it fights only for a heavy they can shoot in their
+	// weapon range, else one within weapon range + 30 s of walking. A heavy already in weapon range (x1.2 for the current
+	// target) is attacked from where the squad stands, whatever escorts it. Snipers (weapon range over LOS: Lance,
+	// Merlin) walk in only to a heavy within weapon range + 30 s of walking; the others hunt across the map. Targets:
+	// mobile first, then the current one, then one other squads have shots ready for, then the nearest; one that the
+	// ready shots of other squads' units in range would kill is left to them. Units fire from spread-out firing spots
+	// that pass the stand-off point's test (pick zones, path_threat); with none, a unit in range fires from where it
+	// stands, else holds. After the kill it stays there. A target the whole squad holds off from out of range is skipped
+	// 10 s (doubling each time again soon, up to 60 s; each target its own); a long-reload squad keeps its target 3 s
+	// after it leaves LOS, standing without firing at its radar blip. Units still ordered on a dropped target stop.
+	// Parking (snipers, cover map on): with no heavy to attack or walk to, a squad parks at the best covered, safe spot
+	// no other squad claims, at the front: follow_dist behind an attack group (straight back, or one of four side slots
+	// max(256, 2x spacing) apart, so several squads fit behind one group); only when no group offers a spot, a third of
+	// the range back from a group of towers (our side). Never within 256 of our base. Score: cover (at most 3x
+	// flee_ally_threat) x recent heavy sightings near it, / (1 + minutes of walking), and halved for 60 s where one of
+	// ours was sent for repair. A spot is kept 30 s, then until another scores 1.3x more, and left once it has lost half
+	// its cover; a spot behind a group is kept while the group lives, also while it is briefly off the list (the group
+	// falls back, an enemy comes near). Parked, units hold position, and walk back only once the squad is more than
+	// max(256, 2x spacing) from its spot. Snipers hold fire only while they attack a heavy (not in the LOS grace, nor
+	// fleeing), so a long reload isn't spent on chaff; fire at will otherwise. The attack on their target still fires.
+	// With nothing to do, squads look at their park spot or the way to the army every 5 s. Ground units travel on
+	// plain moves (no stopping to shoot on the way). Otherwise squad
+	// units keep their own fire state (fire_state, default fire at will); cloakers are no longer held to return fire.
+	// ANTIHEAVY log line per unit type every minute: unit-seconds hunting, parked, engaged and fleeing; shots, radar-only
+	// heavies in range, flees (counted as they end), retreats, scoots and dropped targets
 },
 
 "artillery": {
-	"ally_threat": 10.0,  // only walk to a firing spot with at least this much allied power within ally_radius: our and allied mobile units with a ground or water weapon, not counting artillery (main role, so artillery can't escort itself), planes (gunships do count), anti-air only units or mobile bombs. Power is each unit's power including its pwr_mod (thr_mod is ignored). A building already in range is shot only while the spot still has this much cover, otherwise the unit rejoins the group; -1 = any spot, always shoot (old behaviour)
+	"ally_threat": 10.0,  // only walk to a firing spot with at least this much allied power within ally_radius: our and allied mobile units with a ground or water weapon, not counting artillery (main role, so artillery can't escort itself), anti-heavy units with artillery behaviour (antiheavy.as_artillery), planes (gunships do count), anti-air only units or mobile bombs. Power is each unit's power including its pwr_mod (thr_mod is ignored). A building already in range is shot only while the spot still has this much cover, otherwise the unit rejoins the group; -1 = any spot, always shoot (old behaviour)
 	"ally_radius": 500.0,  // see ally_threat
 	"max_path_threat": 1.0,  // the path to a firing spot may not cross enemy threat (threat map, summed and fading with distance) above this x the unit's own power (including pwr_mod); if no such path exists it joins a group instead; -1 = no limit (threat is only avoided where cheap)
 	"no_scout": true,  // nothing to shoot or walk to: stay put while the spot is threat-free and (ally_threat) covered, otherwise move to safety: behind the nearest attack/defend group, else a defended mex cluster, else the base. false = old behaviour: walk the scout route to enemy mexes, or fight-move to a random spot
@@ -398,11 +451,15 @@
 		// Limits number of units
 //		"limit": 10,
 
-		// Unit can be built only since specific time in seconds
+		// Unit can be built only since specific time in seconds, divided by the allied team size (4v4: a quarter)
 //		"since": 60,
 
-		// Minimum hp percent before retreat
+		// Minimum hp percent before retreat (health only, the shield doesn't count)
 //		"retreat": 0.8,
+
+		// Shielded units: retreat when shield charge is at or below this share of max shield, whatever the
+		// health; unset = retreat.shield[0], 0 = never retreat for the shield, at most 0.9
+//		"retreat_shield": 0.25,
 
 		// Builders other than commanders: overrides retreat.builder_flee's margin, -1 = no flee
 //		"builder_flee_margin": 200.0,
@@ -764,7 +821,7 @@
 		// threat 11.42 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["assault", "support", "shieldball"],
 		"attribute": ["prio_repair"],
-		"retreat": 1.1,
+		"retreat": 0.9,
 		"since": 180,
 		"pwr_mod": 0.4,
 		"thr_mod": 0.5
@@ -784,7 +841,8 @@
 		"role": ["heavy", "shieldball", "snipe_target"],
 		"attribute": ["prio_repair"],
 		"since": 300,
-		"retreat": 1.1,
+		"retreat": 0.9,
+		"retreat_shield": 0.1,  // its shield is its ammo (shield_drain): only an empty one sends it back
 		"pwr_mod": 0.7,
 		"thr_mod": 0.66
 	},
@@ -806,6 +864,7 @@
 		"since": 540,
 		"attribute": ["support", "prio_repair"],
 		"retreat": 0.36,
+		"retreat_shield": 0,  // soaks for the ball and recharges on the spot: leaving takes the cover away
 		"pwr_mod": 1.0,
 		"thr_mod": 0.25
 	},
@@ -1051,10 +1110,11 @@
 		// threat 17.66 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["anti_heavy", "heavy", "snipe_target"],
 		"attribute": ["siege", "support", "prio_repair", "raid_target", "guarded"],
-		"retreat": 0.99,
+		"retreat": 0.65,  // was 0.99: it now stands under cover in fights (antiheavy.as_artillery), so any hit sent it home
 	        "target_dist_mod": 0.34,
 		"pwr_mod": 1.5,
-		"thr_mod": 0.0
+		"thr_mod": 0.0,
+		"artillery_flee_margin": 150.0  // antiheavy.as_artillery: flee from enemies within their range + this (the artillery block's 400 made it leave fights as they started)
 	},
 	"hoveraa": {
 		// threat 7.54 at full health (raw, before pwr_mod/thr_mod)

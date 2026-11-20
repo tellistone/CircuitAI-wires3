@@ -237,6 +237,12 @@ bool CCircuitUnit::IsShieldCharged(float percent)
 	return shield->GetShieldPower() > circuitDef->GetMaxShield() * percent;
 }
 
+bool CCircuitUnit::IsShieldLow()
+{
+	const float retShield = circuitDef->GetRetreatShield();
+	return HasShield() && (retShield > 0.f) && !IsShieldCharged(retShield);
+}
+
 bool CCircuitUnit::IsJumpReady()
 {
 	return circuitDef->IsAbleToJump() && !(unit->GetRulesParamFloat("jumpReload", 1) < 1.f);

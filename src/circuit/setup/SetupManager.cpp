@@ -298,6 +298,12 @@ bool CSetupManager::PickCommander()
 	return true;
 }
 
+float CSetupManager::GetRetreatShield(float value) const
+{
+	// Capped below 1: a unit retreating at a full shield could never recharge past it to come back
+	return utils::clamp((value < 0.f) ? emptyShield : value, 0.f, 0.9f);
+}
+
 CAllyTeam* CSetupManager::GetAllyTeam() const
 {
 	return setupData->GetAllyTeam(circuit->GetAllyTeamId());

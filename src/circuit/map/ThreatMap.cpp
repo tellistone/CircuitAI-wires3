@@ -251,6 +251,34 @@ float CThreatMap::GetThreatAt(CCircuitUnit* unit, const AIFloat3& position) cons
 	return GetLayer(unit, false)[PosToIndex(position)] - THREAT_BASE;
 }
 
+float CThreatMap::GetEnemyThreatAt(CCircuitUnit* unit, CEnemyInfo* enemy, const AIFloat3& position) const
+{
+	// As AddEnemyUnit: ranges in squares + speed slack; air flat, ground with AddEnemyAmphGradient's fall-off
+	// (AddEnemyAmphConst for always-hit weapons). Unknown types (radar blips) aren't worth it: 0
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	if (edef == nullptr) {
+		return 0.f;
+	}
+	const CEnemyUnit* e = enemy->GetData();
+	const int vsl = std::min(int(e->GetVel().Length2D() * slackMod.speedMod), slackMod.speedModMax);
+	int ex, ez, x, z;
+	PosToXZ(e->GetPos(), ex, ez);
+	PosToXZ(position, x, z);
+	const int sum = SQUARE(ex - x) + SQUARE(ez - z);
+	const float threat = e->GetThreat();
+	if (unit->GetCircuitDef()->IsAbleToFly()) {
+		return (edef->HasAntiAir() && (sum <= SQUARE(e->GetRange(CCircuitDef::ThreatType::AIR) + vsl))) ? threat : 0.f;
+	}
+	if (!edef->HasAntiLand() && !edef->HasAntiWater()) {
+		return 0.f;
+	}
+	const int range = std::max(e->GetRange(CCircuitDef::ThreatType::LAND), e->GetRange(CCircuitDef::ThreatType::WATER)) + vsl;
+	if ((range <= 0) || (sum > SQUARE(range))) {
+		return 0.f;
+	}
+	return edef->IsAlwaysHit() ? threat : threat * (1.0f - 0.5f * sqrtf(sum) / range);
+}
+
 float CThreatMap::GetPlainThreatAt(CCircuitUnit* unit, const AIFloat3& position) const
 {
 	return GetLayer(unit, false, false)[PosToIndex(position)] - THREAT_BASE;

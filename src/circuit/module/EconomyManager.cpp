@@ -2263,6 +2263,7 @@ void CEconomyManager::OpenStrategy(const CCircuitDef* facDef, const AIFloat3& po
 		if (type == ROLE_TYPE(BUILDER)) {
 			priotiry = CRecruitTask::Priority::NORMAL;
 			recruit  = CRecruitTask::RecruitType::BUILDPOWER;
+			factoryMgr->CountBuilder(CFactoryManager::BuilderWhy::OPENER);
 		} else {
 			priotiry = CRecruitTask::Priority::HIGH;
 			recruit  = CRecruitTask::RecruitType::FIREPOWER;
@@ -2277,6 +2278,14 @@ float CEconomyManager::GetEcoMetalIncome() const
 	const float odBase = team->GetRulesParamFloat("OD_metalBase", -1.f);
 	return (odBase < 0.f) ? GetAvgMetalIncome()
 			: odBase + team->GetRulesParamFloat("OD_metalOverdrive", 0.f) + team->GetRulesParamFloat("OD_metalMisc", 0.f);
+}
+
+float CEconomyManager::GetTeamMetalIncome() const
+{
+	Team* team = circuit->GetTeam();
+	const float odBase = team->GetRulesParamFloat("OD_team_metalBase", -1.f);
+	return (odBase < 0.f) ? GetAvgMetalIncome() : odBase + team->GetRulesParamFloat("OD_team_metalOverdrive", 0.f)
+			+ team->GetRulesParamFloat("OD_team_metalMisc", 0.f);
 }
 
 float CEconomyManager::GetStorage(Resource* res)

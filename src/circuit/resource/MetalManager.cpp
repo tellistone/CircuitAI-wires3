@@ -21,6 +21,7 @@
 #include "Pathing.h"
 
 #include <algorithm>
+#include <map>
 
 namespace circuit {
 
@@ -263,9 +264,9 @@ bool CMetalManager::IsOpenSpot(const springai::AIFloat3& pos) const
 	return false;
 }
 
-void CMetalManager::MarkAllyMexes()
+void CMetalManager::MarkAllyMexes(bool isForce)
 {
-	if (markFrame /*+ FRAMES_PER_SEC*/ >= circuit->GetLastFrame()) {
+	if (!isForce && (markFrame /*+ FRAMES_PER_SEC*/ >= circuit->GetLastFrame())) {
 		return;
 	}
 
@@ -282,14 +283,14 @@ void CMetalManager::MarkAllyMexes()
 		}
 	}
 
-	MarkAllyMexes(tmpMexes);
+	MarkAllyMexes(tmpMexes, isForce);
 
 	tmpMexes.clear();
 }
 
-void CMetalManager::MarkAllyMexes(const std::vector<CAllyUnit*>& mexes)
+void CMetalManager::MarkAllyMexes(const std::vector<CAllyUnit*>& mexes, bool isForce)
 {
-	if (markFrame /*+ FRAMES_PER_SEC*/ >= circuit->GetLastFrame()) {
+	if (!isForce && (markFrame /*+ FRAMES_PER_SEC*/ >= circuit->GetLastFrame())) {
 		return;
 	}
 	markFrame = circuit->GetLastFrame();
@@ -306,6 +307,7 @@ void CMetalManager::MarkAllyMexes(const std::vector<CAllyUnit*>& mexes)
 		mex.index = FindNearestSpot(unit->GetPos(this->circuit->GetLastFrame()));
 		if (mex.index != -1) {
 			mex.unitId = unit->GetId();
+			mex.team = unit->GetUnit()->GetTeam();
 			*d_first++ = mex;
 			clusterInfos[metalInfos[mex.index].clusterId].finishedCount++;
 		}
@@ -331,7 +333,9 @@ void CMetalManager::MarkAllyMexes(const std::vector<CAllyUnit*>& mexes)
 			if (first2->unitId < (*first1)->GetId()) {
 				delMex(*first2);  // dead unit
 			} else {
-				*d_first++ = *first2;  // old unit
+				SMex mex = *first2;  // old unit: its team may have changed (a resign or a share keeps the unit id)
+				mex.team = (*first1)->GetUnit()->GetTeam();
+				*d_first++ = mex;
 				++first1;  // advance mexes
 			}
 			++first2;  // advance prevUnits
@@ -340,6 +344,40 @@ void CMetalManager::MarkAllyMexes(const std::vector<CAllyUnit*>& mexes)
 	while (first2 != last2) {  // everything else in first2..last2 is dead units
 		delMex(*first2++);
 	}
+}
+
+int CMetalManager::GetClusterOwner(int index)
+{
+	int& owner = clusterInfos[index].owner;
+	static std::map<int, unsigned> counts;  // NOTE: micro-opt; by team, finished mexes in the cluster
+	counts.clear();
+	for (const SMex& mex : markedMexes) {
+		if (metalInfos[mex.index].clusterId == index) {
+			counts[mex.team]++;
+		}
+	}
+	auto it = counts.find(owner);
+	const unsigned ownerCount = (it != counts.end()) ? it->second : 0;
+	unsigned best = ownerCount;
+	for (const auto& kv : counts) {  // by team id: the lower one keeps a tie
+		if (kv.second > best) {
+			best = kv.second;
+			owner = kv.first;
+		}
+	}
+	if (best == 0) {
+		owner = -1;
+	}
+	return owner;
+}
+
+float CMetalManager::GetClusterDice(int index)
+{
+	float& dice = clusterInfos[index].dice;
+	if (dice < 0.f) {
+		dice = (float)rand() / ((float)RAND_MAX + 1.f);  // [0, 1)
+	}
+	return dice;
 }
 
 bool CMetalManager::IsMexInFinished(int index) const

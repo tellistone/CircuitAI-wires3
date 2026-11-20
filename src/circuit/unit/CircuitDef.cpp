@@ -115,6 +115,9 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, aoe(.0f)
 		, fireAoe(.0f)
 		, shotDmg(.0f)
+		, deathAoe(.0f)
+		, deathDmg(.0f)
+		, isDeathBomb(false)
 		, power(.0f)
 		, threat(.0f)
 		, minRange(.0f)
@@ -141,6 +144,8 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, isMex(false)
 		, isPylon(false)
 		, isAssist(false)
+		, isPopup(false)
+		, isPopupSwitch(false)
 		, stockCost(.0f)
 		, jumpRange(.0f)
 		, retreat(-1.f)
@@ -350,6 +355,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		}
 
 		float reloadTime = wd->GetReload();  // seconds
+		burstFrames = std::max(burstFrames, int((wd->GetSalvoSize() - 1) * wd->GetSalvoDelay() * FRAMES_PER_SEC));
 		it = customParams.find("shield_drain");  // charge per shot, taken from the unit's own shield
 		if ((it != customParams.end()) && (reloadTime > 0.f) && (maxShield > 0.f)) {
 			shieldDrain += std::max(utils::string_to_float(it->second), 0.f) * wd->GetSalvoSize() / reloadTime;
@@ -487,6 +493,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 
 	isAttacker = dps > .1f;
 	if (IsMobile() && !IsAttacker()) {  // mobile bomb?
+		isDeathBomb = true;
 		WeaponDef* wd = def->GetDeathExplosion();
 		aoe = fireAoe = wd->GetAreaOfEffect();
 		if (aoe > 64.0f) {
@@ -521,6 +528,25 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 			category |= circuit->GetBadCategory();  // do not chase bombs
 		}
 		delete wd;
+	}
+
+	// Pop-up turret (Faraday, Gauss, Desolator, Lucifer, Hacksaw): a building with a weapon that takes less damage
+	// while armoured (closed), see CCircuitDef::IsPopup
+	isPopup = !IsMobile() && isAttacker && (def->GetArmoredMultiple() < 1.f);
+	isPopupSwitch = isPopup && def->IsOnOffable();
+
+	// Death explosion (explodeAs): its radius and its worst damage over armour types (CCircuitDef::GetDeathDamage)
+	{
+		WeaponDef* wd = def->GetDeathExplosion();
+		if (wd != nullptr) {
+			deathAoe = wd->GetAreaOfEffect();
+			Damage* damage = wd->GetDamage();
+			for (float d : damage->GetTypes()) {
+				deathDmg = std::max(deathDmg, d);
+			}
+			delete damage;
+			delete wd;
+		}
 	}
 
 	// NOTE: isTracks filters units with slow weapon (hermit, recluse, rocko)
@@ -662,6 +688,21 @@ void CCircuitDef::GetCommWeaponRange(CCircuitAI* circuit, springai::Unit* unit, 
 bool CCircuitDef::IsYTargetable(float elevation, float posY) {
 	GetHeight();
 	return (elevation > -height || posY > -topOffset);
+}
+
+bool CCircuitDef::IsLongReload() const
+{
+	return reloadTime >= FRAMES_PER_SEC * 5;
+}
+
+bool CCircuitDef::IsQuarry(const CCircuitDef* edef) const
+{
+	if ((edef == nullptr) || !edef->IsEnemyRoleAny(RoleMask::HEAVY | RoleMask::COMM)) {
+		return false;
+	}
+	return !(IsAttrAntiStat() && edef->IsMobile())
+		&& ((edef->GetCategory() & targetCategory) != 0)
+		&& !(edef->IsAbleToFly() && !HasAntiAir());
 }
 
 } // namespace circuit
