@@ -27,6 +27,21 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Artillery groups shoot any other building before a shut pop-up turret, and nano towers before turrets.** A
+  closed Faraday, Gauss, Desolator, Lucifer or Hacksaw takes a third of the damage, yet artillery shot at it like any
+  other turret. The pick in range was also order-dependent: builders and the strongest building won only if closer
+  than the current pick, so a turret found first stayed ahead of a nano tower behind it. Now the pick in range ranks
+  shut pop-up turrets last, then builders (nano towers, factories), armed buildings by power, unarmed ones, no-chase
+  ones, the nearest first within each.
+  - The AI can't read an enemy's armoured state, so it guesses (`CArtilleryTask::IsPopupShut`). A pop-up turret
+    (`CCircuitDef::IsPopup`) is an armed building with `damageModifier` < 1. One under construction is never
+    armoured.
+    - Desolator and Lucifer open by their on/off switch (`onoffable`): shut while switched off, read in LOS; out of
+      LOS they count as open. Low power doesn't armour them (their close stalls while unpowered), so an unpowered
+      one, which can't shoot back, ranks as any other armed building.
+    - Faraday, Gauss and Hacksaw open to aim: open while an allied unit of a layer it can hit is within its range
+      + 64 elmos. They close 2 to 5 s after their last target, under a unit's ~4 s re-pick period.
+  - Anti-heavy artillery is unchanged.
 - **Regions stay put through a fight: a rebuild for terrain keeps the last build's choices while they still work.**
   With too few regions for `choke.region.min_count`, each rebuild chose afresh whether to keep the merge-1 rebuild
   and which grid to cut by. The grid picked is the first that reaches `min_count`, often just, so a crater that cost
