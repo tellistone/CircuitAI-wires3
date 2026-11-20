@@ -38,7 +38,6 @@ CBFactoryTask::CBFactoryTask(ITaskManager* mgr, Priority priority,
 		, isPlop(isPlop)
 		, stallFrame(-1)
 		, checkFrame(0)
-		, blockersFrame(-1)
 {
 	manager->GetCircuit()->GetFactoryManager()->AddFactory(buildDef);
 }
@@ -87,28 +86,25 @@ void CBFactoryTask::Update()
 	}
 }
 
-bool CBFactoryTask::IsOccupied(const AIFloat3& pos, int face, CCircuitUnit* builder)
+bool CBFactoryTask::IsOccupied(const AIFloat3& pos, int face, CCircuitUnit* builder) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	if (blockersFrame != frame) {  // one snapshot per frame: a site search tests hundreds of footprints
-		blockersFrame = frame;
-		blockers.clear();
-		circuit->UpdateFriendlyUnits();
-		for (const auto& kv : circuit->GetFriendlyUnits()) {  // ours and allies'
-			CAllyUnit* alu = kv.second;
-			if (alu->GetCircuitDef()->IsMobile()) {  // structures: blocking map and IsPossibleToBuildAt
-				blockers.push_back({alu->GetId(), alu->GetPos(frame), alu->GetCircuitDef()->GetRadius() + SQUARE_SIZE});
-			}
-		}
-	}
 	UnitDef* def = buildDef->GetDef();
 	const float hx = (((face & 1) == 0) ? def->GetXSize() : def->GetZSize()) * SQUARE_SIZE / 2;
 	const float hz = (((face & 1) == 0) ? def->GetZSize() : def->GetXSize()) * SQUARE_SIZE / 2;
-	for (const SBlocker& b : blockers) {
-		if ((b.id != builder->GetId()) && (std::fabs(b.pos.x - pos.x) < hx + b.radius)
-			&& (std::fabs(b.pos.z - pos.z) < hz + b.radius))
-		{
+	// Cheap per call (a site search makes hundreds): the list and each unit's position are refreshed once per frame
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {  // ours and allies'
+		CAllyUnit* alu = kv.second;
+		CCircuitDef* cdef = alu->GetCircuitDef();
+		// Structures: blocking map and IsPossibleToBuildAt. Aircraft: not on the ground blocking map
+		if (!cdef->IsMobile() || cdef->IsAbleToFly() || (alu->GetId() == builder->GetId())) {
+			continue;
+		}
+		const AIFloat3& p = alu->GetPos(frame);
+		const float r = cdef->GetRadius() + SQUARE_SIZE;
+		if ((std::fabs(p.x - pos.x) < hx + r) && (std::fabs(p.z - pos.z) < hz + r)) {
 			return true;
 		}
 	}

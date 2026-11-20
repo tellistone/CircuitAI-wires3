@@ -9,9 +9,6 @@
 #define SRC_CIRCUIT_TASK_FACTORYTASK_H_
 
 #include "task/builder/BuilderTask.h"
-#include "unit/CoreUnit.h"
-
-#include <vector>
 
 namespace circuit {
 
@@ -31,19 +28,11 @@ private:
 	virtual void FindBuildSite(CCircuitUnit* builder, const springai::AIFloat3& pos, float searchRadius) override;
 
 	// A mobile friendly unit, other than builder, stands in the footprint at pos (plop: it may never step aside)
-	bool IsOccupied(const springai::AIFloat3& pos, int face, CCircuitUnit* builder);
+	bool IsOccupied(const springai::AIFloat3& pos, int face, CCircuitUnit* builder) const;
 
 	bool isPlop;
 	int stallFrame;  // plop: frame the commander was first seen in range of its site with a unit in it; -1 = no
 	int checkFrame;  // plop: next stall check
-
-	struct SBlocker {
-		ICoreUnit::Id id;
-		springai::AIFloat3 pos;
-		float radius;
-	};
-	std::vector<SBlocker> blockers;  // friendly mobile units, snapshot of blockersFrame
-	int blockersFrame;
 };
 
 } // namespace circuit
