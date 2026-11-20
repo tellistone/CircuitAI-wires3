@@ -2741,7 +2741,7 @@ void CBuilderManager::UpdateTurrets()
 	CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	std::vector<int> shortChokes, lineChokes;
-	std::vector<bool> isOnEnemyLine;  // enemy_line_budget for a choke on it, whichever caller takes it
+	std::vector<bool> isOnEnemyLine;  // enemy_line_budget and no A for a choke on it, whichever caller takes it
 	if (cfg.isShortChoke || cfg.isEnemyLine) {
 		if (chokeMap->IsReady()) {
 			isOnEnemyLine.assign(graph.GetChokes().size(), false);
@@ -2782,9 +2782,7 @@ void CBuilderManager::UpdateTurrets()
 		const std::vector<int>& chokes;
 		float reach;
 		const char* caller;
-		bool isAlly;  // the enemy line's: no A, it goes for the enemy
-	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke", true},
-			{lineChokes, cfg.enemyLineReach, "enemy line", false}};
+	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke"}, {lineChokes, cfg.enemyLineReach, "enemy line"}};
 	const float lineBudget = utils::clamp(cfg.enemyLineBudget, 0.f, 1.f);  // x the balance the account must hold
 	// Artillery: ours shooting a target in range (an artillery unit; an engaged anti-heavy squad with a unit in range,
 	// not mines or aircraft), only a building in anti-heavy mode; centred on it (a squad: its leader), unless a turret
@@ -2829,7 +2827,7 @@ void CBuilderManager::UpdateTurrets()
 				const int c = nearChoke(l.chokes, pos, l.reach);
 				if (c >= 0) {
 					TryTurret(unit, chokeMap->GetCellPos(graph.GetChokes()[c].centre), nullptr, false, l.caller, isOrdered,
-							isOnEnemyLine[c] ? lineBudget : 1.f, l.isAlly);
+							isOnEnemyLine[c] ? lineBudget : 1.f, !isOnEnemyLine[c]);  // on the enemy line: no A
 					return true;
 				}
 			}

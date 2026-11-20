@@ -9,8 +9,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
   unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and
-  energy they were meant to push past. Their orders, and the check on arrival, now count no A
-  (`STurretOrder::isAlly`). With less value, a spot also needs more enemy traffic, enemy buildings or choke worth to
+  energy they were meant to push past. Near-enemy orders and orders at a choke of the enemy line (a short choke on
+  it too), and the check on their arrival, now count no A (`STurretOrder::isAlly`). With less value, a spot also needs more enemy traffic, enemy buildings or choke worth to
   reach `turret.min_value`. The other callers, the creep and porc keep A.
 
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
@@ -157,9 +157,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     only waits.
   - Steps as jobs: up to `turret.creep_builders` (1) steps queued or under way at once, plus one per
     `turret.creep_income` (30) metal/s, and one at a time in a lane. Each is a picker turret about the step's end
-    (`turret.creep_radius`, 250) queued at HIGH for any constructor looking for work to take; nobody is pulled off
-    another job. A job whose builder dies stays queued for the next; one nobody is on for 30 s is refunded. A lane
-    takes an order at most every `turret.creep_interval` (10) s. It shares the turret account: it needs
+    (`turret.creep_radius`, 250) queued at HIGH for any constructor looking for work to take, only while one that
+    can reach it is within the HIGH travel cap (`economy.builder_jobs.travel.high`); nobody building is pulled off.
+    Once begun it builds at NORMAL (HIGH with enemies near). A job whose builder dies stays queued for the next; one
+    nobody is on for 30 s is refunded if not started, and its lane waits 60 s. A lane takes an order at most every
+    `turret.creep_interval` (10) s. It shares the turret account: it needs
     `turret.creep_budget` (0.5) x the dearest def it would choose from there and is charged the full cost (the
     `creep` spender).
   - The picker's threat rule for a creep order, at the order and on arrival: no spot inside any known enemy static's

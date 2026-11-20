@@ -63,6 +63,11 @@ public:
 	unsigned int GetWorkerCount() const { return workers.size(); }
 	const std::set<CCircuitUnit*>& GetWorkers() const { return workers; }
 	float GetJobSwitch() const { return jobSwitch; }
+	// economy.builder_jobs.travel of priority, in seconds: a job farther than this walk is taken only with nothing
+	// nearer (max: no cap)
+	float GetJobTravel(IBuilderTask::Priority priority) const {
+		return jobRanks[std::min(static_cast<int>(priority), 3)].travelSec;
+	}
 	void AddBuildPower(CCircuitUnit* unit);
 	void DelBuildPower(CCircuitUnit* unit);
 	float GetBuildPower() const { return buildPower; }

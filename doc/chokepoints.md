@@ -86,7 +86,7 @@ Choke ids carry over either way. A new choke waits 20 s before anything acts on 
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
 | `turret.after_flee` | `true` | **Turret picker (G), after a flee.** A constructor whose flee from nearby enemies ends clear or covered orders a light turret where the flee started. |
 | `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. Its spot counts no A, so it goes for the enemy instead of being drawn back to cover our buildings. |
-| `turret.short_choke` | `true` | **Turret picker (G), at a short choke.** A mobile ground constructor within `turret.short_choke_reach` of a short choke of our current line (as C judges it, below) orders one centred on the choke's gap. Only defensible chokes, settled and with no enemy artillery on them, as for C. |
+| `turret.short_choke` | `true` | **Turret picker (G), at a short choke.** A mobile ground constructor within `turret.short_choke_reach` of a short choke of our current line (as C judges it, below) orders one centred on the choke's gap. Only defensible chokes, settled and with no enemy artillery on them, as for C. A short choke that is also on the enemy line counts no A, as for `turret.enemy_line`. |
 | `turret.enemy_line` | `true` | **Turret picker (G), near the enemy line.** A mobile ground constructor within `turret.enemy_line_reach` of a choke of the enemy line orders one centred on the choke's gap. The same chokes as `turret.short_choke`. Its spot counts no A, as for `turret.near_enemy`. |
 | `turret.artillery` | `true` | **Turret picker (G), by our artillery.** A mobile ground constructor within `turret.artillery_reach` of our artillery shooting a target in its range, or of an engaged anti-heavy squad with a unit in range of its target (not mines or aircraft), with no ground-hitting turret within `turret.defended_radius` of it, orders one centred on the artillery (an anti-heavy squad: its leader). Anti-heavy squads and anti-heavy artillery count only against a building. |
 | `turret.creep` | `true` | **Turret picker (G), the creep.** Walks our turrets out along our line's chokes, lane by lane, up to just outside the enemy's static range, as HIGH jobs for any constructor looking for work; see [The creep](#the-creep-g). |
@@ -138,7 +138,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height) must reach this × the turret's cost. |
 | `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. T is left out while spiders and jumpers are `choke.gate_share` of the enemy army (until they fall below half of that): then a turret pays for itself in A, E and C alone. |
 | `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
-| `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. The near-enemy and enemy-line callers count no A. |
+| `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. Near-enemy orders and orders at a choke of the enemy line count no A. |
 | `turret.enemy` | `1.0` | Weight of E, the enemies a turret could shoot. |
 | `turret.front` | `1.0` | The spot with the most enemy building influence, out of threat, ranks up to 1 + this × its value. 0 turns the lean off. |
 | `turret.view` | `1.0` | A spot ranks up to 1 + this × its value by *V*, the share of its range circle's ground in a clear line of fire from it. A cliff top over the ground below scores high and its foot low; flat open ground scores 1. Like the lean, it ranks spots and never decides whether one is worth its cost. 0 turns it off. |
@@ -391,8 +391,9 @@ cost:
   as kbots, and their routes over cliffs are left out.
 - *A*, our and allied unarmed buildings in range (mexes, energy, radar, factories, storage, nanoframes too), at cost.
   Energy, pylons and factories in our territory count only above what the spot's C already carries of our economy.
-  The near-enemy and enemy-line callers leave A out (`STurretOrder::isAlly`), at the order and in the arrival
-  check: their turrets go for the enemy, not back to cover our buildings.
+  Near-enemy orders and orders at a choke of the enemy line (whichever caller takes it) leave A out
+  (`STurretOrder::isAlly`), at the order and in the arrival check: their turrets go for the enemy, not back to
+  cover our buildings.
 - *E*, known enemy buildings in range seen in radar or sight in the last 3 minutes (so the ghost of one that died
   out of sight drops out), at cost; an enemy mex counts its income × `turret.horizon`, which is what killing it
   takes from them. Mobiles don't count: they move on, and their routes are in T already.
@@ -512,7 +513,8 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
    searches half the step about its end (`creep_radius` on the target), so the turret lands ahead of the one behind
    it. A finished ground defence within that of the end, or an ally's being built there, takes the step; one of
    ours being built or queued there, by any caller, is raised to NORMAL for a constructor looking for work to take
-   (never a second turret beside it; a nanoframe of ours whose job timed out gets a repair job at NORMAL). Steps
+   (never a second turret beside it; a nanoframe of ours whose job timed out gets a repair job at NORMAL), and the
+   lane counts as helped. Steps
    short of the enemy's line build `turret.light` defs; the unlocked tiers join only at the line (a step onto the
    target, or one pulled back by their range), where the creep stops and has to hold. The creep starts from a first ground turret of ours that another
    caller (porc, the field callers) built; staking the middle before that is for later work.
@@ -526,13 +528,20 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
    until that turret is up and the next step starts from it, or until the job times out.
 6. **Orders.** Highest-ranked lane first, each step is a picker turret about the step's end queued at HIGH
    (`CBuilderManager::OrderCreepTurret`). Nobody is sent: a constructor looking for work takes it as it ranks every
-   job, by priority and walk (`MakeBuilderTask`), so nobody is pulled off another job. The spot is searched for the
-   mobile ground builder nearest the step that can reach it (not a commander hide mode holds); the taker walks
-   there, and the arrival check (point 7) runs for it. A job whose builder dies or leaves stays queued for the next
-   one; a job nobody is on for 30 s times out and is refunded, and the lane steps again. A lane takes an order every
-   `turret.creep_interval` at most (nor does one stepping to the same ground that second). The turret account must
-   hold `turret.creep_budget` x the dearest def it would choose from (point 3); the full cost is charged at the
-   order (`creep` in the account's log). A stall or a short account waits a second.
+   job, by priority and walk (`MakeBuilderTask`). Nobody building is pulled off; one walking to another job may
+   switch to it, as for any job. Once a builder starts it, it builds at NORMAL, so a heavy turret at the line
+   doesn't take metal before the factory (enemies near raise it to HIGH, as for any defence).
+   - A step is queued only if a mobile ground builder that can reach it is within the HIGH travel cap
+     (`economy.builder_jobs.travel.high`) at its speed, the walk past which `MakeBuilderTask` takes a job only
+     with nothing nearer. Otherwise the next lane gets it. The spot is searched for the nearest such constructor,
+     else the commander (not while hide mode holds it), so the commander's flee zones don't narrow it.
+   - The taker walks there, and the arrival check (point 7) runs for it. A job whose builder dies or leaves stays
+     queued for the next one. A job nobody is on for 30 s times out (refunded if not started), and a lane whose job
+     was cancelled before it started waits 60 s, so the next lanes get the count.
+   - A lane takes an order every `turret.creep_interval` at most (nor does one stepping to the same ground that
+     second). The turret account must hold `turret.creep_budget` x the dearest def it would choose from (point 3);
+     the full cost is charged at the order (`creep` in the account's log). A stall or a short account waits a
+     second.
 7. **The picker's threat rule for a creep order**, at the order and again on arrival: a spot inside any known enemy
    static's land range + `creep_margin` is threatened. Elsewhere the threat map's mobile threat passes only where
    the power of our guns whose range covers the spot is higher.
@@ -583,8 +592,8 @@ Lines in the AI's infolog, for tuning:
 - `RADAR by`: each radar a builder is sent to build, with the coverage before it.
 - `CREEP`: once a minute, the steps queued or under way of the most at once, the lanes stepping out of our line's
   chokes and, for that second, why the rest didn't (not live, resting, a step already queued or under way, claimed,
-  no turret, no progress toward the enemy, in enemy reach) and the step ends found under threat. Each step's order is
-  a `TURRET creep, queued, searched for <builder>` line.
+  helped, no turret, no progress toward the enemy, in enemy reach, no builder near) and the step ends found under
+  threat. Each step's order is a `TURRET creep, queued, searched for <builder>` line.
 - `TURRET <caller>, by <builder>`: each turret order (`after flee`, `near enemy` or `test`) with its def, spot, the
   four terms, height, F, the nearest building of ours, the walk, base and value per cost, candidates tested and the
   time; or why nothing (no def, no spot, nothing in range worth its cost, no buildable spot among the best, or the

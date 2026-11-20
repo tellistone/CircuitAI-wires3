@@ -8,8 +8,6 @@
 #ifndef SRC_CIRCUIT_MODULE_CREEPPLANNER_H_
 #define SRC_CIRCUIT_MODULE_CREEPPLANNER_H_
 
-#include "unit/CoreUnit.h"
-
 #include "AIFloat3.h"
 
 #include <map>
@@ -36,16 +34,18 @@ class IBuilderTask;
  * - Claimed: a finished ground defence (ours or an ally's) within turret.creep_radius of the target, or within half
  *   the step of its end, or an ally's being built there. One step at a time: a lane with a creep job of its own
  *   waits for it. Another job of ours being built or queued at the end: help it, by raising it to NORMAL (never a
- *   second turret beside it).
+ *   second turret beside it; a nanoframe of ours whose job timed out gets a repair job).
  * - Rests: turret.creep_losses of our turrets lost in the outer region or a step of the end, or two failed steps
  *   within 2 minutes, rest a lane 2 minutes, doubling (up to 16 minutes) while it keeps failing within 10 minutes of
  *   its last rest. A step's end under threat (the picker's creep rule) only waits.
  * - Orders: up to turret.creep_builders steps queued or under way at once, plus one per turret.creep_income metal/s,
  *   highest-ranked lane first. Each step is a job queued at HIGH (CBuilderManager::OrderCreepTurret) that any builder
- *   looking for work may take, as it ranks jobs by priority and walk (MakeBuilderTask): nobody is pulled off another
- *   job. The spot is searched for the mobile ground builder nearest the step that can reach it. A job holds its lane
- *   and its place in the count until it is built or times out (30 s with no builder on it; refunded), so one whose
- *   builder died stays queued for the next. A lane takes an order every turret.creep_interval at most
+ *   looking for work may take, as it ranks jobs by priority and walk (MakeBuilderTask): nobody building is pulled
+ *   off, though one walking to another job may switch to it, as for any job. Once begun, it builds at NORMAL. Only
+ *   with a builder that can reach the step within the HIGH travel cap (FindPlanner, whom the spot is searched for),
+ *   else the next lane gets it. A job holds its lane and its place in the count until it is built or times out (30 s
+ *   with no builder on it; refunded if not started), so one whose builder died stays queued for the next. A lane
+ *   takes an order every turret.creep_interval at most, and waits 60 s after its job was cancelled unstarted
  */
 class CCreepPlanner {
 public:
@@ -55,15 +55,14 @@ public:
 	void Update();  // every second
 
 	void OnGunLost(const springai::AIFloat3& pos);  // a finished ground-hitting turret of ours died
-	void OnDropped(int lane);  // a creep job of lane dropped on arrival: its step failed
+	void AddFail(int lane);  // a step failed: no spot, or its job dropped on arrival (two in 2 minutes rest the lane)
+	void OnUntaken(int lane);  // a creep job of lane cancelled before it started (timed out, dropped): it waits
 
 private:
 	struct SLane {
 		int chokeId;  // the line choke's graph id (kept over rebuilds)
 		springai::AIFloat3 end;  // the step's end, or the job to help
 		float radius;  // the picker's about end
-		ICoreUnit::Id anchorId;  // the turret it steps from
-		bool isHelp;  // a defence of ours is queued or being built at end: raise it, never a second one
 		bool isAtLine;  // on the target or pulled back by enemy range: the unlocked tiers too
 	};
 	struct SMemo {  // a lane's, kept over seconds
@@ -76,18 +75,19 @@ private:
 		int next = 0;  // no order on it before this frame
 	};
 	struct SGun {
-		ICoreUnit::Id id;
 		springai::AIFloat3 pos;
 		float range;
 		int region;
 	};
-	enum Skip: int {NOT_LIVE, RESTING, CLAIMED, NO_ANCHOR, NO_PROGRESS, IN_REACH, STEPPING, THREATENED, _SIZE_};
+	enum Skip: int {NOT_LIVE, RESTING, STEPPING, CLAIMED, HELPED, NO_ANCHOR, NO_PROGRESS, IN_REACH, NO_BUILDER,
+			THREATENED, _SIZE_};
 
 	void Gather();  // this second's guns, creep jobs, enemy reach and enemy ground
 	void MakeLanes();
-	void OrderSteps(int most);  // queues steps while fewer than most are queued or under way, raises help lanes' jobs
-	// The mobile ground builder nearest pos that can reach it (not a commander hide mode holds): whom a step's spot is
-	// searched for
+	void OrderSteps(int most);  // queues steps while fewer than most are queued or under way
+	// Whom a step's spot is searched for: the nearest mobile ground constructor that can reach pos within the HIGH
+	// travel cap at its speed, as MakeBuilderTask takes jobs; else the commander (not while hide mode holds it), so
+	// a constructor's search isn't held to the commander's flee zones. nullptr: nobody would take it
 	CCircuitUnit* FindPlanner(const springai::AIFloat3& pos) const;
 	// The outer region's exit nearest the enemy (memo.targetId kept until another is 20% nearer), else its centre
 	springai::AIFloat3 ChooseTarget(int choke, int outer, SMemo& memo) const;
@@ -97,7 +97,6 @@ private:
 			float& outLen) const;
 	float EnemySqDist(const springai::AIFloat3& pos, int skipRegion) const;  // to the enemy's ground beyond skipRegion
 	bool IsInEnemyReach(const springai::AIFloat3& pos) const;
-	void AddFail(int chokeId);
 	void Rest(SMemo& m);
 
 	CCircuitAI* circuit;
