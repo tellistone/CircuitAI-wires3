@@ -155,6 +155,8 @@ public:
 	IBuilderTask* EnqueueEscalationEnergy(CCircuitDef* cdef);
 	// Queue a geo on the nearest free, safe vent when none is queued and income allows
 	IBuilderTask* UpdateGeoTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	// Mex job at the best open spot for a builder at position (unit = nullptr: any builder that can reach it)
+	IBuilderTask* UpdateMexTasks(const springai::AIFloat3& position, CCircuitUnit* unit);
 	IBuilderTask* UpdateFactoryTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	IBuilderTask* UpdateFactoryTasks();
 	IBuilderTask* UpdateStorageTasks();
@@ -211,8 +213,6 @@ public:
 
 private:
 	float GetStorage(springai::Resource* res);
-	// Mex job at the best open spot for a builder at position (unit = nullptr: any builder that can reach it)
-	IBuilderTask* UpdateMexTasks(const springai::AIFloat3& position, CCircuitUnit* unit);
 	// mex_front cluster score for CMetalManager::GetMexToBuild; empty = plain nearest-spot search
 	std::function<float (int cluster, float dist)> GetMexFrontScore(float bias) const;
 	// choke.expand: per cluster, the score's factor for being behind a pocket's cut (lower is better); empty when off
