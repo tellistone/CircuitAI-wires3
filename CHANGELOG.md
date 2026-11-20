@@ -193,6 +193,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Scouts go for undefended enemy mexes, and spread over them** (`quota.scout_spot.mex`, shipped 1.0, default 0 =
+  off). A metal spot with a known enemy mex (finished or being built) scores a bonus of `mex` x the spot's stale term,
+  so a mex seen a moment ago gets none and a scout doesn't bounce between known mexes. No bonus if a known enemy
+  defence covers the mex, if another scout is heading to any spot of its metal cluster, or if the spot was given up on
+  for danger lately (its 10 s block plus `claim_time`). Only scouts that can hit land targets get it. A scout's claim
+  on its spot is now renewed while it is not fleeing, until it picks again or leaves scouting (it ran out 20 s after the
+  pick, even mid-trip). `quota.raider_spot.mex` works the same for raid groups; not set.
+
 - **The creep: turrets walk out along our line's chokes, up to just outside the enemy's static range**
   (`turret.creep`, on by default; new `CCreepPlanner`). Our turrets stayed where they were first placed, often far
   back. Now, once a second, along the choke analysis:
