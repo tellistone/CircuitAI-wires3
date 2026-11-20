@@ -659,13 +659,6 @@ int CEconomyManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	return 0; //signaling: OK
 }
 
-int CEconomyManager::UnitGiven(CCircuitUnit* unit, int oldTeamId, int newTeamId)
-{
-	// An ally that drops shares its units: a Big Bertha it gave us is ours to power
-	WatchGridLink(unit);
-	return 0; //signaling: OK
-}
-
 int CEconomyManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	auto itLink = gridLinks.find(unit->GetId());
