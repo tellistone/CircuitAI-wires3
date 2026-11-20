@@ -411,8 +411,8 @@ void CSetupManager::ReadConfig()
 
 		const Json::Value& jbs = comm["jobs"];
 		SCommInfo::SJobs& jobs = commInfo.jobs;
-		jobs.frame = jbs.get("time", -1).asInt();
-		jobs.frame = (jobs.frame < 0) ? -1 : jobs.frame * FRAMES_PER_SEC;
+		const int jobsSec = jbs.get("time", -1).asInt();
+		jobs.frame = (jobsSec < 0) ? std::numeric_limits<int>::max() : jobsSec * FRAMES_PER_SEC;  // < 0: never
 		const IBuilderTask::BuildName& names = IBuilderTask::GetBuildNames();
 		for (const Json::Value& name : jbs["skip"]) {
 			auto it = names.find(name.asString());
