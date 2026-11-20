@@ -33,7 +33,12 @@ struct STurretOrder {
 	std::vector<CCircuitDef*> defs;  // empty: the porcupine list's land or water towers, AA left out
 	IBuilderTask::Priority priority = IBuilderTask::Priority::NORMAL;
 	const char* caller = "test";  // "after flee", "near enemy" or "test", for the log
-	bool isCreep = false;  // turret.creep: enemy statics' range + creep_margin is the threat rule, mobiles under cover pass
+	// turret.creep (CCreepPlanner): the lane's line choke id; -1: not the creep's. Enemy statics' range + creep_margin
+	// is the threat rule, mobiles under cover pass, and the job is left queued at priority for any builder looking for
+	// work (builder: whom the spot is searched for)
+	int creepLane = -1;
+	bool isAlly = true;  // false: no A (near enemy, enemy line), so the turret goes for the enemy, not to cover ours
+	bool IsCreep() const { return creepLane >= 0; }
 };
 
 /*
@@ -103,11 +108,11 @@ public:
 		float enemyReach = 700.f;
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
-		// The creep (CCreepPlanner): pushers step turrets forward to just outside enemy static range
+		// The creep (CCreepPlanner): builders step turrets forward to just outside enemy static range
 		bool isCreep = true;
-		int creepBuilders = 1;  // pushers: the commander first, then constructors
-		float creepIncome = 30.f;  // metal/s of income per extra pusher; 0 = none
-		float creepInterval = 10.f;  // seconds between one pusher's steps
+		int creepBuilders = 1;  // steps queued or under way at once, each a HIGH job for any builder
+		float creepIncome = 30.f;  // metal/s of income per extra step at once; 0 = none
+		float creepInterval = 10.f;  // seconds between orders on one lane
 		float creepStep = 0.7f;  // x the forward turret's range
 		float creepMargin = 64.f;  // elmos kept outside enemy static range
 		float creepRadius = 250.f;  // the picker's radius about the step's end
@@ -193,6 +198,7 @@ private:
 		springai::AIFloat3 centre;
 		float radius;
 		bool isCreep = false;
+		bool isAlly = true;  // STurretOrder::isAlly
 		std::vector<SGun> enemyGuns;  // known enemy statics that hit ground, reach = range + creep_margin
 		std::vector<SGun> ourGuns;  // finished ones of ours and allies' that hit ground, reach = range
 		// Within radius + the longest range, before they are weighed for a def (metal: traffic in metal/s, the rest in

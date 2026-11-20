@@ -28,10 +28,17 @@ public:
 	void SetOffPoints() { isOffPoints = true; }
 	bool IsOffPoints() const { return isOffPoints; }
 	// A picker job: built on its exact spot or not at all, and dropped (its spot masked) on arrival if the spot no
-	// longer pays. isCreep: a turret.creep order's, which keeps the creep's threat rule on arrival
-	void SetPicker(bool isCreep) { isPicker = isOffPoints = true; this->isCreep = isCreep; }
+	// longer pays. creepLane: a turret.creep order's lane (its line choke id; -1: none), which keeps the creep's
+	// threat rule on arrival. isAlly: the order counted A, and so does the arrival's value
+	void SetPicker(int creepLane, bool isAlly) {
+		isPicker = isOffPoints = true;
+		this->creepLane = creepLane;
+		this->isAlly = isAlly;
+	}
 	bool IsPicker() const { return isPicker; }
-	bool IsCreep() const { return isCreep; }
+	bool IsCreep() const { return creepLane >= 0; }
+	int GetCreepLane() const { return creepLane; }
+	bool IsAlly() const { return isAlly; }
 	// porcupine.budget: what the turret account charged for it (0 = free), and the spender
 	void SetCharge(float value, int by) { charged = value; spend = by; }
 	float GetCharged() const { return charged; }
@@ -45,7 +52,8 @@ protected:
 	bool isUrgent;
 	bool isOffPoints;
 	bool isPicker;
-	bool isCreep;
+	bool isAlly;
+	int creepLane;
 	float normalCost;
 	float charged;
 	int spend;

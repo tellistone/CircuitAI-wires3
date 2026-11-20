@@ -18,6 +18,7 @@
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitDef.h"
 #include "unit/CircuitUnit.h"
+#include "task/builder/DefenceTask.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
@@ -35,7 +36,7 @@ static constexpr int MEMORY_FRAMES = FRAMES_PER_SEC * 120;  // losses and failur
 static constexpr int REST_RESET_FRAMES = FRAMES_PER_SEC * 600;  // a lane's rests stop doubling after this long
 static constexpr int MAX_DOUBLINGS = 3;  // a rest is up to 2^3 = 8 x MEMORY_FRAMES (16 minutes)
 static constexpr int LOG_FRAMES = FRAMES_PER_SEC * 60;
-static constexpr int NEAREST_LANES = 3;  // a pusher takes the highest-ranked among this many lanes nearest it
+static constexpr int UNTAKEN_FRAMES = FRAMES_PER_SEC * 60;  // a lane whose job was cancelled before it started waits
 static constexpr float KEEP_TARGET = 1.2f;  // a lane keeps its target until another is this much nearer the enemy
 
 CCreepPlanner::CCreepPlanner(CCircuitAI* circuit)
@@ -52,10 +53,8 @@ CCreepPlanner::~CCreepPlanner()
 
 void CCreepPlanner::Update()
 {
-	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
-	const CTurretPicker::SConfig& cfg = picker->GetConfig();
+	const CTurretPicker::SConfig& cfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
 	if (!cfg.isCreep) {
-		pushers.clear();
 		lanes.clear();
 		return;
 	}
@@ -65,82 +64,86 @@ void CCreepPlanner::Update()
 	}), losses.end());
 
 	MakeLanes();
-	UpdatePushers();
-
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	std::vector<bool> isTaken(lanes.size(), false);
-	for (ICoreUnit::Id id : pushers) {
-		CCircuitUnit* unit = circuit->GetTeamUnit(id);
-		auto it = nextFrames.find(id);
-		if ((unit == nullptr) || ((it != nextFrames.end()) && (frame < it->second)) || !builderMgr->IsTurretFree(unit)) {
-			continue;
-		}
-		// A step's end under threat (the picker's creep rule) waits: not a failed step
-		const SLane* lane = PickLane(unit->GetPos(frame), &isTaken);
-		while ((lane != nullptr) && !lane->isHelp && picker->IsCreepThreatened(unit, lane->end)) {
-			++skips[THREATENED];
-			isTaken[lane - lanes.data()] = true;
-			lane = PickLane(unit->GetPos(frame), &isTaken);
-		}
-		if (lane == nullptr) {
-			break;
-		}
-		const int result = builderMgr->OrderCreepTurret(unit, lane->end, lane->radius, lane->isHelp, !lane->isAtLine);
-		if (result == 0) {
-			continue;  // stall or budget: again next second
-		}
-		for (size_t i = 0; i < lanes.size(); ++i) {  // and every lane stepping to the same ground
-			isTaken[i] = isTaken[i] || (lanes[i].end.SqDistance2D(lane->end) <= SQUARE(cfg.creepRadius));
-		}
-		nextFrames[id] = frame + int(cfg.creepInterval * FRAMES_PER_SEC);
-		laneOf[id] = lane->chokeId;
-		if (result == -1) {
-			AddFail(lane->chokeId);
-		}
-	}
+	// Steps queued or under way at once: turret.creep_builders, plus one per turret.creep_income metal/s
+	const float income = circuit->GetEconomyManager()->GetAvgMetalIncome();
+	const int most = std::max(cfg.creepBuilders, 0) + ((cfg.creepIncome > 0.f) ? int(income / cfg.creepIncome) : 0);
+	OrderSteps(most);
 
 	if (frame >= logFrame) {
 		logFrame = frame + LOG_FRAMES;
-		circuit->LOG("CREEP %i pushers, %i lanes of a line of %i; this second skipped: %i not live, %i resting, "
-				"%i claimed, %i no turret, %i no progress, %i in enemy reach, %i ends under threat; %i lost lately",
-				(int)pushers.size(), (int)lanes.size(), lineSize, skips[NOT_LIVE], skips[RESTING], skips[CLAIMED],
-				skips[NO_ANCHOR], skips[NO_PROGRESS], skips[IN_REACH], skips[THREATENED], (int)losses.size());
+		circuit->LOG("CREEP %i of %i steps queued or under way, %i lanes of a line of %i; this second skipped: %i not "
+				"live, %i resting, %i stepping, %i claimed, %i helped, %i no turret, %i no progress, %i in enemy reach, "
+				"%i with no builder near, %i ends under threat; %i lost lately", (int)jobLanes.size(), most,
+				(int)lanes.size(), lineSize, skips[NOT_LIVE], skips[RESTING], skips[STEPPING], skips[CLAIMED],
+				skips[HELPED], skips[NO_ANCHOR], skips[NO_PROGRESS], skips[IN_REACH], skips[NO_BUILDER],
+				skips[THREATENED], (int)losses.size());
 	}
 }
 
-bool CCreepPlanner::IsPusher(const CCircuitUnit* unit) const
+void CCreepPlanner::OrderSteps(int most)
 {
-	return std::find(pushers.begin(), pushers.end(), unit->GetId()) != pushers.end();
-}
-
-IBuilderTask* CCreepPlanner::MakeHoldTask(CCircuitUnit* unit)
-{
-	if (lanes.empty() || !IsPusher(unit)) {
-		return nullptr;
-	}
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const CTurretPicker::SConfig& cfg = picker->GetConfig();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	const int frame = circuit->GetLastFrame();
-	auto it = laneOf.find(unit->GetId());
-	const SLane* lane = (it != laneOf.end()) ? FindLane(it->second) : nullptr;
-	if (lane == nullptr) {
-		lane = PickLane(unit->GetPos(frame));
+	int busy = (int)jobLanes.size();
+	std::vector<bool> isTaken(lanes.size(), false);  // a lane stepping to ground another took this second
+	for (size_t i = 0; (i < lanes.size()) && (busy < most); ++i) {  // highest rank first
+		const SLane& lane = lanes[i];
+		SMemo& memo = memos[lane.chokeId];
+		if (isTaken[i] || (frame < memo.next)) {
+			continue;
+		}
+		CCircuitUnit* unit = FindPlanner(lane.end);
+		if (unit == nullptr) {
+			++skips[NO_BUILDER];  // nobody would take it: the next lane gets the step
+			continue;
+		}
+		// A step's end under threat (the picker's creep rule) waits: not a failed step
+		if (picker->IsCreepThreatened(unit, lane.end)) {
+			++skips[THREATENED];
+			continue;
+		}
+		const int result = builderMgr->OrderCreepTurret(unit, lane.end, lane.radius, !lane.isAtLine, lane.chokeId);
+		if (result == 0) {
+			break;  // stall or budget: again next second
+		}
+		if (result == 1) {
+			++busy;
+		} else if (result == -1) {
+			AddFail(lane.chokeId);
+		}
+		memo.next = std::max(memo.next, frame + int(cfg.creepInterval * FRAMES_PER_SEC));
+		for (size_t j = i + 1; j < lanes.size(); ++j) {
+			isTaken[j] = isTaken[j] || (lanes[j].end.SqDistance2D(lane.end) <= SQUARE(cfg.creepRadius));
+		}
 	}
-	// Not for a job to help (the next order does), nor while the step's end is under threat (an army parked off the
-	// front: work elsewhere meanwhile). Worth it only while the account fills for this order soon
-	if (lane->isHelp || builderMgr->IsMetalStalling() || picker->IsCreepThreatened(unit, lane->end)) {
-		return nullptr;
+}
+
+CCircuitUnit* CCreepPlanner::FindPlanner(const AIFloat3& pos) const
+{
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float travel = builderMgr->GetJobTravel(IBuilderTask::Priority::HIGH);
+	const int frame = circuit->GetLastFrame();
+	CCircuitUnit* best[2] = {nullptr, nullptr};  // a constructor, a commander
+	float bestSqDist[2] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+	for (CCircuitUnit* u : builderMgr->GetWorkers()) {
+		const CCircuitDef* cdef = u->GetCircuitDef();
+		const int k = cdef->IsRoleComm() ? 1 : 0;
+		if (!cdef->IsMobile() || cdef->IsAbleToFly() || ((k == 1) && builderMgr->IsCommHiding())) {
+			continue;
+		}
+		const float sqDist = u->GetPos(frame).SqDistance2D(pos);
+		if ((sqDist >= bestSqDist[k]) || (sqDist > SQUARE(travel * cdef->GetSpeed()))
+			|| !terrainMgr->CanReachAt(u, pos, cdef->GetBuildDistance()))
+		{
+			continue;
+		}
+		best[k] = u;
+		bestSqDist[k] = sqDist;
 	}
-	const float cost = builderMgr->GetCreepCost(unit, lane->end, !lane->isAtLine);
-	if ((cost < 0.f) || (circuit->GetMilitaryManager()->GetTurretWait(cost) > 2.f * cfg.creepInterval)) {
-		return nullptr;
-	}
-	CCircuitUnit* anchor = circuit->GetTeamUnit(lane->anchorId);
-	if ((anchor == nullptr) || !builderMgr->IsTurretJobSafe(unit, anchor->GetPos(frame))) {
-		return nullptr;
-	}
-	return builderMgr->EnqueueGuard(IBuilderTask::Priority::LOW, anchor, int(cfg.creepInterval * FRAMES_PER_SEC));
+	return (best[0] != nullptr) ? best[0] : best[1];
 }
 
 void CCreepPlanner::OnGunLost(const AIFloat3& pos)
@@ -148,112 +151,11 @@ void CCreepPlanner::OnGunLost(const AIFloat3& pos)
 	losses.push_back({pos, circuit->GetLastFrame()});
 }
 
-void CCreepPlanner::OnDropped(const CCircuitUnit* builder, const AIFloat3& pos)
+void CCreepPlanner::OnUntaken(int lane)
 {
-	auto it = (builder != nullptr) ? laneOf.find(builder->GetId()) : laneOf.end();
-	if (it != laneOf.end()) {
-		AddFail(it->second);
-		return;
-	}
-	const SLane* lane = PickLane(pos);
-	const float radius = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().creepRadius;
-	if ((lane != nullptr) && (lane->end.SqDistance2D(pos) <= SQUARE(2.f * radius))) {
-		AddFail(lane->chokeId);
-	}
+	SMemo& m = memos[lane];
+	m.next = std::max(m.next, circuit->GetLastFrame() + UNTAKEN_FRAMES);
 }
-
-void CCreepPlanner::UpdatePushers()
-{
-	const CTurretPicker::SConfig& cfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	// Half a pusher of hysteresis on income, so it doesn't flip at a multiple of creep_income
-	const float income = circuit->GetEconomyManager()->GetAvgMetalIncome();
-	auto wantAt = [&](float slack) {
-		return std::max(cfg.creepBuilders, 0) + ((cfg.creepIncome > 0.f) ? int(income / cfg.creepIncome + slack) : 0);
-	};
-	const int have = (int)pushers.size();
-	const int want = std::max(wantAt(0.f), std::min(have, wantAt(0.5f)));
-
-	const std::set<CCircuitUnit*>& workers = builderMgr->GetWorkers();
-	CCircuitUnit* comm = nullptr;
-	if (!builderMgr->IsCommHiding()) {
-		for (CCircuitUnit* u : workers) {
-			if (u->GetCircuitDef()->IsRoleComm()) {
-				comm = u;
-				break;
-			}
-		}
-	}
-	// Gone, not a builder any more, or a commander gone into hiding
-	pushers.erase(std::remove_if(pushers.begin(), pushers.end(), [&](ICoreUnit::Id id) {
-		CCircuitUnit* u = circuit->GetTeamUnit(id);
-		return (u == nullptr) || (workers.find(u) == workers.end()) || (u->GetCircuitDef()->IsRoleComm() && (u != comm));
-	}), pushers.end());
-	if ((comm != nullptr) && (want > 0) && !IsPusher(comm)) {
-		pushers.insert(pushers.begin(), comm->GetId());  // the commander first
-	}
-	const int frame = circuit->GetLastFrame();
-	auto laneSqDist = [this, frame](CCircuitUnit* u) {
-		const AIFloat3& pos = u->GetPos(frame);
-		return PickLane(pos)->end.SqDistance2D(pos);
-	};
-	// The free mobile ground constructor nearest a lane, not a pusher yet
-	auto nearestFree = [&](float& outSqDist) {
-		CCircuitUnit* best = nullptr;
-		outSqDist = std::numeric_limits<float>::max();
-		for (CCircuitUnit* u : workers) {
-			const CCircuitDef* cdef = u->GetCircuitDef();
-			if (!cdef->IsMobile() || cdef->IsAbleToFly() || cdef->IsRoleComm() || IsPusher(u) || !builderMgr->IsTurretFree(u)) {
-				continue;
-			}
-			const float sqDist = laneSqDist(u);
-			if (sqDist < outSqDist) {
-				outSqDist = sqDist;
-				best = u;
-			}
-		}
-		return best;
-	};
-	float sqDist;
-	while (!lanes.empty() && ((int)pushers.size() < want)) {
-		CCircuitUnit* best = nearestFree(sqDist);
-		if (best == nullptr) {
-			break;
-		}
-		pushers.push_back(best->GetId());
-	}
-	if ((int)pushers.size() > want) {
-		pushers.resize(want);
-	}
-	// A free constructor pusher gives way to a free constructor at under half its distance from a lane, one a second:
-	// the front moves, and a pusher wanders off between steps
-	if (!lanes.empty()) {
-		auto farthest = pushers.end();
-		float farSqDist = 0.f;
-		for (auto it = pushers.begin(); it != pushers.end(); ++it) {
-			CCircuitUnit* u = circuit->GetTeamUnit(*it);
-			if (u->GetCircuitDef()->IsRoleComm() || !builderMgr->IsTurretFree(u)) {
-				continue;
-			}
-			const float d = laneSqDist(u);
-			if (d > farSqDist) {
-				farSqDist = d;
-				farthest = it;
-			}
-		}
-		CCircuitUnit* best = (farthest != pushers.end()) ? nearestFree(sqDist) : nullptr;
-		if ((best != nullptr) && (sqDist < 0.25f * farSqDist)) {
-			*farthest = best->GetId();
-		}
-	}
-	for (auto it = nextFrames.begin(); it != nextFrames.end();) {
-		it = (std::find(pushers.begin(), pushers.end(), it->first) == pushers.end()) ? nextFrames.erase(it) : std::next(it);
-	}
-	for (auto it = laneOf.begin(); it != laneOf.end();) {
-		it = (std::find(pushers.begin(), pushers.end(), it->first) == pushers.end()) ? laneOf.erase(it) : std::next(it);
-	}
-}
-
 
 void CCreepPlanner::Gather()
 {
@@ -268,7 +170,7 @@ void CCreepPlanner::Gather()
 		const CCircuitDef* cdef = unit->GetCircuitDef();
 		if (picker->IsGroundGun(cdef) && !unit->GetUnit()->IsBeingBuilt()) {
 			const AIFloat3& pos = unit->GetPos(frame);
-			guns.push_back({kv.first, pos, cdef->GetMaxRange(CCircuitDef::RangeType::LAND), chokeMap->GetRegionAt(pos)});
+			guns.push_back({pos, cdef->GetMaxRange(CCircuitDef::RangeType::LAND), chokeMap->GetRegionAt(pos)});
 		}
 	}
 	enemyReach.clear();
@@ -276,6 +178,13 @@ void CCreepPlanner::Gather()
 		const CCircuitDef* edef = kv.second->GetCircuitDef();
 		if (picker->IsEnemyBuilding(kv.second, false) && picker->IsGroundGun(edef)) {
 			enemyReach.push_back({kv.second->GetPos(), edef->GetMaxRange(CCircuitDef::RangeType::LAND) + margin});
+		}
+	}
+	jobLanes.clear();
+	for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
+		const CBDefenceTask* d = static_cast<const CBDefenceTask*>(t);
+		if (d->IsCreep()) {
+			jobLanes.push_back(d->GetCreepLane());
 		}
 	}
 	enemyAt.clear();
@@ -291,6 +200,7 @@ void CCreepPlanner::Gather()
 void CCreepPlanner::MakeLanes()
 {
 	lanes.clear();
+	jobLanes.clear();
 	std::fill(std::begin(skips), std::end(skips), 0);
 	lineSize = 0;
 	CChokeMap* chokeMap = circuit->GetChokeMap();
@@ -340,6 +250,10 @@ void CCreepPlanner::MakeLanes()
 			++skips[RESTING];
 			continue;
 		}
+		if (std::find(jobLanes.begin(), jobLanes.end(), f.chokeId) != jobLanes.end()) {
+			++skips[STEPPING];  // one step at a time
+			continue;
+		}
 		const int outer = graph.OtherSide(chokes[c], inner);
 		const AIFloat3 target = ChooseTarget(c, outer, memo);
 		if (builderMgr->FindTurretDefence(target, cfg.creepRadius, isGround, defencePos) == DF::FINISHED) {
@@ -381,7 +295,7 @@ void CCreepPlanner::MakeLanes()
 		}
 		// The picker stays within half the step of its end, so the turret lands ahead of the one behind it (on the
 		// target: creep_radius, as its claim). A finished ground defence there, or an ally's being built, takes the
-		// step; one of ours being built or queued is helped
+		// step; one of ours being built or queued is helped: up to NORMAL, for a builder looking for work
 		const float radius = isAtTarget ? cfg.creepRadius : std::min(cfg.creepRadius, 0.5f * len);
 		const bool isAtLine = isAtTarget || isPulledBack;
 		switch (builderMgr->FindTurretDefence(end, radius, isGround, defencePos)) {
@@ -390,10 +304,11 @@ void CCreepPlanner::MakeLanes()
 				++skips[CLAIMED];
 			} break;
 			case DF::OURS_PENDING: {
-				lanes.push_back({f.chokeId, defencePos, radius, anchor->id, true, isAtLine});
+				builderMgr->PromoteTurretJob(end, radius, IBuilderTask::Priority::NORMAL);
+				++skips[HELPED];
 			} break;
 			case DF::NONE: {
-				lanes.push_back({f.chokeId, end, radius, anchor->id, false, isAtLine});
+				lanes.push_back({f.chokeId, end, radius, isAtLine});
 			} break;
 		}
 	}
@@ -489,33 +404,6 @@ bool CCreepPlanner::IsInEnemyReach(const AIFloat3& pos) const
 	return std::any_of(enemyReach.begin(), enemyReach.end(), [&pos](const std::pair<AIFloat3, float>& e) {
 		return e.first.SqDistance2D(pos) <= SQUARE(e.second);
 	});
-}
-
-const CCreepPlanner::SLane* CCreepPlanner::FindLane(int chokeId) const
-{
-	auto it = std::find_if(lanes.begin(), lanes.end(), [chokeId](const SLane& l) { return l.chokeId == chokeId; });
-	return (it != lanes.end()) ? &*it : nullptr;
-}
-
-const CCreepPlanner::SLane* CCreepPlanner::PickLane(const AIFloat3& pos, const std::vector<bool>* isTaken) const
-{
-	// The three nearest not taken; of them the first (lanes are in rank order)
-	std::vector<std::pair<float, size_t>> near3;
-	for (size_t i = 0; i < lanes.size(); ++i) {
-		if ((isTaken == nullptr) || !(*isTaken)[i]) {
-			near3.push_back({lanes[i].end.SqDistance2D(pos), i});
-		}
-	}
-	if (near3.empty()) {
-		return nullptr;
-	}
-	const size_t n = std::min<size_t>(near3.size(), NEAREST_LANES);
-	std::partial_sort(near3.begin(), near3.begin() + n, near3.end());
-	size_t best = near3[0].second;
-	for (size_t j = 1; j < n; ++j) {
-		best = std::min(best, near3[j].second);
-	}
-	return &lanes[best];
 }
 
 void CCreepPlanner::AddFail(int chokeId)

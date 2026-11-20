@@ -32,7 +32,8 @@ CBDefenceTask::CBDefenceTask(ITaskManager* mgr, Priority priority,
 		, isUrgent(false)
 		, isOffPoints(false)
 		, isPicker(false)
-		, isCreep(false)
+		, isAlly(true)
+		, creepLane(-1)
 		, normalCost(cost)
 		, charged(0.f)
 		, spend(0)
@@ -53,8 +54,8 @@ void CBDefenceTask::Update()
 		&& !militaryMgr->GetTurretPicker()->IsStillWorth(this, *traveled.begin()))
 	{
 		militaryMgr->GetSpotScorer()->MaskFailed(buildPos);
-		if (isCreep) {
-			militaryMgr->GetCreepPlanner()->OnDropped(*traveled.begin(), buildPos);  // a failed step, not a success
+		if (IsCreep()) {
+			militaryMgr->GetCreepPlanner()->AddFail(creepLane);  // a failed step, not a success
 		}
 		manager->AbortTask(this);
 		return;
@@ -92,8 +93,12 @@ void CBDefenceTask::Finish()
 
 void CBDefenceTask::Cancel()
 {
+	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
 	if (!isOffPoints) {
-		manager->GetCircuit()->GetMilitaryManager()->AbortDefence(this);
+		militaryMgr->AbortDefence(this);
+	}
+	if (IsCreep() && (target == nullptr) && (militaryMgr != nullptr)) {
+		militaryMgr->GetCreepPlanner()->OnUntaken(creepLane);  // timed out or dropped before it started
 	}
 
 	IBuilderTask::Cancel();
@@ -108,6 +113,11 @@ void CBDefenceTask::SetTarget(CCircuitUnit* unit)
 	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
 	if (isOffPoints) {
 		militaryMgr->AddOffPointsTower(unit->GetId());
+	}
+	if (IsCreep() && (priority == Priority::HIGH)) {
+		// HIGH ranks the job for builders looking for work; once begun ZK builds it at its normal priority, unless
+		// enemies near raise it (Update), so a turret at the line doesn't take metal before the factory
+		ChangePriority(Priority::NORMAL);
 	}
 	if (charged > 0.f) {
 		militaryMgr->AddChargedTower(unit->GetId(), charged);  // porcupine.budget.loss_refund

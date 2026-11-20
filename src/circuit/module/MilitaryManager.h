@@ -190,8 +190,6 @@ public:
 		TurretSpend prev;
 	};
 	bool CanAffordTurret(float cost);
-	// Seconds until the turret account holds cost at its current fill rate: 0 now, a big number when it doesn't fill
-	float GetTurretWait(float cost) const;
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
 	void UpdateTurretBudget();  // accrues; logs the spend once a minute
