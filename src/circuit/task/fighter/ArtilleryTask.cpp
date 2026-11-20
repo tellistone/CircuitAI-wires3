@@ -36,6 +36,7 @@ using namespace springai;
 F3Vec CArtilleryTask::safePositions;
 F3Vec CArtilleryTask::firePositions;
 std::vector<CEnemyInfo*> CArtilleryTask::candidates;
+std::vector<CEnemyInfo*> CArtilleryTask::ignoredQuarries;
 std::vector<CArtilleryTask::SEscort> CArtilleryTask::escorts;
 std::vector<CArtilleryTask::SDanger> CArtilleryTask::dangers;
 std::vector<float> CArtilleryTask::coverGrid;
@@ -47,6 +48,8 @@ CArtilleryTask::CArtilleryTask(ITaskManager* mgr, bool isAntiHeavy)
 		, isAntiHeavy(isAntiHeavy)
 {
 	position = manager->GetCircuit()->GetSetupManager()->GetBasePos();
+	// Anti-heavy: no firing spot it allows (IsFireSpotAllowed) = shoot from where it stands, never walk in to one
+	isHoldAttack = isAntiHeavy;
 }
 
 CArtilleryTask::~CArtilleryTask()
@@ -177,11 +180,19 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 			}
 			return;
 		}
-		if (isAntiHeavy) {
-			SetTarget(bestTarget);  // for the other anti-heavy units' overkill check (GetAhReadyDamage)
-		}
+		const bool wasAttacking = isAttacking;
 		isAttacking = true;
 		attackPos = bestTarget->GetPos();
+		if (isAntiHeavy) {
+			// The attack task's firing spots: the cheapest allowed spot (threat, walk) at ~90% of our range, re-picked
+			// every 3 s and when the heavy moves a tile, so the unit backs off as it closes in; none: from here
+			SetTarget(bestTarget);  // also for the other anti-heavy units' overkill check (GetAhReadyDamage)
+			if (!wasAttacking) {
+				unit->ClearTarget();  // our own Stop, scoot or flee came in between: order at once
+			}
+			Attack(frame, true);
+			return;
+		}
 		unit->GetTravelAct()->StateWait();
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Attack(bestTarget->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
@@ -320,7 +331,6 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 	// them, in range too (one we can't shoot from here may be shot from a covered spot nearby), mobile or not, to walk
 	// to; the route query takes the nearest firing spot
 	CCircuitAI* circuit = manager->GetCircuit();
-	CThreatMap* threatMap = circuit->GetThreatMap();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const bool notAW = !cdef->HasAntiWater();
@@ -331,8 +341,7 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 
 	enemyPositions.clear();
 	candidates.clear();
-	threatMap->SetThreatType(unit);
-	float posThreat = threatMap->GetThreatAt(pos);
+	ignoredQuarries.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		if (enemy->IsHidden() || !enemy->IsInRadarOrLOS() || (notAW && (enemy->GetPos().y < -SQUARE_SIZE * 5))) {
@@ -343,7 +352,7 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 			continue;
 		}
 		if (IsQuarryIgnored(unit, enemy)) {
-			posThreat -= threatMap->GetEnemyThreatAt(unit, enemy, pos);
+			ignoredQuarries.push_back(enemy);
 		}
 		if ((pos.SqDistance2D(enemy->GetPos()) < sqRange) && (!isSeenOnly || enemy->IsInLOS())) {
 			candidates.push_back(enemy);
@@ -352,7 +361,7 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 			enemyPositions.push_back(enemy->GetPos());
 		}
 	}
-	if (!cdef->IsPlane() && !IsThreatOk(unit, pos, posThreat, false)) {
+	if (!cdef->IsPlane() && !IsThreatOk(unit, pos, GetNetThreatAt(unit, pos), false)) {
 		return nullptr;
 	}
 
@@ -421,7 +430,7 @@ bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
 			break;
 		}
 	}
-	if (!isInRange || !IsFireSpotValid(unit, spot)) {
+	if (!isInRange || !IsFireSpotValid(unit, spot, circuit->GetThreatMap()->GetThreatAt(unit, spot))) {
 		return false;
 	}
 
@@ -450,12 +459,12 @@ bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
 	return true;
 }
 
-bool CArtilleryTask::IsFireSpotValid(CCircuitUnit* unit, const AIFloat3& spot)
+bool CArtilleryTask::IsFireSpotValid(CCircuitUnit* unit, const AIFloat3& spot, float threat) const
 {
 	// Threat-free (anti-heavy: or IsThreatOk); with ally_threat on, also covered and not where the flee would fire on
 	// arrival. FillCoveredSpots applies the same rules to many cells at once with grids
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (!IsThreatOk(unit, spot, circuit->GetThreatMap()->GetThreatAt(unit, spot), true)) {
+	if (!IsThreatOk(unit, spot, threat, true)) {
 		return false;
 	}
 	if (GetCfg().allyThreat < 0.f) {
@@ -917,7 +926,8 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 	return true;
 }
 
-void CArtilleryTask::CollectDangers(CCircuitUnit* unit, float margin, const AIFloat3& minPos, const AIFloat3& maxPos)
+void CArtilleryTask::CollectDangers(CCircuitUnit* unit, float margin, const AIFloat3& minPos,
+		const AIFloat3& maxPos) const
 {
 	dangers.clear();
 	for (auto& kv : manager->GetCircuit()->GetEnemyInfos()) {
@@ -1020,7 +1030,7 @@ CMilitaryManager::AhNote CArtilleryTask::GetAhActivity() const
 	return CMilitaryManager::AhNote::PARK;  // holding or following the army
 }
 
-bool CArtilleryTask::IsQuarryIgnored(CCircuitUnit* unit, CEnemyInfo* enemy)
+bool CArtilleryTask::IsQuarryIgnored(CCircuitUnit* unit, CEnemyInfo* enemy) const
 {
 	if (!isAntiHeavy) {
 		return false;
@@ -1046,7 +1056,24 @@ bool CArtilleryTask::IsQuarryIgnored(CCircuitUnit* unit, CEnemyInfo* enemy)
 	return unit->GetPos(frame).SqDistance2D(enemy->GetPos()) <= SQUARE(range);  // it out-ranges us: once in our range
 }
 
-bool CArtilleryTask::IsThreatOk(CCircuitUnit* unit, const AIFloat3& spot, float threat, bool isWalk)
+float CArtilleryTask::GetNetThreatAt(CCircuitUnit* unit, const AIFloat3& spot) const
+{
+	CThreatMap* threatMap = manager->GetCircuit()->GetThreatMap();
+	float threat = threatMap->GetThreatAt(unit, spot);
+	for (CEnemyInfo* enemy : ignoredQuarries) {
+		threat -= threatMap->GetEnemyThreatAt(unit, enemy, spot);
+	}
+	return threat;
+}
+
+bool CArtilleryTask::IsFireSpotAllowed(const AIFloat3& p) const
+{
+	// Called by Attack right after FindHeavyTarget (same Execute), so ignoredQuarries is this unit's
+	CCircuitUnit* unit = *units.begin();
+	return IsFireSpotValid(unit, p, GetNetThreatAt(unit, p));
+}
+
+bool CArtilleryTask::IsThreatOk(CCircuitUnit* unit, const AIFloat3& spot, float threat, bool isWalk) const
 {
 	if (threat <= THREAT_MIN) {
 		return true;
@@ -1192,7 +1219,7 @@ void CArtilleryTask::CollectEscorts(CCircuitUnit* unit, bool isFlee)
 	}
 }
 
-bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float enemyThreat, bool isFlee)
+bool CArtilleryTask::HasCover(CCircuitUnit* unit, const AIFloat3& spot, float enemyThreat, bool isFlee) const
 {
 	// Escort power near spot, net of enemyThreat, reaches ally_threat. One pass that stops as soon as it does.
 	// Slack: firing spots are picked by cell centre, and the unit may stop up to ~1.5 cells away, so without
