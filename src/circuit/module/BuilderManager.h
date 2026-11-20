@@ -425,8 +425,6 @@ private:
 		float allyRadius = 500.f;  // flee_ally_radius
 	};
 	// A ground builder with the flee on: its flee settings, and its view of the dangers (GetCommState)
-	// commander.json jobs per commander def, looked up once (GetCommJobs reads the def name)
-	mutable std::unordered_map<CCircuitDef::Id, const CSetupManager::SCommInfo::SJobs*> commJobs;
 	struct SCommState {
 		const CSetupManager::SCommInfo::SHide* hide = nullptr;  // commanders only: hide mode and morph
 		ICoreUnit::Id id = -1;
@@ -463,6 +461,8 @@ private:
 			return (zone.count > 0) && !IsCovered(zone.threat, mod);
 		}
 	};
+	// commander.json jobs per commander def, looked up once (GetCommJobs reads the def name)
+	mutable std::unordered_map<CCircuitDef::Id, const CSetupManager::SCommInfo::SJobs*> commJobs;
 	// An ally that covers a commander: a ground-capable armed mobile or a static defence, with its cover power
 	struct SCommCover {
 		ICoreUnit::Id id;

@@ -22,8 +22,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   searches no longer queue energy where it stands (`MakeEconomyTasks` takes the geo branch instead, bar an energy
   stall), and such a search has a once-a-second slot of its own, so it doesn't take its cluster's slot from a
   constructor that would queue energy. Its idle fallback (`CreateBuilderTask`) looks for a vent instead of energy and,
-  at low income, takes the reclaim job it found or patrols rather than queue cheap energy, which has no dedup and
-  would be queued anew on every idle pass. A commander walking to such a job when the
+  at low income, takes a nearby reclaim job outside flee zones (the near search, and `IsCommJobSafe` as hide mode's
+  fallback; never the map-wide one) or patrols rather than queue cheap energy, which has no dedup and would be queued
+  anew on every idle pass. A commander walking to such a job when the
   time passes drops it at its next re-plan if another job wins; one already in build range finishes it.
 - **Line formations keep each unit type in rows of its own, and form from 2 units** (`formation.min_units` 3 to
   2). Rows filled front to back by `row_order` only once the line ran out of width, so a small group walked as one

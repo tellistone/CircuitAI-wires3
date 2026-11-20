@@ -1712,7 +1712,7 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 	if (task != nullptr) {
 		return task;
 	}
-	task = ecoMgr->UpdateReclaimTasks(position, unit, false);
+	task = ecoMgr->UpdateReclaimTasks(position, unit, isEnergyOff);  // a commander: near only (travel by metal left)
 //	if (task != nullptr) {
 //		return task;
 //	}
@@ -1722,7 +1722,9 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 	const float metalIncome = std::min(ecoMgr->GetAvgMetalIncome(), ecoMgr->GetAvgEnergyIncome()) * ecoMgr->GetEcoFactor();
 	if (metalIncome < super.minIncome) {
 		if (isEnergyOff) {  // no cheap energy either: nothing dedups it, it would be queued anew every idle pass
-			return (task != nullptr) ? task : EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, FRAMES_PER_SEC * 20);
+			// The reclaim job instead, outside flee zones as MakeCommTask's; an unsafe one stays for constructors
+			const bool isSafe = (task != nullptr) && IsCommJobSafe(GetCommState(unit), task->GetPosition());
+			return isSafe ? task : EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, FRAMES_PER_SEC * 20);
 		}
 		float energyMake;
 		buildDef = ecoMgr->GetLowEnergy(position, energyMake);
@@ -2196,7 +2198,7 @@ bool CBuilderManager::IsCommKindOff(const CCircuitUnit* unit, IBuilderTask::Buil
 		it = commJobs.emplace(cdef->GetId(), circuit->GetSetupManager()->GetCommJobs(cdef)).first;
 	}
 	const CSetupManager::SCommInfo::SJobs* jobs = it->second;
-	return (jobs != nullptr) && (jobs->frame >= 0) && (jobs->skipMask & (1u << static_cast<IBuilderTask::BT>(type)))
+	return (jobs != nullptr) && (jobs->skipMask & (1u << static_cast<IBuilderTask::BT>(type)))
 		&& (circuit->GetLastFrame() >= jobs->frame) && (GetWorkerCount() > 2);
 }
 

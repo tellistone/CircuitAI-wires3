@@ -14,6 +14,7 @@
 #include "AIFloat3.h"
 
 #include <functional>
+#include <limits>
 
 namespace circuit {
 
@@ -47,7 +48,7 @@ public:
 		} hide;
 		// Jobs a commander stops taking once "time" has passed (commander.json "jobs"): bit i = IBuilderTask::BuildType i
 		struct SJobs {
-			int frame = -1;  // < 0 = off
+			int frame = std::numeric_limits<int>::max();  // from this frame on; max = never
 			unsigned skipMask = 0;
 		} jobs;
 	};
