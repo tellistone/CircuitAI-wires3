@@ -7,6 +7,7 @@
 
 #include "module/MilitaryManager.h"
 #include "module/AllyCover.h"
+#include "module/AttackBalance.h"
 #include "module/BuilderManager.h"
 #include "module/ChokeDefence.h"
 #include "module/Frontline.h"
@@ -645,6 +646,41 @@ void CMilitaryManager::ReadConfig()
 	// could commit to (1 + this) x their joint strength; at 1 cover would leave no margin
 	allyCover = std::make_unique<CAllyCover>(circuit, readAttackNum("attack_ally_cover", 0.f, 0.f, 0.75f));
 	{
+		// quota.attack_balance: {ratio, horizon_sec, log_only}. Missing (or not an object): off; a missing key uses
+		// its default, a non-number logs and uses it, others are clamped (as readAttackNum)
+		const Json::Value& q = quotas["attack_balance"];
+		if (!q.isNull() && !q.isObject()) {
+			circuit->LOG("CONFIG %s: quota.attack_balance must be an object, it is off", cfgName.c_str());
+		}
+		CAttackBalance::SConfig cfg;  // off
+		if (q.isObject()) {
+			auto num = [&](const char* key, float def, float lo, float hi) {
+				const Json::Value& v = q[key];
+				if (v.isNull()) {
+					return def;
+				}
+				if (!v.isNumeric()) {
+					circuit->LOG("CONFIG %s: quota.attack_balance.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
+					return def;
+				}
+				const float val = v.asFloat();
+				const float clamped = utils::clamp(val, lo, hi);
+				if (clamped != val) {
+					circuit->LOG("CONFIG %s: quota.attack_balance.%s %g clamped to %g", cfgName.c_str(), key, val, clamped);
+				}
+				return clamped;
+			};
+			cfg.ratio = num("ratio", 1.2f, 0.f, 10.f);  // 0 = off
+			cfg.horizon = num("horizon_sec", 10.f, 1.f, 60.f);
+			const Json::Value& qlog = q["log_only"];
+			if (!qlog.isNull() && !qlog.isBool()) {
+				circuit->LOG("CONFIG %s: quota.attack_balance.log_only must be true or false, using true", cfgName.c_str());
+			}
+			cfg.isLogOnly = qlog.isBool() ? qlog.asBool() : true;
+		}
+		attackBalance = std::make_unique<CAttackBalance>(circuit, cfg);
+	}
+	{
 		// Each route kind on or off (default on); a bare true/false sets them all
 		static const char* const kinds[] = {"target", "reinforce", "front", "flee", "cornered"};
 		const Json::Value& qdyn = quotas["attack_path_dynamic_cost"];
@@ -910,7 +946,7 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& formCfg = root["formation"];
 	formation.isEnable = formCfg.get("enable", false).asBool();
-	formation.minUnits = std::max(2, formCfg.get("min_units", 3).asInt());
+	formation.minUnits = std::max(2, formCfg.get("min_units", 2).asInt());
 	const Json::Value& formSpacing = formCfg["spacing"];
 	formation.spacing = std::max(1.f, formSpacing.get((unsigned)0, 96.f).asFloat());
 	formation.spacingUnits = std::max(1.f, formSpacing.get((unsigned)1, 4.f).asFloat());
@@ -923,7 +959,7 @@ void CMilitaryManager::ReadConfig()
 	formation.rowOrder.clear();
 	Json::Value rowOrder = formCfg["row_order"];
 	if (rowOrder.isNull()) {
-		for (const char* name : {"riot", "assault", "heavy", "raider", "skirmish", "anti_heavy", "anti_air", "artillery"}) {
+		for (const char* name : {"assault", "heavy", "raider", "skirmish", "riot", "anti_heavy", "anti_air", "artillery"}) {
 			rowOrder.append(name);
 		}
 	}
@@ -1291,6 +1327,9 @@ void CMilitaryManager::Init()
 		if (allyCover->IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CAllyCover::Log, allyCover.get()), FRAMES_PER_SEC * 60, offset + 3);
 		}
+		if (attackBalance->IsOn()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CAttackBalance::Log, attackBalance.get()), FRAMES_PER_SEC * 60, offset + 4);
+		}
 
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::Watchdog, this),
 								FRAMES_PER_SEC * 60,
@@ -1375,6 +1414,8 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
 	scoutStints.erase(unit->GetId());  // ids get reused
+	// quota.attack_balance outcome log: counted for the fight the unit was in, also after it left its group to retreat
+	attackBalance->NoteUnitLost(unit->GetId(), unit->GetCircuitDef()->GetCostM());
 	// porcupine.budget.loss_refund: a finished turret of ours killed by a known enemy it could fight back pays back
 	// loss_refund x what the account charged for it, so a lost position can be rebuilt. Free (preventive) towers
 	// were never charged and pay nothing: they used to pay 2x their cost into the account, past its cap.
@@ -4020,6 +4061,11 @@ void CMilitaryManager::ReactSuddenThreat(CEnemyInfo* enemy)
 			static_cast<ISquadTask*>(task)->OnSuddenThreat(edef, enemy->GetPos(), frame);
 		}
 	}
+}
+
+void CMilitaryManager::NoteEnemyKilled(const CEnemyInfo* enemy, int attackerId)
+{
+	attackBalance->NoteKill(attackerId, enemy->GetCost());
 }
 
 void CMilitaryManager::UnmarkPointOfInterest(CEnemyInfo* enemy)

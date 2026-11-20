@@ -29,9 +29,10 @@ struct SFormationOrder {
 
 /*
  * Line formation (behaviour.json "formation"): a squad of land or sea units walking its path outside combat goes as
- * a line across the path, with more rows only where the line has to narrow; an attack group running away (fleeing,
- * or cornered and moving to a quieter spot) too, its rows in reverse order while it walks (riots at the back) and waiting for no one. The task plans its path as before; the
- * formation decides where along and beside it each unit walks, and how fast. The travel action asks GetOrder.
+ * a line across the path, a row per unit type (row_order), with more rows where a type's row has to narrow; an attack
+ * group running away (fleeing, or cornered and moving to a quieter spot) too, its rows in reverse order while it walks
+ * (assaults at the back) and waiting for no one. The task plans its path as before; the formation decides where along
+ * and beside it each unit walks, and how fast. The travel action asks GetOrder.
  * - The line: the path the leader walks, through the leader's spot on it, and behind the spot its track. A new path
  *   that turns back by more than 120 degrees from where the line was heading drops the track, so the rows behind are
  *   laid behind the new heading (a sharp corner of the same route doesn't: it turns the heading gradually).
@@ -39,12 +40,14 @@ struct SFormationOrder {
  *   squad's fire range. Free: ground the leader's type can walk, with no more than 1.5 x the threat on the line
  *   there (the threat map's grain), so flanks don't step into a turret's range the path kept out of, or deeper into
  *   one it crosses. Each row shifts sideways to fit, and a slot never lies past the first spot that isn't free, seen
- *   from the line. Spacing shrinks as the squad grows, and squeezes to 0.7 of that before a second row is added.
+ *   from the line. Spacing shrinks as the squad grows, and squeezes to 0.7 of that before a type takes a second row.
  *   With splash near (armed enemies' largest weapon area of effect or bomb blast, within their range + 600, held
- *   10 s), neighbours and rows stay at least splash_spacing x its radius apart (at most 256).
+ *   10 s), neighbours and rows stay at least splash_spacing x its radius apart (at most 256); rows less where the
+ *   block would get deeper than the width cap, so it doesn't reach past the group radius.
  *   Below 2 columns the formation lets go and the units follow the path as before, until 2 fit again for a few
  *   seconds.
- * - Slots: rows fill front to back by row_order. In a row, one pitch; units take the places left to right as they
+ * - Slots: rows front to back by row_order, each place in it (rank) in rows of its own, as wide as the columns
+ *   allow, so types stay apart even in a squad of two. In a row, one pitch; units take the places left to right as they
  *   stand, then two swap places where that shortens their walks by more than half a spacing, so paths don't cross;
  *   the leader takes the middle. Matched again when units join or leave, the columns or the leader change, or the
  *   path turns back.
@@ -124,6 +127,7 @@ private:
 	struct SRow {
 		std::vector<SMember*> units;  // left to right
 		float offset;  // behind the front row, along the line
+		float foot;  // widest footprint (LayOut)
 		float shift;  // sideways, to fit between obstacles
 	};
 
@@ -131,8 +135,9 @@ private:
 
 	// The steps of Update, in order
 	float AddMembers(int frame);  // returns the slowest support unit's speed
-	void MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed);
-	int FitColumns(int frame, float frontArc, int count, float baseSpacing, float gap);  // returns the columns
+	// Returns the most units of one row group (rank, or stragglers of a rank: Rematch)
+	int MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed);
+	int FitColumns(int frame, float frontArc, int widest, float baseSpacing, float gap);  // returns the columns that fit
 	void SwitchOn(int frame);
 	void Rematch(int cols);  // rows, and places by side
 	void LayOut(float gap);
@@ -209,7 +214,7 @@ private:
 	springai::AIFloat3 anchorPos;  // the same, for the next solve's line
 	float heldWidth = 0.f;  // free width in use (narrows at once, widens after WIDEN_FRAMES)
 	int widenFrame;
-	float width = 0.f;  // of the front row
+	float width = 0.f;  // of the widest row
 	float depth = 0.f;  // front to back row
 };
 

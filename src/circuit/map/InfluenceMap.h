@@ -53,6 +53,8 @@ public:
 	float GetMobileArmedInflAt(CAllyUnit* u, const springai::AIFloat3& position) const;
 
 	int Pos2Index(const springai::AIFloat3& pos) const;
+	// Where each mobile armed ally (every allied team) stood when the current maps were applied, by unit id
+	const std::unordered_map<int, springai::AIFloat3>& GetMobileArmedPos() const { return mobileArmedPos; }
 
 private:
 	struct SInfluenceData {

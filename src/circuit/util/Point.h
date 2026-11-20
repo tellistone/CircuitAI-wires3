@@ -36,6 +36,20 @@ static inline bool is_valid(const springai::AIFloat3& pos)
 	return pos.x != -RgtVector.x;
 }
 
+// Squared 2D distance from p to the segment a-b
+static inline float sq_dist_to_segment_2d(const springai::AIFloat3& p, const springai::AIFloat3& a,
+		const springai::AIFloat3& b)
+{
+	const float dx = b.x - a.x;
+	const float dz = b.z - a.z;
+	const float sqLen = dx * dx + dz * dz;
+	float t = (sqLen > 0.f) ? ((p.x - a.x) * dx + (p.z - a.z) * dz) / sqLen : 0.f;
+	t = (t < 0.f) ? 0.f : (t > 1.f) ? 1.f : t;
+	const float ex = a.x + t * dx - p.x;
+	const float ez = a.z + t * dz - p.z;
+	return ex * ex + ez * ez;
+}
+
 } // namespace utils
 
 #endif // SRC_CIRCUIT_UTIL_POINT_H_
