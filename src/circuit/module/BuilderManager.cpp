@@ -1466,63 +1466,65 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	// Never send the commander into a flee zone, measured at the line the flee stops at; nullptr = flee off.
 	// Hide mode's territory test goes with the flee
 	const SCommState* commState = GetCommState(unit);
+	// A job's metric (travel cost / priority weight) if hide mode allows it and it beats best, else -1
+	auto rateJob = [&](const IBuilderTask* candidate, float best) -> float {
+		const bool isNow = (candidate->GetPriority() == IBuilderTask::Priority::NOW);
+		if ((isNow && !circuit->GetMilitaryManager()->IsEscalationComm() && IsEscalationTask(candidate))  // hiding
+			|| (isNow && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
+			|| !candidate->CanAssignTo(unit)
+			|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr))
+			|| (isStalling && IsStallSpend(economyMgr, candidate, unit)))
+		{
+			return -1.f;
+		}
+
+		// Check time-distance to target first: it's cheaper than the reach and safety tests below
+		const AIFloat3& bp = candidate->GetPosition();
+		const AIFloat3& buildPos = utils::is_valid(bp) ? bp : pos;
+		const float distCost = GetJobTravelCost(query, pathfinder, pos, buildPos, buildDistance);
+		if (distCost < 0.f) {
+			return -1.f;
+		}
+		const SJobRank& rank = GetJobRank(candidate, isEnergyStalling);
+		const float jobMetric = distCost * rank.invWeight;
+		CCircuitUnit* target = candidate->GetTarget();
+		if ((jobMetric >= best)
+			|| ((target == nullptr)  // no far fallback here: jobs beyond the travel caps are skipped
+				&& ((distCost >= MAX_TRAVEL_SEC * maxSpeed) || (distCost >= rank.travelSec * maxSpeed))))
+		{
+			return -1.f;
+		}
+
+		// Don't start a chase: the target is driving away from this builder; cheaper than the reach and safety tests below
+		if (IsRepairTargetFleeing(candidate, unit, pos) || !IsCommJobSafe(commState, buildPos, candidate)) {
+			return -1.f;
+		}
+
+		if (isNow) {
+			// Disregard safety (unless configured for priority repair)
+			if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
+				|| IsUnsafePrioRepair(candidate, unit, buildPos))
+			{
+				return -1.f;
+			}
+
+		} else {
+
+			if (((sqMaxBaseRange > 0.f) && (basePos.SqDistance2D(buildPos) > sqMaxBaseRange))  // optional cap
+				|| ((commState != nullptr) && !IsCommTerritory(unit, buildPos))  // allied strength outweighs the enemy's there
+				|| !terrainMgr->CanReachAtSafe(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
+				|| (inflMap->GetInfluenceAt(buildPos) < -INFL_EPS))  // safety check
+			{
+				return -1.f;
+			}
+		}
+
+		return ((target == nullptr) || IsWorthTrip(candidate, distCost, maxSpeed)) ? jobMetric : -1.f;
+	};
 	for (const std::set<IBuilderTask*>& tasks : buildTasks) {
 		for (const IBuilderTask* candidate : tasks) {
-			const bool isNow = (candidate->GetPriority() == IBuilderTask::Priority::NOW);
-			if ((isNow && !circuit->GetMilitaryManager()->IsEscalationComm() && IsEscalationTask(candidate))  // hiding
-				|| (isNow && isPrioRepairFull && (candidate->GetBuildType() == IBuilderTask::BuildType::REPAIR))
-				|| !candidate->CanAssignTo(unit)
-				|| (isNotReady && !isNow && (candidate->GetBuildDef() != nullptr))
-				|| (isStalling && IsStallSpend(economyMgr, candidate, unit)))
-			{
-				continue;
-			}
-
-			// Check time-distance to target first: it's cheaper than the reach and safety tests below
-			const AIFloat3& bp = candidate->GetPosition();
-			const AIFloat3& buildPos = utils::is_valid(bp) ? bp : pos;
-			const float distCost = GetJobTravelCost(query, pathfinder, pos, buildPos, buildDistance);
-			if (distCost < 0.f) {
-				continue;
-			}
-			const SJobRank& rank = GetJobRank(candidate, isEnergyStalling);
-			const float jobMetric = distCost * rank.invWeight;
-			CCircuitUnit* target = candidate->GetTarget();
-			if ((jobMetric >= metric)
-				|| ((target == nullptr)  // no far fallback here: jobs beyond the travel caps are skipped
-					&& ((distCost >= MAX_TRAVEL_SEC * maxSpeed) || (distCost >= rank.travelSec * maxSpeed))))
-			{
-				continue;
-			}
-
-			// Don't start a chase: the target is driving away from this builder; cheaper than the reach and safety tests below
-			if (IsRepairTargetFleeing(candidate, unit, pos)) {
-				continue;
-			}
-			if (!IsCommJobSafe(commState, buildPos, candidate)) {
-				continue;
-			}
-
-			if (isNow) {
-				// Disregard safety (unless configured for priority repair)
-				if (!terrainMgr->CanReachAt(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
-					|| IsUnsafePrioRepair(candidate, unit, buildPos))
-				{
-					continue;
-				}
-
-			} else {
-
-				if (((sqMaxBaseRange > 0.f) && (basePos.SqDistance2D(buildPos) > sqMaxBaseRange))  // optional cap
-					|| ((commState != nullptr) && !IsCommTerritory(unit, buildPos))  // allied strength outweighs the enemy's there
-					|| !terrainMgr->CanReachAtSafe(unit, buildPos, cdef->GetBuildDistance())  // ensure that path always exists
-					|| (inflMap->GetInfluenceAt(buildPos) < -INFL_EPS))  // safety check
-				{
-					continue;
-				}
-			}
-
-			if ((target == nullptr) || IsWorthTrip(candidate, distCost, maxSpeed)) {
+			const float jobMetric = rateJob(candidate, metric);
+			if (jobMetric >= 0.f) {
 				task = candidate;
 				metric = jobMetric;
 			}
@@ -1532,8 +1534,14 @@ IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCost
 	if ((task == nullptr) &&
 		((unit->GetTask()->GetType() != IUnitTask::Type::BUILDER) || (static_cast<IBuilderTask*>(unit->GetTask())->GetBuildType() != IBuilderTask::BuildType::GUARD)))
 	{
-		// No factory guard (it held the commander there for a minute): reclaim nearby, safe and inside the hide range
-		// (as the loop above), else patrol where it stands, which helps any frame in reach and asks again in 5 s
+		// No factory guard (it held the commander there for a minute). A mex search of its own first (the economy's
+		// search above runs once a second per cluster, so it may not have been this one's turn), taken only as the
+		// loop above takes a job; one it won't take stays queued for constructors. Then reclaim nearby, safe and
+		// inside the hide range, else patrol where it stands, which helps any frame in reach and asks again in 5 s
+		IBuilderTask* mex = economyMgr->UpdateMexTasks(pos, unit);
+		if ((mex != nullptr) && (rateJob(mex, std::numeric_limits<float>::max()) >= 0.f)) {
+			return mex;
+		}
 		task = economyMgr->UpdateReclaimTasks(pos, unit, true);
 		if ((task != nullptr) && (!IsCommJobSafe(commState, task->GetPosition())
 			|| ((sqMaxBaseRange > 0.f) && (basePos.SqDistance2D(task->GetPosition()) > sqMaxBaseRange))))
