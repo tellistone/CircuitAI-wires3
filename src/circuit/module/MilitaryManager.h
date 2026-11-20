@@ -838,13 +838,13 @@ private:
 		CCircuitDef* airDef;  // prevent_air: first tower after a sighting of a flying enemy, nullptr = off
 		bool isGeo;  // porcupine.geo: geothermal vents are defended like mex clusters
 		bool isOwnOnly;  // porcupine.own_clusters: team games, towers only on clusters we own (IsOurCluster)
-		bool isAllyCover;  // porcupine.ally_cover: towers of non-Wires allies count towards a cluster's preventive total
+		bool isAllyCover;  // porcupine.ally_cover: built towers near a cluster count towards its preventive total
 	} prevent;
 	// porcupine.own_clusters: in team games only clusters we own (CMetalManager::GetClusterOwner) get towers
 	bool IsOurCluster(int cluster) const;
-	// porcupine.ally_cover: metal of the finished anti-land towers of allied teams that aren't Wires AIs (the shared
-	// CDefenceMatrix already counts theirs) within range of a mex point of the cluster; 0 when every ally is one
-	float GetAllyCoverCost(int cluster, bool isWater) const;
+	// porcupine.ally_cover, team games: metal of the finished towers of the ally team (ours too) that can hit ground
+	// (water when isWater) within range of a mex point of the cluster; 0 when off
+	float GetBuiltCoverCost(int cluster, bool isWater) const;
 	struct SPreventRoll {
 		int count = -1;  // -1 = never rolled
 		int rollFrame = -1;

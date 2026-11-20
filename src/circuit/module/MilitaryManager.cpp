@@ -42,7 +42,6 @@
 #include "terrain/path/QueryPathMulti.h"
 #include "terrain/path/QueryCostMap.h"
 #include "unit/ally/AllyUnit.h"
-#include "util/GameAttribute.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/enemy/EnemyManager.h"
 #include "CircuitAI.h"
@@ -2030,12 +2029,15 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	// each point's. Asked once per finished mex, sighting and sweep visit, every point of a cluster got the count
 	float clusterCap = maxCost;
 	if (!isPorc && !closestPoint->isGeo) {
-		float clusterCost = GetAllyCoverCost(cluster, isWater);  // towers the shared matrix doesn't know about
+		float clusterCost = 0.f;
 		for (const CDefenceMatrix::SDefPoint& p : points) {
 			if (!p.isGeo) {
 				clusterCost += p.cost;
 			}
 		}
+		// porcupine.ally_cover: the larger of what the shared matrix booked (queued and built on points, by every
+		// Wires ally) and every finished tower near the cluster (off-point ones and other allies' too): never both
+		clusterCost = std::max(clusterCost, GetBuiltCoverCost(cluster, isWater));
 		float preventCost = 0.f;
 		for (const CCircuitDef* d : picked) {
 			preventCost += d->GetCostM();
@@ -2408,19 +2410,9 @@ bool CMilitaryManager::IsOurCluster(int cluster) const
 	return mm->GetClusterOwner(cluster) == circuit->GetTeamId();
 }
 
-float CMilitaryManager::GetAllyCoverCost(int cluster, bool isWater) const
+float CMilitaryManager::GetBuiltCoverCost(int cluster, bool isWater) const
 {
 	if (!prevent.isAllyCover || (circuit->GetAllyTeam()->GetSize() <= 1)) {
-		return 0.f;
-	}
-	// Wires allies' towers are in the shared matrix's point costs already
-	std::set<int> wiresTeams;
-	for (const CCircuitAI* ai : circuit->GetGameAttribute()->GetCircuits()) {
-		if (ai->GetAllyTeamId() == circuit->GetAllyTeamId()) {
-			wiresTeams.insert(ai->GetTeamId());
-		}
-	}
-	if ((int)wiresTeams.size() >= circuit->GetAllyTeam()->GetSize()) {
 		return 0.f;
 	}
 	const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(cluster);
@@ -2431,9 +2423,9 @@ float CMilitaryManager::GetAllyCoverCost(int cluster, bool isWater) const
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* ally = kv.second;
 		const CCircuitDef* adef = ally->GetCircuitDef();
-		// As the threat map's cover layer (CThreatMap::PrepareCover): its weapon's real reach against the ground,
-		// halved for a long-ranged static, never an anti-air one; turret.not_defence statics aren't turrets
-		if ((adef == nullptr) || !turretPicker->IsDefence(adef) || !adef->HasAntiLand()) {
+		// As the threat map's cover layer (CThreatMap::PrepareCover): its weapon's real reach, halved for a
+		// long-ranged static; turret.not_defence statics aren't turrets
+		if ((adef == nullptr) || !turretPicker->IsDefence(adef) || !(isWater ? adef->HasAntiWater() : adef->HasAntiLand())) {
 			continue;
 		}
 		float range = adef->GetMaxRange(rangeType);
@@ -2444,7 +2436,7 @@ float CMilitaryManager::GetAllyCoverCost(int cluster, bool isWater) const
 			range /= 2;
 		}
 		Unit* u = ally->GetUnit();
-		if (wiresTeams.count(u->GetTeam()) > 0 || u->IsBeingBuilt() || u->IsParalyzed()) {
+		if (u->IsBeingBuilt() || u->IsParalyzed()) {
 			continue;
 		}
 		const AIFloat3& pos = ally->GetPos(frame);

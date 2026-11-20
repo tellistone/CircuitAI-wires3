@@ -705,6 +705,8 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 	}
 
 	if (chain->isPorc) {
+		// This frame's mark may predate our mex: count it, or its cluster isn't ours yet (own_clusters)
+		circuit->GetMetalManager()->MarkAllyMexes(true);
 		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		const float metalIncome = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome());
 		if (metalIncome > 10) {

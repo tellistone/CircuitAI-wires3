@@ -264,9 +264,9 @@ bool CMetalManager::IsOpenSpot(const springai::AIFloat3& pos) const
 	return false;
 }
 
-void CMetalManager::MarkAllyMexes()
+void CMetalManager::MarkAllyMexes(bool isForce)
 {
-	if (markFrame /*+ FRAMES_PER_SEC*/ >= circuit->GetLastFrame()) {
+	if (!isForce && (markFrame /*+ FRAMES_PER_SEC*/ >= circuit->GetLastFrame())) {
 		return;
 	}
 
@@ -283,14 +283,14 @@ void CMetalManager::MarkAllyMexes()
 		}
 	}
 
-	MarkAllyMexes(tmpMexes);
+	MarkAllyMexes(tmpMexes, isForce);
 
 	tmpMexes.clear();
 }
 
-void CMetalManager::MarkAllyMexes(const std::vector<CAllyUnit*>& mexes)
+void CMetalManager::MarkAllyMexes(const std::vector<CAllyUnit*>& mexes, bool isForce)
 {
-	if (markFrame /*+ FRAMES_PER_SEC*/ >= circuit->GetLastFrame()) {
+	if (!isForce && (markFrame /*+ FRAMES_PER_SEC*/ >= circuit->GetLastFrame())) {
 		return;
 	}
 	markFrame = circuit->GetLastFrame();
@@ -333,7 +333,9 @@ void CMetalManager::MarkAllyMexes(const std::vector<CAllyUnit*>& mexes)
 			if (first2->unitId < (*first1)->GetId()) {
 				delMex(*first2);  // dead unit
 			} else {
-				*d_first++ = *first2;  // old unit
+				SMex mex = *first2;  // old unit: its team may have changed (a resign or a share keeps the unit id)
+				mex.team = (*first1)->GetUnit()->GetTeam();
+				*d_first++ = mex;
 				++first1;  // advance mexes
 			}
 			++first2;  // advance prevUnits

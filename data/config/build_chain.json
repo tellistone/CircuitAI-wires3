@@ -31,9 +31,10 @@
 	// Team games. own_clusters: towers (preventive and porc) only on clusters we own: the ally with the most finished
 	// mexes there owns it (the lower team id on a tie) and keeps it until another has strictly more, or it has none
 	// left; a cluster with no finished mex is no one's; our geo's vent always counts. The preventive dice are shared
-	// by the ally team, so a new owner rolls the same count. ally_cover: the metal of finished anti-land towers of
-	// allies that aren't Wires AIs (Wires allies' are counted already) within range of a mex point of the cluster
-	// counts towards its preventive total (range halved past 1000, as for attack cover). Missing = true
+	// by the ally team, so a new owner rolls the same count. ally_cover: a cluster's preventive total counts the larger of
+	// the towers booked on its points (queued and built, by every Wires ally) and the metal of finished towers of the
+	// ally team, ours too, that can hit ground (water on a water point) within range of one of its mex points (off-point
+	// and human towers; range halved past 1000, as for attack cover). Missing = true
 	"own_clusters": true,
 	"ally_cover": true,
 	// Geothermal vents as clusters: a vent that no mex defence point covers gets its own point (in its nearest

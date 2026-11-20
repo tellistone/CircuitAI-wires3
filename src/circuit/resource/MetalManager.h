@@ -70,8 +70,9 @@ public:
 	void SetOpenSpot(const springai::AIFloat3& pos, bool value);
 	bool IsOpenSpot(int index) const { return metalInfos[index].isOpen; }
 	bool IsOpenSpot(const springai::AIFloat3& pos) const;
-	void MarkAllyMexes();
-	void MarkAllyMexes(const std::vector<CAllyUnit*>& mexes);
+	// At most once per frame; isForce: again, for a mex that finished after this frame's mark (the mex chain)
+	void MarkAllyMexes(bool isForce = false);
+	void MarkAllyMexes(const std::vector<CAllyUnit*>& mexes, bool isForce = false);
 	int GetMexCount() const { return markedMexes.size(); }
 	bool IsClusterFinished(int index) const {
 		return clusterInfos[index].finishedCount >= GetClusters()[index].idxSpots.size();
