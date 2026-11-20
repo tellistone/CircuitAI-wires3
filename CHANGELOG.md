@@ -100,15 +100,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   (`turret.creep`, on by default; new `CCreepPlanner`). Our turrets stayed where they were first placed, often far
   back. Now, once a second, along the choke analysis:
   - Lanes: the live chokes of our current line, highest `CFrontline` rank first (it now runs while the creep is on).
-    Each heads for its outer region's choke nearest the enemy's held ground, kept until another is 20% nearer, into
+    Each heads for its outer region's choke nearest the enemy's held ground (its centre if it is all they hold),
+    kept until another is 20% nearer, into
     enemy-held ground too, stopping at their turrets' range. A finished ground defence by the target claims the lane:
     held ground turns the region ours and the line, and the creep, move on to its exits. It starts from a first
     ground turret another caller built.
   - A step: from our ground-hitting turret nearest the target in the lane's two regions (else anywhere), only if it
     brings us nearer the enemy; `turret.creep_step` (0.7) x its range through the lane's gap, then toward the target,
     landing on it once within one; pulled back to a half, then a quarter, out of every known enemy static's range +
-    `turret.creep_margin` (64). The picker searches half a step about its end, so it lands ahead. A job of ours
-    already there is helped, never doubled.
+    `turret.creep_margin` (64). The picker searches half a step about its end, so it lands ahead. Light defs on
+    the way; the unlocked tiers too only at the enemy's line (onto the target, or pulled back by their range). A job
+    of ours already there, by any caller, is helped, never doubled; an ally's turret being built there takes the
+    step.
   - Rests: `turret.creep_losses` (2) of our turrets lost in the lane, or two failed steps within 2 minutes (no spot,
     or dropped on arrival), rest it 2 minutes, doubling up to 16 while it keeps failing. A step's end under threat
     only waits.
@@ -121,8 +124,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     `creep` spender).
   - The picker's threat rule for a creep order, at the order and on arrival: no spot inside any known enemy static's
     land range + `creep_margin`; mobile threat passes only where our guns' power covering the spot exceeds it.
-  - Between steps a pusher guards its lane's turret, if the account fills for its next order within two intervals
-    and metal isn't stalling, instead of taking a job elsewhere.
+  - Between steps a pusher guards its lane's turret, if its step's end isn't under threat, the account fills for
+    its next order within two intervals and metal isn't stalling, instead of taking a job elsewhere.
   - A `CREEP` log line each minute with why lanes were skipped; all keys settable with `choke_overlay set
     turret.<key>`.
 

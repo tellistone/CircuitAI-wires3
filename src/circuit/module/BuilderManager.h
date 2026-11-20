@@ -313,26 +313,32 @@ public:
 	// choke_overlay turret: our nearest constructor that is free (UpdateTurrets' tests) orders one at pos, def or the
 	// picker's choice (nullptr); what happened, for the chat
 	std::string OrderTurretAt(const springai::AIFloat3& pos, CCircuitDef* def);
-	// turret.creep (CCreepPlanner): the pusher's turret within radius of centre, on the field callers' gates (free,
-	// metal not stalling, a def it can build there, help with a job near centre first), with the account holding
-	// GetCreepCost. isHelpOnly: only help the job there, never order another. 1: ordered or helping, 0: wait (busy,
-	// stall or budget), -1: no spot (the step failed), -2: no def it can build there, or no job it may help (the
-	// pusher's, not the step's)
-	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, float radius, bool isHelpOnly);
+	// turret.creep (CCreepPlanner): the pusher's turret within radius of centre, for a unit the caller found free
+	// (IsTurretFree), on the field callers' other gates (metal not stalling, a def it can build there, help with any
+	// job of ours near centre first), with the account holding GetCreepCost. isHelpOnly: only help the job there,
+	// never order another. isLightOnly: turret.light defs, not the unlocked tiers (a step on the way to the enemy's
+	// line). 1: ordered or helping, 0: wait (stall or budget), -1: no spot (the step failed), -2: no def it can build
+	// there, or no job it may help (the pusher's, not the step's)
+	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, float radius, bool isHelpOnly,
+			bool isLightOnly);
 	// What the turret account must hold for a creep order by unit at centre: turret.creep_budget x the dearest def it
-	// would choose from (unlocked tiers too); < 0 if none
-	float GetCreepCost(CCircuitUnit* unit, const springai::AIFloat3& centre) const;
+	// would choose from; < 0 if none
+	float GetCreepCost(CCircuitUnit* unit, const springai::AIFloat3& centre, bool isLightOnly) const;
 	float GetCreepCost(const std::vector<CCircuitDef*>& defs) const;  // of these defs; < 0 if none
 	// Metal is short and builders pull more than income: their new metal jobs wait (MakeBuilderTask)
 	bool IsMetalStalling() const;
 	// Not player-led, retreating, morphing, on a defence job or on a HIGH or NOW one
 	bool IsTurretFree(CCircuitUnit* unit) const;
 	// A static defence of ours or an ally's (a nanoframe or a queued job of ours too) within radius of centre, of a
-	// kind canHit accepts; outPos its position. FINISHED: standing ones only; PENDING: nanoframes and queued jobs only
-	enum class DefenceState: char {ANY, FINISHED, PENDING};
+	// kind canHit accepts; outPos its position
 	bool HasTurretDefence(const springai::AIFloat3& centre, float radius,
-			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos,
-			DefenceState state = DefenceState::ANY) const;
+			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos) const {
+		return FindTurretDefence(centre, radius, canHit, outPos) != DefenceFound::NONE;
+	}
+	// The same, telling what it found, the best of: a finished one, ours being built or queued, an ally's nanoframe
+	enum class DefenceFound: char {NONE, ALLY_PENDING, OURS_PENDING, FINISHED};
+	DefenceFound FindTurretDefence(const springai::AIFloat3& centre, float radius,
+			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos) const;
 	bool IsCommHiding() const { return isCommHide || isCommHideAir; }  // hide mode: no commander pusher
 private:
 	// Once a second: a constructor whose flee ended clear or covered (centred where the flee started), then each
@@ -351,9 +357,11 @@ private:
 			const std::function<bool (const CCircuitDef*)>& canHit, bool isAfterFlee, const char* caller,
 			bool& isOrdered, float budgetMod = 1.f);
 	std::vector<CCircuitDef*> GetTurretDefs(CCircuitUnit* unit, const springai::AIFloat3& centre,
-			const std::function<bool (const CCircuitDef*)>& canHit) const;
+			const std::function<bool (const CCircuitDef*)>& canHit, bool isLightOnly = false) const;
+	// isAnyJob: an unstarted job of any caller's (the creep's), not only a picker's
 	bool AssistTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
-			const std::function<bool (const CCircuitDef*)>& canHit, bool isHelpNear, const char* caller);
+			const std::function<bool (const CCircuitDef*)>& canHit, bool isHelpNear, const char* caller,
+			bool isAnyJob = false);
 	// Asks for a turret and starts the cooldown, whatever the result; radius < 0: turret.radius
 	IBuilderTask* OrderTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::vector<CCircuitDef*>& defs, const char* caller, float radius = -1.f, bool isCreep = false);

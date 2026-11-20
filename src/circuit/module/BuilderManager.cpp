@@ -2918,7 +2918,7 @@ bool CBuilderManager::IsHitFor(const CCircuitDef* def, bool isAir, bool isWater)
 }
 
 std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit) const
+		const std::function<bool (const CCircuitDef*)>& canHit, bool isLightOnly) const
 {
 	// Land or water by the def's own depths at the centre, as the terrain data sorts buildings; the footprint is the
 	// picker's (FindSiteAt, spot by spot)
@@ -2941,6 +2941,9 @@ std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, con
 		}
 	};
 	add(cfg.light);
+	if (isLightOnly) {
+		return defs;
+	}
 	// The tiers our share of the map's mexes has unlocked (the picker tries the heaviest first)
 	const float mexShare = cfg.tiers.empty() ? 0.f : picker->GetMexShare();
 	for (const CTurretPicker::SConfig::STier& tier : cfg.tiers) {
@@ -2952,10 +2955,11 @@ std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, con
 }
 
 bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit, bool isHelpNear, const char* caller)
+		const std::function<bool (const CCircuitDef*)>& canHit, bool isHelpNear, const char* caller, bool isAnyJob)
 {
 	// Whoever queued it: the porc sweep, a cornered builder or the picker. A started one, or a picker job not
-	// started yet, of a defence that hits what canHit asks for. The nearest the builder may take
+	// started yet (isAnyJob: any job not started yet), of a defence that hits what canHit asks for. The nearest the
+	// builder may take
 	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const CTurretPicker::SConfig& cfg = picker->GetConfig();
 	const int frame = circuit->GetLastFrame();
@@ -2968,7 +2972,7 @@ bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
 	for (IBuilderTask* t : GetTasks(IBuilderTask::BuildType::DEFENCE)) {
 		const CCircuitDef* tdef = t->GetBuildDef();
 		if ((t == unit->GetTask()) || !picker->IsDefence(tdef) || (canHit && !canHit(tdef))
-			|| ((t->GetTarget() == nullptr) && !static_cast<CBDefenceTask*>(t)->IsPicker()))
+			|| ((t->GetTarget() == nullptr) && !isAnyJob && !static_cast<CBDefenceTask*>(t)->IsPicker()))
 		{
 			continue;
 		}
@@ -2991,12 +2995,13 @@ bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
 	const AIFloat3& tpos = best->GetPosition();
 	circuit->LOG("TURRET %s, by %s %i: helps the %s %s at (%.0f, %.0f)", caller,
 			unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), best->GetBuildDef()->GetDef()->GetName(),
-			(best->GetTarget() != nullptr) ? "being built" : "picker job", tpos.x, tpos.z);
+			(best->GetTarget() != nullptr) ? "being built"
+				: static_cast<CBDefenceTask*>(best)->IsPicker() ? "picker job" : "job", tpos.x, tpos.z);
 	return true;
 }
 
-bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
-		const std::function<bool (const CCircuitDef*)>& canHit, AIFloat3& outPos, DefenceState state) const
+CBuilderManager::DefenceFound CBuilderManager::FindTurretDefence(const AIFloat3& centre, float radius,
+		const std::function<bool (const CCircuitDef*)>& canHit, AIFloat3& outPos) const
 {
 	// Finished or being built, ours or an ally's; and our jobs not started yet (the porc sweep's, say). As
 	// CTurretPicker::IsDefence: Claw mines, missiles and turret.not_defence don't count
@@ -3006,27 +3011,32 @@ bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
 	auto isDefence = [picker, &canHit](const CCircuitDef* d) {
 		return picker->IsDefence(d) && canHit(d);
 	};
+	DefenceFound found = DefenceFound::NONE;
+	auto take = [&](DefenceFound f, const AIFloat3& pos) {
+		if (f > found) {
+			found = f;
+			outPos = pos;
+		}
+	};
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const AIFloat3& pos = kv.second->GetPos(frame);
-		if (utils::is_valid(pos) && (pos.SqDistance2D(centre) <= sqRadius) && isDefence(kv.second->GetCircuitDef())
-			&& ((state == DefenceState::ANY) || (kv.second->GetUnit()->IsBeingBuilt() == (state == DefenceState::PENDING))))
-		{
-			outPos = pos;
-			return true;
+		if (!utils::is_valid(pos) || (pos.SqDistance2D(centre) > sqRadius) || !isDefence(kv.second->GetCircuitDef())) {
+			continue;
 		}
-	}
-	if (state == DefenceState::FINISHED) {
-		return false;
+		if (!kv.second->GetUnit()->IsBeingBuilt()) {
+			outPos = pos;
+			return DefenceFound::FINISHED;
+		}
+		take((circuit->GetTeamUnit(kv.first) != nullptr) ? DefenceFound::OURS_PENDING : DefenceFound::ALLY_PENDING, pos);
 	}
 	for (const IBuilderTask* t : GetTasks(IBuilderTask::BuildType::DEFENCE)) {
 		if ((t->GetTarget() == nullptr) && (t->GetPosition().SqDistance2D(centre) <= sqRadius)
 			&& isDefence(t->GetBuildDef()))
 		{
-			outPos = t->GetPosition();
-			return true;
+			take(DefenceFound::OURS_PENDING, t->GetPosition());
 		}
 	}
-	return false;
+	return found;
 }
 
 IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& centre,
@@ -3047,20 +3057,21 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	return picker->Order(order);
 }
 
-int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius, bool isHelpOnly)
+int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius, bool isHelpOnly,
+		bool isLightOnly)
 {
-	if (!IsTurretFree(unit) || IsMetalStalling()) {
+	if (IsMetalStalling()) {
 		return 0;
 	}
-	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, nullptr);
+	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, nullptr, isLightOnly);
 	if (defs.empty()) {
 		return -2;
 	}
-	if (AssistTurret(unit, centre, nullptr, true, "creep")) {
+	if (AssistTurret(unit, centre, nullptr, true, "creep", true)) {
 		return 1;
 	}
 	if (isHelpOnly) {
-		return -2;  // not one AssistTurret takes (a porc job not started, an ally's): never a second turret beside it
+		return -2;  // not one it may take (out of reach, unsafe): never a second turret beside it
 	}
 	if (!circuit->GetMilitaryManager()->CanAffordTurret(GetCreepCost(defs))) {
 		return 0;
@@ -3068,9 +3079,9 @@ int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre
 	return (OrderTurret(unit, centre, defs, "creep", radius, true) != nullptr) ? 1 : -1;
 }
 
-float CBuilderManager::GetCreepCost(CCircuitUnit* unit, const AIFloat3& centre) const
+float CBuilderManager::GetCreepCost(CCircuitUnit* unit, const AIFloat3& centre, bool isLightOnly) const
 {
-	return GetCreepCost(GetTurretDefs(unit, centre, nullptr));
+	return GetCreepCost(GetTurretDefs(unit, centre, nullptr, isLightOnly));
 }
 
 float CBuilderManager::GetCreepCost(const std::vector<CCircuitDef*>& defs) const
