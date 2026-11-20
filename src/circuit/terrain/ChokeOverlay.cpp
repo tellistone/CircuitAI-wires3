@@ -261,8 +261,9 @@ void CChokeOverlay::SetValue(const std::string& key, const std::string& value)
 	}
 	CChokeMap::SConfig& c = chokeMap->GetConfig();
 	const std::map<std::string, float*> floats = {
-		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"defensible", &c.defensible},
-		{"near", &c.nearRanges}, {"lane", &c.lane}, {"gate_share", &c.gateShare}, {"traffic.spread", &c.spread},
+		{"region.min_area", &c.minArea}, {"region.merge", &c.merge}, {"region.min_share", &c.minShare},
+		{"defensible", &c.defensible}, {"near", &c.nearRanges}, {"lane", &c.lane}, {"gate_share", &c.gateShare},
+		{"traffic.spread", &c.spread},
 		{"spot.radius", &c.spotRadius}, {"spot.height", &c.spotHeight}, {"spot.height_cap", &c.spotHeightCap},
 		{"spot.enemy", &c.spotEnemy}, {"spot.forward", &c.spotForward}, {"spot.view", &c.spotView},
 		{"radar.min_gain", &c.radarGain}, {"radar.share", &c.radarShare}, {"radar.enemy", &c.radarEnemy},

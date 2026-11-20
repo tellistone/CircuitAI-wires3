@@ -16,9 +16,7 @@
 #include <map>
 #include <utility>
 
-#define RELAX_STEPS		4  // builds after the first, at most, for SParams::minCount
-#define RELAX_MERGE		1.f  // merge relaxes up to this (a choke as wide as the smaller region's highest)
-#define RELAX_AREA		0.25f  // and minArea down to this share of its value
+#define RELAX_MERGE		1.f  // merge of the build for SParams::minCount: a choke as wide as the smaller region's highest
 
 namespace circuit {
 
@@ -82,22 +80,31 @@ void CRegionGraph::Build(const SCellMask& m, const SParams& params)
 {
 	BuildOnce(m, params);
 	usedParams = params;
-	for (int step = 1; ((int)regions.size() < params.minCount) && (step <= RELAX_STEPS); ++step) {
-		const float t = float(step) / RELAX_STEPS;
-		SParams relaxed = params;
-		relaxed.merge = params.merge + (std::max(params.merge, RELAX_MERGE) - params.merge) * t;
-		relaxed.minArea = params.minArea * (1.f - (1.f - RELAX_AREA) * t);
-		relaxed.mergeWidth = params.defensibleWidth;  // a relaxed choke must be one towers can close
-		CRegionGraph attempt;
-		attempt.BuildOnce(m, relaxed);
-		if (attempt.regions.size() > regions.size()) {
-			attempt.usedParams = relaxed;
-			*this = std::move(attempt);
-		}
-	}
 	splitCount = 0;
+	if ((int)regions.size() >= params.minCount) {
+		return;
+	}
+	/*
+	 * Too few: one more build keeps the chokes narrower than defensibleWidth that the first merged away, then the grid
+	 * cuts open ground. Neither makes a region under minShare of the ground per minCount region: a shard of a region,
+	 * between two lines, is no use
+	 */
+	int ground = 0;
+	for (const SRegion& region : regions) {
+		ground += region.area;
+	}
+	SParams relaxed = params;
+	relaxed.merge = std::max(params.merge, RELAX_MERGE);
+	relaxed.minArea = std::max(params.minArea, params.minShare * ground / params.minCount);
+	relaxed.mergeWidth = params.defensibleWidth;  // a relaxed choke must be one towers can close
+	CRegionGraph attempt;
+	attempt.BuildOnce(m, relaxed);
+	if (attempt.regions.size() > regions.size()) {
+		*this = std::move(attempt);
+		usedParams = relaxed;
+	}
 	if ((int)regions.size() < params.minCount) {
-		SplitOpen(usedParams);
+		SplitOpen(relaxed);
 	}
 }
 
@@ -383,7 +390,7 @@ void CRegionGraph::MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& c
  * map gets mirrored pieces and a crater moves no seed. The grid gains a column or a row, across its wider spacing,
  * until the regions with room for two of minArea hold minCount pieces in all, one per seed in them. Each cell of those
  * regions goes to its region's nearest seed (walking); a piece under minArea gives up its seed, so its neighbours take
- * its cells. Chokes are then remade from the regions' borders (each pair's line is the cells of the lower region
+ * its cells (minArea is Build's floor: minShare of the ground per minCount region). Chokes are then remade from the regions' borders (each pair's line is the cells of the lower region
  * touching the other), and a choke between two pieces of one region is a cut (isCut)
  */
 void CRegionGraph::SplitOpen(const SParams& params)
