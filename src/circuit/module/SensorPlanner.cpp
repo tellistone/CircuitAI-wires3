@@ -156,6 +156,11 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 	return task;
 }
 
+const CCircuitDef* CSensorPlanner::GetPlannedDef() const
+{
+	return circuit->GetChokeMap()->GetConfig().isRadar ? heavyDef : nullptr;
+}
+
 bool CSensorPlanner::IsHeavyReady(CCircuitDef* builderDef) const
 {
 	const int frame = circuit->GetLastFrame();
@@ -163,11 +168,6 @@ bool CSensorPlanner::IsHeavyReady(CCircuitDef* builderDef) const
 		|| (circuit->GetEconomyManager()->GetTeamMetalIncome() < circuit->GetChokeMap()->GetConfig().heavyIncome))
 	{
 		return false;
-	}
-	for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::RADAR)) {
-		if (t->GetBuildDef() == heavyDef) {
-			return false;  // one at a time
-		}
 	}
 	const CSensorPlanner* planner = circuit->GetChokeMap()->GetAuthority()->GetMilitaryManager()->GetSensorPlanner();
 	return std::none_of(planner->deaths.begin(), planner->deaths.end(), [this, frame](const SEvent& d) {

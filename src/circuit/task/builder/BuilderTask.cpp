@@ -67,6 +67,8 @@ IBuilderTask::IBuilderTask(ITaskManager* mgr, Priority priority,
 		, buildPos(-RgtVector)
 		, facing(UNIT_COMMAND_BUILD_NO_FACING)
 		, nextTask(nullptr)
+		, isQueued(false)
+		, heldDef(nullptr)
 		, buildFails(0)
 		, unitIt(units.end())
 {
@@ -76,6 +78,21 @@ IBuilderTask::IBuilderTask(ITaskManager* mgr, Priority priority,
 IBuilderTask::~IBuilderTask()
 {
 	delete nextTask;
+}
+
+void IBuilderTask::UpdateHold()
+{
+	CCircuitDef* want = (isQueued && (target == nullptr) && (buildType < BuildType::REPAIR)) ? buildDef : nullptr;
+	if (want == heldDef) {
+		return;
+	}
+	if (heldDef != nullptr) {
+		heldDef->DecQueued();
+	}
+	if (want != nullptr) {
+		want->IncQueued();
+	}
+	heldDef = want;
 }
 
 bool IBuilderTask::CanAssignTo(CCircuitUnit* unit) const
@@ -366,6 +383,7 @@ void IBuilderTask::SetTarget(CCircuitUnit* unit)
 	if (utils::is_valid(buildPos)) {
 		terrainMgr->AddBlocker(buildDef, buildPos, facing);
 	}
+	UpdateHold();
 }
 
 void IBuilderTask::UpdateTarget(CCircuitUnit* unit)

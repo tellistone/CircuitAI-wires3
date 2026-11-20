@@ -2057,8 +2057,7 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
 	const int frame = circuit->GetLastFrame();
 	std::vector<CCircuitDef*> picked;
-	// choke.radar.enable: the planner places its heavy radar, the porc lists leave it out
-	const CCircuitDef* plannedDef = circuit->GetChokeMap()->GetConfig().isRadar ? sensorPlanner->GetHeavyDef() : nullptr;
+	const CCircuitDef* plannedDef = sensorPlanner->GetPlannedDef();
 	for (unsigned i = 0; i < num; ++i) {
 		CCircuitDef* defDef = (isAirSlot && (i == 0) && prevent.airDef->IsAvailable(frame)) ? prevent.airDef : defenders[i];
 		if (!defDef->IsAvailable(frame) || (defDef == plannedDef)
@@ -4014,7 +4013,7 @@ void CMilitaryManager::UpdateDefence()
 		const auto& defElem = ibd->second.back();
 		if (frame >= defElem.second) {
 			CCircuitDef* buildDef = defElem.first;
-			if (buildDef->IsAvailable(frame)) {
+			if (buildDef->IsAvailable(frame) && (buildDef != sensorPlanner->GetPlannedDef())) {
 				AIFloat3 buildPos = ibd->first;
 				// choke.spot.enable: an attacker goes to the best spot within the main tower's range
 				const CChokeMap* chokeMap = circuit->GetChokeMap();

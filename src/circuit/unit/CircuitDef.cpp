@@ -103,6 +103,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, attr(NONE)
 		, buildOptions(buildOpts)
 		, count(0)
+		, queued(0)
 		, buildCounts(0)
 		, sinceFrame(-1)
 		, dgunDef(nullptr)
