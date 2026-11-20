@@ -29,6 +29,7 @@
 #include "json/json.h"
 
 #include "Log.h"
+#include "spring/SpringCallback.h"
 #include "UnitDef.h"
 
 #include <algorithm>
@@ -102,6 +103,9 @@ void CTurretPicker::ReadConfig()
 	c.creepRadius = turret.get("creep_radius", c.creepRadius).asFloat();
 	c.creepLosses = turret.get("creep_losses", c.creepLosses).asInt();
 	c.creepBudget = turret.get("creep_budget", c.creepBudget).asFloat();
+	c.crowdRadius = turret.get("crowd_radius", c.crowdRadius).asFloat();
+	c.crowdCount = turret.get("crowd_count", c.crowdCount).asInt();
+	c.crowdCredit = turret.get("crowd_credit", c.crowdCredit).asFloat();
 	// A list of def names (the defaults when the key is missing); a name that isn't a unit, or a turret, is logged
 	auto readDefs = [&](const std::string& key, const Json::Value& list, std::vector<std::string> names, bool isTurret) {
 		if (list.isArray()) {
@@ -154,6 +158,42 @@ float CTurretPicker::GetMexShare() const
 	}
 	metalMgr->MarkAllyMexes();  // once a frame at most
 	return float(metalMgr->GetMexCount()) / spotCount;
+}
+
+bool CTurretPicker::IsLight(const CCircuitDef* def) const
+{
+	return std::find(config.light.begin(), config.light.end(), def) != config.light.end();
+}
+
+bool CTurretPicker::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3& pos, const char* caller, bool isCredit)
+{
+	if ((config.crowdCount <= 0) || !IsLight(def)) {
+		return false;
+	}
+	// The ally team's light turrets, finished or being built, then our jobs not started yet; enough is enough
+	int count = 0;
+	COOAICallback* clb = circuit->GetCallback();
+	for (int id : clb->GetFriendlyUnitIdsIn(pos, config.crowdRadius)) {
+		const CCircuitDef* cdef = (id != -1) ? circuit->GetCircuitDef(clb->Unit_GetDefId(id)) : nullptr;
+		if ((cdef != nullptr) && IsLight(cdef) && (++count >= config.crowdCount)) {
+			break;
+		}
+	}
+	if (count < config.crowdCount) {
+		const float sqRadius = SQUARE(config.crowdRadius);
+		circuit->GetBuilderManager()->ForEachQueuedTower([this, &count, &pos, sqRadius](IBuilderTask* t) {
+			if (IsLight(t->GetBuildDef()) && (t->GetTaskPos().SqDistance2D(pos) < sqRadius)) {
+				++count;
+			}
+		});
+		if (count < config.crowdCount) {
+			return false;
+		}
+	}
+	const float credit = isCredit ? circuit->GetMilitaryManager()->CreditTurret(config.crowdCredit) : 0.f;
+	circuit->LOG("TURRET %s: no %s at (%.0f, %.0f), %i+ light turrets within %.0f; +%.0f to the turret account", caller,
+			def->GetDef()->GetName(), pos.x, pos.z, count, config.crowdRadius, credit);
+	return true;
 }
 
 int CTurretPicker::GetTier(const CCircuitDef* def) const
@@ -278,6 +318,10 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	CCircuitDef* def = res.def;
 	const CTurretValue::SScored& pick = res.search.scored.front();
 	const AIFloat3 spot(pick.cand.pos.x, pick.cand.pos.y, pick.cand.pos.z);
+	if (order.isCrowdCheck && !order.IsCreep() && RefuseCrowdedLight(def, spot, order.caller, true)) {  // the creep steps on
+		last.isFound = false;
+		return nullptr;
+	}
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	IBuilderTask* task = builderMgr->EnqueueTask(order.priority, def, spot, IBuilderTask::BuildType::DEFENCE,
 			def->GetCostM(), 0.f /*shake*/, true, JOB_TIMEOUT);
