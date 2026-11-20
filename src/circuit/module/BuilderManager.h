@@ -322,14 +322,17 @@ public:
 	// What the turret account must hold for a creep order by unit at centre: turret.creep_budget x the dearest def it
 	// would choose from (unlocked tiers too); < 0 if none
 	float GetCreepCost(CCircuitUnit* unit, const springai::AIFloat3& centre) const;
+	float GetCreepCost(const std::vector<CCircuitDef*>& defs) const;  // of these defs; < 0 if none
 	// Metal is short and builders pull more than income: their new metal jobs wait (MakeBuilderTask)
 	bool IsMetalStalling() const;
 	// Not player-led, retreating, morphing, on a defence job or on a HIGH or NOW one
 	bool IsTurretFree(CCircuitUnit* unit) const;
 	// A static defence of ours or an ally's (a nanoframe or a queued job of ours too) within radius of centre, of a
-	// kind canHit accepts; outPos its position
+	// kind canHit accepts; outPos its position. FINISHED: standing ones only; PENDING: nanoframes and queued jobs only
+	enum class DefenceState: char {ANY, FINISHED, PENDING};
 	bool HasTurretDefence(const springai::AIFloat3& centre, float radius,
-			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos) const;
+			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos,
+			DefenceState state = DefenceState::ANY) const;
 	bool IsCommHiding() const { return isCommHide || isCommHideAir; }  // hide mode: no commander pusher
 private:
 	// Once a second: a constructor whose flee ended clear or covered (centred where the flee started), then each

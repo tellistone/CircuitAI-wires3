@@ -306,13 +306,8 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	if ((def == nullptr) || !utils::is_valid(spot)) {
 		return false;
 	}
-	SGather guns;  // the order's test (the creep's: its own rule)
-	guns.centre = spot;
-	guns.radius = 0.f;
-	if (task->IsCreep()) {
-		GatherGuns(guns);
-	}
-	if (IsThreatened(guns, builder, spot)) {
+	SGather plain;  // the order's test (the creep's: its own rule)
+	if (task->IsCreep() ? IsCreepThreatened(builder, spot) : IsThreatened(plain, builder, spot)) {
 		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), threat reached it", def->GetDef()->GetName(),
 				spot.x, spot.z);
 		return false;
@@ -714,6 +709,15 @@ float CTurretPicker::GetNearestOurs(const SGather& gather, const AIFloat3& pos) 
 		minSq = std::min(minSq, b.SqDistance2D(pos));
 	}
 	return gather.ourBuildings.empty() ? -1.f : std::sqrt(minSq);
+}
+
+bool CTurretPicker::IsCreepThreatened(CCircuitUnit* builder, const AIFloat3& pos) const
+{
+	SGather guns;
+	guns.centre = pos;
+	guns.radius = 0.f;
+	GatherGuns(guns);
+	return IsThreatened(guns, builder, pos);
 }
 
 bool CTurretPicker::IsThreatened(const SGather& gather, CCircuitUnit* builder, const AIFloat3& pos) const

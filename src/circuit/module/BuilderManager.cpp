@@ -2996,7 +2996,7 @@ bool CBuilderManager::AssistTurret(CCircuitUnit* unit, const AIFloat3& centre,
 }
 
 bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
-		const std::function<bool (const CCircuitDef*)>& canHit, AIFloat3& outPos) const
+		const std::function<bool (const CCircuitDef*)>& canHit, AIFloat3& outPos, DefenceState state) const
 {
 	// Finished or being built, ours or an ally's; and our jobs not started yet (the porc sweep's, say). As
 	// CTurretPicker::IsDefence: Claw mines, missiles and turret.not_defence don't count
@@ -3008,10 +3008,15 @@ bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
 	};
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const AIFloat3& pos = kv.second->GetPos(frame);
-		if (utils::is_valid(pos) && (pos.SqDistance2D(centre) <= sqRadius) && isDefence(kv.second->GetCircuitDef())) {
+		if (utils::is_valid(pos) && (pos.SqDistance2D(centre) <= sqRadius) && isDefence(kv.second->GetCircuitDef())
+			&& ((state == DefenceState::ANY) || (kv.second->GetUnit()->IsBeingBuilt() == (state == DefenceState::PENDING))))
+		{
 			outPos = pos;
 			return true;
 		}
+	}
+	if (state == DefenceState::FINISHED) {
+		return false;
 	}
 	for (const IBuilderTask* t : GetTasks(IBuilderTask::BuildType::DEFENCE)) {
 		if ((t->GetTarget() == nullptr) && (t->GetPosition().SqDistance2D(centre) <= sqRadius)
@@ -3057,7 +3062,7 @@ int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre
 	if (isHelpOnly) {
 		return -2;  // not one AssistTurret takes (a porc job not started, an ally's): never a second turret beside it
 	}
-	if (!circuit->GetMilitaryManager()->CanAffordTurret(GetCreepCost(unit, centre))) {
+	if (!circuit->GetMilitaryManager()->CanAffordTurret(GetCreepCost(defs))) {
 		return 0;
 	}
 	return (OrderTurret(unit, centre, defs, "creep", radius, true) != nullptr) ? 1 : -1;
@@ -3065,8 +3070,13 @@ int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre
 
 float CBuilderManager::GetCreepCost(CCircuitUnit* unit, const AIFloat3& centre) const
 {
+	return GetCreepCost(GetTurretDefs(unit, centre, nullptr));
+}
+
+float CBuilderManager::GetCreepCost(const std::vector<CCircuitDef*>& defs) const
+{
 	float maxCost = -1.f;
-	for (const CCircuitDef* d : GetTurretDefs(unit, centre, nullptr)) {
+	for (const CCircuitDef* d : defs) {
 		maxCost = std::max(maxCost, d->GetCostM());
 	}
 	const float share = utils::clamp(circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().creepBudget, 0.f, 1.f);

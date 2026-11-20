@@ -150,6 +150,8 @@ public:
 	// in turret.not_defence
 	bool IsDefence(const CCircuitDef* cdef) const;
 	bool IsGroundGun(const CCircuitDef* cdef) const;  // IsDefence and hits ground: what the creep steps and fears
+	// The creep's threat rule at pos for builder (as its orders and their arrival use it): the creep waits on it
+	bool IsCreepThreatened(CCircuitUnit* builder, const springai::AIFloat3& pos) const;
 	// A known enemy building: not a fake, a Claw mine or a missile. isFresh: and in radar or sight in the last 3
 	// minutes, so the ghost of one that died out of sight drops out
 	bool IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const;

@@ -25,20 +25,22 @@ class IBuilderTask;
  * turret.creep: pushers walk our turrets out along the choke analysis, lane by lane, up to just outside the enemy's
  * static range. Once a second (doc/chokepoints.md, "The creep"):
  * - Lanes: the live chokes of our current line, as CFrontline ranks them (income behind x traffic). The target: the
- *   outer region's choke (no enemy artillery on it) nearest the enemy's held ground, or its centre if it has no other;
- *   the lane's own gap when the enemy holds the outer region (the step stops at their range).
+ *   outer region's choke (no enemy artillery on it) nearest the enemy's held ground beyond it, kept until another is
+ *   20% nearer, or its centre if it has none; enemy-held ground too: the step stops at their turrets' range.
  * - A step: from our finished turret that hits ground nearest the target, in the lane's two regions (else anywhere),
  *   turret.creep_step x its range toward the lane's gap until within turret.creep_radius of it, then toward the target,
  *   landing on it once within a step; pulled back to a half, then a quarter, out of every known enemy static's range +
  *   turret.creep_margin. None that doesn't bring the anchor nearer the enemy.
- * - Claimed: a finished defence (ours or an ally's) within turret.creep_radius of the target, or within half the
- *   step of its end. One being built or queued by the step's end: help it (assist only, never a second one).
- * - Rests: turret.creep_losses of our turrets lost in the outer region or a step of the end, or two failed steps,
- *   rest a lane 2 minutes, doubling (up to 16 minutes) while it keeps failing within 10 minutes of its last rest.
+ * - Claimed: a finished ground defence (ours or an ally's) within turret.creep_radius of the target, or within half
+ *   the step of its end. One being built or queued by the step's end: help it (assist only, never a second one).
+ * - Rests: turret.creep_losses of our turrets lost in the outer region or a step of the end, or two failed steps
+ *   within 2 minutes, rest a lane 2 minutes, doubling (up to 16 minutes) while it keeps failing within 10 minutes of
+ *   its last rest. A step's end under threat (the picker's creep rule) only waits.
  * - Pushers: turret.creep_builders plus one per turret.creep_income metal/s (half a pusher of hysteresis); the
- *   commander first (not while hide mode holds it), then the free mobile ground constructors nearest a lane. Each free
- *   one, every turret.creep_interval at most, takes the highest-ranked lane among the three nearest it that no other
- *   took this second (CBuilderManager::OrderCreepTurret)
+ *   commander first (not while hide mode holds it), then the free mobile ground constructors nearest a lane; one that
+ *   a free constructor at under half its distance from a lane could replace is swapped, one a second. Each free one,
+ *   every turret.creep_interval at most, takes the highest-ranked lane among the three nearest it that no other took
+ *   this second (CBuilderManager::OrderCreepTurret)
  * - Between steps a pusher guards its lane's turret, while the account fills for its next order within two intervals
  *   and metal isn't stalling (MakeHoldTask)
  */
@@ -71,7 +73,7 @@ private:
 		int lastRest = -1;
 		int until = 0;
 	};
-	enum Skip: int {NOT_LIVE, RESTING, CLAIMED, NO_ANCHOR, NO_PROGRESS, IN_REACH, _SIZE_};
+	enum Skip: int {NOT_LIVE, RESTING, CLAIMED, NO_ANCHOR, NO_PROGRESS, IN_REACH, THREATENED, _SIZE_};
 
 	void UpdatePushers();
 	void MakeLanes();
@@ -88,6 +90,7 @@ private:
 	std::vector<SLane> lanes;  // this second's, highest rank first
 	std::vector<std::pair<springai::AIFloat3, int>> losses;  // our ground-hitting turrets lost, when
 	std::map<int, SRest> rests;  // line choke id -> its failures and rests
+	std::map<int, int> targetOf;  // line choke id -> the choke id it last targeted, kept unless another is clearly nearer
 	int skips[Skip::_SIZE_];  // this second's, for the log
 	int lineSize;
 	int logFrame;
