@@ -822,7 +822,8 @@ private:
 	BuildVector baseDefence;
 	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of landDefenders/waterDefenders.
 	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction.
-	// The count is the cluster's total, over all its defence points. Each cluster throws its dice once, the first
+	// The count is the cluster's total, over all its defence points. Each cluster throws its dice once for the whole
+	// ally team (CMetalManager::GetClusterDice), the first
 	// time it is defended; later rolls (every prevent_reroll[0] s, and on a sighting: an enemy that can hit ground
 	// within mex LOS of our mex there, at most once per prevent_reroll[1] s since its last roll or sighting) reuse
 	// it, so the count only moves with the chance (the mex share). A sighting's roll can only raise the count.
@@ -836,24 +837,16 @@ private:
 		std::vector<std::pair<float, float>> mexCurve;  // prevent_mex: x = ally-team finished mexes / all spots
 		CCircuitDef* airDef;  // prevent_air: first tower after a sighting of a flying enemy, nullptr = off
 		bool isGeo;  // porcupine.geo: geothermal vents are defended like mex clusters
-		bool isOwnOnly;  // porcupine.own_clusters: team games, MakeDefence only on clusters that are ours (SAllyCluster)
-		bool isAllyCover;  // porcupine.ally_cover: allied towers that reach a point stand in for its preventive towers
+		bool isOwnOnly;  // porcupine.own_clusters: team games, towers only on clusters we own (IsOurCluster)
+		bool isAllyCover;  // porcupine.ally_cover: towers of non-Wires allies count towards a cluster's preventive total
 	} prevent;
-	// Team games. A cluster is ours when our finished mexes there are at least any single ally's (a tie goes to the
-	// lower team id); with no finished mex of anyone there, when a mex job of ours is in it. cover: finished armed
-	// statics of allies (not ours) whose ground range (land, or water when isWater) reaches pos
-	struct SAllyCluster {
-		bool isOurs = true;
-		int ourMexes = 0;
-		int topMexes = 0;  // the most finished mexes any one ally has there
-		int topTeam = -1;
-		unsigned cover = 0;
-	};
-	SAllyCluster GetAllyCluster(int cluster, const springai::AIFloat3& pos, bool isWater);
-	std::vector<int> allyLogFrames;  // by cluster: last "not ours" / "ally cover" log line, so the sweep doesn't spam it
+	// porcupine.own_clusters: in team games only clusters we own (CMetalManager::GetClusterOwner) get towers
+	bool IsOurCluster(int cluster) const;
+	// porcupine.ally_cover: metal of the finished anti-land towers of allied teams that aren't Wires AIs (the shared
+	// CDefenceMatrix already counts theirs) within range of a mex point of the cluster; 0 when every ally is one
+	float GetAllyCoverCost(int cluster, bool isWater) const;
 	struct SPreventRoll {
 		int count = -1;  // -1 = never rolled
-		float dice = -1.f;  // [0, 1), thrown once per cluster on its first roll; every later roll reuses it
 		int rollFrame = -1;
 		int sightFrame = -1;  // last sighting acted on
 	};

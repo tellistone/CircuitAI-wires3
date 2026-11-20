@@ -42,6 +42,7 @@
 #include "terrain/path/QueryPathMulti.h"
 #include "terrain/path/QueryCostMap.h"
 #include "unit/ally/AllyUnit.h"
+#include "util/GameAttribute.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/enemy/EnemyManager.h"
 #include "CircuitAI.h"
@@ -1233,7 +1234,6 @@ void CMilitaryManager::Init()
 	}
 
 	preventRolls.resize(clusters.size());
-	allyLogFrames.resize(clusters.size(), -FRAMES_PER_SEC * 60);
 
 	CSetupManager::StartFunc subinit = [this, &spots](const AIFloat3& pos) {
 		auto compare = [&pos, &spots](int a, int b) {
@@ -1948,21 +1948,10 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	bool isWater = circuit->GetTerrainManager()->IsDeepWaterAt(pos);
 	std::vector<CCircuitDef*>& defenders = isWater ? waterDefenders : landDefenders;
 
-	// Team games: only our own clusters, and allied towers already there stand in for preventive ones
-	const bool isTeam = circuit->GetAllyTeam()->GetSize() > 1;
-	SAllyCluster allyCluster;
-	if (isTeam && (prevent.isOwnOnly || prevent.isAllyCover)) {
-		allyCluster = GetAllyCluster(cluster, closestPoint->position, isWater);
-		// A vent's point is asked only for our geo there (or a sighting at it): never someone else's
-		if (prevent.isOwnOnly && !allyCluster.isOurs && !closestPoint->isGeo) {
-			const int frame = circuit->GetLastFrame();
-			if ((cluster < (int)allyLogFrames.size()) && (frame >= allyLogFrames[cluster] + FRAMES_PER_SEC * 60)) {
-				allyLogFrames[cluster] = frame;
-				circuit->LOG("PREVENT cluster %i: not ours (our mexes %i, team %i has %i), no towers", cluster,
-						allyCluster.ourMexes, allyCluster.topTeam, allyCluster.topMexes);
-			}
-			return;
-		}
+	// porcupine.own_clusters (the sweeps skip the rest already). A vent's point is asked only for our geo there,
+	// or a sighting at it: never someone else's
+	if (!closestPoint->isGeo && !IsOurCluster(cluster)) {
+		return;
 	}
 
 	// Front-line porc
@@ -2013,21 +2002,7 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 		}
 	}
 	bool isAirSlot = false;  // a flying enemy was sighted: the first slot is prevent.airDef
-	unsigned num = isPorc ? defenders.size() : GetPreventCount(cluster, sightDef, isAirSlot);
-	if (!isPorc && isTeam && prevent.isAllyCover && (allyCluster.cover > 0)) {
-		const unsigned rolled = num;
-		num = (num > allyCluster.cover) ? num - allyCluster.cover : 0;
-		const int frame = circuit->GetLastFrame();
-		if ((rolled > 0) && (cluster < (int)allyLogFrames.size()) && (frame >= allyLogFrames[cluster] + FRAMES_PER_SEC * 60)) {
-			allyLogFrames[cluster] = frame;
-			circuit->LOG("PREVENT cluster %i: %u allied tower(s) cover the point, %u -> %u", cluster, allyCluster.cover,
-					rolled, num);
-		}
-		if (num == 0) {
-			isAirSlot = false;
-		}
-	}
-	num = std::min<unsigned>(num, defenders.size());
+	unsigned num = std::min<unsigned>(isPorc ? defenders.size() : GetPreventCount(cluster, sightDef, isAirSlot), defenders.size());
 
 	const AIFloat3 backPos = GetBackPos(closestPoint->position);
 
@@ -2055,7 +2030,7 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	// each point's. Asked once per finished mex, sighting and sweep visit, every point of a cluster got the count
 	float clusterCap = maxCost;
 	if (!isPorc && !closestPoint->isGeo) {
-		float clusterCost = 0.f;
+		float clusterCost = GetAllyCoverCost(cluster, isWater);  // towers the shared matrix doesn't know about
 		for (const CDefenceMatrix::SDefPoint& p : points) {
 			if (!p.isGeo) {
 				clusterCost += p.cost;
@@ -2375,7 +2350,7 @@ void CMilitaryManager::SweepByTraffic()
 	const float maxCost = GetDefenceCap();
 	auto isWanted = [&](int cluster, const CDefenceMatrix::SDefPoint& point) {
 		return mm->IsClusterHeld(cluster) && !point.isGeo && (point.cost < maxCost)
-				&& !terrainMgr->IsZoneAlly(point.position);
+				&& !terrainMgr->IsZoneAlly(point.position) && IsOurCluster(cluster);
 	};
 	for (int round = 0; round < 2; ++round) {
 		while (sweepIdx < sweepOrder.size()) {
@@ -2423,69 +2398,64 @@ void CMilitaryManager::SweepByTraffic()
 	}
 }
 
-CMilitaryManager::SAllyCluster CMilitaryManager::GetAllyCluster(int cluster, const AIFloat3& pos, bool isWater)
+bool CMilitaryManager::IsOurCluster(int cluster) const
 {
-	SAllyCluster result;
+	if (!prevent.isOwnOnly || (circuit->GetAllyTeam()->GetSize() <= 1)) {
+		return true;
+	}
 	CMetalManager* mm = circuit->GetMetalManager();
-	const int teamId = circuit->GetTeamId();
-	const int frame = circuit->GetLastFrame();
+	mm->MarkAllyMexes();  // the owner is as of the last mark
+	return mm->GetClusterOwner(cluster) == circuit->GetTeamId();
+}
+
+float CMilitaryManager::GetAllyCoverCost(int cluster, bool isWater) const
+{
+	if (!prevent.isAllyCover || (circuit->GetAllyTeam()->GetSize() <= 1)) {
+		return 0.f;
+	}
+	// Wires allies' towers are in the shared matrix's point costs already
+	std::set<int> wiresTeams;
+	for (const CCircuitAI* ai : circuit->GetGameAttribute()->GetCircuits()) {
+		if (ai->GetAllyTeamId() == circuit->GetAllyTeamId()) {
+			wiresTeams.insert(ai->GetTeamId());
+		}
+	}
+	if ((int)wiresTeams.size() >= circuit->GetAllyTeam()->GetSize()) {
+		return 0.f;
+	}
+	const std::vector<CDefenceMatrix::SDefPoint>& points = defence->GetDefPoints(cluster);
 	const CCircuitDef::RangeType rangeType = isWater ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-	std::map<int, int> mexesByTeam;  // finished mexes in the cluster, by ally team id (not ours)
+	const int frame = circuit->GetLastFrame();
+	float cost = 0.f;
 	circuit->UpdateFriendlyUnits();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
-		CAllyUnit* unit = kv.second;
-		const CCircuitDef* cdef = unit->GetCircuitDef();
-		if ((cdef == nullptr) || cdef->IsMobile()) {
+		CAllyUnit* ally = kv.second;
+		const CCircuitDef* adef = ally->GetCircuitDef();
+		// As the threat map's cover layer (CThreatMap::PrepareCover): its weapon's real reach against the ground,
+		// halved for a long-ranged static, never an anti-air one; turret.not_defence statics aren't turrets
+		if ((adef == nullptr) || !turretPicker->IsDefence(adef) || !adef->HasAntiLand()) {
 			continue;
 		}
-		Unit* u = unit->GetUnit();
-		if (u->IsBeingBuilt()) {
+		float range = adef->GetMaxRange(rangeType);
+		if (range <= 0.f) {
 			continue;
 		}
-		const int team = u->GetTeam();
-		if (cdef->IsMex()) {
-			const int spotId = mm->FindNearestSpot(unit->GetPos(frame));
-			if ((spotId >= 0) && (mm->GetCluster(spotId) == cluster)) {
-				if (team == teamId) {
-					result.ourMexes++;
-				} else {
-					mexesByTeam[team]++;
-				}
-			}
+		if (adef->GetMaxRange() > 1000.f) {
+			range /= 2;
+		}
+		Unit* u = ally->GetUnit();
+		if (wiresTeams.count(u->GetTeam()) > 0 || u->IsBeingBuilt() || u->IsParalyzed()) {
 			continue;
 		}
-		if ((team == teamId) || !cdef->IsAttacker() || cdef->IsMobileBuilding()
-			|| ((turretPicker != nullptr) && !turretPicker->IsDefence(cdef)))
-		{
-			continue;
-		}
-		const float range = cdef->GetMaxRange(rangeType);
-		if ((range > 0.f) && (unit->GetPos(frame).SqDistance2D(pos) < SQUARE(range))) {
-			result.cover++;
-		}
-	}
-	for (const auto& kv : mexesByTeam) {
-		if (kv.second > result.topMexes) {  // std::map: the lower team id keeps a tie
-			result.topMexes = kv.second;
-			result.topTeam = kv.first;
-		}
-	}
-	if (result.ourMexes > 0) {
-		result.isOurs = (result.ourMexes > result.topMexes) || ((result.ourMexes == result.topMexes) && (teamId < result.topTeam));
-	} else if (result.topMexes > 0) {
-		result.isOurs = false;
-	} else {
-		// Nobody's mex is finished there yet: ours if a mex job of ours is in the cluster
-		result.isOurs = false;
-		for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::MEX)) {
-			const int spotId = mm->FindNearestSpot(t->GetTaskPos());
-			if ((spotId >= 0) && (mm->GetCluster(spotId) == cluster)) {
-				result.isOurs = true;
+		const AIFloat3& pos = ally->GetPos(frame);
+		for (const CDefenceMatrix::SDefPoint& p : points) {
+			if (!p.isGeo && (p.position.SqDistance2D(pos) < SQUARE(range))) {
+				cost += adef->GetCostM();
 				break;
 			}
 		}
 	}
-	return result;
+	return cost;
 }
 
 unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, bool& outIsAir)
@@ -2512,11 +2482,8 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	const float chance = prevent.base * prevent.mapMult * mexMult;
 	const float whole = std::floor(chance);
 	// One throw per cluster: fresh dice on every re-roll and sighting, with towers never called off, gave nearly
-	// every cluster the best of many throws
-	if (roll.dice < 0.f) {
-		roll.dice = (float)rand() / ((float)RAND_MAX + 1.f);  // [0, 1)
-	}
-	const float dice = roll.dice;
+	// every cluster the best of many throws. Shared by the ally team, so a new owner rolls the same count
+	const float dice = mm->GetClusterDice(cluster);
 	int count = std::min(int(whole) + ((dice < chance - whole) ? 1 : 0), 64);
 	const int prevCount = roll.count;
 	if ((sightDef != nullptr) && !isFirst) {
@@ -3949,7 +3916,7 @@ void CMilitaryManager::UpdateDefenceTasks()
 	decltype(defenceIdx) prevIdx = defenceIdx;
 	while (defenceIdx < clusters.size()) {
 		int index = defenceIdx++;
-		if (mm->IsClusterQueued(index) || mm->IsClusterFinished(index)) {
+		if ((mm->IsClusterQueued(index) || mm->IsClusterFinished(index)) && IsOurCluster(index)) {
 			MakeDefence(index);
 			return;
 		}
@@ -3957,7 +3924,7 @@ void CMilitaryManager::UpdateDefenceTasks()
 	defenceIdx = 0;
 	while (defenceIdx < prevIdx) {
 		int index = defenceIdx++;
-		if (mm->IsClusterQueued(index) || mm->IsClusterFinished(index)) {
+		if ((mm->IsClusterQueued(index) || mm->IsClusterFinished(index)) && IsOurCluster(index)) {
 			MakeDefence(index);
 			return;
 		}
