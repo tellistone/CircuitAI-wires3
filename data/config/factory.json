@@ -10,6 +10,11 @@
 	"no_air": 3
 },
 
+// Scales every factory's income_tier by map player density (map area / 2 / allied team size, sides in map units:
+// 16x16 1v1 = 128, 8x8 5v5 = 6.4). [[density, mult], ...], linear between points, first/last value outside.
+// 0.5 halves the thresholds (the AI reaches higher tiers at half the income). Missing = x1
+// "income_tier_density": [[6, 0.5], [128, 1.0]],
+
 // Utility param: warning on unit's total probability not equal to 100%
 "warn_probability": true,
 

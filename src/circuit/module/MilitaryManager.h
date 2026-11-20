@@ -56,9 +56,14 @@ private:
 	void ReadConfig();
 	// [[x, multiplier], ...] config curve (quota.*_map_size, response.<role>.income_curve) for utils::eval_curve
 	void ReadCurve(const Json::Value& value, const std::string& key, const char* xName,
-			std::vector<std::pair<float, float>>& curve) const;
+			std::vector<std::pair<float, float>>& curve) const { ReadCurve(circuit, value, key, xName, curve); }
 	void Init();
 public:
+	static void ReadCurve(CCircuitAI* circuit, const Json::Value& value, const std::string& key, const char* xName,
+			std::vector<std::pair<float, float>>& curve);
+	// Map player density = map area / 2 / allied team size, sides in map units (512 elmos, the 16x16 players quote):
+	// 16x16 1v1 = 128, 8x8 5v5 = 6.4. x of response.<role>.density_curve and factory.json income_tier_density
+	static float GetMapDensity(CCircuitAI* circuit);
 	void Release();
 
 	virtual int UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder) override;
@@ -567,6 +572,7 @@ private:
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
+	void UpdateAllyResponse();
 	void UpdateEscalation();
 	void LogRaidStats();  // the RAID log, every minute
 	// One rally's state; attack and raid rallies share the rules (UpdateRally)
@@ -683,9 +689,10 @@ private:
 	std::vector<SRaidPoint> raidPath;  // list of cluster ids
 
 	struct SRoleInfo {
-		float cost;
+		float cost;  // this AI's finished army and builders of the response role
+		float allyCost = 0.f;  // allied teams' finished mobile units of the role (UpdateAllyResponse, every 2 s)
 		float maxPerc;
-		float factor;
+		float densityMult;  // density_curve at the map player density (missing = 1): scales the response amount
 		std::set<CCircuitUnit*> units;
 		std::string name;  // response.<name>, for logs
 		// Response gates (UpdateResponseGates). Share = finished ally mexes / map spots; income = factory income_tier

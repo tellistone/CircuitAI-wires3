@@ -65,7 +65,6 @@ namespace circuit {
 
 using namespace springai;
 
-#define RESPONSE_EPS_MIN	0.1f  // response eps floor
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
 #define SPOT_GIVE_UP		(FRAMES_PER_SEC * 600)  // choke.spot.enable: two failures this close give a type up this long
@@ -354,8 +353,14 @@ CMilitaryManager::~CMilitaryManager()
 	}
 }
 
-void CMilitaryManager::ReadCurve(const Json::Value& value, const std::string& key, const char* xName,
-		std::vector<std::pair<float, float>>& curve) const
+float CMilitaryManager::GetMapDensity(CCircuitAI* circuit)
+{
+	return (circuit->GetMap()->GetWidth() / 64.f) * (circuit->GetMap()->GetHeight() / 64.f) * 0.5f
+			/ std::max(circuit->GetAllyTeam()->GetSize(), 1);
+}
+
+void CMilitaryManager::ReadCurve(CCircuitAI* circuit, const Json::Value& value, const std::string& key, const char* xName,
+		std::vector<std::pair<float, float>>& curve)
 {
 	// [[x, multiplier >= 0], ...], sorted by x; bad points are logged and skipped; missing = empty
 	if (value.isNull()) {
@@ -384,6 +389,8 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& responses = root["response"];
 	const float teamSize = circuit->GetAllyTeam()->GetSize();
+	const float density = GetMapDensity(circuit);  // a role's density_curve maps it to a response multiplier
+	circuit->LOG("RESPONSE: %g allies, map player density %.2f", teamSize, density);
 	roleInfos.resize(roleNames.size(), {.0f});
 	isResponseGates = false;
 	for (const auto& pair : roleNames) {
@@ -393,20 +400,19 @@ void CMilitaryManager::ReadConfig()
 
 		if (response.isNull()) {
 			info.maxPerc = 1.0f;
-			info.factor  = teamSize;
+			info.densityMult = 1.0f;
 			continue;
 		}
 
 		info.maxPerc = response.get("max_percent", 1.0f).asFloat();
-		// eps = 1 + (teamSize - 1) * eps_step. Enemy metal is the whole enemy team's, our role metal this AI's own:
-		// eps_step 1 = each AI answers its 1/teamSize share, > 1 less, < 1 (or negative) more. Floored: at 0 one
-		// sighting would let the role grow to max_percent whatever the enemy amount
-		const float step = response.get("eps_step", 1.0f).asFloat();
-		info.factor  = (teamSize - 1.0f) * step + 1.0f;
-		if (info.factor < RESPONSE_EPS_MIN) {
-			circuit->LOG("CONFIG %s: response.%s eps %g clamped to %g (teamSize %g, eps_step %g)", cfgName.c_str(),
-					pair.first.c_str(), info.factor, RESPONSE_EPS_MIN, teamSize, step);
-			info.factor = RESPONSE_EPS_MIN;
+		if (!response["eps_step"].isNull()) {
+			circuit->LOG("CONFIG %s: response.%s.eps_step is no longer read, use density_curve", cfgName.c_str(), pair.first.c_str());
+		}
+		std::vector<std::pair<float, float>> densityCurve;  // missing = x1
+		ReadCurve(response["density_curve"], "response." + pair.first + ".density_curve", "density", densityCurve);
+		info.densityMult = utils::eval_curve(densityCurve, density);
+		if (!densityCurve.empty()) {
+			circuit->LOG("RESPONSE: %s density_curve x%.3f", pair.first.c_str(), info.densityMult);
 		}
 
 		// Number in [lo, hi] or the default, logged
@@ -1267,6 +1273,9 @@ void CMilitaryManager::Init()
 		}
 		if (isResponseGates) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResponseGates, this), FRAMES_PER_SEC * 2, offset + 3);
+		}
+		if (circuit->GetAllyTeam()->GetSize() > 1) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAllyResponse, this), FRAMES_PER_SEC * 2, offset + 4);
 		}
 		if (escalation.isEnabled) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateEscalation, this), escalation.interval, offset + 2);
@@ -3483,6 +3492,34 @@ void CMilitaryManager::UpdateResponseGates()
 	++responseSamples;
 }
 
+void CMilitaryManager::UpdateAllyResponse()
+{
+	// Allies' response metal, so the response check weighs the enemy against the whole ally team's units of the role.
+	// Counted as AddResponse counts ours (every response role of the def), finished mobile units only: our own
+	// count has no turrets or nanoframes either
+	for (SRoleInfo& info : roleInfos) {
+		info.allyCost = 0.f;
+	}
+	circuit->UpdateFriendlyUnits();
+	const int teamId = circuit->GetTeamId();
+	const CCircuitDef::RoleT roleSize = roleInfos.size();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if ((cdef == nullptr) || !cdef->IsMobile()) {
+			continue;
+		}
+		Unit* u = kv.second->GetUnit();
+		if ((u->GetTeam() == teamId) || u->IsBeingBuilt()) {
+			continue;
+		}
+		for (CCircuitDef::RoleT type = 0; type < roleSize; ++type) {
+			if (cdef->IsRespRoleAny(CCircuitDef::GetMask(type))) {
+				roleInfos[type].allyCost += cdef->GetCostM();
+			}
+		}
+	}
+}
+
 float CMilitaryManager::RoleProbability(const CCircuitDef* cdef) const
 {
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
@@ -3493,11 +3530,13 @@ float CMilitaryManager::RoleProbability(const CCircuitDef* cdef) const
 	float maxProb = 0.f;
 	for (const SRoleInfo::SVsInfo& vs : info.vs) {
 		const float enemyMetal = enemyMgr->GetEnemyCost(vs.role);
+		// Enemy team's metal vs the ally team's (ours + allies'); max_percent caps our own share of our own army
+		const float teamMetal = info.cost + info.allyCost;
 		const float nextMetal = info.cost + cdef->GetCostM();
-		const float prob = enemyMetal / (info.cost + 1.f) * vs.importance;
-		// income_curve scales the amount wanted (not the roll weight); max_percent still caps it
+		const float prob = enemyMetal / (teamMetal + 1.f) * vs.importance;
+		// income_curve and density_curve scale the amount wanted (not the roll weight)
 		if ((prob > maxProb) &&
-			(enemyMetal * vs.ratio * info.incomeMult >= nextMetal * info.factor) &&
+			(enemyMetal * vs.ratio * info.incomeMult * info.densityMult >= teamMetal + cdef->GetCostM()) &&
 			(nextMetal <= (armyCost + cdef->GetCostM()) * info.maxPerc))
 		{
 			maxProb = prob;
