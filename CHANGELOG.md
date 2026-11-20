@@ -7,6 +7,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Regions stay put through a fight: a rebuild for terrain keeps the last build's choices while they still work.**
+  With too few regions for `choke.region.min_count`, each rebuild chose afresh whether to keep the merge-1 rebuild
+  and which grid to cut by. The grid picked is the first that reaches `min_count`, often just, so a crater that cost
+  it one piece moved every cut to the next grid; a region more or less flipped the rebuild and its chokes. Now a
+  rebuild for terrain tries the last grid first and keeps it while it still cuts `min_count` pieces, and keeps or
+  drops the merge-1 rebuild as last time unless that is more than a region off. The first build, a key set and new
+  gating classes choose afresh.
+  - Over 5 rebuilds of 8 more small craters each on 60 test maps, a choice changes on 5 to 16% of rebuilds, was 21
+    to 40%, and 66 to 83% of the ground keeps its region through all five, was 60 to 78%. The openness band changes
+    on 18 of 900 rebuilds, was 25.
+  - It never makes fewer than `min_count` regions. Keeping a grid a fresh pick would have made coarser gives 21.5 to
+    22.3 regions on average at `min_count` 20, was 20.7 to 21.2; the biggest region is no bigger.
 - **Team games: no more towers in allies' bases** (`porcupine.own_clusters` and `porcupine.ally_cover`, both new,
   default true). Every Wires AI swept every cluster the ally team held, each with its own preventive dice and income
   cap, so a cluster got the highest roll and the richest cap among them, inside allies' bases too. Now:
