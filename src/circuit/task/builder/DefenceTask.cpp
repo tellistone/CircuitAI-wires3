@@ -10,6 +10,7 @@
 #include "map/InfluenceMap.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
+#include "module/CreepPlanner.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
@@ -31,6 +32,7 @@ CBDefenceTask::CBDefenceTask(ITaskManager* mgr, Priority priority,
 		, isUrgent(false)
 		, isOffPoints(false)
 		, isPicker(false)
+		, isCreep(false)
 		, normalCost(cost)
 		, charged(0.f)
 		, spend(0)
@@ -51,6 +53,9 @@ void CBDefenceTask::Update()
 		&& !militaryMgr->GetTurretPicker()->IsStillWorth(this, *traveled.begin()))
 	{
 		militaryMgr->GetSpotScorer()->MaskFailed(buildPos);
+		if (isCreep) {
+			militaryMgr->GetCreepPlanner()->OnDropped(buildPos);  // a failed step, not a success
+		}
 		manager->AbortTask(this);
 		return;
 	}

@@ -3042,27 +3042,32 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	return picker->Order(order);
 }
 
-int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre)
+int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius)
 {
 	if (!IsTurretFree(unit) || IsMetalStalling()) {
 		return 0;
 	}
 	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, nullptr);
 	if (defs.empty()) {
-		return -1;
+		return -2;
 	}
 	if (AssistTurret(unit, centre, nullptr, true, "creep")) {
 		return 1;
 	}
-	const CTurretPicker::SConfig& cfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
-	float maxCost = 0.f;
-	for (const CCircuitDef* d : defs) {
-		maxCost = std::max(maxCost, d->GetCostM());
-	}
-	if (!circuit->GetMilitaryManager()->CanAffordTurret(maxCost * utils::clamp(cfg.creepBudget, 0.f, 1.f))) {
+	if (!circuit->GetMilitaryManager()->CanAffordTurret(GetCreepCost(unit, centre))) {
 		return 0;
 	}
-	return (OrderTurret(unit, centre, defs, "creep", cfg.creepRadius, true) != nullptr) ? 1 : -1;
+	return (OrderTurret(unit, centre, defs, "creep", radius, true) != nullptr) ? 1 : -1;
+}
+
+float CBuilderManager::GetCreepCost(CCircuitUnit* unit, const AIFloat3& centre) const
+{
+	float maxCost = -1.f;
+	for (const CCircuitDef* d : GetTurretDefs(unit, centre, nullptr)) {
+		maxCost = std::max(maxCost, d->GetCostM());
+	}
+	const float share = utils::clamp(circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().creepBudget, 0.f, 1.f);
+	return (maxCost < 0.f) ? -1.f : maxCost * share;
 }
 
 std::string CBuilderManager::OrderTurretAt(const AIFloat3& pos, CCircuitDef* def)

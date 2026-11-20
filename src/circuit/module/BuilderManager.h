@@ -313,11 +313,16 @@ public:
 	// choke_overlay turret: our nearest constructor that is free (UpdateTurrets' tests) orders one at pos, def or the
 	// picker's choice (nullptr); what happened, for the chat
 	std::string OrderTurretAt(const springai::AIFloat3& pos, CCircuitDef* def);
-	// turret.creep (CCreepPlanner): the pusher's turret within turret.creep_radius of centre, on the field callers'
-	// gates (free, metal not stalling, a def it can build there, help with a job near it and centre first), with the
-	// account holding creep_budget x the dearest def's cost. 1: ordered or helping, 0: wait (stall or budget),
-	// -1: nothing to build or no spot
-	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre);
+	// turret.creep (CCreepPlanner): the pusher's turret within radius of centre, on the field callers' gates (free,
+	// metal not stalling, a def it can build there, help with a job near centre first), with the account holding
+	// GetCreepCost. 1: ordered or helping, 0: wait (busy, stall or budget), -1: no spot (the step failed), -2: no def it
+	// can build there (the pusher's fault, not the step's)
+	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, float radius);
+	// What the turret account must hold for a creep order by unit at centre: turret.creep_budget x the dearest def it
+	// would choose from (unlocked tiers too); < 0 if none
+	float GetCreepCost(CCircuitUnit* unit, const springai::AIFloat3& centre) const;
+	// Metal is short and builders pull more than income: their new metal jobs wait (MakeBuilderTask)
+	bool IsMetalStalling() const;
 	// Not player-led, retreating, morphing, on a defence job or on a HIGH or NOW one
 	bool IsTurretFree(CCircuitUnit* unit) const;
 	// A static defence of ours or an ally's (a nanoframe or a queued job of ours too) within radius of centre, of a
@@ -463,8 +468,6 @@ private:
 	bool IsCommCornered(CCircuitUnit* unit, SCommState* state);
 	// Other builders: on the defence they were cornered into (cornerTask), which they finish unless metal stalls
 	bool IsFinishingDefence(CCircuitUnit* unit, const SCommState* state) const;
-	// Metal is short and builders pull more than income: their new metal jobs wait (MakeBuilderTask)
-	bool IsMetalStalling() const;
 	// A job at pos: always with no state (flee off); else outside the flee zones (wide line, recently seen dangers
 	// included), or covered 1.25x there. Other builders: a fight-back task is measured at the start line, and the
 	// flee scars count

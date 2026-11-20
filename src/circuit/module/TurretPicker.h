@@ -149,6 +149,7 @@ public:
 	// A static that defends the ground around it: armed, not a Claw mine or a missile (customParams.mobilebuilding), not
 	// in turret.not_defence
 	bool IsDefence(const CCircuitDef* cdef) const;
+	bool IsGroundGun(const CCircuitDef* cdef) const;  // IsDefence and hits ground: what the creep steps and fears
 	// A known enemy building: not a fake, a Claw mine or a missile. isFresh: and in radar or sight in the last 3
 	// minutes, so the ghost of one that died out of sight drops out
 	bool IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const;
@@ -219,6 +220,8 @@ private:
 	CTurretValue::SParams MakeParams(CCircuitDef* def) const;
 	float GetNearestOurs(const SGather& gather, const springai::AIFloat3& pos) const;
 	void GatherGuns(SGather& gather) const;  // the creep's: enemyGuns and ourGuns about the radius
+	// Threat at pos for builder: above THREAT_MIN; for the creep (gather.isCreep), its own rule
+	bool IsThreatened(const SGather& gather, CCircuitUnit* builder, const springai::AIFloat3& pos) const;
 
 	CCircuitAI* circuit;
 	SConfig config;

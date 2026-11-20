@@ -88,7 +88,7 @@ Choke ids carry over either way. A new choke waits 20 s before anything acts on 
 | `turret.short_choke` | `true` | **Turret picker (G), at a short choke.** A mobile ground constructor within `turret.short_choke_reach` of a short choke of our current line (as C judges it, below) orders one centred on the choke's gap. Only defensible chokes, settled and with no enemy artillery on them, as for C. |
 | `turret.enemy_line` | `true` | **Turret picker (G), near the enemy line.** A mobile ground constructor within `turret.enemy_line_reach` of a choke of the enemy line orders one centred on the choke's gap. The same chokes as `turret.short_choke`. |
 | `turret.artillery` | `true` | **Turret picker (G), by our artillery.** A mobile ground constructor within `turret.artillery_reach` of our artillery shooting a target in its range, or of an engaged anti-heavy squad with a unit in range of its target (not mines or aircraft), with no ground-hitting turret within `turret.defended_radius` of it, orders one centred on the artillery (an anti-heavy squad: its leader). Anti-heavy squads and anti-heavy artillery count only against a building. |
-| `turret.creep` | `true` | **Turret picker (G), the creep.** Pushers (the commander first, then constructors) step our turrets forward toward the enemy's statics, each step ending just outside their range; see [The creep](#the-creep-g). |
+| `turret.creep` | `true` | **Turret picker (G), the creep.** Pushers (the commander first, then constructors) claim the regions beyond our current line for turrets, region by region, up to just outside the enemy's static range; see [The creep](#the-creep-g). |
 
 The rankings of enemy-held chokes and the enemy line's (E) feed only the overlay. They are computed only while the overlay is on.
 
@@ -157,14 +157,14 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.enemy_line_reach` | `800` | Distance from an enemy line choke's line that starts the enemy-line caller. |
 | `turret.enemy_line_budget` | `0.5` | An order at a choke of the enemy line (taken by either choke caller) needs only this × the dearest def's cost in the turret account; 0 to 1, 0 = never refused. The turret is still charged its full cost, which may take the account below zero, ahead of every other spender. |
 | `turret.artillery_reach` | `600` | Distance to our attacking artillery that starts the artillery caller. |
-| `turret.creep_builders` | `1` | Pushers before income adds more: the commander first (not while hide mode holds it), then the free mobile ground constructors nearest the best step. |
-| `turret.creep_income` | `30` | One more pusher per this much metal/s of average income; 0 = none. |
+| `turret.creep_builders` | `1` | Pushers before income adds more: the commander first (not while hide mode holds it), then the free mobile ground constructors nearest a lane. |
+| `turret.creep_income` | `30` | One more pusher per this much metal/s of average income, with half a pusher of hysteresis; 0 = none. |
 | `turret.creep_interval` | `10` | Seconds between one pusher's steps at the least; also the length of its guard between steps. |
-| `turret.creep_step` | `0.7` | A step's length, x the forward turret's land range. |
+| `turret.creep_step` | `0.7` | A step's length, x the land range of the turret it steps from. |
 | `turret.creep_margin` | `64` | Elmos a creep turret keeps outside every known enemy static's land range. |
-| `turret.creep_radius` | `250` | The picker's radius about a step's end; a ground defence within it (or half the step, if less) means the step is taken. |
-| `turret.creep_losses` | `2` | Our turrets lost in the last 2 minutes within a turret's range of a step's end that stop the step; 0 = never. |
-| `turret.creep_budget` | `0.5` | A creep order needs only this x the dearest def's cost in the turret account; 0 to 1. The full cost is still charged. |
+| `turret.creep_radius` | `250` | The picker's radius about a step's end (half the step, if less, short of the target). A defence within it of a lane's target claims the lane. |
+| `turret.creep_losses` | `2` | Our ground-hitting turrets lost in a lane's outer region in the last 2 minutes that stop its steps; 0 = never. |
+| `turret.creep_budget` | `0.5` | A creep order needs only this x the dearest def it would choose from (unlocked tiers too) in the turret account; 0 to 1. The full cost is still charged. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
 | `turret.share` | — | Removed: the picker spends from the turret account, `porcupine.budget` in build_chain.json. `choke_overlay set turret.share` sets the account's share. |
@@ -488,37 +488,41 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
 
 ### The creep (G)
 
-`CCreepPlanner` (`turret.creep`) pushes our turret line up to the enemy's, once a second:
+`CCreepPlanner` (`turret.creep`) pushes our turrets out region by region, along the choke analysis's lines, once a
+second:
 
-1. **Our guns and losses.** Our finished turrets that hit ground (picker defences: Claw mines, missiles and
-   `turret.not_defence` left out). One gone since last second is a loss, kept 2 minutes.
-2. **Steps.** From each of our guns, toward a goal:
-   - The known enemy static that hits ground (kept until seen dead) whose stop line, its land range +
-     `turret.creep_margin`, is nearest.
-   - With none known, the nearest live choke of the enemy line (settled, no enemy artillery), stopping at the choke.
-
-   A gun within a quarter step of its stop line makes none: the creep has reached their line there. Otherwise the
-   step is `turret.creep_step` x the gun's land range, cut at the stop line, then halved and quartered until its end
-   is outside every enemy static's range + margin. It is dropped if a ground defence (ours or an ally's, being
-   built or queued too) stands within `turret.creep_radius` (or half the step, if less) of its end; if
-   `turret.creep_losses` of our guns died in the last 2 minutes within the gun's range of its end; or if the gun's
-   steps failed twice in the last 2 minutes.
-3. **Pushers.** `turret.creep_builders` plus one per `turret.creep_income` metal/s. The commander is first while hide
-   mode doesn't hold it; then the free mobile ground constructors nearest the best step. A pusher stays one while it
-   lives and is a builder.
-4. **Orders.** A pusher that is free (as the field callers judge it) and past its `turret.creep_interval` takes,
-   among the three steps nearest it not taken this second, the one with the shortest gap, and orders a picker
-   turret within `turret.creep_radius` of its end (`CBuilderManager::OrderCreepTurret`), or helps a turret already
-   being built there. The turret account must hold `turret.creep_budget` x the dearest def's cost; the full cost is
-   charged (`creep` in the account's log). A stall or a short account waits a second; no def or no spot counts as a
-   failed step.
-5. **The picker's threat rule for a creep order.** A spot inside any known enemy static's land range +
-   `creep_margin` is threatened. Elsewhere the threat map's mobile threat passes only where the power of our guns
-   whose range covers the spot is higher.
-6. **Holding.** A pusher with nothing else urgent (after cornered and home fights) guards the turret of the step
-   nearest it, for one interval, if the account fills for a light turret (at `creep_budget`) within two intervals,
-   metal and energy aren't stalling, and the guard job is safe; so it repairs and stays at the front instead of
-   walking home for a job.
+1. **Lanes.** Each live choke of our current line (C's line: the chokes out of our held ground into regions the enemy
+   reaches) is a lane. Its outer region is the side we don't hold; a lane into ground the enemy holds makes no step
+   (outranging them there is for later work). Its target is the outer region's choke, with no enemy artillery on it,
+   nearest the enemy's held ground (its side of the map while it holds none we know of), or the region's centre if
+   it has no other choke.
+2. **Claims.** A lane rests while a finished defence (ours or an ally's) stands in its outer region or within
+   `turret.creep_radius` of its target, or an ally's is being built there. Held ground turns the region ours once
+   our buildings have held it for 20 s, and the line moves on to its exits, so the creep follows by itself. One of
+   ours being built or queued there is helped instead of ordering another.
+3. **Steps.** From our finished turret that hits ground nearest the target, if it stands within its range + one step
+   of the lane's choke (a lane with none near is the short-choke caller's or porc's), `turret.creep_step` x its land
+   range toward the target, or onto the target once within a step. The step's end is pulled back, to a half and then
+   a quarter, until it is outside every known enemy static's land range + `turret.creep_margin`. Short of the
+   target, the picker searches only half the step about its end, so the turret lands ahead of the one behind it.
+   A step already queued or being built within `turret.creep_radius` of its end is helped.
+4. **Stops.** No step for a lane where `turret.creep_losses` of our ground-hitting turrets died in its outer region in
+   the last 2 minutes (losses come from the unit-destroyed event), or after two failed steps in 2 minutes: no spot,
+   or a creep job dropped on arrival.
+5. **Pushers.** `turret.creep_builders` plus one per `turret.creep_income` metal/s, with half a pusher of hysteresis.
+   The commander is first while hide mode doesn't hold it; then the free mobile ground constructors nearest a lane.
+   A pusher stays one while it lives and is a builder.
+6. **Orders.** A pusher that is free (as the field callers judge it) and past its `turret.creep_interval` takes the
+   nearest lane no other took this second (nor one stepping to the same ground) and orders a picker turret about
+   the step's end (`CBuilderManager::OrderCreepTurret`), or helps the job there. The turret account must hold
+   `turret.creep_budget` x the dearest def it would choose from, unlocked tiers too; the full cost is charged
+   (`creep` in the account's log). A stall or a short account waits a second.
+7. **The picker's threat rule for a creep order**, at the order and again on arrival: a spot inside any known enemy
+   static's land range + `creep_margin` is threatened. Elsewhere the threat map's mobile threat passes only where
+   the power of our guns whose range covers the spot is higher.
+8. **Holding.** A pusher with nothing else urgent (after cornered and home fights) guards the turret its lane steps
+   from, for one interval, if the account fills for its next order within two intervals, metal isn't stalling and
+   the guard job is safe; so it repairs and stays at the front instead of walking home for a job.
 
 ### Holding the line (C) and rankings (E)
 
@@ -564,8 +568,8 @@ Lines in the AI's infolog, for tuning:
 - `CHOKE artillery near choke`: towers called off.
 - `CHOKE hold`: slots starting, moving and ending.
 - `RADAR by`: each radar a builder is sent to build, with the coverage before it.
-- `CREEP`: once a minute, the pushers, the steps and the shortest gap with its end, or why none (our guns, the
-  enemy's known, our recent losses).
+- `CREEP`: once a minute, the pushers, the lanes stepping out of our line's chokes, and why the rest didn't (not
+  live, enemy-held, failed, losses, claimed, no turret near, in enemy reach).
 - `TURRET <caller>, by <builder>`: each turret order (`after flee`, `near enemy` or `test`) with its def, spot, the
   four terms, height, F, the nearest building of ours, the walk, base and value per cost, candidates tested and the
   time; or why nothing (no def, no spot, nothing in range worth its cost, no buildable spot among the best, or the

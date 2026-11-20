@@ -173,6 +173,11 @@ bool CTurretPicker::IsDefence(const CCircuitDef* cdef) const
 		&& (std::find(config.notDefence.begin(), config.notDefence.end(), cdef) == config.notDefence.end());
 }
 
+bool CTurretPicker::IsGroundGun(const CCircuitDef* cdef) const
+{
+	return IsDefence(cdef) && cdef->HasAntiLand();
+}
+
 bool CTurretPicker::IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const
 {
 	const CCircuitDef* edef = enemy->GetCircuitDef();
@@ -275,7 +280,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	IBuilderTask* task = builderMgr->EnqueueTask(order.priority, def, spot, IBuilderTask::BuildType::DEFENCE,
 			def->GetCostM(), 0.f /*shake*/, true, JOB_TIMEOUT);
-	static_cast<CBDefenceTask*>(task)->SetPicker();
+	static_cast<CBDefenceTask*>(task)->SetPicker(order.isCreep);
 	// Its footprint goes on the blocking map now: no other job (a picker's included) takes the spot meanwhile
 	task->SetFacing(UNIT_FACING_SOUTH);
 	task->SetBuildPos(spot);
@@ -301,7 +306,13 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	if ((def == nullptr) || !utils::is_valid(spot)) {
 		return false;
 	}
-	if (circuit->GetThreatMap()->GetThreatAt(builder, spot) > THREAT_MIN) {  // the order's test
+	SGather guns;  // the order's test (the creep's: its own rule)
+	guns.centre = spot;
+	guns.radius = 0.f;
+	if (task->IsCreep()) {
+		GatherGuns(guns);
+	}
+	if (IsThreatened(guns, builder, spot)) {
 		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), threat reached it", def->GetDef()->GetName(),
 				spot.x, spot.z);
 		return false;
@@ -625,22 +636,7 @@ CTurretPicker::Reject CTurretPicker::MakeCandidate(CCircuitUnit* builder, const 
 	})) {
 		return Reject::INFLUENCE;
 	}
-	const float threat = circuit->GetThreatMap()->GetThreatAt(builder, pos);
-	if (gather.isCreep) {
-		// The creep: out of every known enemy static's range + creep_margin; mobiles' threat only where our guns
-		// covering the spot outweigh it, so a raider passing doesn't stall the step
-		auto isIn = [&pos](const SGun& g) { return g.pos.SqDistance2D(pos) <= g.sqReach; };
-		if (std::any_of(gather.enemyGuns.begin(), gather.enemyGuns.end(), isIn)) {
-			return Reject::THREAT;
-		}
-		float cover = 0.f;
-		for (const SGun& g : gather.ourGuns) {
-			cover += isIn(g) ? g.power : 0.f;
-		}
-		if ((threat > THREAT_MIN) && (threat > cover)) {
-			return Reject::THREAT;
-		}
-	} else if (threat > THREAT_MIN) {
+	if (IsThreatened(gather, builder, pos)) {
 		return Reject::THREAT;
 	}
 	if (!circuit->GetTerrainManager()->CanReachAt(builder, pos, builder->GetCircuitDef()->GetBuildDistance())) {
@@ -720,13 +716,31 @@ float CTurretPicker::GetNearestOurs(const SGather& gather, const AIFloat3& pos) 
 	return gather.ourBuildings.empty() ? -1.f : std::sqrt(minSq);
 }
 
+bool CTurretPicker::IsThreatened(const SGather& gather, CCircuitUnit* builder, const AIFloat3& pos) const
+{
+	const float threat = circuit->GetThreatMap()->GetThreatAt(builder, pos);
+	if (!gather.isCreep) {
+		return threat > THREAT_MIN;
+	}
+	// The creep: out of every known enemy static's range + creep_margin; mobiles' threat only where our guns covering
+	// the spot outweigh it, so a raider passing doesn't stall the step
+	auto isIn = [&pos](const SGun& g) { return g.pos.SqDistance2D(pos) <= g.sqReach; };
+	if (std::any_of(gather.enemyGuns.begin(), gather.enemyGuns.end(), isIn)) {
+		return true;
+	}
+	float cover = 0.f;
+	for (const SGun& g : gather.ourGuns) {
+		cover += isIn(g) ? g.power : 0.f;
+	}
+	return (threat > THREAT_MIN) && (threat > cover);
+}
+
 void CTurretPicker::GatherGuns(SGather& gather) const
 {
 	// Statics that hit ground (IsDefence: not a Bertha, a Claw mine or a missile), any whose reach may touch the
 	// radius. Enemy ones as known (until seen dead), at their land range + creep_margin; ours and allies' finished
 	gather.isCreep = true;
 	const int frame = circuit->GetLastFrame();
-	auto isGun = [this](const CCircuitDef* d) { return IsDefence(d) && d->HasAntiLand(); };
 	auto add = [&gather](std::vector<SGun>& out, const AIFloat3& pos, float reach, float power) {
 		if (pos.SqDistance2D(gather.centre) <= SQUARE(gather.radius + reach)) {
 			out.push_back({pos, SQUARE(reach), power});
@@ -734,14 +748,14 @@ void CTurretPicker::GatherGuns(SGather& gather) const
 	};
 	for (const auto& kv : circuit->GetEnemyInfos()) {
 		const CCircuitDef* edef = kv.second->GetCircuitDef();
-		if (IsEnemyBuilding(kv.second, false) && isGun(edef)) {
+		if (IsEnemyBuilding(kv.second, false) && IsGroundGun(edef)) {
 			add(gather.enemyGuns, kv.second->GetPos(),
 					edef->GetMaxRange(CCircuitDef::RangeType::LAND) + config.creepMargin, edef->GetPower());
 		}
 	}
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
-		if (isGun(cdef) && !kv.second->GetUnit()->IsBeingBuilt()) {
+		if (IsGroundGun(cdef) && !kv.second->GetUnit()->IsBeingBuilt()) {
 			add(gather.ourGuns, kv.second->GetPos(frame), cdef->GetMaxRange(CCircuitDef::RangeType::LAND),
 					cdef->GetPower());
 		}

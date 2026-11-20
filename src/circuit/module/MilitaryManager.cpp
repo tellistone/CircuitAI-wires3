@@ -1387,6 +1387,9 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	const CCircuitDef* tdef = unit->GetCircuitDef();
 	if (turretPicker->IsDefence(tdef) && !unit->GetUnit()->IsBeingBuilt()) {
 		turretBudget.lost += tdef->GetCostM();
+		if (tdef->HasAntiLand()) {
+			creepPlanner->OnGunLost(unit->GetPos(circuit->GetLastFrame()));  // turret.creep_losses
+		}
 		const CCircuitDef* kdef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
 		if ((charged > 0.f) && (kdef != nullptr) && CanFightBack(tdef, kdef)) {
 			turretBudget.balance += turretBudget.lossRefund * charged;
