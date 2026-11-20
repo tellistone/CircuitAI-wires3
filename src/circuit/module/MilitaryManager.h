@@ -223,6 +223,10 @@ public:
 	// Gave up on this spot (danger at it or no safe route): nobody of that kind picks it for a while
 	void BlockScoutSpot(const springai::AIFloat3& spot, int frames) { BlockSpot(scoutClaims, spot, frames); }
 	void BlockRaidSpot(const springai::AIFloat3& spot, int frames) { BlockSpot(raidClaims, spot, frames); }
+	// A scout still heading to the spot it picked keeps its claim fresh (claim_time counts from the last call), and
+	// gives it up when it leaves its scout task
+	void HoldScoutSpot(const CCircuitUnit* unit, const springai::AIFloat3& spot) { HoldSpot(scoutClaims, unit, spot); }
+	void ReleaseScoutSpot(const CCircuitUnit* unit);
 	// The raid group led by leader no longer heads for its spot (a raid rally joiner): free its claim for others
 	void ReleaseRaidSpot(const CCircuitUnit* leader);
 	bool IsRaidSpotOn() const { return isRaiderSpot; }  // quota.raider_spot given
@@ -686,12 +690,15 @@ private:
 		int claimTime;    // frames a picked spot is reserved for its picker
 		float rangeMult;  // static enemy weapon range multiplier for danger
 		float homeRatio;  // skip spots nearer to our base than this fraction of their distance to the enemy
+		float mex;        // bonus: a known enemy mex on the spot that no known enemy defence covers (0 = off)
+		float mexSpread;  // no mex bonus within this distance of an enemy mex spot another picker holds a claim on
 	} scoutSpot, raiderSpot;
 	bool isRaiderSpot = false;  // quota.raider_spot given
 	springai::AIFloat3 PickSpot(CCircuitUnit* unit, float safeThreat, const SSpotCfg& cfg, IFighterTask::FightType type,
 			SSpotClaims& claims);
 	void ReleaseSpot(SSpotClaims& claims, int unitId);  // the picker's claim, if any
 	void BlockSpot(SSpotClaims& claims, const springai::AIFloat3& spot, int frames);
+	void HoldSpot(SSpotClaims& claims, const CCircuitUnit* unit, const springai::AIFloat3& spot);
 
 	struct SRaidPoint {
 		unsigned int idx;

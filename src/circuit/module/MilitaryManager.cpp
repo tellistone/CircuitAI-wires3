@@ -540,6 +540,8 @@ void CMilitaryManager::ReadConfig()
 			cfg.claimTime = get("claim_time", 20.f) * FRAMES_PER_SEC;
 			cfg.rangeMult = get("static_range_mult", 1.f);
 			cfg.homeRatio = get("home_ratio", 0.5f);
+			cfg.mex = get("mex", 0.f);
+			cfg.mexSpread = get("mex_spread", 600.f);
 			return isObject;
 		};
 		readSpot("scout_spot", scoutSpot);
@@ -2798,6 +2800,13 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 	std::vector<SDefence> defences;
 	// Points that mark where the enemy is: known enemy buildings and enemy groups
 	std::vector<AIFloat3> anchors;
+	// quota.<kind>_spot.mex: metal spots a known enemy mex stands on (finished or not)
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const bool isMexBonus = (cfg.mex != 0.f);
+	std::vector<bool> isEnemyMex;
+	if (isMexBonus) {
+		isEnemyMex.resize(scoutMetalCount, false);
+	}
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		CCircuitDef* edef = enemy->GetCircuitDef();
@@ -2805,6 +2814,14 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 			continue;
 		}
 		anchors.push_back(enemy->GetPos());
+		if (isMexBonus && edef->IsMex()) {
+			const int idx = metalMgr->FindNearestSpot(enemy->GetPos());
+			if ((idx >= 0) && ((unsigned)idx < scoutMetalCount)
+				&& (spots[idx].SqDistance2D(enemy->GetPos()) < SQUARE(SQUARE_SIZE * 8)))
+			{
+				isEnemyMex[idx] = true;
+			}
+		}
 		const float threat = enemy->GetThreat();
 		const CEnemyUnit* data = enemy->GetData();
 		const int rangeSq = isAir ? data->GetRange(CCircuitDef::ThreatType::AIR)
@@ -2829,7 +2846,8 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 	}
 	// A raid group's safeThreat has its group size bonus: the defences get theirs too, as squad threat counts them
 	const bool isSquad = IFighterTask::IsSquadThreat(unit);
-	auto isDefended = [&](const AIFloat3& spot) {
+	// Known static danger at the spot (0 = no enemy defence covers it), and the level at which it counts as defended
+	auto getStaticDanger = [&](const AIFloat3& spot) {
 		float danger = 0.f;
 		float count = 0.f;
 		for (const SDefence& d : defences) {
@@ -2842,7 +2860,31 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 		if (isSquad) {
 			danger *= threatMap->GetCountMod(count);
 		}
+		return danger;
+	};
+	auto isDefendedBy = [&](const AIFloat3& spot, float danger) {
 		return danger >= safeThreat / GetThrDistMod(type, spot);  // thr_mod.distance.<scout|raid> at the spot
+	};
+	// Enemy mex spots another picker of this kind is heading to (a live claim): the mex bonus goes to spots away from
+	// them, so pickers spread over the enemy's mexes instead of all chasing the best one
+	std::vector<AIFloat3> takenMexes;
+	if (isMexBonus) {
+		for (unsigned i = 0; i < scoutMetalCount; ++i) {
+			if (isEnemyMex[i] && (claims.unitId[i] >= 0) && (claims.unitId[i] != unitId)
+				&& (claims.frame[i] >= 0) && (frame < claims.frame[i] + cfg.claimTime))
+			{
+				takenMexes.push_back(spots[i]);
+			}
+		}
+	}
+	const float sqMexSpread = SQUARE(cfg.mexSpread);
+	auto isNearTakenMex = [&](const AIFloat3& spot) {
+		for (const AIFloat3& t : takenMexes) {
+			if (t.SqDistance2D(spot) <= sqMexSpread) {
+				return true;
+			}
+		}
+		return false;
 	};
 
 	// Best unclaimed spot, else the best claimed one (every safe spot is taken: share it)
@@ -2870,12 +2912,26 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 		const float staleTerm = (scoutSeen[i] < 0) ? 1.f
 				: std::min(float(frame - scoutSeen[i]) / std::max(cfg.staleTime, 1), 1.f);
 		const float travelTerm = pos.distance2D(spot) / mapDiag;
-		const float score = cfg.enemy * enemyTerm + cfg.stale * staleTerm - cfg.travel * travelTerm;
+		float score = cfg.enemy * enemyTerm + cfg.stale * staleTerm - cfg.travel * travelTerm;
+		// An enemy mex on the spot: a bonus, but only while it might be worth it (checked below)
+		const bool hasMexBonus = isMexBonus && (i < scoutMetalCount) && isEnemyMex[i];
+		const float mexBonus = hasMexBonus ? cfg.mex : 0.f;
 
 		const int c = ((claims.frame[i] >= 0) && (frame < claims.frame[i] + cfg.claimTime)) ? 1 : 0;
 		// The costlier checks only for a spot that would become the best: same pick, far fewer checks
-		if ((score <= bestScore[c]) || IsScoutSpotOurs(i) || isDefended(spot)) {
-			continue;  // not better, our territory, or defended
+		if ((score + std::max(mexBonus, 0.f) <= bestScore[c]) || IsScoutSpotOurs(i)) {
+			continue;  // not better (even with the bonus), or our territory
+		}
+		const float danger = getStaticDanger(spot);
+		if (isDefendedBy(spot, danger)) {
+			continue;  // defended
+		}
+		// No bonus for a mex any known enemy defence covers, or one near an enemy mex another picker is heading to
+		if (hasMexBonus && (danger <= 0.f) && !isNearTakenMex(spot)) {
+			score += mexBonus;
+		}
+		if (score <= bestScore[c]) {
+			continue;
 		}
 		bestScore[c] = score;
 		bestIdx[c] = i;
@@ -2897,6 +2953,27 @@ void CMilitaryManager::ReleaseSpot(SSpotClaims& claims, int unitId)
 			claims.unitId[i] = -1;
 		}
 	}
+}
+
+void CMilitaryManager::HoldSpot(SSpotClaims& claims, const CCircuitUnit* unit, const AIFloat3& spot)
+{
+	if (claims.unitId.size() != scoutSpots.size()) {
+		return;
+	}
+	const int unitId = unit->GetId();
+	for (unsigned i = 0; i < scoutSpots.size(); ++i) {
+		if ((scoutSpots[i].x == spot.x) && (scoutSpots[i].z == spot.z)) {
+			if (claims.unitId[i] == unitId) {
+				claims.frame[i] = circuit->GetLastFrame();
+			}
+			return;
+		}
+	}
+}
+
+void CMilitaryManager::ReleaseScoutSpot(const CCircuitUnit* unit)
+{
+	ReleaseSpot(scoutClaims, unit->GetId());
 }
 
 void CMilitaryManager::ReleaseRaidSpot(const CCircuitUnit* leader)

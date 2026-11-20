@@ -69,6 +69,7 @@ void CScoutTask::AssignTo(CCircuitUnit* unit)
 
 void CScoutTask::RemoveAssignee(CCircuitUnit* unit)
 {
+	manager->GetCircuit()->GetMilitaryManager()->ReleaseScoutSpot(unit);  // other scouts may pick its spot now
 	IFighterTask::RemoveAssignee(unit);
 	if (units.empty()) {
 		manager->AbortTask(this);
@@ -386,6 +387,9 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 			OnNoSafeRoute(unit);
 			return;
 		}
+	} else {
+		// Still on the way: keep the spot reserved, so other scouts don't pick it once claim_time runs out
+		manager->GetCircuit()->GetMilitaryManager()->HoldScoutSpot(unit, position);
 	}
 
 	RunScoutQuery(unit);
