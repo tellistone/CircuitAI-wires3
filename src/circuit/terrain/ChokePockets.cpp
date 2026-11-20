@@ -782,6 +782,7 @@ std::string CChokeMap::MakeFixture() const
 	root["min_area"] = config.minArea;
 	root["merge"] = config.merge;
 	root["min_count"] = config.minCount;
+	root["min_share"] = config.minShare;
 	root["defensible"] = config.defensible;
 	root["main_range"] = mainRange;
 	const SCellMask& mask = graph.GetMask();

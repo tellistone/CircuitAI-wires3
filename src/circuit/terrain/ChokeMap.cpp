@@ -138,6 +138,7 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.minArea = region.get("min_area", config.minArea).asFloat();
 	config.merge = region.get("merge", config.merge).asFloat();
 	config.minCount = region.get("min_count", config.minCount).asInt();
+	config.minShare = region.get("min_share", config.minShare).asFloat();
 	config.defensible = choke.get("defensible", config.defensible).asFloat();
 	config.entrances = choke.get("entrances", config.entrances).asInt();
 	config.nearRanges = choke.get("near", config.nearRanges).asFloat();
@@ -816,7 +817,7 @@ std::string CChokeMap::DescribeRelaxed() const
 	std::string out;
 	char buf[160];
 	if ((used.merge != base.merge) || (used.minArea != base.minArea)) {
-		snprintf(buf, sizeof(buf), "; relaxed to merge %.2f, min_area %.2f for min_count %i", used.merge,
+		snprintf(buf, sizeof(buf), "; rebuilt with merge %.2f, min_area %.2f for min_count %i", used.merge,
 				used.minArea / SQUARE(mainRange / GRAPH_CELL), config.minCount);
 		out += buf;
 	}
@@ -848,6 +849,7 @@ CRegionGraph::SParams CChokeMap::GetGraphParams() const
 	params.minArea = config.minArea * SQUARE(mainRange / GRAPH_CELL);  // cells
 	params.merge = config.merge;
 	params.minCount = config.minCount;
+	params.minShare = config.minShare;
 	params.defensibleWidth = config.defensible * mainRange;
 	return params;
 }
