@@ -15,6 +15,7 @@
 #include "util/Scheduler.h"
 #include "util/Utils.h"
 
+#include "spring/SpringCallback.h"
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
