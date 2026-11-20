@@ -85,6 +85,7 @@ public:
 		float minArea = 0.5f;  // choke.region.min_area: main-tower ranges squared
 		float merge = 0.7f;  // choke.region.merge
 		int minCount = 20;  // choke.region.min_count: too few regions relax, then open ground is cut (CRegionGraph)
+		float minShare = 0.5f;  // choke.region.min_share: of the ground per min_count region
 		float defensible = 2.f;  // choke.defensible: main-tower ranges
 		int entrances = 3;  // choke.entrances
 		float nearRanges = 2.5f;  // choke.near: main-tower ranges (not "near": a macro on Windows)

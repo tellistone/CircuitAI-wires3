@@ -16,10 +16,6 @@
 #include <map>
 #include <utility>
 
-#define RELAX_STEPS		4  // builds after the first, at most, for SParams::minCount
-#define RELAX_MERGE		1.f  // merge relaxes up to this (a choke as wide as the smaller region's highest)
-#define RELAX_AREA		0.25f  // and minArea down to this share of its value
-
 namespace circuit {
 
 namespace {
@@ -82,22 +78,34 @@ void CRegionGraph::Build(const SCellMask& m, const SParams& params)
 {
 	BuildOnce(m, params);
 	usedParams = params;
-	for (int step = 1; ((int)regions.size() < params.minCount) && (step <= RELAX_STEPS); ++step) {
-		const float t = float(step) / RELAX_STEPS;
-		SParams relaxed = params;
-		relaxed.merge = params.merge + (std::max(params.merge, RELAX_MERGE) - params.merge) * t;
-		relaxed.minArea = params.minArea * (1.f - (1.f - RELAX_AREA) * t);
-		relaxed.mergeWidth = params.defensibleWidth;  // a relaxed choke must be one towers can close
-		CRegionGraph attempt;
-		attempt.BuildOnce(m, relaxed);
-		if (attempt.regions.size() > regions.size()) {
-			attempt.usedParams = relaxed;
-			*this = std::move(attempt);
-		}
-	}
 	splitCount = 0;
+	if ((int)regions.size() >= params.minCount) {
+		return;
+	}
+	/*
+	 * Too few: one more build keeps the chokes narrower than defensibleWidth that the first merged away, then the grid
+	 * cuts open ground. Neither makes a region under minShare of the ground per minCount region: a shard of a region,
+	 * between two lines, is no use
+	 */
+	int ground = 0;
+	for (const SRegion& region : regions) {
+		ground += region.area;
+	}
+	if (ground == 0) {
+		return;
+	}
+	SParams relaxed = params;
+	relaxed.merge = std::max(params.merge, 1.f);  // keeps a choke unless it is as wide as the smaller region's highest
+	relaxed.minArea = std::max({params.minArea, params.minShare * ground / params.minCount, 1.f});  // 1: no empty piece
+	relaxed.mergeWidth = params.defensibleWidth;  // a relaxed choke must be one towers can close
+	CRegionGraph attempt;
+	attempt.BuildOnce(m, relaxed);
+	if (attempt.regions.size() > regions.size()) {
+		*this = std::move(attempt);
+		usedParams = relaxed;
+	}
 	if ((int)regions.size() < params.minCount) {
-		SplitOpen(usedParams);
+		SplitOpen(relaxed);
 	}
 }
 
@@ -382,19 +390,26 @@ void CRegionGraph::MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& c
  * Open ground has no choke to split at. Seeds go on a grid of the map, cell-centred and mirror-symmetric, so a mirrored
  * map gets mirrored pieces and a crater moves no seed. The grid gains a column or a row, across its wider spacing,
  * until the regions with room for two of minArea hold minCount pieces in all, one per seed in them. Each cell of those
- * regions goes to its region's nearest seed (walking); a piece under minArea gives up its seed, so its neighbours take
- * its cells. Chokes are then remade from the regions' borders (each pair's line is the cells of the lower region
- * touching the other), and a choke between two pieces of one region is a cut (isCut)
+ * regions goes to its region's nearest seed (walking); a piece under minArea (Build's floor: minShare of the ground per
+ * minCount region) gives up its seed, so its neighbours take its cells. With no grid cutting minCount pieces, the one
+ * cutting the most is kept. Chokes are then remade from the regions' borders (each pair's line is the cells of the
+ * lower region touching the other), and a choke between two pieces of one region is a cut (isCut)
  */
 void CRegionGraph::SplitOpen(const SParams& params)
 {
 	const int n = mask.Size();
+	// The cell under the middle of band i of k across size cells. A middle on a cell border takes the cell nearer the
+	// map's middle, so band k-1-i takes the mirror cell (size-1-x)
+	auto middleOf = [](int i, int k, int size) {
+		const int twice = (2 * i + 1) * size;  // 2k x the middle
+		return twice / (2 * k) - (((twice % (2 * k) == 0) && (2 * i + 1 > k)) ? 1 : 0);
+	};
 	auto gridOf = [&](int nx, int nz) {  // the grid's cells in regions with room for two pieces
 		std::vector<int> seeds;
 		for (int j = 0; j < nz; ++j) {
 			for (int i = 0; i < nx; ++i) {
-				const int x = (2 * i + 1) * mask.width / (2 * nx);  // the middle of its column
-				const int z = (2 * j + 1) * mask.height / (2 * nz);
+				const int x = middleOf(i, nx, mask.width);
+				const int z = middleOf(j, nz, mask.height);
 				const int cell = z * mask.width + x;
 				const int r = regionOf[cell];
 				if ((r != NO_REGION) && (regions[r].area >= 2.f * params.minArea)) {
@@ -404,8 +419,8 @@ void CRegionGraph::SplitOpen(const SParams& params)
 		}
 		return seeds;
 	};
-	std::vector<int> seedsIn;  // per region
-	auto countOf = [&](const std::vector<int>& seeds) {  // the regions there would be
+	std::vector<int> seedsIn;  // per region, set by countOf
+	auto countOf = [&](const std::vector<int>& seeds) {  // the regions there would be; seedsIn: the seeds in each
 		seedsIn.assign(regions.size(), 0);
 		for (int s : seeds) {
 			++seedsIn[regionOf[s]];
@@ -447,16 +462,8 @@ void CRegionGraph::SplitOpen(const SParams& params)
 		}
 	};
 	std::vector<int> seeds;
-	for (int nx = 1, nz = 1; float(n) / (nx * nz) >= params.minArea;) {
-		std::vector<int> grid = gridOf(nx, nz);
-		if (mask.width * nz >= mask.height * nx) {  // the next grid: one more across its wider spacing
-			++nx;
-		} else {
-			++nz;
-		}
-		if (countOf(grid) < params.minCount) {
-			continue;
-		}
+	auto cutBy = [&](std::vector<int> grid) {  // seeds: the grid's in regions it cuts, less those of pieces under minArea
+		countOf(grid);  // seedsIn
 		for (int i = 0; i < n; ++i) {
 			group[i] = ((regionOf[i] != NO_REGION) && (seedsIn[regionOf[i]] > 1)) ? regionOf[i] : -1;
 		}
@@ -477,9 +484,32 @@ void CRegionGraph::SplitOpen(const SParams& params)
 		if (seeds.size() < grid.size()) {
 			flood(seeds);
 		}
-		if (countOf(seeds) >= params.minCount) {
+		return countOf(seeds);
+	};
+	std::vector<int> best;  // the grid that cut the most pieces, while none has cut minCount
+	int bestCount = 0;
+	for (int nx = 1, nz = 1; float(n) / (nx * nz) >= params.minArea;) {
+		const std::vector<int> grid = gridOf(nx, nz);
+		if (mask.width * nz >= mask.height * nx) {  // the next grid: one more across its wider spacing
+			++nx;
+		} else {
+			++nz;
+		}
+		if (countOf(grid) < params.minCount) {
+			continue;
+		}
+		const int count = cutBy(grid);
+		if (count >= params.minCount) {
+			best.clear();
 			break;
 		}
+		if (count > bestCount) {
+			bestCount = count;
+			best = grid;
+		}
+	}
+	if (!best.empty()) {  // finer grids only lost pieces under minArea: back to the best
+		cutBy(best);
 	}
 	if (seeds.empty()) {
 		return;

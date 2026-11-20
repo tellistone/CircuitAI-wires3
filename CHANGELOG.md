@@ -7,6 +7,28 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **No more shard regions on open maps: the regions made for `min_count` are of a size** (`choke.region.min_share`,
+  new, 0.5). With too few regions, the build ran again up to 4 times with `merge` raised to 1 and `min_area` lowered
+  to a quarter, and kept the build with the most regions. On an open map with craters (Red Comet) that reached
+  `min_count` by keeping every small basin between craters: slivers between two lines and regions about 200 elmos across
+  beside ones a hundred times their size, so the grid cut never ran. Now:
+  - The rebuild runs once, with `merge` at 1. It still merges across any choke wider than `choke.defensible`.
+  - Neither the rebuild nor the grid cut makes a region under `min_share` of the ground per `min_count` region; they
+    use that as `min_area` where it is bigger. A first build that already has `min_count` regions keeps `min_area`,
+    so pockets behind narrow gaps stay.
+  - A grid cut that can't reach `min_count` (a `min_share` above 0.6, or ground in small islands) keeps the grid
+    that made the most regions, not the last one tried. With `min_area` 0 and no ground at all, the cut no longer
+    loops forever.
+  - The cut's grid is now exactly mirror-symmetric: a column whose middle fell on a cell border took the cell to
+    its right on both halves, one cell off its mirror. A 256-cell-wide open map cut in two now gives two halves of
+    32,768 cells each, was 32,512 and 33,024; on point-mirrored test maps 1 to 2 more points of cells mirror.
+  - On a trace of Red Comet: 20 regions of 0.6 to 1.5 times the average, was 25 of 0.03 to 4 times. Over 180 random
+    crater maps at `min_count` 12, 20 and 30, the biggest region is on average 1.2 to 1.8 times the average, was 1.4
+    to 13 times; the regions under 0.4 times the average left are pockets of the first build.
+  - Steadier and faster: with 40 small craters on the 16x16 test masks, 91 to 93% of region ids carry over, was 42
+    to 53%. A build with cuts takes 11 ms on 256x256 cells and 45 ms on 512x512, was 22 and 114 ms.
+  - The `CHOKE graph` log line says "rebuilt with merge 1.00, min_area ..." when the rebuild was kept.
+
 - **Crash in target claims after a group merged.** A raid or attack group that merges into another is aborted at once
   but deleted only when the staggered fight update reaches it, up to a second later. Until then it stayed bound to its
   target and kept its old leader. If that unit died in the meantime, another group's `IsClaimedByNearer` read the
