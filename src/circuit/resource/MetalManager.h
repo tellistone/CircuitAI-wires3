@@ -70,8 +70,9 @@ public:
 	void SetOpenSpot(const springai::AIFloat3& pos, bool value);
 	bool IsOpenSpot(int index) const { return metalInfos[index].isOpen; }
 	bool IsOpenSpot(const springai::AIFloat3& pos) const;
-	void MarkAllyMexes();
-	void MarkAllyMexes(const std::vector<CAllyUnit*>& mexes);
+	// At most once per frame; isForce: again, for a mex that finished after this frame's mark (the mex chain)
+	void MarkAllyMexes(bool isForce = false);
+	void MarkAllyMexes(const std::vector<CAllyUnit*>& mexes, bool isForce = false);
 	int GetMexCount() const { return markedMexes.size(); }
 	bool IsClusterFinished(int index) const {
 		return clusterInfos[index].finishedCount >= GetClusters()[index].idxSpots.size();
@@ -86,6 +87,12 @@ public:
 		return (clusterInfos[index].queuedCount > 0) || (clusterInfos[index].finishedCount > 0);
 	}
 	int GetCluster(int index) const { return metalInfos[index].clusterId; }
+	// The team that owns a cluster, as of the last MarkAllyMexes; -1 = no finished mex there. The first owner is the
+	// team with the most finished mexes (the lower team id on a tie); it keeps the cluster until another team has
+	// strictly more there, or it has none left. Shared by the ally team, so its AIs agree
+	int GetClusterOwner(int index);
+	// One throw in [0, 1) per cluster for the whole ally team (the preventive roll), so a new owner rolls the same count
+	float GetClusterDice(int index);
 
 	int GetMexToBuild(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate);
 	// Same walk over safe clusters, but goes on to the first maxClusters clusters with open spots (by graph
@@ -119,6 +126,8 @@ private:
 		unsigned int queuedCount;
 		unsigned int finishedCount;
 		int contestedFrame;  // last frame marked; -1 = not contested
+		int owner = -1;  // GetClusterOwner: team id, -1 = none
+		float dice = -1.f;  // GetClusterDice: -1 = not thrown yet
 	};
 	std::vector<SMetalInfo> metalInfos;
 	std::vector<SClusterInfo> clusterInfos;
@@ -128,6 +137,7 @@ private:
 	struct SMex {
 		ICoreUnit::Id unitId;
 		int index;
+		int team;
 	};
 	std::deque<SMex> markedMexes;  // sorted by insertion
 	std::vector<int> contestedIds;  // GetContestedClusters result, rebuilt at most once per frame
