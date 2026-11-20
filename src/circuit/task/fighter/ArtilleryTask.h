@@ -20,7 +20,8 @@ namespace circuit {
  * Artillery: shoot known enemy buildings from threat-free (and covered) spots, walk to such spots, otherwise stay behind
  * the army; flee from approaching enemies. Anti-heavy mode (isAntiHeavy, CMilitaryManager::IsAhArty: Lance, Merlin, Phantom, Racketeer):
  * the same, with the heavies and commanders anti-heavy units hunt (CCircuitDef::IsQuarry) as targets instead
- * of buildings (FindHeavyTarget), and covered spots with threat are fine too (IsThreatOk), see IsQuarryIgnored
+ * of buildings (FindHeavyTarget), and covered spots with threat are fine too (IsThreatOk), see IsQuarryIgnored;
+ * after each shot it steps back (UpdateScoot, antiheavy.artillery_scoot)
  */
 class CArtilleryTask: public IFighterTask {
 public:
@@ -94,6 +95,12 @@ private:
 	// A spot with this much threat is fine: threat-free, or (anti-heavy mode) our cover there, net of the threat, still
 	// reaches ally_threat, as the flee judges it. isWalk: a spot to walk to, also no more threat than the route cap
 	bool IsThreatOk(CCircuitUnit* unit, const springai::AIFloat3& spot, float threat, bool isWalk);
+	// Shoot and scoot (antiheavy.artillery_scoot): after each shot (once its burst is over) the unit steps that far back,
+	// away from the target, threatened or not, and holds there; it turns back in time to be in place when its weapon
+	// is ready, then decides as usual. No scoot when there isn't time to get there and back, or every spot back is
+	// hotter than here. Every update: true while a shot's burst or a scoot is on (no Execute then)
+	bool UpdateScoot(CCircuitUnit* unit, int frame);
+	void StartScoot(CCircuitUnit* unit, int frame);
 
 	// Cover (ally_threat, ally_radius)
 	struct SEscort {
@@ -112,12 +119,16 @@ private:
 	int fleeFrame = 0;  // re-plan the flee after this frame
 	const bool isAntiHeavy;  // heavies instead of buildings
 	bool isAttacking = false;  // our attack order is live (StopAttack)
+	springai::AIFloat3 attackPos;  // where the target of our attack order was (scoot direction)
+	int shotFrame = -1;  // a shot's first frame, until its scoot starts; -1 = none
+	bool wasReady = false;  // the weapon was ready on the last update (a shot = ready, then not)
+	bool isScooting = false;
+	springai::AIFloat3 scootFrom;  // where the scooting unit fired from
 	std::shared_ptr<PathInfo> safePath;  // route to the current safety spot (FallbackStay walks it to the end)
 
 	// Scratch shared by all artillery tasks (micro-opt, as IFighterTask::enemyPositions)
 	static F3Vec safePositions;
 	static F3Vec firePositions;  // covered firing cells
-	static F3Vec staticPositions;  // FindHeavyTarget: static heavies to walk to, used only while no mobile one is known
 	static std::vector<CEnemyInfo*> candidates;  // FindHeavyTarget: heavies in range
 	static std::vector<SEscort> escorts;
 	static std::vector<SDanger> dangers;

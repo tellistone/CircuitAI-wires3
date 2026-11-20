@@ -35,7 +35,6 @@ using namespace springai;
 // Scratch shared by all artillery tasks: only used within one synchronous call (path queries copy their goals)
 F3Vec CArtilleryTask::safePositions;
 F3Vec CArtilleryTask::firePositions;
-F3Vec CArtilleryTask::staticPositions;
 std::vector<CEnemyInfo*> CArtilleryTask::candidates;
 std::vector<CArtilleryTask::SEscort> CArtilleryTask::escorts;
 std::vector<CArtilleryTask::SDanger> CArtilleryTask::dangers;
@@ -103,6 +102,11 @@ void CArtilleryTask::Update()
 	const bool isTick = (++updCount % 4 == 0);
 	for (CCircuitUnit* unit : units) {
 		if (CheckFlee(unit)) {  // every update: run from approaching enemies before anything else
+			shotFrame = -1;
+			isScooting = false;  // the flee has its own path
+			continue;
+		}
+		if (UpdateScoot(unit, frame)) {
 			continue;
 		}
 		if (isTick || unit->IsForceUpdate(frame)) {
@@ -177,6 +181,7 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 			SetTarget(bestTarget);  // for the other anti-heavy units' overkill check (GetAhReadyDamage)
 		}
 		isAttacking = true;
+		attackPos = bestTarget->GetPos();
 		unit->GetTravelAct()->StateWait();
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Attack(bestTarget->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
@@ -311,8 +316,9 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 {
 	// The heavies and commanders anti-heavy units hunt (CCircuitDef::IsQuarry), mobile or not. Shoots only where it
 	// stands is fine (IsThreatOk), the threat of the heavies it may shoot now aside (IsQuarryIgnored): the best one in
-	// range, in LOS for a long reload, that the other anti-heavy units' ready shots won't kill. enemyPositions: the
-	// rest out of range, to walk to; only mobile ones while any is known
+	// range, in LOS for a long reload, that the other anti-heavy units' ready shots won't kill. enemyPositions: all of
+	// them, in range too (one we can't shoot from here may be shot from a covered spot nearby), mobile or not, to walk
+	// to; the route query takes the nearest firing spot
 	CCircuitAI* circuit = manager->GetCircuit();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
@@ -324,7 +330,6 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 	const float shotDamage = cdef->GetShotDamage();
 
 	enemyPositions.clear();
-	staticPositions.clear();
 	candidates.clear();
 	threatMap->SetThreatType(unit);
 	float posThreat = threatMap->GetThreatAt(pos);
@@ -340,16 +345,12 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 		if (IsQuarryIgnored(unit, enemy)) {
 			posThreat -= threatMap->GetEnemyThreatAt(unit, enemy, pos);
 		}
-		if (pos.SqDistance2D(enemy->GetPos()) < sqRange) {
-			if (!isSeenOnly || enemy->IsInLOS()) {
-				candidates.push_back(enemy);
-			}
-		} else if ((edef->GetCategory() & noChaseCat) == 0) {
-			(edef->IsMobile() ? enemyPositions : staticPositions).push_back(enemy->GetPos());
+		if ((pos.SqDistance2D(enemy->GetPos()) < sqRange) && (!isSeenOnly || enemy->IsInLOS())) {
+			candidates.push_back(enemy);
 		}
-	}
-	if (enemyPositions.empty()) {
-		enemyPositions.swap(staticPositions);
+		if ((edef->GetCategory() & noChaseCat) == 0) {
+			enemyPositions.push_back(enemy->GetPos());
+		}
 	}
 	if (!cdef->IsPlane() && !IsThreatOk(unit, pos, posThreat, false)) {
 		return nullptr;
@@ -1007,8 +1008,8 @@ CMilitaryManager::AhNote CArtilleryTask::GetAhActivity() const
 	if (isFleeing) {
 		return CMilitaryManager::AhNote::FLEE;
 	}
-	if (isAttacking) {
-		return CMilitaryManager::AhNote::ENGAGE;
+	if (isAttacking || isScooting || (shotFrame >= 0)) {
+		return CMilitaryManager::AhNote::ENGAGE;  // shooting, or scooting after a shot
 	}
 	if (!units.empty() && (firePath != nullptr)) {
 		ITravelAction* travelAct = (*units.begin())->GetTravelAct();
@@ -1054,6 +1055,99 @@ bool CArtilleryTask::IsThreatOk(CCircuitUnit* unit, const AIFloat3& spot, float 
 		return false;
 	}
 	return HasCover(unit, spot, threat, true);
+}
+
+bool CArtilleryTask::UpdateScoot(CCircuitUnit* unit, int frame)
+{
+	if (!isAntiHeavy || (manager->GetCircuit()->GetMilitaryManager()->GetAntiHeavyCfg().artyScoot <= 0.f)) {
+		return false;
+	}
+	const bool isReady = unit->HasWeapon() && unit->IsWeaponReady(frame);
+	const bool isShot = isAttacking && wasReady && !isReady;
+	wasReady = isReady;
+	if (!isScooting) {
+		// A shot: the weapon stopped being ready while our attack order was live (not an attack given while still
+		// reloading). Let its burst finish (Merlin's rockets), then step back
+		if (shotFrame < 0) {
+			if (!isShot) {
+				return false;
+			}
+			shotFrame = frame;
+		}
+		if (frame < shotFrame + unit->GetCircuitDef()->GetBurstFrames()) {
+			return true;
+		}
+		shotFrame = -1;
+		StartScoot(unit, frame);
+		return isScooting;
+	}
+	// Turn back once walking back to where it fired from takes as long as the reload it has left
+	const float speed = unit->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
+	const float backDist = unit->GetPos(frame).distance2D(scootFrom);
+	if (unit->IsWeaponReady(frame) || ((speed > 0.f) && (backDist / speed >= unit->GetWeaponReloadLeft(frame)))) {
+		isScooting = false;
+		unit->ForceUpdate(frame);  // Execute now
+		return false;
+	}
+	return true;
+}
+
+void CArtilleryTask::StartScoot(CCircuitUnit* unit, int frame)
+{
+	// Straight away from the target, else up to 90 degrees to either side: the first spot the unit can reach that is
+	// no hotter than here (back can lead into flanks or defences behind us). None: no scoot, Execute decides
+	CCircuitAI* circuit = manager->GetCircuit();
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const float dist = circuit->GetMilitaryManager()->GetAntiHeavyCfg().artyScoot;
+	const AIFloat3& pos = unit->GetPos(frame);
+
+	// No time to get there and back before the weapon is ready (short reload, slow unit): it would only lose its spot
+	const float speed = unit->GetCircuitDef()->GetSpeed() / FRAMES_PER_SEC;
+	if ((speed <= 0.f) || (2.f * dist / speed >= unit->GetWeaponReloadLeft(frame))) {
+		return;
+	}
+	AIFloat3 dir = pos - attackPos;
+	dir.y = 0.f;
+	if (dir.Length2D() < 1.f) {
+		dir = circuit->GetSetupManager()->GetBasePos() - pos;  // on top of it: towards our base
+		dir.y = 0.f;
+	}
+	const float len = dir.Length2D();
+	if (len < 1.f) {
+		return;
+	}
+	dir /= len;
+
+	const float hereThreat = threatMap->GetThreatAt(unit, pos);
+	static constexpr float ANGLES[] = {0.f, 0.25f, -0.25f, 0.5f, -0.5f};  // x pi
+	AIFloat3 dest;
+	bool isFound = false;
+	for (float a : ANGLES) {
+		const float rad = a * static_cast<float>(M_PI);
+		const float c = cosf(rad), sn = sinf(rad);
+		AIFloat3 spot = pos + AIFloat3(dir.x * c - dir.z * sn, 0.f, dir.x * sn + dir.z * c) * dist;
+		CTerrainManager::CorrectPosition(spot);
+		if (terrainMgr->CanMoveToPos(unit->GetArea(), spot) && (threatMap->GetThreatAt(unit, spot) <= hereThreat)) {
+			dest = spot;
+			isFound = true;
+			break;
+		}
+	}
+	if (!isFound) {
+		return;
+	}
+
+	SetTarget(nullptr);  // not attacking: no ready shot for the others' overkill check
+	isAttacking = false;  // the move replaces the attack order
+	isScooting = true;
+	scootFrom = pos;
+	circuit->GetMilitaryManager()->NoteAh(unit->GetCircuitDef(), CMilitaryManager::AhNote::SCOOT);
+	unit->GetTravelAct()->StateWait();
+	TRY_UNIT(circuit, unit,
+		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
 }
 
 /*
