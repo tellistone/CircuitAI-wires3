@@ -343,8 +343,8 @@ public:
 	bool IsCommHiding() const { return isCommHide || isCommHideAir; }  // hide mode: no commander pusher
 	// commander.json jobs: a commander past jobs.time, with more than 2 builders (hide mode's guard), takes no new job
 	// of a jobs.skip kind. false for any other builder
-	bool IsCommJobOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const;
-	// The same for a job, except a stall fix (CEconomyManager::IsStallFix, latched) and a geothermal
+	bool IsCommKindOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const;
+	// IsCommKindOff for the job's kind, except a stall fix (CEconomyManager::IsStallFix, latched) and a geothermal
 	bool IsCommJobOff(const CCircuitUnit* unit, const IBuilderTask* task) const;
 private:
 	// Once a second: a constructor whose flee ended clear or covered (centred where the flee started), then each

@@ -931,15 +931,26 @@ IBuilderTask* CEconomyManager::MakeEconomyTasks(const AIFloat3& position, CCircu
 	}
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	int index = metalMgr->FindNearestCluster(position);
-	if ((index < 0) || (clusterInfos[index].metalFrame + FRAMES_PER_SEC >= circuit->GetLastFrame())) {
+	if (index < 0) {
 		return nullptr;
 	}
-	clusterInfos[index].metalFrame = circuit->GetLastFrame();
+	// Short of energy, energy jobs too, but not from a commander past commander.json jobs.time (they would be queued
+	// where it stands for constructors) unless energy stalls (a stall fix it takes itself). Such a search has a slot of
+	// its own, once a second, so it doesn't take the cluster's from a constructor that would queue energy
+	const bool isShort = IsEnergyShort();
+	const bool isEnergy = isShort && (IsEnergyStall() || (unit == nullptr)
+			|| !builderMgr->IsCommKindOff(unit, IBuilderTask::BuildType::ENERGY));
+	int& slotFrame = (isShort && !isEnergy) ? commMetalFrame : clusterInfos[index].metalFrame;
+	const int frame = circuit->GetLastFrame();
+	if (slotFrame + FRAMES_PER_SEC >= frame) {
+		return nullptr;
+	}
+	slotFrame = frame;
 
-	return UpdateMetalTasks(position, unit);
+	return UpdateMetalTasks(position, unit, isEnergy);
 }
 
-IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircuitUnit* unit)
+IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircuitUnit* unit, bool isEnergy)
 {
 	if (!circuit->GetBuilderManager()->CanEnqueueTask(16)) {
 		return nullptr;
@@ -949,9 +960,6 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	// Mex and reclaim are both searched on every pass (reclaim costs no energy, so a stall doesn't stop it);
 	// the job picker then chooses between them by travel and priority.
 	// Geo isn't only a stall fix: a free vent is the cheapest energy there is, so look for one on every pass
-	// A commander past commander.json jobs.time queues no energy where it stands for constructors, bar a stall fix
-	const bool isEnergy = IsEnergyShort() && !((unit != nullptr) && !IsEnergyStall()
-			&& circuit->GetBuilderManager()->IsCommJobOff(unit, IBuilderTask::BuildType::ENERGY));
 	IBuilderTask* task = isEnergy ? UpdateEnergyTasks(position, unit) : UpdateGeoTasks(position, unit);
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
 	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);

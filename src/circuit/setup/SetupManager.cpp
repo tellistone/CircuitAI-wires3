@@ -500,26 +500,27 @@ const std::vector<CCircuitDef::RoleT>* CSetupManager::GetOpener(const CCircuitDe
 	return &its->second.defaultStart;
 }
 
-const CSetupManager::SCommInfo::SJobs* CSetupManager::GetCommJobs(const CCircuitDef* cdef) const
+const CSetupManager::SCommInfo* CSetupManager::FindCommInfo(const CCircuitDef* cdef) const
 {
 	std::string name = cdef->GetDef()->GetName();
 	for (auto& kv : commInfos) {
 		if (name.find(kv.first) != std::string::npos) {
-			return &kv.second.jobs;
+			return &kv.second;
 		}
 	}
 	return nullptr;
 }
 
+const CSetupManager::SCommInfo::SJobs* CSetupManager::GetCommJobs(const CCircuitDef* cdef) const
+{
+	const SCommInfo* info = FindCommInfo(cdef);
+	return (info != nullptr) ? &info->jobs : nullptr;
+}
+
 const CSetupManager::SCommInfo::SHide* CSetupManager::GetHide(const CCircuitDef* cdef) const
 {
-	std::string name = cdef->GetDef()->GetName();
-	for (auto& kv : commInfos) {
-		if (name.find(kv.first) != std::string::npos) {
-			return &kv.second.hide;
-		}
-	}
-	return nullptr;
+	const SCommInfo* info = FindCommInfo(cdef);
+	return (info != nullptr) ? &info->hide : nullptr;
 }
 
 void CSetupManager::Welcome() const

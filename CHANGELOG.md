@@ -13,9 +13,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `pylon`, `energy` shipped). It still takes a stall fix (`CEconomyManager::IsStallFix`, latched: energy while energy
   stalls, a pylon or mex while metal stalls) and a geothermal. The check is in `IBuilderTask::CanAssignTo`
   (`CBuilderManager::IsCommJobOff`), so it holds in both job searches (normal and hide mode). The commander's own
-  searches no longer queue energy where it stands (`UpdateMetalTasks` takes the geo branch instead, bar a stall), and
-  its idle fallback (`CreateBuilderTask`) looks for a vent instead of energy and patrols rather than queue cheap
-  energy, which has no dedup and would be queued anew on every idle pass. A commander walking to such a job when the
+  searches no longer queue energy where it stands (`MakeEconomyTasks` takes the geo branch instead, bar an energy
+  stall), and such a search has a once-a-second slot of its own, so it doesn't take its cluster's slot from a
+  constructor that would queue energy. Its idle fallback (`CreateBuilderTask`) looks for a vent instead of energy and,
+  at low income, takes the reclaim job it found or patrols rather than queue cheap energy, which has no dedup and
+  would be queued anew on every idle pass. A commander walking to such a job when the
   time passes drops it at its next re-plan if another job wins; one already in build range finishes it.
 
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and

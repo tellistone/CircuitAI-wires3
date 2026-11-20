@@ -1711,7 +1711,7 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 	CEconomyManager* ecoMgr = circuit->GetEconomyManager();
 	// A commander past jobs.time queues no energy it won't take (a vent it may still build). Never a stall fix here:
 	// a stalling builder reclaims instead (MakeBuilderTask)
-	const bool isEnergyOff = IsCommJobOff(unit, IBuilderTask::BuildType::ENERGY);
+	const bool isEnergyOff = IsCommKindOff(unit, IBuilderTask::BuildType::ENERGY);
 	IBuilderTask* task = isEnergyOff ? ecoMgr->UpdateGeoTasks(position, unit) : ecoMgr->UpdateEnergyTasks(position, unit);
 	if (task != nullptr) {
 		return task;
@@ -1726,7 +1726,7 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 	const float metalIncome = std::min(ecoMgr->GetAvgMetalIncome(), ecoMgr->GetAvgEnergyIncome()) * ecoMgr->GetEcoFactor();
 	if (metalIncome < super.minIncome) {
 		if (isEnergyOff) {  // no cheap energy either: nothing dedups it, it would be queued anew every idle pass
-			return EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, FRAMES_PER_SEC * 20);
+			return (task != nullptr) ? task : EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, FRAMES_PER_SEC * 20);
 		}
 		float energyMake;
 		buildDef = ecoMgr->GetLowEnergy(position, energyMake);
@@ -2189,7 +2189,7 @@ bool CBuilderManager::IsHomeFight(CCircuitUnit* unit)
 	return (state == nullptr) || !state->IsExposed(state->wideZone, COMM_END_COVER_MOD) || !HasCommEscape(unit, state);
 }
 
-bool CBuilderManager::IsCommJobOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const
+bool CBuilderManager::IsCommKindOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const
 {
 	const CCircuitDef* cdef = unit->GetCircuitDef();
 	if (!cdef->IsRoleComm()) {
@@ -2207,7 +2207,7 @@ bool CBuilderManager::IsCommJobOff(const CCircuitUnit* unit, IBuilderTask::Build
 bool CBuilderManager::IsCommJobOff(const CCircuitUnit* unit, const IBuilderTask* task) const
 {
 	const CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	return IsCommJobOff(unit, task->GetBuildType()) && !economyMgr->IsStallFix(task)
+	return IsCommKindOff(unit, task->GetBuildType()) && !economyMgr->IsStallFix(task)
 		&& !economyMgr->IsGeoDef(task->GetBuildDef());
 }
 

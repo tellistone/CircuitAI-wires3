@@ -98,6 +98,7 @@ public:
 	void Welcome() const;
 
 private:
+	const SCommInfo* FindCommInfo(const CCircuitDef* cdef) const;  // by the def name, as commander.json keys it
 	void FindStart();
 	void CalcStartPos();
 	void CalcLanePos();

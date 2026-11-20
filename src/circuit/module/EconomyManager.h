@@ -119,7 +119,8 @@ public:
 	bool IsStallFix(const IBuilderTask* task) const;
 
 	IBuilderTask* MakeEconomyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
-	IBuilderTask* UpdateMetalTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
+	// isEnergy: energy jobs too (else a geothermal), MakeEconomyTasks' choice
+	IBuilderTask* UpdateMetalTasks(const springai::AIFloat3& position, CCircuitUnit* unit, bool isEnergy);
 	// A visible reclaimable feature with at least 1 metal left
 	struct SReclaimFeature {
 		springai::AIFloat3 pos;  // corrected onto the map (impulsed flying wrecks)
@@ -239,6 +240,7 @@ private:
 		int metalFrame;
 	};
 	std::vector<SClusterInfo> clusterInfos;
+	int commMetalFrame = -FRAMES_PER_SEC;  // MakeEconomyTasks' slot for a commander that skips energy
 	float pylonRange;
 	float pylonLinkInc;
 	std::set<CCircuitDef*> fillDefs;  // economy.energy.fill.unit
