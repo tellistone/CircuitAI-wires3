@@ -1709,7 +1709,10 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 	}
 
 	CEconomyManager* ecoMgr = circuit->GetEconomyManager();
-	IBuilderTask* task = ecoMgr->UpdateEnergyTasks(position, unit);
+	// A commander past jobs.time queues no energy it won't take (a vent it may still build). Never a stall fix here:
+	// a stalling builder reclaims instead (MakeBuilderTask)
+	const bool isEnergyOff = IsCommKindOff(unit, IBuilderTask::BuildType::ENERGY);
+	IBuilderTask* task = isEnergyOff ? ecoMgr->UpdateGeoTasks(position, unit) : ecoMgr->UpdateEnergyTasks(position, unit);
 	if (task != nullptr) {
 		return task;
 	}
@@ -1722,6 +1725,9 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 	CCircuitDef* buildDef/* = nullptr*/;
 	const float metalIncome = std::min(ecoMgr->GetAvgMetalIncome(), ecoMgr->GetAvgEnergyIncome()) * ecoMgr->GetEcoFactor();
 	if (metalIncome < super.minIncome) {
+		if (isEnergyOff) {  // no cheap energy either: nothing dedups it, it would be queued anew every idle pass
+			return (task != nullptr) ? task : EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, FRAMES_PER_SEC * 20);
+		}
 		float energyMake;
 		buildDef = ecoMgr->GetLowEnergy(position, energyMake);
 		if (buildDef == nullptr) {  // position can be in danger
@@ -2181,6 +2187,28 @@ bool CBuilderManager::IsHomeFight(CCircuitUnit* unit)
 	}
 	SCommState* state = GetCommState(unit);
 	return (state == nullptr) || !state->IsExposed(state->wideZone, COMM_END_COVER_MOD) || !HasCommEscape(unit, state);
+}
+
+bool CBuilderManager::IsCommKindOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const
+{
+	const CCircuitDef* cdef = unit->GetCircuitDef();
+	if (!cdef->IsRoleComm()) {
+		return false;
+	}
+	auto it = commJobs.find(cdef->GetId());
+	if (it == commJobs.end()) {
+		it = commJobs.emplace(cdef->GetId(), circuit->GetSetupManager()->GetCommJobs(cdef)).first;
+	}
+	const CSetupManager::SCommInfo::SJobs* jobs = it->second;
+	return (jobs != nullptr) && (jobs->frame >= 0) && (jobs->skipMask & (1u << static_cast<IBuilderTask::BT>(type)))
+		&& (circuit->GetLastFrame() >= jobs->frame) && (GetWorkerCount() > 2);
+}
+
+bool CBuilderManager::IsCommJobOff(const CCircuitUnit* unit, const IBuilderTask* task) const
+{
+	const CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	return IsCommKindOff(unit, task->GetBuildType()) && !economyMgr->IsStallFix(task)
+		&& !economyMgr->IsGeoDef(task->GetBuildDef());
 }
 
 bool CBuilderManager::IsCommInDanger(CCircuitUnit* unit)

@@ -7,6 +7,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Commanders leave storage, pylon and energy jobs to constructors after 3 minutes.** New `jobs` block per
+  commander in `commander.json`: once `time` seconds have passed (180 shipped; -1 or missing = off), and while we
+  have more than 2 builders (hide mode's guard), the commander takes no new job of the kinds in `skip` (`store`,
+  `pylon`, `energy` shipped). It still takes a stall fix (`CEconomyManager::IsStallFix`, latched: energy while energy
+  stalls, a pylon or mex while metal stalls) and a geothermal. The check is in `IBuilderTask::CanAssignTo`
+  (`CBuilderManager::IsCommJobOff`), so it holds in both job searches (normal and hide mode). The commander's own
+  searches no longer queue energy where it stands (`MakeEconomyTasks` takes the geo branch instead, bar an energy
+  stall), and such a search has a once-a-second slot of its own, so it doesn't take its cluster's slot from a
+  constructor that would queue energy. Its idle fallback (`CreateBuilderTask`) looks for a vent instead of energy and,
+  at low income, takes the reclaim job it found or patrols rather than queue cheap energy, which has no dedup and
+  would be queued anew on every idle pass. A commander walking to such a job when the
+  time passes drops it at its next re-plan if another job wins; one already in build range finishes it.
 - **Line formations keep each unit type in rows of its own, and form from 2 units** (`formation.min_units` 3 to
   2). Rows filled front to back by `row_order` only once the line ran out of width, so a small group walked as one
   mixed row, riots beside skirmishers and artillery. Now each place in `row_order` (or `formation_row`) gets rows of

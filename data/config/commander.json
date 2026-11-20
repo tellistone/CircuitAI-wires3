@@ -113,6 +113,15 @@
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
 				"flee_ally_radius": 500.0
+			},
+
+			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
+			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
+			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
+			// radar, sonar, mex, repair. Missing or "time" -1 = off
+			"jobs": {
+				"time": 180,
+				"skip": ["store", "pylon", "energy"]
 			}
 		},
 		"recon": {
@@ -221,6 +230,15 @@
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
 				"flee_ally_radius": 500.0
+			},
+
+			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
+			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
+			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
+			// radar, sonar, mex, repair. Missing or "time" -1 = off
+			"jobs": {
+				"time": 180,
+				"skip": ["store", "pylon", "energy"]
 			}
 		},
 		"assault": {
@@ -331,6 +349,15 @@
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
 				"flee_ally_radius": 500.0
+			},
+
+			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
+			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
+			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
+			// radar, sonar, mex, repair. Missing or "time" -1 = off
+			"jobs": {
+				"time": 180,
+				"skip": ["store", "pylon", "energy"]
 			}
 		},
 		"strike": {
@@ -440,6 +467,15 @@
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
 				"flee_ally_radius": 500.0
+			},
+
+			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
+			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
+			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
+			// radar, sonar, mex, repair. Missing or "time" -1 = off
+			"jobs": {
+				"time": 180,
+				"skip": ["store", "pylon", "energy"]
 			}
 		}
 	}
