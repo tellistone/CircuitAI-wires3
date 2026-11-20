@@ -3179,6 +3179,7 @@ std::string CBuilderManager::OrderTurretAt(const AIFloat3& pos, CCircuitDef* def
 	}
 	order.priority = IBuilderTask::Priority::HIGH;
 	order.caller = "test";
+	order.isCrowdCheck = false;
 	picker->Order(order);
 	return picker->GetLast().line;
 }

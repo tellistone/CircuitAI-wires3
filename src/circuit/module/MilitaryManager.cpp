@@ -2203,10 +2203,10 @@ void CMilitaryManager::UpdateTurretBudget()
 			b.spent[i] = 0.f;
 		}
 		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f x map %.2f x mex %.2f (%.0f%%)),"
-				" last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f): %s", b.balance, rate, b.share,
-				em->GetAvgMetalIncome(), pull, b.mapMult, b.mexMult, b.mexX * 100.f,
-				total, b.refunded, b.lost, b.lossPaid, spent.empty() ? "nothing" : spent.c_str());
-		b.refunded = b.lost = b.lossPaid = 0.f;
+				" last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f), crowd credit %.0f: %s", b.balance,
+				rate, b.share, em->GetAvgMetalIncome(), pull, b.mapMult, b.mexMult, b.mexX * 100.f,
+				total, b.refunded, b.lost, b.lossPaid, b.crowdCredit, spent.empty() ? "nothing" : spent.c_str());
+		b.refunded = b.lost = b.lossPaid = b.crowdCredit = 0.f;
 	}
 }
 
@@ -2253,6 +2253,13 @@ void CMilitaryManager::RefundTurret(CBDefenceTask* task)
 	b.balance += charged;
 	b.refunded += charged;
 	task->SetCharge(0.f, task->GetSpend());
+}
+
+void CMilitaryManager::CreditTurret(float metal)
+{
+	UpdateTurretBudget();
+	turretBudget.balance += metal;
+	turretBudget.crowdCredit += metal;
 }
 
 AIFloat3 CMilitaryManager::GetBackPos(const AIFloat3& pos) const
@@ -2307,6 +2314,12 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 				buildPos = spot;
 				shake = 0.f;  // built where it was scored: a shake slides a ledge's tower down its slope
 				backPos = GetBackPos(spot);  // the support towers after it cover it
+			}
+			// turret.crowd_count: a preventive light tower among enough light turrets isn't placed (the account gets
+			// turret.crowd_credit instead). Not booked on the point, so the next visit asks again, and credits again
+			if (!isPorc && turretPicker->IsLightCrowded(defDef, buildPos, "prevent")) {
+				point->cost -= defCost;
+				continue;
 			}
 			// Porc towers go in a chain, one after another. Preventive ones are queued each on its own, because the
 			// chain abort in MakeDefence cancels any unstarted chain outside porc mode, and would re-queue them on

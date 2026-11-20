@@ -38,6 +38,7 @@ struct STurretOrder {
 	// work (builder: whom the spot is searched for)
 	int creepLane = -1;
 	bool isAlly = true;  // false: no A (near enemy, enemy line), so the turret goes for the enemy, not to cover ours
+	bool isCrowdCheck = true;  // false: a person's test order, never refused for turret.crowd_count
 	bool IsCreep() const { return creepLane >= 0; }
 };
 
@@ -99,6 +100,12 @@ public:
 		bool isArtillery = true;  // near our artillery shooting a target in its range, no turret within defendedRadius
 		float artilleryReach = 600.f;
 		std::vector<CCircuitDef*> light;
+		// A light def that would stand within crowdRadius of crowdCount light turrets of the ally team (finished or
+		// being built, and our jobs not started yet) isn't placed, by the picker or as a preventive tower; the turret
+		// account (porcupine.budget) gets crowdCredit instead, each time. crowdCount 0 = off
+		float crowdRadius = 600.f;
+		int crowdCount = 3;
+		float crowdCredit = 90.f;  // metal
 		// Heavier defs, each tier unlocked once our ally team holds mexShare of the map's metal spots; by mexShare up
 		struct STier {
 			float mexShare;
@@ -179,6 +186,10 @@ public:
 	float GetEnemyInfl(const std::vector<springai::AIFloat3>& enemyBuildings, const springai::AIFloat3& pos) const;
 	// The turret.tiers entry def is in, from 1; 0 if none (turret.light)
 	int GetTier(const CCircuitDef* def) const;
+	bool IsLight(const CCircuitDef* def) const;
+	// turret.crowd_count: def is light and pos has that many other light turrets within turret.crowd_radius; true also
+	// credits the turret account turret.crowd_credit and logs who (caller) was refused
+	bool IsLightCrowded(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
 
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }

@@ -256,6 +256,10 @@
 	"creep_losses": 2,  // our ground-hitting turrets lost in a lane's outer region, or within a step of its end, that rest the lane (2 minutes, doubling up to 16 while it keeps failing); 0 = never
 	"creep_budget": 0.5,  // a creep order needs this x the dearest def it would choose from (light defs short of the enemy's line, the unlocked tiers too at it) in the shared turret account (0 to 1; the default halves it); it is still charged the full cost
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
+	// A light def (above) that would stand within crowd_radius of crowd_count other light turrets of the ally team (ours or an ally's, finished or being built, and our jobs not started yet) isn't placed, by any picker order (the creep's too) or as a preventive tower (build_chain.json porcupine.prevent): the turret account (porcupine.budget) gets crowd_credit metal instead, past its cap if need be, each time (a cluster's sweep visit may credit it again). The TURRET BUDGET log line sums it as "crowd credit". crowd_count 0 = off
+	"crowd_radius": 600,
+	"crowd_count": 3,
+	"crowd_credit": 90,
 	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots. An order
 	// tries the heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier,
 	// down to light. The turret account must then cover the dearest unlocked def
