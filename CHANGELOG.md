@@ -7,6 +7,24 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Support units are attack units, and escorts in groups led by a core** (`quota.escort`, new). Armed support units
+  (role or `support` attribute: Venom, Outlaw, Firewalker, Emissary, Tremor, Dominatrix, Placeholder) take the attack
+  path (gathering, reinforce, merge, rally) whatever their main role; anti-heavy artillery (Phantom, Lance) and the
+  scout quota still come first. Alone or in a group of support units only they are plain attack units. In a group
+  whose core (its non-support units) holds `core_share_on` 0.35 of the power (off below `core_share_off` 0.2, each
+  change held `mode_hold_sec` 10 s, no core: off at once) they are escorts: they walk in its formation, and when the
+  group engages each fires only from its stay disc round the core's centre (`stay_radius` 250, grown by its range
+  past the group's fire range up to `offset_cap` 400): the nearest threat to the core it can hit from there (an armed
+  mobile enemy within its weapon range + 2 s of travel of a core unit), else the group's target, else it holds in the
+  disc. Its current target is kept within the disc grown by `keep_mod` 1.3; runners are skipped, and Venom skips
+  stunned enemies. The target pick counts escorts at the share of the group's fire range they reach from the disc.
+  A group with a core takes in support units only at `speed_min` 0.75 x its slowest core unit's speed or faster, on
+  every join and merge (never by eviction). Unarmed support units (Aspis, Funnelweb) never get attack orders: they
+  walk (Move orders, threat-capped route) to the attack group with the most power per shield they can keep up with,
+  take a formation slot (row 3, `formation_row`), and go to the core's centre in fights; a group left with only them
+  sends them back to find another. Support units now take formation slots, an all-support group keeps a leader, and
+  merges hand the route to support units too. `CSupportAction` (Fight-move to the leader) is gone. `ESCORT` log lines.
+
 - **A hiding commander no longer guards a factory.** In hide mode, with no safe job in range, it used to guard the
   nearest factory for a minute (60 s locked there, and walking back to it from wherever it was). Now it first runs
   a mex search of its own (`UpdateMexTasks`: the economy's search runs once a second per cluster, so it may not have
