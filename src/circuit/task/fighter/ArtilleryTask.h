@@ -48,6 +48,9 @@ private:
 	void Execute(CCircuitUnit* unit, bool isUpdating);
 	CEnemyInfo* FindTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);  // in range, else fills enemyPositions
 	CEnemyInfo* FindHeavyTarget(CCircuitUnit* unit, const springai::AIFloat3& pos);  // FindTarget, anti-heavy mode
+	// A pop-up turret is shut (armoured) while nothing it can shoot is in its range: no ally unit of a layer it hits
+	// within its range (plus a margin). Guessed, since the AI can't read an enemy's armoured state
+	bool IsPopupClosed(CEnemyInfo* enemy, int frame) const;
 	void StopAttack(CCircuitUnit* unit);  // cancel our attack order, if one is live
 	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating);
 	// Walking to a firing spot: keep the route between full re-plans (every 6 s) while it's still good

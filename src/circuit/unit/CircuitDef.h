@@ -334,6 +334,9 @@ public:
 	bool IsPylon() const { return isPylon; }
 	void SetIsAssist(bool value) { isAssist = value; }
 	bool IsAssist() const { return isAssist; }
+	// An armed building that is armoured (takes armoredMultiple damage) while closed: Zero-K's pop-up turrets.
+	// The AI can't read an enemy's armoured state; CArtilleryTask::IsPopupClosed guesses it
+	bool IsPopup() const { return isPopup; }
 
 	float GetHealth()    const { return health; }
 	float GetSpeed()     const { return speed; }
@@ -492,6 +495,7 @@ private:
 	bool isMex : 1;
 	bool isPylon : 1;
 	bool isAssist : 1;
+	bool isPopup : 1;
 	// ---- Bit fields ---- END
 
 	float health;

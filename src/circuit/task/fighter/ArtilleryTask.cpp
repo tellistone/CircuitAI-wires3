@@ -16,11 +16,13 @@
 #include "terrain/path/QueryPathMulti.h"
 #include "unit/action/FightAction.h"
 #include "unit/action/MoveAction.h"
+#include "unit/ally/AllyUnit.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
+#include "spring/SpringCallback.h"
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
@@ -250,12 +252,12 @@ CEnemyInfo* CArtilleryTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 	const bool isPosSafe = (threatMap->GetThreatAt(pos) <= THREAT_MIN) || cdef->IsPlane();
 
 	// Трубка 15, прицел 120, бац, бац …и мимо!
-	// In range: builders first, then the strongest, each only if closer than the current pick; then anything
-	float minSqDist = sqRange;
-	float maxPower = 0.f;
+	// In range: any building before a shut pop-up turret (it takes a third of the damage); then builders (nano
+	// towers, factories), armed buildings by power, unarmed ones, no-chase ones; the nearest last
+	const int frame = circuit->GetLastFrame();
+	using Rank = std::tuple<bool, int, float, float>;
+	Rank bestRank;
 	CEnemyInfo* bestTarget = nullptr;
-	CEnemyInfo* mediumTarget = nullptr;
-	CEnemyInfo* worstTarget = nullptr;
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		if (!enemy->IsInRadarOrLOS() || (notAW && (enemy->GetPos().y < -SQUARE_SIZE * 5))) {
@@ -272,23 +274,16 @@ CEnemyInfo* CArtilleryTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 
 		const float sqDist = pos.SqDistance2D(enemy->GetPos());
 		if (sqDist < sqRange) {
-			if (!isPosSafe || (sqDist >= minSqDist)) {
+			if (!isPosSafe) {
 				continue;
 			}
-			if (edef->IsEnemyRoleAny(CCircuitDef::RoleMask::BUILDER)) {
+			const bool isBuilder = edef->IsEnemyRoleAny(CCircuitDef::RoleMask::BUILDER);
+			const float power = edef->GetPower();
+			const int tier = isBuilder ? 0 : (power > 0.f) ? 1 : ((targetCat & noChaseCat) == 0) ? 2 : 3;
+			const Rank rank(edef->IsPopup() && IsPopupClosed(enemy, frame), tier, isBuilder ? 0.f : -power, sqDist);
+			if ((bestTarget == nullptr) || (rank < bestRank)) {
+				bestRank = rank;
 				bestTarget = enemy;
-				minSqDist = sqDist;
-				maxPower = std::numeric_limits<float>::max();
-			} else if (edef->GetPower() > maxPower) {
-				bestTarget = enemy;
-				minSqDist = sqDist;
-				maxPower = edef->GetPower();
-			} else if (bestTarget == nullptr) {
-				if ((targetCat & noChaseCat) == 0) {
-					mediumTarget = enemy;
-				} else if (mediumTarget == nullptr) {
-					worstTarget = enemy;
-				}
 			}
 			continue;
 		}
@@ -298,9 +293,6 @@ CEnemyInfo* CArtilleryTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
 		}
 	}
 
-	if (bestTarget == nullptr) {
-		bestTarget = (mediumTarget != nullptr) ? mediumTarget : worstTarget;
-	}
 	if (bestTarget != nullptr) {
 		position = bestTarget->GetPos();
 	}
@@ -376,6 +368,41 @@ CEnemyInfo* CArtilleryTask::FindHeavyTarget(CCircuitUnit* unit, const AIFloat3& 
 		position = bestTarget->GetPos();
 	}
 	return bestTarget;
+}
+
+bool CArtilleryTask::IsPopupClosed(CEnemyInfo* enemy, int frame) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CCircuitDef* edef = enemy->GetCircuitDef();
+	const float margin = SQUARE_SIZE * 8;  // opens a little before a target is in range, closes a while after
+	const float airRange = edef->HasAntiAir() ? edef->GetMaxRange(CCircuitDef::RangeType::AIR) + margin : 0.f;
+	const float landRange = edef->HasAntiLand() ? edef->GetMaxRange(CCircuitDef::RangeType::LAND) + margin : 0.f;
+	const float waterRange = edef->HasAntiWater() ? edef->GetMaxRange(CCircuitDef::RangeType::WATER) + margin : 0.f;
+	const float radius = std::max(std::max(airRange, landRange), waterRange);
+	if (radius <= margin) {
+		return false;
+	}
+	const AIFloat3& ePos = enemy->GetPos();
+	COOAICallback* clb = circuit->GetCallback();
+	if (!clb->IsFriendlyUnitsIn(ePos, radius, false)) {
+		return true;
+	}
+	for (int fId : clb->GetFriendlyUnitIdsIn(ePos, radius, false)) {
+		if (fId == -1) {
+			continue;
+		}
+		CAllyUnit* ally = circuit->GetFriendlyUnit(fId);
+		if ((ally == nullptr) || (ally->GetCircuitDef() == nullptr)) {
+			return false;  // not listed yet: assume the turret is open for it
+		}
+		const CCircuitDef* adef = ally->GetCircuitDef();
+		const AIFloat3& aPos = ally->GetPos(frame);
+		const float range = adef->IsAbleToFly() ? airRange : (aPos.y < -SQUARE_SIZE * 5) ? waterRange : landRange;
+		if (ePos.SqDistance2D(aPos) < SQUARE(range)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating)

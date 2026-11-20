@@ -144,6 +144,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, isMex(false)
 		, isPylon(false)
 		, isAssist(false)
+		, isPopup(false)
 		, stockCost(.0f)
 		, jumpRange(.0f)
 		, retreat(-1.f)
@@ -526,6 +527,10 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		}
 		delete wd;
 	}
+
+	// Pop-up turret (Faraday, Gauss, Desolator, Lucifer, Hacksaw): a building with a weapon that takes less damage
+	// while armoured (closed), see CCircuitDef::IsPopup
+	isPopup = !IsMobile() && isAttacker && (def->GetArmoredMultiple() < 1.f);
 
 	// Death explosion (explodeAs): its radius and its worst damage over armour types (CCircuitDef::GetDeathDamage)
 	{
