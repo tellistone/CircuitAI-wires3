@@ -690,13 +690,14 @@ private:
 		int claimTime;    // frames a picked spot is reserved for its picker
 		float rangeMult;  // static enemy weapon range multiplier for danger
 		float homeRatio;  // skip spots nearer to our base than this fraction of their distance to the enemy
-		float mex;        // bonus: a known enemy mex on the spot that no known enemy defence covers (0 = off)
-		float mexSpread;  // no mex bonus within this distance of an enemy mex spot another picker holds a claim on
+		float mex;        // bonus x stale term: a known enemy mex no known defence covers, in a cluster nobody else of
+		                  // this kind is heading to; only for pickers with a weapon (0 = off)
 	} scoutSpot, raiderSpot;
 	bool isRaiderSpot = false;  // quota.raider_spot given
 	springai::AIFloat3 PickSpot(CCircuitUnit* unit, float safeThreat, const SSpotCfg& cfg, IFighterTask::FightType type,
 			SSpotClaims& claims);
 	void ReleaseSpot(SSpotClaims& claims, int unitId);  // the picker's claim, if any
+	int FindSpot(const SSpotClaims& claims, const springai::AIFloat3& spot) const;  // -1 = not a spot
 	void BlockSpot(SSpotClaims& claims, const springai::AIFloat3& spot, int frames);
 	void HoldSpot(SSpotClaims& claims, const CCircuitUnit* unit, const springai::AIFloat3& spot);
 
