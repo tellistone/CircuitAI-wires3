@@ -438,7 +438,7 @@
 		// Limits number of units
 //		"limit": 10,
 
-		// Unit can be built only since specific time in seconds
+		// Unit can be built only since specific time in seconds, divided by the allied team size (4v4: a quarter)
 //		"since": 60,
 
 		// Minimum hp percent before retreat (health only, the shield doesn't count)

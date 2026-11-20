@@ -400,7 +400,9 @@ void CFactoryManager::ReadConfig()
 
 		const Json::Value& since = behaviour["since"];
 		if (!since.isNull()) {
-			cdef->SetSinceFrame(since.asInt() * FRAMES_PER_SEC);
+			// Divided by the allied team size: 1v1 as set, 4v4 a quarter of it
+			const float allies = std::max(circuit->GetAllyTeam()->GetSize(), 1);
+			cdef->SetSinceFrame(int(since.asFloat() / allies * FRAMES_PER_SEC));
 		}
 
 		cdef->SetRetreat(behaviour.get("retreat", cdef->GetRetreat()).asFloat());
