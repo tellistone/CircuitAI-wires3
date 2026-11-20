@@ -7,6 +7,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **A hiding commander no longer guards a factory.** In hide mode, with no safe job in range, it used to guard the
+  nearest factory for a minute (60 s locked there, and walking back to it from wherever it was). Now it first runs
+  a mex search of its own (`UpdateMexTasks`: the economy's search runs once a second per cluster, so it may not have
+  been this cluster's turn) and takes that mex only if hide mode's job test passes (the loop's test, now one lambda,
+  `rateJob`); a mex it won't take stays queued for constructors. Else it reclaims nearby, safe and inside the hide
+  range (the near search and the flee-zone test, as it already did while stalling), else patrols where it stands for
+  5 s, which helps any frame in reach, and then asks again.
+
 - **No light turret where three already stand: its metal goes back to the turret account** (`turret.crowd_radius`
   600, `turret.crowd_count` 3, `turret.crowd_credit` 90, new). A light def (`turret.light`: Lotus, Picket) that a
   picker order (not the creep's) or a preventive tower would place within 600 elmos of 3 other light turrets of the
