@@ -93,6 +93,15 @@ void CTurretPicker::ReadConfig()
 	c.enemyReach = turret.get("enemy_reach", c.enemyReach).asFloat();
 	c.allyRadius = turret.get("ally_radius", c.allyRadius).asFloat();
 	c.cooldown = turret.get("cooldown", c.cooldown).asFloat();
+	c.isCreep = turret.get("creep", c.isCreep).asBool();
+	c.creepBuilders = turret.get("creep_builders", c.creepBuilders).asInt();
+	c.creepIncome = turret.get("creep_income", c.creepIncome).asFloat();
+	c.creepInterval = turret.get("creep_interval", c.creepInterval).asFloat();
+	c.creepStep = turret.get("creep_step", c.creepStep).asFloat();
+	c.creepMargin = turret.get("creep_margin", c.creepMargin).asFloat();
+	c.creepRadius = turret.get("creep_radius", c.creepRadius).asFloat();
+	c.creepLosses = turret.get("creep_losses", c.creepLosses).asInt();
+	c.creepBudget = turret.get("creep_budget", c.creepBudget).asFloat();
 	// A list of def names (the defaults when the key is missing); a name that isn't a unit, or a turret, is logged
 	auto readDefs = [&](const std::string& key, const Json::Value& list, std::vector<std::string> names, bool isTurret) {
 		if (list.isArray()) {
@@ -164,6 +173,11 @@ bool CTurretPicker::IsDefence(const CCircuitDef* cdef) const
 		&& (std::find(config.notDefence.begin(), config.notDefence.end(), cdef) == config.notDefence.end());
 }
 
+bool CTurretPicker::IsGroundGun(const CCircuitDef* cdef) const
+{
+	return IsDefence(cdef) && cdef->HasAntiLand();
+}
+
 bool CTurretPicker::IsEnemyBuilding(const CEnemyInfo* enemy, bool isFresh) const
 {
 	const CCircuitDef* edef = enemy->GetCircuitDef();
@@ -202,7 +216,10 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	for (CCircuitDef* def : defs) {
 		maxRange = std::max(maxRange, def->GetMaxRange());
 	}
-	const SGather gather = Gather(centre, radius, maxRange, -RgtVector);
+	SGather gather = Gather(centre, radius, maxRange, -RgtVector);
+	if (order.isCreep) {
+		GatherGuns(gather);
+	}
 	last.grid = MakeGrid(builder, gather);
 
 	// The heaviest tier with a spot worth its cost, and in it the def whose best spot has the most value per metal;
@@ -263,7 +280,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	IBuilderTask* task = builderMgr->EnqueueTask(order.priority, def, spot, IBuilderTask::BuildType::DEFENCE,
 			def->GetCostM(), 0.f /*shake*/, true, JOB_TIMEOUT);
-	static_cast<CBDefenceTask*>(task)->SetPicker();
+	static_cast<CBDefenceTask*>(task)->SetPicker(order.isCreep);
 	// Its footprint goes on the blocking map now: no other job (a picker's included) takes the spot meanwhile
 	task->SetFacing(UNIT_FACING_SOUTH);
 	task->SetBuildPos(spot);
@@ -289,7 +306,8 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	if ((def == nullptr) || !utils::is_valid(spot)) {
 		return false;
 	}
-	if (circuit->GetThreatMap()->GetThreatAt(builder, spot) > THREAT_MIN) {  // the order's test
+	SGather plain;  // the order's test (the creep's: its own rule)
+	if (task->IsCreep() ? IsCreepThreatened(builder, spot) : IsThreatened(plain, builder, spot)) {
 		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), threat reached it", def->GetDef()->GetName(),
 				spot.x, spot.z);
 		return false;
@@ -613,7 +631,7 @@ CTurretPicker::Reject CTurretPicker::MakeCandidate(CCircuitUnit* builder, const 
 	})) {
 		return Reject::INFLUENCE;
 	}
-	if (circuit->GetThreatMap()->GetThreatAt(builder, pos) > THREAT_MIN) {
+	if (IsThreatened(gather, builder, pos)) {
 		return Reject::THREAT;
 	}
 	if (!circuit->GetTerrainManager()->CanReachAt(builder, pos, builder->GetCircuitDef()->GetBuildDistance())) {
@@ -691,6 +709,61 @@ float CTurretPicker::GetNearestOurs(const SGather& gather, const AIFloat3& pos) 
 		minSq = std::min(minSq, b.SqDistance2D(pos));
 	}
 	return gather.ourBuildings.empty() ? -1.f : std::sqrt(minSq);
+}
+
+bool CTurretPicker::IsCreepThreatened(CCircuitUnit* builder, const AIFloat3& pos) const
+{
+	SGather guns;
+	guns.centre = pos;
+	guns.radius = 0.f;
+	GatherGuns(guns);
+	return IsThreatened(guns, builder, pos);
+}
+
+bool CTurretPicker::IsThreatened(const SGather& gather, CCircuitUnit* builder, const AIFloat3& pos) const
+{
+	const float threat = circuit->GetThreatMap()->GetThreatAt(builder, pos);
+	if (!gather.isCreep) {
+		return threat > THREAT_MIN;
+	}
+	// The creep: out of every known enemy static's range + creep_margin; mobiles' threat only where our guns covering
+	// the spot outweigh it, so a raider passing doesn't stall the step
+	auto isIn = [&pos](const SGun& g) { return g.pos.SqDistance2D(pos) <= g.sqReach; };
+	if (std::any_of(gather.enemyGuns.begin(), gather.enemyGuns.end(), isIn)) {
+		return true;
+	}
+	float cover = 0.f;
+	for (const SGun& g : gather.ourGuns) {
+		cover += isIn(g) ? g.power : 0.f;
+	}
+	return (threat > THREAT_MIN) && (threat > cover);
+}
+
+void CTurretPicker::GatherGuns(SGather& gather) const
+{
+	// Statics that hit ground (IsDefence: not a Bertha, a Claw mine or a missile), any whose reach may touch the
+	// radius. Enemy ones as known (until seen dead), at their land range + creep_margin; ours and allies' finished
+	gather.isCreep = true;
+	const int frame = circuit->GetLastFrame();
+	auto add = [&gather](std::vector<SGun>& out, const AIFloat3& pos, float reach, float power) {
+		if (pos.SqDistance2D(gather.centre) <= SQUARE(gather.radius + reach)) {
+			out.push_back({pos, SQUARE(reach), power});
+		}
+	};
+	for (const auto& kv : circuit->GetEnemyInfos()) {
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if (IsEnemyBuilding(kv.second, false) && IsGroundGun(edef)) {
+			add(gather.enemyGuns, kv.second->GetPos(),
+					edef->GetMaxRange(CCircuitDef::RangeType::LAND) + config.creepMargin, edef->GetPower());
+		}
+	}
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if (IsGroundGun(cdef) && !kv.second->GetUnit()->IsBeingBuilt()) {
+			add(gather.ourGuns, kv.second->GetPos(frame), cdef->GetMaxRange(CCircuitDef::RangeType::LAND),
+					cdef->GetPower());
+		}
+	}
 }
 
 } // namespace circuit

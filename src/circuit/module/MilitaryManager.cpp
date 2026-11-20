@@ -11,6 +11,7 @@
 #include "module/ChokeDefence.h"
 #include "module/Frontline.h"
 #include "module/SensorPlanner.h"
+#include "module/CreepPlanner.h"
 #include "module/TurretPicker.h"
 #include "module/EconomyManager.h"
 #include "map/InfluenceMap.h"
@@ -340,6 +341,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 				circuit->GetSetupManager()->GetConfigName().c_str(), heavyName.c_str());
 	}
 	sensorPlanner = std::make_unique<CSensorPlanner>(circuit, radarDef, heavyDef);
+	creepPlanner = std::make_unique<CCreepPlanner>(circuit);
 	frontline = std::make_unique<CFrontline>(circuit);
 	turretPicker = std::make_unique<CTurretPicker>(circuit);
 
@@ -1251,6 +1253,7 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CChokeDefence::Update, chokeDefence.get()), FRAMES_PER_SEC * 2, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CFrontline::Update, frontline.get()), FRAMES_PER_SEC * 10, offset + 2);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CSensorPlanner::Update, sensorPlanner.get()), FRAMES_PER_SEC * 15, offset + 3);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CCreepPlanner::Update, creepPlanner.get()), FRAMES_PER_SEC, offset + 1);
 		if ((scoutQuota.perMex > 0.f) || (raiderQuota.perMex > 0.f)) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateScoutQuota, this), FRAMES_PER_SEC * 15, offset + 3);
 		}
@@ -1385,6 +1388,9 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	const CCircuitDef* tdef = unit->GetCircuitDef();
 	if (turretPicker->IsDefence(tdef) && !unit->GetUnit()->IsBeingBuilt()) {
 		turretBudget.lost += tdef->GetCostM();
+		if (tdef->HasAntiLand()) {
+			creepPlanner->OnGunLost(unit->GetPos(circuit->GetLastFrame()));  // turret.creep_losses
+		}
 		const CCircuitDef* kdef = (attacker != nullptr) ? attacker->GetCircuitDef() : nullptr;
 		if ((charged > 0.f) && (kdef != nullptr) && CanFightBack(tdef, kdef)) {
 			turretBudget.balance += turretBudget.lossRefund * charged;
@@ -2128,6 +2134,7 @@ void CMilitaryManager::UpdateTurretBudget()
 		b.mexMult = utils::eval_curve(b.mexCurve, b.mexX);
 	}
 	const float rate = b.share * em->GetAvgMetalIncome() * pull * b.mapMult * b.mexMult;  // metal/s
+	b.rate = rate;
 	if ((b.askFrame >= 0) && (frame - b.askFrame > FRAMES_PER_SEC * 120)) {
 		b.askCost = 0.f;  // nobody waiting asked lately
 		b.askFrame = -1;
@@ -2144,7 +2151,7 @@ void CMilitaryManager::UpdateTurretBudget()
 	} else if (frame >= b.logFrame) {
 		b.logFrame = frame + FRAMES_PER_SEC * 60;
 		static const char* names[] = {"other", "porc", "prevent (free)", "picker", "cornered", "base", "guard",
-				"escort", "hub"};
+				"escort", "hub", "creep"};
 		std::string spent;
 		float total = 0.f;
 		for (int i = 0; i < static_cast<int>(TurretSpend::_SIZE_); ++i) {
@@ -2160,6 +2167,15 @@ void CMilitaryManager::UpdateTurretBudget()
 				total, b.refunded, b.lost, b.lossPaid, spent.empty() ? "nothing" : spent.c_str());
 		b.refunded = b.lost = b.lossPaid = 0.f;
 	}
+}
+
+float CMilitaryManager::GetTurretWait(float cost) const
+{
+	const STurretBudget& b = turretBudget;
+	if (b.balance >= cost) {
+		return 0.f;
+	}
+	return (b.rate > 0.f) ? (cost - b.balance) / b.rate : std::numeric_limits<float>::max();
 }
 
 bool CMilitaryManager::CanAffordTurret(float cost)
@@ -2189,7 +2205,7 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 	}
 	b.balance -= cost;
 	task->SetCharge(cost, static_cast<int>(turretSpend));
-	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER)) {
+	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER) || (turretSpend == TurretSpend::CREEP)) {
 		b.askCost = 0.f;  // a waiting spender got its tower
 		b.askFrame = -1;
 	}

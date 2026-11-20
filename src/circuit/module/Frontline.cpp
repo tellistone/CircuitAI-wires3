@@ -64,8 +64,9 @@ void CFrontline::Update()
 {
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CChokeMap::SConfig& config = chokeMap->GetConfig();
-	// C feeds the turret picker's short-choke caller too
-	const bool isShortCaller = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().isShortChoke;
+	// C feeds the turret picker's short-choke caller and the creep's lanes too
+	const CTurretPicker::SConfig& turretCfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
+	const bool isShortCaller = turretCfg.isShortChoke || turretCfg.isCreep;
 	if (!chokeMap->IsReady() || !(config.isHold || isShortCaller || chokeMap->GetOverlay()->IsOn())) {
 		holds.clear();
 		return;
