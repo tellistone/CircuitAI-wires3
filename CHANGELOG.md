@@ -5,8 +5,43 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ## Unreleased
 
+### Changed
+
+- **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
+  shoot and scoot.**
+  - Walk goals are every known heavy and commander, mobile or static, also those already in range. The route query
+    takes the nearest covered firing spot. Before, a heavy in range that it couldn't shoot from where it stood (no
+    cover, reloading, radar only) was no goal at all, and static heavies were goals only while no mobile one was
+    known anywhere, so it walked off to far heavies past nearby ones it could hit from a step away.
+  - `antiheavy.artillery_scoot` (new, 200 shipped; 0 or missing = off): after each shot, once its burst is over
+    (`CCircuitDef::GetBurstFrames`, for Merlin's rockets), the unit steps this far back from the target, whether it
+    is threatened or not, holds there and turns back in time to be in place when its weapon is ready. It goes
+    straight back, else up to 90 degrees to a side, to the first spot it can reach that is no hotter than where it
+    fired; with none, or no time to get there and back, it doesn't scoot. The flee still comes first.
+  - A heavy in range is shot from a firing spot picked as attack groups pick theirs (`IFighterTask::Attack`,
+    `FindFireSpot`, weighted by `quota.attack_spot_threat`): on an arc at 90% of the unit's range facing it, or where
+    it stands while at 60-95% of the range, the cheapest by threat and walking distance among the spots it may shoot
+    from (`CArtilleryTask::IsFireSpotAllowed`: the rules of a spot it walks to, without the threat of the heavies it
+    may shoot now). The pick is renewed every 3 s and when the target moves a tile, so the unit keeps its distance and
+    backs off from a heavy that closes in. Before, it shot from wherever it stood. With no such spot it still does.
+
 ### Fixed
 
+- **Artillery groups shoot any other building before a shut pop-up turret, and nano towers before turrets.** A
+  closed Faraday, Gauss, Desolator, Lucifer or Hacksaw takes a third of the damage, yet artillery shot at it like any
+  other turret. The pick in range was also order-dependent: builders and the strongest building won only if closer
+  than the current pick, so a turret found first stayed ahead of a nano tower behind it. Now the pick in range ranks
+  shut pop-up turrets last, then builders (nano towers, factories), armed buildings by power, unarmed ones, no-chase
+  ones, the nearest first within each.
+  - The AI can't read an enemy's armoured state, so it guesses (`CArtilleryTask::IsPopupShut`). A pop-up turret
+    (`CCircuitDef::IsPopup`) is an armed building with `damageModifier` < 1. One under construction is never
+    armoured.
+    - Desolator and Lucifer open by their on/off switch (`onoffable`): shut while switched off, read in LOS; out of
+      LOS they count as open. Low power doesn't armour them (their close stalls while unpowered), so an unpowered
+      one, which can't shoot back, ranks as any other armed building.
+    - Faraday, Gauss and Hacksaw open to aim: open while an allied unit of a layer it can hit is within its range
+      + 64 elmos. They close 2 to 5 s after their last target, under a unit's ~4 s re-pick period.
+  - Anti-heavy artillery is unchanged.
 - **Regions stay put through a fight: a rebuild for terrain keeps the last build's choices while they still work.**
   With too few regions for `choke.region.min_count`, each rebuild chose afresh whether to keep the merge-1 rebuild
   and which grid to cut by. The grid picked is the first that reaches `min_count`, often just, so a crater that cost

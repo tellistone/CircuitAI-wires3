@@ -10,10 +10,12 @@
 #include "module/BuilderManager.h"
 #include "module/FactoryManager.h"
 #include "terrain/TerrainManager.h"
+#include "unit/ally/AllyUnit.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
 
+#include "spring/SpringCallback.h"
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
@@ -34,6 +36,8 @@ CBFactoryTask::CBFactoryTask(ITaskManager* mgr, Priority priority,
 							 float cost, float shake, bool isPlop, int timeout)
 		: IBuilderTask(mgr, priority, buildDef, position, Type::BUILDER, BuildType::FACTORY, cost, shake, timeout)
 		, isPlop(isPlop)
+		, stallFrame(-1)
+		, checkFrame(0)
 {
 	manager->GetCircuit()->GetFactoryManager()->AddFactory(buildDef);
 }
@@ -55,7 +59,56 @@ void CBFactoryTask::Update()
 {
 	if (!isPlop) {
 		IBuilderTask::Update();
+		return;
 	}
+
+	// Engine: a builder whose footprint has a mobile unit in it asks that unit to bugger off, but a unit busy with its own
+	// job (an allied commander building, a unit with nowhere to step in a crowd) stays, and the builder gives up after
+	// 30 retries (~15 s); then the plain retries pick the same site again (IsPossibleToBuildAt ignores mobile units).
+	// So: a commander in range of a site that stays occupied gets another site
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	if ((target != nullptr) || units.empty() || !utils::is_valid(buildPos) || (frame < checkFrame)) {
+		return;
+	}
+	checkFrame = frame + FRAMES_PER_SEC / 2;
+	CCircuitUnit* unit = *units.begin();
+	const float range = unit->GetCircuitDef()->GetBuildDistance() + unit->GetCircuitDef()->GetRadius()
+			+ std::max(buildDef->GetDef()->GetXSize(), buildDef->GetDef()->GetZSize()) * SQUARE_SIZE / 2 * 1.42f;
+	if ((unit->GetPos(frame).SqDistance2D(buildPos) > SQUARE(range)) || !IsOccupied(buildPos, facing, unit)) {
+		stallFrame = -1;  // walking there, or the engine's bugger-off has cleared it
+	} else if (stallFrame < 0) {
+		stallFrame = frame;
+	} else if (frame - stallFrame >= FRAMES_PER_SEC * 3) {
+		stallFrame = -1;
+		SetBuildPos(-RgtVector);
+		Execute(unit);  // FindBuildSite skips occupied footprints, this one included
+	}
+}
+
+bool CBFactoryTask::IsOccupied(const AIFloat3& pos, int face, CCircuitUnit* builder) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	UnitDef* def = buildDef->GetDef();
+	const float hx = (((face & 1) == 0) ? def->GetXSize() : def->GetZSize()) * SQUARE_SIZE / 2;
+	const float hz = (((face & 1) == 0) ? def->GetZSize() : def->GetXSize()) * SQUARE_SIZE / 2;
+	// Cheap per call (a site search makes hundreds): the list and each unit's position are refreshed once per frame
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {  // ours and allies'
+		CAllyUnit* alu = kv.second;
+		CCircuitDef* cdef = alu->GetCircuitDef();
+		// Structures: blocking map and IsPossibleToBuildAt. Aircraft: not on the ground blocking map
+		if (!cdef->IsMobile() || cdef->IsAbleToFly() || (alu->GetId() == builder->GetId())) {
+			continue;
+		}
+		const AIFloat3& p = alu->GetPos(frame);
+		const float r = cdef->GetRadius() + SQUARE_SIZE;
+		if ((std::fabs(p.x - pos.x) < hx + r) && (std::fabs(p.z - pos.z) < hz + r)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void CBFactoryTask::Cancel()
@@ -81,8 +134,11 @@ void CBFactoryTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, fl
 		facing = (2 * pos.z > terHeight) ? UNIT_FACING_NORTH : UNIT_FACING_SOUTH;
 	}
 
-	CTerrainManager::TerrainPredicate predicate = [terrainMgr, builder](const AIFloat3& p) {
-		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance());
+	// Plop: not over another friendly unit (an allied commander in a crowded start box) that may never step aside
+	bool isAvoidUnits = isPlop;
+	CTerrainManager::TerrainPredicate predicate = [this, terrainMgr, builder, &isAvoidUnits](const AIFloat3& p) {
+		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance())
+				&& !(isAvoidUnits && IsOccupied(p, facing, builder));
 	};
 	CMap* map = circuit->GetMap();
 	auto checkFacing = [this, map, terrainMgr, &predicate, &pos, searchRadius]() {
@@ -116,19 +172,28 @@ void CBFactoryTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, fl
 		return false;
 	};
 
-	if (checkFacing()) {
-		return;
+	const int startFacing = facing;
+	auto checkFacings = [this, &checkFacing, startFacing]() {
+		facing = startFacing;
+		if (checkFacing()) {
+			return true;
+		}
+		facing = opposite[facing];
+		if (checkFacing()) {
+			return true;
+		}
+		++facing %= 4;
+		if (checkFacing()) {
+			return true;
+		}
+		facing = opposite[facing];
+		return checkFacing();
+	};
+
+	if (!checkFacings() && isAvoidUnits) {
+		isAvoidUnits = false;  // all taken: a site to wait on beats Execute's fallback, a random base and no factory
+		checkFacings();
 	}
-	facing = opposite[facing];
-	if (checkFacing()) {
-		return;
-	}
-	++facing %= 4;
-	if (checkFacing()) {
-		return;
-	}
-	facing = opposite[facing];
-	checkFacing();
 }
 
 } // namespace circuit

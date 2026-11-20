@@ -144,6 +144,8 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, isMex(false)
 		, isPylon(false)
 		, isAssist(false)
+		, isPopup(false)
+		, isPopupSwitch(false)
 		, stockCost(.0f)
 		, jumpRange(.0f)
 		, retreat(-1.f)
@@ -353,6 +355,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		}
 
 		float reloadTime = wd->GetReload();  // seconds
+		burstFrames = std::max(burstFrames, int((wd->GetSalvoSize() - 1) * wd->GetSalvoDelay() * FRAMES_PER_SEC));
 		it = customParams.find("shield_drain");  // charge per shot, taken from the unit's own shield
 		if ((it != customParams.end()) && (reloadTime > 0.f) && (maxShield > 0.f)) {
 			shieldDrain += std::max(utils::string_to_float(it->second), 0.f) * wd->GetSalvoSize() / reloadTime;
@@ -526,6 +529,11 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		}
 		delete wd;
 	}
+
+	// Pop-up turret (Faraday, Gauss, Desolator, Lucifer, Hacksaw): a building with a weapon that takes less damage
+	// while armoured (closed), see CCircuitDef::IsPopup
+	isPopup = !IsMobile() && isAttacker && (def->GetArmoredMultiple() < 1.f);
+	isPopupSwitch = isPopup && def->IsOnOffable();
 
 	// Death explosion (explodeAs): its radius and its worst damage over armour types (CCircuitDef::GetDeathDamage)
 	{

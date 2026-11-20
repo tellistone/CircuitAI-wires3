@@ -295,6 +295,7 @@ public:
 		float spacing;  // the two units of a squad stand at least this far apart
 		int maxGroup;  // units in a squad when its type has no antiheavy_max_group; 0 = no limit
 		bool isArtillery;  // as_artillery: IsAhArty
+		float artyScoot;  // artillery_scoot: elmos an IsAhArty unit steps back after each shot; 0 = off
 	};
 	const SAntiHeavyCfg& GetAntiHeavyCfg() const { return antiHeavy; }
 	struct SResignCfg {

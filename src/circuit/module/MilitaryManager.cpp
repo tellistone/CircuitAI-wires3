@@ -1001,6 +1001,7 @@ void CMilitaryManager::ReadConfig()
 	antiHeavy.spacing = std::max(0.f, ahCfg.get("spacing", 150.f).asFloat());
 	antiHeavy.maxGroup = std::max(0, ahCfg.get("max_group", 2).asInt());
 	antiHeavy.isArtillery = ahCfg.get("as_artillery", false).asBool();
+	antiHeavy.artyScoot = std::max(0.f, ahCfg.get("artillery_scoot", 0.f).asFloat());
 
 	const Json::Value& resignCfg = root["resign"];
 	const float resignTime = resignCfg.get("time", 480.f).asFloat();  // on by default, even with an older behaviour.json

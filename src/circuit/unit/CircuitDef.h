@@ -282,6 +282,7 @@ public:
 	int GetFireState() const { return fireState; }
 	int GetReloadTime() const { return reloadTime; }
 	bool IsLongReload() const;  // 5 s or more (anti-heavy: fires at what it sees, steps back while reloading)
+	int GetBurstFrames() const { return burstFrames; }  // frames from a burst's first shot to its last, longest weapon
 	// A heavy or commander a unit of this type can shoot: role, target category, anti-static, air
 	bool IsQuarry(const CCircuitDef* edef) const;
 	int GetCategory() const { return category; }
@@ -334,6 +335,11 @@ public:
 	bool IsPylon() const { return isPylon; }
 	void SetIsAssist(bool value) { isAssist = value; }
 	bool IsAssist() const { return isAssist; }
+	// An armed building that is armoured (takes armoredMultiple damage) while closed: Zero-K's pop-up turrets.
+	// The AI can't read an enemy's armoured state; CArtilleryTask::IsPopupShut guesses it
+	bool IsPopup() const { return isPopup; }
+	// A pop-up opened by its on/off switch (onoffable: Desolator, Lucifer), not by aiming (Faraday, Gauss, Hacksaw)
+	bool IsPopupSwitch() const { return isPopupSwitch; }
 
 	float GetHealth()    const { return health; }
 	float GetSpeed()     const { return speed; }
@@ -454,6 +460,7 @@ private:
 	bool isShieldLinked;
 	FireType fireState;
 	int reloadTime;  // frames in ticks
+	int burstFrames = 0;  // GetBurstFrames
 	int category;
 	int targetCategory;
 	int noChaseCategory;
@@ -492,6 +499,8 @@ private:
 	bool isMex : 1;
 	bool isPylon : 1;
 	bool isAssist : 1;
+	bool isPopup : 1;
+	bool isPopupSwitch : 1;
 	// ---- Bit fields ---- END
 
 	float health;
