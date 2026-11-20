@@ -11,6 +11,7 @@
 #include "module/MilitaryManager.h"  // only for CalcLanePos
 #include "resource/MetalManager.h"
 #include "terrain/TerrainManager.h"
+#include "task/builder/BuilderTask.h"  // only for GetBuildNames
 #include "CircuitAI.h"
 #include "util/GameAttribute.h"
 #include "util/Scheduler.h"
@@ -407,6 +408,21 @@ void CSetupManager::ReadConfig()
 		hide.isLatch = hhdd.get("latch", hide.fleeMargin >= 0.f).asBool();  // missing: on with the flee, as before
 		hide.fleeAllyThreat = hhdd.get("flee_ally_threat", 0.f).asFloat();
 		hide.fleeAllyRadius = std::max(hhdd.get("flee_ally_radius", 500.f).asFloat(), 0.f);
+
+		const Json::Value& jbs = comm["jobs"];
+		SCommInfo::SJobs& jobs = commInfo.jobs;
+		jobs.frame = jbs.get("time", -1).asInt();
+		jobs.frame = (jobs.frame < 0) ? -1 : jobs.frame * FRAMES_PER_SEC;
+		const IBuilderTask::BuildName& names = IBuilderTask::GetBuildNames();
+		for (const Json::Value& name : jbs["skip"]) {
+			auto it = names.find(name.asString());
+			if (it == names.end()) {
+				circuit->LOG("CONFIG %s: commander '%s' jobs.skip has unknown job type '%s'", cfgName.c_str(),
+						commName.c_str(), name.asCString());
+				continue;
+			}
+			jobs.skipMask |= 1u << static_cast<IBuilderTask::BT>(it->second);
+		}
 	}
 
 	if (!commChoices.empty()) {
@@ -484,15 +500,27 @@ const std::vector<CCircuitDef::RoleT>* CSetupManager::GetOpener(const CCircuitDe
 	return &its->second.defaultStart;
 }
 
-const CSetupManager::SCommInfo::SHide* CSetupManager::GetHide(const CCircuitDef* cdef) const
+const CSetupManager::SCommInfo* CSetupManager::FindCommInfo(const CCircuitDef* cdef) const
 {
 	std::string name = cdef->GetDef()->GetName();
 	for (auto& kv : commInfos) {
 		if (name.find(kv.first) != std::string::npos) {
-			return &kv.second.hide;
+			return &kv.second;
 		}
 	}
 	return nullptr;
+}
+
+const CSetupManager::SCommInfo::SJobs* CSetupManager::GetCommJobs(const CCircuitDef* cdef) const
+{
+	const SCommInfo* info = FindCommInfo(cdef);
+	return (info != nullptr) ? &info->jobs : nullptr;
+}
+
+const CSetupManager::SCommInfo::SHide* CSetupManager::GetHide(const CCircuitDef* cdef) const
+{
+	const SCommInfo* info = FindCommInfo(cdef);
+	return (info != nullptr) ? &info->hide : nullptr;
 }
 
 void CSetupManager::Welcome() const
