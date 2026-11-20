@@ -103,11 +103,11 @@ public:
 		float enemyReach = 700.f;
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
-		// The creep (CCreepPlanner): pushers step turrets forward to just outside enemy static range
+		// The creep (CCreepPlanner): builders step turrets forward to just outside enemy static range
 		bool isCreep = true;
-		int creepBuilders = 1;  // pushers: the commander first, then constructors
-		float creepIncome = 30.f;  // metal/s of income per extra pusher; 0 = none
-		float creepInterval = 10.f;  // seconds between one pusher's steps
+		int creepBuilders = 1;  // steps under way at once (a free builder each, the commander first)
+		float creepIncome = 30.f;  // metal/s of income per extra step at once; 0 = none
+		float creepInterval = 10.f;  // seconds between orders on one lane
 		float creepStep = 0.7f;  // x the forward turret's range
 		float creepMargin = 64.f;  // elmos kept outside enemy static range
 		float creepRadius = 250.f;  // the picker's radius about the step's end

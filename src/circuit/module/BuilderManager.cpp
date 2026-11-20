@@ -8,7 +8,6 @@
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
-#include "module/CreepPlanner.h"
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
@@ -1333,9 +1332,6 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	}
 	if (IsHomeFight(unit)) {
 		return EnqueueCombat(1.5f);
-	}
-	if (IBuilderTask* hold = circuit->GetMilitaryManager()->GetCreepPlanner()->MakeHoldTask(unit)) {
-		return hold;  // a pusher between creep steps stays by the front turret
 	}
 
 	const auto it = costQueries.find(unit);
@@ -3077,11 +3073,6 @@ int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre
 		return 0;
 	}
 	return (OrderTurret(unit, centre, defs, "creep", radius, true) != nullptr) ? 1 : -1;
-}
-
-float CBuilderManager::GetCreepCost(CCircuitUnit* unit, const AIFloat3& centre, bool isLightOnly) const
-{
-	return GetCreepCost(GetTurretDefs(unit, centre, nullptr, isLightOnly));
 }
 
 float CBuilderManager::GetCreepCost(const std::vector<CCircuitDef*>& defs) const

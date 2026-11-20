@@ -136,8 +136,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   back. Now, once a second, along the choke analysis:
   - Lanes: the live chokes of our current line, highest `CFrontline` rank first (it now runs while the creep is on).
     Each heads for its outer region's choke nearest the enemy's held ground (its centre if it is all they hold),
-    kept until another is 20% nearer, into
-    enemy-held ground too, stopping at their turrets' range. A finished ground defence by the target claims the lane:
+    kept until another is 20% nearer, into enemy-held ground too, stopping at their turrets' range. A finished ground defence by the target claims the lane:
     held ground turns the region ours and the line, and the creep, move on to its exits. It starts from a first
     ground turret another caller built.
   - A step: from our ground-hitting turret nearest the target in the lane's two regions (else anywhere), only if it
@@ -150,17 +149,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - Rests: `turret.creep_losses` (2) of our turrets lost in the lane, or two failed steps within 2 minutes (no spot,
     or dropped on arrival), rest it 2 minutes, doubling up to 16 while it keeps failing. A step's end under threat
     only waits.
-  - Pushers: `turret.creep_builders` (1) plus one per `turret.creep_income` (30) metal/s, with hysteresis; the
-    commander first unless hide mode holds it, then the free mobile ground constructors nearest a lane (one swapped
-    for a free one at under half its distance, one a second). Each, every
-    `turret.creep_interval` (10) s at most, takes the highest-ranked of the three lanes nearest it and orders a picker
-    turret about its step's end (`turret.creep_radius`, 250). It shares the turret account: it needs
+  - Steps as jobs: up to `turret.creep_builders` (1) steps under way at once, plus one per `turret.creep_income`
+    (30) metal/s, and one at a time in a lane. Each goes to whichever mobile ground builder is free: the commander
+    first unless hide mode holds it (on the highest-ranked of the three lanes nearest it), else the free constructor
+    nearest the highest-ranked lane's step. It orders a picker turret about the step's end (`turret.creep_radius`,
+    250), a lane at most every `turret.creep_interval` (10) s. It shares the turret account: it needs
     `turret.creep_budget` (0.5) x the dearest def it would choose from there and is charged the full cost (the
-    `creep` spender).
+    `creep` spender). Once the turret is up the builder works as any other; the next step goes to whoever is free.
   - The picker's threat rule for a creep order, at the order and on arrival: no spot inside any known enemy static's
     land range + `creep_margin`; mobile threat passes only where our guns' power covering the spot exceeds it.
-  - Between steps a pusher guards its lane's turret, if its step's end isn't under threat, the account fills for
-    its next order within two intervals and metal isn't stalling, instead of taking a job elsewhere.
   - A `CREEP` log line each minute with why lanes were skipped; all keys settable with `choke_overlay set
     turret.<key>`.
 

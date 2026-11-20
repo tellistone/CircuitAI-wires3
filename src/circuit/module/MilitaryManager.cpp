@@ -2169,15 +2169,6 @@ void CMilitaryManager::UpdateTurretBudget()
 	}
 }
 
-float CMilitaryManager::GetTurretWait(float cost) const
-{
-	const STurretBudget& b = turretBudget;
-	if (b.balance >= cost) {
-		return 0.f;
-	}
-	return (b.rate > 0.f) ? (cost - b.balance) / b.rate : std::numeric_limits<float>::max();
-}
-
 bool CMilitaryManager::CanAffordTurret(float cost)
 {
 	UpdateTurretBudget();

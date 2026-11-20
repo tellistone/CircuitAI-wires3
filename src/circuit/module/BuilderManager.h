@@ -313,20 +313,16 @@ public:
 	// choke_overlay turret: our nearest constructor that is free (UpdateTurrets' tests) orders one at pos, def or the
 	// picker's choice (nullptr); what happened, for the chat
 	std::string OrderTurretAt(const springai::AIFloat3& pos, CCircuitDef* def);
-	// turret.creep (CCreepPlanner): the pusher's turret within radius of centre, for a unit the caller found free
+	// turret.creep (CCreepPlanner): a step's turret within radius of centre, for a unit the caller found free
 	// (IsTurretFree), on the field callers' other gates (metal not stalling, a def it can build there, help with any
 	// job of ours near centre first), with the account holding GetCreepCost. isHelpOnly: only help the job there,
 	// never order another. isLightOnly: turret.light defs, not the unlocked tiers (a step on the way to the enemy's
 	// line). 1: ordered or helping, 0: wait (stall or budget), -1: no spot (the step failed), -2: no def it can build
-	// there, or no job it may help (the pusher's, not the step's)
+	// there, or no job it may help (the builder's, not the step's)
 	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, float radius, bool isHelpOnly,
 			bool isLightOnly);
-	// What the turret account must hold for a creep order by unit at centre: turret.creep_budget x the dearest def it
-	// would choose from; < 0 if none
-	float GetCreepCost(CCircuitUnit* unit, const springai::AIFloat3& centre, bool isLightOnly) const;
-	float GetCreepCost(const std::vector<CCircuitDef*>& defs) const;  // of these defs; < 0 if none
-	// Metal is short and builders pull more than income: their new metal jobs wait (MakeBuilderTask)
-	bool IsMetalStalling() const;
+	// What the turret account must hold for a creep order from defs: turret.creep_budget x the dearest; < 0 if none
+	float GetCreepCost(const std::vector<CCircuitDef*>& defs) const;
 	// Not player-led, retreating, morphing, on a defence job or on a HIGH or NOW one
 	bool IsTurretFree(CCircuitUnit* unit) const;
 	// A static defence of ours or an ally's (a nanoframe or a queued job of ours too) within radius of centre, of a
@@ -339,7 +335,7 @@ public:
 	enum class DefenceFound: char {NONE, ALLY_PENDING, OURS_PENDING, FINISHED};
 	DefenceFound FindTurretDefence(const springai::AIFloat3& centre, float radius,
 			const std::function<bool (const CCircuitDef*)>& canHit, springai::AIFloat3& outPos) const;
-	bool IsCommHiding() const { return isCommHide || isCommHideAir; }  // hide mode: no commander pusher
+	bool IsCommHiding() const { return isCommHide || isCommHideAir; }  // hide mode: the creep leaves the commander be
 private:
 	// Once a second: a constructor whose flee ended clear or covered (centred where the flee started), then each
 	// mobile ground constructor by the first field trigger that holds for it: near enemy, short choke, enemy line,
@@ -480,6 +476,8 @@ private:
 	bool IsCommCornered(CCircuitUnit* unit, SCommState* state);
 	// Other builders: on the defence they were cornered into (cornerTask), which they finish unless metal stalls
 	bool IsFinishingDefence(CCircuitUnit* unit, const SCommState* state) const;
+	// Metal is short and builders pull more than income: their new metal jobs wait (MakeBuilderTask)
+	bool IsMetalStalling() const;
 	// A job at pos: always with no state (flee off); else outside the flee zones (wide line, recently seen dangers
 	// included), or covered 1.25x there. Other builders: a fight-back task is measured at the start line, and the
 	// flee scars count
