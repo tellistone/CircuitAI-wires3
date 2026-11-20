@@ -165,19 +165,6 @@ static inline std::string::const_iterator EndInBraces(const std::string::const_i
 	return brEnd;
 }
 
-//auto isInBoundsAndSqDistToLineLessThan = [](const AIFloat3& P0, const AIFloat3& P1, const AIFloat3& P, const float sqDist) {
-//	const float dx = P1.x - P0.x;
-//	const float dz = P1.z - P0.z;
-//	const float innerProduct = (P.x - P0.x) * dx + (P.z - P0.z) * dz;
-//	const float numerator = dx * dx + dz * dz;
-//	if (0 <= innerProduct && innerProduct <= numerator) {  // isInSegment
-//		float C = P1.x * P0.z - P1.z * P0.x;
-//		float denominator = dz * P.x - dx * P.z + C;
-//		return denominator * denominator / numerator <= sqDist;  // compare square distances
-//	}
-//	return false;
-//};
-
 template<class T> static inline constexpr T clamp(const T v, const T vmin, const T vmax)
 {
 	return std::min(vmax, std::max(vmin, v));

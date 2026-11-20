@@ -9,8 +9,10 @@
 #define SRC_CIRCUIT_TASK_FIGHTER_ATTACKTASK_H_
 
 #include "task/fighter/SquadTask.h"
+#include "module/AttackBalance.h"
 #include "unit/CoreUnit.h"
 
+#include <array>
 #include <functional>
 #include <map>
 
@@ -41,6 +43,8 @@ public:
 	virtual void Start(CCircuitUnit* unit) override;
 	// Merging, escape and regrouping on every update; a decision (Decide) every 2 updates, or when a unit asks
 	virtual void Update() override;
+	// quota.attack_balance: blocked time up to now still counts
+	virtual void Stop(bool done) override;
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
@@ -52,6 +56,9 @@ public:
 	// with (GetPickStrength: lower for a few seconds after an escape) around its leader, out to its fire range past its
 	// units' spread. false: none (fleeing)
 	bool GetCoverDisc(int frame, springai::AIFloat3& outPos, float& outRange, float& outPower);
+	// quota.attack_balance: outnumbered where it stands (UpdateOutnumbered), so left out of other groups' ally sums
+	// (CAttackBalance). Also in log-only mode, so the skip counts mean the same in both builds
+	bool IsOutnumbered() const { return isOutnumbered; }
 
 protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
@@ -209,8 +216,9 @@ private:
 	// quota.attack_merge.idle_merge: an army outside the rally walks to the group GetReinforceSquad picks (ranked above
 	// us: CMilitaryManager::IsRankedAbove) and merges, when that group is nearer than its best target by the target
 	// ranking (sqTargetKey: FindTarget's key; no target: max). Once walking, only a target ranked under
-	// MERGE_BREAK_OFF_SHARE of the group's distance breaks the walk off. false: hunt, or no target and the front fallback
-	bool SeekMerge(int frame, bool isReuse, float sqTargetKey);
+	// MERGE_BREAK_OFF_SHARE of the group's distance breaks the walk off. false: hunt, or no target and the front fallback.
+	// isBackOnly (outnumbered): only to a group whose leader is nearer our base than ours
+	bool SeekMerge(int frame, bool isReuse, float sqTargetKey, bool isBackOnly = false);
 	// Rally: where to walk when reinforcing the host, and the strength its route is capped for (in: ours; joint with
 	// the host for the spot beside it); false: nowhere to stand near its fight and we are close already
 	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, SStrength& inOutStrength) const;
@@ -258,6 +266,54 @@ private:
 	virtual bool IsFormationAllowed(int frame) const override { return true; }
 	virtual bool IsFormationFlee(int frame) const override;
 	virtual float GetFormationRange() const override { return fireRangeLand; }
+
+	/*
+	 * Force balance (quota.attack_balance, CAttackBalance): the enemy forces that could join a fight soon against ours.
+	 * Not for a flying group (its threat layer is anti-air) or a cloaked one (it can strike first unseen). Log-only
+	 * (log_only): every check, flag and zone runs and is logged, but nothing is skipped and no move changes
+	 */
+	CAttackBalance* GetBalance() const;
+	bool IsBalanceOn() const;
+	bool IsBalanceLive() const;  // on and not log-only
+	bool IsFlagged() const { return isOutnumbered && IsBalanceLive(); }  // the flag changes what we do
+	bool IsInBaseCore(const springai::AIFloat3& pos) const;  // half the base defence radius: never judged
+	// The force at F: CAttackBalance::GetForceAt, and our own units (GetOwnForce)
+	void GetForceAt(const springai::AIFloat3& F, CAttackBalance::SForce& outForce);
+	// Our units' power, each weighted by how soon it reaches the leader (the group arrives together; stragglers count
+	// by when they catch up), x powerMod. Once per frame
+	float GetOwnForce(int frame);
+	// F for a target: min(our fire range, its distance to the leader) from its range spot toward the leader
+	springai::AIFloat3 GetFirePos(const springai::AIFloat3& rangePos, int frame) const;
+	// The own-spot check, at the leader (Decide, after the reinforce branch). Roaming: the flag goes on at the keep
+	// line, with an avoid zone at the leader. Flagged: it comes off at the pick line. Engaged: only that clear test.
+	// Any exemption clears it: the leader or the current target inside the base core, or a walk to a host
+	void UpdateOutnumbered(int frame);
+	// force: the own spot's, logged (nullptr: an exemption)
+	void SetOutnumbered(bool value, int frame, const char* reason, const CAttackBalance::SForce* force = nullptr);
+	// A candidate out of contact and the base core (FindTarget's goal loop): skipped while an avoid zone holds across
+	// the line from the leader to F, or when the force at F fails its line: the keep line for the target we hold
+	// (isHeld; dropped there: an avoid zone at F), else the pick line. isFirst: it would be the pick (the skip line).
+	// ioChecks: this decision's checks; past MAX_BALANCE_CHECKS the rest are skipped unchecked
+	bool IsBalanceSkip(const CEnemyInfo* enemy, const springai::AIFloat3& F, bool isHeld, bool isFirst, int& ioChecks,
+			int frame);
+	// Avoid zones: spots where we were outnumbered, so the group doesn't walk the same way into the same army again
+	// (the flag going on: the leader; the target we held dropped at the keep line: its F). Up to two; a third replaces
+	// the older
+	void SetAvoidZone(const springai::AIFloat3& spot, int frame, const char* reason);
+	// A zone holds across the line from the leader to F (passes within AVOID_ZONE_RADIUS of its spot; from inside
+	// that radius, heads toward the spot): its spot fails the pick line, measured as the own-spot check would with our
+	// group standing there. Tested at most once per zone per decision (targets and the front walk); a zone that
+	// passes is lifted
+	bool IsInAvoidZone(const springai::AIFloat3& F, int frame);
+	// The skip line (BALANCE): at most once per group every BALANCE_LOG_FRAMES. enemy nullptr: the own spot;
+	// isHeld: the target we hold
+	void LogBalanceSkip(const char* line, const CEnemyInfo* enemy, bool isHeld, const springai::AIFloat3& F,
+			const CAttackBalance::SForce& force, const char* fallback, int frame);
+	// The outcome log: on a move to ENGAGE on a new target, a fight opens (CAttackBalance::OpenFight) with its E/A at
+	// F; one at a time. Flee marks it
+	void NoteBalanceEngage(int frame);
+	// Blocked time: from this decision to the next (outnumbered, or every candidate skipped by the balance)
+	void NoteBlocked(int frame) { blockSince = (blockSince < 0) ? frame : blockSince; }
 
 	/*
 	 * Targets and routes
@@ -373,7 +429,9 @@ private:
 			const springai::AIFloat3* cell = nullptr, int* outCoverSource = nullptr) const;
 	// No target: an army walks to merge (SeekMerge); else route to the front line, or hold nearby
 	// when past it on enemy-held ground (or no front / no safe route). isReuse: a normal decision no unit asked to
-	// re-plan, which may keep a fresh route to the same front
+	// re-plan, which may keep a fresh route to the same front.
+	// Outnumbered (IsFlagged), never toward the enemy: merge only with a group nearer our base, else the front if it is
+	// nearer our base than the leader, else hold
 	void FallbackFrontPos(bool isReuse = false);
 	void ApplyFrontPos(const CQueryPathMulti* query, const springai::AIFloat3& goal);
 	// Threat cap for capped routes (target, front, reinforce): never above what the escape tolerates
@@ -499,6 +557,22 @@ private:
 	float contactSpread;
 	int contactFrame;
 	SRoute lastRoute;  // dropped when a unit joins or leaves: a fresh route re-sends the path at the group's new speed
+
+	// Force balance (quota.attack_balance)
+	bool isOutnumbered;  // UpdateOutnumbered
+	CAttackBalance::SForce spotForce;  // at the leader, at the last own-spot check
+	struct SAvoidZone {
+		springai::AIFloat3 spot;
+		int setFrame = -1;  // -1: none
+		int testFrame = -1;  // the decision it was last tested in (a zone that passes is lifted: active = holding)
+	};
+	std::array<SAvoidZone, 2> avoidZones;
+	float ownForce;  // GetOwnForce, for ownForceFrame
+	int ownForceFrame;
+	int balanceLogFrame;  // last skip line
+	int blockSince;  // blocked from this frame on (NoteBlocked), counted at the next decision; -1: not blocked
+	ICoreUnit::Id balanceTargetId;  // the last target engaged (NoteBalanceEngage)
+	int balanceFightId;  // its fight (CAttackBalance::OpenFight); -1: none
 
 	// Holding
 	bool isHolding;  // HoldPosition is in effect (until the next decision or escape)

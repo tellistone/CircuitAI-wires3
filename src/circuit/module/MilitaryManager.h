@@ -40,6 +40,7 @@ class CChokeDefence;
 class CSensorPlanner;
 class CCreepPlanner;
 class CAllyCover;
+class CAttackBalance;
 class CFrontline;
 class CTurretPicker;
 
@@ -458,6 +459,8 @@ public:
 	float GetAttackPathIgnoreThreat() const { return attackPathIgnoreThreat; }
 	// quota.attack_ally_cover: allies over a spot multiply an attack group's strength there (CAllyCover)
 	CAllyCover* GetAllyCover() const { return allyCover.get(); }
+	// quota.attack_balance: the enemy forces that could join a fight soon against ours there (CAttackBalance)
+	CAttackBalance* GetAttackBalance() const { return attackBalance.get(); }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
@@ -551,6 +554,9 @@ public:
 
 	void MarkPointOfInterest(CEnemyInfo* enemy);
 	void UnmarkPointOfInterest(CEnemyInfo* enemy);
+	// One of our units killed an enemy (the engine's enemy-destroyed event; attackerId -1: none, or not ours): the
+	// quota.attack_balance outcome log counts it for the fight the unit is in
+	void NoteEnemyKilled(const CEnemyInfo* enemy, int attackerId);
 	// A turret seen for the first time (CCircuitAI::EnemyEnterLOS): attack and raid groups within its reach + their path
 	// look-ahead re-plan at the next threat-map update and get the flee grace for a while (ISquadTask::OnSuddenThreat)
 	void ReactSuddenThreat(CEnemyInfo* enemy);
@@ -787,6 +793,7 @@ private:
 	SContested contested;  // quota.contested
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	std::unique_ptr<CAllyCover> allyCover;  // quota.attack_ally_cover
+	std::unique_ptr<CAttackBalance> attackBalance;  // quota.attack_balance
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
