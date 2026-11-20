@@ -77,7 +77,6 @@ IBuilderTask::IBuilderTask(ITaskManager* mgr, Priority priority,
 
 IBuilderTask::~IBuilderTask()
 {
-	SetQueued(false);
 	delete nextTask;
 }
 

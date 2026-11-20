@@ -78,7 +78,8 @@ public:
 	// The authority's: an active radar job of any ally AI starts or ends; its view counts as covered meanwhile
 	void NotePending(const IBuilderTask* task);
 	void EndPending(const IBuilderTask* task);
-	CCircuitDef* GetHeavyDef() const { return heavyDef; }
+	// choke.radar.enable: the heavy radar is the planner's to place, so porcupine.base and the porc lists leave it out
+	const CCircuitDef* GetPlannedDef() const;
 
 	float GetCoveredShare() const { return (totalWeight > 0.f) ? coveredWeight / totalWeight : 1.f; }
 	const std::vector<uint8_t>& GetCovered() const { return isCovered; }  // per traffic cell (choke_overlay)

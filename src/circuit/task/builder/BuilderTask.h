@@ -96,7 +96,8 @@ public:
 	virtual void SetTarget(CCircuitUnit* unit);
 	CCircuitUnit* GetTarget() const { return target; }
 	// In the manager's queue or not (CBuilderManager): a queued construction job with no nanoframe holds a slot of its
-	// def's behaviour.json "limit" (CCircuitDef::IsAvailable); its nanoframe, once placed, counts as a unit instead
+	// def's behaviour.json "limit" (CCircuitDef::IsAvailable); its nanoframe, once placed, counts as a unit instead.
+	// Released on dequeue, not in the destructor: at shutdown the defs go first
 	void SetQueued(bool value) { isQueued = value; UpdateHold(); }
 	void UpdateTarget(CCircuitUnit* unit);
 

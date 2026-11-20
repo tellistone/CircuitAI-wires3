@@ -156,6 +156,11 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 	return task;
 }
 
+const CCircuitDef* CSensorPlanner::GetPlannedDef() const
+{
+	return circuit->GetChokeMap()->GetConfig().isRadar ? heavyDef : nullptr;
+}
+
 bool CSensorPlanner::IsHeavyReady(CCircuitDef* builderDef) const
 {
 	const int frame = circuit->GetLastFrame();
