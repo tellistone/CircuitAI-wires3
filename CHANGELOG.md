@@ -12,7 +12,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   mixed row, riots beside skirmishers and artillery. Now each place in `row_order` (or `formation_row`) gets rows of
   its own, as wide as the columns allow, so types stay apart at any size: two units of different types walk one
   behind the other. Spacing squeezes before a type takes a second row, as it did before the line did. Stragglers
-  still walk at the back, in rows by type. A group of 2 land or sea units now forms a line (it was 3).
+  still walk at the back, in rows by type. A group of 2 land or sea units now forms a line (it was 3). Riots walk
+  near the back: `row_order` is now assault, heavy, raider, skirmish, riot, anti-heavy, anti-air, artillery (riots
+  were in front), so a group running away has its assaults at the back.
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
   shoot and scoot.**
   - Walk goals are every known heavy and commander, mobile or static, also those already in range. The route query

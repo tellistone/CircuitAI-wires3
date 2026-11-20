@@ -31,7 +31,7 @@ struct SFormationOrder {
  * Line formation (behaviour.json "formation"): a squad of land or sea units walking its path outside combat goes as
  * a line across the path, a row per unit type (row_order), with more rows where a type's row has to narrow; an attack
  * group running away (fleeing, or cornered and moving to a quieter spot) too, its rows in reverse order while it walks
- * (riots at the back) and waiting for no one. The task plans its path as before; the formation decides where along
+ * (assaults at the back) and waiting for no one. The task plans its path as before; the formation decides where along
  * and beside it each unit walks, and how fast. The travel action asks GetOrder.
  * - The line: the path the leader walks, through the leader's spot on it, and behind the spot its track. A new path
  *   that turns back by more than 120 degrees from where the line was heading drops the track, so the rows behind are

@@ -144,7 +144,7 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	if (isFacing && (!isOn || (path->posPath.back().SqDistance2D(faceEnd) > SQUARE(FACE_KEEP)))) {
 		EndFacing();
 	}
-	// Running away: rows in reverse (riots at the back, towards the pursuers), matched afresh on the change. Not once
+	// Running away: rows in reverse (assaults at the back, towards the pursuers), matched afresh on the change. Not once
 	// it stands facing (a cornered line at its quiet spot): the threat is ahead then
 	const bool isFleeNow = task->IsFormationFlee(frame) && !isFacing;
 	if (isFleeNow != isFlee) {
