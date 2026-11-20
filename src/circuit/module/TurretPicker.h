@@ -34,6 +34,7 @@ struct STurretOrder {
 	IBuilderTask::Priority priority = IBuilderTask::Priority::NORMAL;
 	const char* caller = "test";  // "after flee", "near enemy" or "test", for the log
 	bool isCreep = false;  // turret.creep: enemy statics' range + creep_margin is the threat rule, mobiles under cover pass
+	bool isAlly = true;  // false: no A (near enemy, enemy line), so the turret goes for the enemy, not to cover ours
 };
 
 /*
@@ -193,6 +194,7 @@ private:
 		springai::AIFloat3 centre;
 		float radius;
 		bool isCreep = false;
+		bool isAlly = true;  // STurretOrder::isAlly
 		std::vector<SGun> enemyGuns;  // known enemy statics that hit ground, reach = range + creep_margin
 		std::vector<SGun> ourGuns;  // finished ones of ours and allies' that hit ground, reach = range
 		// Within radius + the longest range, before they are weighed for a def (metal: traffic in metal/s, the rest in

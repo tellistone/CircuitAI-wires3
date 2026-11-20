@@ -348,10 +348,10 @@ private:
 	// after a flee, no other defence that hits it within turret.defended_radius; the choke analysis (asked for now,
 	// waited for while an after-flee ask lasts); the budget; one order a second. true: done (ordered, helped, or
 	// nothing to have), false: try again next second. budgetMod: x the balance the budget asks for (the charge is
-	// the full cost)
+	// the full cost). isAlly: STurretOrder::isAlly
 	bool TryTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit, bool isAfterFlee, const char* caller,
-			bool& isOrdered, float budgetMod = 1.f);
+			bool& isOrdered, float budgetMod = 1.f, bool isAlly = true);
 	std::vector<CCircuitDef*> GetTurretDefs(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit, bool isLightOnly = false) const;
 	// isAnyJob: an unstarted job of any caller's (the creep's), not only a picker's
@@ -360,7 +360,8 @@ private:
 			bool isAnyJob = false);
 	// Asks for a turret and starts the cooldown, whatever the result; radius < 0: turret.radius
 	IBuilderTask* OrderTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
-			const std::vector<CCircuitDef*>& defs, const char* caller, float radius = -1.f, bool isCreep = false);
+			const std::vector<CCircuitDef*>& defs, const char* caller, float radius = -1.f, bool isCreep = false,
+			bool isAlly = true);
 	// Can hit what a flee is from: a flier with anti-air, in deep water with anti-water, else with anti-land
 	static bool IsHitFor(const CCircuitDef* def, bool isAir, bool isWater);
 	int turretChokeFrame = -1;  // the first order's frame while the choke analysis isn't ready

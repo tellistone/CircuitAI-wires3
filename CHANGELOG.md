@@ -7,6 +7,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
+  unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and
+  energy they were meant to push past. Their orders now count no A (`STurretOrder::isAlly`); with less value, a
+  spot also needs more enemy traffic, enemy buildings or choke worth to reach `turret.min_value`. The other
+  callers, the creep and porc keep A.
+
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
   shoot and scoot.**
   - Walk goals are every known heavy and commander, mobile or static, also those already in range. The route query

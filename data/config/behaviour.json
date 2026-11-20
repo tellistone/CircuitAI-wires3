@@ -213,7 +213,7 @@
 	"min_value": 1.0,  // a spot's value (T + A + E + C, x height) must reach this x the turret's cost
 	"traffic": 1.0,  // weight of T, the enemy traffic in range; none while spiders and jumpers are choke.gate_share of the enemy army (until under half of it)
 	"horizon": 120,  // seconds of threatened income that T counts (and an enemy mex in E)
-	"ally": 1.0,  // weight of A
+	"ally": 1.0,  // weight of A; none for near_enemy and enemy_line orders, so they go for the enemy, not to cover our buildings
 	"enemy": 1.0,  // weight of E
 	"front": 1.0,  // the spot with the most enemy building influence, out of threat, ranks up to 1 + this x its value; 0 = no lean
 	"view": 1.0,  // a spot ranks up to 1 + this x its value by the share of its range circle's ground in a clear line of fire (V), so a cliff top over the ground below beats its foot; ranks only, never decides worth; 0 = off

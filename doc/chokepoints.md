@@ -85,9 +85,9 @@ Choke ids carry over either way. A new choke waits 20 s before anything acts on 
 | `quota.hold_choke` | `false` | **Holding the current line (C).** The idle attack group holds at the most short choke of our line: short is one our ground-hitting towers don't cover all of, or whose towers are short of the enemy army in the region outside it, and the most short has the biggest shortfall, else the least cover. That's 1 choke, or 2 on chokepointed maps, and none on open maps. With `choke.enable`, the top-ranked short choke's pocket is fortified. |
 | `choke.expand` | `false` | **Expansion bonus.** Mex expansion (`economy.mex_front`) scores clusters behind a cut with towers ×0.7, and behind a qualified cut without towers ×0.85. Lower is better. |
 | `turret.after_flee` | `true` | **Turret picker (G), after a flee.** A constructor whose flee from nearby enemies ends clear or covered orders a light turret where the flee started. |
-| `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. |
+| `turret.near_enemy` | `true` | **Turret picker (G), near an enemy building.** A mobile ground constructor within `turret.enemy_reach` of a known enemy building, with no armed ally within `turret.ally_radius`, orders a light turret around itself. Its spot counts no A, so it goes for the enemy instead of being drawn back to cover our buildings. |
 | `turret.short_choke` | `true` | **Turret picker (G), at a short choke.** A mobile ground constructor within `turret.short_choke_reach` of a short choke of our current line (as C judges it, below) orders one centred on the choke's gap. Only defensible chokes, settled and with no enemy artillery on them, as for C. |
-| `turret.enemy_line` | `true` | **Turret picker (G), near the enemy line.** A mobile ground constructor within `turret.enemy_line_reach` of a choke of the enemy line orders one centred on the choke's gap. The same chokes as `turret.short_choke`. |
+| `turret.enemy_line` | `true` | **Turret picker (G), near the enemy line.** A mobile ground constructor within `turret.enemy_line_reach` of a choke of the enemy line orders one centred on the choke's gap. The same chokes as `turret.short_choke`. Its spot counts no A, as for `turret.near_enemy`. |
 | `turret.artillery` | `true` | **Turret picker (G), by our artillery.** A mobile ground constructor within `turret.artillery_reach` of our artillery shooting a target in its range, or of an engaged anti-heavy squad with a unit in range of its target (not mines or aircraft), with no ground-hitting turret within `turret.defended_radius` of it, orders one centred on the artillery (an anti-heavy squad: its leader). Anti-heavy squads and anti-heavy artillery count only against a building. |
 | `turret.creep` | `true` | **Turret picker (G), the creep.** Free builders (the commander first) walk our turrets out along our line's chokes, lane by lane, up to just outside the enemy's static range; see [The creep](#the-creep-g). |
 
@@ -138,7 +138,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height) must reach this × the turret's cost. |
 | `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. T is left out while spiders and jumpers are `choke.gate_share` of the enemy army (until they fall below half of that): then a turret pays for itself in A, E and C alone. |
 | `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
-| `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. |
+| `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. The near-enemy and enemy-line callers count no A. |
 | `turret.enemy` | `1.0` | Weight of E, the enemies a turret could shoot. |
 | `turret.front` | `1.0` | The spot with the most enemy building influence, out of threat, ranks up to 1 + this × its value. 0 turns the lean off. |
 | `turret.view` | `1.0` | A spot ranks up to 1 + this × its value by *V*, the share of its range circle's ground in a clear line of fire from it. A cliff top over the ground below scores high and its foot low; flat open ground scores 1. Like the lean, it ranks spots and never decides whether one is worth its cost. 0 turns it off. |
@@ -391,6 +391,8 @@ cost:
   as kbots, and their routes over cliffs are left out.
 - *A*, our and allied unarmed buildings in range (mexes, energy, radar, factories, storage, nanoframes too), at cost.
   Energy, pylons and factories in our territory count only above what the spot's C already carries of our economy.
+  The near-enemy and enemy-line callers leave A out (`STurretOrder::isAlly`): their turrets go for the enemy, not
+  back to cover our buildings.
 - *E*, known enemy buildings in range seen in radar or sight in the last 3 minutes (so the ghost of one that died
   out of sight drops out), at cost; an enemy mex counts its income × `turret.horizon`, which is what killing it
   takes from them. Mobiles don't count: they move on, and their routes are in T already.

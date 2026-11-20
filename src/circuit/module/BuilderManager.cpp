@@ -2782,7 +2782,9 @@ void CBuilderManager::UpdateTurrets()
 		const std::vector<int>& chokes;
 		float reach;
 		const char* caller;
-	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke"}, {lineChokes, cfg.enemyLineReach, "enemy line"}};
+		bool isAlly;  // the enemy line's: no A, it goes for the enemy
+	} lines[] = {{shortChokes, cfg.shortChokeReach, "short choke", true},
+			{lineChokes, cfg.enemyLineReach, "enemy line", false}};
 	const float lineBudget = utils::clamp(cfg.enemyLineBudget, 0.f, 1.f);  // x the balance the account must hold
 	// Artillery: ours shooting a target in range (an artillery unit; an engaged anti-heavy squad with a unit in range,
 	// not mines or aircraft), only a building in anti-heavy mode; centred on it (a squad: its leader), unless a turret
@@ -2819,7 +2821,7 @@ void CBuilderManager::UpdateTurrets()
 			// allied power around (a finished picker turret counts; a Claw minefield or an Antinuke doesn't)
 			&& (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, isCover) <= 0.f))
 		{
-			TryTurret(unit, pos, nullptr, false, "near enemy", isOrdered);
+			TryTurret(unit, pos, nullptr, false, "near enemy", isOrdered, 1.f, false);  // no A: it goes for the enemy
 			continue;
 		}
 		auto tryLines = [&]() {
@@ -2827,7 +2829,7 @@ void CBuilderManager::UpdateTurrets()
 				const int c = nearChoke(l.chokes, pos, l.reach);
 				if (c >= 0) {
 					TryTurret(unit, chokeMap->GetCellPos(graph.GetChokes()[c].centre), nullptr, false, l.caller, isOrdered,
-							isOnEnemyLine[c] ? lineBudget : 1.f);
+							isOnEnemyLine[c] ? lineBudget : 1.f, l.isAlly);
 					return true;
 				}
 			}
@@ -2848,7 +2850,7 @@ void CBuilderManager::UpdateTurrets()
 
 bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
 		const std::function<bool (const CCircuitDef*)>& canHit, bool isAfterFlee, const char* caller, bool& isOrdered,
-		float budgetMod)
+		float budgetMod, bool isAlly)
 {
 	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, canHit);
 	if (defs.empty() || AssistTurret(unit, centre, canHit, !isAfterFlee, caller)) {
@@ -2882,7 +2884,7 @@ bool CBuilderManager::TryTurret(CCircuitUnit* unit, const AIFloat3& centre,
 		return false;
 	}
 	isOrdered = true;
-	OrderTurret(unit, centre, defs, caller);
+	OrderTurret(unit, centre, defs, caller, -1.f, false, isAlly);
 	return true;
 }
 
@@ -3036,7 +3038,7 @@ CBuilderManager::DefenceFound CBuilderManager::FindTurretDefence(const AIFloat3&
 }
 
 IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::vector<CCircuitDef*>& defs, const char* caller, float radius, bool isCreep)
+		const std::vector<CCircuitDef*>& defs, const char* caller, float radius, bool isCreep, bool isAlly)
 {
 	CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const int frame = circuit->GetLastFrame();
@@ -3048,6 +3050,7 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	order.caller = caller;
 	order.radius = radius;
 	order.isCreep = isCreep;
+	order.isAlly = isAlly;
 	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(),
 			isCreep ? CMilitaryManager::TurretSpend::CREEP : CMilitaryManager::TurretSpend::PICKER);
 	return picker->Order(order);

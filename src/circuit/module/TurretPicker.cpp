@@ -217,6 +217,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 		maxRange = std::max(maxRange, def->GetMaxRange());
 	}
 	SGather gather = Gather(centre, radius, maxRange, -RgtVector);
+	gather.isAlly = order.isAlly;
 	if (order.isCreep) {
 		GatherGuns(gather);
 	}
@@ -571,7 +572,7 @@ std::vector<CTurretValue::STarget> CTurretPicker::MakeTargets(CCircuitDef* def, 
 		switch (r.kind) {
 			case CTurretValue::Kind::TRAFFIC: metal = TrafficMetal(r.metal, range, config.traffic); break;
 			case CTurretValue::Kind::ALLY:
-			case CTurretValue::Kind::ECON: metal = r.metal * config.ally; break;
+			case CTurretValue::Kind::ECON: metal = gather.isAlly ? r.metal * config.ally : 0.f; break;
 			case CTurretValue::Kind::ENEMY: metal = r.metal * config.enemy; break;
 			case CTurretValue::Kind::CHOKE: metal = r.metal; break;
 		}
