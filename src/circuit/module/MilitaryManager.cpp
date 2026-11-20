@@ -946,7 +946,7 @@ void CMilitaryManager::ReadConfig()
 
 	const Json::Value& formCfg = root["formation"];
 	formation.isEnable = formCfg.get("enable", false).asBool();
-	formation.minUnits = std::max(2, formCfg.get("min_units", 3).asInt());
+	formation.minUnits = std::max(2, formCfg.get("min_units", 2).asInt());
 	const Json::Value& formSpacing = formCfg["spacing"];
 	formation.spacing = std::max(1.f, formSpacing.get((unsigned)0, 96.f).asFloat());
 	formation.spacingUnits = std::max(1.f, formSpacing.get((unsigned)1, 4.f).asFloat());
@@ -959,7 +959,7 @@ void CMilitaryManager::ReadConfig()
 	formation.rowOrder.clear();
 	Json::Value rowOrder = formCfg["row_order"];
 	if (rowOrder.isNull()) {
-		for (const char* name : {"riot", "assault", "heavy", "raider", "skirmish", "anti_heavy", "anti_air", "artillery"}) {
+		for (const char* name : {"assault", "heavy", "raider", "skirmish", "riot", "anti_heavy", "anti_air", "artillery"}) {
 			rowOrder.append(name);
 		}
 	}
