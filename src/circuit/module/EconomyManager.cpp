@@ -19,7 +19,6 @@
 #include "map/InfluenceMap.h"
 #include "task/RetreatTask.h"
 #include "task/builder/EnergyTask.h"
-#include "task/builder/MexTask.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
@@ -963,19 +962,6 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 		return nullptr;
 	}
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	// Queued jobs whose spot an allied AI's builder has claimed since (CBMexTask::AssignTo): nobody of ours may take
-	// them (CanAssignTo), so drop them now rather than let them hold a job slot until the timeout
-	static std::vector<IBuilderTask*> takenTasks;  // NOTE: micro-opt
-	for (IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::MEX)) {
-		if (t->GetAssignees().empty() && static_cast<CBMexTask*>(t)->IsSpotTaken()) {
-			takenTasks.push_back(t);
-		}
-	}
-	for (IBuilderTask* t : takenTasks) {
-		builderMgr->AbortTask(t);
-	}
-	takenTasks.clear();
-
 	const float cost = mexDef->GetCostM();
 	const unsigned maxCount = (builderMgr->GetBuildPower() / cost * 8 + 2) * mexJobMod;
 	if (builderMgr->GetTasks(IBuilderTask::BuildType::MEX).size() >= maxCount) {
