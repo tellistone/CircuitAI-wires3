@@ -19,6 +19,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     on 18 of 900 rebuilds, was 25.
   - It never makes fewer than `min_count` regions. Keeping a grid a fresh pick would have made coarser gives 21.5 to
     22.3 regions on average at `min_count` 20, was 20.7 to 21.2; the biggest region is no bigger.
+- **Team games: no more towers in allies' bases** (`porcupine.own_clusters` and `porcupine.ally_cover`, both new,
+  default true). Every Wires AI swept every cluster the ally team held, each with its own preventive dice and income
+  cap, so a cluster got the highest roll and the richest cap among them, inside allies' bases too. Now:
+  - Each cluster has one owner for the ally team (`CMetalManager::GetClusterOwner`): the team with the most finished
+    mexes there (the lower team id on a tie), kept until another has strictly more or it has none left. A resign or a
+    share moves it to the new holder. Only the owner's sweeps, mex chain and sightings put towers there (porc ones
+    too); the sweeps skip other clusters without spending a tick. Our geo's vent always counts.
+  - The owner answers sightings at every ally's mex in its clusters, not only at its own.
+  - The preventive dice are thrown once per cluster for the ally team, so a new owner rolls the same count.
+  - A cluster's preventive total is the larger of the towers booked on its points (every Wires ally's) and the metal
+    of the ally team's towers within range of its mex points (off-point and human towers; nanoframes and stunned
+    ones count), so towers the matrix never booked count without counting any twice.
+
 - **No more shard regions on open maps: the regions made for `min_count` are of a size** (`choke.region.min_share`,
   new, 0.5). With too few regions, the build ran again up to 4 times with `merge` raised to 1 and `min_area` lowered
   to a quarter, and kept the build with the most regions. On an open map with craters (Red Comet) that reached
