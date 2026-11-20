@@ -54,7 +54,7 @@ void CBDefenceTask::Update()
 	{
 		militaryMgr->GetSpotScorer()->MaskFailed(buildPos);
 		if (isCreep) {
-			militaryMgr->GetCreepPlanner()->OnDropped(buildPos);  // a failed step, not a success
+			militaryMgr->GetCreepPlanner()->OnDropped(*traveled.begin(), buildPos);  // a failed step, not a success
 		}
 		manager->AbortTask(this);
 		return;

@@ -8,6 +8,7 @@
 #include "module/CreepPlanner.h"
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
+#include "module/Frontline.h"
 #include "module/MilitaryManager.h"
 #include "module/TurretPicker.h"
 #include "spring/SpringMap.h"
@@ -30,8 +31,11 @@ namespace circuit {
 
 using namespace springai;
 
-static constexpr int MEMORY_FRAMES = FRAMES_PER_SEC * 120;  // losses and failed steps count this long
+static constexpr int MEMORY_FRAMES = FRAMES_PER_SEC * 120;  // losses count this long, and a lane's first rest
+static constexpr int REST_RESET_FRAMES = FRAMES_PER_SEC * 600;  // a lane's rests stop doubling after this long
+static constexpr int MAX_DOUBLINGS = 3;  // a rest is up to 2^3 = 8 x MEMORY_FRAMES (16 minutes)
 static constexpr int LOG_FRAMES = FRAMES_PER_SEC * 60;
+static constexpr int NEAREST_LANES = 3;  // a pusher takes the highest-ranked among this many lanes nearest it
 
 CCreepPlanner::CCreepPlanner(CCircuitAI* circuit)
 		: circuit(circuit)
@@ -57,8 +61,10 @@ void CCreepPlanner::Update()
 	losses.erase(std::remove_if(losses.begin(), losses.end(), [frame](const std::pair<AIFloat3, int>& l) {
 		return frame - l.second > MEMORY_FRAMES;
 	}), losses.end());
-	for (auto it = fails.begin(); it != fails.end();) {
-		it = (frame - it->second.frame > MEMORY_FRAMES) ? fails.erase(it) : std::next(it);
+	for (auto it = rests.begin(); it != rests.end();) {
+		const SRest& r = it->second;
+		const bool isStale = (frame >= r.until) && (frame - std::max(r.lastFail, r.lastRest) > REST_RESET_FRAMES);
+		it = isStale ? rests.erase(it) : std::next(it);
 	}
 
 	MakeLanes();
@@ -72,11 +78,11 @@ void CCreepPlanner::Update()
 		if ((unit == nullptr) || ((it != nextFrames.end()) && (frame < it->second)) || !builderMgr->IsTurretFree(unit)) {
 			continue;
 		}
-		const SLane* lane = NearestLane(unit->GetPos(frame), &isTaken);
+		const SLane* lane = PickLane(unit->GetPos(frame), &isTaken);
 		if (lane == nullptr) {
 			break;
 		}
-		const int result = builderMgr->OrderCreepTurret(unit, lane->end, lane->radius);
+		const int result = builderMgr->OrderCreepTurret(unit, lane->end, lane->radius, lane->isHelp);
 		if (result == 0) {
 			continue;  // stall or budget: again next second
 		}
@@ -92,10 +98,10 @@ void CCreepPlanner::Update()
 
 	if (frame >= logFrame) {
 		logFrame = frame + LOG_FRAMES;
-		circuit->LOG("CREEP %i pushers, %i lanes of a line of %i; skipped: %i not live, %i enemy-held, %i failed, "
-				"%i losses, %i claimed, %i no turret near, %i in enemy reach; %i lost lately",
-				(int)pushers.size(), (int)lanes.size(), lineSize, skips[NOT_LIVE], skips[ENEMY_HELD], skips[FAILED],
-				skips[LOSSES], skips[CLAIMED], skips[NO_ANCHOR], skips[IN_REACH], (int)losses.size());
+		circuit->LOG("CREEP %i pushers, %i lanes of a line of %i; skipped: %i not live, %i resting, %i claimed, "
+				"%i no turret, %i no progress, %i in enemy reach; %i lost lately",
+				(int)pushers.size(), (int)lanes.size(), lineSize, skips[NOT_LIVE], skips[RESTING], skips[CLAIMED],
+				skips[NO_ANCHOR], skips[NO_PROGRESS], skips[IN_REACH], (int)losses.size());
 	}
 }
 
@@ -115,7 +121,10 @@ IBuilderTask* CCreepPlanner::MakeHoldTask(CCircuitUnit* unit)
 	auto it = laneOf.find(unit->GetId());
 	const SLane* lane = (it != laneOf.end()) ? FindLane(it->second) : nullptr;
 	if (lane == nullptr) {
-		lane = NearestLane(unit->GetPos(frame));
+		lane = PickLane(unit->GetPos(frame));
+	}
+	if (lane->isHelp) {
+		return nullptr;  // the next order helps the job there
 	}
 	// Worth holding only while the account fills for this order soon (the cost the order itself asks)
 	const float cost = builderMgr->GetCreepCost(unit, lane->end);
@@ -136,9 +145,14 @@ void CCreepPlanner::OnGunLost(const AIFloat3& pos)
 	losses.push_back({pos, circuit->GetLastFrame()});
 }
 
-void CCreepPlanner::OnDropped(const AIFloat3& pos)
+void CCreepPlanner::OnDropped(const CCircuitUnit* builder, const AIFloat3& pos)
 {
-	const SLane* lane = NearestLane(pos);
+	auto it = (builder != nullptr) ? laneOf.find(builder->GetId()) : laneOf.end();
+	if (it != laneOf.end()) {
+		AddFail(it->second);
+		return;
+	}
+	const SLane* lane = PickLane(pos);
 	const float radius = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig().creepRadius;
 	if ((lane != nullptr) && (lane->end.SqDistance2D(pos) <= SQUARE(2.f * radius))) {
 		AddFail(lane->chokeId);
@@ -185,7 +199,7 @@ void CCreepPlanner::UpdatePushers()
 				continue;
 			}
 			const AIFloat3& pos = u->GetPos(frame);
-			const float sqDist = NearestLane(pos)->end.SqDistance2D(pos);
+			const float sqDist = PickLane(pos)->end.SqDistance2D(pos);
 			if (sqDist < bestSqDist) {
 				bestSqDist = sqDist;
 				best = u;
@@ -217,45 +231,36 @@ void CCreepPlanner::MakeLanes()
 		chokeMap->Request();
 		return;
 	}
+	const std::vector<CFrontline::SFront>& front = circuit->GetMilitaryManager()->GetFrontline()->GetFront();
+	lineSize = (int)front.size();
+	if (front.empty()) {
+		return;
+	}
 	CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const CTurretPicker::SConfig& cfg = picker->GetConfig();
 	const int frame = circuit->GetLastFrame();
-	const std::vector<int>& line = chokeMap->GetCurrentLine();
-	lineSize = (int)line.size();
-	if (line.empty()) {
-		return;
-	}
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	const std::vector<CRegionGraph::SRegion>& regions = graph.GetRegions();
 	const std::vector<CRegionGraph::SChoke>& chokes = graph.GetChokes();
 
-	// Our finished guns (the anchors); every defence of ours and allies' (claims), unfinished ones of ours to help
+	// Our finished guns (the anchors) with their regions; every finished defence, ours or allies' (claims)
 	struct SGun {
 		ICoreUnit::Id id;
 		AIFloat3 pos;
 		float range;
+		int region;
 	};
 	std::vector<SGun> guns;
-	std::vector<AIFloat3> finished, helpable, foreign;  // defences: finished; ours unfinished or queued; allies' unfinished
+	std::vector<AIFloat3> finished;
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
-		if (!picker->IsDefence(cdef)) {
+		if (!picker->IsDefence(cdef) || kv.second->GetUnit()->IsBeingBuilt()) {
 			continue;
 		}
 		const AIFloat3& pos = kv.second->GetPos(frame);
-		const bool isOurs = (circuit->GetTeamUnit(kv.first) != nullptr);
-		if (!kv.second->GetUnit()->IsBeingBuilt()) {
-			finished.push_back(pos);
-			if (isOurs && cdef->HasAntiLand()) {
-				guns.push_back({kv.first, pos, cdef->GetMaxRange(CCircuitDef::RangeType::LAND)});
-			}
-		} else {
-			(isOurs ? helpable : foreign).push_back(pos);
-		}
-	}
-	for (const IBuilderTask* t : circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
-		if ((t->GetTarget() == nullptr) && picker->IsDefence(t->GetBuildDef())) {
-			helpable.push_back(t->GetPosition());
+		finished.push_back(pos);
+		if (cdef->HasAntiLand() && (circuit->GetTeamUnit(kv.first) != nullptr)) {
+			guns.push_back({kv.first, pos, cdef->GetMaxRange(CCircuitDef::RangeType::LAND), chokeMap->GetRegionAt(pos)});
 		}
 	}
 	// The enemy's known guns, at their land range + the margin
@@ -283,97 +288,95 @@ void CCreepPlanner::MakeLanes()
 			enemyAt.push_back(chokeMap->GetCellPos(regions[r].centre));
 		}
 	}
-	auto enemyDist = [&enemyAt](const AIFloat3& p) {
+	auto enemySqDist = [&enemyAt](const AIFloat3& p) {
 		float best = std::numeric_limits<float>::max();
 		for (const AIFloat3& e : enemyAt) {
 			best = std::min(best, p.SqDistance2D(e));
 		}
 		return best;
 	};
-	auto anyWithin = [](const std::vector<AIFloat3>& list, const AIFloat3& p, float radius) -> const AIFloat3* {
-		for (const AIFloat3& q : list) {
-			if (q.SqDistance2D(p) <= SQUARE(radius)) {
-				return &q;
-			}
-		}
-		return nullptr;
+	auto isNear = [](const std::vector<AIFloat3>& list, const AIFloat3& p, float radius) {
+		return std::any_of(list.begin(), list.end(), [&](const AIFloat3& q) { return q.SqDistance2D(p) <= SQUARE(radius); });
 	};
+	auto isGround = [](const CCircuitDef* d) { return d->HasAntiLand(); };
 
-	for (int c : line) {
+	for (const CFrontline::SFront& f : front) {  // highest rank first
+		const int c = graph.FindChoke(f.chokeId);
+		const int inner = graph.FindRegion(f.innerRegionId);
+		if ((c < 0) || (inner < 0) || !chokeMap->IsChokeLive(c, frame)) {
+			++skips[NOT_LIVE];  // or from before a rebuild
+			continue;
+		}
+		auto rit = rests.find(f.chokeId);
+		if ((rit != rests.end()) && (frame < rit->second.until)) {
+			++skips[RESTING];
+			continue;
+		}
 		const CRegionGraph::SChoke& ch = chokes[c];
-		if (!chokeMap->IsChokeLive(c, frame)) {
-			++skips[NOT_LIVE];
-			continue;
-		}
-		const int outer = chokeMap->IsOurGround(ch.regionA) ? ch.regionB
-				: chokeMap->IsOurGround(ch.regionB) ? ch.regionA : CRegionGraph::NO_REGION;
-		if ((outer == CRegionGraph::NO_REGION) || chokeMap->IsEnemyGround(outer)) {
-			++skips[ENEMY_HELD];
-			continue;
-		}
-		auto fit = fails.find(ch.id);
-		if ((fit != fails.end()) && (fit->second.count >= 2)) {
-			++skips[FAILED];
-			continue;
-		}
-		if ((cfg.creepLosses > 0) && (std::count_if(losses.begin(), losses.end(), [&](const std::pair<AIFloat3, int>& l) {
-				return chokeMap->GetRegionAt(l.first) == outer;
-			}) >= cfg.creepLosses))
-		{
-			++skips[LOSSES];
-			continue;
-		}
-		// The target: the outer region's way on toward the enemy, else its centre
-		AIFloat3 target = chokeMap->GetCellPos(regions[outer].centre);
-		float targetDist = std::numeric_limits<float>::max();
-		for (int k : regions[outer].chokes) {
-			if ((k == c) || chokeMap->IsArtilleryNear(k, frame)) {
-				continue;
-			}
-			const AIFloat3 p = chokeMap->GetCellPos(chokes[k].centre);
-			const float d = enemyDist(p);
-			if (d < targetDist) {
-				targetDist = d;
-				target = p;
+		const int outer = graph.OtherSide(ch, inner);
+		const AIFloat3 gapPos = chokeMap->GetCellPos(ch.centre);
+		// The target: the outer region's way on toward the enemy, else its centre; the gap itself when the enemy holds
+		// the outer region (the step stops at their range)
+		AIFloat3 target = gapPos;
+		if (!chokeMap->IsEnemyGround(outer)) {
+			target = chokeMap->GetCellPos(regions[outer].centre);
+			float targetSqDist = std::numeric_limits<float>::max();
+			for (int k : regions[outer].chokes) {
+				if ((k == c) || chokeMap->IsArtilleryNear(k, frame)) {
+					continue;
+				}
+				const AIFloat3 p = chokeMap->GetCellPos(chokes[k].centre);
+				const float d = enemySqDist(p);
+				if (d < targetSqDist) {
+					targetSqDist = d;
+					target = p;
+				}
 			}
 		}
-		// Claimed: a finished defence in the outer region or by the target. Being claimed: help ours, wait on allies'
-		auto inClaim = [&](const AIFloat3& p) {
-			return (chokeMap->GetRegionAt(p) == outer) || (p.SqDistance2D(target) <= SQUARE(cfg.creepRadius));
-		};
-		if (std::any_of(finished.begin(), finished.end(), inClaim) || std::any_of(foreign.begin(), foreign.end(), inClaim)) {
+		if (isNear(finished, target, cfg.creepRadius)) {
 			++skips[CLAIMED];
 			continue;
 		}
-		auto helpIt = std::find_if(helpable.begin(), helpable.end(), inClaim);
-		// The anchor: our gun nearest the target, if it stands by this lane
+		// The anchor: our gun nearest the target in the lane's two regions, else anywhere
 		const SGun* anchor = nullptr;
+		bool isInLane = false;
 		for (const SGun& g : guns) {
-			if ((anchor == nullptr) || (g.pos.SqDistance2D(target) < anchor->pos.SqDistance2D(target))) {
+			const bool isIn = (g.region == inner) || (g.region == outer);
+			if ((isIn && !isInLane) || ((isIn == isInLane)
+				&& ((anchor == nullptr) || (g.pos.SqDistance2D(target) < anchor->pos.SqDistance2D(target)))))
+			{
 				anchor = &g;
+				isInLane = isIn;
 			}
 		}
 		const float fullStep = (anchor != nullptr) ? cfg.creepStep * anchor->range : 0.f;
-		if ((anchor == nullptr) || (fullStep <= 0.f)
-			|| (graph.GetLineDist(ch, anchor->pos.x, anchor->pos.z) > anchor->range + fullStep))
-		{
+		if (fullStep <= 0.f) {
 			++skips[NO_ANCHOR];
 			continue;
 		}
-		const float gap = anchor->pos.distance2D(target);
-		if (helpIt != helpable.end()) {
-			lanes.push_back({ch.id, *helpIt, cfg.creepRadius, anchor->id, gap});
+		if (enemySqDist(target) >= enemySqDist(anchor->pos)) {
+			++skips[NO_PROGRESS];  // a flank or a back door: it doesn't bring us nearer the enemy
 			continue;
 		}
-		// The step: onto the target once within one, else a step toward it; out of the enemy's static reach
-		AIFloat3 dir = target - anchor->pos;
+		// Through the gap the graph found, then on to the target
+		const bool isPastGap = (anchor->region == outer) || (anchor->pos.SqDistance2D(gapPos) <= SQUARE(cfg.creepRadius));
+		const AIFloat3 aim = isPastGap ? target : gapPos;
+		const float dist = anchor->pos.distance2D(aim);
+		const float stepLen = std::min(fullStep, dist);
+		const bool isOnTarget = isPastGap && (stepLen >= dist);
+		// Pulled back out of the enemy's static reach; a step shorter than a quarter of a full one is at their line
+		AIFloat3 dir = aim - anchor->pos;
 		dir.y = 0.f;
 		dir.SafeNormalize2D();
-		const float stepLen = std::min(fullStep, gap);
 		bool isFound = false;
 		AIFloat3 end;
-		for (float f : {1.f, 0.5f, 0.25f}) {
-			end = anchor->pos + dir * (stepLen * f);
+		float len = 0.f;
+		for (float share : {1.f, 0.5f, 0.25f}) {
+			len = stepLen * share;
+			if ((len < 0.25f * fullStep) && !(isOnTarget && (share == 1.f))) {
+				break;
+			}
+			end = anchor->pos + dir * len;
 			CTerrainManager::CorrectPosition(end);
 			if (!isInEnemyReach(end)) {
 				isFound = true;
@@ -385,14 +388,28 @@ void CCreepPlanner::MakeLanes()
 			continue;
 		}
 		end.y = circuit->GetMap()->GetElevationAt(end.x, end.z);
-		// Short of the target, the picker stays within half the step of its end: ahead of the turret behind it
-		const float radius = (stepLen >= gap) ? cfg.creepRadius : std::min(cfg.creepRadius, 0.5f * stepLen);
-		if (const AIFloat3* job = anyWithin(helpable, end, cfg.creepRadius)) {
-			lanes.push_back({ch.id, *job, cfg.creepRadius, anchor->id, gap});  // a step already queued: help it
-		} else if (anyWithin(finished, end, radius) || anyWithin(foreign, end, cfg.creepRadius)) {
+		// Our turrets lost in the outer region or a step of the end, since the lane's last rest
+		const int since = (rit != rests.end()) ? rit->second.lastRest : -1;
+		if ((cfg.creepLosses > 0) && (std::count_if(losses.begin(), losses.end(), [&](const std::pair<AIFloat3, int>& l) {
+				return (l.second > since)
+					&& ((chokeMap->GetRegionAt(l.first) == outer) || (l.first.SqDistance2D(end) <= SQUARE(fullStep)));
+			}) >= cfg.creepLosses))
+		{
+			Rest(rests[f.chokeId]);
+			++skips[RESTING];
+			continue;
+		}
+		// The picker stays within half the step of its end, so the turret lands ahead of the one behind it. A finished
+		// defence there takes the step; one being built or queued is helped
+		const bool isAtTarget = isOnTarget && (len >= stepLen);  // not pulled back: the radius claims use about the target
+		const float radius = isAtTarget ? cfg.creepRadius : std::min(cfg.creepRadius, 0.5f * len);
+		AIFloat3 jobPos;
+		if (isNear(finished, end, radius)) {
 			++skips[CLAIMED];
+		} else if (circuit->GetBuilderManager()->HasTurretDefence(end, radius, isGround, jobPos)) {
+			lanes.push_back({f.chokeId, jobPos, radius, anchor->id, true});
 		} else {
-			lanes.push_back({ch.id, end, radius, anchor->id, gap});
+			lanes.push_back({f.chokeId, end, radius, anchor->id, false});
 		}
 	}
 }
@@ -403,25 +420,48 @@ const CCreepPlanner::SLane* CCreepPlanner::FindLane(int chokeId) const
 	return (it != lanes.end()) ? &*it : nullptr;
 }
 
-const CCreepPlanner::SLane* CCreepPlanner::NearestLane(const AIFloat3& pos, const std::vector<bool>* isTaken) const
+const CCreepPlanner::SLane* CCreepPlanner::PickLane(const AIFloat3& pos, const std::vector<bool>* isTaken) const
 {
-	const SLane* best = nullptr;
-	float bestSqDist = std::numeric_limits<float>::max();
+	// The three nearest not taken; of them the first (lanes are in rank order)
+	std::vector<std::pair<float, size_t>> near3;
 	for (size_t i = 0; i < lanes.size(); ++i) {
-		const float sqDist = lanes[i].end.SqDistance2D(pos);
-		if (((isTaken == nullptr) || !(*isTaken)[i]) && (sqDist < bestSqDist)) {
-			bestSqDist = sqDist;
-			best = &lanes[i];
+		if ((isTaken == nullptr) || !(*isTaken)[i]) {
+			near3.push_back({lanes[i].end.SqDistance2D(pos), i});
 		}
 	}
-	return best;
+	if (near3.empty()) {
+		return nullptr;
+	}
+	const size_t n = std::min<size_t>(near3.size(), NEAREST_LANES);
+	std::partial_sort(near3.begin(), near3.begin() + n, near3.end());
+	size_t best = near3[0].second;
+	for (size_t j = 1; j < n; ++j) {
+		best = std::min(best, near3[j].second);
+	}
+	return &lanes[best];
 }
 
 void CCreepPlanner::AddFail(int chokeId)
 {
-	SFail& f = fails[chokeId];
-	++f.count;
-	f.frame = circuit->GetLastFrame();
+	SRest& r = rests[chokeId];
+	++r.fails;
+	r.lastFail = circuit->GetLastFrame();
+	if (r.fails >= 2) {
+		Rest(r);
+	}
+}
+
+void CCreepPlanner::Rest(SRest& r)
+{
+	// 2 minutes, doubling while the lane keeps failing within 10 minutes of its last rest
+	const int frame = circuit->GetLastFrame();
+	if ((r.lastRest < 0) || (frame - r.lastRest > REST_RESET_FRAMES)) {
+		r.rests = 0;
+	}
+	r.until = frame + (MEMORY_FRAMES << std::min(r.rests, MAX_DOUBLINGS));
+	++r.rests;
+	r.lastRest = frame;
+	r.fails = 0;
 }
 
 } // namespace circuit

@@ -3042,7 +3042,7 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	return picker->Order(order);
 }
 
-int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius)
+int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius, bool isHelpOnly)
 {
 	if (!IsTurretFree(unit) || IsMetalStalling()) {
 		return 0;
@@ -3053,6 +3053,9 @@ int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre
 	}
 	if (AssistTurret(unit, centre, nullptr, true, "creep")) {
 		return 1;
+	}
+	if (isHelpOnly) {
+		return -2;  // not one AssistTurret takes (a porc job not started, an ally's): never a second turret beside it
 	}
 	if (!circuit->GetMilitaryManager()->CanAffordTurret(GetCreepCost(unit, centre))) {
 		return 0;

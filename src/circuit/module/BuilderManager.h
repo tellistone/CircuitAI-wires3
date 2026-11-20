@@ -315,9 +315,10 @@ public:
 	std::string OrderTurretAt(const springai::AIFloat3& pos, CCircuitDef* def);
 	// turret.creep (CCreepPlanner): the pusher's turret within radius of centre, on the field callers' gates (free,
 	// metal not stalling, a def it can build there, help with a job near centre first), with the account holding
-	// GetCreepCost. 1: ordered or helping, 0: wait (busy, stall or budget), -1: no spot (the step failed), -2: no def it
-	// can build there (the pusher's fault, not the step's)
-	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, float radius);
+	// GetCreepCost. isHelpOnly: only help the job there, never order another. 1: ordered or helping, 0: wait (busy,
+	// stall or budget), -1: no spot (the step failed), -2: no def it can build there, or no job it may help (the
+	// pusher's, not the step's)
+	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, float radius, bool isHelpOnly);
 	// What the turret account must hold for a creep order by unit at centre: turret.creep_budget x the dearest def it
 	// would choose from (unlocked tiers too); < 0 if none
 	float GetCreepCost(CCircuitUnit* unit, const springai::AIFloat3& centre) const;
