@@ -39,7 +39,7 @@ CBMexTask::~CBMexTask()
 
 bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!IBuilderTask::CanAssignTo(unit)) {
+	if (!IBuilderTask::CanAssignTo(unit) || IsSpotTaken()) {  // an allied AI's builder heads there already
 		return false;
 	}
 	if (unit->GetCircuitDef()->IsAttacker()) {
@@ -58,15 +58,72 @@ bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 			|| (circuit->GetLastFrame() > circuit->GetEconomyManager()->GetMexEscortFrame());
 }
 
+bool CBMexTask::IsSpotTaken() const
+{
+	return (target == nullptr) && (claimedSpot < 0) && utils::is_valid(buildPos)
+			&& !manager->GetCircuit()->GetMetalManager()->IsOpenSpot(buildPos);
+}
+
+void CBMexTask::AssignTo(CCircuitUnit* unit)
+{
+	IBuilderTask::AssignTo(unit);
+	// Claim the spot for the whole ally team as soon as a builder heads for it, not on arrival (Execute): allied AIs
+	// share the metal manager, so their searches skip it and they don't all walk to the same spot
+	TryClaim();
+}
+
+void CBMexTask::RemoveAssignee(CCircuitUnit* unit)
+{
+	IBuilderTask::RemoveAssignee(unit);
+	// Nobody walks there any more (retreat, a nearer job): let an ally have the spot.
+	// The next builder of ours to take the job claims it again
+	if (units.empty()) {
+		Unclaim();
+	}
+}
+
+void CBMexTask::Update()
+{
+	if (units.empty() && IsSpotTaken()) {  // an allied AI's builder heads there: free the job slot now, not on timeout
+		manager->AbortTask(this);
+		return;
+	}
+	IBuilderTask::Update();
+}
+
+bool CBMexTask::TryClaim()
+{
+	if ((target != nullptr) || !utils::is_valid(buildPos)) {
+		return false;
+	}
+	CMetalManager* metalMgr = manager->GetCircuit()->GetMetalManager();
+	const int index = metalMgr->FindNearestSpot(buildPos);
+	if ((index < 0) || ((index != claimedSpot) && !metalMgr->IsOpenSpot(index))) {
+		return false;
+	}
+	metalMgr->SetOpenSpot(index, false);
+	claimedSpot = index;
+	return true;
+}
+
+void CBMexTask::Unclaim()
+{
+	// Never once a frame is placed: it holds the spot, and the mex destroyed handler reopens it
+	if ((claimedSpot >= 0) && (target == nullptr)) {
+		manager->GetCircuit()->GetMetalManager()->SetOpenSpot(claimedSpot, true);
+		claimedSpot = -1;
+	}
+}
+
 void CBMexTask::Cancel()
 {
 	if ((target == nullptr) && utils::is_valid(buildPos)) {
 		CCircuitAI* circuit = manager->GetCircuit();
 		int index = circuit->GetMetalManager()->FindNearestSpot(buildPos);
-		circuit->GetMetalManager()->SetOpenSpot(index, true);
 		circuit->GetEconomyManager()->SetOpenSpot(index, true);
 		SetBuildPos(-RgtVector);
 	}
+	Unclaim();  // only our own claim: a spot an ally heads for stays closed
 }
 
 void CBMexTask::Execute(CCircuitUnit* unit)
@@ -90,9 +147,7 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 		int index = metalMgr->FindNearestSpot(buildPos);
 		if (index >= 0) {
 			if (circuit->GetMap()->IsPossibleToBuildAt(buildUDef, buildPos, facing)) {
-				if ((State::ENGAGE == state) || metalMgr->IsOpenSpot(index)) {  // !isFirstTry
-					state = State::ENGAGE;  // isFirstTry = false
-					metalMgr->SetOpenSpot(index, false);
+				if (TryClaim()) {  // ours, or still open
 					TRY_UNIT(circuit, unit,
 						unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 					)
@@ -101,7 +156,7 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 					economyMgr->SetOpenSpot(index, true);
 				}
 			} else {
-				metalMgr->SetOpenSpot(index, true);
+				Unclaim();
 				economyMgr->SetOpenSpot(index, true);
 			}
 		}
@@ -124,6 +179,7 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 	if (index >= 0) {
 		SetBuildPos(spots[index].position);
 		economyMgr->SetOpenSpot(index, false);
+		TryClaim();  // for the ally team too, or allied builders walk here meanwhile
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)
