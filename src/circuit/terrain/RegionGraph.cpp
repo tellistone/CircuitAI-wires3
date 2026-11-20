@@ -398,12 +398,18 @@ void CRegionGraph::MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& c
 void CRegionGraph::SplitOpen(const SParams& params)
 {
 	const int n = mask.Size();
+	// The cell under the middle of band i of k across size cells. A middle on a cell border takes the cell nearer the
+	// map's middle, so band k-1-i takes the mirror cell (size-1-x)
+	auto middleOf = [](int i, int k, int size) {
+		const int twice = (2 * i + 1) * size;  // 2k x the middle
+		return twice / (2 * k) - (((twice % (2 * k) == 0) && (2 * i + 1 > k)) ? 1 : 0);
+	};
 	auto gridOf = [&](int nx, int nz) {  // the grid's cells in regions with room for two pieces
 		std::vector<int> seeds;
 		for (int j = 0; j < nz; ++j) {
 			for (int i = 0; i < nx; ++i) {
-				const int x = (2 * i + 1) * mask.width / (2 * nx);  // the middle of its column
-				const int z = (2 * j + 1) * mask.height / (2 * nz);
+				const int x = middleOf(i, nx, mask.width);
+				const int z = middleOf(j, nz, mask.height);
 				const int cell = z * mask.width + x;
 				const int r = regionOf[cell];
 				if ((r != NO_REGION) && (regions[r].area >= 2.f * params.minArea)) {
@@ -413,8 +419,8 @@ void CRegionGraph::SplitOpen(const SParams& params)
 		}
 		return seeds;
 	};
-	std::vector<int> seedsIn;  // per region
-	auto countOf = [&](const std::vector<int>& seeds) {  // the regions there would be
+	std::vector<int> seedsIn;  // per region, set by countOf
+	auto countOf = [&](const std::vector<int>& seeds) {  // the regions there would be; seedsIn: the seeds in each
 		seedsIn.assign(regions.size(), 0);
 		for (int s : seeds) {
 			++seedsIn[regionOf[s]];
@@ -457,7 +463,7 @@ void CRegionGraph::SplitOpen(const SParams& params)
 	};
 	std::vector<int> seeds;
 	auto cutBy = [&](std::vector<int> grid) {  // seeds: the grid's in regions it cuts, less those of pieces under minArea
-		countOf(grid);
+		countOf(grid);  // seedsIn
 		for (int i = 0; i < n; ++i) {
 			group[i] = ((regionOf[i] != NO_REGION) && (seedsIn[regionOf[i]] > 1)) ? regionOf[i] : -1;
 		}

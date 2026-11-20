@@ -19,6 +19,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - A grid cut that can't reach `min_count` (a `min_share` above 0.6, or ground in small islands) keeps the grid
     that made the most regions, not the last one tried. With `min_area` 0 and no ground at all, the cut no longer
     loops forever.
+  - The cut's grid is now exactly mirror-symmetric: a column whose middle fell on a cell border took the cell to
+    its right on both halves, one cell off its mirror. A 256-cell-wide open map cut in two now gives two halves of
+    32,768 cells each, was 32,512 and 33,024; on point-mirrored test maps 1 to 2 more points of cells mirror.
   - On a trace of Red Comet: 20 regions of 0.6 to 1.5 times the average, was 25 of 0.03 to 4 times. Over 180 random
     crater maps at `min_count` 12, 20 and 30, the biggest region is on average 1.2 to 1.8 times the average, was 1.4
     to 13 times; the regions under 0.4 times the average left are pockets of the first build.
