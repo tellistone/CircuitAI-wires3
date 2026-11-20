@@ -199,19 +199,14 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	}
 	std::map<CCircuitUnit*, CEnemyInfo*> meleeTargets;
 	AssignMeleeTargets(claims, frame, meleeTargets);
-	struct SOrder {
-		size_t claim;  // index in claims
-		float range;
-		CEnemyInfo* enemy;  // its target: the group's, or another for melee (AssignMeleeTargets)
-	};
 	std::vector<SOrder> orders;  // units to order
 	for (size_t i = 0; i < claims.size(); ++i) {
 		CCircuitUnit* unit = claims[i].unit;
 		if ((unit->Blocker() != nullptr) || IsScooting(unit)) {
 			continue;  // Do not interrupt current action (or a reloading unit's step back)
 		}
-		if (IsOutOfReach(unit, frame)) {
-			continue;  // far behind: keep following the squad's path instead of a straight walk to a spot
+		if (IsOutOfReach(unit, frame) || IsEscortUnit(unit)) {
+			continue;  // far behind: keep following the squad's path instead of a straight walk to a spot; escorts below
 		}
 		unit->GetTravelAct()->StateWait();
 
@@ -224,15 +219,23 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			orders.push_back({i, GetSpotRange(unit, enemy), enemy});
 		}
 	}
-	if (orders.empty()) {
-		return;
+	const float safeThreat = GetEscapeSafeThreat();
+	const int timeout = frame + FRAMES_PER_SEC * 60;
+	if (!orders.empty()) {
+		OrderOnTarget(claims, orders, frame, isDirect, safeThreat, timeout);
 	}
+	OrderEscorts(claims, frame, isRepeatAttack, safeThreat, timeout);
+}
+
+void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SOrder>& orders, int frame,
+		bool isDirect, float safeThreat, int timeout)
+{
+	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
+	const AIFloat3& tPos = target->GetPos();
 	lastOrderTargetPos = tPos;
 	std::stable_sort(orders.begin(), orders.end(), [](const SOrder& a, const SOrder& b) { return a.range > b.range; });
-	const float safeThreat = GetEscapeSafeThreat();
 	float arcBearing;
 	const float* arc = GetFireArcBearing(arcBearing) ? &arcBearing : nullptr;  // once for the whole group
-	const int timeout = frame + FRAMES_PER_SEC * 60;
 	for (const SOrder& order : orders) {
 		SFireClaim& claim = claims[order.claim];
 		CCircuitUnit* unit = claim.unit;
@@ -395,7 +398,9 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 	bool isAnyElsewhere = false;  // a unit on another target: it may keep it
 	for (const SFireClaim& c : claims) {
 		CCircuitUnit* unit = c.unit;
-		if (!IsCloseSpot(unit, target) || (unit->Blocker() != nullptr) || IsScooting(unit) || IsOutOfReach(unit, frame)) {
+		if (!IsCloseSpot(unit, target) || (unit->Blocker() != nullptr) || IsScooting(unit) || IsOutOfReach(unit, frame)
+			|| IsEscortUnit(unit))
+		{
 			continue;
 		}
 		const bool isOnTarget = (unit->GetTarget() == target);
@@ -606,7 +611,8 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	const int arcSteps = isClose ? ARC_STEPS_CLOSE : ARC_STEPS;
 	const float arcSpan = isClose ? ARC_SPAN_CLOSE : ARC_SPAN;
 	auto add = [&](const AIFloat3& p) {
-		if ((isSight && (!terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)
+		if ((isSpotDisc && (p.SqDistance2D(spotDiscPos) > spotDiscSqRadius))
+			|| (isSight && (!terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)
 			|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p, WALK_CLIMB))) || !IsFireSpotAllowed(p))
 		{
 			return;
@@ -719,8 +725,10 @@ bool IFighterTask::IsAllHolding() const
 	const AIFloat3& tPos = target->GetPos();
 	int ranged = 0;
 	for (CCircuitUnit* unit : units) {
-		if ((GetSpotRange(unit) < SQUARE_SIZE * 4) || (unit->Blocker() != nullptr) || IsOutOfReach(unit, frame)) {
-			continue;  // no spot (direct Attack), busy, or a straggler: Attack gives it no spot
+		if ((GetSpotRange(unit) < SQUARE_SIZE * 4) || (unit->Blocker() != nullptr) || IsOutOfReach(unit, frame)
+			|| IsEscortUnit(unit))
+		{
+			continue;  // no spot (direct Attack), busy, a straggler: Attack gives it no spot; escorts pick their own
 		}
 		++ranged;
 		if ((unit->GetTarget() != target) || (fireSpots.find(unit) != fireSpots.end()) || IsScooting(unit)) {

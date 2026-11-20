@@ -64,6 +64,18 @@ protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
 	virtual bool GetFireArcBearing(float& outBearing) const override;
 
+	/*
+	 * Escorts (quota.escort). Support units (role or "support" attribute) are members like any other: they walk the
+	 * group's route in its formation, count in its strength and flee with it. Only Attack orders them apart:
+	 * - an unarmed one (Aspis, Funnelweb) never gets an attack order; in a fight it walks to the core's centre
+	 * - an armed one, while the group's core (its non-support units) holds enough of its power (isEscortMode), fires
+	 *   only from its stay disc around the core's centre: the nearest threat to the core it can hit from there, else
+	 *   the group's target, else it holds in the disc. Otherwise (a thin core, or none) it is a normal member
+	 */
+	virtual bool IsEscortUnit(CCircuitUnit* unit) const override;
+	virtual void OrderEscorts(std::vector<SFireClaim>& claims, int frame, bool isRepeat, float safeThreat,
+			int timeout) override;
+
 private:
 	// A target route goal: one candidate target, or one firing cell of a cell target (quota.attack_static_cells:
 	// a building, or a parked mobile)
@@ -492,6 +504,27 @@ private:
 	void MoveGroupTo(const springai::AIFloat3& pos);
 	void MoveUnitTo(CCircuitUnit* unit, const springai::AIFloat3& pos, int frame);
 
+	/*
+	 * Escorts (quota.escort, see IsEscortUnit)
+	 */
+	// Every update: escort mode on at core_share_on of the group's power held by its core, off below core_share_off,
+	// each change held mode_hold_sec; no core: off at once
+	void UpdateEscortMode(int frame);
+	// The centre of the core units that aren't stragglers (within GetGroupRadius of the leader); the leader with none
+	// (outPositions: those units' positions)
+	springai::AIFloat3 GetCoreCentre(int frame, std::vector<springai::AIFloat3>* outPositions = nullptr) const;
+	// An armed escort's stay disc: stay_radius, grown by its range past the group's fire range (at most offset_cap)
+	float GetStayRadius(const CCircuitDef* cdef) const;
+	// Share of an armed escort's power the target pick counts: how much of the group's fire range it reaches from its
+	// disc (1 for every other unit), so the group doesn't pick fights its core would fight alone
+	float GetEscortReach(const CCircuitDef* cdef) const;
+	// The group's units are all unarmed support units (its last armed one left): they go back to finding a group
+	// (CSupportTask), or they'd walk to the front alone
+	bool ReleaseUnarmed();
+	bool isEscortMode;
+	int escortModeFrame;  // the other mode has been called for since this frame (-1: no change pending; -2: never set)
+	std::map<const CEnemyInfo*, int> escortBans;  // no spot in an escort's disc by it lately, until when (compared only)
+
 	float minPower;
 	bool IsArmy() const { return attackPower >= minPower; }  // at or above quota.attack
 	// quota.attack as a floor: past it the group may walk to targets anywhere, under it only on our ground.
@@ -530,7 +563,7 @@ private:
 	std::map<std::pair<ICoreUnit::Id, int>, SRejection> rejectedUntil;
 	Bans cellBans;  // cell targets with no safe firing cell (beyond LOS range only)
 	Bans heldBans;  // targets the whole group held off from (IsAllHolding: no safe firing spot), in range or not
-	// Power-weighted median of the weapon ranges of the non-support units that can hit land / under-water targets
+	// Power-weighted median of the weapon ranges of the units that can hit land / under-water targets, escorts left out
 	float fireRangeLand;
 	float fireRangeWater;
 	int targetRouteTries;  // routes so far in this target decision (MAX_TARGET_ROUTES)

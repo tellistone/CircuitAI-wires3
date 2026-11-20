@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <memory>
 
 namespace circuit {
@@ -61,6 +62,21 @@ public:
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const { return false; }
 
 	/*
+	 * Support units' speed (quota.escort.speed_min): a group with a core (non-support units) takes support units only
+	 * if they keep up with it, so it never slows down for them. Checked when units or groups join, never afterwards
+	 */
+	struct SSpeedMix {
+		float core = std::numeric_limits<float>::max();  // the slowest non-support unit; max: none
+		float support = std::numeric_limits<float>::max();  // the slowest support unit; max: none
+		void Add(const CCircuitDef* cdef);
+	};
+	SSpeedMix GetSpeedMix() const;
+	// What joins with unit: the whole group it leads (attack or gathering), else the unit alone
+	static SSpeedMix GetSpeedMix(CCircuitUnit* unit);
+	// Together with joiner: no core, no support units, or the slowest support unit at speedMin x the slowest core one
+	bool IsSpeedMixOk(const SSpeedMix& joiner, float speedMin) const;
+
+	/*
 	 * Line formation (CFormation, behaviour.json "formation") while the squad walks its path outside combat
 	 */
 	// Lays the line out (at most twice a second) and releases units it finds stuck
@@ -81,17 +97,22 @@ protected:
 	void EndLineFacing() { formation.EndFacing(); }  // the squad walks elsewhere: the line stops facing now
 
 private:
+	// Should unit lead instead of current (AssignTo, FindLeader)?
+	static bool IsBetterLeader(const CCircuitUnit* unit, const CCircuitUnit* current);
 	void FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd);
 	// Formation on in config, allowed by the task, ROAM, and the leader walks a path (the line follows it)
 	bool IsFormationActive(int frame) const;
 
 	bool IsMergeSafe() const;
 
-protected:
+public:
 	// The group led by unit moves like ours: top speeds within speedRatio of each other, its leader no worse a mover
 	// than ours (a smaller terrain area: it would take the lead (FindLeader) and drag the group back, or get stranded on
-	// routes only our leader takes), and the same movement type (amphibious may join landers and floaters)
+	// routes only our leader takes), and the same movement type (amphibious may join landers and floaters).
+	// Public for the unarmed support walker's host pick (CSupportTask)
 	bool IsMoveCompatible(CCircuitUnit* unit, float speedRatio) const;
+
+protected:
 	// Threat on the line from 'from' towards 'to' (out to maxReach) stays below allowedAt(spot, threat there) at each
 	// sampled spot (one threat square apart); allowances are above 0, so no threat is always safe. The threat is
 	// passed for allowances that compare the same when they skip work there (IFighterTask::GetAllowedThreatFor)

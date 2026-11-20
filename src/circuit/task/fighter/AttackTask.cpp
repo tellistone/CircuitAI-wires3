@@ -20,7 +20,6 @@
 #include "terrain/path/QueryPathMulti.h"
 #include "unit/action/FightAction.h"
 #include "unit/action/MoveAction.h"
-#include "unit/action/SupportAction.h"
 #include "unit/enemy/EnemyManager.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
@@ -117,11 +116,23 @@ static constexpr int RALLY_FIGHT_MEMORY_FRAMES = FRAMES_PER_SEC * 6;
 static constexpr float HOLD_SWITCH_SHARE = 0.8f;
 // A hold spot this near is reached straight (no route query); a block standing facing slides there
 static constexpr float HOLD_NEAR = DEFAULT_SLACK * 4;
+// Escorts (quota.escort). escortModeFrame before the mode's first setting: it is set at once, with no hold
+static constexpr int ESCORT_MODE_UNSET = -2;
+// A threat to the core: an armed mobile enemy within its weapon range + this many seconds of its travel of a core unit
+static constexpr float ESCORT_THREAT_SEC = 2.f;
+// Firing-spot searches per escort per order round; an enemy with no spot in an escort's disc is skipped this long
+static constexpr int ESCORT_TRIES = 2;
+static constexpr int ESCORT_BAN = FRAMES_PER_SEC * 5;
+// An escort with nothing to hit outside its disc steps back in to this share of the radius from the core's centre
+static constexpr float ESCORT_HOLD_IN = 0.8f;
+// An unarmed escort is sent back to the core's centre again once this share of stay_radius from it (or on repeats)
+static constexpr float ESCORT_SHIELD_SLACK = 0.5f;
 
 namespace {
-// Power-weighted median weapon range against one target type, of the non-support units that can hit it (or of all
-// units, if none can): the group's fire range for firing cells (quota.attack_static_cells)
-float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::RangeType rt)
+// Power-weighted median weapon range against one target type, of the units that can hit it (or of all units, if none
+// can), support units left out while they are escorts (isNoSupport): the group's fire range for firing cells
+// (quota.attack_static_cells), escorts' stay discs and their reach (quota.escort)
+float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::RangeType rt, bool isNoSupport)
 {
 	static std::vector<std::pair<float, float>> ranges;  // range, power; NOTE: micro-opt
 	ranges.clear();
@@ -130,7 +141,7 @@ float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::Ran
 		for (CCircuitUnit* unit : units) {
 			CCircuitDef* cdef = unit->GetCircuitDef();
 			const float range = cdef->GetMaxRange(rt);
-			if ((pass == 0) && (cdef->IsRoleSupport() || (range <= 0.f))) {
+			if ((pass == 0) && ((isNoSupport && cdef->IsRoleSupport()) || (range <= 0.f))) {
 				continue;
 			}
 			const float power = std::max(cdef->GetPower(), 1e-3f);
@@ -152,6 +163,8 @@ float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::Ran
 
 CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		: ISquadTask(mgr, FightType::ATTACK, powerMod)
+		, isEscortMode(false)
+		, escortModeFrame(ESCORT_MODE_UNSET)
 		, minPower(minPower)
 		, isPastFloor(false)
 		, isOwnGroundOnly(false)
@@ -227,7 +240,11 @@ bool CAttackTask::CanAssignTo(CCircuitUnit* unit) const
 
 bool CAttackTask::IsCompatible(CCircuitUnit* unit) const
 {
-	return IsMoveCompatible(unit, GetMilitaryMgr()->GetAttackMerge().speedRatio);  // quota.attack_merge.speed_ratio
+	// quota.attack_merge.speed_ratio; quota.escort.speed_min: a group with a core never slows down for support units
+	// (a unit leading a group joins with that whole group: GetSpeedMix)
+	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	return IsMoveCompatible(unit, militaryMgr->GetAttackMerge().speedRatio)
+		&& IsSpeedMixOk(GetSpeedMix(unit), militaryMgr->GetEscortCfg().speedMin);
 }
 
 void CAttackTask::AssignTo(CCircuitUnit* unit)
@@ -235,10 +252,7 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 	ISquadTask::AssignTo(unit);
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	UpdateHighestRange();
-
-	if (cdef->IsRoleSupport()) {
-		unit->PushBack(new CSupportAction(unit));
-	}
+	UpdateEscortMode(manager->GetCircuit()->GetLastFrame());
 
 	int squareSize = manager->GetCircuit()->GetPathfinder()->GetSquareSize();
 	ITravelAction* travelAction;
@@ -261,6 +275,7 @@ void CAttackTask::RemoveAssignee(CCircuitUnit* unit)
 		return;
 	}
 	UpdateHighestRange();
+	UpdateEscortMode(manager->GetCircuit()->GetLastFrame());
 	lastRoute.path = nullptr;  // the group changed: next decision plans anew (speed, strength)
 	// Under quota.attack after a loss the group stays together (it used to break up and walk home
 	// to gather); Update() looks for a stronger group to reinforce while it is not engaged.
@@ -270,6 +285,7 @@ void CAttackTask::Merge(ISquadTask* task)
 {
 	ISquadTask::Merge(task);
 	UpdateHighestRange();
+	UpdateEscortMode(manager->GetCircuit()->GetLastFrame());
 	lastRoute.path = nullptr;  // the group changed: next decision plans anew (speed, strength)
 	// Both groups' cover discs are stale (the merged one's units are in our strength now): collect them again, or a
 	// decision later this update would count those units twice
@@ -287,8 +303,8 @@ void CAttackTask::UpdateHighestRange()
 		highestRange = std::max(highestRange, std::max(cdef->GetMaxRange(), cdef->GetLosRadius()));
 	}
 
-	fireRangeLand = WeightedMedianRange(units, CCircuitDef::RangeType::LAND);
-	fireRangeWater = WeightedMedianRange(units, CCircuitDef::RangeType::WATER);
+	fireRangeLand = WeightedMedianRange(units, CCircuitDef::RangeType::LAND, isEscortMode);
+	fireRangeWater = WeightedMedianRange(units, CCircuitDef::RangeType::WATER, isEscortMode);
 }
 
 void CAttackTask::Start(CCircuitUnit* unit)
@@ -318,9 +334,13 @@ void CAttackTask::Update()
 		return;
 	}
 	AbsorbWeakerTasks();
+	if (ReleaseUnarmed()) {  // task aborted
+		return;
+	}
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+	UpdateEscortMode(frame);  // its hold runs out between joins and losses too
 	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot (before the escape: Cornered engages too)
 	if (UpdateEscape(frame)) {
 		return;
@@ -509,8 +529,21 @@ float CAttackTask::GetJointSafeThreat(const CAttackTask* squad) const
 
 float CAttackTask::GetPickStrength(int frame) const
 {
-	// Current-health strength (the measure the escape uses, so we don't pick fights we'd flee from at once)
-	return GetSafeThreat() * ((frame < fleeFrame + CAUTIOUS_FRAMES) ? CAUTIOUS_POWER : 1.f);
+	// Current-health strength (the measure the escape uses, so we don't pick fights we'd flee from at once).
+	// Armed escorts count at the share of the group's fire range they reach from their stay discs (GetEscortReach):
+	// the group doesn't take fights its core would end up fighting alone. The escape counts them in full
+	float reachShare = 1.f;
+	if (isEscortMode) {
+		float sum = 0.f;
+		float reached = 0.f;
+		for (const SUnitStrength& s : GetUnitStrengths()) {
+			sum += s.power;
+			CCircuitDef* cdef = s.unit->GetCircuitDef();
+			reached += (cdef->IsRoleSupport() && cdef->IsAttacker()) ? s.power * GetEscortReach(cdef) : s.power;
+		}
+		reachShare = (sum > 0.f) ? reached / sum : 1.f;
+	}
+	return GetSafeThreat() * reachShare * ((frame < fleeFrame + CAUTIOUS_FRAMES) ? CAUTIOUS_POWER : 1.f);
 }
 
 float CAttackTask::GetKeepStrength(const AIFloat3& targetPos, float strength) const
@@ -2948,6 +2981,337 @@ void CAttackTask::MoveUnitTo(CCircuitUnit* unit, const AIFloat3& pos, int frame)
 		unit->CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
 	)
+}
+
+/*
+ * Escorts (quota.escort)
+ */
+
+bool CAttackTask::IsEscortUnit(CCircuitUnit* unit) const
+{
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	return cdef->IsRoleSupport() && (isEscortMode || !cdef->IsAttacker());
+}
+
+void CAttackTask::UpdateEscortMode(int frame)
+{
+	// Core: the non-support units, newcomers too. Power: the def power attackPower sums
+	const CMilitaryManager::SEscortCfg& cfg = GetMilitaryMgr()->GetEscortCfg();
+	float power = 0.f;
+	float corePower = 0.f;
+	int coreCount = 0;
+	for (CCircuitUnit* unit : units) {
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		power += cdef->GetPower();
+		if (!cdef->IsRoleSupport()) {
+			corePower += cdef->GetPower();
+			++coreCount;
+		}
+	}
+	const float share = (power > 0.f) ? (corePower / power) : ((coreCount > 0) ? 1.f : 0.f);
+	const bool isWanted = (coreCount > 0) && (share >= (isEscortMode ? cfg.coreShareOff : cfg.coreShareOn));
+	const bool isFirst = (ESCORT_MODE_UNSET == escortModeFrame);
+	if (isWanted == isEscortMode) {
+		escortModeFrame = -1;
+		return;
+	}
+	// Each change holds mode_hold_sec first, so a group near a threshold doesn't flip with every loss and join.
+	// No core: off at once
+	if (!isFirst && (coreCount > 0)) {
+		if (escortModeFrame < 0) {
+			escortModeFrame = frame;
+			return;
+		}
+		if (frame < escortModeFrame + cfg.modeHoldFrames) {
+			return;
+		}
+	}
+	isEscortMode = isWanted;
+	escortModeFrame = -1;
+	UpdateHighestRange();  // the group's fire range leaves escorts out
+	lastRoute.path = nullptr;  // the pick strength changed: next decision plans anew
+	const int supportCount = static_cast<int>(units.size()) - coreCount;
+	if ((supportCount > 0) && (leader != nullptr)) {
+		manager->GetCircuit()->LOG("ESCORT #%i (%i units, %i support) mode %s: %s, core share %.2f", leader->GetId(),
+				static_cast<int>(units.size()), supportCount, isEscortMode ? "on" : "off",
+				(coreCount == 0) ? "no core" : isEscortMode ? "core holds on" : "core thin", share);
+	}
+}
+
+AIFloat3 CAttackTask::GetCoreCentre(int frame, std::vector<AIFloat3>* outPositions) const
+{
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	const float sqGroupRadius = SQUARE(GetGroupRadius());
+	AIFloat3 sum(ZeroVector);
+	int count = 0;
+	for (CCircuitUnit* unit : units) {
+		if (unit->GetCircuitDef()->IsRoleSupport()) {
+			continue;
+		}
+		const AIFloat3& pos = unit->GetPos(frame);
+		if (pos.SqDistance2D(leaderPos) > sqGroupRadius) {
+			continue;  // a straggler walking in
+		}
+		sum += pos;
+		++count;
+		if (outPositions != nullptr) {
+			outPositions->push_back(pos);
+		}
+	}
+	if (count == 0) {
+		return leaderPos;
+	}
+	AIFloat3 centre = sum / count;
+	CTerrainManager::CorrectPosition(centre);
+	return centre;
+}
+
+float CAttackTask::GetStayRadius(const CCircuitDef* cdef) const
+{
+	// No direction: the disc doesn't swing across the group as it turns. An escort that outranges the group still
+	// stands behind the core: firing spots lie at about 0.9x its range from the target, on the side facing it
+	const CMilitaryManager::SEscortCfg& cfg = GetMilitaryMgr()->GetEscortCfg();
+	const float range = std::max(cdef->GetMaxRange(CCircuitDef::RangeType::LAND),
+			cdef->GetMaxRange(CCircuitDef::RangeType::WATER));
+	return cfg.stayRadius + std::min(cfg.offsetCap, std::max(0.f, range - GetGroundFireRange()));
+}
+
+float CAttackTask::GetEscortReach(const CCircuitDef* cdef) const
+{
+	const float fireRange = GetGroundFireRange();
+	if (fireRange <= 0.f) {
+		return 1.f;
+	}
+	const float range = std::max(cdef->GetMaxRange(CCircuitDef::RangeType::LAND),
+			cdef->GetMaxRange(CCircuitDef::RangeType::WATER));
+	return std::min(1.f, (range + GetMilitaryMgr()->GetEscortCfg().stayRadius) / fireRange);
+}
+
+bool CAttackTask::ReleaseUnarmed()
+{
+	if (units.empty()) {
+		return false;
+	}
+	for (CCircuitUnit* unit : units) {
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		if (!cdef->IsRoleSupport() || cdef->IsAttacker()) {
+			return false;
+		}
+	}
+	manager->GetCircuit()->LOG("ESCORT #%i (%i units) no armed unit left: back to finding a group", leader->GetId(),
+			static_cast<int>(units.size()));
+	static std::vector<CCircuitUnit*> released;  // NOTE: micro-opt
+	released.assign(units.begin(), units.end());
+	ReleaseStuck(released);  // to the idle pool (a new CSupportTask); the task aborts with its last unit
+	return true;
+}
+
+void CAttackTask::OrderEscorts(std::vector<SFireClaim>& claims, int frame, bool isRepeat, float safeThreat,
+		int timeout)
+{
+	// Escorts in the claims, and the widest reach of the armed ones (their candidate enemies)
+	static std::vector<size_t> escorts;  // NOTE: micro-opt
+	escorts.clear();
+	bool isArmed = false;
+	float maxReach = 0.f;
+	const CMilitaryManager::SEscortCfg& cfg = GetMilitaryMgr()->GetEscortCfg();
+	for (size_t i = 0; i < claims.size(); ++i) {
+		CCircuitUnit* unit = claims[i].unit;
+		if (!IsEscortUnit(unit) || (unit->Blocker() != nullptr) || IsScooting(unit) || IsOutOfReach(unit, frame)) {
+			continue;  // busy, or a straggler (Engage walks it to the leader)
+		}
+		escorts.push_back(i);
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		if (cdef->IsAttacker()) {
+			isArmed = true;
+			maxReach = std::max(maxReach, GetStayRadius(cdef) * cfg.keepMod + cdef->GetMaxRange());
+		}
+	}
+	if (escorts.empty()) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	static std::vector<AIFloat3> corePositions;  // NOTE: micro-opt
+	corePositions.clear();
+	const AIFloat3 centre = GetCoreCentre(frame, &corePositions);
+
+	// Candidates, once for all escorts: enemies we see within the widest reach of the centre. A threat to the core
+	// is an armed mobile one within its weapon range + ESCORT_THREAT_SEC of its travel of a core unit; nearest first
+	struct SCandidate {
+		CEnemyInfo* enemy;
+		float sqCoreDist;  // to the nearest core unit
+		bool isThreat;
+	};
+	static std::vector<SCandidate> cands;  // NOTE: micro-opt
+	cands.clear();
+	if (isArmed) {
+		for (auto it = escortBans.begin(); it != escortBans.end();) {
+			it = (it->second <= frame) ? escortBans.erase(it) : std::next(it);
+		}
+		const float sqMaxReach = SQUARE(maxReach + DEFAULT_SLACK);
+		for (auto& kv : circuit->GetEnemyInfos()) {
+			CEnemyInfo* enemy = kv.second;
+			if (enemy->IsHidden() || (enemy->GetPos().SqDistance2D(centre) > sqMaxReach)) {
+				continue;
+			}
+			float sqCoreDist = std::numeric_limits<float>::max();
+			for (const AIFloat3& p : corePositions) {
+				sqCoreDist = std::min(sqCoreDist, p.SqDistance2D(enemy->GetPos()));
+			}
+			float eRange;
+			CCircuitDef* edef = enemy->GetCircuitDef();
+			const bool isThreat = (edef != nullptr) && IsGroundDanger(enemy, false, eRange)
+					&& (sqCoreDist <= SQUARE(eRange + edef->GetSpeed() * ESCORT_THREAT_SEC));
+			cands.push_back({enemy, sqCoreDist, isThreat});  // not a threat: only the group's target or a kept one
+		}
+		std::stable_sort(cands.begin(), cands.end(), [](const SCandidate& a, const SCandidate& b) {
+			return a.isThreat && (!b.isThreat || (a.sqCoreDist < b.sqCoreDist));
+		});
+	}
+
+	for (size_t i : escorts) {
+		SFireClaim& claim = claims[i];
+		CCircuitUnit* unit = claim.unit;
+		CCircuitDef* cdef = unit->GetCircuitDef();
+		const AIFloat3& uPos = unit->GetPos(frame);
+		const bool wasWalking = unit->GetTravelAct()->IsActive();
+		unit->GetTravelAct()->StateWait();
+
+		// Unarmed (shields): to the core's centre, never an attack order
+		if (!cdef->IsAttacker()) {
+			fireSpots.erase(unit);
+			claim.pos = centre;
+			if (isRepeat || wasWalking || (uPos.SqDistance2D(centre) > SQUARE(cfg.stayRadius * ESCORT_SHIELD_SLACK))) {
+				unit->ClearTarget();
+				MoveUnitTo(unit, centre, frame);
+			}
+			continue;
+		}
+
+		const float discRadius = GetStayRadius(cdef);
+		const float keepRadius = discRadius * cfg.keepMod;
+		const float sqSpeed = SQUARE(cdef->GetSpeed() * CHASE_SPEED_MOD / FRAMES_PER_SEC);
+		const float sqOutrangeSpeed = SQUARE(cdef->GetSpeed() * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
+		const float ourRange = std::max(cdef->GetMaxRange(CCircuitDef::RangeType::LAND),
+				cdef->GetMaxRange(CCircuitDef::RangeType::WATER));
+		const bool isEmpOnly = (cdef->GetShotDamage() <= 0.f);  // paralyzers only (Venom): a stunned enemy waits
+		CEnemyInfo* current = unit->GetTarget();  // compared only, until found among the candidates (alive, seen)
+		const int canTargetCat = cdef->GetTargetCategory();
+		const bool notAA = !cdef->HasAntiAir();
+		// Can it fire at enemy from the disc of radius r around the centre: may target it, and a distance test
+		auto isReachable = [&](const SCandidate& c, float r) {
+			CEnemyInfo* enemy = c.enemy;
+			CCircuitDef* edef = enemy->GetCircuitDef();
+			if ((edef != nullptr) && (((edef->GetCategory() & canTargetCat) == 0) || (edef->IsAbleToFly() && notAA))) {
+				return false;
+			}
+			if ((isEmpOnly && enemy->IsParalyzed())
+				|| (escortBans.find(enemy) != escortBans.end())
+				|| IsRunningAway(enemy, centre, sqSpeed, sqOutrangeSpeed, ourRange))
+			{
+				return false;
+			}
+			const float range = GetFireRange(unit, enemy);
+			return (range >= SQUARE_SIZE * 4) && (enemy->GetPos().SqDistance2D(centre) <= SQUARE(r + range));
+		};
+
+		// Picks in order: its current target (the disc grown by keep_mod), the nearest threats to the core, the
+		// group's target; at most ESCORT_TRIES firing-spot searches
+		CEnemyInfo* pick = nullptr;
+		AIFloat3 firePos;
+		int tries = 0;
+		auto tryPick = [&](const SCandidate& c, float r) {
+			if ((tries >= ESCORT_TRIES) || !isReachable(c, r)) {
+				return false;
+			}
+			// The same pick, a kept spot still in the disc and no repeat due: nothing to search or send
+			AIFloat3 keptPos;
+			if ((c.enemy == current) && !isRepeat && !wasWalking && GetKeptFireSpot(unit, false, c.enemy, keptPos)
+				&& (keptPos.SqDistance2D(centre) <= SQUARE(r)))
+			{
+				pick = c.enemy;
+				firePos = keptPos;
+				return true;
+			}
+			++tries;
+			isSpotDisc = true;
+			spotDiscPos = centre;
+			spotDiscSqRadius = SQUARE(r);
+			const FireSpot spot = FindFireSpot(claims, i, safeThreat, nullptr, false, c.enemy, firePos);
+			isSpotDisc = false;
+			if (FireSpot::SPOT != spot) {
+				escortBans[c.enemy] = frame + ESCORT_BAN;  // no safe spot in the disc: skipped a while, by all escorts
+				return false;
+			}
+			pick = c.enemy;
+			return true;
+		};
+		const SCandidate* groupCand = nullptr;
+		const SCandidate* currentCand = nullptr;
+		for (const SCandidate& c : cands) {
+			if (c.enemy == target) {
+				groupCand = &c;
+			}
+			if ((current != nullptr) && (c.enemy == current)) {
+				currentCand = &c;
+			}
+		}
+		if (currentCand != nullptr) {
+			tryPick(*currentCand, keepRadius);
+		}
+		if (pick == nullptr) {
+			for (const SCandidate& c : cands) {
+				if (!c.isThreat) {
+					break;  // threats come first
+				}
+				if ((c.enemy != current) && tryPick(c, discRadius)) {
+					break;
+				}
+			}
+		}
+		if ((pick == nullptr) && (groupCand != nullptr) && (target != current)) {
+			tryPick(*groupCand, discRadius);
+		}
+
+		if (pick != nullptr) {
+			claim.pos = firePos;
+			const bool isNew = (pick != current) || isRepeat || wasWalking;
+			if (isNew) {
+				fireSpots[unit] = {firePos, frame, false};
+				const int tile = circuit->GetInflMap()->Pos2Index(pick->GetPos());
+				unit->FightFrom(firePos, pick, tile, timeout);  // never chases the enemy out of the disc
+				if (pick != current) {
+					CCircuitDef* edef = pick->GetCircuitDef();
+					circuit->LOG("ESCORT #%i %s on %s %s", leader->GetId(), cdef->GetDef()->GetName(),
+							(pick == target) ? "group target" : "threat",
+							(edef != nullptr) ? edef->GetDef()->GetName() : "blip");
+				}
+			}
+			continue;
+		}
+
+		// Nothing to hit from the disc: back into it and hold (fire at whatever comes into range)
+		fireSpots.erase(unit);
+		const float dist = uPos.distance2D(centre);
+		const bool isOutside = (dist > discRadius);
+		AIFloat3 holdPos = uPos;
+		if (isOutside) {
+			holdPos = centre + (uPos - centre) * (discRadius * ESCORT_HOLD_IN / dist);
+			CTerrainManager::CorrectPosition(holdPos);
+		}
+		claim.pos = holdPos;
+		if (isRepeat || wasWalking || isOutside || (current != nullptr)) {
+			if (current != nullptr) {
+				circuit->LOG("ESCORT #%i %s holds: nothing to hit from its disc", leader->GetId(), cdef->GetDef()->GetName());
+			}
+			if (isOutside) {
+				unit->ClearTarget();
+				MoveUnitTo(unit, holdPos, frame);
+			} else {
+				unit->HoldFire(holdPos, nullptr, -1, timeout);
+			}
+		}
+	}
 }
 
 void CAttackTask::OnUnitIdle(CCircuitUnit* unit)

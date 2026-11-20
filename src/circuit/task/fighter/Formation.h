@@ -51,8 +51,7 @@ struct SFormationOrder {
  *   stand, then two swap places where that shortens their walks by more than half a spacing, so paths don't cross;
  *   the leader takes the middle. Matched again when units join or leave, the columns or the leader change, or the
  *   path turns back.
- * - Pace: the front row's centre (anchor) walks at the speed of the slowest unit in line or support unit (those
- *   follow the leader), and slows in proportion as the unit furthest behind its slot along the line falls behind
+ * - Pace: the front row's centre (anchor) walks at the speed of the slowest unit in line, and slows in proportion as the unit furthest behind its slot along the line falls behind
  *   (the leader counts even while busy), stopping when it is lead_sec behind; but while an enemy is in some member's
  *   LOS (or was in the last 5 s) it doesn't wait for anyone. Each unit walks to its slot a few
  *   seconds ahead, at the anchor's speed plus a catch-up term. At the path's end the line stands in its slots.
@@ -92,7 +91,7 @@ public:
 	// doesn't fit there (walk there instead, EndFacing)
 	bool SlideBy(const springai::AIFloat3& shift, F3Vec& outPath);
 	void EndFacing();  // the squad walks elsewhere: stop facing now (as on a path that ends elsewhere)
-	// Takes a slot in the line (a land or sea unit, not support or no_formation), as AddMembers counts it
+	// Takes a slot in the line (a land or sea unit, not no_formation), as AddMembers counts it
 	static bool IsSlotUnit(const CCircuitDef* cdef);
 	// Where the unit walks now; false: it has no slot (busy, no_formation, or the line is off): follow the path
 	bool GetOrder(CCircuitUnit* unit, SFormationOrder& outOrder) const;
@@ -134,9 +133,9 @@ private:
 	const SMember* FindSteered(const CCircuitUnit* unit) const;  // nullptr: the line is off, or it doesn't steer the unit
 
 	// The steps of Update, in order
-	float AddMembers(int frame);  // returns the slowest support unit's speed
+	void AddMembers(int frame);
 	// Returns the most units of one row group (rank, or stragglers of a rank: Rematch)
-	int MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed);
+	int MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path);
 	int FitColumns(int frame, float frontArc, int widest, float baseSpacing, float gap);  // returns the columns that fit
 	void SwitchOn(int frame);
 	void Rematch(int cols);  // rows, and places by side

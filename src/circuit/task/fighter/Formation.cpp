@@ -125,7 +125,7 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 		isDirty = true;  // and takes the middle of its row
 	}
 
-	const float supportSpeed = AddMembers(frame);
+	AddMembers(frame);
 	auto itLeader = members.find(leader);
 	if (itLeader == members.end()) {
 		isOn = false;  // a leader that doesn't walk in line
@@ -162,7 +162,7 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 		isOn = false;  // the leader is far off its path (e.g. a new leader that just merged in), or too few units
 		return;
 	}
-	const int widest = MeasureMembers(frame, path, supportSpeed);
+	const int widest = MeasureMembers(frame, path);
 	// Facing: the anchor stands at the line's end
 	const float frontArc = !isOn ? 0.f : (isFacing ? arcs.back() : Project(anchorPos, 0.f));
 	const int fit = FitColumns(frame, frontArc, widest, baseSpacing, cfg.gap);
@@ -192,21 +192,16 @@ void CFormation::Update(int frame, bool isActive, std::vector<CCircuitUnit*>& ou
 	}
 }
 
-float CFormation::AddMembers(int frame)
+void CFormation::AddMembers(int frame)
 {
-	// Land and sea units take slots (not support, not no_formation: the same tests as IsSlotUnit, kept in step with
-	// it). Newcomers to a formed line straggle to theirs. Support units follow the leader instead (CSupportAction), so
-	// the line walks no faster than they do
+	// Land and sea units take slots (not no_formation: the same tests as IsSlotUnit, kept in step with it), support
+	// units too (quota.escort: they walk with the group and fight from beside its core). Newcomers to a formed line
+	// straggle to theirs
 	CCircuitAI* circuit = task->GetManager()->GetCircuit();
 	const CMilitaryManager::SFormationCfg& cfg = circuit->GetMilitaryManager()->GetFormationCfg();
-	float supportSpeed = std::numeric_limits<float>::max();
 	for (CCircuitUnit* unit : task->GetAssignees()) {
 		CCircuitDef* cdef = unit->GetCircuitDef();
 		if (cdef->IsAbleToFly() || cdef->IsAttrNoForm()) {
-			continue;
-		}
-		if (cdef->IsRoleSupport()) {
-			supportSpeed = std::min(supportSpeed, cdef->GetSpeed());
 			continue;
 		}
 		auto result = members.try_emplace(unit);
@@ -234,13 +229,12 @@ float CFormation::AddMembers(int frame)
 		m.row = -1;
 		isDirty = true;
 	}
-	return supportSpeed;
 }
 
-int CFormation::MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path, float supportSpeed)
+int CFormation::MeasureMembers(int frame, const std::shared_ptr<PathInfo>& path)
 {
-	// The line's top speed: the slowest unit that keeps up with it (or will follow it), the leader at least
-	slowest = std::min(leaderM->maxSpeed, supportSpeed);
+	// The line's top speed: the slowest unit that keeps up with it, the leader at least
+	slowest = leaderM->maxSpeed;
 	maxFoot = 0.f;
 	std::map<int, int> rankCounts;  // units per rank, stragglers too: straggling doesn't change the columns
 	int widest = 0;
@@ -695,7 +689,7 @@ void CFormation::EndFacing()
 
 bool CFormation::IsSlotUnit(const CCircuitDef* cdef)
 {
-	return !cdef->IsAbleToFly() && !cdef->IsAttrNoForm() && !cdef->IsRoleSupport();
+	return !cdef->IsAbleToFly() && !cdef->IsAttrNoForm();
 }
 
 void CFormation::Reset()

@@ -130,6 +130,15 @@ protected:
 	// Attack orders the unit on the group's target instead
 	bool AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self, float safeThreat, CEnemyInfo* enemy,
 			int timeout);
+	// A unit Attack orders: its claim (index in claims), spot range, and target (the group's, or another for melee)
+	struct SOrder {
+		size_t claim;
+		float range;
+		CEnemyInfo* enemy;
+	};
+	// Attack's orders for the units on the group's target (and melee ones AssignMeleeTargets sent elsewhere)
+	void OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SOrder>& orders, int frame, bool isDirect,
+			float safeThreat, int timeout);
 	// isClose (melee's close spots): 0-0.95x GetCloseRange from the enemy; else 0.6-0.95x GetFireRange
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isClose, const CEnemyInfo* enemy) const;
 	// Its last spot, if still in that band
@@ -183,6 +192,16 @@ protected:
 	float crowdRadius = 80.f;  // other claims within this of a firing spot crowd it (FindFireSpot)
 	// May a unit fire from p (FindFireSpot skips the spot if not)? Default: yes. Anti-heavy: outside its pick zones
 	virtual bool IsFireSpotAllowed(const springai::AIFloat3& p) const { return true; }
+	// While isSpotDisc: FindFireSpot only weighs spots within the disc (an escort's stay disc, CAttackTask)
+	bool isSpotDisc = false;
+	springai::AIFloat3 spotDiscPos;
+	float spotDiscSqRadius = 0.f;
+	// Units Attack orders apart from the group's target (CAttackTask's escorts, quota.escort). Default: none
+	virtual bool IsEscortUnit(CCircuitUnit* unit) const { return false; }
+	// Attack's orders for them, after the other units' (whose claims crowd and back up the escorts' spots). isRepeat:
+	// the repeat timer ran out (re-send every order)
+	virtual void OrderEscorts(std::vector<SFireClaim>& claims, int frame, bool isRepeat, float safeThreat,
+			int timeout) {}
 	// Attack skips this unit (no attack order, keeps travelling). Default: fireSpotReach
 	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const;
 	// Attack leaves this unit alone: it is stepping out of the target's reach while it reloads (ISquadTask scoot)
