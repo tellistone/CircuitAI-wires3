@@ -74,10 +74,11 @@ CRegionGraph::CRegionGraph()
 {
 }
 
-void CRegionGraph::Build(const SCellMask& m, const SParams& params)
+void CRegionGraph::Build(const SCellMask& m, const SParams& params, const SChoice& prev)
 {
 	BuildOnce(m, params);
 	usedParams = params;
+	choice = SChoice();
 	splitCount = 0;
 	if ((int)regions.size() >= params.minCount) {
 		return;
@@ -100,12 +101,15 @@ void CRegionGraph::Build(const SCellMask& m, const SParams& params)
 	relaxed.mergeWidth = params.defensibleWidth;  // a relaxed choke must be one towers can close
 	CRegionGraph attempt;
 	attempt.BuildOnce(m, relaxed);
-	if (attempt.regions.size() > regions.size()) {
+	const int margin = (prev.rebuild < 0) ? 0 : (prev.rebuild > 0) ? -1 : 1;  // more regions, give or take the last
+	const bool isRebuilt = (int)attempt.regions.size() - (int)regions.size() > margin;
+	if (isRebuilt) {
 		*this = std::move(attempt);
 		usedParams = relaxed;
 	}
+	choice.rebuild = isRebuilt ? 1 : 0;
 	if ((int)regions.size() < params.minCount) {
-		SplitOpen(relaxed);
+		SplitOpen(relaxed, prev);
 	}
 }
 
@@ -391,11 +395,13 @@ void CRegionGraph::MakeChokes(std::map<std::pair<int, int>, std::vector<int>>& c
  * map gets mirrored pieces and a crater moves no seed. The grid gains a column or a row, across its wider spacing,
  * until the regions with room for two of minArea hold minCount pieces in all, one per seed in them. Each cell of those
  * regions goes to its region's nearest seed (walking); a piece under minArea (Build's floor: minShare of the ground per
- * minCount region) gives up its seed, so its neighbours take its cells. With no grid cutting minCount pieces, the one
- * cutting the most is kept. Chokes are then remade from the regions' borders (each pair's line is the cells of the
- * lower region touching the other), and a choke between two pieces of one region is a cut (isCut)
+ * minCount region) gives up its seed, so its neighbours take its cells. The last build's grid (prev) goes first, kept
+ * while it cuts minCount pieces, so a crater that costs the first such grid a piece doesn't move every cut. With no
+ * grid cutting minCount pieces, the one cutting the most is kept. Chokes are then remade from the regions' borders
+ * (each pair's line is the cells of the lower region touching the other), and a choke between two pieces of one
+ * region is a cut (isCut)
  */
-void CRegionGraph::SplitOpen(const SParams& params)
+void CRegionGraph::SplitOpen(const SParams& params, const SChoice& prev)
 {
 	const int n = mask.Size();
 	// The cell under the middle of band i of k across size cells. A middle on a cell border takes the cell nearer the
@@ -488,27 +494,34 @@ void CRegionGraph::SplitOpen(const SParams& params)
 	};
 	std::vector<int> best;  // the grid that cut the most pieces, while none has cut minCount
 	int bestCount = 0;
-	for (int nx = 1, nz = 1; float(n) / (nx * nz) >= params.minArea;) {
+	auto isCutBy = [&](int nx, int nz) {  // the grid cut minCount pieces
 		const std::vector<int> grid = gridOf(nx, nz);
-		if (mask.width * nz >= mask.height * nx) {  // the next grid: one more across its wider spacing
-			++nx;
-		} else {
-			++nz;
-		}
-		if (countOf(grid) < params.minCount) {
-			continue;
-		}
-		const int count = cutBy(grid);
+		const int count = (countOf(grid) < params.minCount) ? 0 : cutBy(grid);
 		if (count >= params.minCount) {
-			best.clear();
-			break;
+			choice.nx = nx;
+			choice.nz = nz;
+			return true;
 		}
 		if (count > bestCount) {
 			bestCount = count;
 			best = grid;
 		}
+		return false;
+	};
+	auto isRoomy = [&](int nx, int nz) {  // a band of the grid holds a piece
+		return float(n) / (nx * nz) >= params.minArea;
+	};
+	// The last build's grid first, kept while it cuts minCount pieces
+	bool isCut = (prev.nx > 0) && (prev.nz > 0) && isRoomy(prev.nx, prev.nz) && isCutBy(prev.nx, prev.nz);
+	for (int nx = 1, nz = 1; !isCut && isRoomy(nx, nz);) {
+		isCut = isCutBy(nx, nz);
+		if (mask.width * nz >= mask.height * nx) {  // the next grid: one more across its wider spacing
+			++nx;
+		} else {
+			++nz;
+		}
 	}
-	if (!best.empty()) {  // finer grids only lost pieces under minArea: back to the best
+	if (!isCut && !best.empty()) {  // finer grids only lost pieces under minArea: back to the best
 		cutBy(best);
 	}
 	if (seeds.empty()) {

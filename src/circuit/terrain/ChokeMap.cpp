@@ -76,6 +76,7 @@ struct CChokeMap::SBuildJob {
 	SCellMask prevGraphMask;
 	std::vector<int> prevRegionOf;  // per cell, the graph's regions: only while the terrain check isn't due
 	CRegionGraph::SParams graphParams;
+	CRegionGraph::SChoice prevChoice;  // the graph's, kept while it works: none for new gating classes or a key set
 	std::vector<int> trafficClasses;  // never naval: ships get no layer
 	std::vector<MoveKey> keys;  // per class
 	std::vector<std::vector<int>> sourceCells;  // per source group, traffic cells
@@ -442,6 +443,7 @@ std::shared_ptr<CChokeMap::SBuildJob> CChokeMap::MakeJob(bool isMasks, bool isGr
 
 	}
 	job->graphParams = GetGraphParams();
+	job->prevChoice = isGraph ? CRegionGraph::SChoice() : graph.GetChoice();
 	job->trafficClasses = trafficClasses;
 	job->sourceCells = GetSourceCells();
 	job->destinations = destinations;
@@ -601,7 +603,7 @@ void CChokeMap::RunJob(SBuildJob& job)
 		if (isChanged && (job.isGraph || job.isTerrainDue || job.prevRegionOf.empty()
 			|| IsNewCrossing(job.prevGraphMask, job.prevRegionOf, threatMask)))
 		{
-			job.graph.Build(threatMask, job.graphParams);
+			job.graph.Build(threatMask, job.graphParams, job.prevChoice);
 			job.isGraphBuilt = true;
 		} else {
 			job.isTerrainDeferred = isChanged;
