@@ -19,7 +19,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   at low income, takes the reclaim job it found or patrols rather than queue cheap energy, which has no dedup and
   would be queued anew on every idle pass. A commander walking to such a job when the
   time passes drops it at its next re-plan if another job wins; one already in build range finishes it.
-
+- **Line formations keep each unit type in rows of its own, and form from 2 units** (`formation.min_units` 3 to
+  2). Rows filled front to back by `row_order` only once the line ran out of width, so a small group walked as one
+  mixed row, riots beside skirmishers and artillery. Now each place in `row_order` (or `formation_row`) gets rows of
+  its own, as wide as the columns allow, so types stay apart at any size: two units of different types walk one
+  behind the other. Spacing squeezes before a type takes a second row, as it did before the line did. Stragglers
+  still walk at the back, in rows by type. A group of 2 land or sea units now forms a line (it was 3). Riots walk
+  near the back: `row_order` is now assault, heavy, raider, skirmish, riot, anti-heavy, anti-air, artillery (riots
+  were in front), so a group running away has its assaults at the back. Rows keep apart for splash only as far as
+  the line stays no deeper than its width cap (`width_range` x its fire range, at most 900), so a line of many types
+  doesn't reach past the group radius, where front units would count as stragglers.
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) go for nearby heavies first, and
   shoot and scoot.**
   - Walk goals are every known heavy and commander, mobile or static, also those already in range. The route query
@@ -39,6 +48,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     backs off from a heavy that closes in. Before, it shot from wherever it stood. With no such spot it still does.
 
 ### Fixed
+
+- **No crash when a damaged unit stops a morph and has no manager.** Wires 0.1.6 crashed the game (SIGSEGV in
+  `CCircuitUnit::IsUpgradable`) when a unit it had sent to morph dropped under half health and had no manager:
+  `CEconomyManager::UnitDamaged` stops the morph and offers the unit to the commander morph list, which read the
+  manager. A geothermal (no manager) morphing to an advanced geo does this; it was left out of that rule on
+  13 November. `IsUpgradable` is now false for any unit without a manager, so nothing else can reach it either.
+  Commanders are re-queued for their upgrade as before.
+
+- **Units an ally gives us are counted by the economy again.** Since 11 November (grid links) the economy skipped its
+  own created and finished handlers for given units, so a given commander was never queued for its upgrade, a given
+  geothermal never morphed, a given factory wasn't its cluster's, and given mexes and energy didn't add to income.
+  Given units go through those handlers again, as before; a given consumer is still linked to the grid.
 
 - **Artillery groups shoot any other building before a shut pop-up turret, and nano towers before turrets.** A
   closed Faraday, Gauss, Desolator, Lucifer or Hacksaw takes a third of the damage, yet artillery shot at it like any
