@@ -842,8 +842,8 @@ private:
 	} prevent;
 	// porcupine.own_clusters: in team games only clusters we own (CMetalManager::GetClusterOwner) get towers
 	bool IsOurCluster(int cluster) const;
-	// porcupine.ally_cover, team games: metal of the finished towers of the ally team (ours too) that can hit ground
-	// (water when isWater) within range of a mex point of the cluster; 0 when off
+	// porcupine.ally_cover, team games: metal of the towers of the ally team (ours too, nanoframes and stunned ones
+	// included) that can hit ground (water when isWater) within range of a mex point of the cluster; 0 when off
 	float GetBuiltCoverCost(int cluster, bool isWater) const;
 	struct SPreventRoll {
 		int count = -1;  // -1 = never rolled

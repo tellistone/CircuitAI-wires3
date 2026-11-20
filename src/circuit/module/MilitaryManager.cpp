@@ -2035,12 +2035,15 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 				clusterCost += p.cost;
 			}
 		}
-		// porcupine.ally_cover: the larger of what the shared matrix booked (queued and built on points, by every
-		// Wires ally) and every finished tower near the cluster (off-point ones and other allies' too): never both
-		clusterCost = std::max(clusterCost, GetBuiltCoverCost(cluster, isWater));
 		float preventCost = 0.f;
 		for (const CCircuitDef* d : picked) {
 			preventCost += d->GetCostM();
+		}
+		// porcupine.ally_cover: the larger of what the shared matrix booked (queued and built on points, by every
+		// Wires ally) and every tower near the cluster (off-point ones and other allies' too): never both. Only
+		// looked up when the booked towers fall short of the roll
+		if (preventCost > clusterCost) {
+			clusterCost = std::max(clusterCost, GetBuiltCoverCost(cluster, isWater));
 		}
 		// QueueTowers stops at a tower that brings the point's list total to the cap: + 1 lets one that just fills it go
 		clusterCap = std::min(maxCost, closestPoint->cost + std::max(preventCost - clusterCost, 0.f) + 1.f);
@@ -2423,8 +2426,9 @@ float CMilitaryManager::GetBuiltCoverCost(int cluster, bool isWater) const
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		CAllyUnit* ally = kv.second;
 		const CCircuitDef* adef = ally->GetCircuitDef();
-		// As the threat map's cover layer (CThreatMap::PrepareCover): its weapon's real reach, halved for a
-		// long-ranged static; turret.not_defence statics aren't turrets
+		// Its weapon's real reach, halved for a long-ranged static, as the threat map's cover layer
+		// (CThreatMap::PrepareCover); turret.not_defence statics aren't turrets. Unlike that layer, nanoframes and
+		// stunned towers count: the matrix books a tower once queued, and a stun mid-raid mustn't leave a spare one
 		if ((adef == nullptr) || !turretPicker->IsDefence(adef) || !(isWater ? adef->HasAntiWater() : adef->HasAntiLand())) {
 			continue;
 		}
@@ -2434,10 +2438,6 @@ float CMilitaryManager::GetBuiltCoverCost(int cluster, bool isWater) const
 		}
 		if (adef->GetMaxRange() > 1000.f) {
 			range /= 2;
-		}
-		Unit* u = ally->GetUnit();
-		if (u->IsBeingBuilt() || u->IsParalyzed()) {
-			continue;
 		}
 		const AIFloat3& pos = ally->GetPos(frame);
 		for (const CDefenceMatrix::SDefPoint& p : points) {
@@ -2498,7 +2498,8 @@ void CMilitaryManager::UpdatePreventSight()
 	// mex LOS of a finished mex of ours, makes that mex's cluster roll (raise only) and defend at that mex, at most
 	// once per prevent_reroll[1] s since its last roll or sighting. Half-taken clusters count. Polled, not on
 	// EnemyEnterLOS: that fires once on entering the ally team's LOS, so a raider seen at the front that walks on to
-	// a rear mex inside our LOS would never fire again
+	// a rear mex inside our LOS would never fire again. porcupine.own_clusters, team games: the mexes are every ally's
+	// in the clusters we own (no one else answers for those), and none of ours elsewhere (the owner answers)
 	struct SSighted {
 		AIFloat3 pos;
 		CCircuitDef* cdef;
@@ -2525,11 +2526,23 @@ void CMilitaryManager::UpdatePreventSight()
 	CCircuitDef* mexDef = em->GetMexDef();
 	const float sqLos = SQUARE((mexDef != nullptr) ? mexDef->GetLosRadius() : 0.f);
 	const int frame = circuit->GetLastFrame();
-	for (const auto& kv : circuit->GetTeamUnits()) {
-		CCircuitUnit* unit = kv.second;
-		// Geothermals too (porcupine.geo), by the nearest cluster as their vent's point is (CDefenceMatrix::AddGeoPoints)
-		const bool isGeo = prevent.isGeo && em->IsGeoDef(unit->GetCircuitDef());
-		if (!unit->GetCircuitDef()->IsMex() && !isGeo) {
+	const int teamId = circuit->GetTeamId();
+	const bool isAllyMexes = prevent.isOwnOnly && (circuit->GetAllyTeam()->GetSize() > 1);
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		CAllyUnit* unit = kv.second;
+		CCircuitDef* udef = unit->GetCircuitDef();
+		if (udef == nullptr) {
+			continue;
+		}
+		// Geothermals too (porcupine.geo), ours only, by the nearest cluster as their vent's point is
+		// (CDefenceMatrix::AddGeoPoints)
+		const bool isGeo = prevent.isGeo && em->IsGeoDef(udef);
+		if (!udef->IsMex() && !isGeo) {
+			continue;
+		}
+		const bool isOurs = (unit->GetUnit()->GetTeam() == teamId);
+		if (!isOurs && (isGeo || !isAllyMexes)) {
 			continue;
 		}
 		const AIFloat3& mexPos = unit->GetPos(frame);
@@ -2550,7 +2563,8 @@ void CMilitaryManager::UpdatePreventSight()
 		}
 		for (const SSighted& s : sighted) {
 			if (mexPos.SqDistance2D(s.pos) <= sqLos) {
-				if (!unit->GetUnit()->IsBeingBuilt()) {
+				// A vent's point is ours whoever owns its cluster (MakeDefence)
+				if (!unit->GetUnit()->IsBeingBuilt() && (isGeo || IsOurCluster(cluster))) {
 					roll.sightFrame = frame;  // also when MakeDefence returns before rolling (ally zone, income cap)
 					MakeDefence(cluster, mexPos, s.cdef);
 				}
