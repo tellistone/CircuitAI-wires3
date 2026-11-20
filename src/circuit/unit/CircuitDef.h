@@ -282,6 +282,7 @@ public:
 	int GetFireState() const { return fireState; }
 	int GetReloadTime() const { return reloadTime; }
 	bool IsLongReload() const;  // 5 s or more (anti-heavy: fires at what it sees, steps back while reloading)
+	int GetBurstFrames() const { return burstFrames; }  // frames from a burst's first shot to its last, longest weapon
 	// A heavy or commander a unit of this type can shoot: role, target category, anti-static, air
 	bool IsQuarry(const CCircuitDef* edef) const;
 	int GetCategory() const { return category; }
@@ -454,6 +455,7 @@ private:
 	bool isShieldLinked;
 	FireType fireState;
 	int reloadTime;  // frames in ticks
+	int burstFrames = 0;  // GetBurstFrames
 	int category;
 	int targetCategory;
 	int noChaseCategory;
