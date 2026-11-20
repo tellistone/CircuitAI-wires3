@@ -165,7 +165,7 @@ bool CTurretPicker::IsLight(const CCircuitDef* def) const
 	return std::find(config.light.begin(), config.light.end(), def) != config.light.end();
 }
 
-bool CTurretPicker::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3& pos, const char* caller, bool isCredit)
+bool CTurretPicker::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3& pos, const char* caller)
 {
 	if ((config.crowdCount <= 0) || !IsLight(def)) {
 		return false;
@@ -190,7 +190,7 @@ bool CTurretPicker::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3& p
 			return false;
 		}
 	}
-	const float credit = isCredit ? circuit->GetMilitaryManager()->CreditTurret(config.crowdCredit) : 0.f;
+	const float credit = circuit->GetMilitaryManager()->CreditTurret(config.crowdCredit);
 	circuit->LOG("TURRET %s: no %s at (%.0f, %.0f), %i+ light turrets within %.0f; +%.0f to the turret account", caller,
 			def->GetDef()->GetName(), pos.x, pos.z, count, config.crowdRadius, credit);
 	return true;
@@ -318,7 +318,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	CCircuitDef* def = res.def;
 	const CTurretValue::SScored& pick = res.search.scored.front();
 	const AIFloat3 spot(pick.cand.pos.x, pick.cand.pos.y, pick.cand.pos.z);
-	if (order.isCrowdCheck && !order.IsCreep() && RefuseCrowdedLight(def, spot, order.caller, true)) {  // the creep steps on
+	if (order.isCrowdCheck && RefuseCrowdedLight(def, spot, order.caller)) {
 		last.isFound = false;
 		return nullptr;
 	}
