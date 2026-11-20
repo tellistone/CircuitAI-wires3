@@ -693,6 +693,7 @@ void CBuilderManager::ActivateTask(IBuilderTask* task)
 {
 	if ((task->GetType() == IUnitTask::Type::BUILDER) && (task->GetBuildType() < IBuilderTask::BuildType::_SIZE_)) {
 		buildTasks[static_cast<IBuilderTask::BT>(task->GetBuildType())].insert(task);
+		task->SetQueued(true);
 		buildTasksCount++;
 		NoteRadarJob(task, true);
 	}
@@ -754,6 +755,7 @@ IBuilderTask* CBuilderManager::EnqueueFactory(IBuilderTask::Priority priority,
 	IBuilderTask* task = new CBFactoryTask(this, priority, buildDef, position, cost, shake, isPlop, timeout);
 	if (isActive) {
 		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::FACTORY)].insert(task);
+		task->SetQueued(true);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
 	} else {
@@ -788,6 +790,7 @@ IBuilderTask* CBuilderManager::EnqueuePylon(IBuilderTask::Priority priority,
 	IBuilderTask* task = new CBPylonTask(this, priority, buildDef, position, link, cost, timeout);
 	if (isActive) {
 		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::PYLON)].insert(task);
+		task->SetQueued(true);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
 	} else {
@@ -832,6 +835,7 @@ IBuilderTask* CBuilderManager::EnqueueRepair(IBuilderTask::Priority priority,
 	} else {
 		task = new CBRepairTask(this, priority, target, timeout);
 		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::REPAIR)].insert(task);
+		task->SetQueued(true);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
 		repairedUnits[target->GetId()] = task;
@@ -1030,6 +1034,7 @@ IBuilderTask* CBuilderManager::EnqueueReclaim(IBuilderTask::Priority priority,
 {
 	IBuilderTask* task = new CBReclaimTask(this, priority, position, cost, timeout, radius, isMetal);
 	buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::RECLAIM)].insert(task);
+	task->SetQueued(true);
 	buildTasksCount++;
 	buildUpdates.push_back(task);
 	return task;
@@ -1045,6 +1050,7 @@ IBuilderTask* CBuilderManager::EnqueueReclaim(IBuilderTask::Priority priority,
 	}
 	CBReclaimTask* task = new CBReclaimTask(this, priority, target, timeout);
 	buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::RECLAIM)].insert(task);
+	task->SetQueued(true);
 	buildTasksCount++;
 	buildUpdates.push_back(task);
 	reclaimedUnits[target] = task;
@@ -1076,6 +1082,7 @@ IBuilderTask* CBuilderManager::EnqueueTerraform(IBuilderTask::Priority priority,
 	}
 	if (isActive) {
 		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::TERRAFORM)].insert(task);
+		task->SetQueued(true);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
 	} else {
@@ -1178,6 +1185,7 @@ IBuilderTask* CBuilderManager::AddTask(IBuilderTask::Priority priority,
 	}
 	if (isActive) {
 		buildTasks[static_cast<IBuilderTask::BT>(type)].insert(task);
+		task->SetQueued(true);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
 		NoteRadarJob(task, true);
@@ -1218,6 +1226,7 @@ void CBuilderManager::DequeueTask(IUnitTask* task, bool done)
 				} break;
 			}
 			tasks.erase(it);
+			taskB->SetQueued(false);
 			buildTasksCount--;
 			NoteRadarJob(taskB, false);
 		} break;
@@ -1792,6 +1801,7 @@ IBuilderTask* CBuilderManager::AssistEscalationFrame(CAllyUnit* frame)
 	} else {
 		task = new CBRepairTask(this, IBuilderTask::Priority::NOW, frame);
 		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::REPAIR)].insert(task);
+		task->SetQueued(true);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
 		repairedUnits[frame->GetId()] = task;
@@ -3403,6 +3413,7 @@ void CBuilderManager::UpdateRestore()
 		const int c = candidates[i].second;
 		CBRestoreTask* task = new CBRestoreTask(this, restore.priority, c);
 		buildTasks[static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::TERRAFORM)].insert(task);
+		task->SetQueued(true);
 		buildTasksCount++;
 		buildUpdates.push_back(task);
 		grid[c].task = task;

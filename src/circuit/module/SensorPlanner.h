@@ -50,8 +50,8 @@ class IBuilderTask;
  * - choke.radar.heavy (the Advanced Radar): offered first to a builder between jobs that isn't a commander and
  *   stands within 1500 elmos of a spot choke.radar.heavy_depth from enemy ground, while the ally team's metal income
  *   (ZK's overdrive totals) is at least choke.radar.heavy_income, the type is available (its behaviour.json limit
- *   counts living ones, so a lost one is rebuilt), the AI has no heavy job queued and no heavy of the ally team was
- *   lost in the last 90 s. Spots: the candidates within 1500 elmos at that depth, ranked by the uncovered weight in
+ *   counts our units and queued jobs, so a lost one is rebuilt) and no heavy of the ally team was lost in the last
+ *   90 s. Spots: the candidates within 1500 elmos at that depth, ranked by the uncovered weight in
  *   their range disc; scored by their viewshed for 1 + the radars lost within 1500 elmos, which must reach
  *   choke.radar.heavy_min_gain of the total weight. At most 4 new viewsheds per search, a search per AI every 10 s,
  *   and a log line a minute with the best score when none passes.

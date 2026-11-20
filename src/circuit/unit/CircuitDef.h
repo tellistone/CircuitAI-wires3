@@ -233,7 +233,10 @@ public:
 	void SetMaxThisUnit(int value) { maxThisUnit = value; }
 	int GetMaxThisUnit() const { return maxThisUnit; }
 	void SetSinceFrame(int frame) { sinceFrame = frame; }
-	bool IsAvailable() const { return maxThisUnit > count; }
+	// behaviour.json "limit": units of ours (nanoframes too) and queued builder jobs that haven't placed theirs
+	bool IsAvailable() const { return maxThisUnit > count + queued; }
+	void IncQueued() { ++queued; }
+	void DecQueued() { --queued; }
 	bool IsAvailable(int frame) const { return IsAvailable() && (frame >= sinceFrame); }
 
 	void IncBuild() { ++buildCounts; }
@@ -430,6 +433,7 @@ private:
 	float buildDistance;
 	float buildSpeed;
 	int count;
+	int queued;  // queued builder jobs of this def with no nanoframe yet (IBuilderTask::SetQueued)
 	int buildCounts;  // number of builder defs able to build this def;
 	int maxThisUnit;
 	int sinceFrame;

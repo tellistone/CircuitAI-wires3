@@ -56,6 +56,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **behaviour.json `limit` counts queued jobs.** A unit type's limit only counted our units (nanoframes included),
+  so several jobs could be queued before the first nanoframe stood, and each was built: the Advanced Radar (limit 1)
+  went up at the base (`porcupine.base`) and in several porc clusters at once. Now a queued construction job holds a
+  slot until its nanoframe is placed, for every limited type. While the radar planner is on, `porcupine.base` also
+  leaves its heavy radar out.
 - **No crash when a damaged unit stops a morph and has no manager.** Wires 0.1.6 crashed the game (SIGSEGV in
   `CCircuitUnit::IsUpgradable`) when a unit it had sent to morph dropped under half health and had no manager:
   `CEconomyManager::UnitDamaged` stops the morph and offers the unit to the commander morph list, which read the

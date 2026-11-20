@@ -3995,7 +3995,9 @@ void CMilitaryManager::UpdateDefence()
 		const auto& defElem = ibd->second.back();
 		if (frame >= defElem.second) {
 			CCircuitDef* buildDef = defElem.first;
-			if (buildDef->IsAvailable(frame)) {
+			// choke.radar.enable: the planner places its heavy radar, porcupine.base leaves it out
+			const bool isPlanned = circuit->GetChokeMap()->GetConfig().isRadar && (buildDef == sensorPlanner->GetHeavyDef());
+			if (buildDef->IsAvailable(frame) && !isPlanned) {
 				AIFloat3 buildPos = ibd->first;
 				// choke.spot.enable: an attacker goes to the best spot within the main tower's range
 				const CChokeMap* chokeMap = circuit->GetChokeMap();

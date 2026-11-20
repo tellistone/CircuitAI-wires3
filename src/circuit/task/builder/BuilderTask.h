@@ -95,6 +95,9 @@ public:
 
 	virtual void SetTarget(CCircuitUnit* unit);
 	CCircuitUnit* GetTarget() const { return target; }
+	// In the manager's queue or not (CBuilderManager): a queued construction job with no nanoframe holds a slot of its
+	// def's behaviour.json "limit" (CCircuitDef::IsAvailable); its nanoframe, once placed, counts as a unit instead
+	void SetQueued(bool value) { isQueued = value; UpdateHold(); }
 	void UpdateTarget(CCircuitUnit* unit);
 
 	bool IsEqualBuildPos(CCircuitUnit* unit) const;
@@ -142,6 +145,11 @@ protected:
 	springai::AIFloat3 buildPos;
 	int facing;
 	IBuilderTask* nextTask;  // old list style
+private:
+	void UpdateHold();
+	bool isQueued;
+	CCircuitDef* heldDef;  // the def whose limit slot this job holds, or nullptr
+protected:
 
 	float savedIncome;
 	int buildFails;
