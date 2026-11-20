@@ -521,8 +521,11 @@ void CCircuitUnit::StopMorph()
 
 bool CCircuitUnit::IsUpgradable()
 {
+	// Only managed units (commanders) upgrade: a building such as a morphing geothermal has no manager
+	if (manager == nullptr) {
+		return false;
+	}
 	unsigned level = unit->GetRulesParamFloat("comm_level", 0.f);
-	assert(manager != nullptr);
 	return manager->GetCircuit()->GetSetupManager()->HasModules(circuitDef, level);
 }
 
