@@ -244,6 +244,16 @@
 	"enemy_line_budget": 0.5,  // an order at a choke of the enemy line (by enemy_line or short_choke) needs this x the dearest def's cost in the turret account (0 to 1; the default halves it, 0 = never refused); it is still charged the full cost, which may take the account below zero
 	"artillery": true,  // a mobile ground constructor within artillery_reach of our artillery shooting a target in its range, or of an engaged anti-heavy squad with a unit in range of its target (not mines or aircraft), only a building for anti-heavy squads and anti-heavy artillery, with no ground-hitting turret (ours or an ally's, being built or queued too) within defended_radius of it, orders one centred on the artillery (an anti-heavy squad: its leader)
 	"artillery_reach": 600,
+	// The creep: pushers step our turrets forward to just outside the enemy's static range (CCreepPlanner, once a second)
+	"creep": true,  // from each finished ground-hitting turret of ours, a step toward the known enemy static that hits ground whose stop line (its land range + creep_margin) is nearest; with none known, toward the nearest live choke of the enemy line. Steps stop where a ground defence (ours or an ally's, queued too) already stands, where creep_losses of our turrets died in the last 2 minutes within a turret's range, and from a turret whose steps failed twice in 2 minutes. Between steps a pusher guards the front turret while the account fills
+	"creep_builders": 1,  // pushers: the commander first (not while hide mode holds it), then the free mobile ground constructors nearest the best step
+	"creep_income": 30,  // one more pusher per this much metal/s of income; 0 = none
+	"creep_interval": 10,  // seconds between one pusher's steps at the least
+	"creep_step": 0.7,  // a step's length, x the forward turret's land range; cut at the stop line, and halved (then quartered) out of every enemy static's range + creep_margin
+	"creep_margin": 64,  // elmos kept outside enemy static range; the picker rejects a creep spot inside any known enemy static's land range + this, and mobile threat there unless our guns' power covering the spot exceeds it
+	"creep_radius": 250,  // the picker's radius about a step's end
+	"creep_losses": 2,  // our turrets lost within 2 minutes in range of a step's end that stop it; 0 = no stop
+	"creep_budget": 0.5,  // a creep order needs this x the dearest def's cost in the shared turret account (0 to 1; the default halves it); it is still charged the full cost
 	"light": ["turretlaser", "turretmissile"],  // Lotus, Picket
 	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots. An order
 	// tries the heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier,

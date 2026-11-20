@@ -38,6 +38,7 @@ class CRaidTask;
 class ISquadTask;
 class CChokeDefence;
 class CSensorPlanner;
+class CCreepPlanner;
 class CAllyCover;
 class CFrontline;
 class CTurretPicker;
@@ -178,7 +179,7 @@ public:
 	 * cap if need be (the account then stops filling until it is spent below the cap), so a lost position can be
 	 * rebuilt
 	 */
-	enum class TurretSpend: int {OTHER = 0, PORC, PREVENT, PICKER, CORNERED, BASE, GUARD, ESCORT, HUB, _SIZE_};
+	enum class TurretSpend: int {OTHER = 0, PORC, PREVENT, PICKER, CORNERED, BASE, GUARD, ESCORT, HUB, CREEP, _SIZE_};
 	class TurretScope {  // the spender of the DEFENCE jobs queued while it lives
 	public:
 		TurretScope(CMilitaryManager* mgr, TurretSpend spend) : mgr(mgr), prev(mgr->turretSpend) { mgr->turretSpend = spend; }
@@ -188,6 +189,8 @@ public:
 		TurretSpend prev;
 	};
 	bool CanAffordTurret(float cost);
+	// Seconds until the turret account holds cost at its current fill rate: 0 now, a big number when it doesn't fill
+	float GetTurretWait(float cost) const;
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
 	void UpdateTurretBudget();  // accrues; logs the spend once a minute
@@ -197,6 +200,7 @@ public:
 	CChokeDefence* GetChokeDefence() const { return chokeDefence.get(); }
 	CSpotScorer* GetSpotScorer() const { return spotScorer.get(); }
 	CSensorPlanner* GetSensorPlanner() const { return sensorPlanner.get(); }
+	CCreepPlanner* GetCreepPlanner() const { return creepPlanner.get(); }
 	CFrontline* GetFrontline() const { return frontline.get(); }
 	CTurretPicker* GetTurretPicker() const { return turretPicker.get(); }
 	// A picker or cornered tower (CBDefenceTask::IsOffPoints): its death takes no cost off a defence point
@@ -643,6 +647,7 @@ private:
 	std::unique_ptr<CChokeDefence> chokeDefence;
 	std::unique_ptr<CSpotScorer> spotScorer;
 	std::unique_ptr<CSensorPlanner> sensorPlanner;
+	std::unique_ptr<CCreepPlanner> creepPlanner;  // turret.creep
 	std::unique_ptr<CFrontline> frontline;
 	std::unique_ptr<CTurretPicker> turretPicker;
 	std::set<int> offPointsTowers;  // unit ids
@@ -868,6 +873,7 @@ private:
 		float lost = 0.f;  // since the last log line: what the lost turrets cost, and what they paid back
 		float lossPaid = 0.f;
 		float balance = 0.f;
+		float rate = 0.f;  // metal/s, as last filled
 		int frame = -1;
 		float askCost = 0.f;  // the dearest tower a gated spender asked for and couldn't afford
 		int askFrame = -1;

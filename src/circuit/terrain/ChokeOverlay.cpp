@@ -329,14 +329,20 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 		{"short_choke_reach", &c.shortChokeReach}, {"enemy_line_reach", &c.enemyLineReach},
 		{"enemy_line_budget", &c.enemyLineBudget},
 		{"artillery_reach", &c.artilleryReach},
+		{"creep_income", &c.creepIncome}, {"creep_interval", &c.creepInterval}, {"creep_step", &c.creepStep},
+		{"creep_margin", &c.creepMargin}, {"creep_radius", &c.creepRadius}, {"creep_budget", &c.creepBudget},
+	};
+	const std::map<std::string, int*> ints = {
+		{"creep_builders", &c.creepBuilders}, {"creep_losses", &c.creepLosses},
 	};
 	const std::map<std::string, bool*> flags = {
 		{"after_flee", &c.isAfterFlee}, {"near_enemy", &c.isNearEnemy}, {"short_choke", &c.isShortChoke},
-		{"enemy_line", &c.isEnemyLine}, {"artillery", &c.isArtillery},
+		{"enemy_line", &c.isEnemyLine}, {"artillery", &c.isArtillery}, {"creep", &c.isCreep},
 	};
 	std::istringstream in(value);
 	auto floatIt = floats.find(key);
 	auto flagIt = flags.find(key);
+	auto intIt = ints.find(key);
 	if (floatIt != floats.end()) {
 		float v;
 		if (in >> v) {
@@ -347,6 +353,12 @@ bool CChokeOverlay::SetTurretValue(const std::string& key, const std::string& va
 		bool v;
 		if (in >> std::boolalpha >> v) {
 			*flagIt->second = v;
+			return true;
+		}
+	} else if (intIt != ints.end()) {
+		int v;
+		if (in >> v) {
+			*intIt->second = v;
 			return true;
 		}
 	}

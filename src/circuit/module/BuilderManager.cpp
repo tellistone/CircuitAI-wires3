@@ -8,6 +8,7 @@
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
+#include "module/CreepPlanner.h"
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
@@ -1332,6 +1333,9 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	}
 	if (IsHomeFight(unit)) {
 		return EnqueueCombat(1.5f);
+	}
+	if (IBuilderTask* hold = circuit->GetMilitaryManager()->GetCreepPlanner()->MakeHoldTask(unit)) {
+		return hold;  // a pusher between creep steps stays by the front turret
 	}
 
 	const auto it = costQueries.find(unit);
@@ -3021,7 +3025,7 @@ bool CBuilderManager::HasTurretDefence(const AIFloat3& centre, float radius,
 }
 
 IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::vector<CCircuitDef*>& defs, const char* caller)
+		const std::vector<CCircuitDef*>& defs, const char* caller, float radius, bool isCreep)
 {
 	CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const int frame = circuit->GetLastFrame();
@@ -3031,8 +3035,34 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	order.centre = centre;
 	order.defs = defs;
 	order.caller = caller;
-	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::PICKER);
+	order.radius = radius;
+	order.isCreep = isCreep;
+	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(),
+			isCreep ? CMilitaryManager::TurretSpend::CREEP : CMilitaryManager::TurretSpend::PICKER);
 	return picker->Order(order);
+}
+
+int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre)
+{
+	if (!IsTurretFree(unit) || IsMetalStalling()) {
+		return 0;
+	}
+	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, nullptr);
+	if (defs.empty()) {
+		return -1;
+	}
+	if (AssistTurret(unit, centre, nullptr, true, "creep")) {
+		return 1;
+	}
+	const CTurretPicker::SConfig& cfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
+	float maxCost = 0.f;
+	for (const CCircuitDef* d : defs) {
+		maxCost = std::max(maxCost, d->GetCostM());
+	}
+	if (!circuit->GetMilitaryManager()->CanAffordTurret(maxCost * utils::clamp(cfg.creepBudget, 0.f, 1.f))) {
+		return 0;
+	}
+	return (OrderTurret(unit, centre, defs, "creep", cfg.creepRadius, true) != nullptr) ? 1 : -1;
 }
 
 std::string CBuilderManager::OrderTurretAt(const AIFloat3& pos, CCircuitDef* def)

@@ -33,6 +33,7 @@ struct STurretOrder {
 	std::vector<CCircuitDef*> defs;  // empty: the porcupine list's land or water towers, AA left out
 	IBuilderTask::Priority priority = IBuilderTask::Priority::NORMAL;
 	const char* caller = "test";  // "after flee", "near enemy" or "test", for the log
+	bool isCreep = false;  // turret.creep: enemy statics' range + creep_margin is the threat rule, mobiles under cover pass
 };
 
 /*
@@ -102,6 +103,16 @@ public:
 		float enemyReach = 700.f;
 		float allyRadius = 500.f;
 		float cooldown = 30.f;  // seconds
+		// The creep (CCreepPlanner): pushers step turrets forward to just outside enemy static range
+		bool isCreep = true;
+		int creepBuilders = 1;  // pushers: the commander first, then constructors
+		float creepIncome = 30.f;  // metal/s of income per extra pusher; 0 = none
+		float creepInterval = 10.f;  // seconds between one pusher's steps
+		float creepStep = 0.7f;  // x the forward turret's range
+		float creepMargin = 64.f;  // elmos kept outside enemy static range
+		float creepRadius = 250.f;  // the picker's radius about the step's end
+		int creepLosses = 2;  // turrets lost near a step within 2 minutes stop it
+		float creepBudget = 0.5f;  // x the balance the turret account must hold (0 to 1); the full cost is charged
 	};
 	enum class Reject: char {NONE, RADIUS, MASK, LANE, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
 	// The cheap hard rules over the candidate grid of one order: the same for every def
@@ -170,9 +181,17 @@ public:
 
 private:
 	// Gathered once per order
+	struct SGun {  // an armed static for the creep's threat rule
+		springai::AIFloat3 pos;
+		float sqReach;
+		float power;
+	};
 	struct SGather {
 		springai::AIFloat3 centre;
 		float radius;
+		bool isCreep = false;
+		std::vector<SGun> enemyGuns;  // known enemy statics that hit ground, reach = range + creep_margin
+		std::vector<SGun> ourGuns;  // finished ones of ours and allies' that hit ground, reach = range
 		// Within radius + the longest range, before they are weighed for a def (metal: traffic in metal/s, the rest in
 		// metal), halved per covering tower
 		std::vector<CTurretValue::STarget> raws;
@@ -199,6 +218,7 @@ private:
 			const std::vector<CTurretValue::SCandidate>& candidates) const;
 	CTurretValue::SParams MakeParams(CCircuitDef* def) const;
 	float GetNearestOurs(const SGather& gather, const springai::AIFloat3& pos) const;
+	void GatherGuns(SGather& gather) const;  // the creep's: enemyGuns and ourGuns about the radius
 
 	CCircuitAI* circuit;
 	SConfig config;

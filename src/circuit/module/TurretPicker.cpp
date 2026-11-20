@@ -93,6 +93,15 @@ void CTurretPicker::ReadConfig()
 	c.enemyReach = turret.get("enemy_reach", c.enemyReach).asFloat();
 	c.allyRadius = turret.get("ally_radius", c.allyRadius).asFloat();
 	c.cooldown = turret.get("cooldown", c.cooldown).asFloat();
+	c.isCreep = turret.get("creep", c.isCreep).asBool();
+	c.creepBuilders = turret.get("creep_builders", c.creepBuilders).asInt();
+	c.creepIncome = turret.get("creep_income", c.creepIncome).asFloat();
+	c.creepInterval = turret.get("creep_interval", c.creepInterval).asFloat();
+	c.creepStep = turret.get("creep_step", c.creepStep).asFloat();
+	c.creepMargin = turret.get("creep_margin", c.creepMargin).asFloat();
+	c.creepRadius = turret.get("creep_radius", c.creepRadius).asFloat();
+	c.creepLosses = turret.get("creep_losses", c.creepLosses).asInt();
+	c.creepBudget = turret.get("creep_budget", c.creepBudget).asFloat();
 	// A list of def names (the defaults when the key is missing); a name that isn't a unit, or a turret, is logged
 	auto readDefs = [&](const std::string& key, const Json::Value& list, std::vector<std::string> names, bool isTurret) {
 		if (list.isArray()) {
@@ -202,7 +211,10 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	for (CCircuitDef* def : defs) {
 		maxRange = std::max(maxRange, def->GetMaxRange());
 	}
-	const SGather gather = Gather(centre, radius, maxRange, -RgtVector);
+	SGather gather = Gather(centre, radius, maxRange, -RgtVector);
+	if (order.isCreep) {
+		GatherGuns(gather);
+	}
 	last.grid = MakeGrid(builder, gather);
 
 	// The heaviest tier with a spot worth its cost, and in it the def whose best spot has the most value per metal;
@@ -613,7 +625,22 @@ CTurretPicker::Reject CTurretPicker::MakeCandidate(CCircuitUnit* builder, const 
 	})) {
 		return Reject::INFLUENCE;
 	}
-	if (circuit->GetThreatMap()->GetThreatAt(builder, pos) > THREAT_MIN) {
+	const float threat = circuit->GetThreatMap()->GetThreatAt(builder, pos);
+	if (gather.isCreep) {
+		// The creep: out of every known enemy static's range + creep_margin; mobiles' threat only where our guns
+		// covering the spot outweigh it, so a raider passing doesn't stall the step
+		auto isIn = [&pos](const SGun& g) { return g.pos.SqDistance2D(pos) <= g.sqReach; };
+		if (std::any_of(gather.enemyGuns.begin(), gather.enemyGuns.end(), isIn)) {
+			return Reject::THREAT;
+		}
+		float cover = 0.f;
+		for (const SGun& g : gather.ourGuns) {
+			cover += isIn(g) ? g.power : 0.f;
+		}
+		if ((threat > THREAT_MIN) && (threat > cover)) {
+			return Reject::THREAT;
+		}
+	} else if (threat > THREAT_MIN) {
 		return Reject::THREAT;
 	}
 	if (!circuit->GetTerrainManager()->CanReachAt(builder, pos, builder->GetCircuitDef()->GetBuildDistance())) {
@@ -691,6 +718,34 @@ float CTurretPicker::GetNearestOurs(const SGather& gather, const AIFloat3& pos) 
 		minSq = std::min(minSq, b.SqDistance2D(pos));
 	}
 	return gather.ourBuildings.empty() ? -1.f : std::sqrt(minSq);
+}
+
+void CTurretPicker::GatherGuns(SGather& gather) const
+{
+	// Statics that hit ground (IsDefence: not a Bertha, a Claw mine or a missile), any whose reach may touch the
+	// radius. Enemy ones as known (until seen dead), at their land range + creep_margin; ours and allies' finished
+	gather.isCreep = true;
+	const int frame = circuit->GetLastFrame();
+	auto isGun = [this](const CCircuitDef* d) { return IsDefence(d) && d->HasAntiLand(); };
+	auto add = [&gather](std::vector<SGun>& out, const AIFloat3& pos, float reach, float power) {
+		if (pos.SqDistance2D(gather.centre) <= SQUARE(gather.radius + reach)) {
+			out.push_back({pos, SQUARE(reach), power});
+		}
+	};
+	for (const auto& kv : circuit->GetEnemyInfos()) {
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if (IsEnemyBuilding(kv.second, false) && isGun(edef)) {
+			add(gather.enemyGuns, kv.second->GetPos(),
+					edef->GetMaxRange(CCircuitDef::RangeType::LAND) + config.creepMargin, edef->GetPower());
+		}
+	}
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if (isGun(cdef) && !kv.second->GetUnit()->IsBeingBuilt()) {
+			add(gather.ourGuns, kv.second->GetPos(frame), cdef->GetMaxRange(CCircuitDef::RangeType::LAND),
+					cdef->GetPower());
+		}
+	}
 }
 
 } // namespace circuit
