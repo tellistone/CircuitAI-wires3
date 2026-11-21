@@ -1172,14 +1172,14 @@ void CMilitaryManager::ReadConfig()
 	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);
 	ReadCurve(budget["mex"], "porcupine.budget.mex", "mex share", tb.mexCurve);
 	ReadCurve(budget["army"], "porcupine.budget.army", "turrets / army", tb.armyCurve);
+	tb.armySince = int(std::max(budget.get("army_since", 0.f).asFloat(), 0.f) * FRAMES_PER_SEC);
 	tb.mapX = mapSize / std::max(teamSize, 1.f);
 	tb.mapMult = utils::eval_curve(budgetMap, tb.mapX);
 	tb.mexMult = utils::eval_curve(tb.mexCurve, 0.f);
-	tb.armyMult = utils::eval_curve(tb.armyCurve, 0.f);
 	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1) x map %.2f (%.0f per player on our team)"
-			" x mex curve (%u points) x army curve (%u points), bank %.0f s, loss refund x%.1f",
-			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), (unsigned)tb.armyCurve.size(), tb.bankSec,
-			tb.lossRefund);
+			" x mex curve (%u points) x army curve (%u points, from %i s), bank %.0f s, loss refund x%.1f",
+			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), (unsigned)tb.armyCurve.size(),
+			tb.armySince / FRAMES_PER_SEC, tb.bankSec, tb.lossRefund);
 
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
@@ -2220,7 +2220,7 @@ void CMilitaryManager::UpdateTurretBudget()
 			b.mexMult = utils::eval_curve(b.mexCurve, b.mexX);
 		}
 		// budget.army: our finished account turrets' metal over our army's (no army: over 1 metal, so a turret with
-		// no army behind it already takes the curve's end)
+		// no army behind it already takes the curve's end); x1 before budget.army_since
 		if (!b.armyCurve.empty()) {
 			float turrets = 0.f;
 			for (const auto& kv : circuit->GetTeamUnits()) {
@@ -2230,7 +2230,7 @@ void CMilitaryManager::UpdateTurretBudget()
 				}
 			}
 			b.armyX = turrets / std::max(armyCost, 1.f);
-			b.armyMult = utils::eval_curve(b.armyCurve, b.armyX);
+			b.armyMult = (frame >= b.armySince) ? utils::eval_curve(b.armyCurve, b.armyX) : 1.f;
 		}
 	}
 	const float rate = b.share * em->GetAvgMetalIncome() * pull * b.mapMult * b.mexMult * b.armyMult;  // metal/s
