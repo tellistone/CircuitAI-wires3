@@ -315,7 +315,7 @@ void CSetupManager::ReadConfig()
 	const Json::Value& root = GetConfig();
 	const std::string& cfgName = GetConfigName();
 	const Json::Value& shield = root["retreat"]["shield"];
-	emptyShield = shield.get((unsigned)0, 0.1f).asFloat();
+	emptyShield = shield.get((unsigned)0, 0.f).asFloat();
 	fullShield = shield.get((unsigned)1, 0.6f).asFloat();
 	retreatWait = root["retreat"].get("wait_timeout", 0.f).asFloat() * FRAMES_PER_SEC;
 
