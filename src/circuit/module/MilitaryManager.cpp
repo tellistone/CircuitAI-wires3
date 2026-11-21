@@ -4792,7 +4792,8 @@ bool CMilitaryManager::IsPlantReason(CCircuitUnit* unit, int frame, float rangeM
 			}
 		}
 		// b) an anti-heavy that can fight has us in its range
-		if (edef->IsRoleAH() && enemy->GetData()->IsCounted()
+		if (edef->IsRoleAH() && (enemy->GetThreat() > 0.f) && !enemy->IsBeingBuilt()
+			&& !enemy->IsParalyzed() && !enemy->IsDisarmed()
 			&& (sqDist <= SQUARE(edef->GetMaxRange(ourRt) * rangeMult)))
 		{
 			return true;
