@@ -289,6 +289,11 @@ void CRaidTask::Update()
 	if (leader == nullptr) {  // all units released as stuck: task aborted
 		return;
 	}
+	if (utils::is_valid(raidSpot)) {
+		// Still working our spot (on the way, regrouping or fighting there): other groups keep off it and its cluster
+		// (quota.raider_spot.mex), even after claim_time
+		GetMilitaryMgr()->HoldRaidSpot(leader, raidSpot);
+	}
 	if (State::REGROUP == state) {
 		if (mustRegroup) {
 			const int timeout = frame + FRAMES_PER_SEC * 60;

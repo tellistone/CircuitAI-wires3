@@ -225,7 +225,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   defence covers the mex, if another scout is heading to any spot of its metal cluster, or if the spot was given up on
   for danger lately (its 10 s block plus `claim_time`). Only scouts that can hit land targets get it. A scout's claim
   on its spot is now renewed while it is not fleeing, until it picks again or leaves scouting (it ran out 20 s after the
-  pick, even mid-trip). `quota.raider_spot.mex` works the same for raid groups; not set.
+  pick, even mid-trip).
+- **Raid groups go for undefended enemy mexes too** (`quota.raider_spot.mex`, shipped 1.0, default 0 = off): the same
+  bonus and rules as the scouts', with "another raid group" for the cluster rule. A group's claim is renewed while it
+  has a spot and isn't fleeing (on the way, regrouping or fighting there), by spot rather than by leader, so a new
+  leader takes it over once the old leader's claim lapses. Scouts and raid groups spread only among their own kind:
+  a scout and a raid group may go for the same cluster.
 
 - **The creep: turrets walk out along our line's chokes, up to just outside the enemy's static range**
   (`turret.creep`, on by default; new `CCreepPlanner`). Our turrets stayed where they were first placed, often far

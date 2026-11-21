@@ -2897,11 +2897,9 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 		}
 		return danger;
 	};
-	auto isClaimed = [&](unsigned i) {
-		return (claims.frame[i] >= 0) && (frame < claims.frame[i] + cfg.claimTime);
-	};
+	auto isClaimed = [&](unsigned i) { return claims.IsLive(i, frame, cfg.claimTime); };
 	// Metal clusters another picker of this kind is heading to (ours was released above): no mex bonus there, so
-	// pickers spread over the enemy's mexes instead of all going for the best one
+	// pickers spread over the enemy's mexes instead of all going for the best one (a scout and a raid group may share)
 	std::vector<bool> isClusterTaken(isMexBonus ? metalMgr->GetClusters().size() : 0, false);
 	for (unsigned i = 0; i < isEnemyMex.size(); ++i) {
 		const int cluster = metalMgr->GetCluster(i);  // -1 until clusterized
@@ -2996,21 +2994,43 @@ void CMilitaryManager::ReleaseScoutSpot(const CCircuitUnit* unit)
 	ReleaseSpot(scoutClaims, unit->GetId());
 }
 
+void CMilitaryManager::HoldRaidSpot(const CCircuitUnit* leader, const AIFloat3& spot)
+{
+	const int i = FindSpot(raidClaims, spot);
+	if (i < 0) {
+		return;
+	}
+	// Someone else's live claim stays theirs (a group sharing the spot picked it after us)
+	const int frame = circuit->GetLastFrame();
+	if ((raidClaims.unitId[i] == leader->GetId()) || !raidClaims.IsLive(i, frame, raiderSpot.claimTime)) {
+		raidClaims.frame[i] = frame;
+		raidClaims.unitId[i] = leader->GetId();
+	}
+}
+
 void CMilitaryManager::ReleaseRaidSpot(const CCircuitUnit* leader)
 {
 	ReleaseSpot(raidClaims, leader->GetId());
 }
 
-void CMilitaryManager::BlockSpot(SSpotClaims& claims, const AIFloat3& spot, int frames)
+int CMilitaryManager::FindSpot(const SSpotClaims& claims, const AIFloat3& spot) const
 {
 	if (claims.blocked.size() != scoutSpots.size()) {
-		return;
+		return -1;
 	}
 	for (unsigned i = 0; i < scoutSpots.size(); ++i) {
 		if ((scoutSpots[i].x == spot.x) && (scoutSpots[i].z == spot.z)) {
-			claims.blocked[i] = circuit->GetLastFrame() + frames;
-			return;
+			return i;
 		}
+	}
+	return -1;
+}
+
+void CMilitaryManager::BlockSpot(SSpotClaims& claims, const AIFloat3& spot, int frames)
+{
+	const int i = FindSpot(claims, spot);
+	if (i >= 0) {
+		claims.blocked[i] = circuit->GetLastFrame() + frames;
 	}
 }
 
