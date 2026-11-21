@@ -230,6 +230,9 @@ public:
 	// lapses while the scout flees), and gives it up when it picks again (PickSpot) or leaves its scout task
 	void HoldScoutSpot(const CCircuitUnit* unit);
 	void ReleaseScoutSpot(const CCircuitUnit* unit);
+	// A raid group keeps its spot's claim fresh while it works it. By spot, not by id: its leader may have changed since
+	// the pick, and the current one takes the claim over
+	void HoldRaidSpot(const CCircuitUnit* leader, const springai::AIFloat3& spot);
 	// The raid group led by leader no longer heads for its spot (a raid rally joiner): free its claim for others
 	void ReleaseRaidSpot(const CCircuitUnit* leader);
 	bool IsRaidSpotOn() const { return isRaiderSpot; }  // quota.raider_spot given
@@ -714,6 +717,7 @@ private:
 	springai::AIFloat3 PickSpot(CCircuitUnit* unit, float safeThreat, const SSpotCfg& cfg, IFighterTask::FightType type,
 			SSpotClaims& claims);
 	void ReleaseSpot(SSpotClaims& claims, int unitId);  // the picker's claim, if any
+	int FindSpot(const SSpotClaims& claims, const springai::AIFloat3& spot) const;  // -1 = not a spot
 	void BlockSpot(SSpotClaims& claims, const springai::AIFloat3& spot, int frames);
 	void HoldSpot(SSpotClaims& claims, int unitId);  // renew the picker's claim, if any
 

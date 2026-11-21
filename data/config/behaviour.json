@@ -31,8 +31,9 @@
 		"travel": 0.5,      // penalty for distance from the group's leader (default 0.5)
 		"home_ratio": 0.5,  // skip spots nearer our base than this x their distance to the enemy (default 0.5)
 		"stale_time": 90,   // seconds until a seen spot counts as fully stale (default 90)
-		"claim_time": 20,   // seconds a picked spot stays reserved for that group (default 20)
-		"static_range_mult": 1.0  // scales enemy defence ranges when judging if a spot is defended (default 1.0)
+		"claim_time": 20,   // seconds a picked spot stays reserved once its group stops renewing it (it renews while heading there, not fleeing) (default 20)
+		"static_range_mult": 1.0,  // scales enemy defence ranges when judging if a spot is defended (default 1.0)
+		"mex": 1.0          // bonus x stale term for a known enemy mex no enemy defence covers, in a metal cluster no other raid group works; anti-land groups only (default 0 = off)
 	},
         "target_dist_mod": {"comm": 0.5},
 	// Second multiplier on that bonus: this curve at the map size, divided by all players. Points are

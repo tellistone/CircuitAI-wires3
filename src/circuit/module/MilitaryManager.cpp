@@ -2908,7 +2908,7 @@ AIFloat3 CMilitaryManager::PickSpot(CCircuitUnit* unit, float safeThreat, const 
 		return (claims.frame[i] >= 0) && (frame < claims.frame[i] + cfg.claimTime);
 	};
 	// Metal clusters another picker of this kind is heading to (ours was released above): no mex bonus there, so
-	// pickers spread over the enemy's mexes instead of all going for the best one
+	// pickers spread over the enemy's mexes instead of all going for the best one (a scout and a raid group may share)
 	std::vector<bool> isClusterTaken(isMexBonus ? metalMgr->GetClusters().size() : 0, false);
 	for (unsigned i = 0; i < isEnemyMex.size(); ++i) {
 		const int cluster = metalMgr->GetCluster(i);  // -1 until clusterized
@@ -3003,21 +3003,40 @@ void CMilitaryManager::ReleaseScoutSpot(const CCircuitUnit* unit)
 	ReleaseSpot(scoutClaims, unit->GetId());
 }
 
+void CMilitaryManager::HoldRaidSpot(const CCircuitUnit* leader, const AIFloat3& spot)
+{
+	// Whoever works the spot holds its claim: a new leader takes it over at once, so its next pick releases it. Two
+	// groups sharing a spot (every safe one taken) just keep it live between them
+	const int i = FindSpot(raidClaims, spot);
+	if (i >= 0) {
+		raidClaims.frame[i] = circuit->GetLastFrame();
+		raidClaims.unitId[i] = leader->GetId();
+	}
+}
+
 void CMilitaryManager::ReleaseRaidSpot(const CCircuitUnit* leader)
 {
 	ReleaseSpot(raidClaims, leader->GetId());
 }
 
-void CMilitaryManager::BlockSpot(SSpotClaims& claims, const AIFloat3& spot, int frames)
+int CMilitaryManager::FindSpot(const SSpotClaims& claims, const AIFloat3& spot) const
 {
 	if (claims.blocked.size() != scoutSpots.size()) {
-		return;
+		return -1;
 	}
 	for (unsigned i = 0; i < scoutSpots.size(); ++i) {
 		if ((scoutSpots[i].x == spot.x) && (scoutSpots[i].z == spot.z)) {
-			claims.blocked[i] = circuit->GetLastFrame() + frames;
-			return;
+			return i;
 		}
+	}
+	return -1;
+}
+
+void CMilitaryManager::BlockSpot(SSpotClaims& claims, const AIFloat3& spot, int frames)
+{
+	const int i = FindSpot(claims, spot);
+	if (i >= 0) {
+		claims.blocked[i] = circuit->GetLastFrame() + frames;
 	}
 }
 
