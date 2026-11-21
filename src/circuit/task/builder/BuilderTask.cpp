@@ -752,7 +752,8 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 		CCircuitDef* bdef = units.empty() ? circuit->GetSetupManager()->GetCommChoice() : (*this->units.begin())->GetCircuitDef();
 		CBuilderManager* builderMgr = circuit->GetBuilderManager();
 		CEnemyManager* enemyMgr = circuit->GetEnemyManager();
-		CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::HUB);
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::HUB);
 		// choke.spot.enable: an armed hub tower that shoots the ground goes to the spot scorer's best spot guarding the
 		// building, within choke.spot.radius, as a defence point's towers do; its offset if no spot passes
 		const CChokeMap* chokeMap = circuit->GetChokeMap();
@@ -824,9 +825,11 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 					pos = terrainMgr->GetBuildPosition(bdef, pos);
 				}
 
-				// turret.crowd_count: a light tower among enough light turrets is left out of the chain
+				// turret.crowd_count: a light tower among enough light turrets is left out of the chain. A turret the
+				// account (porcupine.budget) can't pay for yet waits for it, out of the chain
 				if ((bi.buildType == IBuilderTask::BuildType::DEFENCE)
-					&& circuit->GetMilitaryManager()->RefuseCrowdedLight(buildDef, pos, "hub"))
+					&& (militaryMgr->RefuseCrowdedLight(buildDef, pos, "hub")
+						|| militaryMgr->HoldHubTower(buildDef, pos, isScored, (target != nullptr) ? target->GetId() : -1)))
 				{
 					continue;
 				}

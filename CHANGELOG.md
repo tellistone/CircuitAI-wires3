@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Base towers and build chain hub towers wait for the turret account** (`porcupine.budget`). They were charged
+  but never refused, so they could take the account below zero and hold up porc, the picker and the creep. A base
+  timetable turret now waits in its place until the account covers it (asking it to save), with the list's later
+  entries behind it. A hub tower the account can't cover leaves its chain and waits in one queue, oldest first, while
+  the building it guards stands, then is queued at LOW. Shields, radars, caretakers and other non-turrets in these
+  lists don't wait. A base or hub tower now clears the account's waiting ask, as the other waiting spenders do.
+
 - **The turret nearest the enemy's base is worth more** (`turret.foremost`, new, 300 metal). A picker spot that would
   put a ground turret nearer the enemy's base (its known factories, else its start boxes) than any ground turret of
   our ally team, built, being built or queued, adds this to its value. That counts in the "worth its cost" test, so the

@@ -2276,7 +2276,7 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 	b.balance -= cost;
 	task->SetCharge(cost, static_cast<int>(turretSpend));
 	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER) || (turretSpend == TurretSpend::CREEP)
-		|| (turretSpend == TurretSpend::ESCORT))
+		|| (turretSpend == TurretSpend::ESCORT) || (turretSpend == TurretSpend::BASE) || (turretSpend == TurretSpend::HUB))
 	{
 		b.askCost = 0.f;  // a waiting spender got its tower
 		b.askFrame = -1;
@@ -4147,6 +4147,10 @@ void CMilitaryManager::UpdateDefence()
 		if (frame >= defElem.second) {
 			CCircuitDef* buildDef = defElem.first;
 			if (buildDef->IsAvailable(frame) && (buildDef != sensorPlanner->GetPlannedDef())) {
+				if (turretPicker->IsDefence(buildDef) && !CanAffordTurret(buildDef->GetCostM())) {
+					++ibd;  // waits in its place (and the list's later entries behind it)
+					continue;
+				}
 				AIFloat3 buildPos = ibd->first;
 				// choke.spot.enable: an attacker goes to the best spot within the main tower's range
 				const CChokeMap* chokeMap = circuit->GetChokeMap();
@@ -4170,10 +4174,47 @@ void CMilitaryManager::UpdateDefence()
 			++ibd;
 		}
 	}
-	if (buildDefence.empty()) {
+
+	// Hub towers (HoldHubTower), oldest first: the first the account can't pay for waits, and the rest behind it
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	auto iht = hubTowers.begin();
+	for (; iht != hubTowers.end(); ++iht) {
+		if ((iht->hubId >= 0) && (circuit->GetTeamUnit(iht->hubId) == nullptr)) {
+			continue;  // the building it guards is gone
+		}
+		if (!iht->def->IsAvailable(frame) || turretPicker->RefuseCrowdedLight(iht->def, iht->pos, "hub")) {
+			continue;
+		}
+		if (!CanAffordTurret(iht->def->GetCostM())) {
+			break;
+		}
+		TurretScope scope(this, TurretSpend::HUB);
+		IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, iht->def, iht->pos,
+				IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
+		if (iht->isScored) {  // as the hub chain's own: its site on the blocking map
+			task->SetFacing(UNIT_FACING_SOUTH);
+			task->SetBuildPos(iht->pos);
+		}
+	}
+	hubTowers.erase(hubTowers.begin(), iht);
+
+	if (buildDefence.empty() && hubTowers.empty()) {
 		circuit->GetScheduler()->RemoveTask(defend);
 		defend = nullptr;
 	}
+}
+
+bool CMilitaryManager::HoldHubTower(CCircuitDef* def, const AIFloat3& pos, bool isScored, int hubId)
+{
+	if ((turretPicker == nullptr) || !turretPicker->IsDefence(def) || CanAffordTurret(def->GetCostM())) {
+		return false;
+	}
+	hubTowers.push_back({def, pos, isScored, hubId});
+	if (defend == nullptr) {
+		defend = std::make_shared<CGameTask>(&CMilitaryManager::UpdateDefence, this);
+		circuit->GetScheduler()->RunTaskEvery(defend, FRAMES_PER_SEC);
+	}
+	return true;
 }
 
 void CMilitaryManager::MakeBaseDefence(const AIFloat3& pos)

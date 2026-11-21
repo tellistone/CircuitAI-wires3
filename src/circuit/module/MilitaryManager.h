@@ -391,8 +391,14 @@ public:
 	bool IsRaiderQuotaOn() const { return raiderQuota.IsOn(); }
 	bool IsRaider(const CCircuitDef* cdef) const;
 	unsigned int GetRaiderCount() const;  // raider units in the army not scouting (factory tasks are counted by the caller)
+	// Base towers (build_chain.json "base") at their times, and the hub towers WaitHubTower holds, once the turret
+	// account (porcupine.budget) covers each: a turret waits in its place, asking the account to save for it
 	void UpdateDefence();
 	void MakeBaseDefence(const springai::AIFloat3& pos);
+	// A build chain's hub tower: true when it's a turret the account can't pay for yet. It then waits, and
+	// UpdateDefence queues it at LOW once the account can, while the building it guards (hubId, -1: none) stands.
+	// isScored: pos is the spot scorer's site, kept as is
+	bool HoldHubTower(CCircuitDef* def, const springai::AIFloat3& pos, bool isScored, int hubId);
 
 	const std::vector<CCircuitDef*>& GetLandDefenders() const { return landDefenders; }
 	const std::vector<CCircuitDef*>& GetWaterDefenders() const { return waterDefenders; }
@@ -962,6 +968,13 @@ private:
 
 	std::shared_ptr<CGameTask> defend;
 	std::vector<std::pair<springai::AIFloat3, BuildVector>> buildDefence;
+	struct SHubTower {
+		CCircuitDef* def;
+		springai::AIFloat3 pos;
+		bool isScored;
+		int hubId;
+	};
+	std::vector<SHubTower> hubTowers;  // HoldHubTower's, oldest first
 };
 
 } // namespace circuit
