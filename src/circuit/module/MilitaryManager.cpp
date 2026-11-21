@@ -2275,7 +2275,9 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 	}
 	b.balance -= cost;
 	task->SetCharge(cost, static_cast<int>(turretSpend));
-	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER) || (turretSpend == TurretSpend::CREEP)) {
+	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER) || (turretSpend == TurretSpend::CREEP)
+		|| (turretSpend == TurretSpend::ESCORT))
+	{
 		b.askCost = 0.f;  // a waiting spender got its tower
 		b.askFrame = -1;
 	}
@@ -2291,6 +2293,11 @@ void CMilitaryManager::RefundTurret(CBDefenceTask* task)
 	b.balance += charged;
 	b.refunded += charged;
 	task->SetCharge(0.f, task->GetSpend());
+}
+
+bool CMilitaryManager::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3& pos, const char* caller)
+{
+	return turretPicker->RefuseCrowdedLight(def, pos, caller);
 }
 
 float CMilitaryManager::CreditTurret(float metal)
@@ -2358,13 +2365,13 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 				shake = 0.f;  // built where it was scored: a shake slides a ledge's tower down its slope
 				backPos = GetBackPos(spot);  // the support towers after it cover it
 			}
-			// turret.crowd_count: a preventive light tower among enough light turrets isn't placed (the account gets
-			// turret.crowd_credit instead). Asked once a call, though a pooled list is walked up to POOL_COPIES times;
-			// not booked on the point, so the next visit asks again
-			if (!isPorc && turretPicker->IsLight(defDef)
-				&& (isCrowded || (isCrowded = turretPicker->RefuseCrowdedLight(defDef, buildPos, "prevent"))))
+			// turret.crowd_count: a preventive or porc light tower among enough light turrets isn't placed (the account
+			// gets turret.crowd_credit instead). Asked once a call, though a pooled list is walked up to POOL_COPIES
+			// times. It stays booked on the point: the crowd paid for its slot, so a later visit doesn't fill that
+			// metal with a second copy of the towers after it
+			if (turretPicker->IsLight(defDef) && (isCrowded
+				|| (isCrowded = turretPicker->RefuseCrowdedLight(defDef, buildPos, isPorc ? "porc" : "prevent"))))
 			{
-				point->cost -= defCost;
 				continue;
 			}
 			// Porc towers go in a chain, one after another. Preventive ones are queued each on its own, because the
@@ -4130,9 +4137,11 @@ void CMilitaryManager::UpdateDefence()
 						buildPos = spot;
 					}
 				}
-				TurretScope scope(this, TurretSpend::BASE);
-				circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, buildPos,
-														  IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
+				if (!turretPicker->RefuseCrowdedLight(buildDef, buildPos, "base")) {  // turret.crowd_count
+					TurretScope scope(this, TurretSpend::BASE);
+					circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, buildPos,
+															  IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
+				}
 			}
 			ibd->second.pop_back();
 		}

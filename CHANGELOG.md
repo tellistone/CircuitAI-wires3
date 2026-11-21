@@ -45,8 +45,23 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   600, `turret.crowd_count` 3, `turret.crowd_credit` 90, new). A light def (`turret.light`: Lotus, Picket) that a
   picker order (not the creep's) or a preventive tower would place within 600 elmos of 3 other light turrets of the
   ally team (finished or being built, and our jobs not started yet) isn't placed; the account (`porcupine.budget`)
-  gets 90 metal instead, up to its cap, once per call (a cluster's next sweep visit may credit it again).
+  gets 90 metal instead, up to its cap, once per call.
   The `TURRET BUDGET` log line sums it as "crowd credit".
+  It also covers porc-mode towers, build chain hub towers, base towers and radar guards. It doesn't cover a
+  cornered builder's tower, a mex escort (it is there to kill an enemy mex the crowd doesn't reach), the creep or
+  test orders. A preventive or porc light refused this way stays booked on its defence point, so a later visit
+  doesn't spend its metal on a second copy of the towers after it.
+
+- **Builders go after enemy mexes they can see.** The mex search used to skip a spot held by an enemy mex in sight
+  (the engine's build test), so the mex escort (a `porcupine.default` tower queued 0.9 x its range short of an enemy
+  mex, to kill it) only fired when a builder stumbled on one it hadn't seen. Now such a spot can be picked, when the
+  builder can build that tower and the spot passes the usual threat and reach tests. The builder walks into the
+  tower's range and queues it there, then builds the mex once the spot is clear. An escort now waits for the turret
+  account (`porcupine.budget`): such a spot is only picked when the account can pay for the tower, and a builder that
+  finds the account short on arrival drops the mex job (the spot reopens). The enemy mex is the one we know of (seen
+  now or before), so a builder that stepped back out of its sight still queues the tower. An escort job of ours that
+  reaches the enemy mex is joined; a friendly turret of any ally that reaches it already means no new one, and the
+  spot is passed over until that changes.
 
 - **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
   unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and

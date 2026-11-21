@@ -17,6 +17,8 @@
 #include "terrain/TerrainManager.h"
 #include "map/ThreatMap.h"
 #include "map/InfluenceMap.h"
+#include "unit/ally/AllyUnit.h"
+#include "unit/enemy/EnemyUnit.h"
 #include "task/RetreatTask.h"
 #include "task/builder/EnergyTask.h"
 #include "CircuitAI.h"
@@ -858,6 +860,45 @@ bool CEconomyManager::IsAllyOpenSpot(int spotId) const
 	return IsOpenSpot(spotId) && circuit->GetMetalManager()->IsOpenSpot(spotId);
 }
 
+std::set<int> CEconomyManager::GetEnemyMexSpots() const
+{
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	std::set<int> result;
+	for (const auto& kv : circuit->GetEnemyInfos()) {
+		const CCircuitDef* edef = kv.second->GetCircuitDef();
+		if ((edef == nullptr) || (edef->GetId() != mexDef->GetId()) || kv.second->GetData()->IsDead()) {
+			continue;
+		}
+		const int index = metalMgr->FindNearestSpot(kv.second->GetPos());
+		if ((index >= 0)
+			&& (metalMgr->GetSpots()[index].position.SqDistance2D(kv.second->GetPos()) < SQUARE(SQUARE_SIZE * 2)))
+		{
+			result.insert(index);
+		}
+	}
+	return result;
+}
+
+bool CEconomyManager::IsEnemyMexAt(const AIFloat3& pos) const
+{
+	return GetEnemyMexSpots().count(circuit->GetMetalManager()->FindNearestSpot(pos)) > 0;
+}
+
+bool CEconomyManager::IsEnemyMexCovered(const AIFloat3& pos) const
+{
+	const int frame = circuit->GetLastFrame();
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* adef = kv.second->GetCircuitDef();
+		if ((adef != nullptr) && !adef->IsMobile() && adef->IsAttacker() && adef->HasAntiLand()
+			&& (kv.second->GetPos(frame).SqDistance2D(pos) < SQUARE(adef->GetMaxRange(CCircuitDef::RangeType::LAND))))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 bool CEconomyManager::IsOpenSpot(int spotId) const
 {
 	return openSpots[spotId] && ((isAllyMexMax ? circuit->GetMetalManager()->GetMexCount() : mexCount) < mexMax);
@@ -976,15 +1017,25 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const CMetalData::Metals& spots = metalMgr->GetSpots();
 	CMap* map = circuit->GetMap();
-	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on
-	CMetalData::PointPredicate predicate = [this, &spots, map, terrainMgr, builderMgr, unit](int index) {
+	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on. A spot an enemy
+	// mex we know of holds (seen now or before) is free when the builder can build the turret that clears it
+	// (CBMexTask), no friendly turret reaches it already and the turret account (porcupine.budget) can pay
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const CCircuitDef* escortDef = militaryMgr->GetDefaultPorc();
+	const bool isEscort = (escortDef != nullptr) && escortDef->IsAvailable(circuit->GetLastFrame())
+			&& ((unit == nullptr) || unit->GetCircuitDef()->CanBuild(escortDef->GetId()));
+	const std::set<int> enemyMexSpots = GetEnemyMexSpots();
+	CMetalData::PointPredicate predicate = [this, &spots, map, terrainMgr, builderMgr, unit, isEscort, militaryMgr,
+			escortDef, &enemyMexSpots](int index) {
 		const AIFloat3& pos = spots[index].position;
 		return (IsAllyOpenSpot(index) && !terrainMgr->IsZoneAlly(pos)
 				&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
 				&& ((unit != nullptr)
 					? terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
 					: builderMgr->IsBuilderInArea(mexDef, pos))
-				&& map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING));
+				&& ((enemyMexSpots.count(index) > 0)
+					? (isEscort && !IsEnemyMexCovered(pos) && militaryMgr->CanAffordTurret(escortDef->GetCostM()))
+					: map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING)));
 	};
 	// A commander's search uses its own bias (mex_front.comm_bias)
 	const bool isComm = (unit != nullptr) && unit->GetCircuitDef()->IsRoleComm();

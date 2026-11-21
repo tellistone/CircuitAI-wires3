@@ -145,6 +145,17 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 	UnitDef* buildUDef = buildDef->GetDef();
 	if (utils::is_valid(buildPos)) {
 		int index = metalMgr->FindNearestSpot(buildPos);
+		const CCircuitDef* escortDef = GetEscortDef(unit);
+		if ((index >= 0) && (escortDef != nullptr) && economyMgr->IsEnemyMexAt(buildPos)) {
+			// An enemy mex we know of holds it: walk up into the turret's range, where OnUnitIdle queues it
+			const float range = escortDef->GetMaxRange();
+			AIFloat3 pos = buildPos - (buildPos - unit->GetPos(frame)).Normalize2D() * range * 0.9f;
+			CTerrainManager::CorrectPosition(pos);
+			TRY_UNIT(circuit, unit,
+				unit->CmdMoveTo(pos, UNIT_CMD_OPTION, frame + FRAMES_PER_SEC * 60);
+			)
+			return;
+		}
 		if (index >= 0) {
 			if (circuit->GetMap()->IsPossibleToBuildAt(buildUDef, buildPos, facing)) {
 				if (TryClaim()) {  // ours, or still open
@@ -190,58 +201,56 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 	}
 }
 
+CCircuitDef* CBMexTask::GetEscortDef(CCircuitUnit* unit) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CCircuitDef* def = circuit->GetMilitaryManager()->GetDefaultPorc();
+	return ((def != nullptr) && def->IsAvailable(circuit->GetLastFrame()) && unit->GetCircuitDef()->CanBuild(def))
+			? def : nullptr;
+}
+
 void CBMexTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	/*
-	 * Check if unit is idle because of enemy mex ahead and build turret if so.
+	 * Idle by an enemy mex on the spot (seen on the way, or walked up to from Execute): a turret against it first.
+	 * The enemy mex is the one we know of, so a builder that stepped back out of its sight still finds it
 	 */
 	CCircuitAI* circuit = manager->GetCircuit();
-	CCircuitDef* def = circuit->GetMilitaryManager()->GetDefaultPorc();
-	if ((def == nullptr) || !def->IsAvailable(circuit->GetLastFrame())) {
-		IBuilderTask::OnUnitIdle(unit);
-		return;
-	}
-
-	const float range = def->GetMaxRange();
-	const float testRange = range + 200.0f;  // 200 elmos
+	CCircuitDef* def = GetEscortDef(unit);
 	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
-	if (buildPos.SqDistance2D(pos) < SQUARE(testRange)) {
-		CCircuitDef::Id mexDefId = circuit->GetEconomyManager()->GetMexDef()->GetId();
-		COOAICallback* clb = circuit->GetCallback();
-		// TODO: Use internal CCircuitAI::GetEnemyUnits?
-		auto enemies = clb->GetEnemyUnitIdsIn(buildPos, SQUARE_SIZE);
-		bool blocked = false;
-		for (int enemyId : enemies) {
-			if (enemyId == -1) {
-				continue;
-			}
-			CCircuitDef::Id enemyDefId = clb->Unit_GetDefId(enemyId);
-			if (enemyDefId == mexDefId) {
-				blocked = true;
+	if ((def != nullptr) && (buildPos.SqDistance2D(pos) < SQUARE(def->GetMaxRange() + 200.0f))  // 200 elmos
+		&& circuit->GetEconomyManager()->IsEnemyMexAt(buildPos))
+	{
+		// A turret job of ours that reaches the enemy mex: help it
+		CBuilderManager* builderMgr = circuit->GetBuilderManager();
+		IBuilderTask* task = nullptr;
+		for (IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
+			const CCircuitDef* tdef = t->GetBuildDef();
+			if ((tdef != nullptr) && tdef->IsAttacker() && t->CanAssignTo(unit)
+				&& (buildPos.SqDistance2D(t->GetTaskPos()) < SQUARE(tdef->GetMaxRange())))
+			{
+				task = t;
 				break;
 			}
 		}
-		if (blocked) {
-			CBuilderManager* builderMgr = circuit->GetBuilderManager();
-			IBuilderTask* task = nullptr;
-			const float qdist = SQUARE(200.0f);  // 200 elmos
-			// TODO: Push tasks into bgi::rtree
-			for (IBuilderTask* t : builderMgr->GetTasks(IBuilderTask::BuildType::DEFENCE)) {
-				if (pos.SqDistance2D(t->GetTaskPos()) < qdist) {
-					task = t;
-					break;
-				}
-			}
-			if (task == nullptr) {
-				AIFloat3 newPos = buildPos - (buildPos - pos).Normalize2D() * range * 0.9f;
-				CTerrainManager::CorrectPosition(newPos);
-				CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::ESCORT);
-				task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, def, newPos, IBuilderTask::BuildType::DEFENCE);
-			}
-			// TODO: Before BuildTask assign MoveTask(task->GetTaskPos())
-			manager->AssignTask(unit, task);
+		// Else a new one, unless a friendly turret reaches it already or the account (porcupine.budget) is short:
+		// then the spot reopens, and the mex search passes it over until that changes
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		if ((task == nullptr)
+			&& (circuit->GetEconomyManager()->IsEnemyMexCovered(buildPos) || !militaryMgr->CanAffordTurret(def->GetCostM())))
+		{
+			manager->AbortTask(this);
 			return;
 		}
+		if (task == nullptr) {
+			AIFloat3 newPos = buildPos - (buildPos - pos).Normalize2D() * def->GetMaxRange() * 0.9f;
+			CTerrainManager::CorrectPosition(newPos);
+			CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::ESCORT);
+			task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, def, newPos, IBuilderTask::BuildType::DEFENCE);
+		}
+		// TODO: Before BuildTask assign MoveTask(task->GetTaskPos())
+		manager->AssignTask(unit, task);
+		return;
 	}
 
 	IBuilderTask::OnUnitIdle(unit);

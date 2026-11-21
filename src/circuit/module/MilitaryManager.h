@@ -192,6 +192,9 @@ public:
 	bool CanAffordTurret(float cost);
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
+	// turret.crowd_count: true when a light def at pos would join enough light turrets; logs and credits the account
+	// (CTurretPicker::RefuseCrowdedLight)
+	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
 	// turret.crowd_credit: a light turret not placed for its crowd (CTurretPicker::RefuseCrowdedLight). Never past the
 	// account's cap; returns what it credited
 	float CreditTurret(float metal);
