@@ -130,15 +130,30 @@ protected:
 	// Attack orders the unit on the group's target instead
 	bool AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self, float safeThreat, CEnemyInfo* enemy,
 			int timeout);
-	// A unit Attack orders: its claim (index in claims), spot range, and target (the group's, or another for melee)
+	// A unit Attack orders: its claim (index in claims), spot range, and target (the group's, or another for melee).
+	// An escort (discRadius > 0): its pick, and a second one (alt, may be nullptr) to try if the first has no spot in
+	// its stay disc round spotDiscPos (each with its own radius: the current target's is grown by keep_mod)
 	struct SOrder {
 		size_t claim;
 		float range;
 		CEnemyInfo* enemy;
+		float discRadius = 0.f;
+		CEnemyInfo* alt = nullptr;
+		float altRadius = 0.f;
 	};
-	// Attack's orders for the units on the group's target (and melee ones AssignMeleeTargets sent elsewhere)
+	// Attack's orders, longest range first: units on the group's target, melee ones AssignMeleeTargets sent
+	// elsewhere, and escorts on their picks (OrderEscorts), all in one claim pass
 	void OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SOrder>& orders, int frame, bool isDirect,
 			float safeThreat, int timeout);
+	// An escort's order: a safe firing spot in its disc by its pick (else by alt), with a FightFrom (it never chases
+	// out of the disc); false: none (both are skipped by this unit type a while, spotDiscBans)
+	bool OrderInDisc(std::vector<SFireClaim>& claims, const SOrder& order, float safeThreat, int timeout);
+	// An escort with nothing to hit from its disc: back into it (a Move to ESCORT_HOLD_IN of the radius) if outside,
+	// else it holds where it stands (fires at whatever comes into range)
+	void HoldInDisc(SFireClaim& claim, float discRadius, int frame, int timeout);
+	// Can unit find a firing spot by enemy inside a disc of radius r round spotDiscPos? Spots lie at FIRE_RADIUS x
+	// its range from the enemy (a distance test, before any FindFireSpot)
+	bool IsDiscReach(CCircuitUnit* unit, const CEnemyInfo* enemy, float r) const;
 	// isClose (melee's close spots): 0-0.95x GetCloseRange from the enemy; else 0.6-0.95x GetFireRange
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isClose, const CEnemyInfo* enemy) const;
 	// Its last spot, if still in that band
@@ -196,12 +211,23 @@ protected:
 	bool isSpotDisc = false;
 	springai::AIFloat3 spotDiscPos;
 	float spotDiscSqRadius = 0.f;
-	// Units Attack orders apart from the group's target (CAttackTask's escorts, quota.escort). Default: none
-	virtual bool IsEscortUnit(CCircuitUnit* unit) const { return false; }
-	// Attack's orders for them, after the other units' (whose claims crowd and back up the escorts' spots). isRepeat:
-	// the repeat timer ran out (re-send every order)
-	virtual void OrderEscorts(std::vector<SFireClaim>& claims, int frame, bool isRepeat, float safeThreat,
+	// Enemies with no spot in an escort's disc lately, per unit type: skipped by that type until then (compared only)
+	std::map<std::pair<const CEnemyInfo*, int>, int> spotDiscBans;
+	bool IsDiscBanned(const CEnemyInfo* enemy, const CCircuitDef* cdef) const;
+	// Units Attack doesn't order on the group's target (quota.escort). Default: unarmed support units (shields), which
+	// never get attack orders; CAttackTask adds its escorts
+	virtual bool IsEscortUnit(CCircuitUnit* unit) const;
+	// Escorts' orders: unarmed ones are moved, armed ones get an SOrder with a disc in orders (or hold). Before the
+	// pass, so they claim spots in it with the others. isRepeat: the repeat timer ran out. Default: none
+	virtual void OrderEscorts(std::vector<SFireClaim>& claims, std::vector<SOrder>& orders, int frame, bool isRepeat,
 			int timeout) {}
+public:
+	// Has a real weapon: an attacker that isn't a mobile bomb (a unit without a weapon whose wide death explosion
+	// CCircuitDef counts as one: a shield's would)
+	static bool IsArmedUnit(const CCircuitDef* cdef);
+	// Support (role or "support" attribute) without a real weapon: Aspis, Funnelweb
+	static bool IsUnarmedSupport(const CCircuitDef* cdef);
+protected:
 	// Attack skips this unit (no attack order, keeps travelling). Default: fireSpotReach
 	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const;
 	// Attack leaves this unit alone: it is stepping out of the target's reach while it reloads (ISquadTask scoot)

@@ -47,8 +47,8 @@ CDefendTask::~CDefendTask()
 
 bool CDefendTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	// quota.escort.speed_min: as attack groups, a gathering group with a core never slows down for support units (it
-	// is promoted to one); unit leads its own gathering group, which joins as a whole (GetSpeedMix)
+	// quota.escort.speed_min, as attack groups (it is promoted to one); unit leads its own gathering group, which joins
+	// as a whole (GetSpeedMix)
 	return !IsGathered() && (static_cast<CDefendTask*>(unit->GetTask())->GetPromote() == promote)
 		&& IsSpeedMixOk(GetSpeedMix(unit), static_cast<CMilitaryManager*>(manager)->GetEscortCfg().speedMin);
 }

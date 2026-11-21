@@ -109,9 +109,10 @@
          },
 	// Support units (role or "support" attribute). Armed ones are attack units like any other (gathering, reinforce, merge, rally); in a group whose core (its non-support units) holds
 	// enough of its power they are escorts: they walk in its formation, but in a fight each fires only from its stay disc round the core's centre, at the nearest threat to the core it
-	// can hit from there (an armed mobile enemy within its weapon range + 2 s of its travel of a core unit), else the group's target, else it holds in the disc. Unarmed ones (shields)
-	// walk to the attack group with the most power per shield already there that they can keep up with (a gathering group if none, else they wait at base), on a threat-capped route;
-	// in the group they take a formation slot and go to the core's centre in fights, never with attack orders. A group left with only unarmed units sends them back to find another
+	// can hit from there (an armed mobile enemy within its weapon range + 2 s of its travel of a core unit; artillery skips enemies within its area of effect of a core unit),
+	// else the group's target, else it holds in the disc. Unarmed ones (shields) walk to the attack group with the most power per shield already there that they can keep up with
+	// (else a gathering group, else any attack group, which then slows down for them), along a threat-capped route; in the group they take a formation slot and stand round the
+	// core's centre in fights, never with attack orders. A group left with only unarmed units sends them back to find another
 	"escort": {
 		"stay_radius": 250,  // elmos: an escort's stay disc round the centre of the core units (those within the group radius of the leader)
 		"offset_cap": 400,  // the disc grows by the escort's weapon range past the group's fire range (power-weighted median, escorts left out), at most this much
@@ -119,7 +120,7 @@
 		"core_share_on": 0.35,  // escort mode on once the core holds this share of the group's power (def power, as quota.attack counts it)
 		"core_share_off": 0.2,  // and off below this (at most core_share_on); a group with no core is never in escort mode
 		"mode_hold_sec": 10,  // a mode change must be called for this long first (no core: off at once)
-		"speed_min": 0.75  // a group with a core only takes in support units (joins, merges, reinforce, rally, gathering, shield hosts) at this x its slowest core unit's speed or faster; 0 = off
+		"speed_min": 0.75  // a group with a core only takes in armed support units (joins, merges, reinforce, rally, gathering) at this x its slowest core unit's speed or faster, so it walks at most 1 - this slower for them (0.75: a quarter); shields prefer such hosts too; 0 = off
 	},
 	"thr_mod": {
 		"base_bonus": 2.0,
@@ -411,7 +412,7 @@
 	"lead_sec": 1.5,  // the line walks at its slowest unit's speed, slows in proportion as the unit furthest behind its slot (or a busy leader) falls behind, and stops when it is this many seconds behind; not while an enemy is in LOS of the group (or was in the last 5 s), when it walks on regardless. A unit out of its slot for 12 s straggles (catches up at full speed, the line doesn't wait for it); while the line walks, one that hasn't moved 64 elmos in 30 s is released to find a new task. Units with the "jump" attribute jump along the path whenever their jump is ready, as before
 	"splash_spacing": 1.2,  // with a finished enemy that can hit the ground (or a mobile bomb; mobile ones seen in the last 10 s) whose weapon area of effect (or blast) is at least 16 within its range + 600 elmos of the group, neighbours and rows stay at least this x the largest such radius apart (at most 256 elmos; held 10 s after it was last seen), so one blast doesn't hit two; rows less where the line would get deeper than its width cap (width_range); more rows if the width runs out; 0 = off
 	"face_range": 2.0,  // once the line stands at the end of its walk, it turns to face the enemy threat read around it (8 ways, at half and all of this x the group's fire range), if the threat has a clear side, else the way it came; it turns about its centre (its front row short of more threat than at the centre), only where it fits that way (walkable, 2 columns wide), and again only for a clear threat more than 45° off for 2 s, and keeps facing while new paths end within 256 elmos of the same spot (not a route to a target: that is always walked); a hold's step to a quieter spot within 256 elmos slides the facing block there, its front still the same way, where it fits; 0 = off (the line stands across its path's last stretch)
-	"row_order": ["assault", "heavy", "raider", "skirmish", "riot", "anti_heavy", "anti_air", "artillery"]  // main roles from the front row back, each place in rows of its own (more than one where its units don't fit across), so unit types walk apart in any line, of two units too (a custom role goes where the role it acts as goes); unlisted roles last, together
+	"row_order": ["assault", "heavy", "raider", "skirmish", "riot", "support", "anti_heavy", "anti_air", "artillery"]  // main roles from the front row back, each place in rows of its own (more than one where its units don't fit across), so unit types walk apart in any line, of two units too (a custom role goes where the role it acts as goes); unlisted roles last, together
 	// Per unit type, in its "behaviour" entry: "formation_row": <n> = its place in row_order instead (0 = front);
 	// "attribute": ["no_formation"] = never takes a slot (follows the path as before)
 },
@@ -1044,6 +1045,7 @@
 		// threat 2.27 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "turtle", "snipe_target"],
 		"attribute": ["support", "prio_repair", "raid_target", "guarded"],
+		"formation_row": 8,  // walks with the artillery (its main role, heavy, would put it second from the front)
 	        "target_dist_mod": 0.34,
 		"since": 600,
 		"limit": 2,
@@ -1293,6 +1295,7 @@
 		// threat 25.58 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["transport"],
 		"attribute": ["support", "prio_repair", "raid_target", "guarded"],
+		"formation_row": 8,  // walks with the artillery (its main role, transport, isn't in row_order: last)
 		"since": 1000,
 	        "target_dist_mod": 0.5,
 		"limit": 1,

@@ -4237,7 +4237,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		// Support (role or attribute), whatever the main role: an armed one is an attack unit (gathering, reinforce,
 		// merge, rally), an escort in groups led by a core (CAttackTask, quota.escort). An unarmed one (shields) walks
 		// to a group it can keep up with (CSupportTask) and never gets attack orders. Neither takes guard slots
-		task = cdef->IsAttacker() ? EnqueueAttackBound(unit) : EnqueueTask(IFighterTask::FightType::SUPPORT);
+		task = IFighterTask::IsArmedUnit(cdef) ? EnqueueAttackBound(unit) : EnqueueTask(IFighterTask::FightType::SUPPORT);
 	} else {
 		// Any configured role may take a free guard slot
 		task = FindGuardTask(unit);

@@ -22,9 +22,13 @@
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
+#include "Log.h"
+
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+
+#include "AISCommands.h"
 
 namespace circuit {
 
@@ -32,6 +36,10 @@ using namespace springai;
 
 namespace {
 const float FIRE_RADIUS   = 0.9f;   // arc spots, x range
+// Escorts (quota.escort, CAttackTask): an enemy with no spot in an escort's disc is skipped by its unit type this long;
+// an escort with nothing to hit outside its disc steps back in to this share of the radius from the centre
+const int   DISC_BAN      = FRAMES_PER_SEC * 5;
+const float DISC_HOLD_IN  = 0.8f;
 const float FIRE_BAND_MIN = 0.6f;   // own/kept spot no closer than this, x range (else step back out)
 const float FIRE_BAND_MAX = 0.95f;  // own/kept spot no farther than this, x range
 const float CROWD_WEIGHT  = 0.5f;   // score per crowding claim (x attack_spot_threat)
@@ -219,12 +227,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 			orders.push_back({i, GetSpotRange(unit, enemy), enemy});
 		}
 	}
-	const float safeThreat = GetEscapeSafeThreat();
 	const int timeout = frame + FRAMES_PER_SEC * 60;
+	OrderEscorts(claims, orders, frame, isRepeatAttack, timeout);
 	if (!orders.empty()) {
-		OrderOnTarget(claims, orders, frame, isDirect, safeThreat, timeout);
+		OrderOnTarget(claims, orders, frame, isDirect, GetEscapeSafeThreat(), timeout);
 	}
-	OrderEscorts(claims, frame, isRepeatAttack, safeThreat, timeout);
 }
 
 void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SOrder>& orders, int frame,
@@ -232,7 +239,9 @@ void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SO
 {
 	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
 	const AIFloat3& tPos = target->GetPos();
-	lastOrderTargetPos = tPos;
+	if (std::any_of(orders.begin(), orders.end(), [](const SOrder& o) { return o.discRadius <= 0.f; })) {
+		lastOrderTargetPos = tPos;  // units ordered on the group's target (escorts alone don't reset its drift)
+	}
 	std::stable_sort(orders.begin(), orders.end(), [](const SOrder& a, const SOrder& b) { return a.range > b.range; });
 	float arcBearing;
 	const float* arc = GetFireArcBearing(arcBearing) ? &arcBearing : nullptr;  // once for the whole group
@@ -240,6 +249,12 @@ void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SO
 		SFireClaim& claim = claims[order.claim];
 		CCircuitUnit* unit = claim.unit;
 		AIFloat3 firePos;
+		if (order.discRadius > 0.f) {  // an escort
+			if (!OrderInDisc(claims, order, safeThreat, timeout)) {
+				HoldInDisc(claim, order.discRadius, frame, timeout);
+			}
+			continue;
+		}
 		if ((order.enemy != target) && AttackMeleeOther(claims, order.claim, safeThreat, order.enemy, timeout)) {
 			continue;
 		}  // else no safe spot by that enemy: the group's target after all
@@ -286,6 +301,94 @@ void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SO
 			} break;
 		}
 	}
+}
+
+bool IFighterTask::IsArmedUnit(const CCircuitDef* cdef)
+{
+	return cdef->IsAttacker() && !cdef->IsDeathBomb();
+}
+
+bool IFighterTask::IsUnarmedSupport(const CCircuitDef* cdef)
+{
+	return cdef->IsRoleSupport() && !IsArmedUnit(cdef);
+}
+
+bool IFighterTask::IsEscortUnit(CCircuitUnit* unit) const
+{
+	return IsUnarmedSupport(unit->GetCircuitDef());
+}
+
+bool IFighterTask::IsDiscBanned(const CEnemyInfo* enemy, const CCircuitDef* cdef) const
+{
+	return spotDiscBans.find(std::make_pair(enemy, static_cast<int>(cdef->GetId()))) != spotDiscBans.end();
+}
+
+bool IFighterTask::IsDiscReach(CCircuitUnit* unit, const CEnemyInfo* enemy, float r) const
+{
+	const float range = GetFireRange(unit, enemy);
+	return (range >= SQUARE_SIZE * 4) && (enemy->GetPos().SqDistance2D(spotDiscPos) <= SQUARE(r + range * FIRE_RADIUS));
+}
+
+bool IFighterTask::OrderInDisc(std::vector<SFireClaim>& claims, const SOrder& order, float safeThreat, int timeout)
+{
+	SFireClaim& claim = claims[order.claim];
+	CCircuitUnit* unit = claim.unit;
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	for (int i = 0; i < 2; ++i) {
+		CEnemyInfo* enemy = (i == 0) ? order.enemy : order.alt;
+		if (enemy == nullptr) {
+			continue;
+		}
+		// Spots on the arc from the enemy towards the disc's centre (not towards the unit, which may stand at its edge)
+		const AIFloat3 toDisc = spotDiscPos - enemy->GetPos();
+		const float bearing = (toDisc.SqLength2D() > 1.f) ? atan2f(toDisc.z, toDisc.x) : 0.f;
+		isSpotDisc = true;
+		spotDiscSqRadius = SQUARE((i == 0) ? order.discRadius : order.altRadius);
+		AIFloat3 firePos;
+		const FireSpot spot = FindFireSpot(claims, order.claim, safeThreat, &bearing, false, enemy, firePos);
+		isSpotDisc = false;
+		if (FireSpot::SPOT != spot) {
+			spotDiscBans[std::make_pair(enemy, static_cast<int>(unit->GetCircuitDef()->GetId()))] = frame + DISC_BAN;
+			continue;
+		}
+		if (enemy != unit->GetTarget()) {
+			CCircuitDef* edef = enemy->GetCircuitDef();
+			circuit->LOG("ESCORT %s #%i on %s%s", unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(),
+					(edef != nullptr) ? edef->GetDef()->GetName() : "blip", (enemy == target) ? " (group target)" : "");
+		}
+		claim.pos = firePos;
+		fireSpots[unit] = {firePos, frame, false};
+		unit->FightFrom(firePos, enemy, circuit->GetInflMap()->Pos2Index(enemy->GetPos()), timeout);
+		return true;
+	}
+	return false;
+}
+
+void IFighterTask::HoldInDisc(SFireClaim& claim, float discRadius, int frame, int timeout)
+{
+	CCircuitUnit* unit = claim.unit;
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (unit->GetTarget() != nullptr) {
+		circuit->LOG("ESCORT %s #%i holds: nothing to hit from its disc", unit->GetCircuitDef()->GetDef()->GetName(),
+				unit->GetId());
+	}
+	fireSpots.erase(unit);
+	unit->ClearTarget();
+	const AIFloat3& uPos = unit->GetPos(frame);
+	const float dist = uPos.distance2D(spotDiscPos);
+	if (dist <= discRadius) {
+		claim.pos = uPos;
+		unit->HoldFire(uPos, nullptr, -1, timeout);
+		return;
+	}
+	AIFloat3 holdPos = spotDiscPos + (uPos - spotDiscPos) * (discRadius * DISC_HOLD_IN / dist);
+	CTerrainManager::CorrectPosition(holdPos);
+	claim.pos = holdPos;
+	TRY_UNIT(circuit, unit,
+		unit->CmdMoveTo(holdPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
 }
 
 bool IFighterTask::AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self, float safeThreat, CEnemyInfo* enemy,

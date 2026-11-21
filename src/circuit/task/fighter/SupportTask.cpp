@@ -100,6 +100,8 @@ ISquadTask* CSupportTask::FindHost(CCircuitUnit* unit, int frame) const
 	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
 	const float speedMin = militaryMgr->GetEscortCfg().speedMin;
 	const float speedRatio = militaryMgr->GetAttackMerge().speedRatio;
+	const float speed = unit->GetCircuitDef()->GetSpeed();
+	const float none = std::numeric_limits<float>::max();
 	// Shields walking to each group, this one left out
 	std::map<const ISquadTask*, int> walkers;
 	for (IFighterTask* t : militaryMgr->GetTasks(FightType::SUPPORT)) {
@@ -108,25 +110,29 @@ ISquadTask* CSupportTask::FindHost(CCircuitUnit* unit, int frame) const
 			++walkers[walker->GetHost()];
 		}
 	}
-	// Power per shield already there: power / (1 + shields), for groups with an armed unit that it may join
-	auto scoreOf = [&](ISquadTask* squad, bool isAttack) {
+	// Power per shield already there: power / (1 + shields), for groups with an armed unit that it may join.
+	// isStrict: it keeps up (attack_merge.speed_ratio with the leader, escort.speed_min with the core's slowest unit);
+	// else only the same kind of mover
+	auto scoreOf = [&](ISquadTask* squad, bool isStrict) {
 		CCircuitUnit* leader = squad->GetLeader();
 		if ((leader == nullptr) || squad->IsDead()
 			|| !terrainMgr->CanMoveToPos(unit->GetArea(), leader->GetPos(frame)))
 		{
 			return -1.f;
 		}
-		const bool isOk = isAttack ? static_cast<CAttackTask*>(squad)->IsCompatible(unit)
-				: (squad->IsMoveCompatible(unit, speedRatio)
-					&& squad->IsSpeedMixOk(ISquadTask::GetSpeedMix(unit), speedMin));
-		if (!isOk) {
+		if (isStrict) {
+			const float core = squad->GetSpeedMix().core;
+			if (!squad->IsMoveCompatible(unit, speedRatio) || ((core != none) && (speed < speedMin * core))) {
+				return -1.f;
+			}
+		} else if (!squad->IsMoveCompatible(unit, none)) {
 			return -1.f;
 		}
 		bool isArmed = false;
 		int shields = 0;
 		for (CCircuitUnit* ass : squad->GetAssignees()) {
 			CCircuitDef* cdef = ass->GetCircuitDef();
-			if (cdef->IsAttacker()) {
+			if (IsArmedUnit(cdef)) {
 				isArmed = true;
 			} else if (cdef->IsRoleSupport()) {
 				++shields;
@@ -139,14 +145,17 @@ ISquadTask* CSupportTask::FindHost(CCircuitUnit* unit, int frame) const
 		shields += (it != walkers.end()) ? it->second : 0;
 		return squad->GetAttackPower() / (1 + shields);
 	};
-	// Attack groups first; gathering groups only when no attack group will do
-	for (FightType ft : {FightType::ATTACK, FightType::DEFEND}) {
+	// Attack groups it keeps up with, else gathering groups it keeps up with. Else any attack group of its kind of
+	// mover: a slow shield (Funnelweb) slows that group down rather than idle at base all game
+	const std::pair<FightType, bool> passes[] = {{FightType::ATTACK, true}, {FightType::DEFEND, true},
+			{FightType::ATTACK, false}};
+	for (const auto& pass : passes) {
 		ISquadTask* best = nullptr;
 		float bestScore = 0.f;
 		float hostScore = -1.f;
-		for (IFighterTask* t : militaryMgr->GetTasks(ft)) {
+		for (IFighterTask* t : militaryMgr->GetTasks(pass.first)) {
 			ISquadTask* squad = static_cast<ISquadTask*>(t);
-			const float score = scoreOf(squad, FightType::ATTACK == ft);
+			const float score = scoreOf(squad, pass.second);
 			if (squad == host) {
 				hostScore = score;
 			}
@@ -178,7 +187,7 @@ void CSupportTask::WalkTo(CCircuitUnit* unit, ISquadTask* squad, int frame)
 			GetTaskThreatAt(unit, startPos) + THREAT_MIN);
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
 			unit, circuit->GetThreatMap(), frame,
-			startPos, pathfinder->GetSquareSize(), {squad->GetLeaderPos(frame)}, nullptr, maxThreat, true);
+			startPos, pathfinder->GetSquareSize(), {squad->GetLeaderPos(frame)}, nullptr, maxThreat);  // the whole route
 	pathQueries[unit] = query;
 	query->HoldTask(this);
 
@@ -194,8 +203,12 @@ void CSupportTask::ApplyPath(const CQueryPathMulti* query)
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
 	if (pPath->posPath.empty()) {
-		host = nullptr;  // no safe way there: wait at base, another pick at the next round
-		HoldNearBase(unit);
+		// No safe way there now: stand where it is (walking back to base would only turn it round again when the
+		// next route, a few seconds on, finds a way)
+		unit->GetTravelAct()->StateWait();
+		TRY_UNIT(manager->GetCircuit(), unit,
+			unit->GetUnit()->Stop();
+		)
 		return;
 	}
 	unit->GetTravelAct()->SetPath(pPath);

@@ -62,18 +62,20 @@ public:
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const { return false; }
 
 	/*
-	 * Support units' speed (quota.escort.speed_min): a group with a core (non-support units) takes support units only
-	 * if they keep up with it, so it never slows down for them. Checked when units or groups join, never afterwards
+	 * Support units' speed (quota.escort.speed_min): a group with a core (non-support units) takes armed support
+	 * units only at speed_min x its slowest core unit's speed or faster, so it slows down for them by at most
+	 * 1 - speed_min (0.75: a quarter). Checked when units or groups join, never afterwards
 	 */
 	struct SSpeedMix {
 		float core = std::numeric_limits<float>::max();  // the slowest non-support unit; max: none
-		float support = std::numeric_limits<float>::max();  // the slowest support unit; max: none
+		float support = std::numeric_limits<float>::max();  // the slowest armed support unit; max: none
 		void Add(const CCircuitDef* cdef);
 	};
 	SSpeedMix GetSpeedMix() const;
 	// What joins with unit: the whole group it leads (attack or gathering), else the unit alone
 	static SSpeedMix GetSpeedMix(CCircuitUnit* unit);
-	// Together with joiner: no core, no support units, or the slowest support unit at speedMin x the slowest core one
+	// Together with joiner: no core, no armed support units, or the slowest of them at speedMin x the slowest core unit
+	// (shields aren't counted: CSupportTask)
 	bool IsSpeedMixOk(const SSpeedMix& joiner, float speedMin) const;
 
 	/*

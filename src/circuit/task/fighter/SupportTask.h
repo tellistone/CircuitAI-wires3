@@ -17,10 +17,12 @@ class CQueryPathMulti;
 
 /*
  * An unarmed support unit (Aspis, Funnelweb) on its way to a group (armed ones are attack units: CAttackTask).
- * It picks a host it can keep up with (CAttackTask::IsCompatible, quota.escort.speed_min): the attack group with the
- * most power for the shields already with it or walking to it, else a gathering (defend) group, else it waits near
- * base. It walks there with Move orders on a threat-capped route, and joins within quota.attack_merge.distance.
- * In the group it is an escort: a formation slot while walking, the core's centre in fights (never attack orders)
+ * It picks a host it keeps up with (quota.attack_merge.speed_ratio with the leader, quota.escort.speed_min with the
+ * core's slowest unit): the attack group with the most power for the shields already with it or walking to it, else a
+ * gathering (defend) group; else any attack group of its kind of mover (a slow one slows that group down rather than
+ * idle at base); else it waits near base. It walks there with Move orders along a threat-capped route (standing where
+ * it is while there is none), and joins within quota.attack_merge.distance. In the group it is an escort: a formation
+ * slot while walking, a point round the core's centre in fights (never attack orders)
  */
 class CSupportTask: public IFighterTask {
 public:

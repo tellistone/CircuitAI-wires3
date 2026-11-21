@@ -67,13 +67,15 @@ protected:
 	/*
 	 * Escorts (quota.escort). Support units (role or "support" attribute) are members like any other: they walk the
 	 * group's route in its formation, count in its strength and flee with it. Only Attack orders them apart:
-	 * - an unarmed one (Aspis, Funnelweb) never gets an attack order; in a fight it walks to the core's centre
+	 * - an unarmed one (Aspis, Funnelweb) never gets an attack order; in a fight it walks to a point round the core's
+	 *   centre
 	 * - an armed one, while the group's core (its non-support units) holds enough of its power (isEscortMode), fires
-	 *   only from its stay disc around the core's centre: the nearest threat to the core it can hit from there, else
-	 *   the group's target, else it holds in the disc. Otherwise (a thin core, or none) it is a normal member
+	 *   only from its stay disc around the core's centre: the nearest threat to the core it can hit from there (its
+	 *   current one kept by keep_mod), else the group's target, else it holds in the disc. Its order goes out in the
+	 *   same pass as the others' (OrderOnTarget). Otherwise (a thin core, or none) it is a normal member
 	 */
 	virtual bool IsEscortUnit(CCircuitUnit* unit) const override;
-	virtual void OrderEscorts(std::vector<SFireClaim>& claims, int frame, bool isRepeat, float safeThreat,
+	virtual void OrderEscorts(std::vector<SFireClaim>& claims, std::vector<SOrder>& orders, int frame, bool isRepeat,
 			int timeout) override;
 
 private:
@@ -523,7 +525,6 @@ private:
 	bool ReleaseUnarmed();
 	bool isEscortMode;
 	int escortModeFrame;  // the other mode has been called for since this frame (-1: no change pending; -2: never set)
-	std::map<const CEnemyInfo*, int> escortBans;  // no spot in an escort's disc by it lately, until when (compared only)
 
 	float minPower;
 	bool IsArmy() const { return attackPower >= minPower; }  // at or above quota.attack
