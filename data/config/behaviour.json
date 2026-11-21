@@ -292,6 +292,51 @@
 	"cooldown": 30  // seconds between one constructor's orders, whatever the result
 },
 
+// AA turret picker (CAATurretPicker): while on, the only route that queues anti-air turrets. The porcupine lists', the
+// base timetable's and the build chain hubs' AA entries are skipped, a flier sighting gets no prevent_air Picket, and AA
+// turrets stay off the turret account (porcupine.budget). Every interval seconds it works out the budget fresh and, if
+// it covers a tower, queues one on the best spot as an exact-spot job any constructor may take: HIGH until begun, then
+// normal unless enemies come near; one unstarted job at a time; one dropped before it began masks its spot; nothing is
+// ever cancelled. AA towers queued elsewhere (a cornered builder, a script) still build and count toward our AA metal.
+// A missing block = off. Logs: AA BUDGET once a minute, AA TURRET for each decision
+"aa_turret": {
+	"enable": true,
+	"unit": ["turretaalaser", "turretaaclose", "turretaaflak", "turretaafar", "turretaaheavy"],  // Razor, Hacksaw, Thresher, Chainsaw, Artemis; each must be available (limit, since) and buildable by a constructor of ours, and cost no more than the target
+	// Budget: target = enemy air metal x factor / our team's players that still have units (so the team as a whole
+	// holds factor x enemy air); net = target - our AA metal (our anti_air statics, a nanoframe at full cost while a
+	// job of ours is on it, else at build progress x cost; our AA jobs not started; mobile AA as below). Allies' AA is
+	// left out. Nothing is built until net covers the cheapest def
+	"factor": 0.25,
+	"ignore_air": ["planefighter", "planeheavyfighter", "gunshipaa", "planescout", "planelightscout", "gunshiptrans", "gunshipheavytrans", "gunshipcon", "planecon", "athena"],  // enemy fliers left out of the air sum and the mix (Swift, Raptor, Trident, Owl, Sparrow, Charon, Hercules, Wasp, Crane, Athena); every other known flier counts, Blastwings included
+	"mobile_share": 0.5,  // our finished mobile anti_air units within 1500 elmos of our base position count at this x their cost in our AA metal, the most of it seen in the last 60 s (an army stepping out of base doesn't open the budget); those away with the army don't count
+	"interval": 10,  // seconds between checks
+	// Worth: A, the ally team's buildings within the def's air range, each at cost x its aa_value (per unit, below,
+	// default 1; a nanoframe at max(progress, 0.5) of that; other anti_air statics, Claw mines and missiles left out),
+	// x overlap for each allied AA turret or AA job of ours that covers it, each counted min(M, 1) (a nanoframe nobody
+	// of ours builds, at its progress of that). Rank: A x U x L /
+	// (1 + walk / 2000), walk to our nearest constructor. Hard rules on the best cells 256 elmos apart: not masked by
+	// a failed build, not on a choke lane, out of the ground-only threat (an identified enemy that doesn't fly, hits
+	// ground and has a land range of 1200 or less, within it + 100; mobiles in radar or sight now or in the last
+	// 30 s); buildable facing south and in reach of our nearest constructor that builds it (8 cells per def at most)
+	"min_value": 1.0,  // a spot is worth building when A >= this x the def's cost
+	"overlap": 0.5,  // a building's value x this for each well-suited AA that already covers it (0 to 1)
+	"umbrella": 0.5,  // rank bonus at full ground-turret cover: U = 1 + this x min(G / the def's cost, 1), G the finished allied ground turrets' metal whose land range covers the spot
+	"line": 0.25,  // rank bonus within 600 elmos of a live choke of our current line; doubled for the enemy line
+	// The def with the best rank x M / cost wins. One dearer than net is saved for only while enemy air keeps rising:
+	// twice the smaller rise of target over the last two 30 s must cover what net lacks (so a fleet just seen buys
+	// now), and 60 s at most; else the best def net covers. M, per def: its curve of [enemy unit cost,
+	// multiplier], averaged over the known enemy air by metal (1 for a def with none). A first guess to tune from the
+	// AA TURRET logs: Blastwing (55) and Locust (220) swarms sit near 150, Ravens (300) near 500, Likho (2000) and
+	// Krow (4200) at 2000 and above
+	"mix": {
+		"turretaalaser": [[150, 1.3], [500, 1.0], [2000, 0.6]],  // Razor
+		"turretaaflak":  [[150, 1.5], [500, 1.0], [2000, 0.5]],  // Thresher
+		"turretaaclose": [[150, 0.4], [500, 1.0], [2000, 1.5]],  // Hacksaw
+		"turretaafar":   [[150, 0.8], [500, 1.0], [2000, 1.3]],  // Chainsaw
+		"turretaaheavy": [[150, 0.6], [500, 1.0], [2000, 1.5]]   // Artemis
+	}
+},
+
 "defence": {
 	"infl_rad": 8,  // influenece cell radius for defendAlly map
 	"base_rad": [1000.0, 2000.0],  // defend if enemy within clamp(distance(lane_pos, base_pos), 1000, 2000) radius
@@ -1618,6 +1663,7 @@
 		"thr_mod": 2.33
 	},
 	"energysingu": {
+		"aa_value": 1.5,  // aa_turret: a big single target whose loss sets the economy back
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static", "turtle", "heavy"],
 	        "target_dist_mod": 0.1,
@@ -1625,6 +1671,7 @@
 		"since": 660
 	},
 	"energyfusion": {
+		"aa_value": 1.5,  // aa_turret: a big single target whose loss sets the economy back
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static", "mine", "heavy"],
 	        "target_dist_mod": 0.25,
@@ -1695,17 +1742,30 @@
 	},
 
 	// support factories won't be built in front
+	// aa_turret: factories are worth 1.5 x their cost to the AA picker (an entry with only aa_value keeps its auto role)
+	"factorycloak": {"aa_value": 1.5},
+	"factoryshield": {"aa_value": 1.5},
+	"factoryveh": {"aa_value": 1.5},
+	"factoryhover": {"aa_value": 1.5},
+	"factorytank": {"aa_value": 1.5},
+	"factoryspider": {"aa_value": 1.5},
+	"factoryjump": {"aa_value": 1.5},
+	"factoryamph": {"aa_value": 1.5},
+	"factoryship": {"aa_value": 1.5},
 	"factoryplane": {
+		"aa_value": 1.5,  // aa_turret: a factory
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static"],
 		"attribute": ["support"]
 	},
 	"factorygunship": {
+		"aa_value": 1.5,  // aa_turret: a factory
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static"],
 		"attribute": ["support"]
 	},
 	"striderhub": {
+		"aa_value": 1.5,  // aa_turret: a factory
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["static"],
 		"since": 900,
@@ -1714,6 +1774,7 @@
 
 	// Enemy Eco!! //
 	"staticmex": {
+		"aa_value": 2.0,  // aa_turret: income and a favourite bomber target; cheap, so at 1.0 a mex field would barely count
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine"]
 	},
@@ -1723,6 +1784,7 @@
 		"attribute": ["raid_target"]
 	},
 	"staticradar": {
+		"aa_value": 0.5,  // aa_turret: cheap to lose
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine"],
 		"attribute": ["raid_target"],
@@ -1742,6 +1804,7 @@
 		"limit": 1
 	},
 	"staticstorage": {
+		"aa_value": 0.5,  // aa_turret: cheap to lose
 		// threat 0 (unarmed: no influence, never counts toward safe)
 		"role": ["mine", "turtle"],
 		"limit": 5

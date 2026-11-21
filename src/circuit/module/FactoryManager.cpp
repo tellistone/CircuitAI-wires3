@@ -317,11 +317,16 @@ void CFactoryManager::ReadConfig()
 			continue;
 		}
 
-		// Read roles from config
+		// aa_value (CCircuitDef::GetAAValue) first: an entry may hold only this, for a building with no role of its own
 		const Json::Value& behaviour = behaviours[defName];
+		cdef->SetAAValue(std::max(behaviour.get("aa_value", cdef->GetAAValue()).asFloat(), 0.f));
+
+		// Read roles from config
 		const Json::Value& role = behaviour["role"];
 		if (role.empty()) {
-			circuit->LOG("CONFIG %s: '%s' has no role", cfgName.c_str(), defName.c_str());
+			if (!behaviour.isMember("aa_value") || (behaviour.size() > 1)) {
+				circuit->LOG("CONFIG %s: '%s' has no role", cfgName.c_str(), defName.c_str());
+			}
 			continue;
 		}
 

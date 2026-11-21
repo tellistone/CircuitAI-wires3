@@ -769,6 +769,10 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				if (!isRadar && !bi.cdef->IsAvailable(circuit->GetLastFrame())) {
 					continue;  // a radar step: the def the planner picks must be
 				}
+				// aa_turret on: its picker is the one route for AA turrets, within its budget
+				if ((bi.buildType == IBuilderTask::BuildType::DEFENCE) && bi.cdef->IsRoleAA() && militaryMgr->IsAAPickerOn()) {
+					continue;
+				}
 				bool isValid = true;
 				switch (bi.condition) {
 					case SBuildInfo::Condition::AIR: {

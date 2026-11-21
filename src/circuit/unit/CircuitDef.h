@@ -386,6 +386,9 @@ public:
 	// this many times its own cost; 0 = off
 	void SetCaptureHide(float value) { captureHide = value; }
 	float GetCaptureHide() const { return captureHide; }
+	// behaviour.json per unit "aa_value": what this building is worth to the AA turret picker (aa_turret), x its cost
+	void SetAAValue(float value) { aaValue = value; }
+	float GetAAValue() const { return aaValue; }
 	// Attack target choice: this enemy type's distance counts as this many times its real distance
 	void SetTargetDistMod(float value) { targetDistMod = value; }
 	float GetTargetDistMod() const { return targetDistMod; }
@@ -530,6 +533,7 @@ private:
 	float reloadScootMargin = -1.f;
 	bool isReloadScootMarginSet = false;
 	float captureHide = 0.f;
+	float aaValue = 1.f;
 	float targetDistMod = 1.f;
 	std::shared_ptr<STargetPriority> targetPriority;  // GetTargetPriority
 	float raidThrMod = 1.f;  // GetRaidThrMod

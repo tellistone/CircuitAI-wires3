@@ -36,6 +36,10 @@ public:
 		this->isAlly = isAlly;
 	}
 	bool IsPicker() const { return isPicker; }
+	// An aa_turret job (CAATurretPicker): built on its exact spot or not at all, and dropped (its spot masked) on
+	// arrival if the ground-only threat rule now fails there
+	void SetAAPicker() { isAAPicker = isOffPoints = true; }
+	bool IsAAPicker() const { return isAAPicker; }
 	bool IsCreep() const { return creepLane >= 0; }
 	int GetCreepLane() const { return creepLane; }
 	bool IsAlly() const { return isAlly; }
@@ -52,6 +56,7 @@ protected:
 	bool isUrgent;
 	bool isOffPoints;
 	bool isPicker;
+	bool isAAPicker;
 	bool isAlly;
 	int creepLane;
 	float normalCost;

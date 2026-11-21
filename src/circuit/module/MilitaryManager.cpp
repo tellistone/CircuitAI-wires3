@@ -6,6 +6,7 @@
  */
 
 #include "module/MilitaryManager.h"
+#include "module/AATurretPicker.h"
 #include "module/AllyCover.h"
 #include "module/AttackBalance.h"
 #include "module/BuilderManager.h"
@@ -346,6 +347,7 @@ CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 	creepPlanner = std::make_unique<CCreepPlanner>(circuit);
 	frontline = std::make_unique<CFrontline>(circuit);
 	turretPicker = std::make_unique<CTurretPicker>(circuit);
+	aaPicker = std::make_unique<CAATurretPicker>(circuit);
 
 	fightTasks.resize(static_cast<IFighterTask::FT>(IFighterTask::FightType::_SIZE_));
 }
@@ -1327,6 +1329,10 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CFrontline::Update, frontline.get()), FRAMES_PER_SEC * 10, offset + 2);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CSensorPlanner::Update, sensorPlanner.get()), FRAMES_PER_SEC * 15, offset + 3);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CCreepPlanner::Update, creepPlanner.get()), FRAMES_PER_SEC, offset + 1);
+		if (aaPicker->IsEnabled()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CAATurretPicker::Update, aaPicker.get()),
+					aaPicker->GetIntervalFrames(), offset + 2);
+		}
 		if ((scoutQuota.perMex > 0.f) || (raiderQuota.perMex > 0.f)) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateScoutQuota, this), FRAMES_PER_SEC * 15, offset + 3);
 		}
@@ -2105,8 +2111,9 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	const CCircuitDef* plannedDef = sensorPlanner->GetPlannedDef();
 	for (unsigned i = 0; i < num; ++i) {
 		CCircuitDef* defDef = (isAirSlot && (i == 0) && prevent.airDef->IsAvailable(frame)) ? prevent.airDef : defenders[i];
+		// aa_turret on: its picker places every AA turret, so the list's AA slots are skipped
 		if (!defDef->IsAvailable(frame) || (defDef == plannedDef)
-			|| (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f)))
+			|| (defDef->IsRoleAA() && (IsAAPickerOn() || (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))))
 		{
 			continue;
 		}
@@ -2598,7 +2605,8 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	const int frame = circuit->GetLastFrame();
 	const bool isFirst = (roll.count < 0);
 	const bool isTimer = !isFirst && (frame >= roll.rollFrame + prevent.rerollFrames);
-	outIsAir = (sightDef != nullptr) && sightDef->IsAbleToFly() && (prevent.airDef != nullptr);
+	// aa_turret on: no prevent_air tower, a flier sighting raises the count with ordinary towers only
+	outIsAir = (sightDef != nullptr) && sightDef->IsAbleToFly() && (prevent.airDef != nullptr) && !IsAAPickerOn();
 	if (!isFirst && !isTimer && (sightDef == nullptr)) {
 		return roll.count;
 	}
@@ -4200,7 +4208,9 @@ bool CMilitaryManager::IsWaiting(const CCircuitDef* def, int sinceFrame)
 
 bool CMilitaryManager::TryBaseTower(const AIFloat3& pos, CCircuitDef* buildDef, int dueFrame)
 {
-	if (!buildDef->IsAvailable(circuit->GetLastFrame()) || (buildDef == sensorPlanner->GetPlannedDef())) {
+	if (!buildDef->IsAvailable(circuit->GetLastFrame()) || (buildDef == sensorPlanner->GetPlannedDef())
+		|| (buildDef->IsRoleAA() && IsAAPickerOn()))  // aa_turret places AA by what it guards, and only for enemy air
+	{
 		return true;
 	}
 	if (IsWaiting(buildDef, dueFrame)) {  // before the spot search, so a waiting turret doesn't search each second
@@ -4259,6 +4269,11 @@ bool CMilitaryManager::HoldHubTower(CCircuitDef* def, const AIFloat3& pos, bool 
 			(hub != nullptr) ? hub->GetCircuitDef() : nullptr, circuit->GetLastFrame()});
 	StartDefend();
 	return true;
+}
+
+bool CMilitaryManager::IsAAPickerOn() const
+{
+	return (aaPicker != nullptr) && aaPicker->IsEnabled();
 }
 
 bool CMilitaryManager::IsAccountTurret(const CCircuitDef* def) const

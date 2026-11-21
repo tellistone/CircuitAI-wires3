@@ -272,6 +272,23 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **A dedicated AA turret picker with its own budget** (`aa_turret`, new block in behaviour.json, on). While on it is
+  the only route that queues anti-air turrets: the porcupine lists' AA slots, the base timetable's AA entries and the
+  build chain hubs' AA steps are skipped, and a flier sighting no longer gets a `prevent_air` Picket. Every 10 s it works out a budget: target =
+  enemy air metal x `factor` (0.25) / our team's players that still have units, net = target - our AA metal (our AA
+  turrets, our AA jobs not started, and half the cost of our mobile AA within 1500 elmos of our base, the most of it in
+  the last 60 s). Enemy air is
+  every known flier but an `ignore_air` list (fighters, scouts, transports, air constructors), so Blastwings count.
+  Once net covers a tower, it scores spots around the ally team's buildings: the value a tower would protect (cost x
+  the new per-unit `aa_value`: mexes 2, fusions, singus and factories 1.5, storages and radars 0.5), discounted
+  for AA already covering it, must reach its cost; the spots are ranked by that value, the allied ground turrets
+  covering them (`umbrella`), the enemy's or our choke line (`line`) and the walk from our nearest constructor. Each
+  tower type is weighed by how it suits the enemy's air (`mix` curves over the enemy fliers' cost), and the best
+  value per metal wins; a dearer winner is saved for only while enemy air keeps rising fast enough to pay for it
+  within about a minute, 60 s at most. The job is an exact-spot job any constructor may take, HIGH until begun, dropped
+  on arrival if ground threat reached the spot; a job dropped before it began masks its spot. It never cancels anything, so the AA follows the peak of enemy air. No
+  enemy air, no AA turrets. Logs: `AA BUDGET` once a minute, `AA TURRET` per decision. A missing block (the
+  `previous` profile) = off, and the old AA routes as they were.
 - **Factories order some units in batches at higher income** (`batch_curve` per unit in `behaviour`, new). Once a
   factory rolls a type with a curve, it orders it batch-size times in a row: size from `[[<income>, <size>], ...]`,
   interpolated, rounded, at least 1, income as `income_tier` reads it. The size is fixed when the batch starts; the
