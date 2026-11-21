@@ -234,6 +234,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Factories order some units in batches at higher income** (`batch_curve` per unit in `behaviour`, new). Once a
+  factory rolls a type with a curve, it orders it batch-size times in a row: size from `[[<income>, <size>], ...]`,
+  interpolated, rounded, at least 1, income as `income_tier` reads it. The size is fixed when the batch starts; the
+  rest of the batch skips the rolls and keeps the first order's priority, and ends early if the type can't be built.
+  Light raiders (Glaive, Bandit, Scorcher, Dagger) ship `[[24, 1], [60, 8]]`. Missing = one at a time
+  ([#181](https://github.com/tellistone/CircuitAI-wires3/pull/181))
 - **Scouts go for undefended enemy mexes, and spread over them** (`quota.scout_spot.mex`, shipped 1.0, default 0 =
   off). A metal spot with a known enemy mex (finished or being built) scores a bonus of `mex` x the spot's stale term,
   so a mex seen a moment ago gets none and a scout doesn't bounce between known mexes. No bonus if a known enemy
