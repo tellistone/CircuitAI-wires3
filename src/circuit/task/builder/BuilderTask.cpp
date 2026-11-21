@@ -829,7 +829,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				// account (porcupine.budget) can't pay for yet waits for it, out of the chain
 				if ((bi.buildType == IBuilderTask::BuildType::DEFENCE)
 					&& (militaryMgr->RefuseCrowdedLight(buildDef, pos, "hub")
-						|| militaryMgr->HoldHubTower(buildDef, pos, isScored, (target != nullptr) ? target->GetId() : -1)))
+						|| militaryMgr->HoldHubTower(buildDef, pos, isScored, target)))
 				{
 					continue;
 				}

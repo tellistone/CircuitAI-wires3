@@ -56,6 +56,7 @@
 #include "Game.h"
 
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 #include "AISCommands.h"
@@ -1164,6 +1165,8 @@ void CMilitaryManager::ReadConfig()
 	tb.share = std::max(budget.get("share", tb.share).asFloat(), 0.f);
 	tb.bankSec = std::max(budget.get("bank_sec", tb.bankSec).asFloat(), 1.f);
 	tb.lossRefund = std::max(budget.get("loss_refund", tb.lossRefund).asFloat(), 0.f);
+	tb.balance = std::max(budget.get("start", tb.balance).asFloat(), 0.f);
+	tb.waitFrames = int(std::max(budget.get("wait_sec", tb.waitFrames / FRAMES_PER_SEC).asFloat(), 0.f) * FRAMES_PER_SEC);
 	// Missing or [] = x1
 	std::vector<std::pair<float, float>> budgetMap;
 	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);
@@ -2263,8 +2266,8 @@ bool CMilitaryManager::CanAffordTurret(float cost)
 void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 {
 	CCircuitDef* def = task->GetBuildDef();
-	if ((turretPicker == nullptr) || !turretPicker->IsDefence(def)) {
-		return;  // not a turret: a shield, storage, caretaker, radar, Claw mine, missile or turret.not_defence
+	if (!IsAccountTurret(def)) {
+		return;  // a shield, storage, caretaker, radar, Claw mine, missile, turret.not_defence or anti-air only
 	}
 	UpdateTurretBudget();
 	STurretBudget& b = turretBudget;
@@ -2275,10 +2278,10 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 	}
 	b.balance -= cost;
 	task->SetCharge(cost, static_cast<int>(turretSpend));
-	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER) || (turretSpend == TurretSpend::CREEP)
-		|| (turretSpend == TurretSpend::ESCORT) || (turretSpend == TurretSpend::BASE) || (turretSpend == TurretSpend::HUB))
+	if ((turretSpend != TurretSpend::OTHER) && (turretSpend != TurretSpend::CORNERED)
+		&& (turretSpend != TurretSpend::GUARD))
 	{
-		b.askCost = 0.f;  // a waiting spender got its tower
+		b.askCost = 0.f;  // a waiting spender got its tower (the others never wait)
 		b.askFrame = -1;
 	}
 }
@@ -2351,7 +2354,7 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 				// TODO: Auto-sort defenders by cost OR remove break?
 				return;
 			}
-			if (isPorc && turretPicker->IsDefence(defDef) && !CanAffordTurret(defCost)) {
+			if (isPorc && IsAccountTurret(defDef) && !CanAffordTurret(defCost)) {
 				return;
 			}
 			point->cost += defCost;
@@ -4141,62 +4144,25 @@ void CMilitaryManager::UpdateDefence()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
 	const int frame = circuit->GetLastFrame();
-	decltype(buildDefence)::iterator ibd = buildDefence.begin();
-	while (ibd != buildDefence.end()) {
-		const auto& defElem = ibd->second.back();
-		if (frame >= defElem.second) {
-			CCircuitDef* buildDef = defElem.first;
-			if (buildDef->IsAvailable(frame) && (buildDef != sensorPlanner->GetPlannedDef())) {
-				if (turretPicker->IsDefence(buildDef) && !CanAffordTurret(buildDef->GetCostM())) {
-					++ibd;  // waits in its place (and the list's later entries behind it)
-					continue;
-				}
-				AIFloat3 buildPos = ibd->first;
-				// choke.spot.enable: an attacker goes to the best spot within the main tower's range
-				const CChokeMap* chokeMap = circuit->GetChokeMap();
-				if (chokeMap->GetConfig().isSpot) {
-					const AIFloat3 spot = spotScorer->FindGuardSpot(buildDef, ibd->first, chokeMap->GetMainRange());
-					if (utils::is_valid(spot)) {
-						buildPos = spot;
-					}
-				}
-				if (!turretPicker->RefuseCrowdedLight(buildDef, buildPos, "base")) {  // turret.crowd_count
-					TurretScope scope(this, TurretSpend::BASE);
-					circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, buildPos,
-															  IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
-				}
+	// Base towers: every entry due (the lists run latest first), each on its own
+	for (auto ibd = buildDefence.begin(); ibd != buildDefence.end();) {
+		BuildVector& list = ibd->second;
+		for (int i = (int)list.size() - 1; (i >= 0) && (frame >= list[i].second); --i) {
+			if (TryBaseTower(ibd->first, list[i].first, list[i].second)) {
+				list.erase(list.begin() + i);
 			}
-			ibd->second.pop_back();
 		}
-		if (ibd->second.empty()) {
-			ibd = buildDefence.erase(ibd);
-		} else {
-			++ibd;
-		}
+		ibd = list.empty() ? buildDefence.erase(ibd) : std::next(ibd);
 	}
 
-	// Hub towers (HoldHubTower), oldest first: the first the account can't pay for waits, and the rest behind it
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	auto iht = hubTowers.begin();
-	for (; iht != hubTowers.end(); ++iht) {
-		if ((iht->hubId >= 0) && (circuit->GetTeamUnit(iht->hubId) == nullptr)) {
-			continue;  // the building it guards is gone
-		}
-		if (!iht->def->IsAvailable(frame) || turretPicker->RefuseCrowdedLight(iht->def, iht->pos, "hub")) {
-			continue;
-		}
-		if (!CanAffordTurret(iht->def->GetCostM())) {
-			break;
-		}
-		TurretScope scope(this, TurretSpend::HUB);
-		IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, iht->def, iht->pos,
-				IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
-		if (iht->isScored) {  // as the hub chain's own: its site on the blocking map
-			task->SetFacing(UNIT_FACING_SOUTH);
-			task->SetBuildPos(iht->pos);
+	// Hub towers, each on its own
+	std::vector<SHubTower> waiting;
+	for (const SHubTower& t : hubTowers) {
+		if (!TryHubTower(t)) {
+			waiting.push_back(t);
 		}
 	}
-	hubTowers.erase(hubTowers.begin(), iht);
+	hubTowers.swap(waiting);
 
 	if (buildDefence.empty() && hubTowers.empty()) {
 		circuit->GetScheduler()->RemoveTask(defend);
@@ -4204,17 +4170,86 @@ void CMilitaryManager::UpdateDefence()
 	}
 }
 
-bool CMilitaryManager::HoldHubTower(CCircuitDef* def, const AIFloat3& pos, bool isScored, int hubId)
+bool CMilitaryManager::IsWaiting(const CCircuitDef* def, int sinceFrame)
 {
-	if ((turretPicker == nullptr) || !turretPicker->IsDefence(def) || CanAffordTurret(def->GetCostM())) {
+	return IsAccountTurret(def) && (circuit->GetLastFrame() - sinceFrame < turretBudget.waitFrames)
+		&& !CanAffordTurret(def->GetCostM());
+}
+
+bool CMilitaryManager::TryBaseTower(const AIFloat3& pos, CCircuitDef* buildDef, int dueFrame)
+{
+	if (!buildDef->IsAvailable(circuit->GetLastFrame()) || (buildDef == sensorPlanner->GetPlannedDef())) {
+		return true;
+	}
+	if (IsWaiting(buildDef, dueFrame)) {  // before the spot search, so a waiting turret doesn't search each second
 		return false;
 	}
-	hubTowers.push_back({def, pos, isScored, hubId});
+	AIFloat3 buildPos = pos;
+	// choke.spot.enable: an attacker goes to the best spot within the main tower's range
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	if (chokeMap->GetConfig().isSpot) {
+		const AIFloat3 spot = spotScorer->FindGuardSpot(buildDef, pos, chokeMap->GetMainRange());
+		if (utils::is_valid(spot)) {
+			buildPos = spot;
+		}
+	}
+	if (!turretPicker->RefuseCrowdedLight(buildDef, buildPos, "base")) {  // turret.crowd_count
+		TurretScope scope(this, TurretSpend::BASE);
+		circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, buildPos,
+												  IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
+	}
+	return true;
+}
+
+bool CMilitaryManager::TryHubTower(const SHubTower& t)
+{
+	if (t.hubId >= 0) {
+		const CCircuitUnit* hub = circuit->GetTeamUnit(t.hubId);
+		if ((hub == nullptr) || (hub->GetCircuitDef() != t.hubDef)) {
+			return true;  // the building it guards is gone
+		}
+	}
+	if (!t.def->IsAvailable(circuit->GetLastFrame())) {
+		return true;
+	}
+	if (IsWaiting(t.def, t.frame)) {
+		return false;
+	}
+	if (turretPicker->RefuseCrowdedLight(t.def, t.pos, "hub")) {  // turret.crowd_count
+		return true;
+	}
+	TurretScope scope(this, TurretSpend::HUB);
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::LOW, t.def, t.pos,
+			IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
+	if (t.isScored) {  // as the hub chain's own: its site on the blocking map
+		task->SetFacing(UNIT_FACING_SOUTH);
+		task->SetBuildPos(t.pos);
+	}
+	return true;
+}
+
+bool CMilitaryManager::HoldHubTower(CCircuitDef* def, const AIFloat3& pos, bool isScored, const CCircuitUnit* hub)
+{
+	if (!IsAccountTurret(def) || CanAffordTurret(def->GetCostM())) {
+		return false;
+	}
+	hubTowers.push_back({def, pos, isScored, (hub != nullptr) ? hub->GetId() : -1,
+			(hub != nullptr) ? hub->GetCircuitDef() : nullptr, circuit->GetLastFrame()});
+	StartDefend();
+	return true;
+}
+
+bool CMilitaryManager::IsAccountTurret(const CCircuitDef* def) const
+{
+	return (turretPicker != nullptr) && turretPicker->IsDefence(def) && (def->HasAntiLand() || def->HasAntiWater());
+}
+
+void CMilitaryManager::StartDefend()
+{
 	if (defend == nullptr) {
 		defend = std::make_shared<CGameTask>(&CMilitaryManager::UpdateDefence, this);
 		circuit->GetScheduler()->RunTaskEvery(defend, FRAMES_PER_SEC);
 	}
-	return true;
 }
 
 void CMilitaryManager::MakeBaseDefence(const AIFloat3& pos)
@@ -4223,10 +4258,11 @@ void CMilitaryManager::MakeBaseDefence(const AIFloat3& pos)
 		return;
 	}
 	buildDefence.push_back(std::make_pair(pos, baseDefence));
-	if (defend == nullptr) {
-		defend = std::make_shared<CGameTask>(&CMilitaryManager::UpdateDefence, this);
-		circuit->GetScheduler()->RunTaskEvery(defend, FRAMES_PER_SEC);
+	const int frame = circuit->GetLastFrame();
+	for (auto& entry : buildDefence.back().second) {  // a base set up late: its overdue towers due now, so they wait
+		entry.second = std::max(entry.second, frame);   // for the account as long as an entry on time
 	}
+	StartDefend();
 }
 
 void CMilitaryManager::MarkPointOfInterest(CEnemyInfo* enemy)

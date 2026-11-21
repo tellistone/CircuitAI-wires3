@@ -391,14 +391,17 @@ public:
 	bool IsRaiderQuotaOn() const { return raiderQuota.IsOn(); }
 	bool IsRaider(const CCircuitDef* cdef) const;
 	unsigned int GetRaiderCount() const;  // raider units in the army not scouting (factory tasks are counted by the caller)
-	// Base towers (build_chain.json "base") at their times, and the hub towers WaitHubTower holds, once the turret
-	// account (porcupine.budget) covers each: a turret waits in its place, asking the account to save for it
+	// Base towers (build_chain.json "base") once due, and the hub towers HoldHubTower holds: an account turret waits
+	// until the turret account (porcupine.budget) covers it, asking it to save, for budget.wait_sec at most, then
+	// goes anyway (the balance may go below zero). Each goes on its own: none waits behind another
 	void UpdateDefence();
 	void MakeBaseDefence(const springai::AIFloat3& pos);
-	// A build chain's hub tower: true when it's a turret the account can't pay for yet. It then waits, and
-	// UpdateDefence queues it at LOW once the account can, while the building it guards (hubId, -1: none) stands.
-	// isScored: pos is the spot scorer's site, kept as is
-	bool HoldHubTower(CCircuitDef* def, const springai::AIFloat3& pos, bool isScored, int hubId);
+	// A build chain's hub tower: true when it's an account turret the account can't pay for yet. It then waits, and
+	// UpdateDefence queues it at LOW, while the building it guards (hub, nullptr: none) stands. isScored: pos is the
+	// spot scorer's site, kept as is
+	bool HoldHubTower(CCircuitDef* def, const springai::AIFloat3& pos, bool isScored, const CCircuitUnit* hub);
+	// On the turret account (porcupine.budget): a defence that can hit ground or water. Anti-air-only turrets are free
+	bool IsAccountTurret(const CCircuitDef* def) const;
 
 	const std::vector<CCircuitDef*>& GetLandDefenders() const { return landDefenders; }
 	const std::vector<CCircuitDef*>& GetWaterDefenders() const { return waterDefenders; }
@@ -910,6 +913,7 @@ private:
 		float share = 0.1f;
 		float bankSec = 60.f;
 		float lossRefund = 2.f;  // x the charge of a finished turret of ours that dies
+		int waitFrames = FRAMES_PER_SEC * 120;  // budget.wait_sec: the most a base or hub turret waits for the balance
 		float mapX = 0.f;  // map area in 512-elmo squares / players on our team
 		float mapMult = 1.f;  // budget.map at mapX, fixed for the game
 		std::vector<std::pair<float, float>> mexCurve;  // budget.mex: x = ally-team finished mexes / all spots
@@ -972,9 +976,16 @@ private:
 		CCircuitDef* def;
 		springai::AIFloat3 pos;
 		bool isScored;
-		int hubId;
+		int hubId;  // -1: none
+		const CCircuitDef* hubDef;  // with hubId: an id the engine gave a new unit isn't the hub
+		int frame;  // held at
 	};
-	std::vector<SHubTower> hubTowers;  // HoldHubTower's, oldest first
+	std::vector<SHubTower> hubTowers;  // HoldHubTower's
+	void StartDefend();  // UpdateDefence every second, if not yet
+	// A due base tower at pos, or a held hub tower: false while it waits for the account (see UpdateDefence)
+	bool TryBaseTower(const springai::AIFloat3& pos, CCircuitDef* buildDef, int dueFrame);
+	bool TryHubTower(const SHubTower& t);
+	bool IsWaiting(const CCircuitDef* def, int sinceFrame);
 };
 
 } // namespace circuit

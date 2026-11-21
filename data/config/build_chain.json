@@ -49,16 +49,18 @@
 		"factor": [1.55, 1.30],
 		"map": [4, 20]
 	},
-	// The turret account: one budget for every armed defence the AI queues (shields, storages, caretakers, radars,
-	// Claw mines, missiles and behaviour.json turret.not_defence aren't turrets here), but preventive ones. It fills at
-	// <share> x avg metal income x min(economy.json ms_pull, 1) x <map> x <mex>, up to <bank_sec> seconds of that (or
-	// the dearest tower a waiting spender asked for in the last 2 minutes), and starts empty. A tower is charged as it
-	// is queued and refunded if called off before it starts.
+	// The turret account: one budget for every armed defence the AI queues that can hit ground or water (shields,
+	// storages, caretakers, radars, Claw mines, missiles, behaviour.json turret.not_defence and anti-air-only turrets
+	// aren't turrets here, and cost it nothing), but preventive ones. It fills at <share> x avg metal income x
+	// min(economy.json ms_pull, 1) x <map> x <mex>, up to <bank_sec> seconds of that (or the dearest tower a waiting
+	// spender asked for in the last 2 minutes), and starts at <start> metal. A tower is charged as it is queued and
+	// refunded if called off before it starts.
 	//   - wait for the balance to cover a tower: porc mode (a cluster's towers and its chokes'), the turret picker
 	//     (behaviour.json turret callers, which check the dearest def they might pick), the creep (turret.creep_budget
-	//     x it), a mex job's tower against an enemy mex, the base timetable below (a turret waits in its place, and the
-	//     list's later entries behind it), and build_chain hub towers (a turret the balance doesn't cover leaves its
-	//     chain and waits, oldest first, while the building it guards stands; queued at LOW once covered)
+	//     x it), a mex job's tower against an enemy mex, the base timetable below and build_chain hub towers (a hub
+	//     turret the balance doesn't cover leaves its chain and waits, while the building it guards stands; queued at
+	//     LOW). A base or hub turret waits on its own, never behind another, and for <wait_sec> at most past its time
+	//     (or since it was held): then it is queued anyway, and the balance may go below zero
 	//   - charged but never refused, the balance may go below zero: a cornered builder's tower, choke.radar.guard,
 	//     test orders, anything else
 	//   - free: preventive towers (a cluster outside porc mode, as many as the prevent roll gives)
@@ -71,14 +73,15 @@
 	// <map> and <mex>: multiplier curves [[<x>, <multiplier>], ...] as prevent_map and prevent_mex (linear between
 	// points, flat beyond the ends; missing or [] = x1): map x = map area in 512-elmo squares (16x16 = 256) / players
 	// on our team, fixed for the game; mex x = ally-team finished mexes / all metal spots, every 10 s.
-	// Missing keys: 0.1, 60 s, 2 and x1 curves. Logged once a minute as TURRET BUDGET, with the spend by spender and
-	// turrets lost
-	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2,
+	// <start>: metal the account holds at the start, so the first base tower (a Lotus at 10 s) goes on time.
+	// Missing keys: 0.1, 60 s, 2, x1 curves, start 0 and wait_sec 120. Logged once a minute as TURRET BUDGET, with the
+	// spend by spender and turrets lost
+	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2, "start": 90, "wait_sec": 120,
 		"map": [[64, 1.00], [256, 0.66]],
 		"mex": [[0.33, 1.00], [0.66, 1.00]]},
 
 
-	// Base defence and time to build it, in seconds; a turret waits for the turret account (budget, above) past its time
+	// Base defence and time to build it, in seconds; an account turret waits up to budget.wait_sec (above) past its time for the balance
 	"base": [[0, 10], [1, 300], [0, 310], [1, 400], [6, 450], [0, 500], [16, 600], [5, 660], [1, 990], [5, 1160], [1, 1380], [2, 1680], [13, 1800], [15, 1850]],
 
 	"superweapon": {

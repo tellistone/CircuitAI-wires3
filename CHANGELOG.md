@@ -9,10 +9,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Base towers and build chain hub towers wait for the turret account** (`porcupine.budget`). They were charged
   but never refused, so they could take the account below zero and hold up porc, the picker and the creep. A base
-  timetable turret now waits in its place until the account covers it (asking it to save), with the list's later
-  entries behind it. A hub tower the account can't cover leaves its chain and waits in one queue, oldest first, while
-  the building it guards stands, then is queued at LOW. Shields, radars, caretakers and other non-turrets in these
-  lists don't wait. A base or hub tower now clears the account's waiting ask, as the other waiting spenders do.
+  timetable turret now waits, once due, until the account covers it (asking it to save). A hub turret the account
+  can't cover leaves its chain and waits while the building it guards stands, then is queued at LOW. Each waits on
+  its own, so a dear one (an Artemis) never holds up a later entry (the antinuke) or another hub's lights, and for
+  `wait_sec` (new, 120 s) at most (for a base set up late, from when it was): then it goes anyway, as before, so a dear turret isn't starved by the light
+  spenders and its ask doesn't hold the account's cap up for good. Shields, radars, caretakers and other non-turrets
+  don't wait. A base or hub tower clears the account's waiting ask, as the other waiting spenders do.
+- **The turret account starts at 90 metal** (`porcupine.budget.start`, new), so the base Lotus at 0:10 still goes at
+  0:10 now that base towers wait for the account.
+- **Anti-air-only turrets are off the turret account** (Hacksaw, Chainsaw, Artemis, Flak and the like). They cost
+  it nothing and never wait for it, so anti-air no longer competes with ground turrets for the account.
 
 - **The turret nearest the enemy's base is worth more** (`turret.foremost`, new, 300 metal). A picker spot that would
   put a ground turret nearer the enemy's base (its known factories, else its start boxes) than any ground turret of
