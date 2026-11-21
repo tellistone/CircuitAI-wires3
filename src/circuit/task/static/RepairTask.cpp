@@ -7,6 +7,7 @@
 
 #include "task/static/RepairTask.h"
 #include "task/TaskManager.h"
+#include "task/IdleTask.h"
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/FactoryManager.h"
@@ -151,7 +152,7 @@ void CSRepairTask::Update()
 			for (CCircuitUnit* unit : tmpUnits) {
 				// Only the nanos that reach the new job (the scan was round the first one); the rest look again
 				const bool isReach = (newTarget == nullptr) || IsInReach(unit, newTarget, frame);
-				manager->AssignTask(unit, isReach ? task : manager->GetIdleTask());
+				manager->AssignTask(unit, isReach ? static_cast<IUnitTask*>(task) : manager->GetIdleTask());
 			}
 			manager->AbortTask(this);
 		}
