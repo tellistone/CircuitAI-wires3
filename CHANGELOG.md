@@ -21,6 +21,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   ally team (finished or being built, and our jobs not started yet) isn't placed; the account (`porcupine.budget`)
   gets 90 metal instead, up to its cap, once per call (a cluster's next sweep visit may credit it again).
   The `TURRET BUDGET` log line sums it as "crowd credit".
+  It also covers porc-mode towers, build chain hub towers, base towers, radar guards and mex escorts. It doesn't
+  cover a cornered builder's tower, the creep or test orders.
 
 - **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
   unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and
