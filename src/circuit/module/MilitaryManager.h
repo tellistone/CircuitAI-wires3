@@ -45,6 +45,7 @@ class CAllyCover;
 class CAttackBalance;
 class CFrontline;
 class CTurretPicker;
+class CAATurretPicker;
 
 // Attack group route kinds (quota.attack_path_dynamic_cost)
 enum class AttackRoute: int { TARGET = 0, REINFORCE, FRONT, FLEE, CORNERED, _SIZE_ };
@@ -212,6 +213,10 @@ public:
 	CCreepPlanner* GetCreepPlanner() const { return creepPlanner.get(); }
 	CFrontline* GetFrontline() const { return frontline.get(); }
 	CTurretPicker* GetTurretPicker() const { return turretPicker.get(); }
+	// aa_turret: the AA turret picker, and whether it is on. While on it is the only route that queues AA turrets: the
+	// porcupine lists' and the base timetable's AA entries are skipped, and a flier sighting gets no prevent_air tower
+	CAATurretPicker* GetAATurretPicker() const { return aaPicker.get(); }
+	bool IsAAPickerOn() const;
 	// A picker or cornered tower (CBDefenceTask::IsOffPoints): its death takes no cost off a defence point
 	void AddOffPointsTower(int unitId) { offPointsTowers.insert(unitId); }
 	// porcupine.budget: a tower whose job the turret account charged (CBDefenceTask::SetTarget). Only these pay
@@ -697,6 +702,7 @@ private:
 	std::unique_ptr<CCreepPlanner> creepPlanner;  // turret.creep
 	std::unique_ptr<CFrontline> frontline;
 	std::unique_ptr<CTurretPicker> turretPicker;
+	std::unique_ptr<CAATurretPicker> aaPicker;  // aa_turret
 	std::set<int> offPointsTowers;  // unit ids
 	std::unordered_map<int, float> chargedTowers;  // unit id: what the turret account charged its job
 
@@ -929,7 +935,12 @@ private:
 		std::vector<std::pair<float, float>> mexCurve;  // budget.mex: x = ally-team finished mexes / all spots
 		float mexMult = 1.f;  // budget.mex now, refreshed every 10 s
 		float mexX = 0.f;
-		int mexFrame = -1;
+		// budget.army: x = the metal of our finished account turrets / our army's (GetArmyCost)
+		std::vector<std::pair<float, float>> armyCurve;
+		float armyMult = 1.f;  // budget.army now, refreshed every 10 s; 1 before armySince
+		int armySince = 0;  // budget.army_since, frames
+		float armyX = 0.f;
+		int curveFrame = -1;  // the next refresh of mexMult and armyMult
 		float lost = 0.f;  // since the last log line: what the lost turrets cost, and what they paid back
 		float lossPaid = 0.f;
 		float balance = 0.f;

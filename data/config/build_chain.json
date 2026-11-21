@@ -15,7 +15,8 @@
 	"water": [4, 1, 6, 4, 4, 3, 5, 9, 16],
 	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of "land"/"water", in total over
 	// all the cluster's mex points (towers already there, porc ones too, count; a geothermal vent's point is its own).
-	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction
+	// chance = prevent x prevent_map x prevent_mex x the turret account's army multiplier (budget.army below, so free
+	// towers slow with the account); count = its whole part, plus 1 with the odds of its fraction
 	// (0.5 = a 50% chance of 1 tower, 1.5 = 1 tower and a 50% chance of a 2nd). Each cluster throws its dice once, the
 	// first time it is defended; it rolls again with the same dice every prevent_reroll[0] s (the new count replaces
 	// the old) and on a sighting: an enemy in LOS that can hit ground (air included) within mex LOS of our mex there,
@@ -52,7 +53,7 @@
 	// The turret account: one budget for every armed defence the AI queues that can hit ground or water (shields,
 	// storages, caretakers, radars, Claw mines, missiles, behaviour.json turret.not_defence and anti-air-only turrets
 	// aren't turrets here, and cost it nothing), but preventive ones. It fills at <share> x avg metal income x
-	// min(economy.json ms_pull, 1) x <map> x <mex>, up to <bank_sec> seconds of that (or the dearest tower a waiting
+	// min(economy.json ms_pull, 1) x <map> x <mex> x <army>, up to <bank_sec> seconds of that (or the dearest tower a waiting
 	// spender asked for in the last 2 minutes), and starts at <start> metal. A tower is charged as it is queued and
 	// refunded if called off before it starts.
 	//   - wait for the balance to cover a tower: porc mode (a cluster's towers and its chokes'), the turret picker
@@ -70,15 +71,20 @@
 	// amphibian: the turret's longer of land and water range, so an Urchin counts against ships). Not artillery or
 	// skirmishers that outrange it, a flier over a Lotus, an unseen killer or a capture. Past the cap if need be (the
 	// account then stops filling until spending brings it below), so a lost position can be rebuilt. The per-point cap (amount x income) still bounds each defence point.
-	// <map> and <mex>: multiplier curves [[<x>, <multiplier>], ...] as prevent_map and prevent_mex (linear between
-	// points, flat beyond the ends; missing or [] = x1): map x = map area in 512-elmo squares (16x16 = 256) / players
-	// on our team, fixed for the game; mex x = ally-team finished mexes / all metal spots, every 10 s.
+	// <map>, <mex> and <army>: multiplier curves [[<x>, <multiplier>], ...] as prevent_map and prevent_mex (linear
+	// between points, flat beyond the ends; missing or [] = x1): map x = map area in 512-elmo squares (16x16 = 256) /
+	// players on our team, fixed for the game; mex x = ally-team finished mexes / all metal spots, every 10 s; army x =
+	// the metal of our finished turrets (those on this account) / our army's (finished combat units, not constructors
+	// or the commander; no army counts as 1 metal), every 10 s, so turret spending slows once turrets outweigh the
+	// army we'd need to hold the ground; x1 before <army_since> seconds of game time (the opening's base towers come
+	// before its army). The preventive chance (above) takes the same army multiplier.
 	// <start>: metal the account holds at the start, so the first base tower (a Lotus at 10 s) goes on time.
-	// Missing keys: 0.1, 60 s, 2, x1 curves, start 0 and wait_sec 120. Logged once a minute as TURRET BUDGET, with the
+	// Missing keys: 0.1, 60 s, 2, x1 curves, start 0, wait_sec 120 and army_since 0. Logged once a minute as TURRET BUDGET, with the
 	// spend by spender and turrets lost
 	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2, "start": 90, "wait_sec": 120,
 		"map": [[64, 1.00], [256, 0.66]],
-		"mex": [[0.33, 1.00], [0.66, 1.00]]},
+		"mex": [[0.33, 1.00], [0.66, 1.00]],
+		"army": [[0.25, 1.00], [0.35, 0.34]], "army_since": 300},
 
 
 	// Base defence and time to build it, in seconds; an account turret waits up to budget.wait_sec (above) past its time for the balance

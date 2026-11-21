@@ -113,8 +113,9 @@ public:
 	 * CLOAK_ROUTE: in an anti-heavy squad, routes while cloaked on the decloak layer with no threat cap (old behaviour);
 	 *            without it a cloaked anti-heavy routes, picks stand-off spots and flees on the normal threat map
 	 *            (mines always route as with it)
-	 * PLANT:     never moves (no move, fight, jump or gather orders) while an enemy it can hit is in LOS and in its weapon
-	 *            range, or an enemy anti_heavy in LOS has it in its weapon range (behaviour.json "plant")
+	 * PLANT:     never moves (no move, fight, jump or gather orders) while its target or an armed enemy it can hit is
+	 *            in LOS and in its weapon range, or a "plant".threats enemy seen lately has it in its weapon range
+	 *            (behaviour.json "plant"; CMilitaryManager::UpdatePlant)
 	 */
 	enum class AttrType: RoleT {NONE = -1,
 		MELEE = 0, BOOST, NO_JUMP, NO_STRAFE,
@@ -390,6 +391,9 @@ public:
 	// this many times its own cost; 0 = off
 	void SetCaptureHide(float value) { captureHide = value; }
 	float GetCaptureHide() const { return captureHide; }
+	// behaviour.json per unit "aa_value": what this building is worth to the AA turret picker (aa_turret), x its cost
+	void SetAAValue(float value) { aaValue = value; }
+	float GetAAValue() const { return aaValue; }
 	// Attack target choice: this enemy type's distance counts as this many times its real distance
 	void SetTargetDistMod(float value) { targetDistMod = value; }
 	float GetTargetDistMod() const { return targetDistMod; }
@@ -534,6 +538,7 @@ private:
 	float reloadScootMargin = -1.f;
 	bool isReloadScootMarginSet = false;
 	float captureHide = 0.f;
+	float aaValue = 1.f;
 	float targetDistMod = 1.f;
 	std::shared_ptr<STargetPriority> targetPriority;  // GetTargetPriority
 	float raidThrMod = 1.f;  // GetRaidThrMod
