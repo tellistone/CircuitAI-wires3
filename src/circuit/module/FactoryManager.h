@@ -137,7 +137,6 @@ private:
 		// batch_curve: orders of batchDef still to queue, each the moment this factory is free again
 		CCircuitDef* batchDef = nullptr;
 		int batchLeft = 0;
-		CRecruitTask::Priority batchPriority = CRecruitTask::Priority::NORMAL;
 	};
 	std::vector<SFactory> factories;  // facory 1:n nano
 	// behaviour.json "batch_curve": [[income, batch size], ...] per unit type; a type missing here is ordered one at a time
