@@ -292,12 +292,13 @@
 	"cooldown": 30  // seconds between one constructor's orders, whatever the result
 },
 
-// AA turret picker (CAATurretPicker): while on, the only route that queues anti-air turrets. The porcupine lists' and
-// the base timetable's AA entries are skipped, a flier sighting gets no prevent_air Picket, and AA turrets stay off the
-// turret account (porcupine.budget). Every interval seconds it works out the budget fresh and, if it covers a tower,
-// queues one on the best spot as an exact-spot job any constructor may take (one unstarted job at a time; nothing is
-// ever cancelled). AA towers queued elsewhere (a build chain hub, a cornered builder, a script) still build and count
-// toward our AA metal. A missing block = off. Logs: AA BUDGET once a minute, AA TURRET for each decision
+// AA turret picker (CAATurretPicker): while on, the only route that queues anti-air turrets. The porcupine lists', the
+// base timetable's and the build chain hubs' AA entries are skipped, a flier sighting gets no prevent_air Picket, and AA
+// turrets stay off the turret account (porcupine.budget). Every interval seconds it works out the budget fresh and, if
+// it covers a tower, queues one on the best spot as an exact-spot job any constructor may take: HIGH until begun, then
+// normal unless enemies come near; one unstarted job at a time; one dropped before it began masks its spot; nothing is
+// ever cancelled. AA towers queued elsewhere (a cornered builder, a script) still build and count toward our AA metal.
+// A missing block = off. Logs: AA BUDGET once a minute, AA TURRET for each decision
 "aa_turret": {
 	"enable": true,
 	"unit": ["turretaalaser", "turretaaclose", "turretaaflak", "turretaafar", "turretaaheavy"],  // Razor, Hacksaw, Thresher, Chainsaw, Artemis; each must be available (limit, since) and buildable by a constructor of ours, and cost no more than the target
@@ -307,11 +308,12 @@
 	// left out. Nothing is built until net covers the cheapest def
 	"factor": 0.25,
 	"ignore_air": ["planefighter", "planeheavyfighter", "gunshipaa", "planescout", "planelightscout", "gunshiptrans", "gunshipheavytrans", "gunshipcon", "planecon", "athena"],  // enemy fliers left out of the air sum and the mix (Swift, Raptor, Trident, Owl, Sparrow, Charon, Hercules, Wasp, Crane, Athena); every other known flier counts, Blastwings included
-	"mobile_share": 0.5,  // our finished mobile anti_air units within 1500 elmos of our base position count at this x their cost in our AA metal; those away with the army don't count
+	"mobile_share": 0.5,  // our finished mobile anti_air units within 1500 elmos of our base position count at this x their cost in our AA metal, the most of it seen in the last 60 s (an army stepping out of base doesn't open the budget); those away with the army don't count
 	"interval": 10,  // seconds between checks
 	// Worth: A, the ally team's buildings within the def's air range, each at cost x its aa_value (per unit, below,
 	// default 1; a nanoframe at max(progress, 0.5) of that; other anti_air statics, Claw mines and missiles left out),
-	// x overlap for each allied AA turret or AA job of ours that covers it, each counted min(M, 1). Rank: A x U x L /
+	// x overlap for each allied AA turret or AA job of ours that covers it, each counted min(M, 1) (a nanoframe nobody
+	// of ours builds, at its progress of that). Rank: A x U x L /
 	// (1 + walk / 2000), walk to our nearest constructor. Hard rules on the best cells 256 elmos apart: not masked by
 	// a failed build, not on a choke lane, out of the ground-only threat (an identified enemy that doesn't fly, hits
 	// ground and has a land range of 1200 or less, within it + 100; mobiles in radar or sight now or in the last
@@ -320,8 +322,9 @@
 	"overlap": 0.5,  // a building's value x this for each well-suited AA that already covers it (0 to 1)
 	"umbrella": 0.5,  // rank bonus at full ground-turret cover: U = 1 + this x min(G / the def's cost, 1), G the finished allied ground turrets' metal whose land range covers the spot
 	"line": 0.25,  // rank bonus within 600 elmos of a live choke of our current line; doubled for the enemy line
-	// The def with the best rank x M / cost wins. One dearer than net is saved for, for 60 s at most and only while
-	// target is above where it was 60 s ago; else the best affordable def. M, per def: its curve of [enemy unit cost,
+	// The def with the best rank x M / cost wins. One dearer than net is saved for only while enemy air keeps rising:
+	// twice the smaller rise of target over the last two 30 s must cover what net lacks (so a fleet just seen buys
+	// now), and 60 s at most; else the best def net covers. M, per def: its curve of [enemy unit cost,
 	// multiplier], averaged over the known enemy air by metal (1 for a def with none). A first guess to tune from the
 	// AA TURRET logs: Blastwing (55) and Locust (220) swarms sit near 150, Ravens (300) near 500, Likho (2000) and
 	// Krow (4200) at 2000 and above

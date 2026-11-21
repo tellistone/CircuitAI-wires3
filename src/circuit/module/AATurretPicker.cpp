@@ -12,6 +12,7 @@
 #include "module/TurretPicker.h"
 #include "setup/SetupManager.h"
 #include "task/builder/DefenceTask.h"
+#include "terrain/CellMask.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
 #include "unit/ally/AllyUnit.h"
@@ -52,18 +53,12 @@ using namespace springai;
 #define FRAME_FLOOR		0.5f  // a nanoframe's value, at least this share of it
 #define JOB_TIMEOUT		(FRAMES_PER_SEC * 60)  // with no builder on it
 #define SAVE_FRAMES		(FRAMES_PER_SEC * 60)  // the most a dearer winner is saved for
-#define RISE_FRAMES		(FRAMES_PER_SEC * 60)  // saving only while target is above where it was this long ago
-#define BACKOFF_FRAMES	(FRAMES_PER_SEC * 60)  // after a search that found nothing, at most
-#define BACKOFF_ASSETS	300.f  // asset value gained that ends the backoff
-#define HIT_FRAMES		(FRAMES_PER_SEC * 30)  // a flier's hit on a building of ours makes a job in range HIGH
+#define HISTORY_FRAMES	(FRAMES_PER_SEC * 60)  // the rise saving looks at (in two halves), and the mobile AA hold
 #define LOG_FRAMES		(FRAMES_PER_SEC * 60)
 
 CAATurretPicker::CAATurretPicker(CCircuitAI* circuit)
 		: circuit(circuit)
 		, saveFrame(-1)
-		, failFrame(-1)
-		, failNet(0.f)
-		, failAssets(0.f)
 		, logFrame(-LOG_FRAMES)
 		, slowestMs(0.f)
 		, queuedMetal(0.f)
@@ -137,7 +132,7 @@ void CAATurretPicker::ReadConfig()
 		c.ignoreAir.insert(cdef->GetId());
 	}
 
-	// mix: def name: [[enemy unit cost, multiplier], ...]; a missing key, the starting curves
+	// mix: def name: [[enemy unit cost, multiplier], ...]; a def without one has M = 1
 	const Json::Value& mix = aa["mix"];
 	if (mix.isObject()) {
 		for (const std::string& name : mix.getMemberNames()) {
@@ -150,24 +145,8 @@ void CAATurretPicker::ReadConfig()
 			CMilitaryManager::ReadCurve(circuit, mix[name], "aa_turret.mix." + name, "enemy unit cost", curve);
 			c.mix[cdef->GetId()] = curve;
 		}
-	} else {
-		if (!mix.isNull()) {
-			circuit->LOG("CONFIG %s: aa_turret.mix must be an object of unit name: curve, defaults used",
-					cfgName.c_str());
-		}
-		const std::vector<std::pair<std::string, Curve>> defaults = {
-			{"turretaalaser", {{150.f, 1.3f}, {500.f, 1.f}, {2000.f, 0.6f}}},  // Razor
-			{"turretaaflak",  {{150.f, 1.5f}, {500.f, 1.f}, {2000.f, 0.5f}}},  // Thresher
-			{"turretaaclose", {{150.f, 0.4f}, {500.f, 1.f}, {2000.f, 1.5f}}},  // Hacksaw
-			{"turretaafar",   {{150.f, 0.8f}, {500.f, 1.f}, {2000.f, 1.3f}}},  // Chainsaw
-			{"turretaaheavy", {{150.f, 0.6f}, {500.f, 1.f}, {2000.f, 1.5f}}}   // Artemis
-		};
-		for (const auto& kv : defaults) {
-			CCircuitDef* cdef = circuit->GetCircuitDef(kv.first.c_str());
-			if (cdef != nullptr) {
-				c.mix[cdef->GetId()] = kv.second;
-			}
-		}
+	} else if (!mix.isNull()) {
+		circuit->LOG("CONFIG %s: aa_turret.mix must be an object of unit name: curve, ignored", cfgName.c_str());
 	}
 
 	circuit->LOG("AA TURRET config: %s, %i defs, factor %.2f, mobile_share %.2f, every %.0f s, min_value %.2f, "
@@ -191,7 +170,7 @@ bool CAATurretPicker::IsGroundThreat(const CEnemyInfo* enemy, int frame, float& 
 	// is meant to stand where they are), and so is artillery: a Cerberus or a Big Bertha would block a whole base
 	const CCircuitDef* edef = enemy->GetCircuitDef();
 	if ((edef == nullptr) || edef->IsAbleToFly() || !edef->IsAttacker() || !edef->HasAntiLand()
-		|| enemy->GetData()->IsFake() || enemy->IsHidden())
+		|| enemy->GetData()->IsFake() || enemy->GetData()->IsIgnore() || enemy->IsHidden())
 	{
 		return false;
 	}
@@ -224,29 +203,6 @@ bool CAATurretPicker::IsThreatened(const AIFloat3& pos) const
 		}
 	}
 	return false;
-}
-
-void CAATurretPicker::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
-{
-	if (!config.isEnable || (attacker == nullptr) || unit->GetCircuitDef()->IsMobile()) {
-		return;
-	}
-	const CCircuitDef* edef = attacker->GetCircuitDef();
-	if ((edef == nullptr) || !edef->IsAbleToFly()) {
-		return;
-	}
-	const int frame = circuit->GetLastFrame();
-	airHits.erase(std::remove_if(airHits.begin(), airHits.end(), [frame](const SAirHit& h) {
-		return frame - h.frame > HIT_FRAMES;
-	}), airHits.end());
-	const AIFloat3& pos = unit->GetPos(frame);
-	for (SAirHit& h : airHits) {  // one per building: each shot of a swarm would add one
-		if (h.pos.SqDistance2D(pos) < SQUARE(SQUARE_SIZE * 2)) {
-			h.frame = frame;
-			return;
-		}
-	}
-	airHits.push_back({pos, frame});
 }
 
 float CAATurretPicker::GetMix(SCheck& check, const CCircuitDef* def) const
@@ -296,10 +252,10 @@ void CAATurretPicker::GatherEnemies(SCheck& check) const
 void CAATurretPicker::GatherOurs(SCheck& check) const
 {
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	auto addCover = [this, &check](const AIFloat3& pos, const CCircuitDef* cdef) {
+	auto addCover = [this, &check](const AIFloat3& pos, const CCircuitDef* cdef, float share) {
 		const float range = cdef->GetMaxRange(CCircuitDef::RangeType::AIR);
 		if (range > 0.f) {
-			check.cover.push_back({pos, SQUARE(range), std::min(GetMix(check, cdef), 1.f)});
+			check.cover.push_back({pos, SQUARE(range), std::min(GetMix(check, cdef), 1.f) * share});
 		}
 	};
 
@@ -311,7 +267,7 @@ void CAATurretPicker::GatherOurs(SCheck& check) const
 			return;
 		}
 		check.queuedAA += cdef->GetCostM();
-		addCover(utils::is_valid(t->GetBuildPos()) ? t->GetBuildPos() : t->GetTaskPos(), cdef);
+		addCover(utils::is_valid(t->GetBuildPos()) ? t->GetBuildPos() : t->GetTaskPos(), cdef, 1.f);
 		if ((t->GetBuildType() == IBuilderTask::BuildType::DEFENCE) && static_cast<CBDefenceTask*>(t)->IsAAPicker()) {
 			++check.ownUnstarted;
 		}
@@ -362,10 +318,12 @@ void CAATurretPicker::GatherOurs(SCheck& check) const
 			continue;
 		}
 		if (IsAATower(cdef)) {  // cover, and no asset: AA doesn't gather around AA
-			addCover(pos, cdef);
-			if (isOurs) {  // an abandoned frame counts at its progress, so it can't block the budget
-				check.staticAA += (isBuilt || (worked.find(au->GetId()) != worked.end()))
-						? cost : unit->GetBuildProgress() * cost;
+			// A frame nobody of ours builds counts at its progress, so an abandoned one can't block the budget or
+			// leave the buildings around it uncovered
+			const float share = (isBuilt || (worked.find(au->GetId()) != worked.end())) ? 1.f : unit->GetBuildProgress();
+			addCover(pos, cdef, share);
+			if (isOurs) {
+				check.staticAA += share * cost;
 			}
 			continue;
 		}
@@ -377,7 +335,6 @@ void CAATurretPicker::GatherOurs(SCheck& check) const
 			b.value += value;
 			b.x += pos.x * value;
 			b.z += pos.z * value;
-			check.assets += value;
 		}
 		if (isBuilt && (turretPicker != nullptr) && turretPicker->IsGroundGun(cdef)) {
 			check.guns.push_back({pos, cdef->GetMaxRange(CCircuitDef::RangeType::LAND), cost});
@@ -409,14 +366,29 @@ void CAATurretPicker::GatherOurs(SCheck& check) const
 	}
 }
 
-float CAATurretPicker::GetTargetAgo(int frame) const
+float CAATurretPicker::GetTargetAgo(int frame, int ago) const
 {
-	for (auto it = targets.rbegin(); it != targets.rend(); ++it) {
-		if (it->first <= frame - RISE_FRAMES) {
-			return it->second;
+	for (auto it = history.rbegin(); it != history.rend(); ++it) {
+		if (it->frame <= frame - ago) {
+			return it->target;
 		}
 	}
-	return targets.empty() ? 0.f : targets.front().second;
+	return history.empty() ? 0.f : history.front().target;
+}
+
+const CAATurretPicker::SWorker* CAATurretPicker::NearestWorker(const SCheck& check, const AIFloat3& pos,
+		CCircuitDef* def)
+{
+	const SWorker* best = nullptr;  // def: one that builds it; nullptr: any
+	float minSq = std::numeric_limits<float>::max();
+	for (const SWorker& w : check.workers) {
+		const float sq = w.pos.SqDistance2D(pos);
+		if ((sq < minSq) && ((def == nullptr) || w.unit->GetCircuitDef()->CanBuild(def))) {
+			minSq = sq;
+			best = &w;
+		}
+	}
+	return best;
 }
 
 std::vector<CCircuitDef*> CAATurretPicker::GetUsableDefs(const SCheck& check) const
@@ -445,17 +417,23 @@ void CAATurretPicker::Update()
 		GatherOurs(check);
 	}
 	check.target = check.airMetal * config.factor / check.players;
-	check.net = check.target - (check.staticAA + check.queuedAA + check.mobileAA);
-	targets.push_back({check.frame, check.target});
-	while ((targets.size() > 1) && (targets[1].first <= check.frame - RISE_FRAMES)) {
-		targets.pop_front();  // one at or before RISE_FRAMES ago is kept
+	history.push_back({check.frame, check.target, check.mobileAA});
+	while ((history.size() > 1) && (history[1].frame <= check.frame - HISTORY_FRAMES)) {
+		history.pop_front();  // one at or before HISTORY_FRAMES ago is kept
 	}
+	for (const SSample& s : history) {
+		if (s.frame > check.frame - HISTORY_FRAMES) {
+			check.mobileHeld = std::max(check.mobileHeld, s.mobileAA);
+		}
+	}
+	check.net = check.target - (check.staticAA + check.queuedAA + check.mobileHeld);
 
-	auto finish = [this, &check, &t0](const std::string& why) {
+	// why: an early return, logged once until it changes; detail goes with it but doesn't count as a change
+	auto finish = [this, &check, &t0](const std::string& why, const std::string& detail = "") {
 		const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
 		slowestMs = std::max(slowestMs, ms);
-		if (!why.empty() && (why != lastWhy)) {  // an early return, once until it changes
-			circuit->LOG("AA TURRET %s", why.c_str());
+		if (!why.empty() && (why != lastWhy)) {
+			circuit->LOG("AA TURRET %s%s", why.c_str(), detail.c_str());
 		}
 		lastWhy = why;
 		if (check.frame >= logFrame + LOG_FRAMES) {
@@ -478,18 +456,14 @@ void CAATurretPicker::Update()
 		cheapest = std::min(cheapest, def->GetCostM());
 	}
 	if (check.net < cheapest) {
-		saveFrame = -1;  // nothing to save from
+		if ((saveFrame >= 0) && (check.frame - saveFrame >= SAVE_FRAMES)) {
+			saveFrame = -1;  // a spent save ends at a dip; one under way runs on, so a dip can't restart it
+		}
 		finish(utils::float_to_string(cheapest, "nothing: net below the cheapest def (%.0f)"));  // net: AA BUDGET
 		return;
 	}
 	if (check.ownUnstarted > 0) {
 		finish("nothing: a job of ours is queued and not started");
-		return;
-	}
-	if ((failFrame >= 0) && (check.frame - failFrame < BACKOFF_FRAMES) && (check.net < failNet + cheapest)
-		&& (check.assets < failAssets + BACKOFF_ASSETS))
-	{
-		finish("nothing: the last search found no spot, and nothing has changed since");
 		return;
 	}
 
@@ -500,77 +474,62 @@ void CAATurretPicker::Update()
 			defs.push_back(def);
 		}
 	}
-	SPick winner = Search(check, defs);
+	const SResult result = Search(check, defs);
+	const SPick& winner = result.best;
 	if (!winner.isFound) {
-		failFrame = check.frame;
-		failNet = check.net;
-		failAssets = check.assets;
-		finish(lastSearch);
+		finish("nothing: no spot", result.why);
 		return;
 	}
-	failFrame = -1;
 
 	const SPick* choice = &winner;
-	const char* why = "";
-	if (winner.def->GetCostM() > check.net) {
-		// Save for it while enemy air is growing, 60 s at most from the first check that chose to. The clock doesn't
-		// restart when the winner changes, and ends on a purchase
-		const float ago = GetTargetAgo(check.frame);
-		const bool isRising = (check.target > ago + 1.f);
-		if (isRising && (saveFrame < 0)) {
-			saveFrame = check.frame;
-		}
-		if (isRising && (check.frame - saveFrame < SAVE_FRAMES)) {
-			char buf[256];
-			snprintf(buf, sizeof(buf), "saving for %s (%.0f): net %.0f, target %.0f (%.0f 60 s ago), %i s of %i",
-					winner.def->GetDef()->GetName(), winner.def->GetCostM(), check.net, check.target, ago,
-					(check.frame - saveFrame) / FRAMES_PER_SEC, SAVE_FRAMES / FRAMES_PER_SEC);
-			finish(buf);
+	std::string why;
+	const float gap = winner.def->GetCostM() - check.net;
+	if (gap > 0.f) {
+		// Save for it only while enemy air keeps rising: twice the smaller rise of the last two 30 s must cover the
+		// gap, so a one-off jump (a fleet just seen) buys now. 60 s at most, from the first check that saved
+		const float ago30 = GetTargetAgo(check.frame, HISTORY_FRAMES / 2);
+		const float ago60 = GetTargetAgo(check.frame, HISTORY_FRAMES);
+		const float projected = 2.f * std::min(check.target - ago30, ago30 - ago60);
+		const bool isProjected = (projected >= gap);
+		if (isProjected && ((saveFrame < 0) || (check.frame - saveFrame < SAVE_FRAMES))) {
+			if (saveFrame < 0) {
+				saveFrame = check.frame;
+			}
+			char buf[160];
+			snprintf(buf, sizeof(buf), ": net %.0f, target %.0f, rise %.0f then %.0f over the last two 30 s",
+					check.net, check.target, ago30 - ago60, check.target - ago30);
+			finish(utils::string_format("saving for %s (%.0f)", winner.def->GetDef()->GetName(),
+					winner.def->GetCostM()), buf);
 			return;
 		}
-		choice = nullptr;
-		for (const SPick& p : affordable) {
-			if (p.isFound && ((choice == nullptr) || (p.score > choice->score))) {
-				choice = &p;
-			}
-		}
-		why = isRising ? ", saved 60 s for " : ", not saving (target flat) for ";
-		if (choice == nullptr) {
-			finish(std::string("nothing: ") + (isRising ? "saved 60 s" : "not saving: target flat") + " for "
-					+ winner.def->GetDef()->GetName() + ", and no affordable def has a spot");
+		why = std::string(isProjected ? ", saved 60 s for " : ", not saving for ") + winner.def->GetDef()->GetName();
+		choice = &result.affordable;
+		if (!choice->isFound) {
+			finish(std::string("nothing: ") + winner.def->GetDef()->GetName()
+					+ " costs more than net, and no def net covers has a spot");
 			return;
 		}
 	}
-	Queue(check, *choice, (choice == &winner) ? "" : (std::string(why) + winner.def->GetDef()->GetName()).c_str());
+	Queue(check, *choice, why);
 	saveFrame = -1;
 	finish("");
 }
 
-CAATurretPicker::SPick CAATurretPicker::Search(SCheck& check, const std::vector<CCircuitDef*>& defs)
+CAATurretPicker::SResult CAATurretPicker::Search(SCheck& check, const std::vector<CCircuitDef*>& defs)
 {
-	affordable.clear();
-	lastSearch.clear();
-	SPick best;
+	SResult result;
 	if (defs.empty()) {
-		lastSearch = "nothing: no def costs at most the target";
-		return best;
+		result.why = ": no def costs at most the target";
+		return result;
 	}
 	const int cells = gridW * gridH;
 	auto raster = [this](std::vector<float>& grid, const AIFloat3& p, float r, float v) {
-		const int x0 = std::max(int((p.x - r) / CELL), 0);
-		const int x1 = std::min(int((p.x + r) / CELL), gridW - 1);
-		const int z0 = std::max(int((p.z - r) / CELL), 0);
-		const int z1 = std::min(int((p.z + r) / CELL), gridH - 1);
 		const float sqR = SQUARE(r);
-		for (int z = z0; z <= z1; ++z) {
-			const float dz = (z + 0.5f) * CELL - p.z;
-			for (int x = x0; x <= x1; ++x) {
-				const float dx = (x + 0.5f) * CELL - p.x;
-				if (SQUARE(dx) + SQUARE(dz) <= sqR) {
-					grid[z * gridW + x] += v;
-				}
+		ForEachCellIn(gridW, gridH, int(CELL), p.x - r, p.z - r, p.x + r, p.z + r, [&](int x, int z) {
+			if (SQUARE((x + 0.5f) * CELL - p.x) + SQUARE((z + 0.5f) * CELL - p.z) <= sqR) {
+				grid[z * gridW + x] += v;
 			}
-		}
+		});
 	};
 
 	// (d) Overlap: each bucket x overlap^c, c its cover from allied AA and our jobs, each min(M, 1)
@@ -610,7 +569,7 @@ CAATurretPicker::SPick CAATurretPicker::Search(SCheck& check, const std::vector<
 		if (it == aGrids.end()) {
 			continue;
 		}
-		SPick pick = SearchDef(check, def, it->second, gGrid, walkGrid);
+		const SPick pick = SearchDef(check, def, it->second, gGrid, walkGrid);
 		for (int r = 0; r < Reject::_SIZE_; ++r) {
 			rejects[r] += pick.rejects[r];
 		}
@@ -619,19 +578,19 @@ CAATurretPicker::SPick CAATurretPicker::Search(SCheck& check, const std::vector<
 					pick.bestA / std::max(def->GetCostM(), 1.f), pick.candidates);
 			continue;
 		}
-		if (def->GetCostM() <= check.net) {
-			affordable.push_back(pick);
+		if ((def->GetCostM() <= check.net) && (!result.affordable.isFound || (pick.score > result.affordable.score))) {
+			result.affordable = pick;
 		}
-		if (!best.isFound || (pick.score > best.score)) {
-			best = pick;
+		if (!result.best.isFound || (pick.score > result.best.score)) {
+			result.best = pick;
 		}
 	}
-	if (!best.isFound) {
-		lastSearch = "nothing: no spot" + reasons + utils::string_format("; rejected: %i masked, %i on a lane, "
-				"%i threatened, %i not buildable, %i out of reach", rejects[Reject::MASK], rejects[Reject::LANE],
+	if (!result.best.isFound) {
+		result.why = reasons + utils::string_format("; rejected: %i masked, %i on a lane, %i threatened, "
+				"%i not buildable, %i out of reach", rejects[Reject::MASK], rejects[Reject::LANE],
 				rejects[Reject::THREAT], rejects[Reject::SITE], rejects[Reject::REACH]);
 	}
-	return best;
+	return result;
 }
 
 CAATurretPicker::SPick CAATurretPicker::SearchDef(SCheck& check, CCircuitDef* def, const std::vector<float>& aGrid,
@@ -641,13 +600,13 @@ CAATurretPicker::SPick CAATurretPicker::SearchDef(SCheck& check, CCircuitDef* de
 	pick.def = def;
 	const float cost = std::max(def->GetCostM(), 1.f);
 	const float worth = std::max(config.minValue * cost, 1.f);
-	const float sqLine = SQUARE(LINE_REACH);
-	auto isNear = [sqLine](const std::vector<AIFloat3>& points, const AIFloat3& pos) {
-		return std::any_of(points.begin(), points.end(), [&](const AIFloat3& p) { return p.SqDistance2D(pos) <= sqLine; });
+	auto isNear = [](const std::vector<AIFloat3>& points, const AIFloat3& pos) {
+		return std::any_of(points.begin(), points.end(), [&](const AIFloat3& p) {
+			return p.SqDistance2D(pos) <= SQUARE(LINE_REACH);
+		});
 	};
-	struct SCand {
-		int cell;
-		float rank;
+	auto centre = [this](int cell) {
+		return AIFloat3(((cell % gridW) + 0.5f) * CELL, 0.f, ((cell / gridW) + 0.5f) * CELL);
 	};
 	std::vector<SCand> cands;
 	for (int cell = 0; cell < (int)aGrid.size(); ++cell) {
@@ -656,19 +615,16 @@ CAATurretPicker::SPick CAATurretPicker::SearchDef(SCheck& check, CCircuitDef* de
 		if (a < worth) {
 			continue;
 		}
-		const AIFloat3 pos(((cell % gridW) + 0.5f) * CELL, 0.f, ((cell / gridW) + 0.5f) * CELL);
+		const AIFloat3 pos = centre(cell);
 		const float u = 1.f + config.umbrella * std::min(gGrid[cell] / cost, 1.f);
-		const float l = isNear(check.enemyLine, pos) ? 1.f + 2.f * config.line
-				: isNear(check.ourLine, pos) ? 1.f + config.line : 1.f;
+		const int lineKind = isNear(check.enemyLine, pos) ? 2 : isNear(check.ourLine, pos) ? 1 : 0;
 		float& walk = walkGrid[cell];
 		if (walk < 0.f) {
-			float minSq = std::numeric_limits<float>::max();
-			for (const SWorker& w : check.workers) {
-				minSq = std::min(minSq, w.pos.SqDistance2D(pos));
-			}
-			walk = check.workers.empty() ? 0.f : std::sqrt(minSq);
+			const SWorker* w = NearestWorker(check, pos, nullptr);
+			walk = (w == nullptr) ? 0.f : w->pos.distance2D(pos);
 		}
-		cands.push_back({cell, a * u * l / (1.f + walk / TRAVEL)});
+		const float l = 1.f + lineKind * config.line;  // L: 1, 1 + line, 1 + 2 x line
+		cands.push_back({cell, a * u * l / (1.f + walk / TRAVEL), u, lineKind, walk});
 	}
 	pick.candidates = cands.size();
 	std::sort(cands.begin(), cands.end(), [](const SCand& a, const SCand& b) { return a.rank > b.rank; });
@@ -685,7 +641,7 @@ CAATurretPicker::SPick CAATurretPicker::SearchDef(SCheck& check, CCircuitDef* de
 		if (((int)tried.size() >= MAX_TRIED) || (costly >= MAX_COSTLY)) {
 			break;
 		}
-		AIFloat3 pos(((c.cell % gridW) + 0.5f) * CELL, 0.f, ((c.cell / gridW) + 0.5f) * CELL);
+		AIFloat3 pos = centre(c.cell);
 		CTerrainManager::CorrectPosition(pos);
 		if (std::any_of(tried.begin(), tried.end(), [&pos](const AIFloat3& t) {
 			return t.SqDistance2D(pos) < SQUARE(SPACING);
@@ -707,21 +663,17 @@ CAATurretPicker::SPick CAATurretPicker::SearchDef(SCheck& check, CCircuitDef* de
 		}
 		++costly;
 		const AIFloat3 site = terrainMgr->FindSiteAt(def, pos, UNIT_FACING_SOUTH);
-		if (!utils::is_valid(site) || spotScorer->IsMasked(site) || IsInThreat(check.threats, site)) {
+		if (!utils::is_valid(site)) {
 			++pick.rejects[Reject::SITE];
 			continue;
 		}
-		CCircuitUnit* builder = nullptr;
-		float minSq = std::numeric_limits<float>::max();
-		for (const SWorker& w : check.workers) {
-			const float sq = w.pos.SqDistance2D(site);
-			if ((sq < minSq) && w.unit->GetCircuitDef()->CanBuild(def)) {
-				minSq = sq;
-				builder = w.unit;
-			}
+		if (spotScorer->IsMasked(site) || IsInThreat(check.threats, site)) {  // the site search moved it onto one
+			++pick.rejects[spotScorer->IsMasked(site) ? Reject::MASK : Reject::THREAT];
+			continue;
 		}
+		const SWorker* builder = NearestWorker(check, site, def);
 		if ((builder == nullptr)
-			|| !terrainMgr->CanReachAt(builder, site, builder->GetCircuitDef()->GetBuildDistance()))
+			|| !terrainMgr->CanReachAt(builder->unit, site, builder->unit->GetCircuitDef()->GetBuildDistance()))
 		{
 			++pick.rejects[Reject::REACH];
 			continue;
@@ -730,28 +682,19 @@ CAATurretPicker::SPick CAATurretPicker::SearchDef(SCheck& check, CCircuitDef* de
 		pick.site = site;
 		pick.a = aGrid[c.cell];
 		pick.g = gGrid[c.cell];
-		pick.u = 1.f + config.umbrella * std::min(pick.g / cost, 1.f);
-		pick.lineKind = isNear(check.enemyLine, pos) ? 2 : isNear(check.ourLine, pos) ? 1 : 0;
-		pick.l = (pick.lineKind == 2) ? 1.f + 2.f * config.line : (pick.lineKind == 1) ? 1.f + config.line : 1.f;
-		pick.walk = walkGrid[c.cell];
-		pick.rank = c.rank;
+		pick.cand = c;
 		pick.m = GetMix(check, def);
-		pick.score = pick.rank * pick.m / cost;
+		pick.score = c.rank * pick.m / cost;
 		break;
 	}
 	return pick;
 }
 
-void CAATurretPicker::Queue(SCheck& check, const SPick& pick, const char* why)
+void CAATurretPicker::Queue(SCheck& check, const SPick& pick, const std::string& why)
 {
+	// HIGH until begun (CBDefenceTask::SetTarget), so it outranks economy work twice as far and gets the HIGH travel cap
 	CCircuitDef* def = pick.def;
-	const float range = def->GetMaxRange(CCircuitDef::RangeType::AIR);
-	bool isHit = false;
-	for (const SAirHit& h : airHits) {
-		isHit |= (check.frame - h.frame <= HIT_FRAMES) && (h.pos.SqDistance2D(pick.site) <= SQUARE(range));
-	}
-	const IBuilderTask::Priority priority = isHit ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
-	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(priority, def, pick.site,
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::HIGH, def, pick.site,
 			IBuilderTask::BuildType::DEFENCE, def->GetCostM(), 0.f /*shake*/, true, JOB_TIMEOUT);
 	if (task == nullptr) {
 		return;
@@ -762,32 +705,39 @@ void CAATurretPicker::Queue(SCheck& check, const SPick& pick, const char* why)
 	task->SetBuildPos(pick.site);
 	queuedMetal += def->GetCostM();
 
+	const float sqRange = SQUARE(def->GetMaxRange(CCircuitDef::RangeType::AIR));
 	float raw = 0.f;  // A before the overlap discount
 	for (const auto& kv : check.buckets) {
-		if (kv.second.pos.SqDistance2D(pick.site) <= SQUARE(range)) {
+		if (kv.second.pos.SqDistance2D(pick.site) <= sqRange) {
 			raw += kv.second.value;
 		}
 	}
 	const char* lineName[] = {"none", "our line", "enemy line"};
-	circuit->LOG("AA TURRET queued %s (%.0f) at (%.0f, %.0f)%s%s: A %.0f (raw %.0f), G %.0f U %.2f, L %.2f (%s), "
+	const SCand& c = pick.cand;
+	circuit->LOG("AA TURRET queued %s (%.0f) at (%.0f, %.0f)%s: A %.0f (raw %.0f), G %.0f U %.2f, L %.2f (%s), "
 			"walk %.0f (/ %.2f), M %.2f, rank x M / cost %.3f; net %.0f of target %.0f", def->GetDef()->GetName(),
-			def->GetCostM(), pick.site.x, pick.site.z, why, isHit ? ", HIGH: air damage in range" : "", pick.a, raw,
-			pick.g, pick.u, pick.l, lineName[pick.lineKind], pick.walk, 1.f + pick.walk / TRAVEL, pick.m, pick.score,
+			def->GetCostM(), pick.site.x, pick.site.z, why.c_str(), pick.a, raw, pick.g, c.u,
+			1.f + c.lineKind * config.line, lineName[c.lineKind], c.walk, 1.f + c.walk / TRAVEL, pick.m, pick.score,
 			check.net, check.target);
 }
 
 void CAATurretPicker::LogBudget(SCheck& check, float slowMs)
 {
 	logFrame = check.frame;
-	std::string mix;
-	for (CCircuitDef* def : config.defs) {
-		mix += utils::string_format(" %s %.2f", def->GetDef()->GetName(), GetMix(check, def));
+	if (check.airMetal <= 0.f) {  // our side isn't gathered then
+		circuit->LOG("AA BUDGET no enemy air, queued last minute %.0f, slowest check %.2f ms", queuedMetal, slowMs);
+	} else {
+		std::string mix;
+		for (CCircuitDef* def : config.defs) {
+			mix += utils::string_format(" %s %.2f", def->GetDef()->GetName(), GetMix(check, def));
+		}
+		circuit->LOG("AA BUDGET enemy air %.0f (%i fliers; M:%s), players %i, target %.0f (%.0f 30 s, %.0f 60 s ago), "
+				"static AA %.0f, queued %.0f, mobile AA at base %.0f (%.0f now, %.0f away), net %.0f, queued last "
+				"minute %.0f, slowest check %.2f ms", check.airMetal, (int)check.airCosts.size(), mix.c_str(),
+				check.players, check.target, GetTargetAgo(check.frame, HISTORY_FRAMES / 2),
+				GetTargetAgo(check.frame, HISTORY_FRAMES), check.staticAA, check.queuedAA, check.mobileHeld,
+				check.mobileAA, check.mobileAway, check.net, queuedMetal, slowMs);
 	}
-	circuit->LOG("AA BUDGET enemy air %.0f (%i fliers; M:%s), players %i, target %.0f (%.0f 60 s ago), static AA %.0f, "
-			"queued %.0f, mobile AA at base %.0f (%.0f away), net %.0f, queued last minute %.0f, slowest check %.2f ms",
-			check.airMetal, (int)check.airCosts.size(), mix.c_str(), check.players, check.target,
-			GetTargetAgo(check.frame), check.staticAA, check.queuedAA, check.mobileAA, check.mobileAway, check.net,
-			queuedMetal, slowMs);
 	queuedMetal = 0.f;
 	slowestMs = 0.f;
 }

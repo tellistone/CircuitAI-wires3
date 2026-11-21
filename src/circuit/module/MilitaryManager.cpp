@@ -1430,9 +1430,6 @@ int CMilitaryManager::UnitIdle(CCircuitUnit* unit)
 
 int CMilitaryManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
-	if (IsAAPickerOn()) {
-		aaPicker->OnUnitDamaged(unit, attacker);  // a flier hitting a building of ours: an AA job in range goes HIGH
-	}
 	auto search = damagedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != damagedHandler.end()) {
 		search->second(unit, attacker);

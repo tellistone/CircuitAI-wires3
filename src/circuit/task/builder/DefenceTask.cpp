@@ -65,13 +65,12 @@ void CBDefenceTask::Update()
 		manager->AbortTask(this);
 		return;
 	}
-	// An aa_turret job whose builder got there: dropped if ground threat has reached the spot (its spot masked)
+	// An aa_turret job whose builder got there: dropped if ground threat has reached the spot (Cancel masks it)
 	if (isAAPicker && (target == nullptr) && !traveled.empty() && (militaryMgr->GetAATurretPicker() != nullptr)
 		&& militaryMgr->GetAATurretPicker()->IsThreatened(buildPos))
 	{
 		manager->GetCircuit()->LOG("AA TURRET dropped on arrival: %s at (%.0f, %.0f), ground threat reached it",
 				buildDef->GetDef()->GetName(), buildPos.x, buildPos.z);
-		militaryMgr->GetSpotScorer()->MaskFailed(buildPos);
 		manager->AbortTask(this);
 		return;
 	}
@@ -115,6 +114,11 @@ void CBDefenceTask::Cancel()
 	if (IsCreep() && (target == nullptr) && (militaryMgr != nullptr)) {
 		militaryMgr->GetCreepPlanner()->OnUntaken(creepLane);  // timed out or dropped before it started
 	}
+	if (isAAPicker && (target == nullptr) && (militaryMgr != nullptr) && utils::is_valid(buildPos)) {
+		// Timed out or dropped before it started: the spot is skipped for a while, so the next check looks elsewhere
+		// rather than queueing the same spot again
+		militaryMgr->GetSpotScorer()->MaskFailed(buildPos);
+	}
 
 	IBuilderTask::Cancel();
 }
@@ -129,7 +133,7 @@ void CBDefenceTask::SetTarget(CCircuitUnit* unit)
 	if (isOffPoints) {
 		militaryMgr->AddOffPointsTower(unit->GetId());
 	}
-	if (IsCreep() && (priority == Priority::HIGH)) {
+	if ((IsCreep() || isAAPicker) && (priority == Priority::HIGH)) {
 		// HIGH ranks the job for builders looking for work; once begun ZK builds it at its normal priority, unless
 		// enemies near raise it (Update), so a turret at the line doesn't take metal before the factory
 		ChangePriority(Priority::NORMAL);
