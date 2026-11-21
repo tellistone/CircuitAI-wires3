@@ -858,6 +858,17 @@ bool CEconomyManager::IsAllyOpenSpot(int spotId) const
 	return IsOpenSpot(spotId) && circuit->GetMetalManager()->IsOpenSpot(spotId);
 }
 
+bool CEconomyManager::IsEnemyMexAt(const AIFloat3& pos) const
+{
+	COOAICallback* clb = circuit->GetCallback();
+	for (int id : clb->GetEnemyUnitIdsIn(pos, SQUARE_SIZE)) {
+		if ((id != -1) && (clb->Unit_GetDefId(id) == mexDef->GetId())) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool CEconomyManager::IsOpenSpot(int spotId) const
 {
 	return openSpots[spotId] && ((isAllyMexMax ? circuit->GetMetalManager()->GetMexCount() : mexCount) < mexMax);
@@ -976,15 +987,20 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const CMetalData::Metals& spots = metalMgr->GetSpots();
 	CMap* map = circuit->GetMap();
-	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on
-	CMetalData::PointPredicate predicate = [this, &spots, map, terrainMgr, builderMgr, unit](int index) {
+	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on, or held by an
+	// enemy mex we see: the builder walks up and queues a turret against it first (CBMexTask), if it can build one
+	const CCircuitDef* escortDef = circuit->GetMilitaryManager()->GetDefaultPorc();
+	const bool isEscort = (escortDef != nullptr) && escortDef->IsAvailable(circuit->GetLastFrame())
+			&& ((unit == nullptr) || unit->GetCircuitDef()->CanBuild(escortDef->GetId()));
+	CMetalData::PointPredicate predicate = [this, &spots, map, terrainMgr, builderMgr, unit, isEscort](int index) {
 		const AIFloat3& pos = spots[index].position;
 		return (IsAllyOpenSpot(index) && !terrainMgr->IsZoneAlly(pos)
 				&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
 				&& ((unit != nullptr)
 					? terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
 					: builderMgr->IsBuilderInArea(mexDef, pos))
-				&& map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING));
+				&& (map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING)
+					|| (isEscort && IsEnemyMexAt(pos))));
 	};
 	// A commander's search uses its own bias (mex_front.comm_bias)
 	const bool isComm = (unit != nullptr) && unit->GetCircuitDef()->IsRoleComm();

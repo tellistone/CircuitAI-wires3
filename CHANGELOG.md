@@ -26,6 +26,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   test orders. A preventive or porc light refused this way stays booked on its defence point, so a later visit
   doesn't spend its metal on a second copy of the towers after it.
 
+- **Builders go after enemy mexes they can see.** The mex search used to skip a spot held by an enemy mex in sight
+  (the engine's build test), so the mex escort (a `porcupine.default` tower queued 0.9 x its range short of an enemy
+  mex, to kill it) only fired when a builder stumbled on one it hadn't seen. Now such a spot can be picked, when the
+  builder can build that tower and the spot passes the usual threat and reach tests. The builder walks into the
+  tower's range and queues it there, then builds the mex once the spot is clear.
+
 - **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
   unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and
   energy they were meant to push past. Near-enemy orders and orders at a choke of the enemy line (a short choke on

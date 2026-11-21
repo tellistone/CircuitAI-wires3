@@ -109,6 +109,7 @@ public:
 	int GetBuildDelay() const { return buildDelay; }
 
 	bool IsAllyOpenSpot(int spotId) const;
+	bool IsEnemyMexAt(const springai::AIFloat3& pos) const;  // an enemy mex we see stands there
 	bool IsOpenSpot(int spotId) const;
 	void SetOpenSpot(int spotId, bool value);
 	bool IsIgnorePull(const IBuilderTask* task) const;

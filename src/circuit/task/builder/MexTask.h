@@ -41,6 +41,8 @@ private:
 	bool TryClaim();
 	// Reopen the spot this job claimed, if any and nothing is placed on it: never one an ally holds
 	void Unclaim();
+	// The tower that clears an enemy mex off the spot (porcupine.default), if available and unit can build it
+	CCircuitDef* GetEscortDef(CCircuitUnit* unit) const;
 
 	int claimedSpot = -1;  // metal spot this job closed in the ally team's metal manager; -1 = none
 };
