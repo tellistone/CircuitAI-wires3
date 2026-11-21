@@ -556,7 +556,8 @@ void CFormation::PlaceSlots(int frame, float pace, float leadSec, std::vector<CC
 		}
 		// Progress watchdog while the line walks: out of its slot and walking to it, but no DEFAULT_SLACK move for
 		// STUCK_FRAMES (standing at the path's end, nothing waits for it)
-		if (!isWalking || !m.isSteered || isNear || (m.pos.SqDistance2D(m.movePos) >= SQUARE(DEFAULT_SLACK))) {
+		// (a planted unit, "plant" attribute, stands on purpose)
+		if (!isWalking || !m.isSteered || isNear || unit->IsPlanted() || (m.pos.SqDistance2D(m.movePos) >= SQUARE(DEFAULT_SLACK))) {
 			m.movePos = m.pos;
 			m.moveFrame = frame;
 		} else if (frame >= m.moveFrame + STUCK_FRAMES) {

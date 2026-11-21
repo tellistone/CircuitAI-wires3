@@ -134,6 +134,8 @@ public:
 	void CmdAttackGround(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
 	void CmdWantedSpeed(float speed = NO_SPEED_LIMIT);
 	void CmdSetTarget(CEnemyInfo* enemy);
+	void CmdPlantTarget(CEnemyInfo* enemy);  // planted: ZK set-target (never moves), once per enemy
+	void CmdCancelTarget();  // clears what CmdPlantTarget set
 	void CmdCloak(bool state);
 	void CmdFireAtRadar(bool state);
 	void CmdFindPad(int timeout = INT_MAX);
@@ -189,7 +191,8 @@ private:
 	int ammoFrame;
 	int reloadCheckFrame;  // frame reloadFrame was read
 	int reloadFrame;  // main weapon's, cached for a frame (GetReloadFrame)
-	int plantFrame;  // "plant" attribute: frame it planted; -1 = not planted
+	int plantFrame;  // "plant" attribute: last frame its reason held; -1 = not planted
+	int plantTargetId;  // the enemy its set-target (CmdPlantTarget) was last sent on; -1 = none
 
 	// ---- Bit fields ---- BEGIN
 	bool isDead : 1;

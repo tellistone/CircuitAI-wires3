@@ -388,7 +388,7 @@ bool ISquadTask::IsMustRegroup()
 	// While it stands for a regroup, only those in their slots: one still walking to its slot counts
 	for (CCircuitUnit* unit : units) {
 		const bool isInLine = isLineRegroup ? formation.IsInSlot(unit) : formation.IsKeptUp(unit);
-		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !isInLine && !IsNewcomer(unit, frame) &&
+		if (!unit->GetCircuitDef()->IsPlane() && !IsRegroupExempt(unit) && !unit->IsPlanted() && !isInLine && !IsNewcomer(unit, frame) &&
 			terrainMgr->CanMoveToPos(unit->GetArea(), unit->GetPos(frame)))
 		{
 			validUnits.push_back(unit);
@@ -422,7 +422,7 @@ bool ISquadTask::IsMustRegroup()
 	} else if (frame >= groupFrame + FRAMES_PER_SEC * 60) {
 		// eliminate buggy units
 		for (CCircuitUnit* unit : units) {
-			if (unit->GetCircuitDef()->IsPlane() || IsRegroupExempt(unit)) {
+			if (unit->GetCircuitDef()->IsPlane() || IsRegroupExempt(unit) || unit->IsPlanted()) {  // planted: "plant", not stuck
 				continue;
 			}
 			const AIFloat3& pos = unit->GetPos(frame);
@@ -451,7 +451,7 @@ bool ISquadTask::IsMustRegroup()
 	}
 
 	if (!wasRegroup && (State::REGROUP == state)) {
-		if (utils::is_equal_pos(prevGroupPos, groupPos)) {
+		if (utils::is_equal_pos(prevGroupPos, groupPos) && !leader->IsPlanted()) {
 			stuckUnits.push_back(leader);
 		}
 		prevGroupPos = groupPos;

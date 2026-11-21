@@ -70,6 +70,7 @@ using namespace springai;
 
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
+#define PLANT_RADIUS_MAX	128.f  // plant (a): the query reaches this far past our range, for the enemy's radius
 #define SPOT_GIVE_UP		(FRAMES_PER_SEC * 600)  // choke.spot.enable: two failures this close give a type up this long
 
 CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
@@ -1082,8 +1083,16 @@ void CMilitaryManager::ReadConfig()
 	drownedFrames = (drownedTime < 0.f) ? -1 : int(drownedTime * FRAMES_PER_SEC);
 
 	const Json::Value& plantJson = root["plant"];
-	plantCfg.leaveMult = std::max(1.f, plantJson.get("leave_range", 1.1f).asFloat());
+	plantCfg.keepFrames = int(std::max(0.f, plantJson.get("keep_sec", 10.f).asFloat()) * FRAMES_PER_SEC);
 	plantCfg.holdFrames = int(std::max(0.f, plantJson.get("hold_sec", 2.f).asFloat()) * FRAMES_PER_SEC);
+	for (const Json::Value& name : plantJson["threats"]) {
+		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
+		if (cdef == nullptr) {
+			circuit->LOG("CONFIG %s: plant.threats has unknown UnitDef '%s'", cfgName.c_str(), name.asCString());
+		} else {
+			plantCfg.threats.insert(cdef->GetId());
+		}
+	}
 
 	const Json::Value& porc = root["porcupine"];
 	const Json::Value& defs = porc["unit"];
@@ -4707,68 +4716,91 @@ void CMilitaryManager::UpdateResign()
  */
 /*
  * "plant" attribute (per unit, behaviour.json; Crabe): the unit never moves while
- *   a) an enemy it can hit (its target category; air only with an anti-air range) is in LOS and within its weapon
- *      range for that enemy (air, land or water), or
- *   b) an enemy anti_heavy (any of its roles) that can fight is in LOS and has the unit within its weapon range.
- * Planting stops the unit and sets hold position, so it fires at whatever is in range without walking after it; while
+ *   a) an enemy in LOS that it can hit (its target category; air only with an anti-air range) is within its weapon
+ *      range for that enemy (air, land or water), and is its target or armed (threat, not being built, paralysed or
+ *      disarmed): a mex, a wall or a nanoframe in range doesn't pin it, or
+ *   b) a "plant".threats enemy that can fight, seen within "plant".keep_sec (a cloaked Phantom between shots), has
+ *      the unit within its weapon range from where it was last seen.
+ * Ranges are to the edge of the other unit (its radius added), as the engine measures them.
+ * Planting stops the unit and sets hold position, so it fires at what is in range without walking after it; while
  * planted CCircuitUnit drops every move, fight, jump, gather and orbit order (CmdMoveTo, CmdFightTo, Attack, ...),
- * retreat included. Hysteresis: a planted unit keeps the reason within "plant".leave_range x the ranges, and stays
- * "plant".hold_sec after the reason last held (an enemy flickering in and out of LOS). Unplanting restores the
- * type's move state and asks its task to update now.
+ * retreat included, and an attack on an enemy becomes ZK's set-target (never moves). Squads don't release a planted
+ * unit as stuck. It unplants "plant".hold_sec after the reason last held: the type's move state comes back, the set
+ * target is cleared and its task sends its orders again at once.
  */
 void CMilitaryManager::UpdatePlant()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
 	const int frame = circuit->GetLastFrame();
+	bool isThreatsRead = false;
 	for (CCircuitUnit* unit : army) {
 		CCircuitDef* cdef = unit->GetCircuitDef();
 		if (!cdef->IsAttrPlant()) {
 			continue;
 		}
+		if (!isThreatsRead) {  // once per update, only with a plant unit about
+			isThreatsRead = true;
+			plantThreats.clear();
+			for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+				CEnemyUnit* enemy = kv.second;
+				CCircuitDef* edef = enemy->GetCircuitDef();
+				if ((edef != nullptr) && (plantCfg.threats.find(edef->GetId()) != plantCfg.threats.end())
+					&& !enemy->IsDead() && !enemy->IsIgnore() && enemy->IsRecentlySeen(frame, plantCfg.keepFrames)  // hidden counts: a cloaked one
+					&& (enemy->GetThreat() > 0.f) && !enemy->IsBeingBuilt() && !enemy->IsParalyzed() && !enemy->IsDisarmed())
+				{
+					plantThreats.push_back(enemy);
+				}
+			}
+		}
 		const bool isPlanted = unit->IsPlanted();
 		const bool isPlayer = (unit->GetTask() == nullptr) || (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER);
-		const bool isReason = !isPlayer && IsPlantReason(unit, frame, isPlanted ? plantCfg.leaveMult : 1.f);
-		if (isReason) {
+		if (!isPlayer && IsPlantReason(unit, frame)) {
 			unit->SetPlantFrame(frame);  // the last frame the reason held
 			if (!isPlanted) {
 				TRY_UNIT(circuit, unit,
 					unit->GetUnit()->Stop();
 					unit->GetUnit()->SetMoveState(0);  // hold position: no chasing while idle
 				)
+				unit->ClearTarget();  // its task orders it again: Attack sets the target (set-target) now
+				unit->ForceUpdate(frame);
 			}
 		} else if (isPlanted && (isPlayer || (frame - unit->GetPlantFrame() >= plantCfg.holdFrames))) {
 			unit->SetPlantFrame(-1);
 			const int defState = cdef->GetDef()->GetMoveState();
 			TRY_UNIT(circuit, unit,
 				unit->GetUnit()->SetMoveState((defState >= 0) ? defState : 1);
+				unit->CmdCancelTarget();
 			)
-			unit->ForceUpdate(frame);  // its task sends its orders again
+			unit->ClearTarget();  // its task orders it again, the same target too
+			unit->ForceUpdate(frame);
 		}
 	}
 }
 
-bool CMilitaryManager::IsPlantReason(CCircuitUnit* unit, int frame, float rangeMult)
+bool CMilitaryManager::IsPlantReason(CCircuitUnit* unit, int frame)
 {
-	if (plantCfg.ahRange < 0.f) {
-		plantCfg.ahRange = 0.f;
-		for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
-			if (cdef.IsRoleAH()) {
-				plantCfg.ahRange = std::max({plantCfg.ahRange, cdef.GetMaxRange(CCircuitDef::RangeType::LAND),
-						cdef.GetMaxRange(CCircuitDef::RangeType::WATER)});
-			}
-		}
-	}
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const AIFloat3& pos = unit->GetPos(frame);
-	// Which of an enemy's ranges reaches us (as IFighterTask::GetFireRange, from the other side)
+	const float ourRadius = cdef->GetRadius();
+
+	// b) a threat has us in its range: which of its ranges reaches us (as IFighterTask::GetFireRange, other side)
 	const CCircuitDef::RangeType ourRt = cdef->IsAbleToFly() ? CCircuitDef::RangeType::AIR
 			: (pos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-	const float radius = std::max(cdef->GetMaxRange(), plantCfg.ahRange) * rangeMult;
-	if (radius <= 0.f) {
+	for (CEnemyUnit* enemy : plantThreats) {
+		const float range = enemy->GetCircuitDef()->GetMaxRange(ourRt) + ourRadius;
+		if ((range > ourRadius) && (pos.SqDistance2D(enemy->GetPos()) <= SQUARE(range))) {
+			return true;
+		}
+	}
+
+	// a) we can hit its target or an armed enemy in LOS from here
+	const float maxRange = cdef->GetMaxRange();
+	if (maxRange <= 0.f) {
 		return false;
 	}
 	const int canTargetCat = cdef->GetTargetCategory();
-	const std::vector<int> enemies = circuit->GetCallback()->GetEnemyUnitIdsIn(pos, radius, false);
+	const CEnemyInfo* target = unit->GetTarget();
+	const std::vector<int> enemies = circuit->GetCallback()->GetEnemyUnitIdsIn(pos, maxRange + PLANT_RADIUS_MAX, false);
 	for (int eId : enemies) {
 		if (eId == -1) {
 			continue;
@@ -4778,24 +4810,19 @@ bool CMilitaryManager::IsPlantReason(CCircuitUnit* unit, int frame, float rangeM
 			continue;
 		}
 		CCircuitDef* edef = enemy->GetCircuitDef();
-		if (edef == nullptr) {
+		if ((edef == nullptr) || ((edef->GetCategory() & canTargetCat) == 0)) {
+			continue;
+		}
+		const bool isArmed = (enemy->GetThreat() > 0.f) && !enemy->IsBeingBuilt() && !enemy->IsParalyzed()
+				&& !enemy->IsDisarmed();
+		if (!isArmed && (enemy != target)) {
 			continue;
 		}
 		const AIFloat3& ePos = enemy->GetPos();
-		const float sqDist = pos.SqDistance2D(ePos);
-		// a) we can hit it from here
-		if ((edef->GetCategory() & canTargetCat) != 0) {
-			const CCircuitDef::RangeType rt = edef->IsAbleToFly() ? CCircuitDef::RangeType::AIR
-					: (ePos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-			if (sqDist <= SQUARE(cdef->GetMaxRange(rt) * rangeMult)) {
-				return true;
-			}
-		}
-		// b) an anti-heavy that can fight has us in its range
-		if (edef->IsRoleAH() && (enemy->GetThreat() > 0.f) && !enemy->IsBeingBuilt()
-			&& !enemy->IsParalyzed() && !enemy->IsDisarmed()
-			&& (sqDist <= SQUARE(edef->GetMaxRange(ourRt) * rangeMult)))
-		{
+		const CCircuitDef::RangeType rt = edef->IsAbleToFly() ? CCircuitDef::RangeType::AIR
+				: (ePos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
+		const float range = cdef->GetMaxRange(rt);
+		if ((range > 0.f) && (pos.SqDistance2D(ePos) <= SQUARE(range + enemy->GetData()->GetRadius()))) {
 			return true;
 		}
 	}
