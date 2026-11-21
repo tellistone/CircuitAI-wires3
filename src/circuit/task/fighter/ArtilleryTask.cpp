@@ -38,6 +38,7 @@ using namespace springai;
 F3Vec CArtilleryTask::safePositions;
 F3Vec CArtilleryTask::firePositions;
 std::vector<CEnemyInfo*> CArtilleryTask::candidates;
+F3Vec CArtilleryTask::sideGoals;
 std::vector<CEnemyInfo*> CArtilleryTask::ignoredQuarries;
 std::vector<CArtilleryTask::SEscort> CArtilleryTask::escorts;
 std::vector<CArtilleryTask::SDanger> CArtilleryTask::dangers;
@@ -177,7 +178,12 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 		if (isNeedCover && !HasCover(unit, pos)) {
 			SetTarget(nullptr);
 			StopAttack(unit);
-			if (IsQueryReady(unit)) {
+			if (!IsQueryReady(unit)) {
+				return;
+			}
+			if (isAntiHeavy) {
+				WalkAntiHeavy(unit, GetWalkRange(unit), isUpdating);  // a covered spot nearby, else the army
+			} else {
 				FallbackNoSpot(unit, isUpdating);
 			}
 			return;
@@ -209,16 +215,20 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 		return;
 	}
 
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	const float range = GetWalkRange(unit);
+	if (isAntiHeavy) {
+		WalkAntiHeavy(unit, range, isUpdating);
+		return;
+	}
+
 	if (enemyPositions.empty()) {
 		FallbackNoTarget(unit, isUpdating);
 		return;
 	}
 
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	const float range = std::max(unit->GetCircuitDef()->GetMaxRange(), (float)threatMap->GetSquareSize());
-
 	// Walking to a firing spot: cheap checks on every Execute, a full search and path query every 6 s
-	if (IsFireRouteValid(unit, range)) {
+	if (IsFireRouteValid(unit, range, enemyPositions)) {
 		return;
 	}
 
@@ -226,7 +236,7 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 	const F3Vec* goals = &enemyPositions;
 	float goalRange = range;
 	if (isNeedCover) {
-		goalRange = FillCoveredSpots(unit, range);
+		goalRange = FillCoveredSpots(unit, range, enemyPositions);
 		if (firePositions.empty()) {
 			FallbackNoSpot(unit, isUpdating);
 			return;
@@ -243,9 +253,131 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 
 	pathfinder->RunQuery(query, [this, isUpdating](const IPathQuery* query) {
 		if (this->IsQueryAlive(query)) {
-			this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query), isUpdating);
+			this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query), isUpdating, false);
 		}
 	});
+}
+
+float CArtilleryTask::GetWalkRange(CCircuitUnit* unit) const
+{
+	return std::max(unit->GetCircuitDef()->GetMaxRange(), (float)manager->GetCircuit()->GetThreatMap()->GetSquareSize());
+}
+
+void CArtilleryTask::WalkAntiHeavy(CCircuitUnit* unit, float range, bool isUpdating)
+{
+	// Heavies first: a covered spot by one, from where the unit shoots it once its weapon is ready and the heavy in
+	// LOS. Else a covered spot in range of any enemy: the front, where heavies show up, rather than the base, which
+	// nearly always has cover. Else behind the army
+	if (IsFireRouteValid(unit, range, isSideRoute ? FillSideGoals(unit) : enemyPositions)) {
+		return;
+	}
+	if (!enemyPositions.empty() && SeekFireSpot(unit, range, enemyPositions, false, isUpdating)) {
+		return;
+	}
+	if (SeekFireSpot(unit, range, FillSideGoals(unit), true, isUpdating)) {
+		return;
+	}
+	FollowArmy(unit, isUpdating);
+}
+
+bool CArtilleryTask::SeekFireSpot(CCircuitUnit* unit, float range, const F3Vec& goals, bool isSide, bool isUpdating)
+{
+	if (goals.empty()) {
+		return false;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+
+	// Already at one: hold (a route there would be a point or two, finish at once and make the unit idle)
+	const float sqRange = SQUARE(range);
+	for (const AIFloat3& goal : goals) {
+		if (pos.SqDistance2D(goal) <= sqRange) {
+			if (IsFireSpotValid(unit, pos, GetNetThreatAt(unit, pos))) {
+				HoldHere(unit);
+				return true;
+			}
+			break;
+		}
+	}
+
+	// The search sweeps cells around every escort: at most every 3 s per kind of goal while it finds nothing
+	int& nextSearch = searchFrame[isSide ? 1 : 0];
+	if (frame < nextSearch) {
+		return false;
+	}
+	const F3Vec* walkGoals = &goals;
+	float goalRange = range;
+	if (GetCfg().allyThreat >= 0.f) {
+		goalRange = FillCoveredSpots(unit, range, goals);
+		if (firePositions.empty()) {
+			nextSearch = frame + FRAMES_PER_SEC * 3;
+			return false;
+		}
+		walkGoals = &firePositions;
+	}
+
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathMultiQuery(
+			unit, circuit->GetThreatMap(), frame,
+			pos, goalRange, *walkGoals, nullptr, GetMaxPathThreat(unit));
+	pathQueries[unit] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this, isUpdating, isSide](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyTargetPath(static_cast<const CQueryPathMulti*>(query), isUpdating, isSide);
+		}
+	});
+	return true;
+}
+
+const F3Vec& CArtilleryTask::FillSideGoals(CCircuitUnit* unit)
+{
+	sideGoals.clear();
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	const bool notAW = !cdef->HasAntiWater();
+	const int canTargetCat = cdef->GetTargetCategory();
+	const int noChaseCat = cdef->GetNoChaseCategory();
+	for (auto& kv : manager->GetCircuit()->GetEnemyInfos()) {
+		CEnemyInfo* enemy = kv.second;
+		if (enemy->IsHidden() || !enemy->IsInRadarOrLOS() || (notAW && (enemy->GetPos().y < -SQUARE_SIZE * 5))) {
+			continue;
+		}
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef == nullptr) || edef->IsAbleToFly()
+			|| ((edef->GetCategory() & canTargetCat) == 0) || ((edef->GetCategory() & noChaseCat) != 0))
+		{
+			continue;
+		}
+		sideGoals.push_back(enemy->GetPos());
+	}
+	return sideGoals;
+}
+
+void CArtilleryTask::FollowArmy(CCircuitUnit* unit, bool isUpdating)
+{
+	// Still walking there: get there first, else at the edge it stops, drifts out and walks again
+	ITravelAction* travelAct = unit->GetTravelAct();
+	if ((safePath != nullptr) && (travelAct->GetPath() == safePath) && travelAct->IsActive()) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	FillSafeSpots(unit);
+	const float sqRadius = SQUARE(GetCfg().allyRadius);
+	for (const AIFloat3& safePos : safePositions) {
+		if (pos.SqDistance2D(safePos) <= sqRadius) {
+			if (IsThreatOk(unit, pos, circuit->GetThreatMap()->GetThreatAt(unit, pos), false)
+				&& ((GetCfg().allyThreat < 0.f) || HasCover(unit, pos)))
+			{
+				HoldHere(unit);
+				return;
+			}
+			break;
+		}
+	}
+	FallbackSafePos(unit, isUpdating);
 }
 
 CEnemyInfo* CArtilleryTask::FindTarget(CCircuitUnit* unit, const AIFloat3& pos)
@@ -427,7 +559,7 @@ bool CArtilleryTask::IsPopupTargetNear(CEnemyInfo* enemy, int frame) const
 	return false;
 }
 
-void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating)
+void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating, bool isSide)
 {
 	const std::shared_ptr<PathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
@@ -440,16 +572,22 @@ void CArtilleryTask::ApplyTargetPath(const CQueryPathMulti* query, bool isUpdati
 		unit->GetTravelAct()->SetPath(pPath);
 		unit->GetTravelAct()->StateActivate();
 		firePath = pPath;
+		isSideRoute = isSide;
 		replanFrame = manager->GetCircuit()->GetLastFrame() + FRAMES_PER_SEC * 6;
+	} else if (isAntiHeavy) {
+		// No route under the cap: not that kind of goal for 6 s, decide again now
+		const int frame = manager->GetCircuit()->GetLastFrame();
+		searchFrame[isSide ? 1 : 0] = frame + FRAMES_PER_SEC * 6;
+		unit->ForceUpdate(frame);
 	} else {
 		FallbackNoSpot(unit, isUpdating);
 	}
 }
 
-bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
+bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range, const F3Vec& goals)
 {
 	// Until the next full re-plan, keep walking while the firing spot still is one (in range of a known building,
-	// IsFireSpotValid) and the waypoints left stay under max_path_threat. Uses enemyPositions from FindTarget
+	// IsFireSpotValid) and the waypoints left stay under max_path_threat. goals: what it was planned for
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	ITravelAction* travelAct = unit->GetTravelAct();
@@ -463,7 +601,7 @@ bool CArtilleryTask::IsFireRouteValid(CCircuitUnit* unit, float range)
 
 	const float sqReach = SQUARE(range + 2 * circuit->GetPathfinder()->GetSquareSize());  // with the pathfinder's slack
 	bool isInRange = false;
-	for (const AIFloat3& target : enemyPositions) {
+	for (const AIFloat3& target : goals) {
 		if (spot.SqDistance2D(target) <= sqReach) {
 			isInRange = true;
 			break;
@@ -521,9 +659,9 @@ bool CArtilleryTask::IsFireSpotValid(CCircuitUnit* unit, const AIFloat3& spot, f
 	return (FindDanger(spot, dangerThreat) == nullptr) || HasCover(unit, spot, dangerThreat, true);
 }
 
-float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
+float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range, const F3Vec& goals)
 {
-	// firePositions: cells (one per pathfinder square, 64 elmos) within range of a building in enemyPositions
+	// firePositions: cells (one per pathfinder square, 64 elmos) within range of a building in goals
 	// that have ally_threat cover, no threat, can be reached and won't set off the flee on arrival.
 	// Returns the goal range for the path query: the pathfinder accepts any square within one square of a cell centre.
 	// The work is bounded to the area around our mobile escorts: no cell elsewhere can be covered
@@ -622,7 +760,7 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range)
 	STerrainMapArea* area = unit->GetArea();
 	const float sqReach = SQUARE(fireRange + allyRadius + cellSize);  // a building this far from every escort has no covered cell
 	cellAdded.assign(width * height, 0);
-	for (const AIFloat3& target : enemyPositions) {
+	for (const AIFloat3& target : goals) {
 		if (isCoverNeeded) {
 			bool isNearEscort = false;
 			for (const SEscort& escort : escorts) {

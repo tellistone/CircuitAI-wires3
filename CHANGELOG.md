@@ -7,6 +7,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) no longer sit in the base when
+  there is no heavy to shoot.**
+  - Before, with no heavy in radar or LOS, or no covered firing spot by one, they held wherever they stood while it
+    was safe and covered. The base nearly always has that cover (new units, defenders, the commander), so they stayed
+    there for long periods.
+  - Now, in order (`CArtilleryTask::WalkAntiHeavy`): a covered firing spot by a heavy, as before; else a covered
+    firing spot in range of any known enemy it can shoot (aircraft aside), held where it stands if it already is one;
+    else behind the nearest attack group, holding once within `ally_radius` of that spot, safe and covered.
+  - Searches that find nothing wait 3 s, and a goal kind with no route under `max_path_threat` waits 6 s.
+
 - **The turret account slows while our army is small next to our turrets** (`porcupine.budget.army`, new curve).
   Every 10 s, x = the metal of our finished turrets on the account / our army's (finished combat units, as the
   factory's army cost counts them; no army counts as 1 metal). The account's fill rate, and so its cap, takes the
