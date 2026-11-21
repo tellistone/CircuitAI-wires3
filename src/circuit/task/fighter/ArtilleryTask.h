@@ -24,7 +24,7 @@ namespace circuit {
  * a heavy in range is shot from the attack task's firing spots (IFighterTask::Attack, IsFireSpotAllowed), so the unit
  * keeps to ~90% of its range and backs off from a heavy that closes in; after each shot it steps back (UpdateScoot,
  * antiheavy.artillery_scoot). With no heavy to shoot it walks to a covered firing spot by one, else holds at a covered
- * spot in range of any enemy (or walks to one), else follows the nearest attack group (WalkAntiHeavy)
+ * spot in range of an enemy near our army, the front (or walks to one), else follows the army (WalkAntiHeavy)
  */
 class CArtilleryTask: public IFighterTask {
 public:
@@ -57,20 +57,28 @@ private:
 	bool IsPopupShut(CEnemyInfo* enemy, int frame) const;
 	bool IsPopupTargetNear(CEnemyInfo* enemy, int frame) const;  // an ally unit it can hit within its range + margin
 	void StopAttack(CCircuitUnit* unit);  // cancel our attack order, if one is live
-	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating, bool isSide);  // isSide: anti-heavy, any enemy
+	// What a firing route is for: the task's targets (enemyPositions: buildings, anti-heavy: heavies), or (anti-heavy)
+	// the front (frontGoals)
+	enum Goal: int { TARGET = 0, FRONT = 1 };
+	// Path query to the nearest of goals (firing cells, or targets with cover off), under the route cap
+	void RunFireQuery(CCircuitUnit* unit, float goalRange, const F3Vec& goals, Goal goal, bool isUpdating);
+	void ApplyTargetPath(const CQueryPathMulti* query, bool isUpdating, Goal goal);
 	// Walking to a firing spot: keep the route between full re-plans (every 6 s) while it's still good. goals: what
-	// the route was planned for (enemyPositions, or anti-heavy sideGoals)
+	// the route was planned for (routeGoal)
 	bool IsFireRouteValid(CCircuitUnit* unit, float range, const F3Vec& goals);
 	// FillCoveredSpots' rules for one spot with this much threat there
 	bool IsFireSpotValid(CCircuitUnit* unit, const springai::AIFloat3& spot, float threat) const;
 	// ally_threat: fills firePositions (covered, safe, reachable, and not where the flee would fire) in range of goals,
-	// returns goal range
+	// returns goal range. Anti-heavy: not within CROWD_RADIUS of another anti-heavy (CollectCrowd)
 	float FillCoveredSpots(CCircuitUnit* unit, float range, const F3Vec& goals);
+	static constexpr float CROWD_RADIUS = 96.f;
+	bool CollectCrowd(CCircuitUnit* unit);  // crowd: the other artillery-mode anti-heavies; false: none
 
 	// Nothing to shoot or walk to
 	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // no known building
 	void FallbackNoSpot(CCircuitUnit* unit, bool isUpdating);  // no acceptable firing spot
-	void FallbackStay(CCircuitUnit* unit, bool isUpdating);  // no_scout: hold if safe and covered, else FallbackSafePos
+	// no_scout (anti-heavy: always): hold if safe and covered (anti-heavy: and near the army), else FallbackSafePos
+	void FallbackStay(CCircuitUnit* unit, bool isUpdating);
 	void HoldHere(CCircuitUnit* unit);  // stop walking (incl. queued engine waypoints) and wait
 	void ApplyPathOrHold(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath);  // walk, or hold if already there
 	void FillSafeSpots(CCircuitUnit* unit);  // safePositions: FillSafePos pulled back by follow_dist
@@ -101,14 +109,15 @@ private:
 
 	float GetWalkRange(CCircuitUnit* unit) const;  // weapon range for firing spots, at least a threat square
 	// Anti-heavy mode with no heavy to shoot: keep a route still good; else a covered firing spot by a heavy
-	// (enemyPositions), else by any enemy (FillSideGoals), held where it stands if it is one; else FollowArmy
+	// (enemyPositions), else at the front (FillFrontGoals), held where it stands if it is one; else behind the army
+	// (FallbackStay)
 	void WalkAntiHeavy(CCircuitUnit* unit, float range, bool isUpdating);
 	// Hold here if this is a firing spot (IsFireSpotValid) in range of one of goals, else walk to the nearest covered
-	// one (a search at most every 3 s per kind, isSide). false: none
-	bool SeekFireSpot(CCircuitUnit* unit, float range, const F3Vec& goals, bool isSide, bool isUpdating);
-	const F3Vec& FillSideGoals(CCircuitUnit* unit);  // sideGoals: every known enemy it can shoot, aircraft aside
-	// Behind the nearest attack group (FillSafeSpots); holds once within ally_radius of that spot, safe and covered
-	void FollowArmy(CCircuitUnit* unit, bool isUpdating);
+	// one (after a search that found nothing, none of that goal for 6 s). false: none
+	bool SeekFireSpot(CCircuitUnit* unit, float range, const F3Vec& goals, Goal goal, bool isUpdating);
+	// frontGoals: the enemies of frontEnemies within range + ally_radius of where the army is (safePositions), those in
+	// LOS if any, else radar dots. Cover off (ally_threat < 0): none
+	const F3Vec& FillFrontGoals(float range);
 
 	// Anti-heavy mode. A heavy we hunt is no danger (flee, firing spots) and its threat doesn't make where we stand
 	// unsafe to shoot from while our weapon is ready and we out-range it or it is within our range. While we reload it
@@ -141,8 +150,8 @@ private:
 	bool HasCover(CCircuitUnit* unit, const springai::AIFloat3& spot, float enemyThreat = 0.f, bool isFlee = false) const;
 
 	std::shared_ptr<PathInfo> firePath;  // route to the current firing spot
-	bool isSideRoute = false;  // anti-heavy: firePath goes to a spot by any enemy, not by a heavy
-	int searchFrame[2] = {0, 0};  // anti-heavy: no firing-spot search by heavies [0] / any enemy [1] before this
+	Goal routeGoal = TARGET;  // what firePath is for
+	int searchFrame[2] = {0, 0};  // anti-heavy: no firing-spot search for that Goal before this frame
 	int replanFrame = 0;  // re-plan that route in full after this frame
 	bool isFleeing = false;
 	int fleeFrame = 0;  // re-plan the flee after this frame
@@ -159,7 +168,13 @@ private:
 	static F3Vec safePositions;
 	static F3Vec firePositions;  // covered firing cells
 	static std::vector<CEnemyInfo*> candidates;  // FindHeavyTarget: heavies in range
-	static F3Vec sideGoals;  // FillSideGoals
+	struct SFrontEnemy {
+		springai::AIFloat3 pos;
+		bool isLos;
+	};
+	static std::vector<SFrontEnemy> frontEnemies;  // FindHeavyTarget: every enemy it can shoot, aircraft aside
+	static F3Vec frontGoals;  // FillFrontGoals
+	static F3Vec crowd;  // CollectCrowd
 	static std::vector<CEnemyInfo*> ignoredQuarries;  // FindHeavyTarget: heavies IsQuarryIgnored, for its Attack
 	static std::vector<SEscort> escorts;
 	static std::vector<SDanger> dangers;

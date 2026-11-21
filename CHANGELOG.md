@@ -12,10 +12,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   - Before, with no heavy in radar or LOS, or no covered firing spot by one, they held wherever they stood while it
     was safe and covered. The base nearly always has that cover (new units, defenders, the commander), so they stayed
     there for long periods.
-  - Now, in order (`CArtilleryTask::WalkAntiHeavy`): a covered firing spot by a heavy, as before; else a covered
-    firing spot in range of any known enemy it can shoot (aircraft aside), held where it stands if it already is one;
-    else behind the nearest attack group, holding once within `ally_radius` of that spot, safe and covered.
-  - Searches that find nothing wait 3 s, and a goal kind with no route under `max_path_threat` waits 6 s.
+  - Now, in order (`CArtilleryTask::WalkAntiHeavy`): a covered firing spot by a heavy, as before; else the front: a
+    covered firing spot in range of an enemy it can shoot (aircraft aside) within its range + `ally_radius` of our
+    army (`FillSafePos`: behind the nearest attack, else defend group leader), enemies in LOS first and radar dots
+    only if none, held where it stands if it already is one; else behind the army, holding once within
+    `ally_radius` of that spot, safe and covered. With `ally_threat` < 0 there is no front step.
+  - Firing spots (heavy or front) stay 96 elmos clear of the other artillery-mode anti-heavies, where they stand or
+    walk to, so one shell doesn't hit several.
+  - A search that finds nothing, or a kind of goal with no route under `max_path_threat`, waits 6 s. After a flee
+    the front waits 5 s. The `ANTIHEAVY` log counts a walk to the front as PARK, so HUNT means heavies only.
 
 - **The turret account slows while our army is small next to our turrets** (`porcupine.budget.army`, new curve).
   Every 10 s, x = the metal of our finished turrets on the account / our army's (finished combat units, as the
