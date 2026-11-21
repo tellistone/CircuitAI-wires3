@@ -77,6 +77,7 @@ public:
 	virtual void OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 	virtual void OnTravelEnd(CCircuitUnit* unit) override;
+	virtual bool CanJumpTo(CCircuitUnit* unit, const springai::AIFloat3& pos) override;
 
 	void Activate();
 	void Deactivate();
@@ -117,6 +118,7 @@ public:
 protected:
 	CCircuitUnit* GetNextAssignee();
 	void Update(CCircuitUnit* unit);
+	void Prefetch(CCircuitUnit* unit);
 	virtual bool Reevaluate(CCircuitUnit* unit);
 	void UpdatePath(CCircuitUnit* unit);
 	// UpdatePath's reach and safety test of the job's position; false aborts the job

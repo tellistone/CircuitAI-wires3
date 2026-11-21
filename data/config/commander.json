@@ -238,7 +238,11 @@
 			// radar, sonar, mex, repair. Missing or "time" -1 = off
 			"jobs": {
 				"time": 180,
-				"skip": ["store", "pylon", "energy"]
+				"skip": ["store", "pylon", "energy"],
+				// It jumps along its path to a job farther than min_dist (elmos), never into enemy threat; keep_for_flee: only
+				// from and onto safe ground (behaviour.json guard.summon), so the jump it escapes with is spent only where no
+				// raider has been seen lately. Missing = no jumps to jobs
+				"jump": {"min_dist": 500, "keep_for_flee": true}
 			}
 		},
 		"assault": {

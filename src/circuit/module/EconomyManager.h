@@ -155,6 +155,17 @@ public:
 	float GetReclaimHelperSec() const { return reclaimHelperSec; }
 	// Before this frame a non-combat constructor needs an escort (or a defended cluster) to build a mex
 	int GetMexEscortFrame() const { return mexEscortFrame; }
+	// economy.opening: the opening's rules are on until its time passes, or until no open spot has passed the mex
+	// spot test for OPENING_NO_SPOT seconds. Off from the start on a map with no metal spots
+	bool IsOpening() const { return isOpening; }
+	int GetOpeningLogEnd() const { return openingLogEnd; }  // economy.opening.log: OPENING lines until this frame, -1 = off
+	// Open spots that pass the mex spot test (any builder), and those of them on safe ground (CMilitaryManager::
+	// IsSafeGround); counted once a second in the opening
+	unsigned GetOpenSpotCount() const { return openSpotCount; }
+	unsigned GetSafeSpotCount() const { return safeSpotCount; }
+	// The mex job search's spot test: open, not ours yet, no threat, reachable (by unit, or by any builder) and free
+	// to build on, or held by an enemy mex we can clear
+	std::function<bool (int spot)> GetMexSpotTest(CCircuitUnit* unit) const;
 	IBuilderTask* UpdateEnergyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	// Escalation mode: a NOW job for cdef at its rear site (economy.energy.rear), else near the base; nullptr = no site
 	IBuilderTask* EnqueueEscalationEnergy(CCircuitDef* cdef);
@@ -304,6 +315,15 @@ private:
 	int mexMax;
 	bool isAllyMexMax;
 	int mexEscortFrame;
+	void UpdateOpening();
+	// The commander's plop (and its forced morph), once its facplop rules param is set or retries frames have passed
+	void StartCommander(ICoreUnit::Id unitId, int retries);
+	bool isOpening = false;
+	int openingEnd = 0;  // frame
+	int openingLogEnd = -1;
+	int noSpotFrame = -1;  // since then no open spot passed the test, -1 = some did
+	unsigned openSpotCount = 0;
+	unsigned safeSpotCount = 0;
 	float mexJobMod;
 	float mexFrontBias;
 	float mexFrontCommBias;  // mex_front.comm_bias: bias when a commander starts the search

@@ -30,6 +30,7 @@ public:
 
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
+	virtual void OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 	bool IsActive() const;
 	bool IsVipSafe() const { return isVipSafe; }
@@ -61,6 +62,7 @@ private:
 	int nextDebugFrame;
 	bool isInterposing;  // the guard holds a spot between the vip and an enemy instead of the engine Guard
 	springai::AIFloat3 interposeSpot;  // last spot it was sent to  // guard was released under enemy threat: slot stays closed until this frame
+	int summonFrame;  // the guard was pulled then and hasn't reached the vip yet (opening log), -1 = none
 };
 
 } // namespace circuit

@@ -64,6 +64,32 @@ public:
 	unsigned int GetWorkerCount() const { return workers.size(); }
 	const std::set<CCircuitUnit*>& GetWorkers() const { return workers; }
 	float GetJobSwitch() const { return jobSwitch; }
+	// economy.builder_jobs.chain: a builder whose job ends takes its next job in the same frame (AssignNext), not on
+	// the idle pass, from a cost map started where it built (StartCostMap), and walks straight while its path runs.
+	// chain_lead: seconds before a build ends, the pick it would make then and its path are worked out ahead
+	// (PrefetchPath); the finish uses that path when it makes the same pick
+	bool IsJobChain() const { return isJobChain; }
+	float GetChainLead() const { return chainLead; }
+	void StartCostMap(CCircuitUnit* unit);
+	bool AssignNext(CCircuitUnit* unit);
+	void PrefetchPath(CCircuitUnit* unit, const springai::AIFloat3& endPos);
+	// The path PrefetchPath worked out for unit to endPos, ready; nullptr if none (a mismatch). Taken once
+	std::shared_ptr<IPathQuery> TakePrefetch(CCircuitUnit* unit, const springai::AIFloat3& endPos);
+	bool HasPrefetch(CCircuitUnit* unit) const { return prefetches.find(unit) != prefetches.end(); }
+	// A builder reached task's site: its update comes on the next frame (UpdateBuild), so the build starts then
+	void OnArrival(IBuilderTask* task);
+	// commander.json jobs of a commander def (looked up once), nullptr for other builders
+	const CSetupManager::SCommInfo::SJobs* GetCommJobs(const CCircuitDef* cdef) const;
+	// Constructors (commanders aside) lost within the last frames
+	unsigned int GetBuilderLosses(int frames) const;
+	// economy.opening.log: a builder's counts for its OPENING lines; nullptr when the log is off or over
+	struct SOpeningStats {
+		int idle = 0, walk = 0, build = 0, flee = 0;  // seconds
+		int forward = 0, back = 0;  // switches to another job while walking: away from our base, or back toward it
+		int mexes = 0, jumps = 0, escorts = 0;
+		float escortWait = 0.f;  // seconds from the guard's pull to its arrival, summed over escorts
+	};
+	SOpeningStats* GetOpeningStats(const CCircuitUnit* unit);
 	// economy.builder_jobs.travel of priority, in seconds: a job farther than this walk is taken only with nothing
 	// nearer (max: no cap)
 	float GetJobTravel(IBuilderTask::Priority priority) const {
@@ -569,6 +595,18 @@ private:
 	SEscort escort;
 	std::set<IUnitTask*> escortTasks;
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner
+	bool isJobChain;
+	float chainLead;
+	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> prefetches;  // PrefetchPath's
+	std::vector<IBuilderTask*> arrivals;  // OnArrival's: live until UpdateBuild, the only place tasks are deleted
+	unsigned int prefetchCount = 0, prefetchHits = 0;  // opening log
+	std::vector<int> builderLossFrames;  // GetBuilderLosses: the last minute's, oldest first
+	bool IsOpeningLog() const;
+	void UpdateOpeningLog();
+	void LogOpening(int frame);
+	std::map<ICoreUnit::Id, SOpeningStats> openingStats;
+	int energyStallSec = 0;
+	unsigned int buildersLost = 0, mexesLost = 0;
 
 	CCircuitDef* terraDef;
 	std::unordered_map<IBuilderTask::BT, std::unordered_map<CCircuitDef*, SBuildChain*>> buildChains;  // owner

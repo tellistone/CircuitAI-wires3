@@ -21,8 +21,10 @@
 #include "terrain/TerrainManager.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/ally/AllyUnit.h"
+#include "unit/action/TravelAction.h"
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryCostMap.h"
+#include "terrain/path/QueryPathSingle.h"
 #include "task/NilTask.h"
 #include "task/IdleTask.h"
 #include "task/RetreatTask.h"
@@ -73,6 +75,7 @@ static constexpr int BUILDER_SCAR_FRAMES = FRAMES_PER_SEC * 5;  // other builder
 static constexpr int BUILDER_CORNER_TIMEOUT = FRAMES_PER_SEC * 30;  // an unstarted cornered defence nobody builds is dropped after this
 static constexpr int BUILDER_IDLE_WAIT = FRAMES_PER_SEC * 3;  // other builders idle in a flee zone with no safe job look again after this
 static constexpr int TURRET_ASK_FRAMES = FRAMES_PER_SEC * 10;  // an after-flee turret request lasts this long
+static constexpr int IDLE_EVENT_LAG = 20;  // frames: an engine idle event this soon after a new job may be the old job's
 
 CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
@@ -94,6 +97,8 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, repairChaseFrames(0)
 		, repairChaseClose(0.f)
 		, escort({0.f, 0.f, 0.f, 0.f, 0.f, false, static_cast<int>(IBuilderTask::Priority::HIGH)})
+		, isJobChain(false)
+		, chainLead(0.f)
 {
 	commDangerFrame = -1;
 	commCoverFrame = -1;
@@ -110,6 +115,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 			unit->SetManager(this);
 			nilTask->AssignTo(unit);
 			this->circuit->AddActionUnit(unit);
+			if (isJobChain) {
+				StartCostMap(unit);  // its first job is ready when it leaves the factory
+			}
 		}
 	};
 	auto workerFinishedHandler = [this](CCircuitUnit* unit) {
@@ -138,14 +146,31 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		if ((isEarly || cdef->IsAttrGuarded()) && !cdef->IsAbleToFly()) {
 			militaryMgr->AddGuardTask(unit);
 		}
+
+		if (isJobChain) {  // its first job now, not on the idle pass
+			StartCostMap(unit);
+			AssignNext(unit);
+		}
 	};
 	auto workerIdleHandler = [this](CCircuitUnit* unit) {
 		// FIXME: Avoid instant task reassignment, its only valid on build order fail.
 		//        Can cause idle builder, but Watchdog should catch it eventually.
 		//        Unfortunately can't use EVENT_COMMAND_FINISHED because there is no unique commandId like unitId
-		if (this->circuit->GetLastFrame() > unit->GetTaskFrame()/* + FRAMES_PER_SEC*/) {
-			unit->GetTask()->OnUnitIdle(unit);
+		const int frame = this->circuit->GetLastFrame();
+		if (frame <= unit->GetTaskFrame()/* + FRAMES_PER_SEC*/) {
+			return;
 		}
+		// economy.builder_jobs.chain: the next job's orders go out as the last job ends, and the engine's idle event
+		// for that job can come after them. A builder with orders isn't idle; one without, its order failed
+		if (isJobChain && (frame < unit->GetTaskFrame() + IDLE_EVENT_LAG)) {
+			auto commands = unit->GetUnit()->GetCurrentCommands();
+			const bool isBusy = !commands.empty();
+			utils::free_clear(commands);
+			if (isBusy) {
+				return;
+			}
+		}
+		unit->GetTask()->OnUnitIdle(unit);
 	};
 	auto workerDamagedHandler = [](CCircuitUnit* unit, CEnemyInfo* attacker) {
 		unit->GetTask()->OnUnitDamaged(unit, attacker);
@@ -165,8 +190,12 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		workers.erase(unit);
 		if (!unit->GetCircuitDef()->IsRoleComm()) {
 			workerCost = std::max(workerCost - unit->GetCircuitDef()->GetCostM(), .0f);
+			builderLossFrames.push_back(this->circuit->GetLastFrame());
+			++buildersLost;
 		}
 		costQueries.erase(unit);
+		prefetches.erase(unit);
+		openingStats.erase(unit->GetId());
 
 		RemoveBuildList(unit);
 
@@ -296,6 +325,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		if (unit->GetUnit()->IsBeingBuilt()) {
 			return;
 		}
+		++mexesLost;
 		// Check mex position in 20 seconds
 		this->circuit->GetScheduler()->RunTaskAfter(std::make_shared<CGameTask>([this, mexDef, pos, index]() {
 			if (this->circuit->GetEconomyManager()->IsAllyOpenSpot(index) &&
@@ -354,6 +384,8 @@ void CBuilderManager::ReadConfig()
 	}
 	jobRanks[3] = {1.f / 10000.f, std::numeric_limits<float>::max()};  // NOW: wins at any distance, as before
 	jobSwitch = utils::clamp(jobs.get("switch", 0.5f).asFloat(), 0.f, 1.f);
+	isJobChain = jobs.get("chain", true).asBool();
+	chainLead = isJobChain ? std::max(jobs.get("chain_lead", 1.5f).asFloat(), 0.f) : 0.f;
 
 	const Json::Value& rest = root["economy"]["restore"];
 	restore.range = rest.get("range", 0.f).asFloat();
@@ -520,6 +552,8 @@ void CBuilderManager::Init()
 		// turret.*: always scheduled, as choke_overlay set may switch a caller on
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CBuilderManager::UpdateTurrets, this),
 								FRAMES_PER_SEC, offset + 7);
+		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CBuilderManager::UpdateOpeningLog, this),
+								FRAMES_PER_SEC, offset + 2);
 	};
 
 	circuit->GetSetupManager()->ExecOnFindStart(subinit);
@@ -1685,7 +1719,9 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	if ((unit->GetTask() == idleTask) && ((task == nullptr) || (task->GetPriority() != IBuilderTask::Priority::NOW))) {
 		IBuilderTask* radar = circuit->GetMilitaryManager()->GetSensorPlanner()->MakeRadarTask(unit,
 				[this, commState](const AIFloat3& spot) { return IsCommJobSafe(commState, spot); });
-		if (radar != nullptr) {
+		// A HIGH one (choke.radar.opening_priority) waits in the queue and ranks by walk like any job, unless there's
+		// nothing else to do
+		if ((radar != nullptr) && ((task == nullptr) || (radar->GetPriority() == IBuilderTask::Priority::NOW))) {
 			return radar;
 		}
 	}
@@ -2193,17 +2229,21 @@ bool CBuilderManager::IsHomeFight(CCircuitUnit* unit)
 	return (state == nullptr) || !state->IsExposed(state->wideZone, COMM_END_COVER_MOD) || !HasCommEscape(unit, state);
 }
 
-bool CBuilderManager::IsCommKindOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const
+const CSetupManager::SCommInfo::SJobs* CBuilderManager::GetCommJobs(const CCircuitDef* cdef) const
 {
-	const CCircuitDef* cdef = unit->GetCircuitDef();
 	if (!cdef->IsRoleComm()) {
-		return false;
+		return nullptr;
 	}
 	auto it = commJobs.find(cdef->GetId());
 	if (it == commJobs.end()) {
 		it = commJobs.emplace(cdef->GetId(), circuit->GetSetupManager()->GetCommJobs(cdef)).first;
 	}
-	const CSetupManager::SCommInfo::SJobs* jobs = it->second;
+	return it->second;
+}
+
+bool CBuilderManager::IsCommKindOff(const CCircuitUnit* unit, IBuilderTask::BuildType type) const
+{
+	const CSetupManager::SCommInfo::SJobs* jobs = GetCommJobs(unit->GetCircuitDef());
 	return (jobs != nullptr) && (jobs->skipMask & (1u << static_cast<IBuilderTask::BT>(type)))
 		&& (circuit->GetLastFrame() >= jobs->frame) && (GetWorkerCount() > 2);
 }
@@ -2263,6 +2303,8 @@ void CBuilderManager::UpdateCommDangers()
 	}
 	commDangerFrame = frame;
 	commDangers.clear();
+	const CMilitaryManager::SGuardCfg& guard = circuit->GetMilitaryManager()->GetGuardCfg();
+	const float minThreat = guard.isSummon ? guard.minThreat : 0.f;
 	fleeScars.erase(std::remove_if(fleeScars.begin(), fleeScars.end(),
 			[frame](const SFleeScar& scar) { return scar.endFrame <= frame; }), fleeScars.end());
 	CMap* map = circuit->GetMap();
@@ -2285,6 +2327,9 @@ void CBuilderManager::UpdateCommDangers()
 			isSeen = false;
 		}
 		CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef != nullptr) && (edef->GetThreat() < minThreat)) {
+			continue;  // guard.summon.min_threat: a scout passing by doesn't chase builders off their jobs
+		}
 		float threat = enemy->GetThreat();
 		if ((edef != nullptr) && edef->IsRoleComm() && (commThrMod > 0.f)) {
 			threat /= commThrMod;  // quota.thr_mod.comm scales every commander down, ours is the one at risk
@@ -2392,6 +2437,12 @@ CBuilderManager::SCommState* CBuilderManager::GetCommState(CCircuitUnit* unit)
 			state.dangerRange = danger.range;
 			state.isAir = danger.isAir;
 		}
+	}
+	if (!state.IsComm()) {
+		// guard.summon: with its guard on the job, a builder stays where it is covered at all, as a commander does
+		const CMilitaryManager::SGuardCfg& guard = circuit->GetMilitaryManager()->GetGuardCfg();
+		state.cfg.allyThreat = (guard.isSummon && circuit->GetMilitaryManager()->IsEscorted(unit))
+				? guard.escortedAllyThreat : builderFlee.allyThreat;
 	}
 	if ((state.allZone.count > 0) && (state.cfg.allyThreat >= 0.f)) {
 		// The builder itself included. Enough once it passes the highest bar any check sets
@@ -3211,15 +3262,163 @@ void CBuilderManager::LogFlee(CCircuitUnit* unit, const char* event, const SComm
 				 state->allZone.threat, state->cover);
 }
 
+void CBuilderManager::StartCostMap(CCircuitUnit* unit)
+{
+	// DefaultMakeTask picks from the cost map it started last time: start one where unit stands now, unless the last
+	// one started nearer than its build range from here
+	prefetches.erase(unit);  // a new build: what an earlier one prefetched is no use
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	auto it = costQueries.find(unit);
+	if ((it != costQueries.end()) && (static_cast<CQueryCostMap*>(it->second.get())->GetStartPos().SqDistance2D(pos)
+		< SQUARE(unit->GetCircuitDef()->GetBuildDistance())))
+	{
+		return;
+	}
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreateCostMapQuery(unit, circuit->GetThreatMap(), frame, pos);
+	costQueries[unit] = query;
+	pathfinder->RunQuery(query);
+}
+
+bool CBuilderManager::AssignNext(CCircuitUnit* unit)
+{
+	// An idle builder's next job now: the idle pass would wait 20 frames and take one unit per pass
+	if (unit->GetTask() != idleTask) {
+		return false;
+	}
+	IUnitTask* task = MakeTask(unit);
+	if (task == nullptr) {
+		return false;
+	}
+	AssignTask(unit, task);
+	return true;
+}
+
+void CBuilderManager::PrefetchPath(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(unit, circuit->GetThreatMap(),
+			circuit->GetLastFrame(), unit->GetPos(circuit->GetLastFrame()), endPos, unit->GetCircuitDef()->GetBuildDistance());
+	prefetches[unit] = query;
+	pathfinder->RunQuery(query);
+	++prefetchCount;
+}
+
+std::shared_ptr<IPathQuery> CBuilderManager::TakePrefetch(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	auto it = prefetches.find(unit);
+	if (it == prefetches.end()) {
+		return nullptr;
+	}
+	std::shared_ptr<IPathQuery> query = it->second;
+	prefetches.erase(it);
+	if ((query->GetState() != IPathQuery::State::READY)
+		|| !utils::is_equal_pos(static_cast<CQueryPathSingle*>(query.get())->GetEndPos(), endPos))
+	{
+		return nullptr;
+	}
+	++prefetchHits;
+	return query;
+}
+
+unsigned int CBuilderManager::GetBuilderLosses(int frames) const
+{
+	const int since = circuit->GetLastFrame() - frames;
+	return static_cast<unsigned int>(std::count_if(builderLossFrames.begin(), builderLossFrames.end(),
+			[since](int f) { return f >= since; }));
+}
+
+bool CBuilderManager::IsOpeningLog() const
+{
+	// Through the opening's time, and the second its last line is written in
+	const int logEnd = circuit->GetEconomyManager()->GetOpeningLogEnd();
+	return (logEnd >= 0) && (circuit->GetLastFrame() < logEnd + FRAMES_PER_SEC);
+}
+
+CBuilderManager::SOpeningStats* CBuilderManager::GetOpeningStats(const CCircuitUnit* unit)
+{
+	return IsOpeningLog() ? &openingStats[unit->GetId()] : nullptr;
+}
+
+void CBuilderManager::UpdateOpeningLog()
+{
+	const int frame = circuit->GetLastFrame();
+	builderLossFrames.erase(builderLossFrames.begin(), std::find_if(builderLossFrames.begin(), builderLossFrames.end(),
+			[frame](int f) { return f >= frame - FRAMES_PER_SEC * 60; }));
+	if (!IsOpeningLog()) {
+		return;
+	}
+	// Each builder's second, by what it does
+	for (CCircuitUnit* unit : workers) {
+		SOpeningStats& stats = openingStats[unit->GetId()];
+		const IUnitTask* task = unit->GetTask();
+		if (task->GetType() == IUnitTask::Type::RETREAT) {
+			++stats.flee;
+		} else if ((task->GetType() != IUnitTask::Type::BUILDER)
+			|| (static_cast<const IBuilderTask*>(task)->GetBuildType() == IBuilderTask::BuildType::PATROL))
+		{
+			++stats.idle;  // idle, waiting, or patrolling with no job
+		} else if ((unit->GetTravelAct() != nullptr) && !unit->GetTravelAct()->IsFinished()) {
+			++stats.walk;
+		} else {
+			++stats.build;
+		}
+	}
+	energyStallSec += circuit->GetEconomyManager()->IsEnergyStall() ? 1 : 0;
+	if ((frame > 0) && (frame % (FRAMES_PER_SEC * 60) < FRAMES_PER_SEC)) {
+		LogOpening(frame);
+	}
+}
+
+void CBuilderManager::LogOpening(int frame)
+{
+	const int min = frame / (FRAMES_PER_SEC * 60);
+	for (CCircuitUnit* unit : workers) {
+		const SOpeningStats& s = openingStats[unit->GetId()];
+		circuit->LOG("OPENING %i:00 | %s %i | idle %is walk %is build %is flee %is | switch forward %i back %i"
+				" | mexes %i jumps %i | escorts %i (%.1fs to arrive)",
+				min, unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), s.idle, s.walk, s.build, s.flee,
+				s.forward, s.back, s.mexes, s.jumps, s.escorts, (s.escorts > 0) ? s.escortWait / s.escorts : 0.f);
+	}
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const CCircuitDef* mexDef = economyMgr->GetMexDef();
+	unsigned int mexes = 0;
+	for (auto& kv : circuit->GetTeamUnits()) {
+		mexes += ((kv.second->GetCircuitDef() == mexDef) && !kv.second->GetUnit()->IsBeingBuilt()) ? 1 : 0;
+	}
+	circuit->LOG("OPENING %i:00 team | builders %u (%u lost) | mexes %u (%u lost) | metal %.1f/s | energy stall %is"
+			" | open spots %u (%u safe)%s | prefetch %u of %u matched",
+			min, (unsigned)workers.size(), buildersLost, mexes, mexesLost, economyMgr->GetAvgMetalIncome(), energyStallSec,
+			economyMgr->GetOpenSpotCount(), economyMgr->GetSafeSpotCount(), economyMgr->IsOpening() ? "" : ", opening over",
+			prefetchHits, prefetchCount);
+}
+
 void CBuilderManager::UpdateIdle()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
 	idleTask->Update();
 }
 
+void CBuilderManager::OnArrival(IBuilderTask* task)
+{
+	if (std::find(arrivals.begin(), arrivals.end(), task) == arrivals.end()) {
+		arrivals.push_back(task);
+	}
+}
+
 void CBuilderManager::UpdateBuild()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	// Jobs a builder just reached, out of turn: the staggered updates below come round once a second or so
+	std::vector<IBuilderTask*> arrived;
+	arrived.swap(arrivals);
+	for (IBuilderTask* task : arrived) {
+		if (!task->IsDead()) {
+			task->Update();
+		}
+	}
+
 	if (buildIterator >= buildUpdates.size()) {
 		buildIterator = 0;
 	}

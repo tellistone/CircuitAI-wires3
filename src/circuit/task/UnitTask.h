@@ -62,6 +62,8 @@ public:
 	void OnUnitMoveFailed(CCircuitUnit* unit);
 
 	virtual void OnTravelEnd(CCircuitUnit* unit);
+	// A travel action asks before it jumps unit to pos (CMoveAction): false = walk this step instead
+	virtual bool CanJumpTo(CCircuitUnit* unit, const springai::AIFloat3& pos) { return true; }
 	// The squad's line formation while it is on: travel actions take their moves from it
 	virtual const CFormation* GetFormation() const { return nullptr; }
 	virtual void OnRearmStart(CCircuitUnit* unit);

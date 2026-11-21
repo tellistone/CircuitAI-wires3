@@ -295,6 +295,15 @@ public:
 		int threatCooldown;
 		bool isDamageExit;  // a guard that takes damage is released at once and the slot cools down (threat_cooldown)
 		bool isDebug;  // log guard slot events and a 10 s status line per slot to infolog  // guard in enemy threat is cancelled and the slot closes for this long, < 0 = never cancel
+		// guard.summon: a builder's slot opens as soon as it or its job is off safe ground (IsSafeGround) and stays
+		// empty on it; a builder never waits for its guard (CBMexTask)
+		bool isSummon;
+		float minThreat;  // min_threat: an enemy whose type's threat is below this doesn't count (nor for builder flee)
+		int enemyFrames;  // enemy_sec: an enemy seen this recently makes its region and enemy_radius around unsafe
+		float enemyRadius;
+		bool isFromGroups;  // from_groups: an attack group that isn't fighting gives up one unit, keeping quota.attack
+		float openingShare;  // opening_share: max_share during the opening (CEconomyManager::IsOpening)
+		float escortedAllyThreat;  // escorted_ally_threat: flee_ally_threat of a builder while its guard is with it
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }
 
@@ -326,6 +335,12 @@ public:
 		int holdFrames;  // ... on every check for this long
 	};
 	bool IsGuardRole(CCircuitDef* cdef) const;
+	// guard.summon's safe ground: no enemy over min_threat seen lately in pos's region or near it, and the region is
+	// ours (held ground, our side or our half), not the enemy's, nor contested. Before the choke map is ready: our half
+	// with no enemy influence
+	bool IsSafeGround(const springai::AIFloat3& pos);
+	// The unit has a guard with it now (guard.summon: its flee takes escorted_ally_threat)
+	bool IsEscorted(CCircuitUnit* unit) const;
 	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
 	bool IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const;
 	// A guard released by damage or threat can't take any guard slot until the ban ends
@@ -793,6 +808,12 @@ private:
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
 	SGuardCfg guard;
+	struct SRecentEnemy {
+		springai::AIFloat3 pos;
+		int region;
+	};
+	std::vector<SRecentEnemy> recentEnemies;  // IsSafeGround's, refreshed once a second
+	int recentEnemyFrame = -1;
 	std::map<int, int> guardBanUntil;  // unit id -> frame
 	SAntiAirCfg antiAir;
 	SAntiHeavyCfg antiHeavy;

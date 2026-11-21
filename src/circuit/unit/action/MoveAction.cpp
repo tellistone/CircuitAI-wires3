@@ -6,6 +6,7 @@
  */
 
 #include "unit/action/MoveAction.h"
+#include "task/UnitTask.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -67,7 +68,13 @@ void CMoveAction::Update(CCircuitAI* circuit)
 				if (isBadJump) {
 					jumpPos = startPos + (jumpPos - startPos).Normalize2D() * range;
 				}
-				unit->CmdJumpTo(jumpPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+				if (unit->GetTask()->CanJumpTo(unit, jumpPos)) {
+					unit->CmdJumpTo(jumpPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+				} else {  // the task keeps the jump (IBuilderTask::CanJumpTo): walk, as a unit that can't jump
+					isBadJump = false;
+					step = pathIterator;
+					unit->CmdMoveTo(pPath->posPath[step], UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+				}
 			}
 			if (isBadJump) {
 				const AIFloat3& pos = pPath->posPath[step];

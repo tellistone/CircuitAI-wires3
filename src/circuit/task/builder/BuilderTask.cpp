@@ -126,7 +126,9 @@ void IBuilderTask::AssignTo(CCircuitUnit* unit)
 	}
 	unit->PushTravelAct(travelAction);
 	travelAction->StateWait();
-	unit->SetAllowedToJump(cdef->IsAbleToJump() && cdef->IsAttrJump());
+	// The "jump" attribute, or a commander with commander.json jobs.jump (CanJumpTo)
+	const CSetupManager::SCommInfo::SJobs* jobs = circuit->GetBuilderManager()->GetCommJobs(cdef);
+	unit->SetAllowedToJump(cdef->IsAbleToJump() && (cdef->IsAttrJump() || ((jobs != nullptr) && (jobs->jumpMinDist >= 0.f))));
 }
 
 void IBuilderTask::RemoveAssignee(CCircuitUnit* unit)
@@ -147,8 +149,12 @@ void IBuilderTask::Start(CCircuitUnit* unit)
 
 void IBuilderTask::Update()
 {
+	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
 	for (CCircuitUnit* unit : traveled) {
 		Execute(unit);
+		if (builderMgr->IsJobChain()) {
+			builderMgr->StartCostMap(unit);  // the next pick, from here
+		}
 	}
 	traveled.clear();
 
@@ -162,10 +168,27 @@ void IBuilderTask::Update()
 
 void IBuilderTask::Stop(bool done)
 {
+	// economy.builder_jobs.chain: the builders of a finished job take their next job now, not on the idle pass
+	// (those Finish sent to a build_delay wait aside)
+	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
+	const decltype(units) chained = (done && builderMgr->IsJobChain()) ? units : decltype(units)();
+	if (done && (buildType == BuildType::MEX)) {
+		for (CCircuitUnit* unit : units) {
+			CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(unit);
+			if (stats != nullptr) {
+				++stats->mexes;
+			}
+		}
+	}
+
 	IUnitTask::Stop(done);
 
 	if ((buildDef != nullptr) && !manager->GetCircuit()->GetEconomyManager()->IsIgnorePull(this)) {
 		manager->DelMetalPull(buildPower);
+	}
+
+	for (CCircuitUnit* unit : chained) {
+		builderMgr->AssignNext(unit);
 	}
 }
 
@@ -340,7 +363,11 @@ void IBuilderTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 
 void IBuilderTask::OnTravelEnd(CCircuitUnit* unit)
 {
-	traveled.insert(unit);
+	traveled.insert(unit);  // Execute(unit) in Update: not here, inside the unit's action update
+	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
+	if (builderMgr->IsJobChain() && (manager == builderMgr)) {
+		builderMgr->OnArrival(this);  // ... but on the next frame, not on this job's next turn
+	}
 }
 
 void IBuilderTask::Activate()
@@ -444,9 +471,61 @@ CCircuitUnit* IBuilderTask::GetNextAssignee()
 
 void IBuilderTask::Update(CCircuitUnit* unit)
 {
-	if (Reevaluate(unit) && !unit->GetTravelAct()->IsFinished()) {
+	if (!Reevaluate(unit)) {
+		return;
+	}
+	if (unit->GetTravelAct()->IsFinished()) {
+		Prefetch(unit);
+	} else {
 		UpdatePath(unit);  // Execute(unit) within OnTravelEnd
 	}
+}
+
+void IBuilderTask::Prefetch(CCircuitUnit* unit)
+{
+	// economy.builder_jobs.chain_lead seconds before the build ends: the job unit would pick from here, and its path,
+	// so it walks the moment the build ends. The finish picks again (AssignNext) and takes the path only if it made
+	// the same pick
+	CCircuitAI* circuit = manager->GetCircuit();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	if ((builderMgr->GetChainLead() <= 0.f) || (manager != builderMgr) || (buildType >= BuildType::REPAIR)
+		|| (target == nullptr) || (buildPower <= 0.f) || builderMgr->HasPrefetch(unit)
+		|| (cost * (1.f - target->GetUnit()->GetBuildProgress()) > builderMgr->GetChainLead() * buildPower))
+	{
+		return;
+	}
+	// The finish queues the chain's energy beside it (ExecuteChain): that is the next job, and needs no path
+	SBuildChain* chain = (buildDef != nullptr) ? builderMgr->GetBuildChain(buildType, buildDef) : nullptr;
+	if ((chain != nullptr) && (chain->energy > circuit->GetEconomyManager()->GetAvgEnergyIncome())) {
+		return;
+	}
+	HideAssignee(unit);
+	IUnitTask* task = manager->MakeTask(unit);
+	ShowAssignee(unit);
+	if ((task != nullptr) && (task != this) && (task->GetType() == IUnitTask::Type::BUILDER)) {
+		const AIFloat3& pos = static_cast<IBuilderTask*>(task)->GetPosition();
+		if (utils::is_valid(pos)) {
+			builderMgr->PrefetchPath(unit, pos);
+		}
+	}
+}
+
+// economy.opening.log: a walking builder's switch to task, by direction: forward when the new job is no nearer our
+// base than the builder is now, give or take its build range
+static void NoteSwitch(CCircuitAI* circuit, CCircuitUnit* unit, IUnitTask* task)
+{
+	CBuilderManager::SOpeningStats* stats = circuit->GetBuilderManager()->GetOpeningStats(unit);
+	if ((stats == nullptr) || (task->GetType() != IUnitTask::Type::BUILDER)) {
+		return;
+	}
+	const AIFloat3& newPos = static_cast<IBuilderTask*>(task)->GetPosition();
+	if (!utils::is_valid(newPos)) {
+		return;
+	}
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	const bool isForward = newPos.distance2D(basePos) >= pos.distance2D(basePos) - unit->GetCircuitDef()->GetBuildDistance();
+	++(isForward ? stats->forward : stats->back);
 }
 
 bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
@@ -489,6 +568,7 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 		&& ((task->GetType() != IUnitTask::Type::BUILDER)
 			|| (static_cast<IBuilderTask*>(task)->GetBuildType() != buildType)))
 	{
+		NoteSwitch(circuit, unit, task);
 		manager->AssignTask(unit, task);
 		return false;
 	}
@@ -497,6 +577,7 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 	if ((task != nullptr) && (task != this) && (switchShare > 0.f) && (priority != Priority::NOW)) {
 		const AIFloat3& newPos = static_cast<IBuilderTask*>(task)->GetPosition();
 		if (utils::is_valid(newPos) && (pos.SqDistance2D(newPos) < SQUARE(switchShare) * sqDist)) {
+			NoteSwitch(circuit, unit, task);
 			manager->AssignTask(unit, task);
 			return false;
 		}
@@ -523,6 +604,21 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	if (startPos.SqDistance2D(endPos) < SQUARE(range)) {
 		unit->GetTravelAct()->StateFinish();
 		return;
+	}
+
+	// economy.builder_jobs.chain, the job's first path: the one worked out before the last build ended, if it leads
+	// here (Prefetch); else walk straight while the query runs
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	if ((pathQueries.find(unit) == pathQueries.end()) && builderMgr->IsJobChain() && (manager == builderMgr)) {
+		std::shared_ptr<IPathQuery> prefetch = builderMgr->TakePrefetch(unit, endPos);
+		if (prefetch != nullptr) {
+			pathQueries[unit] = prefetch;
+			ApplyPath(static_cast<const CQueryPathSingle*>(prefetch.get()));
+			return;
+		}
+		TRY_UNIT(circuit, unit,
+			unit->CmdMoveTo(endPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		)
 	}
 
 	if (!IsQueryReady(unit)) {
@@ -570,6 +666,34 @@ void IBuilderTask::ApplyPath(const CQueryPathSingle* query)
 	} else {
 		unit->GetTravelAct()->StateFinish();
 	}
+}
+
+bool IBuilderTask::CanJumpTo(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	// Never into enemy threat. A commander with commander.json jobs.jump: only on a walk over min_dist, and with
+	// keep_for_flee only from and onto safe ground (CMilitaryManager::IsSafeGround), so the jump it escapes with is
+	// spent only where no raider has been seen lately
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (circuit->GetThreatMap()->GetThreatAt(unit, pos) > THREAT_MIN) {
+		return false;
+	}
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const CSetupManager::SCommInfo::SJobs* jobs = builderMgr->GetCommJobs(unit->GetCircuitDef());
+	if ((jobs != nullptr) && !unit->GetCircuitDef()->IsAttrJump()) {
+		const AIFloat3& startPos = unit->GetPos(circuit->GetLastFrame());
+		if (startPos.SqDistance2D(GetPosition()) <= SQUARE(jobs->jumpMinDist)) {
+			return false;
+		}
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		if (jobs->isJumpKeep && (!militaryMgr->IsSafeGround(startPos) || !militaryMgr->IsSafeGround(pos))) {
+			return false;
+		}
+	}
+	CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(unit);
+	if (stats != nullptr) {
+		++stats->jumps;
+	}
+	return true;
 }
 
 void IBuilderTask::HideAssignee(CCircuitUnit* unit)

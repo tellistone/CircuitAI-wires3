@@ -1033,6 +1033,15 @@ void CMilitaryManager::ReadConfig()
 	guard.guardedMaxShare = (guardedShare < 0.f) ? guard.maxShare : guardedShare;
 	guard.isDamageExit = guardCfg.get("damage_exit", true).asBool();
 	guard.isDebug = guardCfg.get("debug", false).asBool();
+	const Json::Value& summon = guardCfg["summon"];
+	const Json::Value& summonCfg = summon.isObject() ? summon : Json::Value::nullSingleton();
+	guard.isSummon = summon.isObject() || summon.isNull() || (summon.isBool() && summon.asBool());  // missing = on
+	guard.minThreat = summonCfg.get("min_threat", 1.f).asFloat();
+	guard.enemyFrames = std::max(summonCfg.get("enemy_sec", 30.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	guard.enemyRadius = summonCfg.get("enemy_radius", 800.f).asFloat();
+	guard.isFromGroups = summonCfg.get("from_groups", true).asBool();
+	guard.openingShare = std::max(summonCfg.get("opening_share", 1.f).asFloat(), 0.f);
+	guard.escortedAllyThreat = summonCfg.get("escorted_ally_threat", 0.f).asFloat();
 	guard.roleMask = 0;
 	const Json::Value& guardRoles = guardCfg["roles"];
 	if (guardRoles.isNull()) {  // legacy behaviour
@@ -3646,7 +3655,8 @@ bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
 bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const
 {
 	// Two pools: builder slots and "guarded"-unit slots, so builders can't use up the whole share
-	const float maxShare = isGuardedPool ? guard.guardedMaxShare : guard.maxShare;
+	const float maxShare = isGuardedPool ? guard.guardedMaxShare
+			: (guard.isSummon && circuit->GetEconomyManager()->IsOpening()) ? guard.openingShare : guard.maxShare;
 	if (maxShare >= 1.f) {
 		return false;
 	}
@@ -3674,6 +3684,48 @@ bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) 
 	}
 	// -1e-3: 0.3f * 10 is 3.0000001f in float, which would ceil to 4
 	return guarding >= std::ceil(maxShare * total - 1e-3f);
+}
+
+bool CMilitaryManager::IsSafeGround(const AIFloat3& pos)
+{
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	const bool isRegions = chokeMap->IsReady();
+	const int frame = circuit->GetLastFrame();
+	if ((recentEnemyFrame < 0) || (frame - recentEnemyFrame >= FRAMES_PER_SEC)) {
+		// Armed enemies we know the type of, under min_threat aside (a Flea scouting through)
+		recentEnemyFrame = frame;
+		recentEnemies.clear();
+		for (auto& kv : circuit->GetEnemyInfos()) {
+			const CEnemyInfo* enemy = kv.second;
+			const CCircuitDef* edef = enemy->GetCircuitDef();
+			if ((edef != nullptr) && edef->IsMobile() && edef->IsAttacker() && !enemy->IsHidden()
+				&& (edef->GetThreat() >= guard.minThreat) && enemy->IsRecentlySeen(frame, guard.enemyFrames))
+			{
+				recentEnemies.push_back({enemy->GetPos(), isRegions ? chokeMap->GetRegionAt(enemy->GetPos()) : -1});
+			}
+		}
+	}
+	const int region = isRegions ? chokeMap->GetRegionAt(pos) : -1;
+	for (const SRecentEnemy& e : recentEnemies) {
+		if (((region >= 0) && (e.region == region)) || (pos.SqDistance2D(e.pos) < SQUARE(guard.enemyRadius))) {
+			return false;
+		}
+	}
+	if (!isRegions) {
+		return chokeMap->IsOurHalf(pos) && (circuit->GetInflMap()->GetEnemyInflAt(pos) <= INFL_EPS);
+	}
+	if ((region < 0) || chokeMap->IsEnemySide(region) || chokeMap->IsEnemyGround(region)
+		|| (chokeMap->GetSettledOwner(region) == CChokeMap::Side::CONTESTED))
+	{
+		return false;
+	}
+	return chokeMap->IsOurGround(region) || chokeMap->IsOurSide(region) || chokeMap->IsOurHalf(pos);
+}
+
+bool CMilitaryManager::IsEscorted(CCircuitUnit* unit) const
+{
+	auto it = guardTasks.find(unit);
+	return (it != guardTasks.end()) && !it->second->GetAssignees().empty();
 }
 
 void CMilitaryManager::BanGuard(CCircuitUnit* unit, int frames)

@@ -50,6 +50,10 @@ public:
 		struct SJobs {
 			int frame = std::numeric_limits<int>::max();  // from this frame on; max = never
 			unsigned skipMask = 0;
+			// jobs.jump: it jumps along its path to a job farther than min_dist (< 0 = never); keep_for_flee: only
+			// from and onto safe ground (IBuilderTask::CanJumpTo)
+			float jumpMinDist = -1.f;
+			bool isJumpKeep = true;
 		} jobs;
 	};
 	using StartFunc = std::function<void (const springai::AIFloat3& pos)>;

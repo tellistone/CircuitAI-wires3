@@ -2630,11 +2630,15 @@ bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 	return pos.SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
 }
 
-bool CAttackTask::IsGuardPullable() const
+bool CAttackTask::IsGuardPullable(const CCircuitUnit* unit, bool isFromGroup) const
 {
-	// A squad of 2+ would get weaker (maybe below quota.attack); a lone unit's task just ends when it leaves.
-	// The rally host is left alone too: every compatible group is walking to it
-	return (units.size() == 1) && !IsFighting() && (static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this);
+	// A lone unit's task just ends when it leaves. A squad of 2+ would get weaker: only for isFromGroup, and only while
+	// it keeps quota.attack power without the unit. Never a fighting group, nor the rally host: every compatible group
+	// is walking to it
+	if (IsFighting() || (static_cast<CMilitaryManager*>(manager)->GetRallyHost() == this)) {
+		return false;
+	}
+	return (units.size() == 1) || (isFromGroup && (attackPower - unit->GetCircuitDef()->GetPower() >= minPower));
 }
 
 bool CAttackTask::IsFighting() const

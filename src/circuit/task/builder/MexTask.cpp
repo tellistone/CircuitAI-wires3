@@ -42,12 +42,13 @@ bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 	if (!IBuilderTask::CanAssignTo(unit) || IsSpotTaken()) {  // an allied AI's builder heads there already
 		return false;
 	}
-	if (unit->GetCircuitDef()->IsAttacker()) {
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	// guard.summon: the guard is called as the builder heads off safe ground, never waited for
+	if (unit->GetCircuitDef()->IsAttacker() || militaryMgr->GetGuardCfg().isSummon) {
 		return true;
 	}
 	// TODO: Naked expansion on big maps
-	CCircuitAI* circuit = manager->GetCircuit();
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	int cluster = circuit->GetMetalManager()->FindNearestCluster(GetPosition());
 	if ((cluster < 0) || militaryMgr->HasDefence(cluster)) {
 		return true;

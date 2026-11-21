@@ -8,6 +8,7 @@
 #include "task/fighter/GuardTask.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
+#include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
 #include "task/builder/BuilderTask.h"
 #include "task/fighter/AttackTask.h"
@@ -26,6 +27,9 @@ namespace circuit {
 
 using namespace springai;
 
+#define GUARD_DEATH_COOLDOWN	(FRAMES_PER_SEC * 10)
+#define SLOW_GUARD_RANGE		600.f  // elmos: guard.summon takes a unit slower than the builder only this close
+
 CFGuardTask::CFGuardTask(ITaskManager* mgr, CCircuitUnit* vip, float maxPower)
 		: IFighterTask(mgr, FightType::GUARD, 1.f)
 		, vipId(vip->GetId())
@@ -40,6 +44,7 @@ CFGuardTask::CFGuardTask(ITaskManager* mgr, CCircuitUnit* vip, float maxPower)
 		, nextDebugFrame(0)
 		, isInterposing(false)
 		, interposeSpot(-RgtVector)
+		, summonFrame(-1)
 {
 }
 
@@ -125,13 +130,24 @@ void CFGuardTask::Update()
 			if (!terrainMgr->CanReachAt(unit, vipPos, unit->GetCircuitDef()->GetMaxRange())) {
 				DebugLog(vip, "vip unreachable");
 				ReleaseUnit(unit);
-			} else {
-				Interpose(unit, vip);
+				continue;
+			}
+			Interpose(unit, vip);
+			// economy.opening.log: from the pull to the guard standing within its weapon range of the vip
+			const int frame = circuit->GetLastFrame();
+			if ((summonFrame >= 0) && (unit->GetPos(frame).SqDistance2D(vipPos) <= SQUARE(unit->GetCircuitDef()->GetMaxRange()))) {
+				CBuilderManager::SOpeningStats* stats = circuit->GetBuilderManager()->GetOpeningStats(vip);
+				if (stats != nullptr) {
+					++stats->escorts;
+					stats->escortWait += float(frame - summonFrame) / FRAMES_PER_SEC;
+				}
+				summonFrame = -1;
 			}
 		}
 	} else {
 		Pull(vip);
 		if (!units.empty()) {
+			summonFrame = manager->GetCircuit()->GetLastFrame();
 			DebugLog(vip, "pulled guard");
 		}
 	}
@@ -171,6 +187,17 @@ void CFGuardTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	}
 }
 
+void CFGuardTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
+{
+	// guard.summon: a slot whose guard died gets the next one GUARD_DEATH_COOLDOWN later at the soonest, so a builder
+	// that walks into a fight doesn't feed it one unit at a time
+	if (static_cast<CMilitaryManager*>(manager)->GetGuardCfg().isSummon) {
+		cooldownUntil = std::max(cooldownUntil, manager->GetCircuit()->GetLastFrame() + GUARD_DEATH_COOLDOWN);
+	}
+	summonFrame = -1;
+	IFighterTask::OnUnitDestroyed(unit, attacker);
+}
+
 void CFGuardTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -194,7 +221,9 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 
 	// Exit 2: the builder stands inside the allied threat bubble.
 	// The guard's own contribution is subtracted, so the guard can't make the spot look safe by itself.
-	if (cfg.safeAlly <= 0.f) {
+	// guard.summon (builders' slots): on safe ground instead, the builder and its job both
+	const bool isSummon = cfg.isSummon && !isGuardedVip;
+	if ((cfg.safeAlly <= 0.f) && !isSummon) {
 		isVipSafe = false;
 		safeSince = -1;
 		return;
@@ -209,10 +238,13 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 	lastAlly = allyInfl;
 	lastEnemy = inflMap->GetEnemyInflAt(pos);
 	bool isSafe = (allyInfl >= cfg.safeAlly) && (lastEnemy <= cfg.safeEnemy);
-
-	// The builder's job destination must be safe too: a builder at base that just took a far mex
-	// keeps its slot open, so a guard can join (pull reaches units gathering at base) before it leaves
-	if (isSafe) {
+	if (isSummon) {
+		CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+		const AIFloat3 dest = GetVipDestination(vip);
+		isSafe = militaryMgr->IsSafeGround(pos) && (!utils::is_valid(dest) || militaryMgr->IsSafeGround(dest));
+	} else if (isSafe) {
+		// The builder's job destination must be safe too: a builder at base that just took a far mex
+		// keeps its slot open, so a guard can join (pull reaches units gathering at base) before it leaves
 		const AIFloat3 dest = GetVipDestination(vip);
 		if (utils::is_valid(dest)) {
 			const float destAlly = inflMap->GetAllyInflAt(dest) - GetExcludedInflAt(vip, dest);
@@ -224,8 +256,8 @@ void CFGuardTask::CheckVip(CCircuitUnit* vip)
 		if (safeSince < 0) {
 			safeSince = frame;
 		}
-		// Debounce: an army walking past shouldn't send the guard away
-		isVipSafe = (frame - safeSince >= cfg.safeFrames);
+		// Debounce: an army walking past shouldn't send the guard away. Under guard.summon an empty slot shuts at once
+		isVipSafe = (frame - safeSince >= cfg.safeFrames) || (isSummon && units.empty());
 	} else {
 		safeSince = -1;
 		isVipSafe = false;
@@ -302,12 +334,22 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = vip->GetPos(frame);
+	// guard.summon (builders' slots): the unit that gets there first by straight line, one slower than the builder only
+	// from close by (it would trail behind); a scout too while another one scouts on. Else the nearest, no scout
+	const bool isSummon = cfg.isSummon && !isGuardedVip;
+	const float vipSpeed = vip->GetCircuitDef()->GetSpeed();
+	unsigned int scouts = 0;
+	if (isSummon) {
+		for (CCircuitUnit* unit : militaryMgr->GetArmy()) {
+			scouts += militaryMgr->IsScouting(unit) ? 1 : 0;
+		}
+	}
 	CCircuitUnit* best = nullptr;
-	float minSqDist = SQUARE(cfg.pullRange);
+	float minRank = std::numeric_limits<float>::max();
 	for (CCircuitUnit* unit : militaryMgr->GetArmy()) {
-		// Only units the AI controls that are idle, on a raid/defend task, or alone in an attack task
+		// Only units the AI controls that are idle, on a raid/defend task, or free to leave an attack task
 		// (CAttackTask::IsGuardPullable). Never retreating or player-controlled (not FIGHTER/IDLE),
-		// already guarding, or scouting (keeps the scout quota)
+		// already guarding, or scouting (keeps the scout quota; under guard.summon, unless another one scouts on)
 		IUnitTask* curTask = unit->GetTask();
 		if ((curTask == nullptr)
 			|| ((curTask->GetType() != IUnitTask::Type::FIGHTER) && (curTask->GetType() != IUnitTask::Type::IDLE))
@@ -319,16 +361,25 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		}
 		if (curTask->GetType() == IUnitTask::Type::FIGHTER) {
 			const FightType ft = static_cast<IFighterTask*>(curTask)->GetFightType();
-			if ((ft == FightType::GUARD) || (ft == FightType::SCOUT)
-				|| militaryMgr->IsScoutStint(unit)
-				|| ((ft == FightType::ATTACK) && !static_cast<CAttackTask*>(curTask)->IsGuardPullable()))
+			const bool isScout = (ft == FightType::SCOUT) || militaryMgr->IsScoutStint(unit);
+			if ((ft == FightType::GUARD) || (isScout && (!isSummon || (scouts <= 1)))
+				|| ((ft == FightType::ATTACK)
+					&& !static_cast<CAttackTask*>(curTask)->IsGuardPullable(unit, isSummon && cfg.isFromGroups)))
 			{
 				continue;
 			}
 		}
 		const AIFloat3& unitPos = unit->GetPos(frame);
 		const float sqDist = pos.SqDistance2D(unitPos);
-		if (sqDist >= minSqDist) {
+		if (sqDist >= SQUARE(cfg.pullRange)) {
+			continue;
+		}
+		const float speed = unit->GetCircuitDef()->GetSpeed();
+		if (isSummon && (speed < vipSpeed) && (sqDist > SQUARE(SLOW_GUARD_RANGE))) {
+			continue;
+		}
+		const float rank = isSummon ? sqDist / SQUARE(std::max(speed, 1.f)) : sqDist;
+		if (rank >= minRank) {
 			continue;
 		}
 		// Don't pull a unit the threat exit would cancel right away or on arrival (avoids a cooldown ping-pong)
@@ -338,11 +389,12 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 		if (!militaryMgr->IsGuardCapReached(unit->GetCircuitDef(), isGuardedVip)  // O(army): checked last, on nearby candidates only
 			&& terrainMgr->CanReachAt(unit, pos, unit->GetCircuitDef()->GetMaxRange()))
 		{
-			minSqDist = sqDist;
+			minRank = rank;
 			best = unit;
 		}
 	}
 	if (best != nullptr) {
+		militaryMgr->EndScoutStint(best);  // guarding now: it doesn't count as a scout
 		manager->AssignTask(best, this);
 	}
 }

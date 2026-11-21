@@ -423,6 +423,11 @@ void CSetupManager::ReadConfig()
 			}
 			jobs.skipMask |= 1u << static_cast<IBuilderTask::BT>(it->second);
 		}
+		const Json::Value& jump = jbs["jump"];
+		if (jump.isObject()) {
+			jobs.jumpMinDist = std::max(jump.get("min_dist", 500.f).asFloat(), 0.f);
+			jobs.isJumpKeep = jump.get("keep_for_flee", true).asBool();
+		}
 	}
 
 	if (!commChoices.empty()) {
