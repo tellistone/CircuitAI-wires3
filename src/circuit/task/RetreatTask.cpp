@@ -347,12 +347,19 @@ void CRetreatTask::CheckRepairer(CCircuitUnit* newRep)
 	}
 	CCircuitUnit* unit = *units.begin();
 
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	CCircuitDef* repDef = newRep->GetCircuitDef();
+	if (!repDef->IsMobile() && (newRep->GetPos(frame).SqDistance2D(unit->GetPos(frame))
+		> SQUARE(repDef->GetBuildDistance() + unit->GetCircuitDef()->GetRadius())))
+	{
+		return;  // a nano that can't reach it: walking to it is no better than the haven, and its job won't last
+	}
+
 	if ((costQuery != nullptr) && (costQuery->GetState() != IPathQuery::State::READY)) {  // not ready
 		return;
 	}
 
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
 	const AIFloat3& startPos = unit->GetPos(frame);
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
