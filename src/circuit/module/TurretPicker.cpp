@@ -73,6 +73,7 @@ void CTurretPicker::ReadConfig()
 	c.ally = turret.get("ally", c.ally).asFloat();
 	c.enemy = turret.get("enemy", c.enemy).asFloat();
 	c.front = turret.get("front", c.front).asFloat();
+	c.foremost = turret.get("foremost", c.foremost).asFloat();
 	c.view = turret.get("view", c.view).asFloat();
 	c.height = turret.get("height", c.height).asFloat();
 	c.choke = turret.get("choke", c.choke).asFloat();
@@ -336,10 +337,10 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	const CTurretValue::STerms& t = pick.terms;
 	const float cost = std::max(def->GetCostM(), 1.f);
 	char buf[512];
-	snprintf(buf, sizeof(buf), ": %s at (%.0f, %.0f): T %.0f, A %.0f, E %.0f, C %.0f, height %.2f, front %.2f "
+	snprintf(buf, sizeof(buf), ": %s at (%.0f, %.0f): T %.0f, A %.0f, E %.0f, C %.0f, B %.0f, height %.2f, front %.2f "
 			"(enemy %.1f of %.1f), our building at %.0f, walk %.0f, base %.2f x cost, value %.2f x cost, "
 			"view %.2f, %i of %i candidates, tier %i", def->GetDef()->GetName(), spot.x, spot.z, t.traffic, t.ally,
-			t.enemy, t.choke, 1.f + config.height * t.height, t.front, pick.cand.enemyInfl, res.search.frontNorm,
+			t.enemy, t.choke, t.bonus, 1.f + config.height * t.height, t.front, pick.cand.enemyInfl, res.search.frontNorm,
 			GetNearestOurs(gather, spot), pick.cand.walk, t.base / cost, t.value / cost, t.view, res.search.tested,
 			(int)last.grid.passed.size(), GetTier(def));
 	say(who + buf);
@@ -363,8 +364,8 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	SGather gather = Gather(spot, 0.f, def->GetMaxRange(), spot);
 	gather.isAlly = task->IsAlly();
 	const CTurretValue::SParams params = MakeParams(def);
-	const CTurretValue::SCandidate c = {{spot.x, circuit->GetTerrainManager()->GetHeightAt(spot.x, spot.z), spot.z},
-			0.f, 0.f};
+	CTurretValue::SCandidate c = {{spot.x, circuit->GetTerrainManager()->GetHeightAt(spot.x, spot.z), spot.z}, 0.f, 0.f};
+	c.bonus = GetForemostBonus(gather, spot);  // still the foremost, its own tower left out
 	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
 	const float base = CTurretValue::Evaluate(c, MakeTargets(def, gather), params, 0.f, spotScorer->MakeClearFn(def)).base;
 	if (base < KEEP_SHARE * params.minBase) {  // not at the order's line: a spot just over it doesn't flip
@@ -452,6 +453,19 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	// factories; mexes steer the traffic, which splits it among the chokes)
 	const bool isEcon = isChokeReady && (config.chokeEcon > 0.f);
 	float econ = 0.f;
+	if ((config.foremost > 0.f) && isChokeReady) {
+		g.enemyBases = chokeMap->GetEnemyBases();
+	}
+	auto baseDist = [&g](const AIFloat3& pos) {
+		float minSq = std::numeric_limits<float>::max();
+		for (const AIFloat3& b : g.enemyBases) {
+			minSq = std::min(minSq, b.SqDistance2D(pos));
+		}
+		return std::sqrt(minSq);
+	};
+	auto isOther = [&skipTower](const AIFloat3& pos) {
+		return !utils::is_valid(skipTower) || (pos.SqDistance2D(skipTower) > SQUARE(SQUARE_SIZE * 2));
+	};
 	const CEnergyGrid* energyGrid = circuit->GetEconomyManager()->GetEnergyGrid();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
@@ -470,6 +484,9 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 			isEconHere = (region != CRegionGraph::NO_REGION) && chokeMap->IsOurGround(region);
 			econ += isEconHere ? cdef->GetCostM() : 0.f;
 		}
+		if (!g.enemyBases.empty() && IsGroundGun(cdef) && isOther(pos)) {
+			g.foremostDist = std::min(g.foremostDist, baseDist(pos));
+		}
 		const float sqDist = pos.SqDistance2D(centre);
 		if (sqDist <= sqInflReach) {
 			g.ourBuildings.push_back(pos);
@@ -478,6 +495,13 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 			const CTurretValue::Kind kind = isEconHere ? CTurretValue::Kind::ECON : CTurretValue::Kind::ALLY;
 			g.raws.push_back({ground(pos), cdef->GetCostM(), kind});
 		}
+	}
+	if (!g.enemyBases.empty()) {  // and our turret jobs not started yet
+		circuit->GetBuilderManager()->ForEachQueuedTower([&](IBuilderTask* t) {
+			if (IsGroundGun(t->GetBuildDef()) && isOther(t->GetTaskPos())) {
+				g.foremostDist = std::min(g.foremostDist, baseDist(t->GetTaskPos()));
+			}
+		});
 	}
 
 	// E: known enemy buildings seen lately. F reads every known enemy building
@@ -712,6 +736,16 @@ void CTurretPicker::FillCandidate(CCircuitUnit* builder, const SGather& gather, 
 	out.pos = {pos.x, circuit->GetTerrainManager()->GetHeightAt(pos.x, pos.z), pos.z};
 	out.enemyInfl = GetEnemyInfl(gather.enemyBuildings, pos);
 	out.walk = builder->GetPos(circuit->GetLastFrame()).distance2D(pos);
+	out.bonus = GetForemostBonus(gather, pos);
+}
+
+float CTurretPicker::GetForemostBonus(const SGather& gather, const AIFloat3& pos) const
+{
+	float minSq = std::numeric_limits<float>::max();
+	for (const AIFloat3& b : gather.enemyBases) {
+		minSq = std::min(minSq, b.SqDistance2D(pos));
+	}
+	return (!gather.enemyBases.empty() && (minSq < SQUARE(gather.foremostDist))) ? config.foremost : 0.f;
 }
 
 CTurretPicker::SDefResult CTurretPicker::SearchDef(CCircuitDef* def, CCircuitUnit* builder, const SGather& gather,

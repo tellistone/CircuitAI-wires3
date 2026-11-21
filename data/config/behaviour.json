@@ -228,7 +228,8 @@
 // prefers a short walk (travel). Reads the choke analysis (built for it when a caller is on)
 "turret": {
 	"radius": 600,  // elmos from the centre a turret may stand
-	"min_value": 1.0,  // a spot's value (T + A + E + C, x height) must reach this x the turret's cost
+	"min_value": 1.0,  // a spot's value (T + A + E + C, x height, + foremost) must reach this x the turret's cost
+	"foremost": 300,  // metal a spot adds when it would be our ally team's ground turret nearest the enemy's base (its factories, else its start boxes; queued jobs count, the arrival re-check leaves the job's own out), so the lead turret can be a heavier one; 0 = off
 	"traffic": 1.0,  // weight of T, the enemy traffic in range; none while spiders and jumpers are choke.gate_share of the enemy army (until under half of it)
 	"horizon": 120,  // seconds of threatened income that T counts (and an enemy mex in E)
 	"ally": 1.0,  // weight of A; none for near_enemy orders and orders at a choke of the enemy line, so they go for the enemy, not to cover our buildings

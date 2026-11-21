@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **The turret nearest the enemy's base is worth more** (`turret.foremost`, new, 300 metal). A picker spot that would
+  put a ground turret nearer the enemy's base (its known factories, else its start boxes) than any ground turret of
+  our ally team, built, being built or queued, adds this to its value. That counts in the "worth its cost" test, so the
+  lead turret of a creep or a field order can be a Stardust or a Gauss where the other terms alone only paid for a
+  light one. Every picker caller gets it. The arrival re-check leaves the job's own tower out, so the job doesn't
+  lose the bonus it was picked for. The order log shows it as `B`.
+
 - **The creep builds heavier turrets whenever the budget allows.** A creep step used to offer only the light defs
   (Lotus, Picket) on the way to the enemy's line, and the `turret.tiers` only at the line, once our ally team held
   their mex share (40% for Stardust and Gauss, 55% for HLT). Now every step offers each tier whose dearest def the

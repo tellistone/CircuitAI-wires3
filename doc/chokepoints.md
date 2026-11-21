@@ -135,7 +135,8 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | Key | Default | Meaning |
 |---|---|---|
 | `turret.radius` | `600` | Elmos from the order's centre a turret may stand. |
-| `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height) must reach this × the turret's cost. |
+| `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height, + foremost) must reach this × the turret's cost. |
+| `turret.foremost` | `300` | Metal a spot adds (B) when a ground turret there would stand nearer the enemy's base than any ground turret of our ally team, built, a nanoframe or a queued job. The enemy's base is its known factories, else its start boxes. It pays on top of the other terms, so the lead spot can be worth a heavier turret, and on its own it can make an empty forward spot worth a light one. Only spots past the current lead get it. 0 turns it off. |
 | `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. T is left out while spiders and jumpers are `choke.gate_share` of the enemy army (until they fall below half of that): then a turret pays for itself in A, E and C alone. |
 | `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
 | `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. Near-enemy orders and orders at a choke of the enemy line count no A. |

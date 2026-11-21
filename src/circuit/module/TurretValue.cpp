@@ -70,7 +70,8 @@ CTurretValue::STerms CTurretValue::Evaluate(const SCandidate& c, const std::vect
 		const float above = c.pos.y - heightSum / count;
 		t.height = std::min(std::max(above / std::max(p.heightCap, 1.f), 0.f), 1.f);
 	}
-	t.base = (t.traffic + t.ally + t.enemy + t.choke) * (1.f + std::max(p.heightBonus, 0.f) * t.height);
+	t.bonus = std::max(c.bonus, 0.f);
+	t.base = (t.traffic + t.ally + t.enemy + t.choke) * (1.f + std::max(p.heightBonus, 0.f) * t.height) + t.bonus;
 	// V ranks a spot, as F does, and never decides its worth; read only where there is a base to rank
 	t.view = (viewOf && (t.base > 0.f)) ? std::min(std::max(viewOf(c.pos), 0.f), 1.f) : 1.f;
 	t.value = t.base * LeanAndWalk(c, p, frontNorm, t.front) * (1.f + std::max(p.view, 0.f) * t.view);
@@ -115,7 +116,7 @@ CTurretValue::SResult CTurretValue::Search(const std::vector<SCandidate>& candid
 				}
 			}
 		}
-		const float baseBound = (inRange + choke) * heightMax;
+		const float baseBound = (inRange + choke) * heightMax + std::max(c.bonus, 0.f);
 		if ((baseBound <= 0.f) || (baseBound < p.minBase)) {
 			continue;  // never worth it, nor shown as tested
 		}

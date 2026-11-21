@@ -471,6 +471,21 @@ void CChokeMap::Reblend()
 /*
  * Per source group, its traffic cells: its factories once one is seen, else every cell under its boxes
  */
+std::vector<AIFloat3> CChokeMap::GetEnemyBases() const
+{
+	std::vector<AIFloat3> bases;
+	for (const SSourceGroup& g : sourceGroups) {
+		if (!g.factoryPos.empty()) {
+			bases.insert(bases.end(), g.factoryPos.begin(), g.factoryPos.end());
+		} else {
+			for (const SRect& r : g.boxes) {
+				bases.push_back(AIFloat3((r.x0 + r.x1) * 0.5f, 0.f, (r.z0 + r.z1) * 0.5f));
+			}
+		}
+	}
+	return bases;
+}
+
 std::vector<CTrafficField::Cells> CChokeMap::GetSourceCells() const
 {
 	std::vector<CTrafficField::Cells> sources;
