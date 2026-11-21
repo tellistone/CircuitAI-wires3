@@ -1173,12 +1173,15 @@ void CMilitaryManager::ReadConfig()
 	std::vector<std::pair<float, float>> budgetMap;
 	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);
 	ReadCurve(budget["mex"], "porcupine.budget.mex", "mex share", tb.mexCurve);
+	ReadCurve(budget["army"], "porcupine.budget.army", "turrets / army", tb.armyCurve);
+	tb.armySince = int(std::max(budget.get("army_since", 0.f).asFloat(), 0.f) * FRAMES_PER_SEC);
 	tb.mapX = mapSize / std::max(teamSize, 1.f);
 	tb.mapMult = utils::eval_curve(budgetMap, tb.mapX);
 	tb.mexMult = utils::eval_curve(tb.mexCurve, 0.f);
 	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1) x map %.2f (%.0f per player on our team)"
-			" x mex curve (%u points), bank %.0f s, loss refund x%.1f",
-			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), tb.bankSec, tb.lossRefund);
+			" x mex curve (%u points) x army curve (%u points, from %i s), bank %.0f s, loss refund x%.1f",
+			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), (unsigned)tb.armyCurve.size(),
+			tb.armySince / FRAMES_PER_SEC, tb.bankSec, tb.lossRefund);
 
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
@@ -2216,16 +2219,31 @@ void CMilitaryManager::UpdateTurretBudget()
 	const int frame = circuit->GetLastFrame();
 	CEconomyManager* em = circuit->GetEconomyManager();
 	const float pull = std::min(em->GetPullMtoS(), 1.f);
-	// budget.mex: ally-team finished mexes over all metal spots, as prevent_mex (MarkAllyMexes walks every spot)
-	if (!b.mexCurve.empty() && (frame >= b.mexFrame)) {
-		b.mexFrame = frame + FRAMES_PER_SEC * 10;
-		CMetalManager* mm = circuit->GetMetalManager();
-		mm->MarkAllyMexes();
-		const size_t spotCount = mm->GetSpots().size();
-		b.mexX = (spotCount > 0) ? float(mm->GetMexCount()) / spotCount : 0.f;
-		b.mexMult = utils::eval_curve(b.mexCurve, b.mexX);
+	if (frame >= b.curveFrame) {
+		b.curveFrame = frame + FRAMES_PER_SEC * 10;
+		// budget.mex: ally-team finished mexes over all metal spots, as prevent_mex (MarkAllyMexes walks every spot)
+		if (!b.mexCurve.empty()) {
+			CMetalManager* mm = circuit->GetMetalManager();
+			mm->MarkAllyMexes();
+			const size_t spotCount = mm->GetSpots().size();
+			b.mexX = (spotCount > 0) ? float(mm->GetMexCount()) / spotCount : 0.f;
+			b.mexMult = utils::eval_curve(b.mexCurve, b.mexX);
+		}
+		// budget.army: our finished account turrets' metal over our army's (no army: over 1 metal, so a turret with
+		// no army behind it already takes the curve's end); x1 before budget.army_since
+		if (!b.armyCurve.empty()) {
+			float turrets = 0.f;
+			for (const auto& kv : circuit->GetTeamUnits()) {
+				const CCircuitDef* cdef = kv.second->GetCircuitDef();
+				if (IsAccountTurret(cdef) && !kv.second->GetUnit()->IsBeingBuilt()) {
+					turrets += cdef->GetCostM();
+				}
+			}
+			b.armyX = turrets / std::max(armyCost, 1.f);
+			b.armyMult = (frame >= b.armySince) ? utils::eval_curve(b.armyCurve, b.armyX) : 1.f;
+		}
 	}
-	const float rate = b.share * em->GetAvgMetalIncome() * pull * b.mapMult * b.mexMult;  // metal/s
+	const float rate = b.share * em->GetAvgMetalIncome() * pull * b.mapMult * b.mexMult * b.armyMult;  // metal/s
 	b.rate = rate;
 	if ((b.askFrame >= 0) && (frame - b.askFrame > FRAMES_PER_SEC * 120)) {
 		b.askCost = 0.f;  // nobody waiting asked lately
@@ -2253,9 +2271,10 @@ void CMilitaryManager::UpdateTurretBudget()
 			}
 			b.spent[i] = 0.f;
 		}
-		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f x map %.2f x mex %.2f (%.0f%%)),"
-				" last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f), crowd credit %.0f: %s", b.balance,
-				rate, b.share, em->GetAvgMetalIncome(), pull, b.mapMult, b.mexMult, b.mexX * 100.f,
+		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f x map %.2f x mex %.2f (%.0f%%)"
+				" x army %.2f (turrets %.2f x army)), last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f),"
+				" crowd credit %.0f: %s", b.balance,
+				rate, b.share, em->GetAvgMetalIncome(), pull, b.mapMult, b.mexMult, b.mexX * 100.f, b.armyMult, b.armyX,
 				total, b.refunded, b.lost, b.lossPaid, b.crowdCredit, spent.empty() ? "nothing" : spent.c_str());
 		b.refunded = b.lost = b.lossPaid = b.crowdCredit = 0.f;
 	}
@@ -2600,7 +2619,9 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	const size_t spotCount = mm->GetSpots().size();
 	const float mexX = (spotCount > 0) ? float(mm->GetMexCount()) / spotCount : 0.f;
 	const float mexMult = utils::eval_curve(prevent.mexCurve, mexX);
-	const float chance = prevent.base * prevent.mapMult * mexMult;
+	UpdateTurretBudget();  // porcupine.budget.army: free towers slow with the account's own
+	const float armyMult = turretBudget.armyMult;
+	const float chance = prevent.base * prevent.mapMult * mexMult * armyMult;
 	const float whole = std::floor(chance);
 	// One throw per cluster: fresh dice on every re-roll and sighting, with towers never called off, gave nearly
 	// every cluster the best of many throws. Shared by the ally team, so a new owner rolls the same count
@@ -2614,9 +2635,10 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	roll.rollFrame = frame;
 
 	const char* why = (sightDef != nullptr) ? "sight" : isFirst ? "first" : "timer";
-	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f, dice %.2f -> %i (was %i)%s",
+	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) x army %.2f = %.2f, dice %.2f"
+			" -> %i (was %i)%s",
 			cluster, why, (sightDef != nullptr) ? " " : "", (sightDef != nullptr) ? sightDef->GetDef()->GetName() : "",
-			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, dice, count, prevCount,
+			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, armyMult, chance, dice, count, prevCount,
 			outIsAir ? ", air: first slot is prevent_air" : "");
 	return count;
 }

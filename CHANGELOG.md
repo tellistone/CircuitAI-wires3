@@ -7,6 +7,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **The turret account slows while our army is small next to our turrets** (`porcupine.budget.army`, new curve).
+  Every 10 s, x = the metal of our finished turrets on the account / our army's (finished combat units, as the
+  factory's army cost counts them; no army counts as 1 metal). The account's fill rate, and so its cap, takes the
+  curve's multiplier: 1.0x up to 0.25, falling to 0.34x at 0.35 and beyond, from `army_since` (new, 300 s) of
+  game time: before it the opening's base towers would outweigh an army not yet out. The preventive towers' chance
+  takes the same multiplier, so the free towers slow with the account. The `TURRET BUDGET` and `PREVENT` logs show
+  it as `army`.
+
 - **Base towers and build chain hub towers wait for the turret account** (`porcupine.budget`). They were charged
   but never refused, so they could take the account below zero and hold up porc, the picker and the creep. A base
   timetable turret now waits, once due, until the account covers it (asking it to save). A hub turret the account
