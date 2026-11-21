@@ -32,7 +32,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   builder can build that tower and the spot passes the usual threat and reach tests. The builder walks into the
   tower's range and queues it there, then builds the mex once the spot is clear. An escort now waits for the turret
   account (`porcupine.budget`): such a spot is only picked when the account can pay for the tower, and a builder that
-  finds the account short on arrival drops the mex job (the spot reopens).
+  finds the account short on arrival drops the mex job (the spot reopens). The enemy mex is the one we know of (seen
+  now or before), so a builder that stepped back out of its sight still queues the tower. An escort job of ours that
+  reaches the enemy mex is joined; a friendly turret of any ally that reaches it already means no new one, and the
+  spot is passed over until that changes.
 
 - **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
   unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and
