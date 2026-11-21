@@ -2608,7 +2608,9 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	const size_t spotCount = mm->GetSpots().size();
 	const float mexX = (spotCount > 0) ? float(mm->GetMexCount()) / spotCount : 0.f;
 	const float mexMult = utils::eval_curve(prevent.mexCurve, mexX);
-	const float chance = prevent.base * prevent.mapMult * mexMult;
+	UpdateTurretBudget();  // porcupine.budget.army: free towers slow with the account's own
+	const float armyMult = turretBudget.armyMult;
+	const float chance = prevent.base * prevent.mapMult * mexMult * armyMult;
 	const float whole = std::floor(chance);
 	// One throw per cluster: fresh dice on every re-roll and sighting, with towers never called off, gave nearly
 	// every cluster the best of many throws. Shared by the ally team, so a new owner rolls the same count
@@ -2622,9 +2624,10 @@ unsigned CMilitaryManager::GetPreventCount(int cluster, CCircuitDef* sightDef, b
 	roll.rollFrame = frame;
 
 	const char* why = (sightDef != nullptr) ? "sight" : isFirst ? "first" : "timer";
-	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) = %.2f, dice %.2f -> %i (was %i)%s",
+	circuit->LOG("PREVENT cluster %i (%s%s%s): %.2f x map %.2f (%.0f) x mex %.2f (%.0f%%) x army %.2f = %.2f, dice %.2f"
+			" -> %i (was %i)%s",
 			cluster, why, (sightDef != nullptr) ? " " : "", (sightDef != nullptr) ? sightDef->GetDef()->GetName() : "",
-			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, chance, dice, count, prevCount,
+			prevent.base, prevent.mapMult, prevent.mapX, mexMult, mexX * 100.f, armyMult, chance, dice, count, prevCount,
 			outIsAir ? ", air: first slot is prevent_air" : "");
 	return count;
 }

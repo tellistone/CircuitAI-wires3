@@ -15,7 +15,8 @@
 	"water": [4, 1, 6, 4, 4, 3, 5, 9, 16],
 	// Preventive defences: towers a cluster gets outside porc mode, the first <count> of "land"/"water", in total over
 	// all the cluster's mex points (towers already there, porc ones too, count; a geothermal vent's point is its own).
-	// chance = prevent x prevent_map x prevent_mex; count = its whole part, plus 1 with the odds of its fraction
+	// chance = prevent x prevent_map x prevent_mex x the turret account's army multiplier (budget.army below, so free
+	// towers slow with the account); count = its whole part, plus 1 with the odds of its fraction
 	// (0.5 = a 50% chance of 1 tower, 1.5 = 1 tower and a 50% chance of a 2nd). Each cluster throws its dice once, the
 	// first time it is defended; it rolls again with the same dice every prevent_reroll[0] s (the new count replaces
 	// the old) and on a sighting: an enemy in LOS that can hit ground (air included) within mex LOS of our mex there,
@@ -76,7 +77,7 @@
 	// the metal of our finished turrets (those on this account) / our army's (finished combat units, not constructors
 	// or the commander; no army counts as 1 metal), every 10 s, so turret spending slows once turrets outweigh the
 	// army we'd need to hold the ground; x1 before <army_since> seconds of game time (the opening's base towers come
-	// before its army).
+	// before its army). The preventive chance (above) takes the same army multiplier.
 	// <start>: metal the account holds at the start, so the first base tower (a Lotus at 10 s) goes on time.
 	// Missing keys: 0.1, 60 s, 2, x1 curves, start 0, wait_sec 120 and army_since 0. Logged once a minute as TURRET BUDGET, with the
 	// spend by spender and turrets lost
