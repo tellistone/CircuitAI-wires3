@@ -792,6 +792,36 @@ void CMilitaryManager::ReadConfig()
 		readRallyCfg(qmerge.isObject() ? qmerge["rally"] : Json::Value(), "attack_merge.rally", 3000.f, attackRally.cfg);
 	}
 	{
+		const Json::Value& qescort = quotas["escort"];
+		if (!qescort.isNull() && !qescort.isObject()) {
+			circuit->LOG("CONFIG %s: quota.escort must be an object, using defaults", cfgName.c_str());
+		}
+		// Missing keys use the default; a non-number or a value out of range logs and uses the default
+		auto readNum = [&](const char* name, float def, float minVal, float maxVal) {
+			const Json::Value& v = qescort.isObject() ? qescort[name] : Json::Value();
+			if (v.isNull()) {
+				return def;
+			}
+			if (!v.isNumeric() || (v.asFloat() < minVal) || (v.asFloat() > maxVal)) {
+				circuit->LOG("CONFIG %s: quota.escort.%s must be a number in [%g, %g], using %g", cfgName.c_str(), name, minVal, maxVal, def);
+				return def;
+			}
+			return v.asFloat();
+		};
+		const float big = std::numeric_limits<float>::max();
+		escortCfg.stayRadius = readNum("stay_radius", 250.f, 0.f, big);
+		escortCfg.offsetCap = readNum("offset_cap", 400.f, 0.f, big);
+		escortCfg.keepMod = readNum("keep_mod", 1.3f, 1.f, big);
+		escortCfg.coreShareOn = readNum("core_share_on", 0.35f, 0.f, 1.f);
+		escortCfg.coreShareOff = readNum("core_share_off", 0.2f, 0.f, 1.f);
+		if (escortCfg.coreShareOff > escortCfg.coreShareOn) {
+			circuit->LOG("CONFIG %s: quota.escort.core_share_off above core_share_on, using core_share_on", cfgName.c_str());
+			escortCfg.coreShareOff = escortCfg.coreShareOn;
+		}
+		escortCfg.modeHoldFrames = static_cast<int>(readNum("mode_hold_sec", 10.f, 0.f, 600.f) * FRAMES_PER_SEC);
+		escortCfg.speedMin = readNum("speed_min", 0.75f, 0.f, 1.f);
+	}
+	{
 		const Json::Value& q = quotas["attack_group_radius"];
 		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
 				&& (q[0u].asFloat() >= 0.f) && (q[1u].asFloat() >= 0.f));
@@ -1596,7 +1626,12 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float powe
 	if (host != nullptr) {
 		return host;
 	}
+	// Support units always attach, whatever the speeds (CAttackTask::IsCompatible). A group of only support units (or
+	// a new one) prefers the nearest group whose core it keeps up with (quota.escort.speed_min), else the nearest one
+	const ISquadTask::SSpeedMix mix = ISquadTask::GetSpeedMix(unit);
+	const bool isSupportOnly = !mix.HasCore();
 	CAttackTask* best = nullptr;
+	bool isBestKeptUp = false;
 	float minSqDist = std::numeric_limits<float>::max();
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
 		CAttackTask* squad = static_cast<CAttackTask*>(t);
@@ -1607,8 +1642,11 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float powe
 			continue;
 		}
 		const float sqDist = pos.SqDistance2D(squadLeader->GetPos(frame));
-		if ((sqDist < minSqDist) && CanReinforce(squad, unit)) {
+		const bool isKeptUp = !isSupportOnly || squad->IsKeptUpBy(mix, escortCfg.speedMin);
+		const bool isBetter = (isKeptUp == isBestKeptUp) ? (sqDist < minSqDist) : isKeptUp;
+		if (isBetter && CanReinforce(squad, unit)) {
 			minSqDist = sqDist;
+			isBestKeptUp = isKeptUp;
 			best = squad;
 		}
 	}
@@ -4213,12 +4251,11 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	} else if (isAhHunt) {
 		task = EnqueueAntiHeavy(unit);
 	} else if (cdef->IsRoleSupport() && !isAhArty) {
-		if (/*cdef->IsAttacker() && */GetTasks(IFighterTask::FightType::ATTACK).empty() && GetTasks(IFighterTask::FightType::DEFEND).empty()) {
-			task = EnqueueDefend(IFighterTask::FightType::ATTACK,
-								 IFighterTask::FightType::SUPPORT, minAttackers);
-		} else {
-			task = EnqueueTask(IFighterTask::FightType::SUPPORT);
-		}
+		// Support (role or attribute), whatever the main role: an armed one is an attack unit (gathering, reinforce,
+		// merge, rally; it joins whatever the speeds), an escort in groups led by a core (CAttackTask, quota.escort).
+		// An unarmed one (shields) walks to a group, one it keeps up with first (CSupportTask), and never gets attack
+		// orders. Neither takes guard slots
+		task = IFighterTask::IsArmedUnit(cdef) ? EnqueueAttackBound(unit) : EnqueueTask(IFighterTask::FightType::SUPPORT);
 	} else {
 		// Any configured role may take a free guard slot
 		task = FindGuardTask(unit);
@@ -4306,7 +4343,7 @@ void CMilitaryManager::UpdateAhPull()
 		}
 		const IFighterTask::FightType type = static_cast<IFighterTask*>(task)->GetFightType();
 		if ((type != IFighterTask::FightType::ATTACK) && (type != IFighterTask::FightType::DEFEND)
-			&& (type != IFighterTask::FightType::SUPPORT))  // support: anti-heavies with the support attribute (Phantom, Lance)
+			&& (type != IFighterTask::FightType::SUPPORT))  // support: only unarmed walkers now (armed ones are attack-bound)
 		{
 			continue;  // already anti-heavy, or a guard
 		}

@@ -7,6 +7,32 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Support units are attack units, and escorts in groups led by a core** (`quota.escort`, new). Armed support units
+  (role or `support` attribute: Venom, Outlaw, Firewalker, Emissary, Tremor, Dominatrix, Placeholder) take the attack
+  path (gathering, reinforce, merge, rally) whatever their main role; anti-heavy artillery (Phantom, Lance) and the
+  scout quota still come first. Alone or in a group of support units only they are plain attack units. In a group
+  whose core (its non-support units) holds `core_share_on` 0.35 of the power (off below `core_share_off` 0.2, each
+  change held `mode_hold_sec` 10 s, no core: off at once) they are escorts: they walk in its formation, and when the
+  group engages each fires only from its stay disc round the core's centre (`stay_radius` 250, grown by its range
+  past the group's fire range up to `offset_cap` 400): the nearest threat to the core it can hit from there (an armed
+  mobile enemy within its weapon range + 2 s of travel of a core unit), else the group's target, else it holds in the
+  disc. A threat always comes before the group's target; between threats the current one is kept (`keep_mod` 1.3);
+  runners are skipped, Venom skips stunned enemies, and artillery escorts skip enemies within their splash of a core
+  unit. Escorts claim firing spots in the same pass as the rest of the group. The target pick counts escorts at the
+  share of the group's fire range they reach from the disc. The core's share counts armed units only.
+  Support units still always attach to a group, whatever the speeds: the speed ratio is skipped when either side
+  has only support units, and gathering groups take any. Picking a host on their own (a new unit, a group of only
+  support units, a shield), they prefer one whose slowest core unit they walk at least `speed_min` 0.75 x as fast as
+  (so it slows down by at most a quarter for them), else the nearest. Unarmed support units (Aspis, Funnelweb: no
+  real weapon, death explosions don't count) never get attack orders, in gathering groups either: they walk (Move
+  orders along a threat-capped route, standing still while there is none) to the attack group they keep up with that
+  has the most power per shield, nearer ones first (halved at 60 s of travel), else a gathering group, else any attack
+  or gathering group (which slows down for them); they take a formation slot (row 3, `formation_row`) and stand round
+  the core's centre in fights; a group left with only them sends them back to find another. Support units now take
+  formation slots (`support` added to `row_order` after riot; Firewalker and Tremor walk with the artillery), an
+  all-support group keeps a leader (a core unit takes the lead when one joins), and merges hand the route to support
+  units too. `CSupportAction` (Fight-move to the leader) is gone. `ESCORT` log lines.
+
 - **A hiding commander no longer guards a factory.** In hide mode, with no safe job in range, it used to guard the
   nearest factory for a minute (60 s locked there, and walking back to it from wherever it was). Now it first runs
   a mex search of its own (`UpdateMexTasks`: the economy's search runs once a second per cluster, so it may not have

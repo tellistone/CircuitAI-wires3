@@ -484,6 +484,20 @@ public:
 	// quota.attack_melee_blast: a target whose death explosion deals at least this x a melee unit's health is a
 	// blast for it: the unit fires from a normal firing spot within weapon range, not right next to it; < 0: off
 	float GetAttackMeleeBlast() const { return attackMeleeBlast; }
+	// quota.escort: support units (role or "support" attribute) in attack groups. Armed ones are normal members, except
+	// in a group whose core (the non-support units) holds coreShareOn of its power or more (until it drops below
+	// coreShareOff, each change held modeHoldFrames; no core: off at once): there they are escorts, which in a fight
+	// shoot only from a stay disc around the core (CAttackTask::OrderEscorts). Unarmed ones never get attack orders
+	struct SEscortCfg {
+		float stayRadius;  // the disc's radius around the core centroid
+		float offsetCap;  // most the disc grows for an escort that out-ranges the group (its range - the group's)
+		float keepMod;  // the current target is kept while it can be hit from the disc grown by this
+		float coreShareOn;  // escort mode on at or above this share of the group's power held by its core
+		float coreShareOff;  // and off below this
+		int modeHoldFrames;  // a mode change must hold this long
+		float speedMin;  // support units prefer hosts whose core's slowest speed is at most 1 / this x theirs
+	};
+	const SEscortCfg& GetEscortCfg() const { return escortCfg; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other
 	struct SAttackMerge {
 		float speedRatio;  // leaders' speeds within this factor of each other
@@ -813,6 +827,7 @@ private:
 	float attackMeleeSpread;  // quota.attack_melee_spread
 	float attackMeleeBlast;  // quota.attack_melee_blast
 	SAttackMerge attackMerge;  // quota.attack_merge
+	SEscortCfg escortCfg;  // quota.escort
 	SRally attackRally;  // quota.attack_merge.rally
 	SRally raidRally;  // quota.raid_rally
 	SResignCfg resign;  // "resign"

@@ -71,13 +71,7 @@ void ISquadTask::AssignTo(CCircuitUnit* unit)
 		highestRange = std::max(highestRange, unit->GetCircuitDef()->GetMaxRange());
 		lowestSpeed  = std::min(lowestSpeed,  unit->GetCircuitDef()->GetSpeed());
 		highestSpeed = std::max(highestSpeed, unit->GetCircuitDef()->GetSpeed());
-		if (unit->GetCircuitDef()->IsRoleSupport()) {
-			return;
-		}
-		if ((leader->GetArea() == nullptr) ||
-			leader->GetCircuitDef()->IsRoleSupport() ||
-			((unit->GetArea() != nullptr) && (unit->GetArea()->percentOfMap < leader->GetArea()->percentOfMap)))
-		{
+		if (IsBetterLeader(unit, leader)) {
 			leader = unit;
 		}
 	}
@@ -127,9 +121,6 @@ void ISquadTask::Merge(ISquadTask* task)
 		unit->SetTask(this);
 		if (isNewcomerOn) {
 			joinFrames[unit] = frame;
-		}
-		if (unit->GetCircuitDef()->IsRoleSupport()) {
-			continue;
 		}
 		unit->GetTravelAct()->SetPath(lPath);
 		unit->GetTravelAct()->SetState(state);
@@ -218,38 +209,77 @@ float ISquadTask::GetLineThreatAt(AIFloat3& p) const
 	return GetTaskThreatAt(leader, p);  // squad threat when the task judges by it
 }
 
+bool ISquadTask::IsBetterLeader(const CCircuitUnit* unit, const CCircuitUnit* current)
+{
+	// A non-support unit over a support unit (support units fight beside the core: quota.escort), and a group of only
+	// support units still has a leader; then the worse mover (a smaller terrain area): the group goes where it can.
+	// A leader with no area (aircraft) gives way to any unit of its kind
+	const bool isSupport = unit->GetCircuitDef()->IsRoleSupport();
+	const bool isCurSupport = current->GetCircuitDef()->IsRoleSupport();
+	if (isSupport != isCurSupport) {
+		return isCurSupport;
+	}
+	return (current->GetArea() == nullptr)
+		|| ((unit->GetArea() != nullptr) && (unit->GetArea()->percentOfMap < current->GetArea()->percentOfMap));
+}
+
 void ISquadTask::FindLeader(decltype(units)::iterator itBegin, decltype(units)::iterator itEnd)
 {
-	if (leader == nullptr) {
-		for (; itBegin != itEnd; ++itBegin) {
-			CCircuitUnit* ass = *itBegin;
-			lowestRange  = std::min(lowestRange,  ass->GetCircuitDef()->GetMaxRange());
-			highestRange = std::max(highestRange, ass->GetCircuitDef()->GetMaxRange());
-			lowestSpeed  = std::min(lowestSpeed,  ass->GetCircuitDef()->GetSpeed());
-			highestSpeed = std::max(highestSpeed, ass->GetCircuitDef()->GetSpeed());
-			if (!ass->GetCircuitDef()->IsRoleSupport()) {
-				leader = ass;
-				++itBegin;
-				break;
-			}
-		}
-	}
 	for (; itBegin != itEnd; ++itBegin) {
 		CCircuitUnit* ass = *itBegin;
 		lowestRange  = std::min(lowestRange,  ass->GetCircuitDef()->GetMaxRange());
 		highestRange = std::max(highestRange, ass->GetCircuitDef()->GetMaxRange());
 		lowestSpeed  = std::min(lowestSpeed,  ass->GetCircuitDef()->GetSpeed());
 		highestSpeed = std::max(highestSpeed, ass->GetCircuitDef()->GetSpeed());
-		if (ass->GetCircuitDef()->IsRoleSupport() || (ass->GetArea() == nullptr)) {
-			continue;
-		}
-		if ((leader->GetArea() == nullptr) ||
-			leader->GetCircuitDef()->IsRoleSupport() ||
-			(ass->GetArea()->percentOfMap < leader->GetArea()->percentOfMap))
-		{
+		if ((leader == nullptr) || IsBetterLeader(ass, leader)) {
 			leader = ass;
 		}
 	}
+}
+
+ISquadTask::SSpeedMix ISquadTask::GetSpeedMix(CCircuitUnit* unit)
+{
+	// The unit's own group if it leads an attack or gathering (defend) group: that group joins as a whole
+	SSpeedMix mix;
+	IUnitTask* task = unit->GetTask();
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)) {
+		const FightType type = static_cast<IFighterTask*>(task)->GetFightType();
+		if ((type == FightType::ATTACK) || (type == FightType::DEFEND)) {
+			const ISquadTask* squad = static_cast<ISquadTask*>(task);
+			if (squad->GetLeader() == unit) {
+				return squad->GetSpeedMix();
+			}
+		}
+	}
+	mix.Add(unit->GetCircuitDef());
+	return mix;
+}
+
+ISquadTask::SSpeedMix ISquadTask::GetSpeedMix() const
+{
+	SSpeedMix mix;
+	for (CCircuitUnit* unit : units) {
+		mix.Add(unit->GetCircuitDef());
+	}
+	return mix;
+}
+
+void ISquadTask::SSpeedMix::Add(const CCircuitDef* cdef)
+{
+	if (IsUnarmedSupport(cdef)) {
+		return;  // shields join through their walker (CSupportTask), which has its own speed test
+	}
+	float& slowest = cdef->IsRoleSupport() ? support : core;
+	slowest = std::min(slowest, cdef->GetSpeed());
+}
+
+bool ISquadTask::IsKeptUpBy(const SSpeedMix& joiner, float speedMin) const
+{
+	// quota.escort.speed_min: the formation walks at its slowest unit's pace, so a host the joiner's support units keep
+	// up with slows down by at most 1 - speedMin
+	const float core = GetSpeedMix().core;
+	const float none = std::numeric_limits<float>::max();
+	return (core == none) || (joiner.support == none) || (joiner.support >= speedMin * core);
 }
 
 bool ISquadTask::IsMergeSafe() const
