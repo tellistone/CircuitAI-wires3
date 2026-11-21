@@ -30,7 +30,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   (the engine's build test), so the mex escort (a `porcupine.default` tower queued 0.9 x its range short of an enemy
   mex, to kill it) only fired when a builder stumbled on one it hadn't seen. Now such a spot can be picked, when the
   builder can build that tower and the spot passes the usual threat and reach tests. The builder walks into the
-  tower's range and queues it there, then builds the mex once the spot is clear.
+  tower's range and queues it there, then builds the mex once the spot is clear. An escort now waits for the turret
+  account (`porcupine.budget`): such a spot is only picked when the account can pay for the tower, and a builder that
+  finds the account short on arrival drops the mex job (the spot reopens).
 
 - **Near-enemy and enemy-line turrets no longer lean toward our buildings.** The picker's A term (our and allied
   unarmed buildings in range, x `turret.ally`) drew the turrets these two callers order back toward the mexes and

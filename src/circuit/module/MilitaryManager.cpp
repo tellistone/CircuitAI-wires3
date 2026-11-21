@@ -2237,7 +2237,9 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 	}
 	b.balance -= cost;
 	task->SetCharge(cost, static_cast<int>(turretSpend));
-	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER) || (turretSpend == TurretSpend::CREEP)) {
+	if ((turretSpend == TurretSpend::PORC) || (turretSpend == TurretSpend::PICKER) || (turretSpend == TurretSpend::CREEP)
+		|| (turretSpend == TurretSpend::ESCORT))
+	{
 		b.askCost = 0.f;  // a waiting spender got its tower
 		b.askFrame = -1;
 	}

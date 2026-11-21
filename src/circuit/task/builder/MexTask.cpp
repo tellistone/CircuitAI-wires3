@@ -229,10 +229,15 @@ void CBMexTask::OnUnitIdle(CCircuitUnit* unit)
 				break;
 			}
 		}
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		if ((task == nullptr) && !militaryMgr->CanAffordTurret(def->GetCostM())) {
+			manager->AbortTask(this);  // porcupine.budget: the spot reopens; the mex search waits for the account
+			return;
+		}
 		if (task == nullptr) {
 			AIFloat3 newPos = buildPos - (buildPos - pos).Normalize2D() * def->GetMaxRange() * 0.9f;
 			CTerrainManager::CorrectPosition(newPos);
-			CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::ESCORT);
+			CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::ESCORT);
 			task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, def, newPos, IBuilderTask::BuildType::DEFENCE);
 		}
 		// TODO: Before BuildTask assign MoveTask(task->GetTaskPos())

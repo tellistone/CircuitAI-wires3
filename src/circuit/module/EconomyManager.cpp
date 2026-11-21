@@ -989,10 +989,13 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	CMap* map = circuit->GetMap();
 	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on, or held by an
 	// enemy mex we see: the builder walks up and queues a turret against it first (CBMexTask), if it can build one
-	const CCircuitDef* escortDef = circuit->GetMilitaryManager()->GetDefaultPorc();
+	// and the turret account (porcupine.budget) can pay for it
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const CCircuitDef* escortDef = militaryMgr->GetDefaultPorc();
 	const bool isEscort = (escortDef != nullptr) && escortDef->IsAvailable(circuit->GetLastFrame())
 			&& ((unit == nullptr) || unit->GetCircuitDef()->CanBuild(escortDef->GetId()));
-	CMetalData::PointPredicate predicate = [this, &spots, map, terrainMgr, builderMgr, unit, isEscort](int index) {
+	CMetalData::PointPredicate predicate = [this, &spots, map, terrainMgr, builderMgr, unit, isEscort, militaryMgr,
+			escortDef](int index) {
 		const AIFloat3& pos = spots[index].position;
 		return (IsAllyOpenSpot(index) && !terrainMgr->IsZoneAlly(pos)
 				&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
@@ -1000,7 +1003,7 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 					? terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
 					: builderMgr->IsBuilderInArea(mexDef, pos))
 				&& (map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING)
-					|| (isEscort && IsEnemyMexAt(pos))));
+					|| (isEscort && IsEnemyMexAt(pos) && militaryMgr->CanAffordTurret(escortDef->GetCostM()))));
 	};
 	// A commander's search uses its own bias (mex_front.comm_bias)
 	const bool isComm = (unit != nullptr) && unit->GetCircuitDef()->IsRoleComm();
