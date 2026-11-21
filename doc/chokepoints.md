@@ -136,7 +136,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 |---|---|---|
 | `turret.radius` | `600` | Elmos from the order's centre a turret may stand. |
 | `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height, + foremost) must reach this × the turret's cost. |
-| `turret.foremost` | `300` | Metal a spot adds (B) when a ground turret there would stand nearer the enemy's base than any ground turret of our ally team, built, a nanoframe or a queued job. The enemy's base is its known factories, else its start boxes. It pays on top of the other terms, so the lead spot can be worth a heavier turret, and on its own it can make an empty forward spot worth a light one. Only spots past the current lead get it. 0 turns it off. |
+| `turret.foremost` | `300` | Metal a spot adds (B) when a ground turret there would stand nearer the enemy's base than any ground turret of our ally team, built, a nanoframe or one of our queued jobs. When a job's builder arrives, the re-check counts only the turrets that stand, leaving its own out, so a job queued ahead meanwhile doesn't drop it. The enemy's base is its known factories, else its start boxes. It pays on top of the other terms, so the lead spot can be worth a heavier turret, and on its own it can make an empty forward spot worth a light one. Only spots past the current lead get it. 0 turns it off. |
 | `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. T is left out while spiders and jumpers are `choke.gate_share` of the enemy army (until they fall below half of that): then a turret pays for itself in A, E and C alone. |
 | `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
 | `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. Near-enemy orders and orders at a choke of the enemy line count no A. |
@@ -516,8 +516,10 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
    ours being built or queued there, by any caller, is raised to NORMAL for a constructor looking for work to take
    (never a second turret beside it; a nanoframe of ours whose job timed out gets a repair job at NORMAL), and the
    lane counts as helped. A step offers the `turret.light` defs, and each `turret.tiers` entry whose dearest def the
-   turret account covers (`turret.creep_budget` x it), whatever our mex share; the picker tries the heaviest first,
-   so the creep builds heavier turrets whenever the budget allows. The creep starts from a first ground turret of ours that another
+   turret account's spare covers (`turret.creep_budget` x it, past what another spender's waiting ask saves for),
+   whatever our mex share; the picker tries the heaviest first, so the creep builds heavier turrets whenever the
+   budget allows. At the line (a step on the target, or pulled back by enemy range) it also offers the tiers our mex
+   share has unlocked, and the money check asks for the dearest, so the account saves for it. The creep starts from a first ground turret of ours that another
    caller (porc, the field callers) built; staking the middle before that is for later work.
 4. **Rests.** `turret.creep_losses` of our ground-hitting turrets lost in the outer region or within a step of the
    end since the lane's last rest (from the unit-destroyed event), or two failed steps within 2 minutes (no spot, or

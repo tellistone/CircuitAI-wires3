@@ -2951,7 +2951,7 @@ bool CBuilderManager::IsHitFor(const CCircuitDef* def, bool isAir, bool isWater)
 
 std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, const AIFloat3& centre,
 		const std::function<bool (const CCircuitDef*)>& canHit,
-		const std::function<bool (const std::vector<CCircuitDef*>&)>& isTierOpen) const
+		const std::function<bool (const std::vector<CCircuitDef*>&, bool)>& isTierOpen) const
 {
 	// Land or water by the def's own depths at the centre, as the terrain data sorts buildings; the footprint is the
 	// picker's (FindSiteAt, spot by spot)
@@ -2974,11 +2974,12 @@ std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, con
 		}
 	};
 	add(cfg.light);
-	// The tiers our share of the map's mexes has unlocked, or that isTierOpen passes (the picker tries the heaviest
-	// first)
-	const float mexShare = (cfg.tiers.empty() || isTierOpen) ? 0.f : picker->GetMexShare();
+	// The tiers our share of the map's mexes has unlocked, or that isTierOpen passes, told whether it has (the picker
+	// tries the heaviest first)
+	const float mexShare = cfg.tiers.empty() ? 0.f : picker->GetMexShare();
 	for (const CTurretPicker::SConfig::STier& tier : cfg.tiers) {
-		if (isTierOpen ? isTierOpen(tier.defs) : (mexShare >= tier.mexShare)) {
+		const bool isUnlocked = (mexShare >= tier.mexShare);
+		if (isTierOpen ? isTierOpen(tier.defs, isUnlocked) : isUnlocked) {
 			add(tier.defs);
 		}
 	}
@@ -3084,19 +3085,21 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	return picker->Order(order);
 }
 
-int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius, int lane)
+int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius, bool isAtLine,
+		int lane)
 {
 	if (IsMetalStalling()) {
 		return 0;
 	}
-	// A tier joins once the account covers its dearest def, as GetCreepCost asks: heavier turrets whenever the
-	// budget allows, light ones while it doesn't
+	// A tier joins once the account's spare covers its dearest def, as GetCreepCost asks: heavier turrets whenever
+	// the budget allows, light ones while it doesn't. At the line the unlocked tiers too: the check below then asks
+	// for the dearest, so the account saves for it
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const float balance = militaryMgr->GetTurretBalance();
+	const float spare = militaryMgr->GetTurretSpare();
 	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, nullptr,
-			[this, balance](const std::vector<CCircuitDef*>& tierDefs) {
+			[this, spare, isAtLine](const std::vector<CCircuitDef*>& tierDefs, bool isUnlocked) {
 		const float cost = GetCreepCost(tierDefs);
-		return (cost >= 0.f) && (cost <= balance);
+		return (isAtLine && isUnlocked) || ((cost >= 0.f) && (cost <= spare));
 	});
 	if (defs.empty()) {
 		return -2;

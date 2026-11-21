@@ -104,7 +104,7 @@ void CCreepPlanner::OrderSteps(int most)
 			++skips[THREATENED];
 			continue;
 		}
-		const int result = builderMgr->OrderCreepTurret(unit, lane.end, lane.radius, lane.chokeId);
+		const int result = builderMgr->OrderCreepTurret(unit, lane.end, lane.radius, lane.isAtLine, lane.chokeId);
 		if (result == 0) {
 			break;  // stall or budget: again next second
 		}
@@ -282,6 +282,7 @@ void CCreepPlanner::MakeLanes()
 		}
 		const float dist = anchor->pos.distance2D(aim);
 		const bool isAtTarget = isPastGap && (len >= dist);
+		const bool isPulledBack = (len < std::min(fullStep, dist));
 		// Our turrets lost in the outer region or a step of the end, since the lane's last rest
 		if ((cfg.creepLosses > 0) && (std::count_if(losses.begin(), losses.end(), [&](const std::pair<AIFloat3, int>& l) {
 				return (l.second > memo.lastRest)
@@ -296,6 +297,7 @@ void CCreepPlanner::MakeLanes()
 		// target: creep_radius, as its claim). A finished ground defence there, or an ally's being built, takes the
 		// step; one of ours being built or queued is helped: up to NORMAL, for a builder looking for work
 		const float radius = isAtTarget ? cfg.creepRadius : std::min(cfg.creepRadius, 0.5f * len);
+		const bool isAtLine = isAtTarget || isPulledBack;
 		switch (builderMgr->FindTurretDefence(end, radius, isGround, defencePos)) {
 			case DF::FINISHED:
 			case DF::ALLY_PENDING: {
@@ -306,7 +308,7 @@ void CCreepPlanner::MakeLanes()
 				++skips[HELPED];
 			} break;
 			case DF::NONE: {
-				lanes.push_back({f.chokeId, end, radius});
+				lanes.push_back({f.chokeId, end, radius, isAtLine});
 			} break;
 		}
 	}

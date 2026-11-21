@@ -322,9 +322,10 @@ public:
 	// turret.creep (CCreepPlanner): lane's step, a turret within radius of centre queued at HIGH for any builder
 	// looking for work (MakeBuilderTask); the spot is searched for unit. Metal not stalling, a def unit can build
 	// there, the account holding GetCreepCost. The turret.light defs, and each turret.tiers entry whose dearest def
-	// the account covers (whatever our mex share): the picker tries the heaviest first. 1: queued, 0: wait (stall or
-	// budget), -1: no spot (the step failed), -2: no def
-	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, float radius, int lane);
+	// the account's spare covers (past a waiting ask; whatever our mex share); isAtLine (on the target, or pulled back
+	// by enemy range): the tiers our mex share unlocked too, waited for. The picker tries the heaviest first.
+	// 1: queued, 0: wait (stall or budget), -1: no spot (the step failed), -2: no def
+	int OrderCreepTurret(CCircuitUnit* unit, const springai::AIFloat3& centre, float radius, bool isAtLine, int lane);
 	// Our ground-hitting defence job nearest centre within radius, queued or being built, raised to priority if
 	// lower (a nanoframe of ours with no job gets a repair job); false if none
 	bool PromoteTurretJob(const springai::AIFloat3& centre, float radius, IBuilderTask::Priority priority);
@@ -364,10 +365,11 @@ private:
 	bool TryTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit, bool isAfterFlee, const char* caller,
 			bool& isOrdered, float budgetMod = 1.f, bool isAlly = true);
-	// The light defs and the tiers isTierOpen passes (nullptr: those our mex share has unlocked)
+	// The light defs and the tiers isTierOpen passes, given a tier's defs and whether our mex share unlocked it
+	// (nullptr: the unlocked ones)
 	std::vector<CCircuitDef*> GetTurretDefs(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit,
-			const std::function<bool (const std::vector<CCircuitDef*>&)>& isTierOpen = nullptr) const;
+			const std::function<bool (const std::vector<CCircuitDef*>&, bool)>& isTierOpen = nullptr) const;
 	bool AssistTurret(CCircuitUnit* unit, const springai::AIFloat3& centre,
 			const std::function<bool (const CCircuitDef*)>& canHit, bool isHelpNear, const char* caller);
 	// Asks for a turret and starts the cooldown, whatever the result. isAlly: STurretOrder::isAlly

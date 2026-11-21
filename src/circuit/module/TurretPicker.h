@@ -220,10 +220,11 @@ private:
 		std::vector<CTurretValue::STarget> raws;
 		std::vector<springai::AIFloat3> ourBuildings;  // within radius + defence.infl_rad
 		std::vector<springai::AIFloat3> enemyBuildings;  // within radius + ENEMY_INFL_RADIUS
-		// turret.foremost: the enemy's bases (CChokeMap::GetEnemyBases), and our ground turrets' nearest distance to
-		// one (finished, being built or queued, ours and allies'; the order's own tower left out)
+		// turret.foremost: the enemy's bases (CChokeMap::GetEnemyBases), and our ground turrets' nearest squared
+		// distance to one (finished or being built, ours and allies', and our queued jobs; on a job's arrival check
+		// its own tower and the queued jobs left out)
 		std::vector<springai::AIFloat3> enemyBases;
-		float foremostDist = std::numeric_limits<float>::max();
+		float foremostSq = std::numeric_limits<float>::max();
 	};
 
 	void ReadConfig();
@@ -245,6 +246,7 @@ private:
 			const std::vector<CTurretValue::SCandidate>& candidates) const;
 	CTurretValue::SParams MakeParams(CCircuitDef* def) const;
 	float GetNearestOurs(const SGather& gather, const springai::AIFloat3& pos) const;
+	static float SqDistToBase(const SGather& gather, const springai::AIFloat3& pos);  // to the nearest enemy base
 	float GetForemostBonus(const SGather& gather, const springai::AIFloat3& pos) const;  // turret.foremost, or 0
 	void GatherGuns(SGather& gather) const;  // the creep's: enemyGuns and ourGuns about the radius
 	// Threat at pos for builder: above THREAT_MIN; for the creep (gather.isCreep), its own rule

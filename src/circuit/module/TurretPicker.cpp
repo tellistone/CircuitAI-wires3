@@ -365,7 +365,7 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	gather.isAlly = task->IsAlly();
 	const CTurretValue::SParams params = MakeParams(def);
 	CTurretValue::SCandidate c = {{spot.x, circuit->GetTerrainManager()->GetHeightAt(spot.x, spot.z), spot.z}, 0.f, 0.f};
-	c.bonus = GetForemostBonus(gather, spot);  // still the foremost, its own tower left out
+	c.bonus = GetForemostBonus(gather, spot);  // still past every turret that stands, its own left out
 	const CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
 	const float base = CTurretValue::Evaluate(c, MakeTargets(def, gather), params, 0.f, spotScorer->MakeClearFn(def)).base;
 	if (base < KEEP_SHARE * params.minBase) {  // not at the order's line: a spot just over it doesn't flip
@@ -456,16 +456,6 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 	if ((config.foremost > 0.f) && isChokeReady) {
 		g.enemyBases = chokeMap->GetEnemyBases();
 	}
-	auto baseDist = [&g](const AIFloat3& pos) {
-		float minSq = std::numeric_limits<float>::max();
-		for (const AIFloat3& b : g.enemyBases) {
-			minSq = std::min(minSq, b.SqDistance2D(pos));
-		}
-		return std::sqrt(minSq);
-	};
-	auto isOther = [&skipTower](const AIFloat3& pos) {
-		return !utils::is_valid(skipTower) || (pos.SqDistance2D(skipTower) > SQUARE(SQUARE_SIZE * 2));
-	};
 	const CEnergyGrid* energyGrid = circuit->GetEconomyManager()->GetEnergyGrid();
 	for (const auto& kv : circuit->GetFriendlyUnits()) {
 		const CCircuitDef* cdef = kv.second->GetCircuitDef();
@@ -484,8 +474,10 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 			isEconHere = (region != CRegionGraph::NO_REGION) && chokeMap->IsOurGround(region);
 			econ += isEconHere ? cdef->GetCostM() : 0.f;
 		}
-		if (!g.enemyBases.empty() && IsGroundGun(cdef) && isOther(pos)) {
-			g.foremostDist = std::min(g.foremostDist, baseDist(pos));
+		if (!g.enemyBases.empty() && IsGroundGun(cdef)
+			&& (!utils::is_valid(skipTower) || (pos.SqDistance2D(skipTower) > SQUARE(SQUARE_SIZE * 2))))
+		{
+			g.foremostSq = std::min(g.foremostSq, SqDistToBase(g, pos));
 		}
 		const float sqDist = pos.SqDistance2D(centre);
 		if (sqDist <= sqInflReach) {
@@ -496,10 +488,11 @@ CTurretPicker::SGather CTurretPicker::Gather(const AIFloat3& centre, float radiu
 			g.raws.push_back({ground(pos), cdef->GetCostM(), kind});
 		}
 	}
-	if (!g.enemyBases.empty()) {  // and our turret jobs not started yet
+	if (!g.enemyBases.empty() && !utils::is_valid(skipTower)) {  // and our turret jobs not started yet; on arrival
+		// only those that stand, so a job queued ahead meanwhile doesn't drop this one after its walk
 		circuit->GetBuilderManager()->ForEachQueuedTower([&](IBuilderTask* t) {
-			if (IsGroundGun(t->GetBuildDef()) && isOther(t->GetTaskPos())) {
-				g.foremostDist = std::min(g.foremostDist, baseDist(t->GetTaskPos()));
+			if (IsGroundGun(t->GetBuildDef())) {
+				g.foremostSq = std::min(g.foremostSq, SqDistToBase(g, t->GetTaskPos()));
 			}
 		});
 	}
@@ -739,13 +732,18 @@ void CTurretPicker::FillCandidate(CCircuitUnit* builder, const SGather& gather, 
 	out.bonus = GetForemostBonus(gather, pos);
 }
 
-float CTurretPicker::GetForemostBonus(const SGather& gather, const AIFloat3& pos) const
+float CTurretPicker::SqDistToBase(const SGather& gather, const AIFloat3& pos)
 {
 	float minSq = std::numeric_limits<float>::max();
 	for (const AIFloat3& b : gather.enemyBases) {
 		minSq = std::min(minSq, b.SqDistance2D(pos));
 	}
-	return (!gather.enemyBases.empty() && (minSq < SQUARE(gather.foremostDist))) ? config.foremost : 0.f;
+	return minSq;
+}
+
+float CTurretPicker::GetForemostBonus(const SGather& gather, const AIFloat3& pos) const
+{
+	return (!gather.enemyBases.empty() && (SqDistToBase(gather, pos) < gather.foremostSq)) ? config.foremost : 0.f;
 }
 
 CTurretPicker::SDefResult CTurretPicker::SearchDef(CCircuitDef* def, CCircuitUnit* builder, const SGather& gather,
