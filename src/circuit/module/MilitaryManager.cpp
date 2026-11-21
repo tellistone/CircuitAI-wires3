@@ -2255,6 +2255,11 @@ void CMilitaryManager::RefundTurret(CBDefenceTask* task)
 	task->SetCharge(0.f, task->GetSpend());
 }
 
+bool CMilitaryManager::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3& pos, const char* caller)
+{
+	return turretPicker->RefuseCrowdedLight(def, pos, caller);
+}
+
 float CMilitaryManager::CreditTurret(float metal)
 {
 	UpdateTurretBudget();
@@ -2322,11 +2327,11 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 			}
 			// turret.crowd_count: a preventive or porc light tower among enough light turrets isn't placed (the account
 			// gets turret.crowd_credit instead). Asked once a call, though a pooled list is walked up to POOL_COPIES
-			// times; not booked on the point, so the next visit asks again
+			// times. It stays booked on the point: the crowd paid for its slot, so a later visit doesn't fill that
+			// metal with a second copy of the towers after it
 			if (turretPicker->IsLight(defDef) && (isCrowded
 				|| (isCrowded = turretPicker->RefuseCrowdedLight(defDef, buildPos, isPorc ? "porc" : "prevent"))))
 			{
-				point->cost -= defCost;
 				continue;
 			}
 			// Porc towers go in a chain, one after another. Preventive ones are queued each on its own, because the

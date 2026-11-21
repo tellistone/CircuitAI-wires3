@@ -102,7 +102,7 @@ public:
 		std::vector<CCircuitDef*> light;
 		// A light def that would stand within crowdRadius of crowdCount light turrets of the ally team (finished or
 		// being built, and our jobs not started yet) isn't placed: by the picker (not the creep), as a preventive or
-		// porc tower, a hub chain's, a base tower, a radar guard or a mex escort (not a cornered builder's); the turret
+		// porc tower, a hub chain's, a base tower or a radar guard (not a cornered builder's or a mex escort); the turret
 		// account (porcupine.budget) gets crowdCredit instead, up to its cap. crowdCount 0 = off
 		float crowdRadius = 600.f;
 		int crowdCount = 3;

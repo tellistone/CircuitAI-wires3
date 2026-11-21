@@ -12,7 +12,6 @@
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
-#include "module/TurretPicker.h"
 #include "resource/MetalManager.h"
 #include "terrain/TerrainManager.h"
 #include "CircuitAI.h"
@@ -236,10 +235,6 @@ void CBMexTask::OnUnitIdle(CCircuitUnit* unit)
 			if (task == nullptr) {
 				AIFloat3 newPos = buildPos - (buildPos - pos).Normalize2D() * range * 0.9f;
 				CTerrainManager::CorrectPosition(newPos);
-				if (circuit->GetMilitaryManager()->GetTurretPicker()->RefuseCrowdedLight(def, newPos, "escort")) {
-					IBuilderTask::OnUnitIdle(unit);  // turret.crowd_count
-					return;
-				}
 				CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::ESCORT);
 				task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, def, newPos, IBuilderTask::BuildType::DEFENCE);
 			}

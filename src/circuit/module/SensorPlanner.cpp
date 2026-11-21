@@ -11,7 +11,6 @@
 #include "module/EconomyManager.h"
 #include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
-#include "module/TurretPicker.h"
 #include "module/SpotScorer.h"
 #include "resource/MetalManager.h"
 #include "terrain/ChokeMap.h"
@@ -284,7 +283,7 @@ IBuilderTask* CSensorPlanner::MakeGuardTask(const AIFloat3& radarPos)
 	if (!utils::is_valid(pos)) {
 		pos = radarPos;
 	}
-	if (circuit->GetMilitaryManager()->GetTurretPicker()->RefuseCrowdedLight(guardDef, pos, "radar guard")) {
+	if (circuit->GetMilitaryManager()->RefuseCrowdedLight(guardDef, pos, "radar guard")) {
 		return nullptr;  // turret.crowd_count
 	}
 	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::GUARD);

@@ -14,7 +14,6 @@
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
-#include "module/TurretPicker.h"
 #include "module/SensorPlanner.h"
 #include "module/SpotScorer.h"
 #include "resource/MetalManager.h"
@@ -827,7 +826,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 
 				// turret.crowd_count: a light tower among enough light turrets is left out of the chain
 				if ((bi.buildType == IBuilderTask::BuildType::DEFENCE)
-					&& circuit->GetMilitaryManager()->GetTurretPicker()->RefuseCrowdedLight(buildDef, pos, "hub"))
+					&& circuit->GetMilitaryManager()->RefuseCrowdedLight(buildDef, pos, "hub"))
 				{
 					continue;
 				}
