@@ -484,7 +484,8 @@ one order a second for the AI, so a group arriving together orders once and the 
 cooldown whatever the result.
 
 The budget is the AI's turret account (`porcupine.budget` in build_chain.json), which porc-mode towers spend from
-too. It is paid in as the metal comes: `share` x the average income x min(ms_pull, 1), held up to `bank_sec` seconds
+too. It is paid in as the metal comes: `share` x the average income x min(ms_pull, 1) x the map, mex and army curves
+(the army curve: our finished turrets' metal over our army's, 1.0x up to 0.25, 0.34x from 0.35), held up to `bank_sec` seconds
 of that (or the dearest tower a waiting spender asked for, whichever is more). An order needs the dearest light def's
 cost in it and takes the turret's cost out. The creep, mex escort, base timetable and build chain hub turrets wait
 for it too: a hub turret out of its chain, queued once covered while its building stands. A base or hub turret waits
