@@ -135,7 +135,8 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | Key | Default | Meaning |
 |---|---|---|
 | `turret.radius` | `600` | Elmos from the order's centre a turret may stand. |
-| `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height) must reach this × the turret's cost. |
+| `turret.min_value` | `1.0` | A spot's value (T + A + E + C, × height, + foremost) must reach this × the turret's cost. |
+| `turret.foremost` | `300` | Metal a spot adds (B) when a ground turret there would stand nearer the enemy's base than any ground turret of our ally team, built, a nanoframe or one of our queued jobs. When a job's builder arrives, the re-check counts only the turrets that stand, leaving its own out, so a job queued ahead meanwhile doesn't drop it. The enemy's base is its known factories, else its start boxes. It pays on top of the other terms, so the lead spot can be worth a heavier turret, and on its own it can make an empty forward spot worth a light one. Only spots past the current lead get it. 0 turns it off. |
 | `turret.traffic` | `1.0` | Weight of T, the enemy traffic in range. T is left out while spiders and jumpers are `choke.gate_share` of the enemy army (until they fall below half of that): then a turret pays for itself in A, E and C alone. |
 | `turret.horizon` | `120` | Seconds of threatened income T counts, and of an enemy mex's income in E. |
 | `turret.ally` | `1.0` | Weight of A, our and allied unarmed buildings in range. Near-enemy orders and orders at a choke of the enemy line count no A. |
@@ -165,7 +166,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.creep_margin` | `64` | Elmos a creep turret keeps outside every known enemy static's land range. |
 | `turret.creep_radius` | `250` | The picker's radius about a step's end on the target (half the step, if less, short of it). A finished defence within it of the target claims the lane; within it of the gap, a turret is past it. |
 | `turret.creep_losses` | `2` | Our ground-hitting turrets lost in a lane's outer region, or within a step of its end, since its last rest, that rest the lane; 0 = never. |
-| `turret.creep_budget` | `0.5` | A creep order needs only this x the dearest def it would choose from (light defs on the way, the unlocked tiers too at the enemy's line) in the turret account; 0 to 1. The full cost is still charged. |
+| `turret.creep_budget` | `0.5` | A creep order needs only this x the dearest def it would choose from (the light defs, and each tier the account covers) in the turret account; 0 to 1. The full cost is still charged. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
 | `turret.share` | — | Removed: the picker spends from the turret account, `porcupine.budget` in build_chain.json. `choke_overlay set turret.share` sets the account's share. |
@@ -514,9 +515,11 @@ need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 
    it. A finished ground defence within that of the end, or an ally's being built there, takes the step; one of
    ours being built or queued there, by any caller, is raised to NORMAL for a constructor looking for work to take
    (never a second turret beside it; a nanoframe of ours whose job timed out gets a repair job at NORMAL), and the
-   lane counts as helped. Steps
-   short of the enemy's line build `turret.light` defs; the unlocked tiers join only at the line (a step onto the
-   target, or one pulled back by their range), where the creep stops and has to hold. The creep starts from a first ground turret of ours that another
+   lane counts as helped. A step offers the `turret.light` defs, and each `turret.tiers` entry whose dearest def the
+   turret account's spare covers (`turret.creep_budget` x it, past what another spender's waiting ask saves for),
+   whatever our mex share; the picker tries the heaviest first, so the creep builds heavier turrets whenever the
+   budget allows. At the line (a step on the target, or pulled back by enemy range) it also offers the tiers our mex
+   share has unlocked, and the money check asks for the dearest, so the account saves for it. The creep starts from a first ground turret of ours that another
    caller (porc, the field callers) built; staking the middle before that is for later work.
 4. **Rests.** `turret.creep_losses` of our ground-hitting turrets lost in the outer region or within a step of the
    end since the lane's last rest (from the unit-destroyed event), or two failed steps within 2 minutes (no spot, or

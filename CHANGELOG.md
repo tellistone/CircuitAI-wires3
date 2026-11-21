@@ -7,6 +7,23 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **The turret nearest the enemy's base is worth more** (`turret.foremost`, new, 300 metal). A picker spot that would
+  put a ground turret nearer the enemy's base (its known factories, else its start boxes) than any ground turret of
+  our ally team, built, being built or queued, adds this to its value. That counts in the "worth its cost" test, so the
+  lead turret of a creep or a field order can be a Stardust or a Gauss where the other terms alone only paid for a
+  light one. Every picker caller gets it. The arrival re-check counts only the turrets that stand and leaves the
+  job's own out, so a job doesn't lose the bonus it was picked for to another job queued ahead meanwhile (a creep
+  step would also have counted it as a lane failure). The order log shows it as `B`.
+
+- **The creep builds heavier turrets whenever the budget allows.** A creep step used to offer only the light defs
+  (Lotus, Picket) on the way to the enemy's line, and the `turret.tiers` only at the line, once our ally team held
+  their mex share (40% for Stardust and Gauss, 55% for HLT). Now every step also offers each tier whose dearest def
+  the turret account's spare covers (`turret.creep_budget` x it), whatever the mex share. The spare is the balance
+  past what another spender's waiting ask saves for, so the creep doesn't spend a porc or picker heavy's savings. The
+  picker tries the heaviest first and drops to a lighter tier when no spot is worth its cost, so a short account still
+  steps with a light turret instead of waiting. At the line the unlocked tiers stay on offer as before, and the
+  account saves for them. Other picker callers keep the mex-share unlock.
+
 - **Support units are attack units, and escorts in groups led by a core** (`quota.escort`, new). Armed support units
   (role or `support` attribute: Venom, Outlaw, Firewalker, Emissary, Tremor, Dominatrix, Placeholder) take the attack
   path (gathering, reinforce, merge, rally) whatever their main role; anti-heavy artillery (Phantom, Lance) and the

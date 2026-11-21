@@ -104,7 +104,7 @@ void CCreepPlanner::OrderSteps(int most)
 			++skips[THREATENED];
 			continue;
 		}
-		const int result = builderMgr->OrderCreepTurret(unit, lane.end, lane.radius, !lane.isAtLine, lane.chokeId);
+		const int result = builderMgr->OrderCreepTurret(unit, lane.end, lane.radius, lane.isAtLine, lane.chokeId);
 		if (result == 0) {
 			break;  // stall or budget: again next second
 		}

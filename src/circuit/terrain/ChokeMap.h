@@ -200,6 +200,8 @@ public:
 	std::string DescribeTypeSet() const;  // each type in the set: its name, role and share
 
 	bool IsEnemySide(int region) const { return isEnemySide[region]; }
+	// The enemy's bases: each enemy traffic source's known factories, else its start box centres (or the mirror guess)
+	std::vector<springai::AIFloat3> GetEnemyBases() const;
 	bool IsOurSide(int region) const { return isOurSide[region]; }
 	// Per region: the region itself, and each region the enemy side walks into only through it (a mesa or a dead end
 	// off it). Only the region itself while the enemy side is unknown

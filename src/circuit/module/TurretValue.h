@@ -15,12 +15,13 @@ namespace circuit {
 
 /*
  * CTurretPicker's value of a spot and its search, with no engine calls, so a harness can test them. In metal:
- *   base  = (T + A + E + C) x (1 + turret.height x height)
+ *   base  = (T + A + E + C) x (1 + turret.height x height) + B
  *   value = base x (1 + turret.front x F) x (1 + turret.view x V) x factor / (1 + walk / travel)
  * T, A and E sum the targets of their kind in range with a clear line of fire; C is the best choke target so; height
  * is how far the spot stands above the mean height of those targets, per heightCap (up to 1); F the spot's
  * enemy building influence over the highest among the candidates; V the share of its range circle's ground, by area,
- * in a clear line of fire from it (a cliff top over the ground below scores high, its foot low). Only a spot whose
+ * in a clear line of fire from it (a cliff top over the ground below scores high, its foot low); B the caller's own
+ * metal for the spot, whatever is in range (CTurretPicker: turret.foremost). Only a spot whose
  * base reaches minBase is worth building; the most valuable of those wins
  */
 class CTurretValue {
@@ -41,12 +42,14 @@ public:
 		float enemyInfl;  // F before it is normalised
 		float walk;  // elmos from the ordered constructor
 		float factor = 1.f;  // the caller's own terms for the spot, > 0 (CSpotScorer: setback, lean, threat, builder)
+		float bonus = 0.f;  // B, metal added to the base
 	};
 	struct STerms {
 		float traffic = 0.f, ally = 0.f, enemy = 0.f, choke = 0.f;  // T, A, E, C
 		float height = 0.f;  // 0 to 1
 		float front = 0.f;  // F, 0 to 1
 		float view = 1.f;  // V, 0 to 1 (1 with no ViewFn)
+		float bonus = 0.f;  // B
 		float base = 0.f;
 		float value = 0.f;
 	};
