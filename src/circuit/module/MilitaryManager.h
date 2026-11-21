@@ -919,7 +919,12 @@ private:
 		std::vector<std::pair<float, float>> mexCurve;  // budget.mex: x = ally-team finished mexes / all spots
 		float mexMult = 1.f;  // budget.mex now, refreshed every 10 s
 		float mexX = 0.f;
-		int mexFrame = -1;
+		// budget.army: x = the metal of our finished account turrets / our army's (GetArmyCost)
+		std::vector<std::pair<float, float>> armyCurve;
+		float armyMult = 1.f;  // budget.army now, refreshed every 10 s; 1 before armySince
+		int armySince = 0;  // budget.army_since, frames
+		float armyX = 0.f;
+		int curveFrame = -1;  // the next refresh of mexMult and armyMult
 		float lost = 0.f;  // since the last log line: what the lost turrets cost, and what they paid back
 		float lossPaid = 0.f;
 		float balance = 0.f;
