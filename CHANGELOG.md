@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **The creep builds heavier turrets whenever the budget allows.** A creep step used to offer only the light defs
+  (Lotus, Picket) on the way to the enemy's line, and the `turret.tiers` only at the line, once our ally team held
+  their mex share (40% for Stardust and Gauss, 55% for HLT). Now every step offers each tier whose dearest def the
+  turret account covers (`turret.creep_budget` x it), whatever the mex share. The picker tries the heaviest first and
+  drops to a lighter tier when no spot is worth its cost, so a short account still steps with a light turret instead
+  of waiting. Other picker callers keep the mex-share unlock.
+
 - **Support units are attack units, and escorts in groups led by a core** (`quota.escort`, new). Armed support units
   (role or `support` attribute: Venom, Outlaw, Firewalker, Emissary, Tremor, Dominatrix, Placeholder) take the attack
   path (gathering, reinforce, merge, rally) whatever their main role; anti-heavy artillery (Phantom, Lance) and the

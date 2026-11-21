@@ -29,8 +29,8 @@ class IBuilderTask;
  * - A step: from our finished turret that hits ground nearest the target, in the lane's two regions (else anywhere),
  *   turret.creep_step x its range toward the lane's gap until within turret.creep_radius of it, then toward the target,
  *   landing on it once within a step; pulled back to a half, then a quarter, out of every known enemy static's range +
- *   turret.creep_margin. None that doesn't bring the anchor nearer the enemy. Light defs on the way; the unlocked
- *   tiers too at the line (on the target, or pulled back by their range).
+ *   turret.creep_margin. None that doesn't bring the anchor nearer the enemy. Light defs, and each turret.tiers
+ *   entry the turret account covers (turret.creep_budget x its dearest def), whatever our mex share.
  * - Claimed: a finished ground defence (ours or an ally's) within turret.creep_radius of the target, or within half
  *   the step of its end, or an ally's being built there. One step at a time: a lane with a creep job of its own
  *   waits for it. Another job of ours being built or queued at the end: help it, by raising it to NORMAL (never a
@@ -63,7 +63,6 @@ private:
 		int chokeId;  // the line choke's graph id (kept over rebuilds)
 		springai::AIFloat3 end;  // the step's end, or the job to help
 		float radius;  // the picker's about end
-		bool isAtLine;  // on the target or pulled back by enemy range: the unlocked tiers too
 	};
 	struct SMemo {  // a lane's, kept over seconds
 		int fails = 0;

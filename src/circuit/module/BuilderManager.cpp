@@ -2950,7 +2950,8 @@ bool CBuilderManager::IsHitFor(const CCircuitDef* def, bool isAir, bool isWater)
 }
 
 std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, const AIFloat3& centre,
-		const std::function<bool (const CCircuitDef*)>& canHit, bool isLightOnly) const
+		const std::function<bool (const CCircuitDef*)>& canHit,
+		const std::function<bool (const std::vector<CCircuitDef*>&)>& isTierOpen) const
 {
 	// Land or water by the def's own depths at the centre, as the terrain data sorts buildings; the footprint is the
 	// picker's (FindSiteAt, spot by spot)
@@ -2973,13 +2974,11 @@ std::vector<CCircuitDef*> CBuilderManager::GetTurretDefs(CCircuitUnit* unit, con
 		}
 	};
 	add(cfg.light);
-	if (isLightOnly) {
-		return defs;
-	}
-	// The tiers our share of the map's mexes has unlocked (the picker tries the heaviest first)
-	const float mexShare = cfg.tiers.empty() ? 0.f : picker->GetMexShare();
+	// The tiers our share of the map's mexes has unlocked, or that isTierOpen passes (the picker tries the heaviest
+	// first)
+	const float mexShare = (cfg.tiers.empty() || isTierOpen) ? 0.f : picker->GetMexShare();
 	for (const CTurretPicker::SConfig::STier& tier : cfg.tiers) {
-		if (mexShare >= tier.mexShare) {
+		if (isTierOpen ? isTierOpen(tier.defs) : (mexShare >= tier.mexShare)) {
 			add(tier.defs);
 		}
 	}
@@ -3085,17 +3084,23 @@ IBuilderTask* CBuilderManager::OrderTurret(CCircuitUnit* unit, const AIFloat3& c
 	return picker->Order(order);
 }
 
-int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius, bool isLightOnly,
-		int lane)
+int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre, float radius, int lane)
 {
 	if (IsMetalStalling()) {
 		return 0;
 	}
-	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, nullptr, isLightOnly);
+	// A tier joins once the account covers its dearest def, as GetCreepCost asks: heavier turrets whenever the
+	// budget allows, light ones while it doesn't
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const float balance = militaryMgr->GetTurretBalance();
+	const std::vector<CCircuitDef*> defs = GetTurretDefs(unit, centre, nullptr,
+			[this, balance](const std::vector<CCircuitDef*>& tierDefs) {
+		const float cost = GetCreepCost(tierDefs);
+		return (cost >= 0.f) && (cost <= balance);
+	});
 	if (defs.empty()) {
 		return -2;
 	}
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	if (!militaryMgr->CanAffordTurret(GetCreepCost(defs))) {
 		return 0;
 	}

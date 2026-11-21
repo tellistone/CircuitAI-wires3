@@ -190,6 +190,7 @@ public:
 		TurretSpend prev;
 	};
 	bool CanAffordTurret(float cost);
+	float GetTurretBalance() { UpdateTurretBudget(); return turretBudget.balance; }  // no ask recorded
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
 	// turret.crowd_count: true when a light def at pos would join enough light turrets; logs and credits the account
