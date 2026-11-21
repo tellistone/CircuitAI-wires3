@@ -1020,6 +1020,10 @@ bool CRaidTask::Flee(int frame)
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
 	if (!wasFleeing) {
 		GetMilitaryMgr()->AddRaidEscape();  // for tuning raid_thr_mod (RAID log)
+		if (utils::is_valid(raidSpot)) {
+			// As a scout's flee: other groups don't pick it for a while, nor get its mex bonus (quota.raider_spot.mex)
+			GetMilitaryMgr()->BlockRaidSpot(raidSpot, FRAMES_PER_SEC * 10);
+		}
 	}
 	fleeFrame = frame + FRAMES_PER_SEC * 2;
 	if (wasFleeing && (frame < fleePathFrame + FRAMES_PER_SEC)) {

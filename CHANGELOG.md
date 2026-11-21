@@ -244,8 +244,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Raid groups go for undefended enemy mexes too** (`quota.raider_spot.mex`, shipped 1.0, default 0 = off): the same
   bonus and rules as the scouts', with "another raid group" for the cluster rule. A group's claim is renewed while it
   has a spot and isn't fleeing (on the way, regrouping or fighting there), by spot rather than by leader, so a new
-  leader takes it over once the old leader's claim lapses. Scouts and raid groups spread only among their own kind:
-  a scout and a raid group may go for the same cluster.
+  leader takes it over at once. A group's escape now blocks its spot for 10 s, as a scout's flee does. Scouts and
+  raid groups spread only among their own kind: a scout and a raid group may go for the same cluster.
 
 - **The creep: turrets walk out along our line's chokes, up to just outside the enemy's static range**
   (`turret.creep`, on by default; new `CCreepPlanner`). Our turrets stayed where they were first placed, often far

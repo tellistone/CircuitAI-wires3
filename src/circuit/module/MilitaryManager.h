@@ -231,7 +231,7 @@ public:
 	void HoldScoutSpot(const CCircuitUnit* unit);
 	void ReleaseScoutSpot(const CCircuitUnit* unit);
 	// A raid group keeps its spot's claim fresh while it works it. By spot, not by id: its leader may have changed since
-	// the pick (the old leader's claim lapses after claim_time, then the new leader takes it over)
+	// the pick, and the current one takes the claim over
 	void HoldRaidSpot(const CCircuitUnit* leader, const springai::AIFloat3& spot);
 	// The raid group led by leader no longer heads for its spot (a raid rally joiner): free its claim for others
 	void ReleaseRaidSpot(const CCircuitUnit* leader);
@@ -700,7 +700,6 @@ private:
 		std::vector<int> blocked;  // per spot: frame until which nobody of this kind picks it
 		void Clear() { frame.clear(); unitId.clear(); blocked.clear(); }
 		void Resize(size_t n) { frame.resize(n, -1); unitId.resize(n, -1); blocked.resize(n, -1); }
-		bool IsLive(unsigned i, int now, int claimTime) const { return (frame[i] >= 0) && (now < frame[i] + claimTime); }
 	} scoutClaims, raidClaims;
 	// quota.scout_spot / raider_spot: spot scoring
 	struct SSpotCfg {
