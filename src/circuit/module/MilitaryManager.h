@@ -492,7 +492,7 @@ public:
 		float coreShareOn;  // escort mode on at or above this share of the group's power held by its core
 		float coreShareOff;  // and off below this
 		int modeHoldFrames;  // a mode change must hold this long
-		float speedMin;  // a group with a core takes support units at least this x its core's slowest speed
+		float speedMin;  // support units prefer hosts whose core's slowest speed is at most 1 / this x theirs
 	};
 	const SEscortCfg& GetEscortCfg() const { return escortCfg; }
 	// quota.attack_merge: how attack groups join, absorb and reinforce each other

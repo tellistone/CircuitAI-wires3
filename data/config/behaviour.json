@@ -107,11 +107,12 @@
 		"seen_sec": 20  // enemies count only if seen this recently; a rally ends when no blob has been found for this long
 	}
          },
-	// Support units (role or "support" attribute). Armed ones are attack units like any other (gathering, reinforce, merge, rally); in a group whose core (its non-support units) holds
+	// Support units (role or "support" attribute). They always attach to a group, whatever the speeds (the group walks at its slowest unit's pace). Armed ones are attack units like any
+	// other (gathering, reinforce, merge, rally; the speed ratio is skipped when either side has only support units); in a group whose core (its non-support units) holds
 	// enough of its power they are escorts: they walk in its formation, but in a fight each fires only from its stay disc round the core's centre, at the nearest threat to the core it
 	// can hit from there (an armed mobile enemy within its weapon range + 2 s of its travel of a core unit; artillery skips enemies within its area of effect of a core unit),
-	// else the group's target, else it holds in the disc. Unarmed ones (shields) walk to the attack group with the most power per shield already there that they can keep up with
-	// (else a gathering group, else any attack group, which then slows down for them), along a threat-capped route; in the group they take a formation slot and stand round the
+	// else the group's target, else it holds in the disc. Unarmed ones (shields) walk to the attack group they keep up with that has the most power per shield already there, nearer
+	// ones first (else a gathering group, else any attack or gathering group, which then slows down for them), along a threat-capped route; in the group they take a formation slot and stand round the
 	// core's centre in fights, never with attack orders. A group left with only unarmed units sends them back to find another
 	"escort": {
 		"stay_radius": 250,  // elmos: an escort's stay disc round the centre of the core units (those within the group radius of the leader)
@@ -120,7 +121,7 @@
 		"core_share_on": 0.35,  // escort mode on once the core holds this share of the group's power (def power, as quota.attack counts it)
 		"core_share_off": 0.2,  // and off below this (at most core_share_on); a group with no core is never in escort mode
 		"mode_hold_sec": 10,  // a mode change must be called for this long first (no core: off at once)
-		"speed_min": 0.75  // a group with a core only takes in armed support units (joins, merges, reinforce, rally, gathering) at this x its slowest core unit's speed or faster, so it walks at most 1 - this slower for them (0.75: a quarter); shields prefer such hosts too; 0 = off
+		"speed_min": 0.75  // a preference, never a join rule: support units on their own (a new one, a group of only support units, a shield) pick first a group whose slowest core unit they walk at least this x as fast as, so it slows down by at most 1 - this for them (0.75: a quarter); 0 = any group
 	},
 	"thr_mod": {
 		"base_bonus": 2.0,

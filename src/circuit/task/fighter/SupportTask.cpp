@@ -31,8 +31,10 @@ static constexpr int WALK_UPDATES = 4;
 // The route's threat cap: this x the host's power (it walks alone, towards where the host fights), never below the
 // threat where it stands
 static constexpr float WALK_THREAT_MOD = 0.5f;
-// Another host replaces the current one only with this much more power per shield
+// Another host replaces the current one only with this much more score (power per shield, by travel time)
 static constexpr float HOST_SWITCH_MOD = 1.25f;
+// A host this many seconds of travel away scores half as much as one beside it
+static constexpr float HOST_TRAVEL_SEC = 60.f;
 
 CSupportTask::CSupportTask(ITaskManager* mgr)
 		: IFighterTask(mgr, FightType::SUPPORT, 1.f)
@@ -99,9 +101,11 @@ ISquadTask* CSupportTask::FindHost(CCircuitUnit* unit, int frame) const
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
 	const float speedMin = militaryMgr->GetEscortCfg().speedMin;
-	const float speedRatio = militaryMgr->GetAttackMerge().speedRatio;
 	const float speed = unit->GetCircuitDef()->GetSpeed();
-	const float none = std::numeric_limits<float>::max();
+	const float travelMod = 1.f / (std::max(speed, 1.f) * HOST_TRAVEL_SEC);
+	const AIFloat3& pos = unit->GetPos(frame);
+	ISquadTask::SSpeedMix ours;  // shields aren't in SSpeedMix (Add): its own speed as a support unit's
+	ours.support = speed;
 	// Shields walking to each group, this one left out
 	std::map<const ISquadTask*, int> walkers;
 	for (IFighterTask* t : militaryMgr->GetTasks(FightType::SUPPORT)) {
@@ -110,22 +114,16 @@ ISquadTask* CSupportTask::FindHost(CCircuitUnit* unit, int frame) const
 			++walkers[walker->GetHost()];
 		}
 	}
-	// Power per shield already there: power / (1 + shields), for groups with an armed unit that it may join.
-	// isStrict: it keeps up (attack_merge.speed_ratio with the leader, escort.speed_min with the core's slowest unit);
-	// else only the same kind of mover
-	auto scoreOf = [&](ISquadTask* squad, bool isStrict) {
+	// Power per shield already there: power / (1 + shields), for groups with an armed unit that it may join (same kind
+	// of mover, whatever the speeds), over 1 + its travel time there in HOST_TRAVEL_SEC: a group near base that has no
+	// shield beats the main army across the map. isKeepUp: only groups it keeps up with (escort.speed_min)
+	auto scoreOf = [&](ISquadTask* squad, bool isKeepUp) {
 		CCircuitUnit* leader = squad->GetLeader();
 		if ((leader == nullptr) || squad->IsDead()
-			|| !terrainMgr->CanMoveToPos(unit->GetArea(), leader->GetPos(frame)))
+			|| !terrainMgr->CanMoveToPos(unit->GetArea(), leader->GetPos(frame))
+			|| !squad->IsMoveCompatible(unit, std::numeric_limits<float>::max())
+			|| (isKeepUp && !squad->IsKeptUpBy(ours, speedMin)))
 		{
-			return -1.f;
-		}
-		if (isStrict) {
-			const float core = squad->GetSpeedMix().core;
-			if (!squad->IsMoveCompatible(unit, speedRatio) || ((core != none) && (speed < speedMin * core))) {
-				return -1.f;
-			}
-		} else if (!squad->IsMoveCompatible(unit, none)) {
 			return -1.f;
 		}
 		bool isArmed = false;
@@ -143,12 +141,14 @@ ISquadTask* CSupportTask::FindHost(CCircuitUnit* unit, int frame) const
 		}
 		auto it = walkers.find(squad);
 		shields += (it != walkers.end()) ? it->second : 0;
-		return squad->GetAttackPower() / (1 + shields);
+		const float travel = pos.distance2D(leader->GetPos(frame)) * travelMod;
+		return squad->GetAttackPower() / ((1 + shields) * (1.f + travel));
 	};
-	// Attack groups it keeps up with, else gathering groups it keeps up with. Else any attack group of its kind of
-	// mover: a slow shield (Funnelweb) slows that group down rather than idle at base all game
+	// Attack groups it keeps up with, else gathering groups it keeps up with. Else any attack group, else any gathering
+	// group of its kind of mover: it always attaches, a slow shield (Funnelweb) slows that group down rather than idle at
+	// base all game
 	const std::pair<FightType, bool> passes[] = {{FightType::ATTACK, true}, {FightType::DEFEND, true},
-			{FightType::ATTACK, false}};
+			{FightType::ATTACK, false}, {FightType::DEFEND, false}};
 	for (const auto& pass : passes) {
 		ISquadTask* best = nullptr;
 		float bestScore = 0.f;

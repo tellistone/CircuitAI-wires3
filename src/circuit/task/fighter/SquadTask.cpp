@@ -273,15 +273,13 @@ void ISquadTask::SSpeedMix::Add(const CCircuitDef* cdef)
 	slowest = std::min(slowest, cdef->GetSpeed());
 }
 
-bool ISquadTask::IsSpeedMixOk(const SSpeedMix& joiner, float speedMin) const
+bool ISquadTask::IsKeptUpBy(const SSpeedMix& joiner, float speedMin) const
 {
-	// quota.escort.speed_min: armed support units in a group with a core are at least speedMin x its slowest core unit's
-	// speed (the formation walks at its slowest unit's pace, so the group slows down by at most 1 - speedMin)
-	const SSpeedMix ours = GetSpeedMix();
-	const float core = std::min(ours.core, joiner.core);
-	const float support = std::min(ours.support, joiner.support);
+	// quota.escort.speed_min: the formation walks at its slowest unit's pace, so a host the joiner's support units keep
+	// up with slows down by at most 1 - speedMin
+	const float core = GetSpeedMix().core;
 	const float none = std::numeric_limits<float>::max();
-	return (core == none) || (support == none) || (support >= speedMin * core);
+	return (core == none) || (joiner.support == none) || (joiner.support >= speedMin * core);
 }
 
 bool ISquadTask::IsMergeSafe() const

@@ -237,11 +237,14 @@ bool CAttackTask::CanAssignTo(CCircuitUnit* unit) const
 
 bool CAttackTask::IsCompatible(CCircuitUnit* unit) const
 {
-	// quota.attack_merge.speed_ratio; quota.escort.speed_min: armed support units at least speed_min x the core's
-	// slowest speed (a unit leading a group joins with that whole group: GetSpeedMix)
-	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	return IsMoveCompatible(unit, militaryMgr->GetAttackMerge().speedRatio)
-		&& IsSpeedMixOk(GetSpeedMix(unit), militaryMgr->GetEscortCfg().speedMin);
+	// quota.attack_merge.speed_ratio between the leaders. Support units always attach to a group, whatever the speeds:
+	// no speed rule when either side has only support units (a unit leading a group joins with that whole group:
+	// GetSpeedMix). The group then walks at its slowest unit's pace; FindReinforceSquad prefers hosts they keep up with
+	if (IsMoveCompatible(unit, GetMilitaryMgr()->GetAttackMerge().speedRatio)) {
+		return true;
+	}
+	return !(GetSpeedMix().HasCore() && GetSpeedMix(unit).HasCore())
+		&& IsMoveCompatible(unit, std::numeric_limits<float>::max());
 }
 
 void CAttackTask::AssignTo(CCircuitUnit* unit)
@@ -1092,9 +1095,9 @@ void CAttackTask::AbsorbWeakerTasks()
 {
 	// Every quota.attack_merge.absorb_interval (8) updates, a group pulls in groups near it: an army those under
 	// quota.attack, any group those walking to it (below).
-	// Same rules as joining (CanAssignTo: speed ratio, leaders within the merge distance, movement type,
-	// never a worse mover than our leader; reachable; IsSafeMergeLine incl. its travel limit), seen from the
-	// small group's side.
+	// Same rules as joining (CanAssignTo: speed ratio unless a side has only support units, leaders within the merge
+	// distance, movement type, never a worse mover than our leader; reachable; IsSafeMergeLine incl. its travel limit),
+	// seen from the small group's side.
 	// The rally host (quota.attack_merge.rally) absorbs any compatible group, armies too, whatever its own size
 	// A rally host checks every 2 updates, so a joiner that arrives merges at once (the host doesn't wait for it)
 	// Any group walking to us (reinforce: ours) is absorbed too, whatever either size: a walker that kept us as its
@@ -1129,7 +1132,7 @@ void CAttackTask::AbsorbWeakerTasks()
 
 	// Merge after the loop: aborting a task removes it from the set being iterated
 	for (CAttackTask* candy : weaklings) {
-		Merge(candy);  // CanAssignTo ruled out units that would take the lead
+		Merge(candy);  // CanAssignTo ruled out worse movers; a core unit takes the lead from support units (FindLeader)
 		candy->units.clear();
 		manager->AbortTask(candy);
 	}

@@ -1626,7 +1626,12 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float powe
 	if (host != nullptr) {
 		return host;
 	}
+	// Support units always attach, whatever the speeds (CAttackTask::IsCompatible). A group of only support units (or
+	// a new one) prefers the nearest group whose core it keeps up with (quota.escort.speed_min), else the nearest one
+	const ISquadTask::SSpeedMix mix = ISquadTask::GetSpeedMix(unit);
+	const bool isSupportOnly = !mix.HasCore();
 	CAttackTask* best = nullptr;
+	bool isBestKeptUp = false;
 	float minSqDist = std::numeric_limits<float>::max();
 	for (IFighterTask* t : GetTasks(IFighterTask::FightType::ATTACK)) {
 		CAttackTask* squad = static_cast<CAttackTask*>(t);
@@ -1637,8 +1642,11 @@ CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float powe
 			continue;
 		}
 		const float sqDist = pos.SqDistance2D(squadLeader->GetPos(frame));
-		if ((sqDist < minSqDist) && CanReinforce(squad, unit)) {
+		const bool isKeptUp = !isSupportOnly || squad->IsKeptUpBy(mix, escortCfg.speedMin);
+		const bool isBetter = (isKeptUp == isBestKeptUp) ? (sqDist < minSqDist) : isKeptUp;
+		if (isBetter && CanReinforce(squad, unit)) {
 			minSqDist = sqDist;
+			isBestKeptUp = isKeptUp;
 			best = squad;
 		}
 	}
@@ -4235,8 +4243,9 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		task = EnqueueAntiHeavy(unit);
 	} else if (cdef->IsRoleSupport() && !isAhArty) {
 		// Support (role or attribute), whatever the main role: an armed one is an attack unit (gathering, reinforce,
-		// merge, rally), an escort in groups led by a core (CAttackTask, quota.escort). An unarmed one (shields) walks
-		// to a group it can keep up with (CSupportTask) and never gets attack orders. Neither takes guard slots
+		// merge, rally; it joins whatever the speeds), an escort in groups led by a core (CAttackTask, quota.escort).
+		// An unarmed one (shields) walks to a group, one it keeps up with first (CSupportTask), and never gets attack
+		// orders. Neither takes guard slots
 		task = IFighterTask::IsArmedUnit(cdef) ? EnqueueAttackBound(unit) : EnqueueTask(IFighterTask::FightType::SUPPORT);
 	} else {
 		// Any configured role may take a free guard slot
