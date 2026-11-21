@@ -486,8 +486,11 @@ cooldown whatever the result.
 The budget is the AI's turret account (`porcupine.budget` in build_chain.json), which porc-mode towers spend from
 too. It is paid in as the metal comes: `share` x the average income x min(ms_pull, 1), held up to `bank_sec` seconds
 of that (or the dearest tower a waiting spender asked for, whichever is more). An order needs the dearest light def's
-cost in it and takes the turret's cost out. Cornered, base timetable, radar guard, mex escort and hub towers are
-charged too, but never wait, so they can take it below zero; preventive towers are free. A finished turret of ours
+cost in it and takes the turret's cost out. The creep, mex escort, base timetable and build chain hub turrets wait
+for it too: a hub turret out of its chain, queued once covered while its building stands. A base or hub turret waits
+on its own, never holding up another entry, and for `wait_sec` (120 s) at most, then goes anyway. Cornered and radar
+guard towers are charged but never wait, so they can take it below zero; preventive and anti-air-only towers are
+free. The account starts at `start` (90), so the first base Lotus goes at 10 s. A finished turret of ours
 that dies to a known mobile killer that doesn't outrange it pays `loss_refund` (2) x its cost back, past the cap if
 need be. So at 0.1, ms_pull 1 and 10 m/s it fills at 1 m/s: a Lotus about every 90 s if nothing else spends.
 
