@@ -386,6 +386,19 @@
 	"time": 10.0  // seconds stuck before the self-destruct order
 },
 
+// "attribute": ["plant"] (per unit; Crabe) = never moves (no move, fight, jump or gather orders, retreat included)
+// while an enemy in LOS that it can hit is within its weapon range and is its target or armed (a mex, wall or nanoframe
+// doesn't pin it), or a "threats" enemy that can fight, seen within keep_sec, has it within its weapon range from
+// where it was last seen. Ranges reach the other unit's edge. Planting stops the unit and sets hold position; its
+// attacks become ZK set-target (never moves). Squads don't release a planted unit as stuck. Checked every 8 frames
+"plant": {
+	// Enemy types that plant a unit in their range: the anti_heavy types and Phantom (cloaksnipe is not anti_heavy)
+	"threats": ["cloaksnipe", "hoverarty", "striderarty", "striderscorpion", "striderantiheavy", "spiderantiheavy", "jumpbomb",
+		"gunshipemp", "gunshipassault", "gunshipkrow", "bomberdisarm"],
+	"keep_sec": 10.0,  // a threat counts this long after it was last seen (a cloaked Phantom between shots), at its last known position
+	"hold_sec": 2.0  // a planted unit stays this long after the reason last held
+},
+
 // Anti-heavy squads (main role anti_heavy: Lance, Ultimatum, Scorpion, Merlin, ...)
 "antiheavy": {
 	"artillery_scoot": 200.0,  // as_artillery units: after each shot (its burst over) step this many elmos back, away from the target, threatened or not (straight back, else up to 90 degrees to a side: the first spot no hotter than where it fired), hold there, and turn back in time to be in place when the weapon is ready. No scoot when there isn't time to get there and back, or no spot back is that safe. 0 or missing = off (it then steps back only while threatened)
@@ -836,7 +849,7 @@
 	"spidercrabe": {
 		// threat 32.83 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "disarm_target", "turtle"],
-		"attribute": ["siege", "ret_fight", "prio_repair"],
+		"attribute": ["siege", "ret_fight", "prio_repair", "plant"],
 		"retreat": 0.5,
 		"thr_mod": 2.0,
 		"pwr_mod": 2.0,

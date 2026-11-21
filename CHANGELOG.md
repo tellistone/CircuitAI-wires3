@@ -272,6 +272,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **`plant` unit attribute: stay put next to targets and anti-heavies** (Crabe has it). A unit with it never moves
+  (move, fight, jump, gather and orbit orders are dropped, retreat included) while an enemy in LOS that it can hit is
+  within its weapon range and is its target or armed (threat, not being built, paralysed or disarmed: a mex, wall or
+  nanoframe doesn't pin it), or an enemy of a `plant.threats` type (new: the anti_heavy types and Phantom) that can
+  fight, seen within `plant.keep_sec` (new, 10 s; a cloaked Phantom between shots), has it within its weapon range
+  from where it was last seen. Ranges reach the other unit's edge (its radius added). On planting it gets a Stop and
+  hold position, and its task orders it again: an attack on an enemy becomes ZK's set-target, which never moves, so
+  the AI still picks what it shoots (Crabe curls up). Squads don't release a planted unit as stuck (regroup and line
+  formation watchdogs). It unplants `plant.hold_sec` (new, 2 s) after the reason last held: the type's move state
+  comes back, the set target is cleared and its task re-sends its orders at once. Checked every 8 frames.
+
 - **A dedicated AA turret picker with its own budget** (`aa_turret`, new block in behaviour.json, on). While on it is
   the only route that queues anti-air turrets: the porcupine lists' AA slots, the base timetable's AA entries and the
   build chain hubs' AA steps are skipped, and a flier sighting no longer gets a `prevent_air` Picket. Every 10 s it works out a budget: target =
@@ -289,6 +300,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   on arrival if ground threat reached the spot; a job dropped before it began masks its spot. It never cancels anything, so the AA follows the peak of enemy air. No
   enemy air, no AA turrets. Logs: `AA BUDGET` once a minute, `AA TURRET` per decision. A missing block (the
   `previous` profile) = off, and the old AA routes as they were.
+
 - **Factories order some units in batches at higher income** (`batch_curve` per unit in `behaviour`, new). Once a
   factory rolls a type with a curve, it orders it batch-size times in a row: size from `[[<income>, <size>], ...]`,
   interpolated, rounded, at least 1, income as `income_tier` reads it. The size is fixed when the batch starts; the

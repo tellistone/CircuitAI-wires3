@@ -22,6 +22,7 @@
 #include <memory>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Json {
 class Value;
@@ -30,6 +31,7 @@ class Value;
 namespace circuit {
 
 class CGameTask;
+class CEnemyUnit;
 class CBDefenceTask;
 class IBuilderTask;
 class CRetreatTask;
@@ -622,6 +624,8 @@ private:
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
+	void UpdatePlant();  // "plant" attribute: plant (Stop, hold position) and unplant units, every 8 frames
+	bool IsPlantReason(CCircuitUnit* unit, int frame);
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
 	void UpdateAllyResponse();
@@ -855,6 +859,12 @@ private:
 	int resignSince = -1;  // first frame of the current "reads lost" run; -1 = doesn't read lost
 	int drownedFrames;  // "drowned".time in frames; < 0 = off
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
+	struct SPlantCfg {
+		std::unordered_set<CCircuitDef::Id> threats;  // "plant".threats: enemy types that plant a unit in their range
+		int keepFrames;  // "plant".keep_sec in frames: a threat counts this long after it was last seen
+		int holdFrames;  // "plant".hold_sec in frames: a planted unit stays this long after the reason last held
+	} plantCfg;
+	std::vector<CEnemyUnit*> plantThreats;  // UpdatePlant: the threats that count now
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at

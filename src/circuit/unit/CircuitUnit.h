@@ -103,6 +103,10 @@ public:
 	// Set by the military manager: units captured by this one are worth too much to risk it ("capture_hide")
 	void SetCaptureHide(bool value) { isCaptureHide = value; }
 	bool IsCaptureHide() const { return isCaptureHide; }
+	// Set by the military manager ("plant" attribute): while planted, move, fight, jump and gather orders are dropped
+	void SetPlantFrame(int frame) { plantFrame = frame; }
+	int GetPlantFrame() const { return plantFrame; }
+	bool IsPlanted() const { return plantFrame >= 0; }
 	bool IsWeaponReady(int frame);
 	// Main weapon at least this much (0..1] reloaded, out of its current reload time; 1 = IsWeaponReady.
 	// No weapon: false. Planes: IsWeaponReady (ammo)
@@ -122,6 +126,7 @@ public:
 
 	void CmdRemove(std::vector<float>&& params, short options = 0);
 	void CmdMoveTo(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
+	void CmdFightTo(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
 	void CmdJumpTo(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
 	// Melee units jump there when the jump is ready and pos is farther than minJump, else (and all others) move.
 	// true: jumped. Must be called inside TRY_UNIT
@@ -129,6 +134,8 @@ public:
 	void CmdAttackGround(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
 	void CmdWantedSpeed(float speed = NO_SPEED_LIMIT);
 	void CmdSetTarget(CEnemyInfo* enemy);
+	void CmdPlantTarget(CEnemyInfo* enemy);  // planted: ZK set-target (never moves), once per enemy
+	void CmdCancelTarget();  // clears what CmdPlantTarget set
 	void CmdCloak(bool state);
 	void CmdFireAtRadar(bool state);
 	void CmdFindPad(int timeout = INT_MAX);
@@ -184,6 +191,8 @@ private:
 	int ammoFrame;
 	int reloadCheckFrame;  // frame reloadFrame was read
 	int reloadFrame;  // main weapon's, cached for a frame (GetReloadFrame)
+	int plantFrame;  // "plant" attribute: last frame its reason held; -1 = not planted
+	int plantTargetId;  // the enemy its set-target (CmdPlantTarget) was last sent on; -1 = none
 
 	// ---- Bit fields ---- BEGIN
 	bool isDead : 1;

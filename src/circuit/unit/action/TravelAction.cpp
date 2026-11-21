@@ -134,7 +134,7 @@ bool ITravelAction::TryFormationOrder(CCircuitAI* circuit)
 	TRY_UNIT(circuit, unit,
 		if (isMove) {
 			if (IsEqual(Mask::FIGHT)) {
-				unit->GetUnit()->Fight(order.pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+				unit->CmdFightTo(order.pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
 			} else {
 				unit->CmdMoveTo(order.pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
 			}
