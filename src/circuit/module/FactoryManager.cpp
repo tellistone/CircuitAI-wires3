@@ -457,6 +457,13 @@ void CFactoryManager::ReadConfig()
 		}
 
 		cdef->SetFormationRow(std::max(-1, behaviour.get("formation_row", -1).asInt()));
+
+		// batch_curve: [[income, batch size], ...]; the factory queues that many in a row once it rolls this type
+		std::vector<std::pair<float, float>> batchCurve;
+		CMilitaryManager::ReadCurve(circuit, behaviour["batch_curve"], defName + " batch_curve", "income", batchCurve);
+		if (!batchCurve.empty()) {
+			batchCurves[cdef->GetId()] = batchCurve;
+		}
 		cdef->SetIgnore(behaviour.get("ignore", cdef->IsIgnore()).asBool());
 	}
 
@@ -1232,6 +1239,32 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 		return EnqueueTask(priority, bd, pos, CRecruitTask::RecruitType::FIREPOWER, radius);
 	};
 
+	// batch_curve: a rolled type with a curve is ordered batch-size times in a row. The size is read from the income
+	// once, at the roll, and the rest of the batch keeps it (no flip-flop as income moves around a curve point). The
+	// rest skips the rolls below, one order each time this factory is free; it ends early if the type can't be built
+	auto itF = std::find_if(factories.begin(), factories.end(), [unit](const SFactory& f) { return f.unit == unit; });
+	SFactory* fac = (itF != factories.end()) ? &*itF : nullptr;
+	if ((fac != nullptr) && (fac->batchLeft > 0)) {
+		--fac->batchLeft;
+		if (isBuildable(fac->batchDef)) {
+			return enqueue(fac->batchDef, fac->batchPriority);
+		}
+		fac->batchLeft = 0;
+	}
+	auto recruit = [&](CCircuitDef* bd, CRecruitTask::Priority priority) {
+		auto itB = batchCurves.find(bd->GetId());
+		if ((fac != nullptr) && (itB != batchCurves.end())) {
+			const int size = std::max(1, (int)std::round(utils::eval_curve(itB->second, metalIncome)));
+			fac->batchDef = bd;
+			fac->batchLeft = size - 1;
+			fac->batchPriority = priority;
+			if (size > 1) {
+				circuit->LOG("FACTORY: batch of %i %s at income %.1f", size, bd->GetDef()->GetName(), metalIncome);
+			}
+		}
+		return enqueue(bd, priority);
+	};
+
 	// quota.raider floor first: while we have fewer raider units (army plus queued) than the quota, build one of
 	// this factory's raiders, picked by its tier weights
 	if (militaryMgr->IsRaiderQuotaOn()) {
@@ -1255,7 +1288,7 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 				raidDef = candidates.back().first;
 			}
 			candidates.clear();
-			return enqueue(raidDef, CRecruitTask::Priority::NORMAL);
+			return recruit(raidDef, CRecruitTask::Priority::NORMAL);
 		}
 	}
 
@@ -1298,7 +1331,7 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 	candidates.clear();
 
 	if ((buildDef != nullptr) && buildDef->IsAvailable(frame)) {
-		CRecruitTask* task = enqueue(buildDef, isResponse ? CRecruitTask::Priority::HIGH : CRecruitTask::Priority::NORMAL);
+		CRecruitTask* task = recruit(buildDef, isResponse ? CRecruitTask::Priority::HIGH : CRecruitTask::Priority::NORMAL);
 		if ((task != nullptr) && (buildDef->GetMainRole() == ROLE_TYPE(BUILDER))) {
 			CountBuilder(BuilderWhy::ROLL);
 		}

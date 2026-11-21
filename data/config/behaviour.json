@@ -435,6 +435,10 @@
 },
 
 "behaviour": {
+	// "batch_curve": [[<income>, <batch size>], ...] = once a factory rolls this type it orders it batch-size times in
+	// a row, one order each time the factory is free (builders and other queued jobs can still come between). Size is
+	// interpolated between points, flat past the ends, rounded; income is the one factory income_tier reads. The size
+	// is fixed when the batch starts; the batch ends early if the type can't be built. Missing = one at a time
 	// factorycloak
 	"cloakcon": {
 		// threat 0 (unarmed: no influence, never counts toward safe)
@@ -500,7 +504,8 @@
 	        "target_dist_mod": 1.5,
 		"retreat": 0.1,
 		"pwr_mod": 0.9,
-		"thr_mod": 0.75
+		"thr_mod": 0.75,
+		"batch_curve": [[24, 1], [60, 8]]  // income < 24: one at a time; 60+: batches of 8
 	},
 	"cloakheavyraid": {
 		// threat 8.51 at full health (raw, before pwr_mod/thr_mod)
@@ -829,7 +834,8 @@
 	        "target_dist_mod": 1.5,
 		"retreat": 0.01,
 		"pwr_mod": 0.9,
-		"thr_mod": 0.8
+		"thr_mod": 0.8,
+		"batch_curve": [[24, 1], [60, 8]]  // income < 24: one at a time; 60+: batches of 8
 	},
 	"shieldskirm": {
 		// threat 5.21 at full health (raw, before pwr_mod/thr_mod)
@@ -920,7 +926,8 @@
 		"attribute": ["melee", "ret_fight"],
 		"retreat": 0.1,
 		"pwr_mod": 1.0,
-		"thr_mod": 0.8
+		"thr_mod": 0.8,
+		"batch_curve": [[24, 1], [60, 8]]  // income < 24: one at a time; 60+: batches of 8
 	},
 	"vehsupport": {
 		// threat 3.27 at full health (raw, before pwr_mod/thr_mod)
@@ -1084,7 +1091,8 @@
 	        "target_dist_mod": 2.0,
 		"attribute": ["scout"],		
 		"pwr_mod": 0.9,
-		"thr_mod": 0.8
+		"thr_mod": 0.8,
+		"batch_curve": [[24, 1], [60, 8]]  // income < 24: one at a time; 60+: batches of 8
 	},
 	"hoverheavyraid": {
 		// threat 7.24 at full health (raw, before pwr_mod/thr_mod)
