@@ -460,8 +460,8 @@ float CFGuardTask::GetExcludedInflAt(CCircuitUnit* vip, const AIFloat3& pos) con
 		for (CCircuitUnit* unit : task->GetAssignees()) {
 			exclude(unit);
 		}
-		// A support unit (role or "support" attribute) is alone in its task but tags along with the nearest
-		// attack or defend squad, which it picks again on every update: those squads are its squadmates
+		// An unarmed support unit walking to a group (CSupportTask) is alone in its task: the attack and defend
+		// squads it walks to are its squadmates. Armed ones (and unarmed ones that arrived) are members of a squad
 		if (static_cast<IFighterTask*>(task)->GetFightType() == FightType::SUPPORT) {
 			for (FightType ft : {FightType::ATTACK, FightType::DEFEND}) {
 				for (IFighterTask* t : militaryMgr->GetTasks(ft)) {

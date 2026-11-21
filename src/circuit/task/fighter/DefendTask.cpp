@@ -17,7 +17,6 @@
 #include "terrain/path/QueryPathMulti.h"
 #include "unit/action/FightAction.h"
 #include "unit/action/MoveAction.h"
-#include "unit/action/SupportAction.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
@@ -57,10 +56,6 @@ void CDefendTask::AssignTo(CCircuitUnit* unit)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	attackCost += cdef->GetCostM();
 	highestRange = std::max(highestRange, cdef->GetLosRadius());
-
-	if (cdef->IsRoleSupport() && (leader != unit)) {
-		unit->PushBack(new CSupportAction(unit));
-	}
 
 	int squareSize = manager->GetCircuit()->GetPathfinder()->GetSquareSize();
 	ITravelAction* travelAction;
