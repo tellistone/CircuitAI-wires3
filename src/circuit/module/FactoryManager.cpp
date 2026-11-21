@@ -1241,36 +1241,26 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 
 	// batch_curve: a rolled type with a curve is ordered batch-size times in a row. The size is read from the income
 	// once, at the roll, and the rest of the batch keeps it (no flip-flop as income moves around a curve point). The
-	// rest skips the rolls below, one order each time this factory is free, at NORMAL priority; it ends early if the
-	// type can't be built
+	// rest skips the rolls below, one order each time this factory is free; it ends early if the type can't be built
 	auto itF = std::find_if(factories.begin(), factories.end(), [unit](const SFactory& f) { return f.unit == unit; });
 	SFactory* fac = (itF != factories.end()) ? &*itF : nullptr;
 	if ((fac != nullptr) && (fac->batchLeft > 0)) {
 		--fac->batchLeft;
 		if (isBuildable(fac->batchDef)) {
-			return enqueue(fac->batchDef, CRecruitTask::Priority::NORMAL);
+			return enqueue(fac->batchDef, fac->batchPriority);
 		}
 		fac->batchLeft = 0;
 	}
-	auto batchSize = [&](CCircuitDef* bd) {  // 1 = no curve
-		auto it = batchCurves.find(bd->GetId());
-		return (it == batchCurves.end()) ? 1 : std::max(1, (int)std::round(utils::eval_curve(it->second, metalIncome)));
-	};
-	// A type with batches of n rolls at 1/n of its weight: the unit mix by count stays the weights', only grouped
-	auto roll = [&]() {
-		float magnitude = 0.f;
-		for (auto& c : candidates) {
-			c.second /= batchSize(c.first);
-			magnitude += c.second;
-		}
-		return RollCandidate(candidates, magnitude);
-	};
 	auto recruit = [&](CCircuitDef* bd, CRecruitTask::Priority priority) {
-		const int size = batchSize(bd);
-		if ((fac != nullptr) && (size > 1)) {
+		auto itB = batchCurves.find(bd->GetId());
+		if ((fac != nullptr) && (itB != batchCurves.end())) {
+			const int size = std::max(1, (int)std::round(utils::eval_curve(itB->second, metalIncome)));
 			fac->batchDef = bd;
 			fac->batchLeft = size - 1;
-			circuit->LOG("FACTORY: batch of %i %s at income %.1f", size, bd->GetDef()->GetName(), metalIncome);
+			fac->batchPriority = priority;
+			if (size > 1) {
+				circuit->LOG("FACTORY: batch of %i %s at income %.1f", size, bd->GetDef()->GetName(), metalIncome);
+			}
 		}
 		return enqueue(bd, priority);
 	};
@@ -1284,14 +1274,16 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 				++raiders;
 			}
 		}
+		float magnitude = 0.f;
 		for (unsigned i = 0; i < facDef.buildDefs.size(); ++i) {
 			CCircuitDef* bd = facDef.buildDefs[i];
 			if (militaryMgr->IsRaider(bd) && (raiders < militaryMgr->GetMinRaiders(bd)) && isBuildable(bd)) {
 				candidates.push_back(std::make_pair(bd, probs[i]));
+				magnitude += probs[i];
 			}
 		}
 		if (!candidates.empty()) {
-			CCircuitDef* raidDef = roll();
+			CCircuitDef* raidDef = RollCandidate(candidates, magnitude);
 			if (raidDef == nullptr) {
 				raidDef = candidates.back().first;
 			}
@@ -1335,7 +1327,7 @@ CRecruitTask* CFactoryManager::UpdateFirePower(CCircuitUnit* unit)
 		}
 	}
 
-	CCircuitDef* buildDef = roll();
+	CCircuitDef* buildDef = RollCandidate(candidates, magnitude);
 	candidates.clear();
 
 	if ((buildDef != nullptr) && buildDef->IsAvailable(frame)) {

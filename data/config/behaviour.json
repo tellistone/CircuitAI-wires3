@@ -438,8 +438,7 @@
 	// "batch_curve": [[<income>, <batch size>], ...] = once a factory rolls this type it orders it batch-size times in
 	// a row, one order each time the factory is free (builders and other queued jobs can still come between). Size is
 	// interpolated between points, flat past the ends, rounded; income is the one factory income_tier reads. The size
-	// is fixed when the batch starts; the batch ends early if the type can't be built. A batched type rolls at
-	// weight / batch size, so the unit mix by count stays the tier and response weights'. Missing = one at a time
+	// is fixed when the batch starts; the batch ends early if the type can't be built. Missing = one at a time
 	// factorycloak
 	"cloakcon": {
 		// threat 0 (unarmed: no influence, never counts toward safe)
