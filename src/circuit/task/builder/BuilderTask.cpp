@@ -824,6 +824,12 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 					pos = terrainMgr->GetBuildPosition(bdef, pos);
 				}
 
+				// turret.crowd_count: a light tower among enough light turrets is left out of the chain
+				if ((bi.buildType == IBuilderTask::BuildType::DEFENCE)
+					&& circuit->GetMilitaryManager()->RefuseCrowdedLight(buildDef, pos, "hub"))
+				{
+					continue;
+				}
 				IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::LOW, buildDef, pos, bi.buildType, 0.f,
 						parent == nullptr, 0);
 				if (isScored) {  // its site on the blocking map now, as the picker's: the next tower's spot moves on

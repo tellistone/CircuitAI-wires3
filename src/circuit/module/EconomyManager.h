@@ -109,6 +109,11 @@ public:
 	int GetBuildDelay() const { return buildDelay; }
 
 	bool IsAllyOpenSpot(int spotId) const;
+	// Metal spots an enemy mex we know of stands on (seen; a building keeps its last seen position out of sight)
+	std::set<int> GetEnemyMexSpots() const;
+	bool IsEnemyMexAt(const springai::AIFloat3& pos) const;  // on pos's spot
+	// A friendly armed static of any ally (finished or a nanoframe) already reaches pos: no escort needed there
+	bool IsEnemyMexCovered(const springai::AIFloat3& pos) const;
 	bool IsOpenSpot(int spotId) const;
 	void SetOpenSpot(int spotId, bool value);
 	bool IsIgnorePull(const IBuilderTask* task) const;
