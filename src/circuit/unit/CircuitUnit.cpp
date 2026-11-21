@@ -46,6 +46,7 @@ CCircuitUnit::CCircuitUnit(CCircuitAI* circuit, Id unitId, Unit* unit, CCircuitD
 		, ammoFrame(-1)
 		, reloadCheckFrame(-1)
 		, reloadFrame(0)
+		, plantFrame(-1)
 		, isDead(false)
 		, isDisarmed(false)
 		, isWeaponReady(true)
@@ -296,8 +297,19 @@ void CCircuitUnit::CmdRemove(std::vector<float>&& params, short options)
 
 void CCircuitUnit::CmdMoveTo(const AIFloat3& pos, short options, int timeout)
 {
+	if (IsPlanted()) {
+		return;
+	}
 //	unit->MoveTo(pos, options, timeout);
 	unit->ExecuteCustomCommand(CMD_RAW_MOVE, {pos.x, pos.y, pos.z}, options, timeout);
+}
+
+void CCircuitUnit::CmdFightTo(const AIFloat3& pos, short options, int timeout)
+{
+	if (IsPlanted()) {
+		return;
+	}
+	unit->Fight(pos, options, timeout);
 }
 
 bool CCircuitUnit::CmdMoveOrJumpTo(const AIFloat3& pos, int timeout, float minJump)
@@ -314,6 +326,9 @@ bool CCircuitUnit::CmdMoveOrJumpTo(const AIFloat3& pos, int timeout, float minJu
 
 void CCircuitUnit::CmdJumpTo(const AIFloat3& pos, short options, int timeout)
 {
+	if (IsPlanted()) {
+		return;
+	}
 	unit->ExecuteCustomCommand(CMD_JUMP, {pos.x, pos.y, pos.z}, options, timeout);
 }
 
@@ -382,6 +397,9 @@ void CCircuitUnit::CmdTerraform(std::vector<float>&& params)
 void CCircuitUnit::Attack(CEnemyInfo* enemy, int timeout)
 {
 	target = enemy;
+	if (IsPlanted()) {
+		return;  // "plant": no move or fight orders
+	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		const AIFloat3& pos = enemy->GetPos();
 		if (circuitDef->IsAttrMelee()) {
@@ -405,6 +423,9 @@ void CCircuitUnit::Attack(CEnemyInfo* enemy, int tile, int timeout)
 void CCircuitUnit::Attack(const AIFloat3& position, int timeout)
 {
 	const AIFloat3& pos = utils::get_radial_pos(position, SQUARE_SIZE * 8);
+	if (IsPlanted()) {
+		return;  // "plant": no move or fight orders
+	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		if (circuitDef->IsAttrMelee()) {
 			if (CmdMoveOrJumpTo(pos, timeout)) {
@@ -420,6 +441,9 @@ void CCircuitUnit::Attack(const AIFloat3& position, int timeout)
 void CCircuitUnit::Attack(const AIFloat3& position, CEnemyInfo* enemy, int timeout)
 {
 	const AIFloat3& pos = utils::get_radial_pos(position, SQUARE_SIZE * 8);
+	if (IsPlanted()) {
+		return;  // "plant": no move or fight orders
+	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		if (circuitDef->IsAttrMelee()) {
 			if (CmdMoveOrJumpTo(pos, timeout)) {
@@ -446,6 +470,9 @@ void CCircuitUnit::AttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int ti
 {
 	target = enemy;
 	targetTile = tile;
+	if (IsPlanted()) {
+		return;  // "plant": no move or fight orders
+	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		// Move, not Fight: go straight to the firing spot (weapons still shoot what's in range on the way);
 		// melee jumps there when it can and the spot isn't close
@@ -462,6 +489,9 @@ void CCircuitUnit::FightFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int til
 {
 	target = enemy;
 	targetTile = tile;
+	if (IsPlanted()) {
+		return;  // "plant": no move or fight orders
+	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		CmdMoveOrJumpTo(firePos, timeout, SPOT_JUMP_MIN);
 		// Fight at the spot: shoots what comes into range (the set target first), stays put
@@ -476,6 +506,9 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 	target = enemy;
 	targetTile = tile;
 	// Fight to its own spot: stays put but keeps fight behaviours (auto-kiting, skirmishing)
+	if (IsPlanted()) {
+		return;  // "plant": no move or fight orders
+	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		unit->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 		CmdWantedSpeed(NO_SPEED_LIMIT);
@@ -484,6 +517,9 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 
 void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 {
+	if (IsPlanted()) {
+		return;  // "plant": no move or fight orders
+	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		unit->ExecuteCustomCommand(CMD_ORBIT, {(float)target->GetId(), 300.0f}, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 //		unit->Guard(target->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
@@ -494,6 +530,9 @@ void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 void CCircuitUnit::Gather(const AIFloat3& groupPos, int timeout)
 {
 	const AIFloat3& pos = utils::get_radial_pos(groupPos, SQUARE_SIZE * 8);
+	if (IsPlanted()) {
+		return;  // "plant": no move or fight orders
+	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		CmdMoveTo(groupPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 		CmdWantedSpeed(NO_SPEED_LIMIT);

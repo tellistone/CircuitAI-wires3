@@ -264,6 +264,14 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **`plant` unit attribute: stay put next to targets and anti-heavies** (Crabe has it). A unit with it never moves
+  (move, fight, jump, gather and orbit orders are dropped, retreat included) while an enemy it can hit is in LOS and
+  within its weapon range, or an enemy anti_heavy that can fight is in LOS and has it within its weapon range. On
+  planting it gets a Stop and hold position, so it shoots what is in range without walking after it (Crabe curls up).
+  Hysteresis so it doesn't twitch at range edges: once planted it stays while the reason holds within
+  `plant.leave_range` (new, 1.1) x the ranges, and for `plant.hold_sec` (new, 2 s) after the reason last held. On
+  unplanting its move state goes back to the type's and its task re-sends its orders at once. Checked every 8 frames.
+
 - **Factories order some units in batches at higher income** (`batch_curve` per unit in `behaviour`, new). Once a
   factory rolls a type with a curve, it orders it batch-size times in a row: size from `[[<income>, <size>], ...]`,
   interpolated, rounded, at least 1, income as `income_tier` reads it. The size is fixed when the batch starts; the

@@ -341,6 +341,15 @@
 	"time": 10.0  // seconds stuck before the self-destruct order
 },
 
+// "attribute": ["plant"] (per unit; Crabe) = never moves (no move, fight, jump or gather orders, retreat included)
+// while an enemy it can hit is in LOS and within its weapon range, or an enemy anti_heavy in LOS has it within its
+// weapon range. Planting stops the unit and sets hold position, so it shoots what is in range without walking after it.
+// Checked every 8 frames
+"plant": {
+	"leave_range": 1.1,  // a planted unit stays planted while the reason holds within this x the weapon ranges (>= 1)
+	"hold_sec": 2.0  // and for this long after the reason last held (an enemy flickering in and out of LOS)
+},
+
 // Anti-heavy squads (main role anti_heavy: Lance, Ultimatum, Scorpion, Merlin, ...)
 "antiheavy": {
 	"artillery_scoot": 200.0,  // as_artillery units: after each shot (its burst over) step this many elmos back, away from the target, threatened or not (straight back, else up to 90 degrees to a side: the first spot no hotter than where it fired), hold there, and turn back in time to be in place when the weapon is ready. No scoot when there isn't time to get there and back, or no spot back is that safe. 0 or missing = off (it then steps back only while threatened)
@@ -791,7 +800,7 @@
 	"spidercrabe": {
 		// threat 32.83 at full health (raw, before pwr_mod/thr_mod)
 		"role": ["heavy", "disarm_target", "turtle"],
-		"attribute": ["siege", "ret_fight", "prio_repair"],
+		"attribute": ["siege", "ret_fight", "prio_repair", "plant"],
 		"retreat": 0.5,
 		"thr_mod": 2.0,
 		"pwr_mod": 2.0,

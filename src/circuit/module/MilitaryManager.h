@@ -617,6 +617,8 @@ private:
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
+	void UpdatePlant();  // "plant" attribute: plant (Stop, hold position) and unplant units, every 8 frames
+	bool IsPlantReason(CCircuitUnit* unit, int frame, float rangeMult);
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
 	void UpdateAllyResponse();
@@ -849,6 +851,11 @@ private:
 	int resignSince = -1;  // first frame of the current "reads lost" run; -1 = doesn't read lost
 	int drownedFrames;  // "drowned".time in frames; < 0 = off
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
+	struct SPlantCfg {
+		float leaveMult;  // "plant".leave_range: a planted unit stays while the reason holds within this x the range
+		int holdFrames;  // "plant".hold_sec in frames: and for this long after the reason last held
+		float ahRange = -1.f;  // the longest anti_heavy weapon range (query radius); < 0 = not measured yet
+	} plantCfg;
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at

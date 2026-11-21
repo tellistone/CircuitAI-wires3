@@ -71,18 +71,18 @@ void CFightAction::Update(CCircuitAI* circuit)
 			}
 			if (isBadJump) {
 				const AIFloat3& pos = pPath->posPath[step];
-				unit->GetUnit()->Fight(pos, options, lastFrame + FRAMES_PER_SEC * 60);
+				unit->CmdFightTo(pos, options, lastFrame + FRAMES_PER_SEC * 60);
 			}
 		} else {
 			const AIFloat3& pos = pPath->posPath[step];
-			unit->GetUnit()->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+			unit->CmdFightTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
 		}
 		unit->CmdWantedSpeed(stepSpeed);
 
 		for (int i = 2; (step < pathMaxIndex) && (i < 3); ++i) {
 			step = std::min(step + increment, pathMaxIndex);
 			const AIFloat3& pos = pPath->posPath[step];
-			unit->GetUnit()->Fight(pos, options, lastFrame + FRAMES_PER_SEC * 60 * i);
+			unit->CmdFightTo(pos, options, lastFrame + FRAMES_PER_SEC * 60 * i);
 		}
 	)
 }

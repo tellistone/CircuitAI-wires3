@@ -87,7 +87,7 @@ void CDefendTask::Start(CCircuitUnit* unit)
 	pos = terrainMgr->FindBuildSite(unit->GetCircuitDef(), pos, 300.0f, UNIT_COMMAND_BUILD_NO_FACING);
 
 	TRY_UNIT(circuit, unit,
-		unit->GetUnit()->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);
+		unit->CmdFightTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);
 		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
 	)
 }
@@ -396,7 +396,7 @@ void CDefendTask::Fallback()
 	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
 		TRY_UNIT(circuit, unit,
-			unit->GetUnit()->Fight(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdFightTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 			unit->CmdWantedSpeed(lowestSpeed);
 		)
 		unit->GetTravelAct()->StateWait();
