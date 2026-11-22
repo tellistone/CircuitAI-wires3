@@ -399,10 +399,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     reload private to the jumper's team, so an enemy jumper in LOS is seen in flight by its height above the ground
     (over 20 elmos). Its landing spot and frame are worked out once from the velocity the jump gadget sets each
     frame: horizontal speed v gives the jump's length (L = 2rh / sqrt(1 - r^2), r = v / jump_speed, h =
-    jump_height), vertical speed how far along the arc it is. A height that doesn't fit the arc there (a unit walking
-    on freshly raised ground) is no jump. Out of LOS a flight ends when the guess says. Reload: `jump_reload` from
-    the landing (none with several `jump_charges`: Detriment); a jumper never seen jumping counts as ready, the safe
-    side.
+    jump_height), vertical speed and its height above the landing how far along the arc it is (first as if it lands
+    level with the ground under it, then again from the height of that spot, as the gadget aims at the ground there).
+    A height that doesn't fit the arc there (a unit walking on freshly raised ground) is no jump. Up but off a jump's
+    arc (carried by a transport, thrown) it isn't taken as jumping until it's seen down or out of LOS, so a transport
+    slowing down to drop a Jack doesn't read as a jump that used it. Out of LOS a flight ends when the guess says.
+    Reload: `jump_reload` from the landing (none with several `jump_charges`: Detriment); a jumper never seen jumping,
+    or whose flight turns out off the arc, counts as ready, the safe side. Checked offline against a port of the
+    gadget's arc: Jack lands within 5 elmos of the guess on average (19 at worst, on long jumps to ground 100 elmos
+    higher or lower), Detriment within 8 at worst, Skuttle and Jugglenaut (flat, fast arcs) within 19 on average and
+    about 70 at worst (a full-range jump with that height change).
   - `jump_land` (default true): while it flies, the jumper's fight position (`CEnemyInfo::GetFightPos`) is its
     landing spot. Firing spots, the fire band, the target's tile (so take-off re-orders units at their next update),
     `IsOutOfReach`, melee picks (`AssignMeleeTargets`), reload scoots and its threat on the threat map

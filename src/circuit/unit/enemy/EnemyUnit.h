@@ -179,9 +179,10 @@ public:
 	// Jumpers (CCircuitDef::IsAbleToJump), from the staggered enemy update after UpdateInRadarData. Zero-K keeps
 	// is_jumping, the jump's goal and (but for Detriment) its reload private, so a flight is seen in LOS by height above
 	// the ground, and its landing (spot and frame) is worked out once from the velocity the jump gadget sets each
-	// frame: horizontal speed gives the jump's length, vertical speed how far along it is. The reload is timed from the
-	// landing (jump_reload); a jump never seen leaves it ready, the safe side. isLand: quota.jump_land (landPos as
-	// the fight position). true: IsJumpReady changed (the caller updates its threat range)
+	// frame: horizontal speed gives the jump's length, vertical speed and the height above the landing how far along it
+	// is. Up off a jump's arc (carried, thrown) it isn't taken as jumping until seen down or out of LOS. The reload is
+	// timed from the landing (jump_reload); a jump never seen leaves it ready, the safe side. isLand: quota.jump_land
+	// (landPos as the fight position). true: IsJumpReady changed (the caller updates its threat range)
 	bool UpdateJump(int frame, CTerrainManager* terrainMgr, bool isLand);
 	// Not in flight and reloaded (or never seen jumping)
 	bool IsJumpReady() const { return isJumpReady; }
@@ -206,10 +207,12 @@ private:
 	springai::AIFloat3 stillPos = springai::AIFloat3(-1.f, 0.f, -1.f);
 	int stillSince = -1;  // -1: no spot (moving, or not seen in LOS on it yet)
 	int blindShots = 0;  // AddBlindShot
-	// UpdateJump: the landing frame of the flight under way (-1: none), when the jump is ready again
+	// UpdateJump: the landing frame of the flight under way (-1: none), when the jump is ready again; seen up off a
+	// jump's arc since it was last seen down or out of LOS
 	int landFrame = -1;
 	int jumpReadyFrame = 0;
 	bool isJumpReady = true;
+	bool isOffArc = false;
 
 public:
 	void SetInLOS()     { data.SetInLOS(); }
