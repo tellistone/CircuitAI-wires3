@@ -13,6 +13,7 @@
 #include "map/InfluenceMap.h"
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
+#include "module/MexBoard.h"
 #include "module/MilitaryManager.h"
 #include "module/SensorPlanner.h"
 #include "module/SpotScorer.h"
@@ -152,6 +153,7 @@ void IBuilderTask::Update()
 	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
 	for (CCircuitUnit* unit : traveled) {
 		Execute(unit);
+		builderMgr->GetMexBoard()->OnBuildStart(unit, this);  // its next spot now
 		if (builderMgr->IsJobChain()) {
 			builderMgr->StartCostMap(unit);  // the next pick, from here
 		}
@@ -476,22 +478,18 @@ void IBuilderTask::Update(CCircuitUnit* unit)
 	}
 }
 
-// economy.opening.log: a walking builder's switch to task, by direction: forward when the new job is no nearer our
-// base than the builder is now, give or take its build range
+// economy.opening.log: a walking builder's switch to task, by direction (CBuilderManager::IsJobForward)
 static void NoteSwitch(CCircuitAI* circuit, CCircuitUnit* unit, IUnitTask* task)
 {
-	CBuilderManager::SOpeningStats* stats = circuit->GetBuilderManager()->GetOpeningStats(unit);
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(unit);
 	if ((stats == nullptr) || (task->GetType() != IUnitTask::Type::BUILDER)) {
 		return;
 	}
 	const AIFloat3& newPos = static_cast<IBuilderTask*>(task)->GetPosition();
-	if (!utils::is_valid(newPos)) {
-		return;
+	if (utils::is_valid(newPos)) {
+		++(builderMgr->IsJobForward(unit, newPos) ? stats->forward : stats->back);
 	}
-	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
-	const bool isForward = newPos.distance2D(basePos) >= pos.distance2D(basePos) - unit->GetCircuitDef()->GetBuildDistance();
-	++(isForward ? stats->forward : stats->back);
 }
 
 bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
@@ -527,26 +525,15 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 			return true;
 		}
 	}
+	// Walking: a switch only as CBuilderManager::MakeSwitchTask allows (by direction, and in the opening only for
+	// danger or an urgent job)
 	HideAssignee(unit);
-	IUnitTask* task = manager->MakeTask(unit);
+	IUnitTask* task = circuit->GetBuilderManager()->MakeSwitchTask(unit, this);
 	ShowAssignee(unit);
-	if ((task != nullptr)
-		&& ((task->GetType() != IUnitTask::Type::BUILDER)
-			|| (static_cast<IBuilderTask*>(task)->GetBuildType() != buildType)))
-	{
+	if (task != nullptr) {
 		NoteSwitch(circuit, unit, task);
 		manager->AssignTask(unit, task);
 		return false;
-	}
-	// Same kind of job, but much nearer than the one we walk to (economy.builder_jobs.switch): take it
-	const float switchShare = circuit->GetBuilderManager()->GetJobSwitch();
-	if ((task != nullptr) && (task != this) && (switchShare > 0.f) && (priority != Priority::NOW)) {
-		const AIFloat3& newPos = static_cast<IBuilderTask*>(task)->GetPosition();
-		if (utils::is_valid(newPos) && (pos.SqDistance2D(newPos) < SQUARE(switchShare) * sqDist)) {
-			NoteSwitch(circuit, unit, task);
-			manager->AssignTask(unit, task);
-			return false;
-		}
 	}
 	return true;
 }

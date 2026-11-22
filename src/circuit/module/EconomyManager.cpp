@@ -8,6 +8,7 @@
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
 #include "module/FactoryManager.h"
+#include "module/MexBoard.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
 #include "resource/MetalManager.h"
@@ -19,6 +20,7 @@
 #include "map/InfluenceMap.h"
 #include "unit/ally/AllyUnit.h"
 #include "unit/enemy/EnemyUnit.h"
+#include "task/IdleTask.h"
 #include "task/RetreatTask.h"
 #include "task/builder/EnergyTask.h"
 #include "CircuitAI.h"
@@ -974,7 +976,10 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	// Geo isn't only a stall fix: a free vent is the cheapest energy there is, so look for one on every pass
 	IBuilderTask* task = isEnergy ? UpdateEnergyTasks(position, unit) : UpdateGeoTasks(position, unit);
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
-	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);
+	// Only a builder between jobs opens reclaim: a walking one's check (IBuilderTask::Reevaluate) doesn't
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	IBuilderTask* reclaimTask = ((unit == nullptr) || (unit->GetTask() == builderMgr->GetIdleTask()))
+			? UpdateReclaimTasks(position, unit) : nullptr;
 
 	return (task != nullptr) ? task : (mexTask != nullptr) ? mexTask : reclaimTask;
 }
@@ -985,6 +990,10 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 		return nullptr;
 	}
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	// economy.mex_board, in the opening: the board makes the mex jobs, one per builder, and this is the unit's
+	if (builderMgr->GetMexBoard()->IsActive()) {
+		return (unit != nullptr) ? builderMgr->GetMexBoard()->GetJob(unit) : nullptr;
+	}
 	const float cost = mexDef->GetCostM();
 	const unsigned maxCount = (builderMgr->GetBuildPower() / cost * 8 + 2) * mexJobMod;
 	if (builderMgr->GetTasks(IBuilderTask::BuildType::MEX).size() >= maxCount) {
@@ -992,20 +1001,21 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	}
 
 	CMetalManager* metalMgr = circuit->GetMetalManager();
-	const CMetalData::Metals& spots = metalMgr->GetSpots();
 	CMetalData::PointPredicate predicate = GetMexSpotTest(unit);
 	// A commander's search uses its own bias (mex_front.comm_bias)
-	const bool isComm = (unit != nullptr) && unit->GetCircuitDef()->IsRoleComm();
-	const CMetalManager::ClusterScore score = GetMexFrontScore(isComm ? mexFrontCommBias : mexFrontBias);
+	const CMetalManager::ClusterScore score = GetMexScore((unit != nullptr) && unit->GetCircuitDef()->IsRoleComm());
 	const int index = score
 			? metalMgr->GetMexToBuild(position, predicate, mexFrontClusters, score)
 			: metalMgr->GetMexToBuild(position, predicate);
-	if (index == -1) {
-		return nullptr;
-	}
+	return (index == -1) ? nullptr : EnqueueMex(index);
+}
 
-	const AIFloat3& pos = spots[index].position;
-	IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos, IBuilderTask::BuildType::MEX, cost, .0f);
+IBuilderTask* CEconomyManager::EnqueueMex(int index)
+{
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const AIFloat3& pos = metalMgr->GetSpots()[index].position;
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos,
+			IBuilderTask::BuildType::MEX, mexDef->GetCostM(), .0f);
 	task->SetBuildPos(pos);
 	SetOpenSpot(index, false);
 	// guard.summon: no escort gate, so builders take undefended clusters at once. The cluster's preventive towers
@@ -1018,7 +1028,7 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	return task;
 }
 
-std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* unit) const
+std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen) const
 {
 	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on. A spot an enemy
 	// mex we know of holds (seen now or before) is free when the builder can build the turret that clears it
@@ -1031,10 +1041,11 @@ std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* uni
 	const CCircuitDef* escortDef = militaryMgr->GetDefaultPorc();
 	const bool isEscort = (escortDef != nullptr) && escortDef->IsAvailable(circuit->GetLastFrame())
 			&& ((unit == nullptr) || unit->GetCircuitDef()->CanBuild(escortDef->GetId()));
-	return [this, spots, map, terrainMgr, builderMgr, unit, isEscort, militaryMgr, escortDef,
+	const CMexBoard* board = isHeldOpen ? builderMgr->GetMexBoard() : nullptr;
+	return [this, spots, map, terrainMgr, builderMgr, unit, isEscort, militaryMgr, escortDef, board,
 			enemyMexSpots = GetEnemyMexSpots()](int index) {
 		const AIFloat3& pos = (*spots)[index].position;
-		return (IsAllyOpenSpot(index) && !terrainMgr->IsZoneAlly(pos)
+		return ((IsAllyOpenSpot(index) || ((board != nullptr) && board->IsHeld(index))) && !terrainMgr->IsZoneAlly(pos)
 				&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
 				&& ((unit != nullptr)
 					? terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
@@ -1062,7 +1073,9 @@ void CEconomyManager::UpdateOpening()
 		}
 	}
 	const int frame = circuit->GetLastFrame();
-	noSpotFrame = (openSpotCount > 0) ? -1 : (noSpotFrame < 0) ? frame : noSpotFrame;
+	// A spot the mex board holds keeps it going: a builder is on the way or about to be
+	const bool isAnySpot = (openSpotCount > 0) || circuit->GetBuilderManager()->GetMexBoard()->IsHolding();
+	noSpotFrame = isAnySpot ? -1 : (noSpotFrame < 0) ? frame : noSpotFrame;
 	const bool isSpotless = (noSpotFrame >= 0) && (frame - noSpotFrame >= OPENING_NO_SPOT);
 	if (isSpotless || (frame >= openingEnd)) {
 		// Builders keep their jobs: nothing is picked again for it

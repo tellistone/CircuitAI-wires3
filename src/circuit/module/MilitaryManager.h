@@ -195,6 +195,10 @@ public:
 		TurretSpend prev;
 	};
 	bool CanAffordTurret(float cost);
+	// porcupine.budget.since: before it only the reactive spenders draw on the account (a turret near an enemy or
+	// after a flee, a cornered builder's, an enemy mex's); planned towers (porc, base, hub, creep, radar guard, the
+	// choke and artillery callers) wait
+	bool IsTurretEarly() const;
 	// The balance past what a waiting ask saves for (no ask recorded)
 	float GetTurretSpare() { UpdateTurretBudget(); return turretBudget.balance - turretBudget.askCost; }
 	void ChargeTurret(CBDefenceTask* task);
@@ -955,6 +959,7 @@ private:
 		float bankSec = 60.f;
 		float lossRefund = 2.f;  // x the charge of a finished turret of ours that dies
 		int waitFrames = FRAMES_PER_SEC * 120;  // budget.wait_sec: the most a base or hub turret waits for the balance
+		int sinceFrame = FRAMES_PER_SEC * 120;  // budget.since (IsTurretEarly)
 		float mapX = 0.f;  // map area in 512-elmo squares / players on our team
 		float mapMult = 1.f;  // budget.map at mapX, fixed for the game
 		std::vector<std::pair<float, float>> mexCurve;  // budget.mex: x = ally-team finished mexes / all spots

@@ -11,6 +11,7 @@
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
+#include "module/MexBoard.h"
 #include "module/TurretPicker.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
@@ -180,6 +181,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		unit->GetTask()->RemoveAssignee(unit);  // Remove unit from IdleTask
 		costQueries.erase(unit);  // a nanoframe's too (workerCreatedHandler)
 		openingStats.erase(unit->GetId());
+		mexBoard->OnBuilderDestroyed(unit);
 
 		if (task->GetType() == IUnitTask::Type::NIL) {
 			return;
@@ -336,6 +338,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 	};
 
 	ReadConfig();
+	mexBoard = new CMexBoard(circuit);
 
 	buildTasks.resize(static_cast<IBuilderTask::BT>(IBuilderTask::BuildType::_SIZE_));
 
@@ -352,6 +355,7 @@ CBuilderManager::~CBuilderManager()
 	for (IUnitTask* task : buildUpdates) {
 		task->ClearRelease();
 	}
+	delete mexBoard;
 	for (auto& kv1 : buildChains) {
 		for (auto& kv2 : kv1.second) {
 			delete kv2.second;
@@ -369,7 +373,7 @@ void CBuilderManager::ReadConfig()
 		terraDef = circuit->GetEconomyManager()->GetDefaultDef();
 	}
 
-	// Builder job choice: travel cost / weight, lowest wins; travel caps in seconds per priority; switch share
+	// Builder job choice: travel cost / weight, lowest wins; travel caps in seconds per priority; switch shares
 	const Json::Value& jobs = root["economy"]["builder_jobs"];
 	const char* prioNames[] = {"low", "normal", "high"};
 	const float defWeight[] = {1.f, 2.f, 4.f};
@@ -381,7 +385,14 @@ void CBuilderManager::ReadConfig()
 	}
 	jobRanks[3] = {1.f / 10000.f, std::numeric_limits<float>::max()};  // NOW: wins at any distance, as before
 	jobSwitch = utils::clamp(jobs.get("switch", 0.5f).asFloat(), 0.f, 1.f);
+	jobSwitchForward = utils::clamp(jobs.get("switch_forward", 0.8f).asFloat(), 0.f, 1.f);
+	jobSwitchOther = utils::clamp(jobs.get("switch_other", 0.5f).asFloat(), 0.f, 1.f);
+	jobCommitSec = std::max(jobs.get("commit_sec", 4.f).asFloat(), 0.f);
 	isJobChain = jobs.get("chain", true).asBool();
+	const Json::Value& opening = jobs["opening"];
+	openingMexRank = {1.f / std::max(opening.get("mex_weight", 6.f).asFloat(), 0.01f), jobRanks[2].travelSec};
+	openingReclaimMetal = opening.get("reclaim_metal", 100.f).asFloat();
+	openingPatrolFrames = std::max(opening.get("patrol_sec", 2.f).asFloat(), 1.f) * FRAMES_PER_SEC;
 
 	const Json::Value& rest = root["economy"]["restore"];
 	restore.range = rest.get("range", 0.f).asFloat();
@@ -1226,6 +1237,7 @@ void CBuilderManager::DequeueTask(IUnitTask* task, bool done)
 {
 	escortTasks.erase(task);
 	if (task->GetType() == IUnitTask::Type::BUILDER) {
+		mexBoard->OnTaskRemoved(static_cast<IBuilderTask*>(task), done);
 		escalationTasks.erase(static_cast<IBuilderTask*>(task));
 		escIdleSince.erase(static_cast<IBuilderTask*>(task));
 		escStarted.erase(static_cast<IBuilderTask*>(task));
@@ -1354,20 +1366,9 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	const CCircuitDef* cdef = unit->GetCircuitDef();
 	// Before the cost-map readiness check, as fights at home always were: GetCommState is cached per frame
 	SCommState* commState = GetCommState(unit);
-	if (IsFinishingDefence(unit, commState)) {
-		return nullptr;  // keep at it: a job elsewhere mustn't take it off either (IBuilderTask::Reevaluate)
-	}
-	if (IsCommCornered(unit, commState)) {  // build cover rather than stand; with none to build it fights at home
-		if (IsBuildingDefence(unit)) {
-			return nullptr;  // keep at it
-		}
-		IBuilderTask* task = MakeCommDefence(unit, commState);
-		if (task != nullptr) {
-			return task;
-		}
-	}
-	if (IsHomeFight(unit)) {
-		return EnqueueCombat(1.5f);
+	IUnitTask* dangerTask;
+	if (MakeDangerTask(unit, commState, dangerTask)) {
+		return dangerTask;
 	}
 
 	const auto it = costQueries.find(unit);
@@ -1386,25 +1387,12 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	}
 
 	std::shared_ptr<CQueryCostMap> pQuery = std::static_pointer_cast<CQueryCostMap>(query);
+	// economy.mex_board: its spot for this builder first, matched on the cost map this pick rates on
+	mexBoard->GetJob(unit, pQuery.get());
 
-	if (cdef->IsRoleComm()) {  // hide commander?
-		CEnemyManager* enemyMgr = circuit->GetEnemyManager();
-		const CSetupManager::SCommInfo::SHide* hide = (commState != nullptr) ? commState->hide
-				: circuit->GetSetupManager()->GetHide(cdef);
-		if (hide != nullptr) {
-			if ((frame < hide->frame) || (GetWorkerCount() <= 2)) {
-				return MakeBuilderTask(unit, pQuery.get());
-			}
-			// hide.latch: the threat trigger stays on once tripped (the threat per ally jumps around in trades and when
-			// an ally dies). The air trigger is live: one scout plane must not keep the commander home all game
-			const bool isThreat = (enemyMgr->GetMobileThreat() / circuit->GetAllyTeam()->GetAliveSize() >= hide->threat);
-			if (isThreat && hide->isLatch) {
-				isCommHide = true;
-			}
-			isCommHideAir = hide->isAir && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) > 1.f);
-			const bool isHide = isCommHideAir || isThreat || isCommHide;
-			return isHide ? MakeCommTask(unit, pQuery.get(), hide->sqTaskRad) : MakeBuilderTask(unit, pQuery.get());
-		}
+	const CSetupManager::SCommInfo::SHide* hide = GetCommHide(unit, commState);  // hide commander?
+	if (hide != nullptr) {
+		return MakeCommTask(unit, pQuery.get(), hide->sqTaskRad);
 	}
 
 	IBuilderTask* task = MakeBuilderTask(unit, pQuery.get());
@@ -1425,9 +1413,19 @@ const CBuilderManager::SJobRank& CBuilderManager::GetJobRank(const IBuilderTask*
 	switch (task->GetPriority()) {
 		case IBuilderTask::Priority::LOW:    return jobRanks[0];
 		case IBuilderTask::Priority::NORMAL: return jobRanks[1];
-		case IBuilderTask::Priority::HIGH:
-			// Mex jobs still get picked during an energy stall, but rank as NORMAL so energy jobs (HIGH while stalling) go first
-			return (isEnergyStalling && (task->GetBuildType() == IBuilderTask::BuildType::MEX)) ? jobRanks[1] : jobRanks[2];
+		case IBuilderTask::Priority::HIGH: {
+			const bool isOpening = circuit->GetEconomyManager()->IsOpening();
+			switch (task->GetBuildType()) {
+				// Mex jobs still get picked during an energy stall, but rank as NORMAL so energy jobs (HIGH while
+				// stalling) go first
+				case IBuilderTask::BuildType::MEX:
+					return isEnergyStalling ? jobRanks[1] : isOpening ? openingMexRank : jobRanks[2];
+				case IBuilderTask::BuildType::RECLAIM:
+					return (isOpening && (task->GetCost() < openingReclaimMetal)) ? jobRanks[1] : jobRanks[2];
+				default:
+					return jobRanks[2];
+			}
+		}
 		default:                             return jobRanks[3];  // NOW
 	}
 }
@@ -1470,6 +1468,150 @@ static bool IsWorthTrip(const IBuilderTask* task, float distCost, float maxSpeed
 	const float health = tu->GetHealth() - maxHealth * 0.005f;
 	const float healthSpeed = maxHealth * task->GetBuildPower() / task->GetCost();
 	return ((maxHealth - health) * 0.6f) * maxSpeed > healthSpeed * distCost;
+}
+
+bool CBuilderManager::MakeDangerTask(CCircuitUnit* unit, SCommState* commState, IUnitTask*& outTask)
+{
+	outTask = nullptr;
+	if (IsFinishingDefence(unit, commState)) {
+		return true;  // keep at it: a job elsewhere mustn't take it off either (IBuilderTask::Reevaluate)
+	}
+	if (IsCommCornered(unit, commState)) {  // build cover rather than stand; with none to build it fights at home
+		if (IsBuildingDefence(unit)) {
+			return true;  // keep at it
+		}
+		outTask = MakeCommDefence(unit, commState);
+		if (outTask != nullptr) {
+			return true;
+		}
+	}
+	if (IsHomeFight(unit)) {
+		outTask = EnqueueCombat(1.5f);
+		return true;
+	}
+	return false;
+}
+
+IUnitTask* CBuilderManager::MakeUrgentTask(CCircuitUnit* unit, const IBuilderTask* current)
+{
+	IUnitTask* task;
+	if (MakeDangerTask(unit, GetCommState(unit), task)) {
+		return (task == current) ? nullptr : task;
+	}
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	economyMgr->IsStalling();  // the latches IsStallFix reads
+	auto isUrgent = [economyMgr](const IBuilderTask* t) {
+		return (t->GetPriority() == IBuilderTask::Priority::NOW) || economyMgr->IsStallFix(t);
+	};
+	// No pick (nor its cost map) while nothing urgent it could take waits: the board moves its mex spots
+	const bool isWaiting = std::any_of(buildTasks.begin(), buildTasks.end(), [&](const std::set<IBuilderTask*>& tasks) {
+		return std::any_of(tasks.begin(), tasks.end(), [&](const IBuilderTask* t) {
+			return (t != current) && isUrgent(t) && t->CanAssignTo(unit);
+		});
+	});
+	if (!isWaiting) {
+		return nullptr;
+	}
+	task = DefaultMakeTask(unit);
+	return ((task != nullptr) && (task != current) && (task->GetType() == IUnitTask::Type::BUILDER)
+			&& isUrgent(static_cast<IBuilderTask*>(task))) ? task : nullptr;
+}
+
+bool CBuilderManager::IsJobForward(CCircuitUnit* unit, const AIFloat3& jobPos) const
+{
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	return jobPos.distance2D(basePos) >= pos.distance2D(basePos) - unit->GetCircuitDef()->GetBuildDistance();
+}
+
+IUnitTask* CBuilderManager::MakeSwitchTask(CCircuitUnit* unit, IBuilderTask* current)
+{
+	if (mexBoard->IsActive()) {
+		return MakeUrgentTask(unit, current);
+	}
+	// The cost map the pick rates on (it starts the next one)
+	const auto it = costQueries.find(unit);
+	const std::shared_ptr<IPathQuery> query = ((it != costQueries.end())
+			&& (it->second->GetState() == IPathQuery::State::READY)) ? it->second : nullptr;
+	IUnitTask* task = MakeTask(unit);
+	if ((task == nullptr) || (task == current) || (task->GetType() != IUnitTask::Type::BUILDER)) {
+		return (task == current) ? nullptr : task;  // a fight, a wait: always
+	}
+	IBuilderTask* next = static_cast<IBuilderTask*>(task);
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const bool isUrgent = (next->GetPriority() == IBuilderTask::Priority::NOW) || economyMgr->IsStallFix(next);
+	const bool isForward = IsJobForward(unit, next->GetPosition());
+	const bool isSameKind = (next->GetBuildType() == current->GetBuildType());
+	if (!isSameKind && !isForward) {
+		return isUrgent ? next : nullptr;
+	}
+	// The walk left, from where it stands (a straight line without the cost map)
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	const CCircuitDef* cdef = unit->GetCircuitDef();
+	const int buildDistance = std::max<int>(cdef->GetBuildDistance(), pathfinder->GetSquareSize());
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	auto walkCost = [&](const AIFloat3& p) {
+		return (query != nullptr)
+				? GetJobTravelCost(static_cast<const CQueryCostMap*>(query.get()), pathfinder, pos, p, buildDistance)
+				: std::max(pos.distance2D(p) / pathfinder->GetSquareSize() * COST_BASE, COST_BASE);
+	};
+	const float newCost = walkCost(next->GetPosition());
+	const float curCost = walkCost(current->GetPosition());
+	if ((newCost < 0.f) || (curCost < 0.f)) {
+		return (newCost < 0.f) ? nullptr : next;  // buildings block the way: never there, always away
+	}
+	if (!isSameKind) {  // forward, another kind: as the picker rates them
+		const bool isEnergyStalling = economyMgr->IsEnergyStalling();
+		return (newCost * GetJobRank(next, isEnergyStalling).invWeight
+				< jobSwitchOther * curCost * GetJobRank(current, isEnergyStalling).invWeight) ? next : nullptr;
+	}
+	const float maxSpeed = cdef->GetSpeed() / pathfinder->GetSquareSize() * COST_BASE;
+	const bool isCommitted = !isForward && (curCost <= jobCommitSec * maxSpeed);
+	return ((current->GetPriority() != IBuilderTask::Priority::NOW) && !isCommitted
+			&& (newCost < (isForward ? jobSwitchForward : jobSwitch) * curCost)) ? next : nullptr;
+}
+
+const CSetupManager::SCommInfo::SHide* CBuilderManager::GetCommHide(CCircuitUnit* unit, const SCommState* commState)
+{
+	const CCircuitDef* cdef = unit->GetCircuitDef();
+	if (!cdef->IsRoleComm()) {
+		return nullptr;
+	}
+	const CSetupManager::SCommInfo::SHide* hide = (commState != nullptr) ? commState->hide
+			: circuit->GetSetupManager()->GetHide(cdef);
+	if ((hide == nullptr) || (circuit->GetLastFrame() < hide->frame) || (GetWorkerCount() <= 2)) {
+		return nullptr;
+	}
+	// hide.latch: the threat trigger stays on once tripped (the threat per ally jumps around in trades and when
+	// an ally dies). The air trigger is live: one scout plane must not keep the commander home all game
+	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
+	const bool isThreat = (enemyMgr->GetMobileThreat() / circuit->GetAllyTeam()->GetAliveSize() >= hide->threat);
+	if (isThreat && hide->isLatch) {
+		isCommHide = true;
+	}
+	isCommHideAir = hide->isAir && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) > 1.f);
+	return (isCommHideAir || isThreat || isCommHide) ? hide : nullptr;
+}
+
+std::function<bool (const AIFloat3& pos)> CBuilderManager::GetMexJobTest(CCircuitUnit* unit)
+{
+	if (IsCommKindOff(unit, IBuilderTask::BuildType::MEX)) {
+		return nullptr;
+	}
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	threatMap->SetThreatType(unit);
+	const float maxThreat = threatMap->GetUnitThreat(unit);
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	const SCommState* state = GetCommState(unit);
+	const CSetupManager::SCommInfo::SHide* hide = GetCommHide(unit, state);
+	const AIFloat3 basePos = circuit->GetSetupManager()->GetBasePos();
+	return [this, unit, threatMap, maxThreat, inflMap, state, hide, basePos](const AIFloat3& pos) {
+		return IsCommJobSafe(state, pos)
+			&& !((threatMap->GetThreatAt(pos) > maxThreat) && (inflMap->GetInfluenceAt(pos) < -INFL_EPS))
+			&& ((hide == nullptr)
+				|| (((hide->sqTaskRad <= 0.f) || (basePos.SqDistance2D(pos) <= hide->sqTaskRad))
+					&& ((state == nullptr) || IsCommTerritory(unit, pos))));
+	};
 }
 
 IBuilderTask* CBuilderManager::MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange)
@@ -1737,12 +1879,14 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 
 IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCircuitUnit* unit)
 {
+	CEconomyManager* ecoMgr = circuit->GetEconomyManager();
+	// With nothing to do it patrols, and looks again after that (economy.builder_jobs.opening.patrol_sec in the opening)
+	const int patrolFrames = ecoMgr->IsOpening() ? openingPatrolFrames : FRAMES_PER_SEC * 20;
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	if (terrainMgr->IsZoneAlly(position)) {
-		return EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, FRAMES_PER_SEC * 20);
+		return EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, patrolFrames);
 	}
 
-	CEconomyManager* ecoMgr = circuit->GetEconomyManager();
 	// A commander past jobs.time queues no energy it won't take (a vent it may still build). Never a stall fix here:
 	// a stalling builder reclaims instead (MakeBuilderTask)
 	const bool isEnergyOff = IsCommKindOff(unit, IBuilderTask::BuildType::ENERGY);
@@ -1762,7 +1906,7 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 		if (isEnergyOff) {  // no cheap energy either: nothing dedups it, it would be queued anew every idle pass
 			// The reclaim job instead, outside flee zones as MakeCommTask's; an unsafe one stays for constructors
 			const bool isSafe = (task != nullptr) && IsCommJobSafe(GetCommState(unit), task->GetPosition());
-			return isSafe ? task : EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, FRAMES_PER_SEC * 20);
+			return isSafe ? task : EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, patrolFrames);
 		}
 		float energyMake;
 		buildDef = ecoMgr->GetLowEnergy(position, energyMake);
@@ -1799,7 +1943,7 @@ IBuilderTask* CBuilderManager::CreateBuilderTask(const AIFloat3& position, CCirc
 		}
 	}
 
-	return EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, FRAMES_PER_SEC * 20);
+	return EnqueuePatrol(IBuilderTask::Priority::LOW, position, .0f, patrolFrames);
 }
 
 void CBuilderManager::PromoteEscalation(IBuilderTask* task)
@@ -2893,6 +3037,7 @@ void CBuilderManager::UpdateTurrets()
 	}
 	const float sqArtilleryReach = SQUARE(cfg.artilleryReach);
 	auto isGround = [](const CCircuitDef* d) { return d->HasAntiLand(); };
+	const bool isEarly = circuit->GetMilitaryManager()->IsTurretEarly();  // porcupine.budget.since: near enemy only
 
 	for (CCircuitUnit* unit : builders) {
 		const AIFloat3& pos = unit->GetPos(frame);
@@ -2903,6 +3048,9 @@ void CBuilderManager::UpdateTurrets()
 			&& (GetCommCover(pos, cfg.allyRadius, unit->GetId(), INFL_EPS, isCover) <= 0.f))
 		{
 			TryTurret(unit, pos, nullptr, false, "near enemy", isOrdered, 1.f, false);  // no A: it goes for the enemy
+			continue;
+		}
+		if (isEarly) {
 			continue;
 		}
 		auto tryLines = [&]() {
@@ -3151,8 +3299,8 @@ int CBuilderManager::OrderCreepTurret(CCircuitUnit* unit, const AIFloat3& centre
 	if (defs.empty()) {
 		return -2;
 	}
-	if (!militaryMgr->CanAffordTurret(GetCreepCost(defs))) {
-		return 0;
+	if (militaryMgr->IsTurretEarly() || !militaryMgr->CanAffordTurret(GetCreepCost(defs))) {
+		return 0;  // porcupine.budget.since, then the account
 	}
 	STurretOrder order;
 	order.builder = unit;
@@ -3345,9 +3493,9 @@ void CBuilderManager::LogOpening(int frame)
 	for (CCircuitUnit* unit : workers) {
 		const SOpeningStats& s = openingStats[unit->GetId()];
 		circuit->LOG("OPENING %i:00 | %s %i | idle %is walk %is build %is flee %is | switch forward %i back %i"
-				" | mexes %i jumps %i | escorts %i (%.1fs to arrive)",
+				" board %i | mexes %i jumps %i | escorts %i (%.1fs to arrive)",
 				min, unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(), s.idle, s.walk, s.build, s.flee,
-				s.forward, s.back, s.mexes, s.jumps, s.escorts, (s.escorts > 0) ? s.escortWait / s.escorts : 0.f);
+				s.forward, s.back, s.moves, s.mexes, s.jumps, s.escorts, (s.escorts > 0) ? s.escortWait / s.escorts : 0.f);
 	}
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	const CCircuitDef* mexDef = economyMgr->GetMexDef();
@@ -3377,6 +3525,7 @@ void CBuilderManager::OnArrival(IBuilderTask* task)
 void CBuilderManager::UpdateBuild()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	mexBoard->Update();
 	// Jobs a builder just reached, out of turn: the staggered updates below come round once a second or so
 	std::vector<IBuilderTask*> arrived;
 	arrived.swap(arrivals);

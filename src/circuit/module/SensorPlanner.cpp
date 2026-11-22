@@ -295,8 +295,11 @@ IBuilderTask* CSensorPlanner::MakeGuardTask(const AIFloat3& radarPos)
 	if (circuit->GetMilitaryManager()->RefuseCrowdedLight(guardDef, pos, "radar guard")) {
 		return nullptr;  // turret.crowd_count
 	}
-	// In the opening only if the turret account (porcupine.budget) can pay for it, as other towers wait for it
-	if (circuit->GetEconomyManager()->IsOpening() && !circuit->GetMilitaryManager()->CanAffordTurret(guardDef->GetCostM())) {
+	// In the opening only from porcupine.budget.since and if the turret account can pay for it, as other towers wait
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	if (circuit->GetEconomyManager()->IsOpening()
+		&& (militaryMgr->IsTurretEarly() || !militaryMgr->CanAffordTurret(guardDef->GetCostM())))
+	{
 		return nullptr;
 	}
 	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::GUARD);

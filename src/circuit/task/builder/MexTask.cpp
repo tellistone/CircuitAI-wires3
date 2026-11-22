@@ -11,6 +11,7 @@
 #include "map/ThreatMap.h"
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
+#include "module/MexBoard.h"
 #include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "terrain/TerrainManager.h"
@@ -39,10 +40,12 @@ CBMexTask::~CBMexTask()
 
 bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!IBuilderTask::CanAssignTo(unit) || IsSpotTaken()) {  // an allied AI's builder heads there already
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (!IBuilderTask::CanAssignTo(unit) || IsSpotTaken()  // an allied AI's builder heads there already
+		|| circuit->GetBuilderManager()->GetMexBoard()->IsHeldByOther(this, unit))  // economy.mex_board
+	{
 		return false;
 	}
-	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	// guard.summon: the guard is called as the builder heads off safe ground, never waited for
 	if (unit->GetCircuitDef()->IsAttacker() || militaryMgr->GetGuardCfg().isSummon) {

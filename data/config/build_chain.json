@@ -78,10 +78,15 @@
 	// or the commander; no army counts as 1 metal), every 10 s, so turret spending slows once turrets outweigh the
 	// army we'd need to hold the ground; x1 before <army_since> seconds of game time (the opening's base towers come
 	// before its army). The preventive chance (above) takes the same army multiplier.
-	// <start>: metal the account holds at the start, so the first base tower (a Lotus at 10 s) goes on time.
-	// Missing keys: 0.1, 60 s, 2, x1 curves, start 0, wait_sec 120 and army_since 0. Logged once a minute as TURRET BUDGET, with the
-	// spend by spender and turrets lost
-	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2, "start": 90, "wait_sec": 120,
+	// <start>: metal the account holds at the start, so the first base tower goes on time.
+	// <since>: seconds of game time before planned towers may spend it: porc, the base timetable (a base tower due
+	// earlier, such as the Lotus at 10 s, waits until then, and wait_sec counts from then), hub towers, the creep,
+	// choke.radar.guard and the short choke, enemy line and artillery callers. Before it only the reactive ones: a
+	// turret near an enemy or after a flee, a cornered builder's, a tower against an enemy mex, so the opening's metal
+	// goes to mexes. Preventive towers are free and never wait. 0 = off.
+	// Missing keys: 0.1, 60 s, 2, x1 curves, start 0, wait_sec 120, since 120 and army_since 0. Logged once a minute as
+	// TURRET BUDGET, with the spend by spender and turrets lost
+	"budget": {"share": 0.1, "bank_sec": 60, "loss_refund": 2, "start": 90, "wait_sec": 120, "since": 120,
 		"map": [[64, 1.00], [256, 0.66]],
 		"mex": [[0.33, 1.00], [0.66, 1.00]],
 		"army": [[0.25, 1.00], [0.35, 0.34]], "army_since": 300},

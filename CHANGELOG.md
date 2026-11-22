@@ -52,6 +52,37 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   before). In the opening the budget grows at `opening_share`, and a radar is a HIGH job that waits for a builder and
   ranks by walk like a mex, taken from the planner only when the builder has nothing else to do. In the opening its
   guard tower is queued only if the turret account can pay for it.
+- **A mex board matches builders to spots in the opening** (`economy.mex_board`, new; `false` = off). Mex jobs are
+  no longer made one at a time near whichever builder picks: each builder is matched to the spot it would reach
+  first, holds that one spot (the one it walks to, or while it builds something else its next), and no other builder
+  takes its job. Arrival counts the job left (and the energy the mex chain queues after a mex) plus the walk from
+  that job's site on its cost map, scored as `mex_front` scores clusters; the commander uses `comm_bias` but never
+  takes a spot another builder reaches sooner. A held spot moves to another builder only if it gets there
+  `min_gain_sec` (3) sooner, a builder leaves its spot for another only if that scores 3 s better, one within
+  `commit_sec` of its spot keeps it, and a fleeing one keeps it for `hold_sec` (20). Only spots the builder's own pick
+  would take, and in team games not nearer an ally's base or factory than ours; a spot whose job failed waits 30 s
+  for that builder. A job is made only when a builder is matched, so there is no job cap and nothing is claimed
+  before someone heads there. Matching runs when something changes, at most once a frame. When the opening ends,
+  builders keep the job they walk to and the next jobs nobody walks to are dropped. The `OPENING` line counts spots a
+  walking builder lost to another (`board`), and the opening goes on while the board holds a spot.
+- **Walking builders switch jobs by direction** (`economy.builder_jobs`: `switch` now 0.5 and only for turning back,
+  `switch_forward` 0.8, `switch_other` 0.5, `commit_sec` 4, all new but `switch`). The walk is measured on the
+  builder's cost map, not in a straight line. Forward (no nearer our base than it is now, give or take its build
+  range): a job of the same kind nearer than `switch_forward` x the walk left, or of another kind that rates under
+  `switch_other` x the current one. Back: the same kind nearer than `switch` x the walk left and never within
+  `commit_sec` of arrival; another kind only if NOW or a stall fix. Danger always wins, and any job does when the
+  current one is cut off. In the opening with the mex board on, a walking builder runs no pick at all: it leaves its
+  job only for danger, a NOW job or stall fix it could take, or a board move. Only a builder between jobs searches
+  for reclaim.
+- **Mexes first in the opening** (`economy.builder_jobs.opening`, new: `mex_weight` 6, `reclaim_metal` 100,
+  `patrol_sec` 2). In the opening a HIGH mex job weighs `mex_weight` instead of `weight.high` (an energy stall still
+  ranks it as normal), reclaim of less than `reclaim_metal` ranks as normal, and a builder with nothing to do patrols
+  `patrol_sec` before it looks again, not 20 s.
+- **No planned towers before 2:00** (`porcupine.budget.since`, new, 120 s; 0 = off). Before it only reactive towers
+  draw on the turret account: near an enemy, after a flee, a cornered builder's, one against an enemy mex. Porc, the
+  base timetable (the Lotus at 10 s waits until then, and `wait_sec` counts from then), hub towers, the creep,
+  `choke.radar.guard` and the short choke, enemy line and artillery callers wait. Preventive towers are free and
+  don't wait.
 
 - **The turret account slows while our army is small next to our turrets** (`porcupine.budget.army`, new curve).
   Every 10 s, x = the metal of our finished turrets on the account / our army's (finished combat units, as the

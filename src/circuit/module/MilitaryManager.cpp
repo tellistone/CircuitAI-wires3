@@ -1191,6 +1191,7 @@ void CMilitaryManager::ReadConfig()
 	tb.lossRefund = std::max(budget.get("loss_refund", tb.lossRefund).asFloat(), 0.f);
 	tb.balance = std::max(budget.get("start", tb.balance).asFloat(), 0.f);
 	tb.waitFrames = int(std::max(budget.get("wait_sec", tb.waitFrames / FRAMES_PER_SEC).asFloat(), 0.f) * FRAMES_PER_SEC);
+	tb.sinceFrame = int(std::max(budget.get("since", tb.sinceFrame / FRAMES_PER_SEC).asFloat(), 0.f) * FRAMES_PER_SEC);
 	// Missing or [] = x1
 	std::vector<std::pair<float, float>> budgetMap;
 	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);
@@ -1201,9 +1202,10 @@ void CMilitaryManager::ReadConfig()
 	tb.mapMult = utils::eval_curve(budgetMap, tb.mapX);
 	tb.mexMult = utils::eval_curve(tb.mexCurve, 0.f);
 	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1) x map %.2f (%.0f per player on our team)"
-			" x mex curve (%u points) x army curve (%u points, from %i s), bank %.0f s, loss refund x%.1f",
+			" x mex curve (%u points) x army curve (%u points, from %i s), bank %.0f s, loss refund x%.1f,"
+			" planned towers from %i s",
 			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), (unsigned)tb.armyCurve.size(),
-			tb.armySince / FRAMES_PER_SEC, tb.bankSec, tb.lossRefund);
+			tb.armySince / FRAMES_PER_SEC, tb.bankSec, tb.lossRefund, tb.sinceFrame / FRAMES_PER_SEC);
 
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
@@ -2407,7 +2409,7 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 				// TODO: Auto-sort defenders by cost OR remove break?
 				return;
 			}
-			if (isPorc && IsAccountTurret(defDef) && !CanAffordTurret(defCost)) {
+			if (isPorc && IsAccountTurret(defDef) && (IsTurretEarly() || !CanAffordTurret(defCost))) {
 				return;
 			}
 			point->cost += defCost;
@@ -4271,10 +4273,17 @@ void CMilitaryManager::UpdateDefence()
 	}
 }
 
+bool CMilitaryManager::IsTurretEarly() const
+{
+	return circuit->GetLastFrame() < turretBudget.sinceFrame;
+}
+
 bool CMilitaryManager::IsWaiting(const CCircuitDef* def, int sinceFrame)
 {
-	return IsAccountTurret(def) && (circuit->GetLastFrame() - sinceFrame < turretBudget.waitFrames)
-		&& !CanAffordTurret(def->GetCostM());
+	// Not before budget.since; from then (or when due, if later) up to wait_sec for the balance
+	const int waitFrom = std::max(sinceFrame, turretBudget.sinceFrame);
+	return IsAccountTurret(def) && (IsTurretEarly()
+		|| ((circuit->GetLastFrame() - waitFrom < turretBudget.waitFrames) && !CanAffordTurret(def->GetCostM())));
 }
 
 bool CMilitaryManager::TryBaseTower(const AIFloat3& pos, CCircuitDef* buildDef, int dueFrame)
@@ -4333,7 +4342,7 @@ bool CMilitaryManager::TryHubTower(const SHubTower& t)
 
 bool CMilitaryManager::HoldHubTower(CCircuitDef* def, const AIFloat3& pos, bool isScored, const CCircuitUnit* hub)
 {
-	if (!IsAccountTurret(def) || CanAffordTurret(def->GetCostM())) {
+	if (!IsAccountTurret(def) || (!IsTurretEarly() && CanAffordTurret(def->GetCostM()))) {
 		return false;
 	}
 	hubTowers.push_back({def, pos, isScored, (hub != nullptr) ? hub->GetId() : -1,
