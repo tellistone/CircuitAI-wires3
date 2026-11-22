@@ -30,18 +30,19 @@ class IBuilderTask;
  * started where it picked, so a walker measures straight). As the mex search, a builder rates only spots in the
  * mex_front.clusters nearest clusters (CMetalManager::FindNearSpots: its walk stops at threat walls). A builder walking
  * to its spot keeps it until the spot has failed its test for 3 s (a raider passing it doesn't turn the builder): the
+ * pick's spot test with threat aside (CEconomyManager::GetMexSpotTest: an enemy or ally may build there meanwhile), the
  * builder's own danger rule (CBuilderManager::GetMexJobTest), and threat there within the builder's own (THREAT_MIN for
- * a constructor). Its job leaves threat at the spot to the board meanwhile (CBMexTask::IsReachable). One fleeing keeps
- * its spot for hold_sec. The rest go by mex_front's score of the arrival (comm_bias for a commander), lowest first, so
- * no builder takes a spot another reaches sooner; a commander never takes a spot another free builder reaches sooner. A
+ * a constructor). Its job leaves threat at the spot to the board meanwhile (CBMexTask::IsReachable). A fleeing builder
+ * holds no spot. The rest go by mex_front's score of the arrival (comm_bias for a commander), lowest first, so no
+ * builder takes a spot another reaches sooner; a commander never takes a spot another free builder reaches sooner. A
  * next spot nobody walks to yet may move to another builder on any match, which costs nothing. A mex job is made only
  * when a builder is matched (no job cap), and no other builder takes it (CBMexTask::CanAssignTo). A builder takes a
  * spot only with no threat there, and only if its own picker would (reach, flee zones, threat, a hiding commander's
  * range and territory), and in team games not an ally's (CEconomyManager::GetTestedSpots). A job that ended without its
- * mex (unreachable, the build failed) keeps its spot from that builder for 30 s. Matching runs once a second, and at
- * once (at most once a frame) when a builder with no spot asks for a job, a builder starts building its spot, a held
- * job ends or a builder dies. When the opening ends, builders keep the job they walk to; the next jobs nobody walks to
- * are dropped
+ * mex (unreachable, the build failed, a retreat from damage) keeps its spot from that builder for 30 s. Matching runs
+ * once a second, and at once (at most once a frame) when a builder with no spot asks for a job, a builder starts
+ * building its spot, a held job ends or a builder dies. When the opening ends, builders keep the job they walk to; the
+ * next jobs nobody walks to are dropped
  */
 class CMexBoard {
 public:
@@ -69,7 +70,6 @@ private:
 		CCircuitUnit* unit;
 		IBuilderTask* task;
 		int spot;
-		int fleeFrame;  // its builder began to flee at, -1 = not fleeing
 		int failFrame;  // its walking builder's test first failed at, -1 = passes
 	};
 	struct SSkip {
@@ -78,7 +78,7 @@ private:
 		int until;  // frame
 	};
 	SHold* FindHold(const CCircuitUnit* unit);
-	SHold* FindHold(const IBuilderTask* task);
+	const SHold* FindHold(const IBuilderTask* task) const;
 	void DropHold(const SHold* hold);  // erases it, and matches again
 
 	// Match, in steps: the spots, each builder's start and pairs, the pick, then the jobs
@@ -95,7 +95,6 @@ private:
 
 	CCircuitAI* circuit;
 	bool isOn;
-	int holdFrames;
 	std::vector<SHold> holds;
 	std::vector<SSkip> skips;
 	std::vector<CCircuitUnit*> toAssign;  // Update's AssignNext
