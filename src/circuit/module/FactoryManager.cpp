@@ -841,7 +841,15 @@ int CFactoryManager::UnitFinished(CCircuitUnit* unit)
 {
 	auto iter = unfinishedUnits.find(unit);
 	if (iter != unfinishedUnits.end()) {
+		const std::set<CCircuitUnit*> facs = iter->second->GetAssignees();  // copy: the task is gone after DoneTask
 		DoneTask(iter->second);
+		// factory.restart: the factory's next order now, not from the idle pass 20+ frames on (a build_delay wait stays)
+		for (CCircuitUnit* fac : facs) {
+			if (fac->GetTask() == idleTask) {
+				AssignTask(fac);
+				fac->GetTask()->Start(fac);
+			}
+		}
 	}
 	auto itre = repairedUnits.find(unit->GetId());
 	if (itre != repairedUnits.end()) {

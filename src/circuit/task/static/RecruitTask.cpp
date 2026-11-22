@@ -177,7 +177,14 @@ void CRecruitTask::Execute(CCircuitUnit* unit)
 
 void CRecruitTask::OnUnitIdle(CCircuitUnit* unit)
 {
-	Start(unit);
+	// factory.restart: the order can come the frame the last unit finished, before that job's late UnitIdle.
+	// A factory that still has orders isn't idle: giving the order again would queue a second unit
+	auto commands = unit->GetUnit()->GetCurrentCommands();
+	const bool isIdle = commands.empty();
+	utils::free_clear(commands);
+	if (isIdle) {
+		Start(unit);
+	}
 }
 
 void CRecruitTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
