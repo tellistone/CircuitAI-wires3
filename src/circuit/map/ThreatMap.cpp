@@ -126,6 +126,11 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 	slackMod.speedModMax = speedSlack.get((unsigned)1, 2).asInt() * DEFAULT_SLACK / squareSize;
 	constexpr float allowedRange = 2000.f;
 	ammoReach = 0.f;
+	// Jumpers: this share of the jump range on top of the weapon range while the jump is ready (SetEnemyUnitRange);
+	// behaviour.json per unit "jump_threat" for one type. 0 = off
+	const Json::Value& root = circuit->GetSetupManager()->GetConfig();
+	const float jumpThreat = std::max(quota.get("jump_threat", 0.5f).asFloat(), 0.f);
+	const Json::Value& behaviours = root["behaviour"];
 	for (CCircuitDef& cdef : circuit->GetCircuitDefs()) {
 		float slack = squareSize - 1 + cdef.GetAoe() / 2 + DEFAULT_SLACK * slackMod.allMod;
 		if (cdef.IsMobile()) {
@@ -151,6 +156,21 @@ CThreatMap::CThreatMap(CMapManager* manager, float decloakRadius)
 
 		cdef.SetThreatRange(CCircuitDef::ThreatType::CLOAK, GetCloakRange(&cdef));
 		cdef.SetThreatRange(CCircuitDef::ThreatType::SHIELD, GetShieldRange(&cdef));
+
+		// The same with the jump's reach, added before rounding to squares; as extra squares over the plain ranges
+		if (cdef.IsAbleToJump() && !cdef.IsAbleToFly()) {
+			const Json::Value& own = behaviours[cdef.GetDef()->GetName()]["jump_threat"];
+			cdef.SetJumpThreat(own.isNumeric() ? std::max(own.asFloat(), 0.f) : jumpThreat);
+			const float reach = cdef.GetJumpThreat() * cdef.GetJumpRange();
+			auto extra = [&](CCircuitDef::RangeType rt, CCircuitDef::ThreatType tt, bool isArmed) {
+				const int plain = cdef.GetThreatRange(tt);
+				const int jump = ((plain > 0) && isArmed) ? int(cdef.GetMaxRange(rt) + reach + slack) / squareSize + 1 : plain;
+				cdef.SetJumpThreatExtra(tt, jump - plain);
+			};
+			extra(CCircuitDef::RangeType::AIR, CCircuitDef::ThreatType::AIR, cdef.HasAntiAir());
+			extra(CCircuitDef::RangeType::LAND, CCircuitDef::ThreatType::LAND, cdef.HasAntiLand());
+			extra(CCircuitDef::RangeType::WATER, CCircuitDef::ThreatType::WATER, cdef.HasAntiWater());
+		}
 		if (cdef.GetShieldDrain() > 0.f) {
 			ammoReach = std::max(ammoReach, cdef.GetShieldRadius());
 		}
@@ -191,6 +211,9 @@ void CThreatMap::SetEnemyUnitRange(CEnemyUnit* e) const
 	if (edef->IsRoleComm() && !e->IsFake()) {
 		float maxRange, maxAoe;  // the fitted weapons' (x comm_range_mult)
 		CCircuitDef::GetCommWeaponRange(manager->GetCircuit(), e->GetUnit(), maxRange, maxAoe);
+		if (edef->IsAbleToJump() && e->IsJumpReady() && (maxRange > 0.f)) {
+			maxRange += edef->GetJumpThreat() * edef->GetJumpRange();  // as below
+		}
 		const float slack = squareSize - 1 + maxAoe / 2
 				+ DEFAULT_SLACK * slackMod.allMod
 				+ THREAT_UPDATE_RATE * edef->GetSpeed() / FRAMES_PER_SEC;
@@ -203,9 +226,11 @@ void CThreatMap::SetEnemyUnitRange(CEnemyUnit* e) const
 	} else {
 	// FIXME: DEBUG
 
+		// A jumper whose jump is ready (CEnemyUnit::UpdateJump) reaches farther: quota.jump_threat of its jump range
+		const bool isJumpReach = edef->IsAbleToJump() && e->IsJumpReady();
 		for (CCircuitDef::ThreatT tt = 0; tt < static_cast<CCircuitDef::ThreatT>(CCircuitDef::ThreatType::_SIZE_); ++tt) {
 			CCircuitDef::ThreatType type = static_cast<CCircuitDef::ThreatType>(tt);
-			e->SetRange(type, edef->GetThreatRange(type));
+			e->SetRange(type, edef->GetThreatRange(type) + (isJumpReach ? edef->GetJumpThreatExtra(type) : 0));
 		}
 	}
 }
@@ -262,7 +287,7 @@ float CThreatMap::GetEnemyThreatAt(CCircuitUnit* unit, CEnemyInfo* enemy, const 
 	const CEnemyUnit* e = enemy->GetData();
 	const int vsl = std::min(int(e->GetVel().Length2D() * slackMod.speedMod), slackMod.speedModMax);
 	int ex, ez, x, z;
-	PosToXZ(e->GetPos(), ex, ez);
+	PosToXZ(e->GetFightPos(), ex, ez);  // where AddEnemyUnit draws it: a jumper's landing spot
 	PosToXZ(position, x, z);
 	const int sum = SQUARE(ex - x) + SQUARE(ez - z);
 	const float threat = e->GetThreat();
@@ -386,7 +411,7 @@ void CThreatMap::AddEnemyUnitAll(const SEnemyData& e)
 void CThreatMap::AddEnemyAir(const SEnemyData& e, const int slack, const float count)
 {
 	int posx, posz;
-	PosToXZ(e.pos, posx, posz);
+	PosToXZ(e.GetFightPos(), posx, posz);  // a jumper in flight: where it lands
 
 	const float threat = e.threat/* - THREAT_DECAY*/;
 	const int range = e.GetRange(CCircuitDef::ThreatType::AIR) + slack;
@@ -425,7 +450,7 @@ void CThreatMap::AddEnemyAmphConst(const SEnemyData& e, const int slack, const f
 		const SDrawLayers& layers)
 {
 	int posx, posz;
-	PosToXZ(e.pos, posx, posz);
+	PosToXZ(e.GetFightPos(), posx, posz);  // a jumper in flight: where it lands
 
 	float* drawSurf = layers.surf;
 	float* drawAmph = layers.amph;
@@ -474,7 +499,7 @@ void CThreatMap::AddEnemyAmphGradient(const SEnemyData& e, const int slack, cons
 		const SDrawLayers& layers)
 {
 	int posx, posz;
-	PosToXZ(e.pos, posx, posz);
+	PosToXZ(e.GetFightPos(), posx, posz);  // a jumper in flight: where it lands
 
 	float* drawSurf = layers.surf;
 	float* drawAmph = layers.amph;

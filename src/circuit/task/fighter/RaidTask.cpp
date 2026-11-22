@@ -972,7 +972,7 @@ void CRaidTask::ApplyChasePath(const CQueryPathSingle* query)
 void CRaidTask::AttackDirect(int frame)
 {
 	// Same re-order rule as IFighterTask::Attack, without firing spots
-	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
+	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetFightPos());
 	const bool isRepeatAttack = (frame >= attackFrame + attackRepeat);
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	for (CCircuitUnit* unit : units) {

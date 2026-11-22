@@ -311,6 +311,30 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Fighting jumpers and kiting Jack** (`quota.jump_land`, `quota.jump_threat`, `quota.kite`, new attribute `kite`).
+  - Jump tracking (`CEnemyUnit::UpdateJump`). Zero-K keeps `is_jumping`, the jump's goal and (but for Detriment) its
+    reload private to the jumper's team, so an enemy jumper in LOS is seen in flight by its height above the ground
+    (over 20 elmos). Its landing spot and frame are worked out once from the velocity the jump gadget sets each
+    frame: horizontal speed v gives the jump's length (L = 2rh / sqrt(1 - r^2), r = v / jump_speed, h =
+    jump_height), vertical speed how far along the arc it is. A height that doesn't fit the arc there (a unit walking
+    on freshly raised ground) is no jump. Out of LOS a flight ends when the guess says. Reload: `jump_reload` from
+    the landing; a jumper never seen jumping counts as ready, the safe side.
+  - `jump_land` (default true): while it flies, the jumper's fight position (`CEnemyInfo::GetFightPos`) is its
+    landing spot. Firing spots, the fire band, the target's tile (so take-off re-orders units at their next update),
+    `IsOutOfReach` and its threat on the threat map (`AddEnemyUnit`, and the single-enemy `GetThreatAt` that
+    `GetTaskThreatExcl` subtracts) all use it. LOS, routes and orders keep its real position.
+  - `jump_threat` (default 0.5; per unit `jump_threat` for one type): while the jump is ready, that share of the jump
+    range is added to its weapon range on the threat map, before rounding to squares. Jack: 5 squares (about 320
+    elmos with slack) to 8 (about 512). Readers of the per-enemy range (threat layers, anti-heavy stand-off) follow.
+  - `kite` (default 0.85, 0 = off) with the new `kite` attribute (on `jumpassault`): every ranged unit that fights
+    from firing spots (not melee units, aircraft or mobile bombs) keeps out of 0.85 x its own range of each kited
+    enemy in LOS, whatever it targets. No firing spot inside such a disc, its kept spot and where it stands
+    included, and standing in one re-orders it at every task update. With no spot clear of the discs it steps out
+    to 0.95 x its range from that enemy (straight away, then 30 and 60 degrees either side, the first safe) and
+    fights from there without chasing (`FireSpot::KITE`); outside them it holds. On a kited target, spots go on a ring
+    at 0.95 x range and the fire band reaches the full range, so a unit Zero-K's own skirm keeps at the edge of its
+    range is no longer pulled back in to 0.9 x range.
+
 - **Commander protect against rushes** (`quota.protect`, new, off by default: `enable`, `zone` 1200, `keep_sec` 12,
   `respond_sec` 12, `go_ratio` 1.0). When the commander's seen danger within `zone` beats its own power, or it takes
   damage, one central go or no-go decides once a second for every group that can reach it, so they commit together

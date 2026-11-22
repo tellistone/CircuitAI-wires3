@@ -498,6 +498,9 @@ public:
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
+	// quota.kite: ranged units with firing spots keep out of this x their range of enemies with the "kite" attribute;
+	// 0: off (IFighterTask::FindFireSpot)
+	float GetKiteRange() const { return kiteRange; }
 	// quota.attack_melee_spot: melee units pick a firing spot this many elmos beyond both units' bodies; < 0: off
 	float GetAttackMeleeSpot() const { return attackMeleeSpot; }
 	// quota.attack_melee_max: at most this many melee units of a group close in on one target (fewer if its ring
@@ -852,6 +855,7 @@ private:
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
+	float kiteRange;  // quota.kite
 	float attackMeleeSpot;  // quota.attack_melee_spot
 	int attackMeleeMax;  // quota.attack_melee_max
 	float attackMeleeSpread;  // quota.attack_melee_spread

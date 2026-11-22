@@ -51,6 +51,7 @@ CCircuitDef::AttrName CCircuitDef::attrNames = {
 	{"no_formation", CCircuitDef::AttrType::NO_FORM},
 	{"cloak_route",  CCircuitDef::AttrType::CLOAK_ROUTE},
 	{"plant",        CCircuitDef::AttrType::PLANT},
+	{"kite",         CCircuitDef::AttrType::KITE},
 };
 CCircuitDef::FireName CCircuitDef::fireNames = {
 	{"hold",   CCircuitDef::FireType::HOLD},
@@ -203,6 +204,13 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	if (isAbleToJump) {
 		it = customParams.find("jump_range");
 		jumpRange = (it != customParams.end()) ? utils::string_to_float(it->second) : 400.0f;
+		// Zero-K's defaults (gamedata/unitdef_defaults/jump_defs.lua) where a def has none
+		it = customParams.find("jump_speed");
+		jumpSpeed = (it != customParams.end()) ? utils::string_to_float(it->second) : 6.0f;
+		it = customParams.find("jump_height");
+		jumpHeight = (it != customParams.end()) ? utils::string_to_float(it->second) : 200.0f;
+		it = customParams.find("jump_reload");
+		jumpReload = int(((it != customParams.end()) ? utils::string_to_float(it->second) : 10.0f) * FRAMES_PER_SEC);
 	}
 
 	isMobileBuilding = customParams.find("mobilebuilding") != customParams.end();  // Zero-K tests it is there

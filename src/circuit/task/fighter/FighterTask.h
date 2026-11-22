@@ -87,12 +87,33 @@ protected:
 	// isDirect: units without a spot (no usable range, or quota.attack_melee_spot < 0 for melee) get a direct Attack instead of a fight-move, so the target keeps priority.
 	// The engine still lets weapons shoot other units while the ordered target can't be hit.
 	void Attack(const int frame, const bool isDirect = false);
+	// Kiting (quota.kite): enemies of a type with the "kite" attribute in LOS (finished, not paralysed or disarmed),
+	// at their fight position (CEnemyInfo::GetFightPos: a jumper's landing spot). Gathered once per Attack, which
+	// every FindFireSpot runs under; empty outside it
+	struct SKiteDisc {
+		springai::AIFloat3 pos;
+		float range;  // quota.kite x our unit's range against it
+		float step;  // a step out goes this far from it: KITE_STEP x that range
+	};
+	void GatherKited();
+	// Keep-out discs round the kited enemies for this unit; none for melee units, aircraft, mobile bombs or with
+	// kiting off
+	void GetKiteDiscs(CCircuitUnit* unit, std::vector<SKiteDisc>& outDiscs) const;
+	static const SKiteDisc* FindKiteDisc(const std::vector<SKiteDisc>& discs, const springai::AIFloat3& p);
+	// A straight walk from -> to crosses no disc that from is outside of
+	static bool IsKiteWalkClear(const std::vector<SKiteDisc>& discs, const springai::AIFloat3& from,
+			const springai::AIFloat3& to);
+	// Is this enemy's type kited (its firing spots: ring at KITE_RADIUS, band up to the full range)?
+	bool IsKited(const CEnemyInfo* enemy) const;
+	std::vector<const CEnemyInfo*> kited;
 	// Firing spot for a unit: within its spot range (GetSpotRange) of the target, trading walking distance against
-	// threat and against spots other units are heading to.
+	// threat and against spots other units are heading to. Never inside a kite disc (GetKiteDiscs), whatever the
+	// target.
 	// NONE: no usable range (old orders); SPOT: a safe spot; HOLD: every spot dangerous but the unit's own
 	// spot is safe, or no spot has a line of fire and a direct walk there (GetUnitSightLifts); RISKY: nowhere safe, the
-	// unit's spot neither: the least dangerous spot
-	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY};
+	// unit's spot neither: the least dangerous spot; KITE: it stands too near a kited enemy and no spot is clear of
+	// them: a step out, away from that enemy, to fight from (no chase)
+	enum class FireSpot: char {NONE, SPOT, HOLD, RISKY, KITE};
 	// Where a unit of the group is heading (its last firing spot if still usable, else where it stands) and its
 	// health-scaled power (GetUnitStrengths): it backs up spots near there
 	struct SFireClaim {
@@ -154,7 +175,8 @@ protected:
 	// Can unit find a firing spot by enemy inside a disc of radius r round spotDiscPos? Spots lie at FIRE_RADIUS x
 	// its range from the enemy (a distance test, before any FindFireSpot)
 	bool IsDiscReach(CCircuitUnit* unit, const CEnemyInfo* enemy, float r) const;
-	// isClose (melee's close spots): 0-0.95x GetCloseRange from the enemy; else 0.6-0.95x GetFireRange
+	// isClose (melee's close spots): 0-0.95x GetCloseRange from the enemy; else 0.6-0.95x GetFireRange (a kited
+	// enemy: up to 1x, so a unit the game's own skirm holds at the edge of its range keeps its place)
 	bool IsInFireBand(CCircuitUnit* unit, const springai::AIFloat3& pos, bool isClose, const CEnemyInfo* enemy) const;
 	// Its last spot, if still in that band
 	bool GetKeptFireSpot(CCircuitUnit* unit, bool isClose, const CEnemyInfo* enemy, springai::AIFloat3& outPos) const;

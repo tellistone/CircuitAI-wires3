@@ -756,6 +756,7 @@ void CMilitaryManager::ReadConfig()
 	attackMeleeMax = static_cast<int>(readAttackNum("attack_melee_max", 6.f, 0.f, 64.f));
 	attackMeleeSpread = readAttackNum("attack_melee_spread", 400.f, 0.f, noMax);
 	attackMeleeBlast = readAttackNum("attack_melee_blast", 0.1f, -1.f, noMax);
+	kiteRange = readAttackNum("kite", 0.85f, 0.f, 0.9f);
 	// quota.attack_merge.rally, quota.raid_rally: {match, margin, range, seen_sec}; not an object (or match 0) = off
 	auto readRallyCfg = [&](const Json::Value& q, const char* name, float defRange, SRallyCfg& outCfg) {
 		if (!q.isNull() && !q.isObject()) {
