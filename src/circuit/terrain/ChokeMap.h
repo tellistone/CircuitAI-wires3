@@ -102,6 +102,8 @@ public:
 		float spotForward = 0.5f;  // choke.spot.forward: the most a position's spot gains for leaning toward the enemy
 		float radarGain = 0.02f;  // choke.radar.min_gain
 		float radarShare = 0.05f;  // choke.radar.share
+		float radarSince = 90.f;  // choke.radar.since: seconds before the first planned radar
+		float radarOpeningShare = 0.05f;  // choke.radar.opening_share: the share in the opening; missing = min(share, 0.1)
 		float radarEnemy = 2.f;  // choke.radar.enemy
 		float radarInside = 0.25f;  // choke.radar.inside
 		std::string radarGuard;  // choke.radar.guard: the tower def that guards a new radar, "" = none

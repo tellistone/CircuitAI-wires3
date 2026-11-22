@@ -72,6 +72,7 @@ public:
 	// The same without one enemy's threat there (CThreatMap::GetSquadThreatExcl), never below 0
 	float GetTaskThreatExcl(CCircuitUnit* unit, const springai::AIFloat3& pos, float exclThreat) const;
 	CEnemyInfo* GetTarget() const { return target; }
+	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	void ClearTarget() { target = nullptr; }  // Only for ~CEnemyUnit
 	void ReleaseTarget() { SetTarget(nullptr); }  // unbound too: for a task that ends (CMilitaryManager::DequeueTask)
 

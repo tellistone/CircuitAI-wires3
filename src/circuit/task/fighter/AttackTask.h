@@ -33,9 +33,10 @@ public:
 	// Walk to this stronger group and merge into it instead of hunting targets alone (while a safe route exists)
 	void SetReinforce(CAttackTask* squad) { reinforce = squad; }
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const override { return IsCompatible(unit); }
-	// A guard slot may pull this group's unit (CFGuardTask::Pull): it is alone, not fighting and not the rally host.
-	// With quota.attack_merge.base_gather false a new riot walks out alone, so this is how it gets pulled
-	bool IsGuardPullable() const;
+	// A guard slot may pull unit from this group (CFGuardTask::Pull): it is alone (isFromGroup, under guard.summon: or
+	// the group keeps quota.attack power without it), not fighting and not the rally host. With
+	// quota.attack_merge.base_gather false a new riot walks out alone, so this is how it gets pulled
+	bool IsGuardPullable(const CCircuitUnit* unit, bool isFromGroup) const;
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
 	virtual void Merge(ISquadTask* task) override;
@@ -474,7 +475,6 @@ private:
 	// Straggler: farther from the leader than GetGroupRadius and the target out of its weapon range.
 	// Gets no firing-spot order (keeps travelling)
 	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const override;
-	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Attack (firing spots), and walk stragglers (IsOutOfReach) to the leader if they have no path
 	void Engage(int frame);
 	// Nothing to go to: hold at the quietest reachable spot within 2x our range (never head home), avoiding the spot

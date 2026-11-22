@@ -39,6 +39,7 @@ class IBuilderTask;
 struct STerrainMapArea;
 class CGameTask;
 class CEnergyGrid;
+struct SBuildChain;
 
 class CEconomyManager: public IModule {
 public:
@@ -155,6 +156,31 @@ public:
 	float GetReclaimHelperSec() const { return reclaimHelperSec; }
 	// Before this frame a non-combat constructor needs an escort (or a defended cluster) to build a mex
 	int GetMexEscortFrame() const { return mexEscortFrame; }
+	// economy.opening: the opening's rules are on until its time passes, or until no open spot has passed the mex
+	// spot test (and the mex board holds none) for OPENING_NO_SPOT seconds. Off from the start on a map with no spots
+	bool IsOpening() const { return isOpening; }
+	int GetOpeningLogEnd() const { return openingLogEnd; }  // economy.opening.log: OPENING lines until this frame, -1 = off
+	// Open spots in GetTestedSpots, and those of them on safe ground (CMilitaryManager::IsSafeGround); counted once a
+	// second in the opening
+	unsigned GetOpenSpotCount() const { return openSpotCount; }
+	unsigned GetSafeSpotCount() const { return safeSpotCount; }
+	// The mex job search's spot test: open, not ours yet, no threat, reachable (by unit, or by any builder) and free
+	// to build on, or held by an enemy mex we can clear. isHeldOpen: a spot the mex board holds counts as open
+	std::function<bool (int spot)> GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen = false) const;
+	// The spots that pass it for any builder, the mex board's held ones too, and in team games not nearer an ally's
+	// base or factory than ours (the ally takes it); worked out at most once a second (the opening's spot count and the
+	// board share it), so a spot may have closed since: check IsAllyOpenSpot
+	const std::vector<int>& GetTestedSpots();
+	// mex_front cluster score of a commander's search (comm_bias) or another builder's; empty = plain nearest spot.
+	// It ranks only the mex_front.clusters nearest clusters (CMetalManager::FindNearSpots)
+	std::function<float (int cluster, float dist)> GetMexScore(bool isComm) const {
+		return GetMexFrontScore(isComm ? mexFrontCommBias : mexFrontBias);
+	}
+	unsigned GetMexFrontClusters() const { return mexFrontClusters; }
+	IBuilderTask* EnqueueMex(int index);  // a HIGH mex job on spot index
+	// The energy a build chain queues beside its building at pos (IBuilderTask::ExecuteChain): the low energy there
+	// while our income is under the chain's energy, beside a spot worth it on a "mex" chain; nullptr = none
+	CCircuitDef* GetChainEnergy(const SBuildChain* chain, const springai::AIFloat3& pos) const;
 	IBuilderTask* UpdateEnergyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	// Escalation mode: a NOW job for cdef at its rear site (economy.energy.rear), else near the base; nullptr = no site
 	IBuilderTask* EnqueueEscalationEnergy(CCircuitDef* cdef);
@@ -220,6 +246,7 @@ private:
 	float GetStorage(springai::Resource* res);
 	// mex_front cluster score for CMetalManager::GetMexToBuild; empty = plain nearest-spot search
 	std::function<float (int cluster, float dist)> GetMexFrontScore(float bias) const;
+	std::vector<springai::AIFloat3> GetAllyAnchors() const;  // team games: allied AI bases and allied factories
 	// choke.expand: per cluster, the score's factor for being behind a pocket's cut (lower is better); empty when off
 	std::vector<float> GetExpandMods() const;
 	// Metal of a whole feature of this def, 0 = none or not reclaimable; read once per def
@@ -304,6 +331,17 @@ private:
 	int mexMax;
 	bool isAllyMexMax;
 	int mexEscortFrame;
+	void UpdateOpening();
+	// The commander's plop (and its forced morph), once its facplop rules param is set or retries frames have passed
+	void StartCommander(ICoreUnit::Id unitId, int retries);
+	bool isOpening = false;
+	int openingEnd = 0;  // frame
+	int openingLogEnd = -1;
+	int noSpotFrame = -1;  // since then no open spot passed the test, -1 = some did
+	unsigned openSpotCount = 0;
+	unsigned safeSpotCount = 0;
+	std::vector<int> testedSpots;  // GetTestedSpots
+	int testedFrame = -1;
 	float mexJobMod;
 	float mexFrontBias;
 	float mexFrontCommBias;  // mex_front.comm_bias: bias when a commander starts the search

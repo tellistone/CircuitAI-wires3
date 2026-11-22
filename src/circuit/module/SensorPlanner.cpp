@@ -97,9 +97,14 @@ void CSensorPlanner::Update()
 IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::function<bool(const AIFloat3&)>& isSafe)
 {
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	const CChokeMap::SConfig& config = chokeMap->GetConfig();
 	const int frame = circuit->GetLastFrame();
-	if (!chokeMap->GetConfig().isRadar || (circuit->GetFactoryManager()->GetFactoryCount() == 0)) {
+	if (!config.isRadar || (circuit->GetFactoryManager()->GetFactoryCount() == 0)) {
 		return nullptr;  // the factory goes first
+	}
+	if (frame < config.radarSince * FRAMES_PER_SEC) {
+		budgetFrame = frame;  // choke.radar.since: the budget starts then, with one radar
+		return nullptr;
 	}
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
@@ -137,7 +142,9 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 		return nullptr;
 	}
 	const float cost = radarDef->GetCostM();
-	budget = std::min(budget + chokeMap->GetConfig().radarShare * circuit->GetEconomyManager()->GetAvgMetalIncome()
+	const bool isOpening = circuit->GetEconomyManager()->IsOpening();
+	const float share = isOpening ? config.radarOpeningShare : config.radarShare;
+	budget = std::min(budget + share * circuit->GetEconomyManager()->GetAvgMetalIncome()
 			* (frame - budgetFrame) / FRAMES_PER_SEC, cost * 2.f);
 	budgetFrame = frame;
 	if (budget < cost) {
@@ -150,8 +157,10 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 	budget -= cost;
 	circuit->LOG("RADAR by %s at (%.0f, %.0f): %.0f%% covered with it", unit->GetCircuitDef()->GetDef()->GetName(),
 			spot.x, spot.z, planner->GetCoveredShare() * 100.f);
-	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NOW, radarDef, spot,
-			IBuilderTask::BuildType::RADAR, cost, 0.f, true, ORPHAN_TIMEOUT);  // no shake: built where it sees most
+	// In the opening a HIGH job that waits for a builder and ranks by walk, so it never beats a mex across the map
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(
+			isOpening ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NOW, radarDef, spot,
+			IBuilderTask::BuildType::RADAR, cost, 0.f, true, isOpening ? ASSIGN_TIMEOUT : ORPHAN_TIMEOUT);  // no shake: built where it sees most
 	task->SetNextTask(MakeGuardTask(spot));  // queued once the radar stands; dropped with it
 	return task;
 }
@@ -285,6 +294,13 @@ IBuilderTask* CSensorPlanner::MakeGuardTask(const AIFloat3& radarPos)
 	}
 	if (circuit->GetMilitaryManager()->RefuseCrowdedLight(guardDef, pos, "radar guard")) {
 		return nullptr;  // turret.crowd_count
+	}
+	// In the opening only from porcupine.budget.since and if the turret account can pay for it, as other towers wait
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	if (circuit->GetEconomyManager()->IsOpening()
+		&& (militaryMgr->IsTurretEarly() || !militaryMgr->CanAffordTurret(guardDef->GetCostM())))
+	{
+		return nullptr;
 	}
 	CMilitaryManager::TurretScope scope(circuit->GetMilitaryManager(), CMilitaryManager::TurretSpend::GUARD);
 	return circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::HIGH, guardDef, pos,

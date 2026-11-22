@@ -2709,29 +2709,16 @@ bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 	return pos.SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
 }
 
-bool CAttackTask::IsGuardPullable() const
+bool CAttackTask::IsGuardPullable(const CCircuitUnit* unit, bool isFromGroup) const
 {
-	// A squad of 2+ would get weaker (maybe below quota.attack); a lone unit's task just ends when it leaves.
-	// The rally host is left alone too: every compatible group is walking to it
-	return (units.size() == 1) && !IsFighting() && (static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this)
-			&& !IsProtecting();  // quota.protect: committed
-}
-
-bool CAttackTask::IsFighting() const
-{
-	// Engaged and some unit has the target within its own weapon range. ENGAGE alone starts at highestRange,
-	// which includes LOS radius: far too wide to keep groups from merging.
-	if ((State::ENGAGE != state) || (target == nullptr)) {
+	// A lone unit's task just ends when it leaves. A squad of 2+ would get weaker: only for isFromGroup, and only while
+	// it keeps quota.attack power without the unit. Never a fighting group, nor the rally host: every compatible group
+	// is walking to it, nor a group quota.protect committed
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	if (IsFighting() || (militaryMgr->GetRallyHost() == this) || IsProtecting()) {
 		return false;
 	}
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	const AIFloat3& tPos = target->GetPos();
-	for (CCircuitUnit* unit : units) {
-		if (unit->GetPos(frame).SqDistance2D(tPos) < SQUARE(unit->GetCircuitDef()->GetMaxRange())) {
-			return true;
-		}
-	}
-	return false;
+	return (units.size() == 1) || (isFromGroup && (attackPower - unit->GetCircuitDef()->GetPower() >= minPower));
 }
 
 void CAttackTask::Engage(int frame)

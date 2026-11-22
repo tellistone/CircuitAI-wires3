@@ -7,6 +7,89 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Builders go from one job straight to the next** (`economy.builder_jobs.chain`, new, true). A builder whose job
+  ends picks its next one in the same frame, not on the idle pass (20 frames later, one builder at a time), and so
+  does a new builder the frame it is finished. The pick uses a cost map started where it built, not where it last
+  picked (a new builder's starts when its nanoframe appears). Its build starts the frame after it arrives, not on the
+  job's next turn (up to a second later). The engine's idle event for the old job, which can come after the new
+  job's orders, is ignored when the builder has orders.
+- **The opening** (`economy.opening`, new). `time` (300 s, or a map size curve as `mex_escort`; 0 = none) sets how
+  long the opening's rules hold: `economy.buildpower_spots`, `guard.summon.opening_share` and the
+  `choke.radar.opening_*` keys. It ends early 20 s after the last open mex spot a builder could take went, and the log
+  says when and why (`OPENING ends at`). `log` (true) writes `OPENING` lines to infolog once a minute until `time`:
+  per builder, seconds idle, walking, building and fleeing, job switches while walking away from our base and back
+  toward it, mexes, jumps, and escorts with their mean wait; and for the team, builders and mexes made and lost, metal
+  income, seconds of energy stall, and open mex spots and those on safe ground.
+- **A factory makes constructors while free mex spots outnumber them** (`economy.buildpower_spots`, new, `per_builder`
+  4, `max` 4; `per_builder` 0 = off). In the opening a factory's next unit is a constructor (a queued one first, the
+  opener's too) while open mex spots on safe ground (`guard.summon`; in team games not an ally's) number more than
+  `per_builder` x our builders (the commander one of them, those in a factory too), up to `max` builders. Not before
+  our first combat unit is finished (the opener's raider comes first), nor while the known enemy army per enemy team
+  (no commanders or constructors, unseen ones faded as for `ms_pull_army`) is over 1.5x ours, nor after two
+  constructors died within a minute. The `BUILDERS` log counts them as `spots`.
+- **Escorts are summoned, not waited for** (`guard.summon`, new; `false` = the safe test alone, as before). A
+  builder's guard slot opens as soon as the builder or its job is neither on safe ground nor inside our army's bubble
+  (the `guard.safe` test), and an empty slot stays shut while both are safe. Safe ground: no enemy whose type's raw
+  threat (before `thr_mod`) is at least `min_threat` (1.0, so a Flea doesn't count) seen within `enemy_sec` (30) in
+  its choke map region or within `enemy_radius` (800) elmos, and the region is ours (held, our side or our half), not
+  the enemy's nor contested; before the choke map is ready, our half with no enemy influence. Builders never wait
+  for an escort to take a mex, so `economy.mex_escort` is unused, and a cluster's preventive towers are booked as
+  its first mex starts instead of once every spot in it is queued. The pull takes the unit that gets there first by
+  straight line; one slower than the builder only within 600 elmos; and a scout while another one scouts on. A raid
+  or attack group gives up a unit only if it is alone, or with `from_groups` (true) if it isn't fighting and keeps
+  `quota.raid` or `quota.attack` power without it. `opening_share` (1.0 = no cap) is `max_share` while the opening
+  lasts. While its guard is with it, a builder's flee takes `escorted_ally_threat` (0) as its ally threat instead of
+  `retreat.builder_flee`'s. A slot whose guard died takes the next one 10 s later at the soonest. Builder flee (and
+  the commander's danger list) skips enemies under `min_threat` too, by raw threat.
+- **Jump builders jump to their jobs** (`commander.json` `jobs.jump`, new; behaviour.json `jumpcon` gets the
+  `jump` attribute). A commander with `jobs.jump` jumps along its path to a job farther than `min_dist` (500 elmos);
+  with `keep_for_flee` (true) only from and onto safe ground, so the jump it escapes with is spent only where no
+  raider has been seen lately. No builder jumps into enemy threat: the jump is walked instead. The recon commander
+  has it on.
+- **The commander plops its factory as soon as the game allows** (about frame 5, not at 1 s), and the lane
+  (`mex_front`) is worked out at start as well as 1 s later, so the commander's first mex already leans toward it.
+- **The first radar waits for the opening's mexes** (`choke.radar.since`, new, 90 s; `opening_share`, new, 0.05,
+  missing = min(`share`, 0.1)). No planned radar before `since`, and its budget starts then (with one radar, as
+  before). In the opening the budget grows at `opening_share`, and a radar is a HIGH job that waits for a builder and
+  ranks by walk like a mex, taken from the planner only when the builder has nothing else to do. In the opening its
+  guard tower is queued only if the turret account can pay for it.
+- **A mex board matches builders to spots in the opening** (`economy.mex_board`, new; `false` = off). Mex jobs are no
+  longer made one at a time near whichever builder picks: each builder is matched to the spot it would reach first,
+  holds that one spot (the one it walks to, or while it builds something else its next), and no other builder takes
+  its job. Arrival counts the job left (and the energy the mex chain queues after a mex) plus the walk from that job's
+  site on its cost map, scored as `mex_front` scores clusters, and as in the mex search only spots in the
+  `mex_front.clusters` nearest clusters (its walk around threat walls) count; the commander uses `comm_bias` but never
+  takes a spot another builder reaches sooner. A builder walking to its spot keeps it until the spot has failed its
+  test for 3 s: the builder's own danger rule, and threat there within its own strength (any threat for a
+  constructor), so a raider passing it doesn't turn a commander that would win. Its job leaves threat at the spot to
+  the board meanwhile. A fleeing one keeps it for `hold_sec` (20), and a next spot nobody walks to yet can move to
+  another builder on any match. Only spots with no threat that the builder's own pick would take, and in team games
+  not nearer an ally's base or factory than ours (the opening's spot counts skip those too); a spot whose job failed
+  waits 30 s for that builder. A job is made only when a builder is matched, so there is no job cap and nothing is
+  claimed before someone heads there. Matching runs once a second, and at once (at most once a frame) when a builder
+  needs a spot, starts its build, loses its job or dies. A lost mex's spot just reopens for the board, with no 20 s
+  rebuild job. When the opening ends, builders keep the job they walk to and the next jobs nobody walks to are
+  dropped. The `OPENING` line counts walks the board ended (`board`) and their next spots as forward or back, and the
+  opening goes on while the board holds a spot.
+- **Walking builders switch jobs by direction** (`economy.builder_jobs`: `switch` now 0.5 and only for turning back,
+  `switch_forward` 0.8, `switch_other` 0.5, `commit_sec` 4, all new but `switch`). The walk is measured on the
+  builder's cost map, not in a straight line. Forward (no nearer our base than it is now, give or take its build
+  range): a job of the same kind nearer than `switch_forward` x the walk left, or of another kind that rates under
+  `switch_other` x the current one. Back: the same kind nearer than `switch` x the walk left and never within
+  `commit_sec` of arrival; another kind only if NOW or a stall fix. Danger always wins, and any job does when the
+  current one is cut off. In the opening with the mex board on, a walking builder runs no pick at all: it leaves its
+  job only for danger, a NOW job or a stall fix other than a mex it could take, or a board move. Only a builder between jobs searches
+  for reclaim.
+- **Mexes first in the opening** (`economy.builder_jobs.opening`, new: `mex_weight` 6, `reclaim_metal` 100,
+  `patrol_sec` 2). In the opening a HIGH mex job weighs `mex_weight` instead of `weight.high` (an energy stall still
+  ranks it as normal), reclaim of less than `reclaim_metal` ranks as normal, and a builder with nothing to do patrols
+  `patrol_sec` before it looks again, not 20 s.
+- **No planned towers before 2:00** (`porcupine.budget.since`, new, 120 s or a map size curve as `mex_escort`; 0 =
+  off). Before it only reactive towers
+  draw on the turret account: near an enemy, after a flee, a cornered builder's, one against an enemy mex. Porc, the
+  base timetable (the Lotus at 10 s waits until then, and `wait_sec` counts from then), hub towers, the creep,
+  `choke.radar.guard` and the short choke, enemy line and artillery callers wait. Preventive towers are free and
+  don't wait.
 - **Factories order their next unit the frame the last one finishes** (`factory.restart`). Before, a finished unit
   sent the factory to the idle pass, which skips a unit for 20 frames after a task change, so every factory stood
   about 0.7 s or more between units. Now `UnitFinished` gives it its next job at once, the same choice the idle pass

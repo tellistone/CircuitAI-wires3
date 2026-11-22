@@ -67,6 +67,10 @@ private:
 public:
 	static void ReadCurve(CCircuitAI* circuit, const Json::Value& value, const std::string& key, const char* xName,
 			std::vector<std::pair<float, float>>& curve);
+	// Seconds for this map: a number, or [[<map size>, <seconds>], ...] (linear between points, flat beyond the ends),
+	// map size = sqrt(width x height) in 512-elmo map units (8x8 = 8); missing = defSec. economy.mex_escort,
+	// economy.opening.time, porcupine.budget.since
+	static float ReadMapSeconds(CCircuitAI* circuit, const Json::Value& value, const std::string& key, float defSec);
 	// Map player density = map area / 2 / allied team size, sides in map units (512 elmos, the 16x16 players quote):
 	// 16x16 1v1 = 128, 8x8 5v5 = 6.4. x of response.<role>.density_curve and factory.json income_tier_density
 	static float GetMapDensity(CCircuitAI* circuit);
@@ -160,8 +164,10 @@ public:
 	void MakeDefence(const springai::AIFloat3& pos);
 	void MakeDefence(int cluster);
 	// sightDef: a sighting of that enemy near our mex at pos (UpdatePreventSight): the preventive roll can only
-	// raise the count, and a half-taken cluster below 10 m/s stays out of porc mode
-	void MakeDefence(int cluster, const springai::AIFloat3& pos, CCircuitDef* sightDef = nullptr);
+	// raise the count, and a half-taken cluster below 10 m/s stays out of porc mode.
+	// isFirstMex: the cluster's first mex job under guard.summon (UpdateMexTasks): only the preventive towers, and
+	// an unowned cluster counts as ours (porcupine.own_clusters)
+	void MakeDefence(int cluster, const springai::AIFloat3& pos, CCircuitDef* sightDef = nullptr, bool isFirstMex = false);
 	void AbortDefence(const CBDefenceTask* task);
 	// Aborts an unstarted tower the AI no longer wants there (porc mode ended, artillery near a choke). Unlike a
 	// tower that failed, its scored spot stays frozen and counts no failure
@@ -194,6 +200,10 @@ public:
 		TurretSpend prev;
 	};
 	bool CanAffordTurret(float cost);
+	// porcupine.budget.since: before it only the reactive spenders draw on the account (a turret near an enemy or
+	// after a flee, a cornered builder's, an enemy mex's); planned towers (porc, base, hub, creep, radar guard, the
+	// choke and artillery callers) wait
+	bool IsTurretEarly() const;
 	// The balance past what a waiting ask saves for (no ask recorded)
 	float GetTurretSpare() { UpdateTurretBudget(); return turretBudget.balance - turretBudget.askCost; }
 	void ChargeTurret(CBDefenceTask* task);
@@ -296,8 +306,18 @@ public:
 		int threatCooldown;
 		bool isDamageExit;  // a guard that takes damage is released at once and the slot cools down (threat_cooldown)
 		bool isDebug;  // log guard slot events and a 10 s status line per slot to infolog  // guard in enemy threat is cancelled and the slot closes for this long, < 0 = never cancel
+		// guard.summon: a builder's slot opens as soon as it or its job is off safe ground (IsSafeGround) and outside
+		// our bubble (guard.safe), and stays empty in either; a builder never waits for its guard (CBMexTask)
+		bool isSummon;
+		float minThreat;  // min_threat: an enemy whose type's threat is below this doesn't count (nor for builder flee)
+		int enemyFrames;  // enemy_sec: an enemy seen this recently makes its region and enemy_radius around unsafe
+		float enemyRadius;
+		bool isFromGroups;  // from_groups: a raid or attack group (not fighting) gives up a unit, keeping quota.raid/attack
+		float openingShare;  // opening_share: max_share during the opening (CEconomyManager::IsOpening)
+		float escortedAllyThreat;  // escorted_ally_threat: flee_ally_threat of a builder while its guard is with it
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }
+	float GetRaidMinPower() const { return raid.min; }  // quota.raid[0]
 
 	struct SAntiAirCfg {
 		float leash;  // chase aircraft only within this distance of a home point (attack/defend group leader, base); < 0 = no leash
@@ -327,6 +347,12 @@ public:
 		int holdFrames;  // ... on every check for this long
 	};
 	bool IsGuardRole(CCircuitDef* cdef) const;
+	// guard.summon's safe ground: no enemy over min_threat seen lately in pos's region or near it, and the region is
+	// ours (held ground, our side or our half), not the enemy's, nor contested. Before the choke map is ready: our half
+	// with no enemy influence
+	bool IsSafeGround(const springai::AIFloat3& pos);
+	// The unit has a guard with it now (guard.summon: its flee takes escorted_ally_threat)
+	bool IsEscorted(CCircuitUnit* unit) const;
 	// isGuardedPool: the slot belongs to a "guarded" unit, which has its own share pool
 	bool IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const;
 	// A guard released by damage or threat can't take any guard slot until the ban ends
@@ -797,6 +823,12 @@ private:
 
 	std::map<CCircuitUnit*, IFighterTask*> guardTasks;
 	SGuardCfg guard;
+	struct SRecentEnemy {
+		springai::AIFloat3 pos;
+		int region;
+	};
+	std::vector<SRecentEnemy> recentEnemies;  // IsSafeGround's, refreshed once a second
+	int recentEnemyFrame = -1;
 	std::map<int, int> guardBanUntil;  // unit id -> frame
 	SAntiAirCfg antiAir;
 	SAntiHeavyCfg antiHeavy;
@@ -915,8 +947,9 @@ private:
 		bool isOwnOnly;  // porcupine.own_clusters: team games, towers only on clusters we own (IsOurCluster)
 		bool isAllyCover;  // porcupine.ally_cover: built towers near a cluster count towards its preventive total
 	} prevent;
-	// porcupine.own_clusters: in team games only clusters we own (CMetalManager::GetClusterOwner) get towers
-	bool IsOurCluster(int cluster) const;
+	// porcupine.own_clusters: in team games only clusters we own (CMetalManager::GetClusterOwner) get towers;
+	// isFreeOurs: one nobody owns counts too
+	bool IsOurCluster(int cluster, bool isFreeOurs = false) const;
 	// porcupine.ally_cover, team games: metal of the towers of the ally team (ours too, nanoframes and stunned ones
 	// included) that can hit ground (water when isWater) within range of a mex point of the cluster; 0 when off
 	float GetBuiltCoverCost(int cluster, bool isWater) const;
@@ -935,6 +968,7 @@ private:
 		float bankSec = 60.f;
 		float lossRefund = 2.f;  // x the charge of a finished turret of ours that dies
 		int waitFrames = FRAMES_PER_SEC * 120;  // budget.wait_sec: the most a base or hub turret waits for the balance
+		int sinceFrame = FRAMES_PER_SEC * 120;  // budget.since (IsTurretEarly)
 		float mapX = 0.f;  // map area in 512-elmo squares / players on our team
 		float mapMult = 1.f;  // budget.map at mapX, fixed for the game
 		std::vector<std::pair<float, float>> mexCurve;  // budget.mex: x = ally-team finished mexes / all spots

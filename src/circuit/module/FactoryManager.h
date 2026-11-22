@@ -75,8 +75,15 @@ public:
 	springai::AIFloat3 GetClosestHaven(const springai::AIFloat3& position) const;
 
 	CRecruitTask* UpdateBuildPower(CCircuitUnit* unit);
+	// economy.buildpower_spots: in the opening, a constructor next (a queued one first, the opener's too) while open
+	// spots on safe ground outnumber per_builder x our builders (the commander one of them), up to max builders, once
+	// our first combat unit is finished, and while the army doesn't fall behind (IsArmyBehind)
+	CRecruitTask* UpdateSpotsBuilder(CCircuitUnit* unit);
+	// The known enemy army per enemy team (CMilitaryManager::GetEnemyArmyRatio: no commanders or constructors, unseen
+	// enemies fade) is over 1.5x ours, or two constructors died within a minute
+	bool IsArmyBehind() const;
 	// Why a constructor was queued, for the once-a-minute BUILDERS log line
-	enum class BuilderWhy: int {INCOME = 0, ARMY, RECLAIM, ROLL, OPENER, _SIZE_};
+	enum class BuilderWhy: int {INCOME = 0, ARMY, RECLAIM, ROLL, OPENER, SPOTS, _SIZE_};
 	void CountBuilder(BuilderWhy why) { ++builderCounts[static_cast<int>(why)]; }
 	// Any of the economy.json constructor rules asks for one more (buildDef from its factory at pos); outWhy: the
 	// first rule that asked
@@ -181,6 +188,8 @@ private:
 	};
 	SBuilderRatio bpArmy;  // to the mobile army's metal value
 	SBuilderRatio bpReclaim;  // to the reclaim a factory's constructor can safely reach
+	unsigned int bpSpotsPer;  // economy.buildpower_spots.per_builder, 0 = off
+	unsigned int bpSpotsMax;
 	float reWeight;
 	// BUILDERS log: constructors queued since the last line, by BuilderWhy; the last reclaim the rule saw
 	int builderCounts[static_cast<int>(BuilderWhy::_SIZE_)] = {};

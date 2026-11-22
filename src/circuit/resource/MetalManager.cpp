@@ -432,18 +432,14 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 	return result;
 }
 
-int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate& predicate,
-								 unsigned maxClusters, const ClusterScore& score)
+bool CMetalManager::FindNearSpots(const AIFloat3& pos, CMetalData::PointPredicate& predicate, unsigned maxClusters,
+								  std::vector<int>& outIndices)
 {
 	const int frame = circuit->GetLastFrame();
 	if (StartWalk(pos, frame) < 0) {
-		return -1;
+		return false;
 	}
-
-	static std::vector<int> indices;  // NOTE: micro-opt
-	indices.clear();
-
-	DetectClusters goal(this, predicate, indices);
+	DetectClusters goal(this, predicate, outIndices);
 	// Each start() stops with the next cluster that has an open spot on top of the heap; process it so the
 	// next start() goes on from there
 	for (unsigned found = 0; found < std::max(maxClusters, 1u); ++found) {
@@ -453,6 +449,17 @@ int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate
 		shortPath->processNextNode();
 	}
 	MarkWalkWalls(frame);
+	return true;
+}
+
+int CMetalManager::GetMexToBuild(const AIFloat3& pos, CMetalData::PointPredicate& predicate,
+								 unsigned maxClusters, const ClusterScore& score)
+{
+	static std::vector<int> indices;  // NOTE: micro-opt
+	indices.clear();
+	if (!FindNearSpots(pos, predicate, maxClusters, indices)) {
+		return -1;
+	}
 
 	// Nearest open spot per found cluster (at most maxClusters of them)
 	static std::vector<std::pair<int, std::pair<int, float>>> nearest;  // cluster, (spot, sqDist); NOTE: micro-opt
