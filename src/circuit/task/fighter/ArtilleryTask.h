@@ -12,6 +12,7 @@
 #include "module/MilitaryManager.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace circuit {
@@ -81,7 +82,14 @@ private:
 	void FallbackStay(CCircuitUnit* unit, bool isUpdating);
 	void HoldHere(CCircuitUnit* unit);  // stop walking (incl. queued engine waypoints) and wait
 	void ApplyPathOrHold(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath);  // walk, or hold if already there
-	void FillSafeSpots(CCircuitUnit* unit);  // safePositions: FillSafePos pulled back by follow_dist
+	void FillSafeSpots(CCircuitUnit* unit);  // safePositions: anti-heavy GetArmySpot, else FillSafePos pulled back by follow_dist
+	// Anti-heavy: one attack group to follow (armyGroup), the strongest (GetCoverDisc power) over walking time, not
+	// fleeing, outside our base defence range; outPos: this unit's side slot behind it. false: none
+	bool GetArmySpot(CCircuitUnit* unit, springai::AIFloat3& outPos);
+	static constexpr float ARMY_WALK_SEC = 60.f;  // a group this many seconds' walk away scores half
+	static constexpr float ARMY_KEEP = 1.5f;  // the group followed now scores this much more
+	static constexpr float ARMY_HOLD_RADIUS = 256.f;  // hold within this of its army slot, walk back beyond it
+	static constexpr float SLOT_GAP = 1.5f * CROWD_RADIUS;  // between side slots behind a group
 	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // move to the nearest safety spot
 	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackBasePos(CCircuitUnit* unit, bool isUpdating);
@@ -112,9 +120,11 @@ private:
 	// (enemyPositions), else at the front (FillFrontGoals), held where it stands if it is one; else behind the army
 	// (FallbackStay)
 	void WalkAntiHeavy(CCircuitUnit* unit, float range, bool isUpdating);
-	// Hold here if this is a firing spot (IsFireSpotValid) in range of one of goals, else walk to the nearest covered
-	// one (after a search that found nothing, none of that goal for 6 s). false: none
-	bool SeekFireSpot(CCircuitUnit* unit, float range, const F3Vec& goals, Goal goal, bool isUpdating);
+	// Hold here if this is a firing spot (IsFireSpotValid, isHereSpot: worked out once per Execute) in range of one of
+	// goals, else walk to the nearest covered one (after a search that found nothing, none of that goal for 6 s).
+	// false: none
+	bool SeekFireSpot(CCircuitUnit* unit, float range, const F3Vec& goals, Goal goal, std::optional<bool>& isHereSpot,
+			bool isUpdating);
 	// frontGoals: the enemies of frontEnemies within range + ally_radius of where the army is (safePositions), those in
 	// LOS if any, else radar dots. Cover off (ally_threat < 0): none
 	const F3Vec& FillFrontGoals(float range);
@@ -151,6 +161,7 @@ private:
 
 	std::shared_ptr<PathInfo> firePath;  // route to the current firing spot
 	Goal routeGoal = TARGET;  // what firePath is for
+	const IFighterTask* armyGroup = nullptr;  // anti-heavy: the attack group followed (only compared)
 	int searchFrame[2] = {0, 0};  // anti-heavy: no firing-spot search for that Goal before this frame
 	int replanFrame = 0;  // re-plan that route in full after this frame
 	bool isFleeing = false;
