@@ -1023,7 +1023,7 @@ CCircuitDef* CEconomyManager::GetChainEnergy(const SBuildChain* chain, const AIF
 	return ((index >= 0) && (metalMgr->GetSpots()[index].income > make * 0.8f)) ? energyDef : nullptr;
 }
 
-std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen) const
+std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen, bool isSafe) const
 {
 	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on. A spot an enemy
 	// mex we know of holds (seen now or before) is free when the builder can build the turret that clears it
@@ -1037,14 +1037,15 @@ std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* uni
 	const bool isEscort = (escortDef != nullptr) && escortDef->IsAvailable(circuit->GetLastFrame())
 			&& ((unit == nullptr) || unit->GetCircuitDef()->CanBuild(escortDef->GetId()));
 	const CMexBoard* board = isHeldOpen ? builderMgr->GetMexBoard() : nullptr;
-	return [this, spots, map, terrainMgr, builderMgr, unit, isEscort, militaryMgr, escortDef, board,
+	return [this, spots, map, terrainMgr, builderMgr, unit, isEscort, militaryMgr, escortDef, board, isSafe,
 			enemyMexSpots = GetEnemyMexSpots()](int index) {
 		const AIFloat3& pos = (*spots)[index].position;
 		return ((IsAllyOpenSpot(index) || ((board != nullptr) && board->IsHeld(index))) && !terrainMgr->IsZoneAlly(pos)
-				&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
-				&& ((unit != nullptr)
-					? terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
-					: builderMgr->IsBuilderInArea(mexDef, pos))
+				// hostile environment
+				&& (isSafe ? terrainMgr->CanBeBuiltAtSafe(mexDef, pos) : terrainMgr->CanBeBuiltAt(mexDef, pos))
+				&& ((unit == nullptr) ? builderMgr->IsBuilderInArea(mexDef, pos)
+					: isSafe ? terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
+					: terrainMgr->CanReachAt(unit, pos, unit->GetCircuitDef()->GetBuildDistance()))
 				&& ((enemyMexSpots.count(index) > 0)
 					? (isEscort && !IsEnemyMexCovered(pos) && militaryMgr->CanAffordTurret(escortDef->GetCostM()))
 					: map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING)));
