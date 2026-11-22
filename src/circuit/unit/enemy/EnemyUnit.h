@@ -62,8 +62,9 @@ struct SEnemyData {
 	springai::AIFloat3 landPos;
 	bool isJumping = false;
 	const springai::AIFloat3& GetFightPos() const { return isJumping ? landPos : pos; }
-	// Speed for the threat map's slack (elmos per frame): in flight its walking speed, as drawn at its landing spot
-	float GetSlackSpeed() const {
+	// Its speed over the ground (elmos per frame), but in flight its walking speed: it is drawn and fought at its
+	// landing spot, and walks on from there (the threat map's slack, ISquadTask::IsRunningAway)
+	float GetGroundSpeed() const {
 		return (isJumping && (cdef != nullptr)) ? cdef->GetSpeed() / FRAMES_PER_SEC : vel.Length2D();
 	}
 
@@ -152,7 +153,7 @@ public:
 	const springai::AIFloat3& GetPos() const { return data.pos; }
 	const springai::AIFloat3& GetVel() const { return data.vel; }
 	const springai::AIFloat3& GetFightPos() const { return data.GetFightPos(); }
-	float GetSlackSpeed() const { return data.GetSlackSpeed(); }
+	float GetGroundSpeed() const { return data.GetGroundSpeed(); }
 
 	void SetThreat(float t) { data.threat = t; }
 	float GetThreat() const { return data.threat; }
@@ -264,6 +265,7 @@ public:
 	const springai::AIFloat3& GetVel() const { return data->GetVel(); }
 	// Where to fight it: its landing spot while it jumps (CEnemyUnit::UpdateJump), else GetPos
 	const springai::AIFloat3& GetFightPos() const { return data->GetFightPos(); }
+	float GetGroundSpeed() const { return data->GetGroundSpeed(); }
 
 	float GetThreat() const { return data->GetThreat(); }
 	bool GetParkedSpot(int frame, int parkedFrames, springai::AIFloat3& outPos, int& outEpoch) const {

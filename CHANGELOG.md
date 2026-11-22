@@ -405,8 +405,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     side.
   - `jump_land` (default true): while it flies, the jumper's fight position (`CEnemyInfo::GetFightPos`) is its
     landing spot. Firing spots, the fire band, the target's tile (so take-off re-orders units at their next update),
-    `IsOutOfReach` and its threat on the threat map (`AddEnemyUnit`, and the single-enemy `GetThreatAt` that
-    `GetTaskThreatExcl` subtracts) all use it. LOS, routes and orders keep its real position.
+    `IsOutOfReach`, melee picks (`AssignMeleeTargets`), reload scoots and its threat on the threat map
+    (`AddEnemyUnit`, and the single-enemy `GetThreatAt` that `GetTaskThreatExcl` subtracts) all use it. LOS, routes
+    and orders keep its real position. In flight it moves at its walking speed for the threat map's slack and for
+    `IsRunningAway` (`GetGroundSpeed`), so a jump away isn't read as a run.
   - `jump_threat` (default 0.5; per unit `jump_threat` for one type): while the jump is ready, that share of the jump
     range is added to its weapon range on the threat map, before rounding to squares. Jack: 5 squares (about 320
     elmos with slack) to 8 (about 512). Readers of the per-enemy range (threat layers, anti-heavy stand-off) follow.

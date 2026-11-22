@@ -596,7 +596,7 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 	}
 	// Melee units Attack may order that close in on the target, nearest first; already on it: a head start, so they
 	// keep it rather than swap with one that walked a little closer
-	const AIFloat3& tPos = target->GetPos();
+	const AIFloat3& tPos = target->GetFightPos();  // where its close spots are (a jumper's landing spot)
 	struct SMelee {
 		CCircuitUnit* unit;
 		float dist;
@@ -627,7 +627,7 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		CCircuitDef* edef = enemy->GetCircuitDef();
-		const AIFloat3& ePos = enemy->GetPos();
+		const AIFloat3& ePos = enemy->GetFightPos();
 		if ((enemy != target) && enemy->IsInLOS() && !enemy->IsHidden() && (edef != nullptr) && !edef->IsAbleToFly()
 			&& (ePos.y >= -SQUARE_SIZE * 5) && (ePos.SqDistance2D(tPos) <= SQUARE(spread))
 			&& (meleeBans.find(enemy) == meleeBans.end()))
@@ -677,7 +677,7 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 		CEnemyInfo* best = nullptr;
 		float bestDist = std::numeric_limits<float>::max();
 		for (CEnemyInfo* enemy : others) {
-			const float dist = enemy->GetPos().distance2D(uPos) - ((unit->GetTarget() == enemy) ? MELEE_STICK : 0.f);
+			const float dist = enemy->GetFightPos().distance2D(uPos) - ((unit->GetTarget() == enemy) ? MELEE_STICK : 0.f);
 			if ((dist < bestDist) && isValid(unit, enemy)
 				&& circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), enemy->GetPos()))
 			{

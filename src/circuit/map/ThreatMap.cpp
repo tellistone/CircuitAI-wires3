@@ -274,7 +274,7 @@ float CThreatMap::GetEnemyThreatAt(CCircuitUnit* unit, CEnemyInfo* enemy, const 
 		return 0.f;
 	}
 	const CEnemyUnit* e = enemy->GetData();
-	const int vsl = std::min(int(e->GetSlackSpeed() * slackMod.speedMod), slackMod.speedModMax);
+	const int vsl = std::min(int(e->GetGroundSpeed() * slackMod.speedMod), slackMod.speedModMax);
 	int ex, ez, x, z;
 	PosToXZ(e->GetFightPos(), ex, ez);  // where AddEnemyUnit draws it: a jumper's landing spot
 	PosToXZ(position, x, z);
@@ -367,7 +367,7 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 		return;
 	}
 
-	const int vsl = std::min(int(e.GetSlackSpeed() * slackMod.speedMod), slackMod.speedModMax);
+	const int vsl = std::min(int(e.GetGroundSpeed() * slackMod.speedMod), slackMod.speedModMax);
 	const float count = isCounting ? e.GetCountWeight() : 0.f;
 	if (cdef->HasAntiAir()) {
 		AddEnemyAir(e, vsl, count);
