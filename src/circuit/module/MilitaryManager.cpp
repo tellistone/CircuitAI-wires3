@@ -2351,13 +2351,11 @@ void CMilitaryManager::UpdateTurretBudget()
 		b.logFrame = frame + FRAMES_PER_SEC * 60;
 	} else if (frame >= b.logFrame) {
 		b.logFrame = frame + FRAMES_PER_SEC * 60;
-		static const char* names[] = {"other", "porc", "prevent (free)", "picker", "cornered", "base", "guard",
-				"escort", "hub", "creep"};
 		std::string spent;
 		float total = 0.f;
 		for (int i = 0; i < static_cast<int>(TurretSpend::_SIZE_); ++i) {
 			if (b.spent[i] > 0.f) {
-				spent += std::string(spent.empty() ? "" : ", ") + names[i] + " " + utils::int_to_string(int(b.spent[i]));
+				spent += std::string(spent.empty() ? "" : ", ") + GetSpendName(i) + " " + utils::int_to_string(int(b.spent[i]));
 				total += (i == static_cast<int>(TurretSpend::PREVENT)) ? 0.f : b.spent[i];
 			}
 			b.spent[i] = 0.f;
@@ -2385,6 +2383,7 @@ bool CMilitaryManager::CanAffordTurret(float cost)
 
 void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 {
+	task->SetCharge(0.f, static_cast<int>(turretSpend));  // who asked, for every tower (TURRET dropped, cornered)
 	CCircuitDef* def = task->GetBuildDef();
 	if (!IsAccountTurret(def)) {
 		return;  // a shield, storage, caretaker, radar, Claw mine, missile, turret.not_defence or anti-air only
@@ -2394,7 +2393,7 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 	const float cost = def->GetCostM();
 	b.spent[static_cast<int>(turretSpend)] += cost;
 	if (turretSpend == TurretSpend::PREVENT) {
-		return;
+		return;  // free
 	}
 	b.balance -= cost;
 	task->SetCharge(cost, static_cast<int>(turretSpend));
@@ -2404,6 +2403,13 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 		b.askCost = 0.f;  // a waiting spender got its tower (the others never wait)
 		b.askFrame = -1;
 	}
+}
+
+const char* CMilitaryManager::GetSpendName(int spend)
+{
+	static const char* names[] = {"other", "porc", "prevent (free)", "picker", "cornered", "base", "guard", "escort", "hub",
+			"creep"};
+	return ((spend >= 0) && (spend < static_cast<int>(TurretSpend::_SIZE_))) ? names[spend] : "?";
 }
 
 void CMilitaryManager::RefundTurret(CBDefenceTask* task)

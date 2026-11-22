@@ -172,6 +172,7 @@ public:
 	// Aborts an unstarted tower the AI no longer wants there (porc mode ended, artillery near a choke). Unlike a
 	// tower that failed, its scored spot stays frozen and counts no failure
 	void CallOffDefence(IBuilderTask* task);
+	bool IsCallingOff() const { return isCallingOff; }
 	bool HasDefence(int cluster);
 	// MakeDefence's cap on a point's towers: MIN_BUILD_SEC x porcupine.amount x income
 	float GetDefenceCap() const;
@@ -208,6 +209,7 @@ public:
 	float GetTurretSpare() { UpdateTurretBudget(); return turretBudget.balance - turretBudget.askCost; }
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
+	static const char* GetSpendName(int spend);  // a TurretSpend, as the TURRET BUDGET line names it
 	// turret.crowd_count: true when a light def at pos would join enough light turrets; logs and credits the account
 	// (CTurretPicker::RefuseCrowdedLight)
 	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
