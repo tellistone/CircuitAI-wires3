@@ -25,6 +25,7 @@ public:
 	virtual void Update() override;
 
 protected:
+	virtual bool IsReachable(CCircuitUnit* unit, const springai::AIFloat3& endPos) override;
 	virtual void Cancel() override;
 
 	virtual void Execute(CCircuitUnit* unit) override;

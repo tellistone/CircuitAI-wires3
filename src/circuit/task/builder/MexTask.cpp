@@ -41,8 +41,9 @@ CBMexTask::~CBMexTask()
 bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
+	const CCircuitUnit* holder = circuit->GetBuilderManager()->GetMexBoard()->GetHolder(this);  // economy.mex_board
 	if (!IBuilderTask::CanAssignTo(unit) || IsSpotTaken()  // an allied AI's builder heads there already
-		|| circuit->GetBuilderManager()->GetMexBoard()->IsHeldByOther(this, unit))  // economy.mex_board
+		|| ((holder != nullptr) && (holder != unit)))
 	{
 		return false;
 	}
@@ -84,6 +85,17 @@ void CBMexTask::RemoveAssignee(CCircuitUnit* unit)
 	if (units.empty()) {
 		Unclaim();
 	}
+}
+
+bool CBMexTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	// Its mex board walk: the board judges threat at the spot (CMexBoard::RateBuilders), so a raider passing it
+	// doesn't end the job
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (circuit->GetBuilderManager()->GetMexBoard()->GetHolder(this) == unit) {
+		return circuit->GetTerrainManager()->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
+	}
+	return IBuilderTask::IsReachable(unit, endPos);
 }
 
 void CBMexTask::Update()

@@ -50,11 +50,10 @@ bool CMexBoard::IsHeld(int spot) const
 	return std::any_of(holds.begin(), holds.end(), [spot](const SHold& h) { return h.spot == spot; });
 }
 
-bool CMexBoard::IsHeldByOther(const IBuilderTask* task, const CCircuitUnit* unit) const
+const CCircuitUnit* CMexBoard::GetHolder(const IBuilderTask* task) const
 {
-	return std::any_of(holds.begin(), holds.end(), [task, unit](const SHold& h) {
-		return (h.task == task) && (h.unit != unit);
-	});
+	auto it = std::find_if(holds.begin(), holds.end(), [task](const SHold& h) { return h.task == task; });
+	return (it != holds.end()) ? it->unit : nullptr;
 }
 
 CMexBoard::SHold* CMexBoard::FindHold(const CCircuitUnit* unit)
@@ -202,8 +201,7 @@ struct CMexBoard::SMatch {
 		CCircuitUnit* unit;
 		AIFloat3 from;  // where its walk to a spot would start
 		float busy;  // seconds before it can
-		int hold;  // the spot it holds, -1 = none
-		bool isFixed;  // keeps it: walking to it, or fleeing
+		int keep;  // the spot it keeps (walking to it, or fleeing), -1 = none
 	};
 	struct SPair {
 		int b, spot;  // builder, spot
@@ -257,7 +255,7 @@ void CMexBoard::RateBuilders(CCircuitUnit* asker, const CQueryCostMap* askerQuer
 		SHold* hold = FindHold(unit);
 		const IUnitTask* task = unit->GetTask();
 		const AIFloat3& pos = unit->GetPos(frame);
-		SMatch::SBuilder b = {unit, pos, 0.f, (hold != nullptr) ? hold->spot : -1, false};
+		SMatch::SBuilder b = {unit, pos, 0.f, -1};
 		if (hold != nullptr) {
 			const bool isFlee = (task->GetType() == IUnitTask::Type::RETREAT);
 			hold->fleeFrame = !isFlee ? -1 : (hold->fleeFrame < 0) ? frame : hold->fleeFrame;
@@ -265,7 +263,7 @@ void CMexBoard::RateBuilders(CCircuitUnit* asker, const CQueryCostMap* askerQuer
 				hold->failFrame = -1;  // counts only while it walks there
 			}
 			if (isFlee && (frame - hold->fleeFrame <= holdFrames)) {
-				b.isFixed = true;
+				b.keep = hold->spot;
 				m.builders.push_back(b);
 				continue;
 			}
@@ -277,30 +275,31 @@ void CMexBoard::RateBuilders(CCircuitUnit* asker, const CQueryCostMap* askerQuer
 		if (!isJobOk) {
 			continue;  // a commander off mex jobs
 		}
-		const CCircuitDef* cdef = unit->GetCircuitDef();
-		const ICoreUnit::Id unitId = unit->GetId();
-		// Keeping a spot: its own danger rule decides; taking one also wants no threat there (as CanReachAtSafe)
-		auto isKeepOk = [&](int spot) {
-			const AIFloat3& spotPos = metalSpots[spot].position;
-			return m.isSpot[spot]
-				&& std::none_of(skips.begin(), skips.end(), [unitId, spot](const SSkip& s) {
-					return (s.unitId == unitId) && (s.spot == spot);
-				})
-				&& terrainMgr->CanReachAt(unit, spotPos, cdef->GetBuildDistance()) && isJobOk(spotPos);
-		};
-		CMetalData::PointPredicate isPairOk = [&](int spot) {
-			return (threatMap->GetThreatAt(metalSpots[spot].position) <= THREAT_MIN) && isKeepOk(spot);
-		};
-		// A walker keeps its spot until that has failed the test for FAIL_FRAMES (a raider passing it doesn't turn it)
+		// A walker keeps its spot until the spot has failed this for FAIL_FRAMES (a raider passing doesn't turn it):
+		// its own danger rule, and threat there within its own (THREAT_MIN for a constructor). Picks refuse any threat
+		// (the spot list, CanReachAtSafe); the walk's reach is its job's (CBMexTask::IsReachable)
 		if ((hold != nullptr) && (task == hold->task)) {
-			hold->failFrame = isKeepOk(hold->spot) ? -1 : (hold->failFrame < 0) ? frame : hold->failFrame;
+			const AIFloat3& spotPos = metalSpots[hold->spot].position;
+			const bool isOk = isJobOk(spotPos)
+				&& (threatMap->GetThreatAt(spotPos) <= std::max(threatMap->GetUnitThreat(unit), THREAT_MIN));
+			hold->failFrame = isOk ? -1 : (hold->failFrame < 0) ? frame : hold->failFrame;
 			if ((hold->failFrame < 0) || (frame - hold->failFrame < FAIL_FRAMES)) {
-				b.isFixed = true;
+				b.keep = hold->spot;
 				m.builders.push_back(b);
 				continue;
 			}
 		}
 
+		const CCircuitDef* cdef = unit->GetCircuitDef();
+		const ICoreUnit::Id unitId = unit->GetId();
+		CMetalData::PointPredicate isPairOk = [&](int spot) {
+			const AIFloat3& spotPos = metalSpots[spot].position;
+			return m.isSpot[spot]
+				&& std::none_of(skips.begin(), skips.end(), [unitId, spot](const SSkip& s) {
+					return (s.unitId == unitId) && (s.spot == spot);
+				})
+				&& terrainMgr->CanReachAtSafe(unit, spotPos, cdef->GetBuildDistance()) && isJobOk(spotPos);
+		};
 		const float speed = std::max(cdef->GetSpeed(), 1.f);
 		const float costSpeed = speed / pathfinder->GetSquareSize() * COST_BASE;
 		const int buildDist = std::max<int>(cdef->GetBuildDistance(), pathfinder->GetSquareSize());
@@ -352,9 +351,9 @@ void CMexBoard::Pick(SMatch& m) const
 	std::vector<bool> isMatched(builders.size(), false);
 	m.takenBy.assign(m.isSpot.size(), -1);
 	for (int bi = 0; bi < (int)builders.size(); ++bi) {
-		if (builders[bi].isFixed) {
+		if (builders[bi].keep >= 0) {
 			isMatched[bi] = true;
-			m.takenBy[builders[bi].hold] = bi;
+			m.takenBy[builders[bi].keep] = bi;
 		}
 	}
 	for (int pass = 0; pass < 2; ++pass) {
