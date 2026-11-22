@@ -2457,8 +2457,8 @@ bool CBuilderManager::IsCommFleeSpot(CCircuitUnit* unit, const AIFloat3& pos)
 
 bool CBuilderManager::GetProtectMeet(CCircuitUnit* unit, AIFloat3& outPos) const
 {
-	// Checked by the protect when it picked it (once a second): away from the danger and a safe flee spot, or the
-	// commander stands at it already
+	// Checked by the protect once a second: strong enough with the commander, reached in time, away from the danger and
+	// a safe flee spot, or the commander stands at it already
 	if (unit != circuit->GetSetupManager()->GetCommander()) {
 		return false;
 	}
@@ -2692,18 +2692,19 @@ void CBuilderManager::StartCommFlee(CCircuitUnit* unit, SCommState* state)
 		return;
 	}
 	const int frame = circuit->GetLastFrame();
-	// quota.protect: our commander flees to the meeting point (turrets that hold the danger with it, or the group
-	// coming for it); standing at it already, it stays and fights there with them
+	// quota.protect: our commander flees to the meeting point (turrets that hold the danger with it); standing at it
+	// already, it stays and fights there with them, and cornered there it still builds its defence, beside them
 	AIFloat3 meetPos;
 	const bool isMeet = GetProtectMeet(unit, meetPos);
-	if (isMeet && (unit->GetPos(frame).SqDistance2D(meetPos) < SQUARE(COMM_ESCAPE_MIN))) {
-		return;
-	}
-	if (!isMeet && !HasCommEscape(unit, state)) {
+	const bool isAtMeet = isMeet && (unit->GetPos(frame).SqDistance2D(meetPos) < SQUARE(COMM_ESCAPE_MIN));
+	if ((!isMeet || isAtMeet) && !HasCommEscape(unit, state)) {
 		IBuilderTask* defence = MakeCommDefence(unit, state);
 		if (defence != nullptr) {
 			AssignTask(unit, defence);
 		}
+		return;
+	}
+	if (isAtMeet) {
 		return;
 	}
 	// A commander upgrade is a combat morph in Zero-K: it goes on while the commander moves, so it isn't stopped

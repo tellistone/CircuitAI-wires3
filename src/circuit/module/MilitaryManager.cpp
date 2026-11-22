@@ -1392,8 +1392,10 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhPull, this), FRAMES_PER_SEC * 2, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhStats, this), FRAMES_PER_SEC, offset + 2);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogAhStats, this), FRAMES_PER_SEC * 60, offset + 3);
-		if (protect->IsEnabled()) {  // before the rallies, which leave its committed groups out
-			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateProtect, this), FRAMES_PER_SEC, offset + 1);
+		// Before the rallies, which leave its committed groups out: same frame as the attack rally, registered first, so
+		// the per-frame blob cache (CEnemyManager::GetBlobs) serves both
+		if (protect->IsEnabled()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateProtect, this), FRAMES_PER_SEC, offset + 2);
 		}
 		if (attackRally.cfg.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);

@@ -22,7 +22,6 @@ namespace circuit {
 class CCircuitAI;
 class CCircuitUnit;
 class CAttackTask;
-class CProtect;
 
 /*
  * Allied cover (quota.attack_ally_cover): allies over a spot multiply an attack group's strength there by
@@ -107,11 +106,9 @@ private:
 		float power;
 	};
 	const std::vector<SDisc>& GetDiscs();
-	// The commander's disc (task nullptr) never is. protect: the commander protect while judge.self is committed to it
-	// (CProtect::IsActing), else nullptr: the other committed groups are left out too, their strength is in the
-	// judging group's already (CProtect::GetBoost)
-	static bool IsLeftOut(const SDisc& d, const SJudge& judge, const CProtect* protect);
-	const CProtect* GetJudgeProtect(const SJudge& judge) const;
+	static bool IsLeftOut(const SDisc& d, const SJudge& judge) {  // the commander's disc (task nullptr) never is
+		return (d.task != nullptr) && ((d.task == judge.self) || (d.task == judge.partner));
+	}
 	// The commander's reach: its fitted weapons' longest range (dynamic commanders), else its def's land range
 	float GetCommRange(CCircuitUnit* comm) const;
 

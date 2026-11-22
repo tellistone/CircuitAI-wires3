@@ -303,11 +303,17 @@ ISquadTask* ISquadTask::CheckMergeTask()
 	const float sqMaxDistCost = SQUARE(MAX_TRAVEL_SEC * lowestSpeed);
 	float metric = std::numeric_limits<float>::max();
 
-	const std::set<IFighterTask*>& tasks = static_cast<CMilitaryManager*>(manager)->GetTasks(fightType);
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	// quota.protect: a group committed to the commander's fight joins only another committed one, or Merge would hand
+	// the commit to a group that is busy elsewhere
+	const CProtect* protect = militaryMgr->GetProtect();
+	const bool isProtect = protect->IsActing(this);
+	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(fightType);
 	for (const IFighterTask* candidate : tasks) {
 		if ((candidate == this) ||
 			(candidate->GetAttackPower() < attackPower) ||
-			!candidate->CanAssignTo(leader))
+			!candidate->CanAssignTo(leader) ||
+			(isProtect && !protect->IsActing(candidate)))
 		{
 			continue;
 		}

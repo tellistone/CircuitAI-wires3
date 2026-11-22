@@ -529,7 +529,7 @@ bool CRaidTask::FindTarget()
 	float sqContestedDist = std::numeric_limits<float>::max();
 	float sqOtherDist = std::numeric_limits<float>::max();
 	// quota.protect: committed to the commander's fight, only the enemies in its zone (and those within our reach). They
-	// pass other groups' claims and the 3-group cap, and are judged with the committed strength near the commander
+	// pass other groups' claims and the 3-group cap, and are judged with the strength present near the commander
 	// (GetSafeThreatAt); those that hit it lately are preferred targets
 	const CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = protect->IsActing(this);
@@ -701,7 +701,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
 	// unless we're already there; else the usual mex-spot roaming
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	// quota.protect: committed with nothing to hunt, head for the commander's fight (the turret point, else it)
+	// quota.protect: committed with nothing to hunt, head for the commander's fight (the protect's goal)
 	const CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = protect->IsActing(this);
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
@@ -1001,14 +1001,18 @@ void CRaidTask::SendPendingFight(int frame)
 
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 {
+	// quota.protect: a committed group judges the commander's fight with the strength present
+	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos, highestRange);
+	return GetBaseSafeThreatAt(pos, safeThreat * boost);
+}
+
+float CRaidTask::GetBaseSafeThreatAt(const AIFloat3& pos, float safeThreat) const
+{
 	// Same allowances as FindTarget: near-base bonus and the distance curve at this spot
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float sqDist = basePos.SqDistance2D(pos);
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	// quota.protect: a committed group judges the commander's fight with the committed strength
-	const float boost = militaryMgr->GetProtect()->GetBoost(this, pos, highestRange);
-	return safeThreat * boost * militaryMgr->GetBaseThrBonus(sqDist) / GetThrDistModAt(pos);
+	return safeThreat * circuit->GetMilitaryManager()->GetBaseThrBonus(sqDist) / GetThrDistModAt(pos);
 }
 
 bool CRaidTask::IsFightOn(int frame) const
@@ -1029,14 +1033,6 @@ bool CRaidTask::Flee(int frame)
 	AIFloat3 dest = circuit->GetFactoryManager()->GetClosestHaven(leader);
 	if (!utils::is_valid(dest)) {
 		dest = circuit->GetSetupManager()->GetBasePos();
-	}
-	// quota.protect: let go by a no-go, run to where the commander runs (its meeting point), if we can get there
-	const CProtect* protect = GetMilitaryMgr()->GetProtect();
-	if (protect->IsReleased(this) && utils::is_valid(protect->GetFleeMeetingPoint())
-		&& (leader->GetPos(frame).SqDistance2D(protect->GetFleeMeetingPoint()) >= SQUARE(400.f))
-		&& circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), protect->GetFleeMeetingPoint()))
-	{
-		dest = protect->GetFleeMeetingPoint();
 	}
 	if (leader->GetPos(frame).SqDistance2D(dest) < SQUARE(400.f)) {
 		// End the "keep running" hold, but keep the 4 s cautious window of the last escape

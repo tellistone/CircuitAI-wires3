@@ -584,11 +584,8 @@ float CAttackTask::GetBaseAllowedThreatAt(const AIFloat3& pos, float strength, f
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	const float bonus = militaryMgr->GetBaseThrBonus(basePos.SqDistance2D(pos));
-	// quota.protect: a committed group judges the commander's fight with the committed strength
-	const float boost = militaryMgr->GetProtect()->GetBoost(this, pos, highestRange);
-	return strength * boost * bonus / GetThrDistModAt(pos) / std::max(GetNearBaseScaleAt(pos, refSqDist), 1e-3f);
+	const float bonus = GetMilitaryMgr()->GetBaseThrBonus(basePos.SqDistance2D(pos));
+	return strength * bonus / GetThrDistModAt(pos) / std::max(GetNearBaseScaleAt(pos, refSqDist), 1e-3f);
 }
 
 float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, const SStrength& strength, float refSqDist,
@@ -596,8 +593,14 @@ float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, const SStrength& stre
 {
 	// Cover multiplies whatever strength the caller passes (pick, keep, cautious, raid factor, joint), so the keep
 	// and cautious margins scale with it. Linear in strength: the routes' threat / cover mod matches it exactly.
-	// At most 2x: under the base allowance a spot passes, at 2x it or more it fails, either way without cover
-	const float allowed = GetBaseAllowedThreatAt(pos, strength.value, refSqDist);
+	// At most 2x: under the base allowance a spot passes, at 2x it or more it fails, either way without cover.
+	// quota.protect: a committed group judges the commander's fight with the strength present (CProtect::GetBoost),
+	// which has the other committed groups there, the commander and the turrets in it already: no cover there
+	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos, highestRange);
+	const float allowed = GetBaseAllowedThreatAt(pos, strength.value * boost, refSqDist);
+	if (boost > 1.f) {
+		return allowed;
+	}
 	const bool isKnown = (threat >= 0.f);
 	if (!GetAllyCover()->IsOn() || (isKnown && ((threat < allowed) || (threat >= allowed * 2.f)))) {
 		return allowed;
@@ -1124,6 +1127,11 @@ void CAttackTask::AbsorbWeakerTasks()
 	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 
+	// quota.protect: a group committed to the commander's fight is absorbed only by another committed one (Merge hands
+	// the commit over); a committed group absorbs any
+	const CProtect* protect = GetMilitaryMgr()->GetProtect();
+	const bool isProtect = protect->IsActing(this);
+
 	static std::vector<CAttackTask*> weaklings;  // NOTE: micro-opt
 	for (IFighterTask* t : GetMilitaryMgr()->GetTasks(fightType)) {
 		CAttackTask* candy = static_cast<CAttackTask*>(t);
@@ -1131,6 +1139,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		// Cheap checks first; the small group walks to us, so the line is judged from its side
 		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
 			|| (!isHost && (candy->reinforce != this) && (!isArmy || candy->IsArmy()))
+			|| (!isProtect && protect->IsActing(candy))
 			|| !CanAssignTo(candyLeader)
 			|| candy->IsFighting()  // let it finish its fight (it doesn't join either)
 			|| !terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)
@@ -1256,9 +1265,10 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 
 void CAttackTask::WalkToProtect(int frame, bool isReuse)
 {
-	// Committed with nothing to fight in reach: walk to the commander's fight (the turret point it meets us at, else the
-	// commander). Its safe edge as rally joiners find the host's (FindFightEdge: near the commander the spots are judged
-	// with the committed strength); none: straight to it, the go was judged for all of us together
+	// Committed with nothing to fight in reach: walk to the commander's fight (the protect's goal: the turret point
+	// while the commander heads there, else the commander). Its safe edge as rally joiners find the host's
+	// (FindFightEdge: near the goal the spots are judged with the strength present and ours); none: straight to it,
+	// the go was judged for all of us together
 	SetTarget(nullptr);
 	ClearScaleAnchor();  // walking to the fight, not into an accepted one
 	state = State::ROAM;
@@ -1574,17 +1584,6 @@ AIFloat3 CAttackTask::FindFleeDest(int frame) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-
-	// quota.protect: let go by a no-go, run to where the commander runs (its meeting point), if we can get there
-	const CProtect* protect = militaryMgr->GetProtect();
-	if (protect->IsReleased(this) && utils::is_valid(protect->GetFleeMeetingPoint())) {
-		const AIFloat3& meetPos = protect->GetFleeMeetingPoint();
-		if ((leader->GetPos(frame).SqDistance2D(meetPos) >= SQUARE(FLEE_ARRIVE_DIST))
-			&& circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), meetPos))
-		{
-			return meetPos;
-		}
-	}
 
 	// The nearest stronger attack group (fight beside it, then merge), if the two groups together can stand there:
 	// it may be in this same fight, or past the enemy. Not the rally host by preference: it may be far away
@@ -2571,7 +2570,7 @@ void CAttackTask::ApplyFrontPos(const CQueryPathMulti* query, const AIFloat3& go
 
 float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals) const
 {
-	// quota.protect: a route into the commander's fight is capped for the committed strength, as its goals are judged
+	// quota.protect: a route into the commander's fight is capped for the strength present, as its goals are judged
 	const CProtect* protect = GetMilitaryMgr()->GetProtect();
 	float boost = 1.f;
 	for (const AIFloat3& g : goals) {
