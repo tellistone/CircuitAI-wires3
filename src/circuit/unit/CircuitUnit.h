@@ -103,10 +103,18 @@ public:
 	// Set by the military manager: units captured by this one are worth too much to risk it ("capture_hide")
 	void SetCaptureHide(bool value) { isCaptureHide = value; }
 	bool IsCaptureHide() const { return isCaptureHide; }
-	// Set by the military manager ("plant" attribute): while planted, move, fight, jump and gather orders are dropped
-	void SetPlantFrame(int frame) { plantFrame = frame; }
-	int GetPlantFrame() const { return plantFrame; }
-	bool IsPlanted() const { return plantFrame >= 0; }
+	// "plant" attribute, kept by CMilitaryManager::UpdatePlant: while planted, move, fight, jump and gather orders
+	// are dropped
+	struct SPlant {
+		int frame = -1;  // the last frame its reason held; -1 = not planted
+		int targetId = -1;  // the enemy its set-target (IsPlantHeld) was last sent on; -1 = none
+		int idleFrame = -1;  // planted for a target only: since when its weapon has stood ready; -1 = not so
+		int muteFrame = -1;  // a target doesn't plant it before this frame (the idle watchdog fired)
+	};
+	SPlant& GetPlant() { return plant; }
+	bool IsPlanted() const { return plant.frame >= 0; }
+	// Planted: true, and an attack on enemy (if any) becomes set-target; the order wrappers return then
+	bool IsPlantHeld(CEnemyInfo* enemy);
 	bool IsWeaponReady(int frame);
 	// Main weapon at least this much (0..1] reloaded, out of its current reload time; 1 = IsWeaponReady.
 	// No weapon: false. Planes: IsWeaponReady (ammo)
@@ -134,8 +142,7 @@ public:
 	void CmdAttackGround(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
 	void CmdWantedSpeed(float speed = NO_SPEED_LIMIT);
 	void CmdSetTarget(CEnemyInfo* enemy);
-	void CmdPlantTarget(CEnemyInfo* enemy);  // planted: ZK set-target (never moves), once per enemy
-	void CmdCancelTarget();  // clears what CmdPlantTarget set
+	void CmdCancelTarget();  // clears the set-target IsPlantHeld sent
 	void CmdCloak(bool state);
 	void CmdFireAtRadar(bool state);
 	void CmdFindPad(int timeout = INT_MAX);
@@ -167,7 +174,7 @@ public:
 	void StopUpgrade();
 	bool IsMorphing() const { return isMorphing; }
 
-	void ClearTarget() { target = nullptr; }
+	void ClearTarget() { target = nullptr; plant.targetId = -1; }  // a planted unit's set-target can be sent again
 	CEnemyInfo* GetTarget() const { return target; }
 	int GetTargetTile() const { return targetTile; }
 
@@ -191,8 +198,7 @@ private:
 	int ammoFrame;
 	int reloadCheckFrame;  // frame reloadFrame was read
 	int reloadFrame;  // main weapon's, cached for a frame (GetReloadFrame)
-	int plantFrame;  // "plant" attribute: last frame its reason held; -1 = not planted
-	int plantTargetId;  // the enemy its set-target (CmdPlantTarget) was last sent on; -1 = none
+	SPlant plant;
 
 	// ---- Bit fields ---- BEGIN
 	bool isDead : 1;

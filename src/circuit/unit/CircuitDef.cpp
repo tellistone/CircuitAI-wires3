@@ -657,6 +657,18 @@ void CCircuitDef::RemDGun()
 	hasDGunAA = false;
 }
 
+CCircuitDef::RangeType CCircuitDef::GetRangeType(const CCircuitDef* cdef, const AIFloat3& pos)
+{
+	return ((cdef != nullptr) && cdef->IsAbleToFly()) ? RangeType::AIR
+			: (pos.y < -SQUARE_SIZE * 5) ? RangeType::WATER : RangeType::LAND;
+}
+
+int CCircuitDef::GetDefaultMoveState() const
+{
+	const int state = def->GetMoveState();
+	return (state >= 0) ? state : 1;
+}
+
 float CCircuitDef::GetRadius()
 {
 	if (radius < 0.f) {

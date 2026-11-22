@@ -393,16 +393,18 @@
 },
 
 // "attribute": ["plant"] (per unit; Crabe) = never moves (no move, fight, jump or gather orders, retreat included)
-// while an enemy in LOS that it can hit is within its weapon range and is its target or armed (a mex, wall or nanoframe
-// doesn't pin it), or a "threats" enemy that can fight, seen within keep_sec, has it within its weapon range from
-// where it was last seen. Ranges reach the other unit's edge. Planting stops the unit and sets hold position; its
-// attacks become ZK set-target (never moves). Squads don't release a planted unit as stuck. Checked every 8 frames
+// while (a) its target or an armed enemy in LOS is within reach (Cannon: the engine's height-adjusted range on a clear
+// arc), or (b) a "threats" enemy that can fight, in LOS or on radar and seen in LOS lately, has it within its weapon
+// range. Planting stops the unit and sets hold position; its attacks become ZK set-target (never moves). Squads don't
+// release a planted unit as stuck. Checked every 8 frames
 "plant": {
 	// Enemy types that plant a unit in their range: the anti_heavy types and Phantom (cloaksnipe is not anti_heavy)
 	"threats": ["cloaksnipe", "hoverarty", "striderarty", "striderscorpion", "striderantiheavy", "spiderantiheavy", "jumpbomb",
 		"gunshipemp", "gunshipassault", "gunshipkrow", "bomberdisarm"],
-	"keep_sec": 10.0,  // a threat counts this long after it was last seen (a cloaked Phantom between shots), at its last known position
-	"hold_sec": 2.0  // a planted unit stays this long after the reason last held
+	"reach": 0.9,  // (a) counts within this x the range, so it walks into range instead of stopping at its edge (0.1-1)
+	"keep_sec": 20.0,  // (b) a threat on radar counts this long after it left LOS (a recloaked Phantom: its 17 s reload); out of radar and LOS it doesn't
+	"hold_sec": 2.0,  // a planted unit stays this long after the reason last held
+	"idle_sec": 8.0  // planted for (a) only with its weapon ready this long (not hitting): (a) is ignored this long, so its task can move it
 },
 
 // Anti-heavy squads (main role anti_heavy: Lance, Ultimatum, Scorpion, Merlin, ...)

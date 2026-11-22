@@ -899,8 +899,7 @@ bool ISquadTask::IsWalkLongerThanReload(CCircuitUnit* unit, int frame, float dis
 
 int ISquadTask::GetMoveState(CCircuitUnit* unit) const
 {
-	const int defState = unit->GetCircuitDef()->GetDef()->GetMoveState();
-	return (defState >= 0) ? defState : 1;
+	return unit->GetCircuitDef()->GetDefaultMoveState();
 }
 
 void ISquadTask::SetScootHold(CCircuitUnit* unit, bool isHold)
