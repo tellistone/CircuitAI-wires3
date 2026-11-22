@@ -270,6 +270,11 @@
 	// New factory switch interval, in seconds (each new factory resets timer, switch event is also based on eco + caretakers)
 	// switch = random(<min_interval>..<max_interval>)
 	"switch": [800, 900],
+	// Minimum factory count: at least floor(<metal income without reclaim> / factory_income) factories (finished and
+	// queued); below it a new factory is due at once, as when the switch timer runs out (one at a time, at a mex
+	// cluster of ours without a factory, the type chosen as for a switch; a due factory, by either rule, is tried at
+	// most every 30 s). 0 = off
+	"factory_income": 40,
 
 	"terra": "terraunit",
 	"airpad": "staticrearm",
