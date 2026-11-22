@@ -60,17 +60,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   site on its cost map, scored as `mex_front` scores clusters, and as in the mex search only spots in the
   `mex_front.clusters` nearest clusters (its walk around threat walls) count; the commander uses `comm_bias` but never
   takes a spot another builder reaches sooner. A builder walking to its spot keeps it until the spot has failed its
-  test for 3 s: the builder's own danger rule, and threat there within its own strength (any threat for a
-  constructor), so a raider passing it doesn't turn a commander that would win. Its job leaves threat at the spot to
-  the board meanwhile. A fleeing one keeps it for `hold_sec` (20), and a next spot nobody walks to yet can move to
-  another builder on any match. Only spots with no threat that the builder's own pick would take, and in team games
-  not nearer an ally's base or factory than ours (the opening's spot counts skip those too); a spot whose job failed
-  waits 30 s for that builder. A job is made only when a builder is matched, so there is no job cap and nothing is
-  claimed before someone heads there. Matching runs once a second, and at once (at most once a frame) when a builder
-  needs a spot, starts its build, loses its job or dies. A lost mex's spot just reopens for the board, with no 20 s
-  rebuild job. When the opening ends, builders keep the job they walk to and the next jobs nobody walks to are
-  dropped. The `OPENING` line counts walks the board ended (`board`) and their next spots as forward or back, and the
-  opening goes on while the board holds a spot.
+  test for 3 s: the pick's spot test with threat aside (an enemy or ally may build there meanwhile), the builder's own
+  danger rule, and threat there within its own strength (any threat for a constructor), so a raider passing it doesn't
+  turn a commander that would win. Its job leaves threat at the spot to the board meanwhile. A fleeing builder holds
+  no spot (`hold_sec` is gone, and ignored if set), and a next spot nobody walks to yet can move to another builder on
+  any match. Only spots with no threat that the builder's own pick would take, and in team games not nearer an ally's
+  base or factory than ours (the opening's spot counts skip those too); a spot whose job failed waits 30 s for that
+  builder. A job is made only when a builder is matched, so there is no job cap and nothing is claimed before someone
+  heads there. Matching runs once a second, and at once (at most once a frame) when a builder needs a spot, starts its
+  build, loses its job or dies. A lost mex's spot just reopens for the board, with no 20 s rebuild job. When the
+  opening ends, builders keep the job they walk to and the next jobs nobody walks to are dropped. The `OPENING` line
+  counts walks the board ended (`board`) and their next spots as forward or back, and the opening goes on while the
+  board holds a spot.
 - **Walking builders switch jobs by direction** (`economy.builder_jobs`: `switch` now 0.5 and only for turning back,
   `switch_forward` 0.8, `switch_other` 0.5, `commit_sec` 4, all new but `switch`). The walk is measured on the
   builder's cost map, not in a straight line. Forward (no nearer our base than it is now, give or take its build
