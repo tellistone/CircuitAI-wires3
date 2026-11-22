@@ -12,6 +12,7 @@
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
 #include "module/CreepPlanner.h"
+#include "terrain/TerrainManager.h"
 #include "unit/CircuitDef.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -42,6 +43,7 @@ CBDefenceTask::CBDefenceTask(ITaskManager* mgr, Priority priority,
 		, normalCost(cost)
 		, charged(0.f)
 		, spend(0)
+		, queueFrame(mgr->GetCircuit()->GetLastFrame())
 {
 }
 
@@ -107,7 +109,22 @@ void CBDefenceTask::Finish()
 
 void CBDefenceTask::Cancel()
 {
-	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	if ((target == nullptr) && (militaryMgr != nullptr)) {
+		// A tower that ends before it starts, and why, from the job's state as it ends (Stop: before its builders
+		// leave): a damage retreat and a death take the builder off first
+		const int frame = circuit->GetLastFrame();
+		const char* why = militaryMgr->IsCallingOff() ? "called off"
+				: (buildFails > TASK_RETRIES) ? "the engine refused the build"
+				: !traveled.empty() ? "on arrival: no site, or a picker's spot no longer worth it"
+				: !units.empty() ? "unreachable or in a flee zone, with a builder on it"
+				: ((lastTouched >= 0) && (frame - lastTouched >= timeout)) ? "nobody took it in time"
+				: "its builder died or retreated";
+		circuit->LOG("TURRET dropped: %s (%s%s) at (%.0f, %.0f) %i s after it was queued: %s",
+				buildDef->GetDef()->GetName(), CMilitaryManager::GetSpendName(spend), isOffPoints ? ", off points" : "",
+				position.x, position.z, (frame - queueFrame) / FRAMES_PER_SEC, why);
+	}
 	if (!isOffPoints) {
 		militaryMgr->AbortDefence(this);
 	}
@@ -174,6 +191,19 @@ void CBDefenceTask::Execute(CCircuitUnit* unit)
 		return;
 	}
 	IBuilderTask::Execute(unit);
+}
+
+bool CBDefenceTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	// An armed tower is taken under threat (CBuilderManager::MakeBuilderTask, the turret is what makes the spot safe),
+	// so the walk keeps that rule: reach, and the builder's flee zones. The any-threat test dropped it on the update
+	// after a builder took it
+	if (buildDef->GetPower() < THREAT_MIN) {
+		return IBuilderTask::IsReachable(unit, endPos);
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	return circuit->GetTerrainManager()->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
+		&& circuit->GetBuilderManager()->IsTurretJobSafe(unit, endPos, this);
 }
 
 } // namespace circuit

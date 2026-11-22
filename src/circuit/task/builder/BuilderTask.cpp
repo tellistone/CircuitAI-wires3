@@ -706,9 +706,9 @@ void IBuilderTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, flo
 
 	CEconomyManager* economyMgr = manager->GetCircuit()->GetEconomyManager();
 	CCircuitDef* cdef = buildDef;
-	CTerrainManager::TerrainPredicate predicate = [terrainMgr, economyMgr, cdef, builder](const AIFloat3& p) {
-		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance())
-			&& economyMgr->IsAllowedAt(cdef, p);  // economy.energy.base_only
+	// The walk's own rule (an armed tower's: CBDefenceTask::IsReachable), so the site isn't one its walk would drop
+	CTerrainManager::TerrainPredicate predicate = [this, economyMgr, cdef, builder](const AIFloat3& p) {
+		return IsReachable(builder, p) && economyMgr->IsAllowedAt(cdef, p);  // economy.energy.base_only
 	};
 	SetBuildPos(terrainMgr->FindBuildSite(buildDef, pos, searchRadius, facing, predicate));
 }

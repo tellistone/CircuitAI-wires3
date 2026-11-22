@@ -273,6 +273,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Tower jobs are no longer dropped for any threat at their site.** The pick lets a builder take an armed build under
+  threat (the turret makes the spot safe), and keeps it out of flee zones only. But the job's next update tested the
+  site with `CanReachAtSafe`, which fails on any threat in the threat map, last-known ghosts of enemies long gone
+  included, and aborted it. The tower's booking on its defence point was freed, so it came back only when the sweep
+  reached its cluster again, and a scored spot that failed twice in 10 minutes was given up.
+  `CBDefenceTask::IsReachable` now keeps the pick's rule for an armed tower: reachable, and outside the builder's flee
+  zones (`IsTurretJobSafe`, measured as a fight-back job). Unarmed builds keep the old test. The build site search
+  uses the job's own rule too (`IBuilderTask::FindBuildSite` calls `IsReachable`), so an armed tower no longer slides
+  off threatened ground. A `TURRET dropped` line now logs every tower job that ends before it starts: the def, its
+  spender (`prevent (free)`, `porc`, ...), where, how long after it was queued, and why (called off, the engine
+  refused the build, no site on arrival, unreachable or in a flee zone with a builder on it, nobody took it in time,
+  or its builder died or retreated).
+
 - **behaviour.json `limit` counts queued jobs.** A unit type's limit only counted our units (nanoframes included),
   so several jobs could be queued before the first nanoframe stood, and each was built: the Advanced Radar (limit 1)
   went up at the base (`porcupine.base`) and in several porc clusters at once. Now a queued construction job holds a

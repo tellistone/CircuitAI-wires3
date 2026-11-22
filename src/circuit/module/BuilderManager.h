@@ -344,8 +344,9 @@ public:
 	/*
 	 * turret.after_flee, turret.near_enemy: a light turret for a constructor in the field (CTurretPicker)
 	 */
-	// A turret job at pos for unit: IsCommJobSafe by its flee state (always, with its flee off)
-	bool IsTurretJobSafe(CCircuitUnit* unit, const springai::AIFloat3& pos);
+	// A turret job at pos for unit: IsCommJobSafe by its flee state (always, with its flee off); task: the job, so an
+	// armed one is measured as a fight-back job (as the pick does)
+	bool IsTurretJobSafe(CCircuitUnit* unit, const springai::AIFloat3& pos, const IBuilderTask* task = nullptr);
 	// choke_overlay turret: our nearest constructor that is free (UpdateTurrets' tests) orders one at pos, def or the
 	// picker's choice (nullptr); what happened, for the chat
 	std::string OrderTurretAt(const springai::AIFloat3& pos, CCircuitDef* def);

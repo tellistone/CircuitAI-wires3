@@ -2960,9 +2960,9 @@ void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat
 	}
 }
 
-bool CBuilderManager::IsTurretJobSafe(CCircuitUnit* unit, const AIFloat3& pos)
+bool CBuilderManager::IsTurretJobSafe(CCircuitUnit* unit, const AIFloat3& pos, const IBuilderTask* task)
 {
-	return IsCommJobSafe(GetCommState(unit), pos);
+	return IsCommJobSafe(GetCommState(unit), pos, task);
 }
 
 void CBuilderManager::UpdateTurrets()
