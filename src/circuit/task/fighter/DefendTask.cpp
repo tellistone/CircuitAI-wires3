@@ -28,9 +28,13 @@
 #include "OOAICallback.h"
 #include "AISCommands.h"
 
+#include <algorithm>
+
 namespace circuit {
 
 using namespace springai;
+
+static constexpr size_t PATROL_NEAREST = 4;  // solo hunters patrol among this many held cluster points nearest them
 
 CDefendTask::CDefendTask(ITaskManager* mgr, const AIFloat3& position,
 						 FightType check, FightType promote, float maxPower, float powerMod)
@@ -420,13 +424,23 @@ void CDefendTask::FallbackPatrol()
 		}
 		patrolPos = park;
 	} else if (!utils::is_valid(patrolPos) || (startPos.SqDistance2D(patrolPos) < sqNear)) {
+		// A random one of the PATROL_NEAREST held cluster points nearest it, other than where it stands: it moves
+		// round our ground near it, not across the map to an ally's far flank
 		circuit->GetMilitaryManager()->FillFriendlyClusterPos(leader, urgentPositions);
+		urgentPositions.erase(std::remove_if(urgentPositions.begin(), urgentPositions.end(),
+				[&startPos, sqNear](const AIFloat3& p) { return startPos.SqDistance2D(p) < sqNear; }),
+				urgentPositions.end());
 		if (urgentPositions.empty()) {
 			patrolPos = -RgtVector;
 			FallbackBasePos();
 			return;
 		}
-		patrolPos = urgentPositions[rand() % urgentPositions.size()];
+		const size_t count = std::min(urgentPositions.size(), PATROL_NEAREST);
+		std::partial_sort(urgentPositions.begin(), urgentPositions.begin() + count, urgentPositions.end(),
+				[&startPos](const AIFloat3& a, const AIFloat3& b) {
+					return startPos.SqDistance2D(a) < startPos.SqDistance2D(b);
+				});
+		patrolPos = urgentPositions[rand() % count];
 	}
 
 	const float pathRange = DEFAULT_SLACK * 4;

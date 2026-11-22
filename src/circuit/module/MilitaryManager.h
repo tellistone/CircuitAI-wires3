@@ -118,8 +118,9 @@ public:
 	bool IsSoloHuntOver() const { return soloHunt.isOver; }
 	// quota.solo_hunt.choke_dist > 0: frontline chokes feed solo hunters' parking (CFrontline::Update builds them)
 	bool IsSoloParkOn() const { return !soloHunt.isOver && (soloHunt.chokeDist > 0.f); }
-	// Where a solo hunter with no target parks: a short choke of our line (CFrontline's C), by shortness minus
-	// distance / choke_dist minus choke_spread per other hunter parked there; kept while it stays short.
+	// Where a solo hunter with no target parks: a short choke of our line (CFrontline's C) whose inner region holds
+	// one of our structures, by shortness minus distance / choke_dist minus choke_spread per other hunter parked
+	// there; kept while the choke is on our line and was short within SOLO_PARK_KEEP.
 	// -RgtVector: none (no choke map yet, none short or reachable)
 	springai::AIFloat3 GetSoloPark(const IFighterTask* task, CCircuitUnit* leader);
 	// A solo hunter left for a quota.protect commit: it goes back to hunting alone once its group stops protecting
@@ -923,11 +924,13 @@ private:
 		float mexShare = 0.25f;
 		float chokeDist = 2000.f;  // choke_dist: elmos away that cost as much as a choke's whole shortness; 0 = no parking
 		float chokeSpread = 1.f;  // choke_spread: shortness taken off per other hunter parked at the choke
+		int maxFrame = 0;  // max_sec in frames: the switch flips by then whatever the mex share; 0 = no cap
 		bool isOver = true;
 	} soloHunt;
 	struct SSoloPark {
 		int chokeId;
 		springai::AIFloat3 spot;
+		int shortFrame;  // its choke was last short then: the claim holds SOLO_PARK_KEEP after
 	};
 	std::map<const IFighterTask*, SSoloPark> soloParks;
 	std::set<int> soloProtectIds;  // NoteSoloProtect

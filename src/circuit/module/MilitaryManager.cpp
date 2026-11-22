@@ -71,6 +71,7 @@ namespace circuit {
 using namespace springai;
 
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
+#define SOLO_PARK_KEEP		(FRAMES_PER_SEC * 30)  // quota.solo_hunt: a parking claim outlives its choke's last short by this
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
 #define PLANT_RADIUS_MAX	128.f  // plant (a): the query reaches this far past our range, for the enemy's radius
 #define SPOT_GIVE_UP		(FRAMES_PER_SEC * 600)  // choke.spot.enable: two failures this close give a type up this long
@@ -1124,6 +1125,7 @@ void CMilitaryManager::ReadConfig()
 			soloHunt.mexShare = solo.get("mex", 0.25f).asFloat();
 			soloHunt.chokeDist = std::max(solo.get("choke_dist", soloHunt.chokeDist).asFloat(), 0.f);
 			soloHunt.chokeSpread = std::max(solo.get("choke_spread", soloHunt.chokeSpread).asFloat(), 0.f);
+			soloHunt.maxFrame = std::max(solo.get("max_sec", 0.f).asFloat(), 0.f) * FRAMES_PER_SEC;
 			soloHunt.isOver = (soloHunt.roleMask == 0) || (soloHunt.mexShare <= 0.f);
 		}
 	}
@@ -2089,12 +2091,14 @@ void CMilitaryManager::UpdateSoloHunt()
 	if (IsSoloParkOn()) {
 		circuit->GetChokeMap()->Request();  // builds the choke map if nothing else asked for it
 	}
-	if (share >= soloHunt.mexShare) {
+	const int frame = circuit->GetLastFrame();
+	const bool isTimeUp = (soloHunt.maxFrame > 0) && (frame >= soloHunt.maxFrame);  // max_sec: e.g. FFA, big maps
+	if ((share >= soloHunt.mexShare) || isTimeUp) {
 		soloHunt.isOver = true;
 		soloParks.clear();
 		soloProtectIds.clear();  // the ones still in a protect fight stay in the army
-		circuit->LOG("SOLO_HUNT: over at frame %i (ally mexes %i / %i = %.2f >= %.2f)", circuit->GetLastFrame(),
-				metalMgr->GetMexCount(), spotCount, share, soloHunt.mexShare);
+		circuit->LOG("SOLO_HUNT: over at frame %i by %s (ally mexes %i / %i = %.2f, mex %.2f)", frame,
+				isTimeUp ? "max_sec" : "mex", metalMgr->GetMexCount(), spotCount, share, soloHunt.mexShare);
 	}
 }
 
@@ -2106,13 +2110,20 @@ AIFloat3 CMilitaryManager::GetSoloPark(const IFighterTask* task, CCircuitUnit* l
 		soloParks.erase(task);
 		return -RgtVector;
 	}
-	// Keep the claim while its choke is still a short one on our line
+	// Keep the claim while its choke is on our line and was short within SOLO_PARK_KEEP (no hop away from a choke a
+	// new tower just covered or whose enemy sighting just went stale, and back a minute later)
+	const int frame = circuit->GetLastFrame();
 	auto it = soloParks.find(task);
 	if (it != soloParks.end()) {
 		auto fit = std::find_if(front.begin(), front.end(),
 				[it](const CFrontline::SFront& f) { return f.chokeId == it->second.chokeId; });
-		if ((fit != front.end()) && fit->IsShort()) {
-			return it->second.spot;
+		if (fit != front.end()) {
+			if (fit->IsShort()) {
+				it->second.shortFrame = frame;
+			}
+			if (frame - it->second.shortFrame < SOLO_PARK_KEEP) {
+				return it->second.spot;
+			}
 		}
 		soloParks.erase(it);
 	}
@@ -2127,15 +2138,23 @@ AIFloat3 CMilitaryManager::GetSoloPark(const IFighterTask* task, CCircuitUnit* l
 	for (const auto& kv : soloParks) {
 		++parked[kv.second.chokeId];
 	}
+	// Only chokes into a region where we have a structure (our team's, built or being built)
+	std::set<int> ourRegions;
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		if (!kv.second->GetCircuitDef()->IsMobile()) {
+			ourRegions.insert(chokeMap->GetRegionAt(kv.second->GetPos(frame)));
+		}
+	}
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
+	const AIFloat3& pos = leader->GetPos(frame);
 	const CFrontline::SFront* best = nullptr;
 	AIFloat3 bestCentre;
 	float bestScore = -std::numeric_limits<float>::max();
 	for (const CFrontline::SFront& f : front) {
 		const int choke = graph.FindChoke(f.chokeId);
-		if (!f.IsShort() || (choke < 0)) {
+		const int inner = graph.FindRegion(f.innerRegionId);
+		if (!f.IsShort() || (choke < 0) || (inner < 0) || (ourRegions.find(inner) == ourRegions.end())) {
 			continue;
 		}
 		const AIFloat3 centre = chokeMap->GetCellPos(graph.GetChokes()[choke].centre);
@@ -2160,7 +2179,7 @@ AIFloat3 CMilitaryManager::GetSoloPark(const IFighterTask* task, CCircuitUnit* l
 	if (!utils::is_valid(spot)) {
 		spot = bestCentre;
 	}
-	soloParks[task] = {best->chokeId, spot};
+	soloParks[task] = {best->chokeId, spot, frame};
 	return spot;
 }
 
