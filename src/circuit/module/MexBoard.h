@@ -49,7 +49,7 @@ public:
 	bool IsHeldByOther(const IBuilderTask* task, const CCircuitUnit* unit) const;
 	// The mex job unit holds, nullptr = none. A builder between jobs matches first if anything changed. query: the
 	// cost map its pick rates on (CBuilderManager::DefaultMakeTask), nullptr = the one it holds
-	IBuilderTask* GetJob(CCircuitUnit* unit, const CQueryCostMap* query = nullptr);
+	IBuilderTask* GetMexJob(CCircuitUnit* unit, const CQueryCostMap* query = nullptr);
 
 	void OnBuildStart(CCircuitUnit* unit, const IBuilderTask* task);  // at its site: its next spot comes now
 	void OnTaskRemoved(const IBuilderTask* task, bool done);

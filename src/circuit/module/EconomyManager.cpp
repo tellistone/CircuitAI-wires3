@@ -992,7 +992,7 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	// economy.mex_board, in the opening: the board makes the mex jobs, one per builder, and this is the unit's
 	if (builderMgr->GetMexBoard()->IsActive()) {
-		return (unit != nullptr) ? builderMgr->GetMexBoard()->GetJob(unit) : nullptr;
+		return (unit != nullptr) ? builderMgr->GetMexBoard()->GetMexJob(unit) : nullptr;
 	}
 	const float cost = mexDef->GetCostM();
 	const unsigned maxCount = (builderMgr->GetBuildPower() / cost * 8 + 2) * mexJobMod;

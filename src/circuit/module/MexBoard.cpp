@@ -64,7 +64,7 @@ CMexBoard::SHold* CMexBoard::FindHold(const CCircuitUnit* unit)
 	return (it != holds.end()) ? &*it : nullptr;
 }
 
-IBuilderTask* CMexBoard::GetJob(CCircuitUnit* unit, const CQueryCostMap* query)
+IBuilderTask* CMexBoard::GetMexJob(CCircuitUnit* unit, const CQueryCostMap* query)
 {
 	if (!IsActive()) {
 		return nullptr;

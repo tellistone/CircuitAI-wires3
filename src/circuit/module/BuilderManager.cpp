@@ -1390,7 +1390,7 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 
 	std::shared_ptr<CQueryCostMap> pQuery = std::static_pointer_cast<CQueryCostMap>(query);
 	// economy.mex_board: its spot for this builder first, matched on the cost map this pick rates on
-	mexBoard->GetJob(unit, pQuery.get());
+	mexBoard->GetMexJob(unit, pQuery.get());
 
 	const CSetupManager::SCommInfo::SHide* hide = GetCommHide(unit, commState);  // hide commander?
 	if (hide != nullptr) {
