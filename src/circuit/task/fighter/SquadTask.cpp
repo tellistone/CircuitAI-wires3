@@ -140,6 +140,11 @@ void ISquadTask::Merge(ISquadTask* task)
 	manager->GetCircuit()->GetMilitaryManager()->GetProtect()->Transfer(task, this);  // quota.protect: its commit too
 }
 
+bool ISquadTask::IsProtecting() const
+{
+	return static_cast<CMilitaryManager*>(manager)->GetProtect()->IsActing(this);
+}
+
 const AIFloat3& ISquadTask::GetLeaderPos(int frame) const
 {
 	return (leader != nullptr) ? leader->GetPos(frame) : GetPosition();
@@ -307,7 +312,7 @@ ISquadTask* ISquadTask::CheckMergeTask()
 	// quota.protect: a group committed to the commander's fight joins only another committed one, or Merge would hand
 	// the commit to a group that is busy elsewhere
 	const CProtect* protect = militaryMgr->GetProtect();
-	const bool isProtect = protect->IsActing(this);
+	const bool isProtect = IsProtecting();
 	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(fightType);
 	for (const IFighterTask* candidate : tasks) {
 		if ((candidate == this) ||

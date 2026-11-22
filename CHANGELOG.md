@@ -315,16 +315,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   `respond_sec` 12, `go_ratio` 1.0). When the commander's seen danger within `zone` beats its own power, or it takes
   damage, one central go or no-go decides once a second for every group that can reach it, so they commit together
   or not at all instead of each judging the fight alone and trickling in.
-  - Danger: the larger of the enemy blobs centred in the zone and the commander's own danger list, plus enemy static
-    defences whose range reaches into the zone.
+  - Danger: the larger of the force balance's enemy force at the commander (mobiles by how soon they can shoot it,
+    enemy statics by their cover falloff) and the commander's own danger list. Against gunships (over 60% of that
+    list, until under 40%) no group is sent: only anti-air turrets count, and the commander if it hits air.
   - Commit: attack, raid and gathering groups that reach the commander within `respond_sec` (or its time to death)
-    and aren't fighting elsewhere (against gunships, anti-air groups only), nearest first, until groups + commander +
-    turrets reach 1.25x the danger. Go at `go_ratio` with one group at least (0.6x once cornered or paralysed),
-    no-go under `go_ratio` / `attack_keep_threat`, 5 s per state at least.
-  - On go, committed groups leave rallies and guard pulls, merge only with each other, take only enemies in the zone
-    (the commander's attackers first), and near the commander judge with the strength present there.
+    and aren't fleeing or fighting elsewhere, nearest first, until groups + commander + turrets reach 1.25x the danger
+    (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or paralysed), no-go
+    under `go_ratio` / `attack_keep_threat`, 5 s per state at least. A committed group that flees counts 0.
+  - On go, committed groups leave rallies and guard pulls, merge only with each other, head for the commander, take
+    only enemies in the zone (the commander's attackers first), and within their range of it judge with the strength
+    present there (groups within half the zone, kept to 0.625).
   - Meeting point: our or allied turrets near the commander that hold the danger with it, reached in time and safe to
-    flee to. The commander flees there and stays; committed groups head there while it does.
+    flee to, kept while they hold 1 / `attack_keep_threat` of it. The commander flees there and stays; cornered there,
+    it ends its flee and builds its defence.
   - `PROTECT` log lines on start, go, nogo and end.
 
 - **`plant` unit attribute: stay put next to targets and anti-heavies** (Crabe has it). A unit with it never moves

@@ -1392,8 +1392,7 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhPull, this), FRAMES_PER_SEC * 2, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhStats, this), FRAMES_PER_SEC, offset + 2);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogAhStats, this), FRAMES_PER_SEC * 60, offset + 3);
-		// Before the rallies, which leave its committed groups out: same frame as the attack rally, registered first, so
-		// the per-frame blob cache (CEnemyManager::GetBlobs) serves both
+		// Before the rallies, which leave its committed groups out (same frame as the attack rally, registered first)
 		if (protect->IsEnabled()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateProtect, this), FRAMES_PER_SEC, offset + 2);
 		}
@@ -1794,7 +1793,7 @@ void CMilitaryManager::CollectRallyGroups(const SRally& rally, std::vector<ISqua
 		ISquadTask* g = static_cast<ISquadTask*>(t);  // attack and raid tasks are squads
 		// Not a group committed to the commander protect (CProtect): it answers that fight, not the blob
 		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()
-			&& !protect->IsActing(g))
+			&& !g->IsProtecting())
 		{
 			outGroups.push_back(g);
 		}

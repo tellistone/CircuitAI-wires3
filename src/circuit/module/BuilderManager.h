@@ -394,10 +394,10 @@ public:
 	struct SCommView {
 		float own = 0.f;  // its cover power (power x sqrt(health %))
 		float danger = 0.f;  // seen dangers (gunships and moving blips included) within the radius, summed
+		float airDanger = 0.f;  // the gunships' part of it
 		int count = 0;
 		springai::AIFloat3 dangerPos = -RgtVector;  // the nearest of them; invalid: none
 		float dangerRange = 0.f;  // its weapon range
-		bool isAir = false;  // it is a gunship
 		bool isCornered = false;  // IsCommCornered
 	};
 	// false: no flee state for it (a flying builder, or its flee is off)
@@ -523,7 +523,8 @@ private:
 	bool FindCommFleeGoal(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir, float margin,
 						  springai::AIFloat3& outGoal);
 	void UpdateCommFlee();
-	// Commander protect: the protect's meeting point for our commander while it has one (CProtect::GetMeetingPoint)
+	// Commander protect: the protect's meeting point (turrets) for our commander while it has one
+	// (CProtect::GetMeetingPoint). Asked only by its flee: a health retreat keeps its own goal
 	bool GetProtectMeet(CCircuitUnit* unit, springai::AIFloat3& outPos) const;
 	void StartCommFlee(CCircuitUnit* unit, SCommState* state);
 	void ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat, SCommState* state);

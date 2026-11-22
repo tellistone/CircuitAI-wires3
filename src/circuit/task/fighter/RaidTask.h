@@ -35,6 +35,7 @@ public:
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const override;
 	// The group led by unit (or the unit alone) and ours together keep all speeds within quota.attack_merge.speed_ratio
 	bool IsSpeedSpreadOk(CCircuitUnit* unit) const;
+	virtual bool IsFleeing(int frame) const override { return frame < fleeFrame; }  // running from an escape
 
 private:
 	CMilitaryManager* GetMilitaryMgr() const;

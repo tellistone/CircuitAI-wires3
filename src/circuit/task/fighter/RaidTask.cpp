@@ -333,7 +333,7 @@ void CRaidTask::Update()
 	// Raid rally joiner: with no target in range (FindTarget picks only those) and no enemy at our base to defend,
 	// head for the bigger group
 	// quota.protect: not while committed to the commander's fight
-	if ((target == nullptr) && urgentPositions.empty() && !GetMilitaryMgr()->GetProtect()->IsActing(this)) {
+	if ((target == nullptr) && urgentPositions.empty() && !IsProtecting()) {
 		const CRaidTask* chase = UpdateChase(frame);
 		if (chase != nullptr) {
 			state = State::ROAM;
@@ -532,7 +532,7 @@ bool CRaidTask::FindTarget()
 	// pass other groups' claims and the 3-group cap, and are judged with the strength present near the commander
 	// (GetSafeThreatAt); those that hit it lately are preferred targets
 	const CProtect* protect = militaryMgr->GetProtect();
-	const bool isProtect = protect->IsActing(this);
+	const bool isProtect = IsProtecting();
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
@@ -701,9 +701,9 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
 	// unless we're already there; else the usual mex-spot roaming
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	// quota.protect: committed with nothing to hunt, head for the commander's fight (the protect's goal)
+	// quota.protect: committed with nothing to hunt, head for the commander (the protect's goal)
 	const CProtect* protect = militaryMgr->GetProtect();
-	const bool isProtect = protect->IsActing(this);
+	const bool isProtect = IsProtecting();
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	contested.clear();
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
