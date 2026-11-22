@@ -104,7 +104,7 @@ void CDefendTask::Update()
 	// quota.protect: committed to the commander's fight, the gathering group leaves at once as a new group, which is
 	// committed instead
 	CProtect* protect = militaryMgr->GetProtect();
-	const bool isProtect = protect->IsActing(this);
+	const bool isProtect = IsProtecting();
 	if (isProtect || (updCount % 32 == 1)) {
 		IFighterTask* task = nullptr;
 		if (isProtect) {

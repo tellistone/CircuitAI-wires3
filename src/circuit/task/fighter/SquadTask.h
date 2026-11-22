@@ -64,6 +64,14 @@ public:
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const { return false; }
 
 	/*
+	 * Commander protect (quota.protect, CProtect)
+	 */
+	// Committed to the commander's fight while the protect says go (CProtect::IsActing)
+	bool IsProtecting() const;
+	// Running along an escape path: a committed group counts 0 meanwhile. Default: never
+	virtual bool IsFleeing(int frame) const { return false; }
+
+	/*
 	 * Support units' speed: support units always attach to a group, whatever the speeds (a group walks at its slowest
 	 * unit's pace). Hosts their support units keep up with (quota.escort.speed_min x the slowest core unit's speed, the
 	 * core being the non-support units) come first when they pick one (FindReinforceSquad, CSupportTask)
