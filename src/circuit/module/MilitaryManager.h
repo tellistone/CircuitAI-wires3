@@ -172,6 +172,7 @@ public:
 	// Aborts an unstarted tower the AI no longer wants there (porc mode ended, artillery near a choke). Unlike a
 	// tower that failed, its scored spot stays frozen and counts no failure
 	void CallOffDefence(IBuilderTask* task);
+	bool IsCallingOff() const { return isCallingOff; }
 	bool HasDefence(int cluster);
 	// MakeDefence's cap on a point's towers: MIN_BUILD_SEC x porcupine.amount x income
 	float GetDefenceCap() const;
@@ -208,6 +209,7 @@ public:
 	float GetTurretSpare() { UpdateTurretBudget(); return turretBudget.balance - turretBudget.askCost; }
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
+	static const char* GetSpendName(int spend);  // a TurretSpend, as the TURRET BUDGET line names it
 	// turret.crowd_count: true when a light def at pos would join enough light turrets; logs and credits the account
 	// (CTurretPicker::RefuseCrowdedLight)
 	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
@@ -524,6 +526,9 @@ public:
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
+	// quota.kite: ranged units with firing spots keep out of this x their range of enemies with the "kite" attribute;
+	// 0: off (IFighterTask::FindFireSpot)
+	float GetKiteRange() const { return kiteRange; }
 	// quota.attack_melee_spot: melee units pick a firing spot this many elmos beyond both units' bodies; < 0: off
 	float GetAttackMeleeSpot() const { return attackMeleeSpot; }
 	// quota.attack_melee_max: at most this many melee units of a group close in on one target (fewer if its ring
@@ -884,6 +889,7 @@ private:
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
+	float kiteRange;  // quota.kite
 	float attackMeleeSpot;  // quota.attack_melee_spot
 	int attackMeleeMax;  // quota.attack_melee_max
 	float attackMeleeSpread;  // quota.attack_melee_spread

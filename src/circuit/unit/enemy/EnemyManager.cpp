@@ -120,6 +120,16 @@ void CEnemyManager::UpdateEnemyDatas(CQuadField& quadField)
 				enemy->UpdateInLosData();  // heavy on engine calls
 			}
 		}
+		// Jumpers: flight, landing and reload (in LOS; out of it a flight ends when its guess says). A jump that is
+		// ready again, or used, changes the reach of its threat
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		// (A commander's range is read off its rules params, so only in LOS; it is set again on entering LOS)
+		if ((edef != nullptr) && edef->IsAbleToJump() && !edef->IsAbleToFly() && !enemy->IsFake()
+			&& enemy->UpdateJump(circuit->GetLastFrame(), circuit->GetTerrainManager(), isJumpLand)
+			&& (enemy->IsInLOS() || !edef->IsRoleComm()))
+		{
+			circuit->GetThreatMap()->SetEnemyUnitRange(enemy);
+		}
 
 		++enemyIterator;
 		--n;
@@ -557,6 +567,7 @@ void CEnemyManager::ReadConfig()
 	initThrMod.inMobile = qthrMod.get("mobile", 1.f).asFloat();
 	initThrMod.inStatic = qthrMod.get("static", 0.f).asFloat();
 	maxAAThreat = quotas.get("aa_threat", 42.f).asFloat();
+	isJumpLand = quotas.get("jump_land", true).asBool();
 }
 
 /*

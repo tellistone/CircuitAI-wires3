@@ -165,8 +165,9 @@ public:
 	unsigned GetOpenSpotCount() const { return openSpotCount; }
 	unsigned GetSafeSpotCount() const { return safeSpotCount; }
 	// The mex job search's spot test: open, not ours yet, no threat, reachable (by unit, or by any builder) and free
-	// to build on, or held by an enemy mex we can clear. isHeldOpen: a spot the mex board holds counts as open
-	std::function<bool (int spot)> GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen = false) const;
+	// to build on, or held by an enemy mex we can clear. isHeldOpen: a spot the mex board holds counts as open.
+	// isSafe false: threat aside (a mex board walker's test, CMexBoard::RateBuilders)
+	std::function<bool (int spot)> GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen = false, bool isSafe = true) const;
 	// The spots that pass it for any builder, the mex board's held ones too, and in team games not nearer an ally's
 	// base or factory than ours (the ally takes it); worked out at most once a second (the opening's spot count and the
 	// board share it), so a spot may have closed since: check IsAllyOpenSpot

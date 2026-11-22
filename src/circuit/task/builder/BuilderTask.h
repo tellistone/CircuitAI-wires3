@@ -96,6 +96,9 @@ public:
 
 	virtual void SetTarget(CCircuitUnit* unit);
 	CCircuitUnit* GetTarget() const { return target; }
+	// The job adds or brings back firepower where it is: an armed build, or a repair of an armed unit or turret. The
+	// pick takes it under threat (the turret or the repaired unit is what makes the spot safe)
+	bool IsFightBack() const;
 	// In the manager's queue or not (CBuilderManager): a queued construction job with no nanoframe holds a slot of its
 	// def's behaviour.json "limit" (CCircuitDef::IsAvailable); its nanoframe, once placed, counts as a unit instead.
 	// Released on dequeue, not in the destructor: at shutdown the defs go first

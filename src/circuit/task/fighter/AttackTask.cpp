@@ -3353,10 +3353,11 @@ void CAttackTask::OrderEscorts(std::vector<SFireClaim>& claims, std::vector<SOrd
 			}
 			continue;
 		}
-		// Nothing changed (the same pick, its spot still in the disc, no repeat due): its order stands
+		// Nothing changed (the same pick, its spot still in the disc and clear of kite discs, no repeat due): its order
+		// stands
 		AIFloat3 keptPos;
 		if (!isRepeat && !wasWalking && (best.enemy == current) && GetKeptFireSpot(unit, false, current, keptPos)
-			&& (keptPos.SqDistance2D(centre) <= SQUARE(best.radius)))
+			&& (keptPos.SqDistance2D(centre) <= SQUARE(best.radius)) && !IsKiteRespot(unit, frame))
 		{
 			claim.pos = keptPos;
 			continue;
