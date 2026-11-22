@@ -303,6 +303,7 @@ private:
 	int switchTime;
 	int lastFacFrame;
 	float factoryIncome;  // factory_income: at least floor(metal income without reclaim / this) factories, 0 = off
+	int floorFrame;  // the next frame the factory_income floor may try a factory
 
 	struct SEnergyFactorInfo {
 		float startFactor;

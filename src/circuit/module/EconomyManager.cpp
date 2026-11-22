@@ -71,6 +71,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, mexCount(0)
 		, lastFacFrame(-1)
 		, factoryIncome(0.f)
+		, floorFrame(0)
 		, indexRes(0)
 		, metalIncome(.0f)
 		, energyIncome(.0f)
@@ -1856,11 +1857,16 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 	const float factoryFactor = (metalIncome - assistDef->GetBuildSpeed()) * 1.2f;
 	const int nanoSize = builderMgr->GetTasks(IBuilderTask::BuildType::NANO).size();
 	const float factoryPower = factoryMgr->GetFactoryPower() + nanoSize * assistDef->GetBuildSpeed();
-	// factory_income: below floor(metal income without reclaim / factory_income) factories (finished ones and queued
-	// factory jobs) a new factory is due now, as when the switch timer runs out
+	// factory_income: fewer factories (finished + queued) than floor(metal income without reclaim / factory_income)
+	// makes a new one due now, as when the switch timer runs out; tried at most every 30 s, so nanos are built between
+	// tries that find no place for it
 	const int factoryCount = factoryMgr->GetFactoryCount() + factoryTasks.size();
-	const int minFactories = (factoryIncome > 0.f) ? int(GetEcoMetalIncome() / factoryIncome) : 0;
-	const bool isBelowMin = (factoryCount < minFactories);
+	const float ecoIncome = GetEcoMetalIncome();
+	const bool isBelowMin = (factoryIncome > 0.f) && (frame >= floorFrame)
+			&& (ecoIncome >= (factoryCount + 1) * factoryIncome);
+	if (isBelowMin) {
+		floorFrame = frame + FRAMES_PER_SEC * 30;
+	}
 	const bool isSwitchTime = (lastFacFrame + switchTime <= frame) || isBelowMin;
 	if ((factoryPower >= factoryFactor) && !isSwitchTime) {
 		return nullptr;
@@ -1983,8 +1989,8 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 	{
 		lastFacFrame = frame;
 		if (isBelowMin) {
-			circuit->LOG("FACTORY_INCOME %s: %i factories < %i (%.1f m / %.0f)", facDef->GetDef()->GetName(),
-					factoryCount, minFactories, GetEcoMetalIncome(), factoryIncome);
+			circuit->LOG("FACTORY_INCOME %s: %i factories at %.1f m (one per %.0f)", facDef->GetDef()->GetName(),
+					factoryCount, ecoIncome, factoryIncome);
 		}
 		// NOW while few constructors, or while no factory of ours can make constructors (the replacement job was lost)
 		IBuilderTask::Priority priority = ((builderMgr->GetWorkerCount() <= 2) || !factoryMgr->HasBuilderFactory(frame))
