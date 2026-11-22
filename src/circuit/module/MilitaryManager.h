@@ -111,6 +111,17 @@ public:
 	// An attack-bound unit's first task: a gathering group at base (quota.attack_merge.base_gather true), else
 	// reinforce the rally host or the nearest compatible group, else a new attack group
 	IFighterTask* EnqueueAttackBound(CCircuitUnit* unit);
+	// quota.solo_hunt: a one-unit defend task that hunts enemies on our ground and never merges or promotes, until
+	// the one-off switch flips (IsSoloHuntOver); then the unit is attack-bound
+	IFighterTask* EnqueueSoloHunt();
+	bool IsSoloHuntRole(const CCircuitDef* cdef) const;
+	bool IsSoloHuntOver() const { return soloHunt.isOver; }
+	// quota.solo_hunt.choke_dist > 0: frontline chokes feed solo hunters' parking (CFrontline::Update builds them)
+	bool IsSoloParkOn() const { return !soloHunt.isOver && (soloHunt.chokeDist > 0.f); }
+	// Where a solo hunter with no target parks: a short choke of our line (CFrontline's C), by shortness minus
+	// distance / choke_dist minus choke_spread per other hunter parked there; kept while it stays short.
+	// -RgtVector: none (no choke map yet, none short or reachable)
+	springai::AIFloat3 GetSoloPark(const IFighterTask* task, CCircuitUnit* leader);
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
 	// Mines always get a new one (each lays its field somewhere else)
 	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
@@ -903,6 +914,21 @@ private:
 	} plantCfg;
 	std::vector<CEnemyUnit*> plantThreats;  // UpdatePlant: the threats that count now
 	bool attackBaseGather;  // quota.attack_merge.base_gather
+	// quota.solo_hunt: units of these main roles hunt alone on our ground until the ally team first holds mex x the
+	// map's metal spots (finished mexes); one-off, it never switches back. No roles = off
+	struct SSoloHunt {
+		CCircuitDef::RoleM roleMask = 0;
+		float mexShare = 0.25f;
+		float chokeDist = 2000.f;  // choke_dist: elmos away that cost as much as a choke's whole shortness; 0 = no parking
+		float chokeSpread = 1.f;  // choke_spread: shortness taken off per other hunter parked at the choke
+		bool isOver = true;
+	} soloHunt;
+	struct SSoloPark {
+		int chokeId;
+		springai::AIFloat3 spot;
+	};
+	std::map<const IFighterTask*, SSoloPark> soloParks;
+	void UpdateSoloHunt();
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at
 	int heavySeenAge;  // frames since an enemy heavy was last in radar or LOS; max = none

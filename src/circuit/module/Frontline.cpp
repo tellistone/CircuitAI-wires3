@@ -66,7 +66,8 @@ void CFrontline::Update()
 	const CChokeMap::SConfig& config = chokeMap->GetConfig();
 	// C feeds the turret picker's short-choke caller and the creep's lanes too
 	const CTurretPicker::SConfig& turretCfg = circuit->GetMilitaryManager()->GetTurretPicker()->GetConfig();
-	const bool isShortCaller = turretCfg.isShortChoke || turretCfg.isCreep;
+	const bool isShortCaller = turretCfg.isShortChoke || turretCfg.isCreep
+			|| circuit->GetMilitaryManager()->IsSoloParkOn();  // quota.solo_hunt parks at short chokes
 	if (!chokeMap->IsReady() || !(config.isHold || isShortCaller || chokeMap->GetOverlay()->IsOn())) {
 		holds.clear();
 		return;

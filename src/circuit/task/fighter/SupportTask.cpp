@@ -7,6 +7,7 @@
 
 #include "task/fighter/SupportTask.h"
 #include "task/fighter/AttackTask.h"
+#include "task/fighter/DefendTask.h"
 #include "task/fighter/SquadTask.h"
 #include "task/TaskManager.h"
 #include "map/ThreatMap.h"
@@ -122,7 +123,8 @@ ISquadTask* CSupportTask::FindHost(CCircuitUnit* unit, int frame) const
 		if ((leader == nullptr) || squad->IsDead()
 			|| !terrainMgr->CanMoveToPos(unit->GetArea(), leader->GetPos(frame))
 			|| !squad->IsMoveCompatible(unit, std::numeric_limits<float>::max())
-			|| (isKeepUp && !squad->IsKeptUpBy(ours, speedMin)))
+			|| (isKeepUp && !squad->IsKeptUpBy(ours, speedMin))
+			|| ((squad->GetFightType() == FightType::DEFEND) && static_cast<CDefendTask*>(squad)->IsSolo()))  // quota.solo_hunt
 		{
 			return -1.f;
 		}

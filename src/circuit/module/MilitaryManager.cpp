@@ -1107,6 +1107,27 @@ void CMilitaryManager::ReadConfig()
 		}
 	}
 
+	// quota.solo_hunt: {"roles": [...], "mex": 0.25}. Missing block or no known roles = off
+	{
+		const Json::Value& solo = root["quota"]["solo_hunt"];
+		if (!solo.isNull() && !solo.isObject()) {
+			circuit->LOG("CONFIG %s: quota.solo_hunt must be an object, off", cfgName.c_str());
+		} else if (solo.isObject()) {
+			for (const Json::Value& sr : solo["roles"]) {
+				auto it = roleNames.find(sr.asString());
+				if (it == roleNames.end()) {
+					circuit->LOG("CONFIG %s: quota.solo_hunt.roles has unknown role '%s'", cfgName.c_str(), sr.asString().c_str());
+					continue;
+				}
+				soloHunt.roleMask |= CCircuitDef::GetMask(it->second.type);
+			}
+			soloHunt.mexShare = solo.get("mex", 0.25f).asFloat();
+			soloHunt.chokeDist = std::max(solo.get("choke_dist", soloHunt.chokeDist).asFloat(), 0.f);
+			soloHunt.chokeSpread = std::max(solo.get("choke_spread", soloHunt.chokeSpread).asFloat(), 0.f);
+			soloHunt.isOver = (soloHunt.roleMask == 0) || (soloHunt.mexShare <= 0.f);
+		}
+	}
+
 	const Json::Value& aaCfg = root["antiair"];
 	antiAir.leash = aaCfg.get("leash", -1.f).asFloat();
 	antiAir.isOwnGround = aaCfg.get("own_ground", false).asBool();
@@ -1438,6 +1459,9 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdatePlant, this), 8, offset + 1);
 		if (isResponseGates) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResponseGates, this), FRAMES_PER_SEC * 2, offset + 3);
+		}
+		if (!soloHunt.isOver) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateSoloHunt, this), FRAMES_PER_SEC * 2, offset + 4);
 		}
 		if (circuit->GetAllyTeam()->GetSize() > 1) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAllyResponse, this), FRAMES_PER_SEC * 2, offset + 4);
@@ -2013,6 +2037,110 @@ IFighterTask* CMilitaryManager::EnqueueAttackBound(CCircuitUnit* unit)
 	return (task != nullptr) ? task : EnqueueTask(IFighterTask::FightType::ATTACK);
 }
 
+IFighterTask* CMilitaryManager::EnqueueSoloHunt()
+{
+	CDefendTask* task = static_cast<CDefendTask*>(EnqueueDefend(IFighterTask::FightType::DEFEND, 0.f));
+	task->SetSolo();
+	return task;
+}
+
+bool CMilitaryManager::IsSoloHuntRole(const CCircuitDef* cdef) const
+{
+	// Main role by its own name or by the role it acts as, as IsGuardRole
+	const CCircuitDef::RoleT mainRole = cdef->GetMainRole();
+	const CCircuitDef::RoleM mask = CCircuitDef::GetMask(mainRole)
+			| CCircuitDef::GetMask(circuit->GetBindedRole(mainRole));
+	return !soloHunt.isOver && ((soloHunt.roleMask & mask) != 0);
+}
+
+void CMilitaryManager::UpdateSoloHunt()
+{
+	// One-off: once the ally team's finished mexes reach mex x the map's spots, solo hunters turn attack-bound for
+	// good (CDefendTask::Update hands each one over); losing mexes later doesn't switch it back
+	if (soloHunt.isOver) {
+		return;
+	}
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	metalMgr->MarkAllyMexes();
+	const int spotCount = metalMgr->GetSpots().size();
+	const float share = (spotCount > 0) ? (float)metalMgr->GetMexCount() / spotCount : 1.f;  // no spots: over at once
+	if (IsSoloParkOn()) {
+		circuit->GetChokeMap()->Request();  // builds the choke map if nothing else asked for it
+	}
+	if (share >= soloHunt.mexShare) {
+		soloHunt.isOver = true;
+		soloParks.clear();
+		circuit->LOG("SOLO_HUNT: over at frame %i (ally mexes %i / %i = %.2f >= %.2f)", circuit->GetLastFrame(),
+				metalMgr->GetMexCount(), spotCount, share, soloHunt.mexShare);
+	}
+}
+
+AIFloat3 CMilitaryManager::GetSoloPark(const IFighterTask* task, CCircuitUnit* leader)
+{
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	const std::vector<CFrontline::SFront>& front = frontline->GetFront();
+	if (!IsSoloParkOn() || !chokeMap->IsReady() || front.empty()) {
+		soloParks.erase(task);
+		return -RgtVector;
+	}
+	// Keep the claim while its choke is still a short one on our line
+	auto it = soloParks.find(task);
+	if (it != soloParks.end()) {
+		auto fit = std::find_if(front.begin(), front.end(),
+				[it](const CFrontline::SFront& f) { return f.chokeId == it->second.chokeId; });
+		if ((fit != front.end()) && fit->IsShort()) {
+			return it->second.spot;
+		}
+		soloParks.erase(it);
+	}
+
+	// Shortness, 0 to 2: the share of its line our ground-hitting towers don't cover, plus its shortfall against the
+	// enemy army outside it over the biggest one
+	float maxShortfall = 0.f;
+	for (const CFrontline::SFront& f : front) {
+		maxShortfall = std::max(maxShortfall, f.GetShortfall());
+	}
+	std::map<int, int> parked;  // choke id -> other hunters parked there
+	for (const auto& kv : soloParks) {
+		++parked[kv.second.chokeId];
+	}
+	const CRegionGraph& graph = chokeMap->GetGraph();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
+	const CFrontline::SFront* best = nullptr;
+	AIFloat3 bestCentre;
+	float bestScore = -std::numeric_limits<float>::max();
+	for (const CFrontline::SFront& f : front) {
+		const int choke = graph.FindChoke(f.chokeId);
+		if (!f.IsShort() || (choke < 0)) {
+			continue;
+		}
+		const AIFloat3 centre = chokeMap->GetCellPos(graph.GetChokes()[choke].centre);
+		if (!terrainMgr->CanMoveToPos(leader->GetArea(), centre)) {
+			continue;
+		}
+		const float shortness = (1.f - f.cover) + ((maxShortfall > 0.f) ? std::max(f.GetShortfall(), 0.f) / maxShortfall : 0.f);
+		auto pit = parked.find(f.chokeId);
+		const int others = (pit != parked.end()) ? pit->second : 0;
+		const float score = shortness - pos.distance2D(centre) / soloHunt.chokeDist - soloHunt.chokeSpread * others;
+		if (score > bestScore) {
+			bestScore = score;
+			best = &f;
+			bestCentre = centre;
+		}
+	}
+	if (best == nullptr) {
+		return -RgtVector;
+	}
+	// The hold spot attack groups take there (inner side, set back), else the middle of the gap
+	AIFloat3 spot = frontline->FindHoldSpot(best->chokeId, leader);
+	if (!utils::is_valid(spot)) {
+		spot = bestCentre;
+	}
+	soloParks[task] = {best->chokeId, spot};
+	return spot;
+}
+
 IFighterTask* CMilitaryManager::EnqueueGuard(CCircuitUnit* vip)
 {
 	IFighterTask* task = new CFGuardTask(this, vip, 1.0f);
@@ -2036,6 +2164,7 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
 			priorityArtyTasks.erase(taskF);
 			frontline->ReleaseHold(taskF, 0);
+			soloParks.erase(taskF);
 			OnRallyTaskEnd(attackRally, taskF);
 			OnRallyTaskEnd(raidRally, taskF);
 			protect->OnTaskEnd(taskF);  // its address may be reused by a new task before the next update
@@ -4538,6 +4667,9 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		task = FindGuardTask(unit);
 		if (task != nullptr) {
 			// guard picked above
+		} else if (IsSoloHuntRole(cdef) && IFighterTask::IsArmedUnit(cdef)) {
+			// quota.solo_hunt: alone on our ground until the one-off mex switch, then attack-bound
+			task = EnqueueSoloHunt();
 		} else if (it != types.end()) {
 			switch (it->second) {
 				case IFighterTask::FightType::RAID: {

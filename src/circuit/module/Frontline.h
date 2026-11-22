@@ -81,6 +81,8 @@ public:
 	// quota.hold_choke: where the attack group led by leader holds (claiming a free slot once it has a spot there),
 	// -RgtVector if nowhere
 	springai::AIFloat3 GetHoldSpot(CCircuitUnit* leader);
+	// The spot an attack group holds at this choke of the front (also quota.solo_hunt parking); -RgtVector if none
+	springai::AIFloat3 FindHoldSpot(int chokeId, CCircuitUnit* leader) const;
 	// The task ended, or ran from danger: its claim goes, and it may not claim again for banFrames
 	void ReleaseHold(const IFighterTask* task, int banFrames);
 
@@ -101,7 +103,6 @@ private:
 	void UpdateFront(const std::vector<SArmed>& armed);
 	void UpdateHolds();
 	void Fortify();
-	springai::AIFloat3 FindHoldSpot(int chokeId, CCircuitUnit* leader) const;  // -RgtVector if none
 	// Regions reachable from our held ground (our side before we hold any) without crossing these chokes
 	std::vector<bool> ReachableFromUs(const std::vector<int>& blocked) const;
 	const SFront* FindFront(int chokeId) const;
