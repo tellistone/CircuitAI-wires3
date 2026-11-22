@@ -21,8 +21,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     60 s), the one followed now x1.5), not fleeing and outside our base defence range, so a group still forming in
     base doesn't hold them there. Each unit has its own side slot `follow_dist` behind the leader, 144 elmos apart.
     With no such group: attack/defend group leaders, a defended mex cluster, the base, as before.
-  - Long-reload units (reload of 5 s or more) no longer walk to a static heavy seen only on radar: they would wait in range
-    for it unseen. It counts as a front radar dot.
+  - Long-reload units (reload of 5 s or more) no longer walk to a static heavy seen only on radar: they would wait
+    in range for it unseen. It counts as a front radar dot.
   - Firing spots (heavy or front) stay 96 elmos clear of the other artillery-mode anti-heavies, where they stand or
     walk to, so one shell doesn't hit several.
   - A search that finds nothing, or a kind of goal with no route under `max_path_threat`, waits 6 s. After a flee
