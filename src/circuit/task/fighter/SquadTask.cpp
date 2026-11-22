@@ -792,7 +792,7 @@ void ISquadTask::UpdateScoots(int frame)
 		}
 		// Turn back once walking into fire range takes as long as the reload left, so the unit shoots again as soon
 		// as it's ready (a slow unit far back would otherwise lose time on every cycle)
-		const float walkBack = unit->GetPos(frame).distance2D(target->GetPos()) - GetFireRange(unit);
+		const float walkBack = unit->GetPos(frame).distance2D(target->GetFightPos()) - GetFireRange(unit);
 		if (IsWalkLongerThanReload(unit, frame, walkBack)) {
 			EndScoot(it, frame, true);
 			continue;
@@ -811,7 +811,7 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 	const AIFloat3& uPos = unit->GetPos(frame);
 	// Out of the target's reach: no new scoot, the unit reloads where it stands. A scooting unit keeps its order (no
 	// stop and go at the edge; the turn-back still brings it in on time)
-	if (uPos.SqDistance2D(target->GetPos()) >= SQUARE(GetTargetGroundRange() + margin)) {
+	if (uPos.SqDistance2D(target->GetFightPos()) >= SQUARE(GetTargetGroundRange() + margin)) {
 		return;
 	}
 	// Back can lead into other enemies (flanks, defences behind us): the spot must be no hotter than here, where the
@@ -824,7 +824,7 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 	if (scoot == nullptr) {
 		// Too slow to get there and back into fire range before the weapon is ready (short reload, slow unit): it
 		// would only lose its spot. Fights on instead
-		const float walk = uPos.distance2D(dest) + std::max(dest.distance2D(target->GetPos()) - GetFireRange(unit), 0.f);
+		const float walk = uPos.distance2D(dest) + std::max(dest.distance2D(target->GetFightPos()) - GetFireRange(unit), 0.f);
 		if (IsWalkLongerThanReload(unit, frame, walk)) {
 			return;
 		}
@@ -845,8 +845,9 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 bool ISquadTask::IsRunningAway(CEnemyInfo* enemy, const AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
 		float ourRange)
 {
+	// A jumper in flight by its walk (GetGroundSpeed): it lands and walks on, so a jump away is no run
 	const AIFloat3& eVel = enemy->GetVel();
-	const float sqVel = eVel.SqLength2D();
+	const float sqVel = SQUARE(enemy->GetGroundSpeed());
 	if ((sqVel < sqOutrangeSpeed) || (eVel.dot2D(pos - enemy->GetPos()) >= 0.f)) {
 		return false;  // slow, or not moving away
 	}
@@ -870,7 +871,7 @@ float ISquadTask::GetTargetGroundRange() const
 AIFloat3 ISquadTask::GetScootSpot(CCircuitUnit* unit, const AIFloat3& uPos, float margin) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	const AIFloat3& tPos = target->GetPos();
+	const AIFloat3& tPos = target->GetFightPos();  // a jumper in flight: where it lands
 	AIFloat3 dir = GetScootAnchor(unit, uPos) - tPos;
 	dir.y = 0.f;
 	if (dir.Length2D() < 1.f) {
@@ -898,8 +899,7 @@ bool ISquadTask::IsWalkLongerThanReload(CCircuitUnit* unit, int frame, float dis
 
 int ISquadTask::GetMoveState(CCircuitUnit* unit) const
 {
-	const int defState = unit->GetCircuitDef()->GetDef()->GetMoveState();
-	return (defState >= 0) ? defState : 1;
+	return unit->GetCircuitDef()->GetDefaultMoveState();
 }
 
 void ISquadTask::SetScootHold(CCircuitUnit* unit, bool isHold)

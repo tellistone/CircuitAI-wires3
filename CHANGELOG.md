@@ -7,6 +7,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
+  radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped
+  at the edge, below a hill or behind a ridge and couldn't fire. Now (a) counts within `plant.reach` (new, 0.9) x the
+  range, and for a Cannon the engine's height-adjusted range on a clear low arc (`ballistics::IsShotClear`, as static
+  guns check), so it walks on into range. Planted for (a) only with its weapon standing ready for `plant.idle_sec`
+  (new, 8 s), it isn't hitting: (a) is ignored that long, so its task can move it. (b) counted a threat while on
+  radar and for `keep_sec` after it left radar, at its old spot; now a threat counts in LOS, or on radar and in LOS
+  within `plant.keep_sec` (now 20 s: a recloaked Phantom stays a radar dot through its 17 s reload), and a ghost
+  doesn't. Also: a planted unit claims no firing spot it won't walk to, set-target is sent again after each new order
+  from its task, a unit the player took keeps its own set-target, and the job only runs with a type that has `plant`.
+
 - **Nanos pick their job better** (`CFactoryManager::CreateAssistTask`, `nano.hand_off` review). Repairs: the unit
   whose lost health stands for the most metal (cost x missing share), not the first damaged one the scan returned,
   so in a fight they go to the turret about to fall rather than a scratched wall. Frames: high-priority factory
@@ -422,6 +433,42 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   nothing.
 
 ### Added
+
+- **Fighting jumpers and kiting Jack** (`quota.jump_land`, `quota.jump_threat`, `quota.kite`, new attribute `kite`).
+  - Jump tracking (`CEnemyUnit::UpdateJump`). Zero-K keeps `is_jumping`, the jump's goal and (but for Detriment) its
+    reload private to the jumper's team, so an enemy jumper in LOS is seen in flight by its height above the ground
+    (over 20 elmos). Its landing spot and frame are worked out once from the velocity the jump gadget sets each
+    frame: horizontal speed v gives the jump's length (L = 2rh / sqrt(1 - r^2), r = v / jump_speed, h =
+    jump_height), vertical speed and its height above the landing how far along the arc it is (first as if it lands
+    level with the ground under it, then again from the height of that spot, as the gadget aims at the ground there).
+    A height that doesn't fit the arc there (a unit walking on freshly raised ground) is no jump. Up but off a jump's
+    arc (carried by a transport, thrown) it isn't taken as jumping until it's seen down or out of LOS, so a transport
+    slowing down to drop a Jack doesn't read as a jump that used it. Out of LOS a flight ends when the guess says.
+    Reload: `jump_reload` from the landing (none with several `jump_charges`: Detriment); a jumper never seen jumping,
+    or whose flight turns out off the arc, counts as ready, the safe side. Checked offline against a port of the
+    gadget's arc: Jack lands within 5 elmos of the guess on average (19 at worst, on long jumps to ground 100 elmos
+    higher or lower), Detriment within 8 at worst, Skuttle and Jugglenaut (flat, fast arcs) within 19 on average and
+    about 70 at worst (a full-range jump with that height change).
+  - `jump_land` (default true): while it flies, the jumper's fight position (`CEnemyInfo::GetFightPos`) is its
+    landing spot. Firing spots, the fire band, the target's tile (so take-off re-orders units at their next update),
+    `IsOutOfReach`, melee picks (`AssignMeleeTargets`), reload scoots and its threat on the threat map
+    (`AddEnemyUnit`, and the single-enemy `GetThreatAt` that `GetTaskThreatExcl` subtracts) all use it. LOS, routes
+    and orders keep its real position. In flight it moves at its walking speed for the threat map's slack and for
+    `IsRunningAway` (`GetGroundSpeed`), so a jump away isn't read as a run.
+  - `jump_threat` (default 0.5; per unit `jump_threat` for one type): while the jump is ready, that share of the jump
+    range is added to its weapon range on the threat map, before rounding to squares. Jack: 5 squares (about 320
+    elmos with slack) to 8 (about 512). Readers of the per-enemy range (threat layers, anti-heavy stand-off) follow.
+  - `kite` (default 0.85, 0 = off) with the new `kite` attribute (on `jumpassault`): every ranged unit that fights
+    from firing spots (not melee units, aircraft or mobile bombs) keeps out of 0.85 x its own range of each kited
+    enemy in LOS, whatever it targets. No firing spot inside such a disc or with a walk through one (a walk out of
+    one it stands in comes no nearer than 0.9 x where it starts). A unit, escorts too, whose spot or walk there is
+    caught by a disc is re-ordered at the next task update (`IsKiteRespot`). With no spot clear of the discs it
+    steps out to 0.95 x its range from that enemy (straight away, then 30 and 60 degrees either side, the first safe
+    one with a direct walk; with none safe, a hold if it is safe where it stands, else the least dangerous step) and
+    fights from there without chasing (`FireSpot::KITE`); outside them it holds. A jumper in flight gets the threat
+    map's speed slack of its walking speed, not the jump's. On a kited target, spots go on a ring
+    at 0.95 x range and the fire band reaches the full range, so a unit Zero-K's own skirm keeps at the edge of its
+    range is no longer pulled back in to 0.9 x range.
 
 - **Commander protect against rushes** (`quota.protect`, new, off by default: `enable`, `zone` 1200, `keep_sec` 12,
   `respond_sec` 12, `go_ratio` 1.0). When the commander's seen danger within `zone` beats its own power, or it takes
