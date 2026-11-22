@@ -527,11 +527,8 @@ bool IFighterTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 
 float IFighterTask::GetFireRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const
 {
-	const AIFloat3& tPos = enemy->GetFightPos();  // a jumper in flight: by where it lands (water or not)
-	CCircuitDef* edef = enemy->GetCircuitDef();
-	const CCircuitDef::RangeType rt = ((edef != nullptr) && edef->IsAbleToFly()) ? CCircuitDef::RangeType::AIR
-			: (tPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-	return unit->GetCircuitDef()->GetMaxRange(rt);
+	// a jumper in flight: by where it lands (water or not)
+	return unit->GetCircuitDef()->GetMaxRange(CCircuitDef::GetRangeType(enemy->GetCircuitDef(), enemy->GetFightPos()));
 }
 
 float IFighterTask::GetSpotRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const
@@ -731,6 +728,10 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& tPos = enemy->GetFightPos();  // a jumper in flight: where it lands
 	const AIFloat3& uPos = unit->GetPos(circuit->GetLastFrame());
+	if (unit->IsPlanted()) {
+		outPos = uPos;  // "plant": it stands where it is (its orders become set-target), claiming no spot it won't use
+		return FireSpot::SPOT;
+	}
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	// Kited enemies' keep-out discs: no spot inside one, whatever the target (melee close spots have none)
 	std::vector<SKiteDisc> discs;

@@ -57,6 +57,7 @@ CEnemyUnit::CEnemyUnit(Id unitId, Unit* unit, CCircuitDef* cdef)
 		: ICoreUnit(unitId, unit)
 		, knownFrame(-1)
 		, lastSeen(-1)
+		, lastLos(-1)
 		, data(SEnemyData(cdef,
 			0.f,         // shieldPower
 			0.f,         // health
@@ -78,6 +79,7 @@ CEnemyUnit::CEnemyUnit(CCircuitDef* cdef, const AIFloat3& pos)
 		: ICoreUnit(-1, nullptr)
 		, knownFrame(-1)
 		, lastSeen(-1)
+		, lastLos(-1)
 		, shield(nullptr)
 		, data(SEnemyData(cdef,
 			cdef->GetMaxShield(),  // shieldPower

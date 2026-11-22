@@ -46,8 +46,6 @@ CCircuitUnit::CCircuitUnit(CCircuitAI* circuit, Id unitId, Unit* unit, CCircuitD
 		, ammoFrame(-1)
 		, reloadCheckFrame(-1)
 		, reloadFrame(0)
-		, plantFrame(-1)
-		, plantTargetId(-1)
 		, isDead(false)
 		, isDisarmed(false)
 		, isWeaponReady(true)
@@ -348,21 +346,25 @@ void CCircuitUnit::CmdSetTarget(CEnemyInfo* enemy)
 //	unit->ExecuteCustomCommand(CMD_UNIT_SET_TARGET, {(float)target->GetId()});
 }
 
-void CCircuitUnit::CmdPlantTarget(CEnemyInfo* enemy)
+bool CCircuitUnit::IsPlantHeld(CEnemyInfo* enemy)
 {
-	if ((enemy == nullptr) || (enemy->GetId() == plantTargetId)) {
-		return;  // sent already: no command spam on every task update
+	if (!IsPlanted()) {
+		return false;
 	}
-	plantTargetId = enemy->GetId();
-	unit->ExecuteCustomCommand(CMD_UNIT_SET_TARGET, {(float)plantTargetId});
+	// "plant": no move or fight orders; an attack on an enemy becomes ZK's set-target, which never moves. Sent once
+	// per enemy (ClearTarget, on every new order from a task, lets it be sent again)
+	if ((enemy != nullptr) && (enemy->GetId() != plant.targetId)) {
+		plant.targetId = enemy->GetId();
+		TRY_UNIT(manager->GetCircuit(), this,
+			unit->ExecuteCustomCommand(CMD_UNIT_SET_TARGET, {(float)plant.targetId});
+		)
+	}
+	return true;
 }
 
 void CCircuitUnit::CmdCancelTarget()
 {
-	if (plantTargetId < 0) {
-		return;
-	}
-	plantTargetId = -1;
+	plant.targetId = -1;  // sent whatever it says: a task's ClearTarget clears it too
 	unit->ExecuteCustomCommand(CMD_UNIT_CANCEL_TARGET, {});
 }
 
@@ -416,10 +418,7 @@ void CCircuitUnit::CmdTerraform(std::vector<float>&& params)
 void CCircuitUnit::Attack(CEnemyInfo* enemy, int timeout)
 {
 	target = enemy;
-	if (IsPlanted()) {  // "plant": no move or fight orders; set-target never moves
-		TRY_UNIT(manager->GetCircuit(), this,
-			CmdPlantTarget(enemy);
-		)
+	if (IsPlantHeld(enemy)) {
 		return;
 	}
 	TRY_UNIT(manager->GetCircuit(), this,
@@ -446,7 +445,7 @@ void CCircuitUnit::Attack(const AIFloat3& position, int timeout)
 {
 	const AIFloat3& pos = utils::get_radial_pos(position, SQUARE_SIZE * 8);
 	if (IsPlanted()) {
-		return;  // "plant": no move or fight orders
+		return;
 	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		if (circuitDef->IsAttrMelee()) {
@@ -463,10 +462,7 @@ void CCircuitUnit::Attack(const AIFloat3& position, int timeout)
 void CCircuitUnit::Attack(const AIFloat3& position, CEnemyInfo* enemy, int timeout)
 {
 	const AIFloat3& pos = utils::get_radial_pos(position, SQUARE_SIZE * 8);
-	if (IsPlanted()) {  // "plant": no move or fight orders; set-target never moves
-		TRY_UNIT(manager->GetCircuit(), this,
-			CmdPlantTarget(enemy);
-		)
+	if (IsPlantHeld(enemy)) {
 		return;
 	}
 	TRY_UNIT(manager->GetCircuit(), this,
@@ -495,10 +491,7 @@ void CCircuitUnit::AttackFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int ti
 {
 	target = enemy;
 	targetTile = tile;
-	if (IsPlanted()) {  // "plant": no move or fight orders; set-target never moves
-		TRY_UNIT(manager->GetCircuit(), this,
-			CmdPlantTarget(enemy);
-		)
+	if (IsPlantHeld(enemy)) {
 		return;
 	}
 	TRY_UNIT(manager->GetCircuit(), this,
@@ -517,10 +510,7 @@ void CCircuitUnit::FightFrom(const AIFloat3& firePos, CEnemyInfo* enemy, int til
 {
 	target = enemy;
 	targetTile = tile;
-	if (IsPlanted()) {  // "plant": no move or fight orders; set-target never moves
-		TRY_UNIT(manager->GetCircuit(), this,
-			CmdPlantTarget(enemy);
-		)
+	if (IsPlantHeld(enemy)) {
 		return;
 	}
 	TRY_UNIT(manager->GetCircuit(), this,
@@ -537,10 +527,7 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 	target = enemy;
 	targetTile = tile;
 	// Fight to its own spot: stays put but keeps fight behaviours (auto-kiting, skirmishing)
-	if (IsPlanted()) {  // "plant": no move or fight orders; set-target never moves
-		TRY_UNIT(manager->GetCircuit(), this,
-			CmdPlantTarget(enemy);
-		)
+	if (IsPlantHeld(enemy)) {
 		return;
 	}
 	TRY_UNIT(manager->GetCircuit(), this,
@@ -552,7 +539,7 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 {
 	if (IsPlanted()) {
-		return;  // "plant": no move or fight orders
+		return;
 	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		unit->ExecuteCustomCommand(CMD_ORBIT, {(float)target->GetId(), 300.0f}, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
@@ -565,7 +552,7 @@ void CCircuitUnit::Gather(const AIFloat3& groupPos, int timeout)
 {
 	const AIFloat3& pos = utils::get_radial_pos(groupPos, SQUARE_SIZE * 8);
 	if (IsPlanted()) {
-		return;  // "plant": no move or fight orders
+		return;
 	}
 	TRY_UNIT(manager->GetCircuit(), this,
 		CmdMoveTo(groupPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);

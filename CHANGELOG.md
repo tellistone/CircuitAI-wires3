@@ -7,6 +7,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
+  radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped
+  at the edge, below a hill or behind a ridge and couldn't fire. Now (a) counts within `plant.reach` (new, 0.9) x the
+  range, and for a Cannon the engine's height-adjusted range on a clear low arc (`ballistics::IsShotClear`, as static
+  guns check), so it walks on into range. Planted for (a) only with its weapon standing ready for `plant.idle_sec`
+  (new, 8 s), it isn't hitting: (a) is ignored that long, so its task can move it. (b) counted a threat while on
+  radar and for `keep_sec` after it left radar, at its old spot; now a threat counts in LOS, or on radar and in LOS
+  within `plant.keep_sec` (now 20 s: a recloaked Phantom stays a radar dot through its 17 s reload), and a ghost
+  doesn't. Also: a planted unit claims no firing spot it won't walk to, set-target is sent again after each new order
+  from its task, a unit the player took keeps its own set-target, and the job only runs with a type that has `plant`.
+
 - **Nanos pick their job better** (`CFactoryManager::CreateAssistTask`, `nano.hand_off` review). Repairs: the unit
   whose lost health stands for the most metal (cost x missing share), not the first damaged one the scan returned,
   so in a fight they go to the turret about to fall rather than a scratched wall. Frames: high-priority factory
@@ -467,17 +478,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     enemy statics by their cover falloff) and the commander's own danger list. Against gunships (over 60% of that
     list, until under 40%) no group is sent: only anti-air turrets count, and the commander if it hits air.
   - Commit: attack, raid and gathering groups that reach the commander within `respond_sec` (or its time to death)
-    and aren't fleeing or fighting elsewhere, nearest first, until groups + commander + turrets reach 1.25x the danger
-    (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or paralysed), no-go
-    under `go_ratio` / `attack_keep_threat` (at once when the danger turns to air), 5 s per state at least. A
-    committed group that flees still counts for keeping a go, not for starting one.
+    and aren't fleeing or fighting elsewhere, soonest there first, until groups + commander + turrets reach 1.25x the
+    danger (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or paralysed),
+    no-go under `go_ratio` / `attack_keep_threat` (at once when the danger turns to air), 5 s per state at least. A
+    committed group that flees still counts for keeping a go, not for starting one, and a committed group 1.5x
+    `respond_sec` of travel away is dropped.
   - On go, committed groups leave rallies and guard pulls, merge only with each other, head for the commander, take
     only enemies in the zone (the commander's attackers first), and within half the zone of it (kept to 0.625) judge
     with the strength present there.
   - Meeting point: a spot 100 elmos behind our or allied turrets near the commander, away from the danger, where they
     hold the danger with it, reached in time and safe to flee to; kept while they hold 1 / `attack_keep_threat` of it.
     The commander flees there and stays; cornered there, it ends its flee and builds its defence.
-  - `PROTECT` log lines on start, go, nogo and end.
+  - `PROTECT` log lines on start, go, nogo and end, with the gunships' share of the danger. The end line sums up the
+    protect: its goes and the highest gunship share.
 
 - **`plant` unit attribute: stay put next to targets and anti-heavies** (Crabe has it). A unit with it never moves
   (move, fight, jump, gather and orbit orders are dropped, retreat included) while an enemy in LOS that it can hit is
