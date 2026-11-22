@@ -13,6 +13,7 @@
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -93,6 +94,7 @@ static constexpr float MERGE_BREAK_OFF_SHARE = 0.5f;
 // now: one loss would otherwise turn two similar groups around (both walking to each other still merges them)
 static constexpr float REINFORCE_KEEP_SHARE = 0.8f;
 static constexpr ICoreUnit::Id REINFORCE_ROUTE_ID = -2;  // to the group we reinforce (or the rally host's fight edge)
+static constexpr ICoreUnit::Id PROTECT_ROUTE_ID = -3;  // quota.protect: to the commander's fight (WalkToProtect)
 // Routes to a group (ApplyGroupRoute) are kept this long, and while their goal (a moving group)
 // drifts less than this share of the route's length: a far group's route barely changes when its goal moves a little
 static constexpr int GROUP_ROUTE_REUSE_FRAMES = FRAMES_PER_SEC * 6;
@@ -411,11 +413,13 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	// quota.attack_merge.rally: every compatible group that can reach the host reinforces it, whatever its size (no
 	// retry cooldown); the host carries on as usual and never waits for them
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	CAttackTask* rallyHost = militaryMgr->GetRallyHost();
+	// quota.protect: committed to the commander's fight, the group neither walks to merge nor joins a rally
+	const bool isProtect = militaryMgr->GetProtect()->IsActing(this);
+	CAttackTask* rallyHost = isProtect ? nullptr : militaryMgr->GetRallyHost();
 	const bool isHost = (rallyHost == this);
-	const bool isJoiner = !isHost && militaryMgr->IsRallyJoiner(this);
-	const bool isFreeArmy = !isHost && !isJoiner && IsArmy();  // an army outside the rally
-	if (isHost) {
+	const bool isJoiner = !isHost && !isProtect && militaryMgr->IsRallyJoiner(this);
+	const bool isFreeArmy = !isHost && !isJoiner && !isProtect && IsArmy();  // an army outside the rally
+	if (isHost || isProtect) {
 		reinforce = nullptr;
 	} else if (isJoiner) {
 		if (frame < rallyRouteFrame) {
@@ -475,11 +479,15 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		return;
 	}
 	if (target == nullptr) {
-		FallbackFrontPos(isReuse);
+		if (isProtect) {
+			WalkToProtect(frame, isReuse);
+		} else {
+			FallbackFrontPos(isReuse);
+		}
 		return;
 	}
 	// The group we'd merge with is nearer: merge, then hunt together (outnumbered: only one nearer our base)
-	if (SeekMerge(frame, isReuse, targetSqKey, IsFlagged())) {
+	if (!isProtect && SeekMerge(frame, isReuse, targetSqKey, IsFlagged())) {
 		return;
 	}
 	if (isReuse && ReuseRoute(target->GetId(), position, frame)) {  // position: GetRangePos (FindTarget)
@@ -585,8 +593,14 @@ float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, const SStrength& stre
 {
 	// Cover multiplies whatever strength the caller passes (pick, keep, cautious, raid factor, joint), so the keep
 	// and cautious margins scale with it. Linear in strength: the routes' threat / cover mod matches it exactly.
-	// At most 2x: under the base allowance a spot passes, at 2x it or more it fails, either way without cover
-	const float allowed = GetBaseAllowedThreatAt(pos, strength.value, refSqDist);
+	// At most 2x: under the base allowance a spot passes, at 2x it or more it fails, either way without cover.
+	// quota.protect: a committed group judges the commander's fight with the strength present (CProtect::GetBoost),
+	// which has the other committed groups there, the commander and the turrets in it already: no cover there
+	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos, highestRange);
+	const float allowed = GetBaseAllowedThreatAt(pos, strength.value * boost, refSqDist);
+	if (boost > 1.f) {
+		return allowed;
+	}
 	const bool isKnown = (threat >= 0.f);
 	if (!GetAllyCover()->IsOn() || (isKnown && ((threat < allowed) || (threat >= allowed * 2.f)))) {
 		return allowed;
@@ -1113,6 +1127,11 @@ void CAttackTask::AbsorbWeakerTasks()
 	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 
+	// quota.protect: a group committed to the commander's fight is absorbed only by another committed one (Merge hands
+	// the commit over); a committed group absorbs any
+	const CProtect* protect = GetMilitaryMgr()->GetProtect();
+	const bool isProtect = protect->IsActing(this);
+
 	static std::vector<CAttackTask*> weaklings;  // NOTE: micro-opt
 	for (IFighterTask* t : GetMilitaryMgr()->GetTasks(fightType)) {
 		CAttackTask* candy = static_cast<CAttackTask*>(t);
@@ -1120,6 +1139,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		// Cheap checks first; the small group walks to us, so the line is judged from its side
 		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
 			|| (!isHost && (candy->reinforce != this) && (!isArmy || candy->IsArmy()))
+			|| (!isProtect && protect->IsActing(candy))
 			|| !CanAssignTo(candyLeader)
 			|| candy->IsFighting()  // let it finish its fight (it doesn't join either)
 			|| !terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)
@@ -1240,6 +1260,44 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 }
 
 /*
+ * Commander protect (quota.protect, CProtect)
+ */
+
+void CAttackTask::WalkToProtect(int frame, bool isReuse)
+{
+	// Committed with nothing to fight in reach: walk to the commander's fight (the protect's goal: the turret point
+	// while the commander heads there, else the commander). Its safe edge as rally joiners find the host's
+	// (FindFightEdge: near the goal the spots are judged with the strength present and ours); none: straight to it,
+	// the go was judged for all of us together
+	SetTarget(nullptr);
+	ClearScaleAnchor();  // walking to the fight, not into an accepted one
+	state = State::ROAM;
+	if (!IsQueryReady(leader)) {
+		return;
+	}
+	const CProtect* protect = GetMilitaryMgr()->GetProtect();
+	const AIFloat3 hostPos = protect->GetGoal();
+	const SStrength together(GetSafeThreat() * protect->GetJointMod(this));
+	AIFloat3 goal = hostPos;
+	SStrength routeStrength = GetSafeThreat();
+	if (!FindFightEdge(frame, hostPos, RALLY_EDGE_FAR_DIST, goal, routeStrength, &together)) {
+		goal = hostPos;
+		routeStrength = together;
+	}
+	position = goal;
+	if (isReuse && ReuseRoute(PROTECT_ROUTE_ID, goal, frame)) {
+		return;
+	}
+	const AIFloat3& startPos = leader->GetPos(frame);
+	const float slack = GROUP_ROUTE_SLACK * startPos.distance2D(goal);
+	RunGroupRoute(frame, goal, DEFAULT_SLACK * 2, routeStrength, [this, goal, slack](const CQueryPathSingle* query) {
+		if (!this->ApplyGroupRoute(query, PROTECT_ROUTE_ID, goal, slack)) {
+			this->GatherAt(goal);  // no capped route: straight there, the commander can't wait
+		}
+	});
+}
+
+/*
  * Merging armies (quota.attack_merge.idle_merge): an army walks to another group and merges, unless it has a nearer target
  */
 
@@ -1336,7 +1394,7 @@ bool CAttackTask::ApplyGroupRoute(const CQueryPathSingle* query, ICoreUnit::Id r
 }
 
 bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, float farDist, AIFloat3& outPos,
-		SStrength& outStrength) const
+		SStrength& outStrength, const SStrength* together) const
 {
 	// The rally host is fighting: its position stepped back towards us until the threat there is under our own
 	// allowance (as our route judges it), so we join the fight from its safe side.
@@ -1368,9 +1426,9 @@ bool CAttackTask::FindFightEdge(int frame, const AIFloat3& hostPos, float farDis
 		CTerrainManager::CorrectPosition(outPos);
 		return true;
 	}
-	const SStrength together = GetJointStrength(reinforce);
-	if (!IsDangerAt(leader, hostPos, together, scaleRefSqDist)) {
-		outStrength = together;
+	const SStrength joint = (together != nullptr) ? *together : GetJointStrength(reinforce);
+	if (!IsDangerAt(leader, hostPos, joint, scaleRefSqDist)) {
+		outStrength = joint;
 		return true;  // outPos: the host (as given)
 	}
 	return false;
@@ -1911,16 +1969,25 @@ bool CAttackTask::FindTarget()
 	UpdatePastFloor();
 	isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
 			|| militaryMgr->IsAttackThreatFloor();
+	// quota.protect: committed to the commander's fight, only the enemies in its zone (and those already fighting us).
+	// They pass the own-ground rule, other groups' claims, the 3-group cap and the force balance; those that hit the
+	// commander lately rank 3x nearer
+	const CProtect* protect = militaryMgr->GetProtect();
+	const bool isProtect = protect->IsActing(this);
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
+		const bool isZone = isProtect && protect->IsZoneEnemy(enemy);
 		// Cheap checks first
-		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2) || !isTargetableType(enemy)) {
+		if (enemy->IsHidden() || ((enemy->GetTasks().size() > 2) && !isZone) || !isTargetableType(enemy)) {
 			continue;
 		}
 		const bool isPrev = (enemy->GetId() == prevTargetId);
 		float contactSqDist;
 		const bool isContact = IsInContact(enemy, isPrev, frame, &contactSqDist);
+		if (isProtect && !isZone && !isContact) {
+			continue;
+		}
 		// In contact: already fighting us. It needs no route, so a rejected route doesn't matter, and another group's
 		// claim doesn't take it: a claim stops us heading for an enemy, not shooting one we reach (the current target
 		// stays in contact out to TARGET_KEEP x, so an enemy at the edge isn't picked and dropped by turns). Else not
@@ -1930,7 +1997,7 @@ bool CAttackTask::FindTarget()
 		// back doesn't flip the pick; a roaming group doesn't chase a raider or scout that pokes it and runs.
 		// IsRunningAway: runs away faster than we chase (or nearly as fast, and outranges us)
 		if ((!isContact && (IsRejected(enemy->GetId(), -1, -1, frame)
-				|| IsClaimedByNearer(enemy, pos, 0.f, /*isRaidClaim*/ !isPrev, /*isAttackClaim*/ true, frame)))
+				|| (!isZone && IsClaimedByNearer(enemy, pos, 0.f, /*isRaidClaim*/ !isPrev, /*isAttackClaim*/ true, frame))))
 			|| (!(isContact && isEngaged) && IsRunningAway(enemy, pos, sqMaxSpeed, sqOutrangeSpeed, groundRange)))
 		{
 			continue;
@@ -1961,7 +2028,7 @@ bool CAttackTask::FindTarget()
 		// would hop forward one LOS radius at a time) is always fair game, so fights at the edge aren't dropped. The
 		// current target stays ours until the enemy outweighs us there by half a building, so it doesn't flicker on
 		// the border as our constructors move or enemy buildings come into view
-		if (isOwnGroundOnly && !isContact
+		if (isOwnGroundOnly && !isContact && !isZone
 			&& !inflMap->IsAllyTerritory(c.rangePos, isPrev ? -1.f : INFL_EPS))
 		{
 			continue;
@@ -1971,6 +2038,9 @@ bool CAttackTask::FindTarget()
 		c.key = c.rawKey * SQUARE(distModFor(enemy));
 		if (IsSiegeTarget(enemy, frame)) {  // quota.attack_static_cells.siege_bonus
 			c.key /= SQUARE(cellCfg.siegeBonus);
+		}
+		if (isZone && protect->IsRecentAttacker(enemy->GetId(), frame)) {
+			c.key /= 9.f;  // quota.protect: the commander's attackers first
 		}
 		candidates.push_back(c);
 		if (c.isInRange) {
@@ -2024,7 +2094,8 @@ bool CAttackTask::FindTarget()
 		const bool isInRange = c.isInRange;
 		// quota.attack_balance: judged unless in contact or inside the base core. Its free skips come first, before
 		// the approach line and the firing cells: flagged, only unjudged targets; past the check cap, the rest
-		const bool isJudged = isBalanceOn && !c.isContact && !IsInBaseCore(rangePos);
+		const bool isJudged = isBalanceOn && !c.isContact && !IsInBaseCore(rangePos)
+				&& !(isProtect && protect->IsZoneEnemy(c.enemy));  // quota.protect: judged centrally
 		if (isJudged && isBalanceLive && (isFlagged || (balanceChecks >= MAX_BALANCE_CHECKS))) {
 			isBalanceSkip = true;
 			continue;
@@ -2499,7 +2570,13 @@ void CAttackTask::ApplyFrontPos(const CQueryPathMulti* query, const AIFloat3& go
 
 float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals) const
 {
-	return GetPathThreatCap(startPos, goals, GetSafeThreat());
+	// quota.protect: a route into the commander's fight is capped for the strength present, as its goals are judged
+	const CProtect* protect = GetMilitaryMgr()->GetProtect();
+	float boost = 1.f;
+	for (const AIFloat3& g : goals) {
+		boost = std::max(boost, protect->GetBoost(this, g, highestRange));
+	}
+	return GetPathThreatCap(startPos, goals, GetSafeThreat() * boost);
 }
 
 float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals, float strength) const
@@ -2634,7 +2711,8 @@ bool CAttackTask::IsGuardPullable() const
 {
 	// A squad of 2+ would get weaker (maybe below quota.attack); a lone unit's task just ends when it leaves.
 	// The rally host is left alone too: every compatible group is walking to it
-	return (units.size() == 1) && !IsFighting() && (static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this);
+	return (units.size() == 1) && !IsFighting() && (static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this)
+			&& !static_cast<CMilitaryManager*>(manager)->GetProtect()->IsActing(this);  // quota.protect: committed
 }
 
 bool CAttackTask::IsFighting() const

@@ -8,6 +8,7 @@
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
@@ -147,7 +148,8 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 			unit->GetTask()->OnUnitIdle(unit);
 		}
 	};
-	auto workerDamagedHandler = [](CCircuitUnit* unit, CEnemyInfo* attacker) {
+	auto workerDamagedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
+		this->circuit->GetMilitaryManager()->GetProtect()->OnCommDamaged(unit, attacker);  // quota.protect: our commander only
 		unit->GetTask()->OnUnitDamaged(unit, attacker);
 	};
 	auto workerDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
@@ -2416,6 +2418,58 @@ bool CBuilderManager::IsCommCornered(CCircuitUnit* unit, SCommState* state)
 	return (state != nullptr) && state->IsExposed(state->wideZone, 1.f) && !HasCommEscape(unit, state);
 }
 
+bool CBuilderManager::GetCommView(CCircuitUnit* unit, float radius, SCommView& out)
+{
+	SCommState* state = GetCommState(unit);
+	if (state == nullptr) {
+		return false;
+	}
+	out = SCommView();
+	out.own = state->own;
+	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
+	const float sqRadius = SQUARE(radius);
+	float minSqDist = std::numeric_limits<float>::max();
+	UpdateCommDangers();
+	for (const SCommDanger& danger : commDangers) {
+		const float sqDist = pos.SqDistance2D(danger.pos);
+		if (!danger.isSeen || (sqDist > sqRadius)) {
+			continue;
+		}
+		out.danger += danger.threat;
+		++out.count;
+		if (sqDist < minSqDist) {
+			minSqDist = sqDist;
+			out.dangerPos = danger.pos;
+			out.dangerRange = danger.range;
+			out.isAir = danger.isAir;
+		}
+	}
+	out.isCornered = IsCommCornered(unit, state);
+	return true;
+}
+
+bool CBuilderManager::IsCommFleeSpot(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	SCommState* state = GetCommState(unit);
+	return (state != nullptr) && circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), pos)
+			&& IsCommSafe(pos, state->wideMargin);
+}
+
+bool CBuilderManager::GetProtectMeet(CCircuitUnit* unit, AIFloat3& outPos) const
+{
+	// Checked by the protect once a second: strong enough with the commander, reached in time, away from the danger and
+	// a safe flee spot, or the commander stands at it already
+	if (unit != circuit->GetSetupManager()->GetCommander()) {
+		return false;
+	}
+	const CProtect* protect = circuit->GetMilitaryManager()->GetProtect();
+	if (!protect->IsActive() || !utils::is_valid(protect->GetMeetingPoint())) {
+		return false;
+	}
+	outPos = protect->GetMeetingPoint();
+	return true;
+}
+
 bool CBuilderManager::IsFinishingDefence(CCircuitUnit* unit, const SCommState* state) const
 {
 	return (state != nullptr) && (state->cornerTask != nullptr) && (unit->GetTask() == state->cornerTask)
@@ -2637,18 +2691,26 @@ void CBuilderManager::StartCommFlee(CCircuitUnit* unit, SCommState* state)
 	if (IsFinishingDefence(unit, state)) {
 		return;
 	}
-	if (!HasCommEscape(unit, state)) {
+	const int frame = circuit->GetLastFrame();
+	// quota.protect: our commander flees to the meeting point (turrets that hold the danger with it); standing at it
+	// already, it stays and fights there with them, and cornered there it still builds its defence, beside them
+	AIFloat3 meetPos;
+	const bool isMeet = GetProtectMeet(unit, meetPos);
+	const bool isAtMeet = isMeet && (unit->GetPos(frame).SqDistance2D(meetPos) < SQUARE(COMM_ESCAPE_MIN));
+	if ((!isMeet || isAtMeet) && !HasCommEscape(unit, state)) {
 		IBuilderTask* defence = MakeCommDefence(unit, state);
 		if (defence != nullptr) {
 			AssignTask(unit, defence);
 		}
 		return;
 	}
+	if (isAtMeet) {
+		return;
+	}
 	// A commander upgrade is a combat morph in Zero-K: it goes on while the commander moves, so it isn't stopped
 	// (stopping refunds only 2/3 of the metal spent)
-	const int frame = circuit->GetLastFrame();
 	CRetreatTask* flee = EnqueueRetreat();
-	flee->SetFlee(state->escapeGoal, frame);
+	flee->SetFlee(isMeet ? meetPos : state->escapeGoal, frame);
 	AssignTask(unit, flee);
 	state->fleeFrom = unit->GetPos(frame);  // turret.after_flee: the turret goes where it was raided
 	state->isFleeAir = state->isAir;
@@ -2679,6 +2741,14 @@ void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat
 		return;
 	}
 	const AIFloat3& goal = retreat->GetFleeGoal();
+	// quota.protect: on to the meeting point while there is one (the protect keeps it safe, or the commander at it)
+	AIFloat3 meetPos;
+	if (GetProtectMeet(unit, meetPos)) {
+		if (meetPos.SqDistance2D(goal) > SQUARE(DEFAULT_SLACK)) {
+			retreat->Redirect(unit, meetPos);
+		}
+		return;
+	}
 	if (IsCommSafe(goal, state->wideMargin)) {
 		return;
 	}

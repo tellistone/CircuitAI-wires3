@@ -13,6 +13,7 @@
 #include "map/MapManager.h"
 #include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -331,7 +332,8 @@ void CRaidTask::Update()
 	const bool isTargetsFound = FindTarget();
 	// Raid rally joiner: with no target in range (FindTarget picks only those) and no enemy at our base to defend,
 	// head for the bigger group
-	if ((target == nullptr) && urgentPositions.empty()) {
+	// quota.protect: not while committed to the commander's fight
+	if ((target == nullptr) && urgentPositions.empty() && !GetMilitaryMgr()->GetProtect()->IsActing(this)) {
 		const CRaidTask* chase = UpdateChase(frame);
 		if (chase != nullptr) {
 			state = State::ROAM;
@@ -526,14 +528,23 @@ bool CRaidTask::FindTarget()
 	F3Vec contestedPositions;
 	float sqContestedDist = std::numeric_limits<float>::max();
 	float sqOtherDist = std::numeric_limits<float>::max();
+	// quota.protect: committed to the commander's fight, only the enemies in its zone (and those within our reach). They
+	// pass other groups' claims and the 3-group cap, and are judged with the strength present near the commander
+	// (GetSafeThreatAt); those that hit it lately are preferred targets
+	const CProtect* protect = militaryMgr->GetProtect();
+	const bool isProtect = protect->IsActing(this);
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
+		const bool isZone = isProtect && protect->IsZoneEnemy(enemy);
+		if (isProtect && !isZone && (pos.SqDistance2D(enemy->GetPos()) > SQUARE(range))) {
+			continue;
+		}
 		// Not one another raid group already targets from clearly nearer, unless within our fire range + 64 elmos
 		// (IsClaimedByNearer)
-		if (enemy->IsHidden() || (enemy->GetTasks().size() > 2)
-			|| IsClaimedByNearer(enemy, pos, (enemy == prevTarget) ? sqClaimFreeKeep : sqClaimFree,
-				/*isRaidClaim*/ true, /*isAttackClaim*/ false, circuit->GetLastFrame()))
+		if (enemy->IsHidden() || ((enemy->GetTasks().size() > 2) && !isZone)
+			|| (!isZone && IsClaimedByNearer(enemy, pos, (enemy == prevTarget) ? sqClaimFreeKeep : sqClaimFree,
+				/*isRaidClaim*/ true, /*isAttackClaim*/ false, circuit->GetLastFrame())))
 		{
 			continue;
 		}
@@ -554,7 +565,8 @@ bool CRaidTask::FindTarget()
 		}
 
 		const float sqEBDist = basePos.SqDistance2D(ePos);
-		const float distMod = GetThrDistModAt(ePos);  // thr_mod.distance curve at the enemy's spot
+		const float boost = isProtect ? protect->GetBoost(this, ePos, highestRange) : 1.f;  // quota.protect
+		const float distMod = GetThrDistModAt(ePos) / boost;  // thr_mod.distance curve at the enemy's spot
 		float checkPower = maxPower / distMod;
 		float sqCheckSpeed = sqMaxSpeed;
 		if (sqEBDist < sqBaseRange) {
@@ -591,7 +603,8 @@ bool CRaidTask::FindTarget()
 				continue;
 			}
 			defThreat = edef->GetPower();
-			isBuilder = militaryMgr->IsRaidPreferred(edef);  // configurable preferred target
+			isBuilder = militaryMgr->IsRaidPreferred(edef)  // configurable preferred target
+					|| (isZone && protect->IsRecentAttacker(enemy->GetId(), circuit->GetLastFrame()));  // quota.protect
 		} else {
 			if (notAW && (ePos.y < -SQUARE_SIZE * 5)) {
 				continue;
@@ -688,10 +701,13 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
 	// unless we're already there; else the usual mex-spot roaming
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	// quota.protect: committed with nothing to hunt, head for the commander's fight (the protect's goal)
+	const CProtect* protect = militaryMgr->GetProtect();
+	const bool isProtect = protect->IsActing(this);
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	contested.clear();
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
-	if (isContestedAllowed) {
+	if (isContestedAllowed && !isProtect) {
 		const float cautionMod = IsCautious(frame) ? 0.75f : 1.f;  // same as FindTarget
 		militaryMgr->GetTakeableContested(leader, highestRange,
 				[this, safeThreat, cautionMod](const AIFloat3& p, float) { return GetSafeThreatAt(p, safeThreat * cautionMod); },
@@ -715,12 +731,16 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// quota.raider_spot: roam between scored spots instead of the shared mex list
 	bool isSpotDest = false;
 	bool isSpotDone = false;
-	if ((bestContested == nullptr) && militaryMgr->IsRaidSpotOn()) {
+	if ((bestContested == nullptr) && !isProtect && militaryMgr->IsRaidSpotOn()) {
 		isSpotDest = UpdateRaidSpot(safeThreat, mustRepick, isDanger, isSpotDone);
 	} else {
 		raidSpot = -RgtVector;
 	}
-	if (bestContested != nullptr) {
+	if (isProtect) {
+		// The goal moves with the commander: the route is kept while it stays within a few squares of the last one
+		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(), protect->GetGoal());
+		position = (utils::is_valid(roamGoal) && (goal.SqDistance2D(roamGoal) < SQUARE(DEFAULT_SLACK * 2))) ? roamGoal : goal;
+	} else if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);
 	} else if (isSpotDest) {
 		// heading to a scored spot (UpdateRaidSpot)
@@ -980,6 +1000,13 @@ void CRaidTask::SendPendingFight(int frame)
 }
 
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
+{
+	// quota.protect: a committed group judges the commander's fight with the strength present
+	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos, highestRange);
+	return GetBaseSafeThreatAt(pos, safeThreat * boost);
+}
+
+float CRaidTask::GetBaseSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 {
 	// Same allowances as FindTarget: near-base bonus and the distance curve at this spot
 	CCircuitAI* circuit = manager->GetCircuit();
