@@ -52,6 +52,8 @@ CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 		, factoryPower(.0f)
 		, assistDef(nullptr)
 		, bpRatio(1.f)
+		, bpSpotsPer(0)
+		, bpSpotsMax(0)
 		, reWeight(.5f)
 {
 	circuit->GetScheduler()->RunOnInit(std::make_shared<CGameTask>(&CFactoryManager::Init, this));
@@ -765,6 +767,9 @@ void CFactoryManager::ReadConfig()
 	};
 	bpArmy = readBuilderRatio("buildpower_army");
 	bpReclaim = readBuilderRatio("buildpower_reclaim");
+	const Json::Value& spotsCfg = root["economy"]["buildpower_spots"];
+	bpSpotsPer = std::max(spotsCfg.get("per_builder", 4).asInt(), 0);
+	bpSpotsMax = std::max(spotsCfg.get("max", 4).asInt(), 0);
 	reWeight = root["response"].get("_weight_", .5f).asFloat();
 }
 
@@ -1149,6 +1154,51 @@ CRecruitTask* CFactoryManager::UpdateBuildPower(CCircuitUnit* unit)
 	return task;
 }
 
+CRecruitTask* CFactoryManager::UpdateSpotsBuilder(CCircuitUnit* unit)
+{
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	auto it = factoryDefs.find(unit->GetCircuitDef()->GetId());
+	if ((bpSpotsPer == 0) || !economyMgr->IsOpening() || (it == factoryDefs.end())) {
+		return nullptr;
+	}
+	CCircuitDef* buildDef = it->second.GetRoleDef(ROLE_TYPE(BUILDER));
+	const int frame = circuit->GetLastFrame();
+	if ((buildDef == nullptr) || !buildDef->IsAvailable(frame)) {
+		return nullptr;
+	}
+	unsigned int builders = circuit->GetBuilderManager()->GetWorkerCount();
+	for (const CRecruitTask* t : factoryTasks) {
+		builders += (t->GetBuildDef()->IsRoleBuilder() && !t->GetAssignees().empty()) ? 1 : 0;  // in a factory now
+	}
+	// Not before our first combat unit is finished: the opener's raider comes first, and is the escort to summon
+	if ((builders >= bpSpotsMax) || (economyMgr->GetSafeSpotCount() <= bpSpotsPer * builders)
+		|| (circuit->GetMilitaryManager()->GetArmyCost() <= 0.f) || IsArmyBehind())
+	{
+		return nullptr;
+	}
+	for (CRecruitTask* t : factoryTasks) {
+		if ((t->GetRecruitType() == CRecruitTask::RecruitType::BUILDPOWER) && t->GetBuildDef()->IsRoleBuilder()
+			&& t->GetAssignees().empty() && t->CanAssignTo(unit))
+		{
+			return t;
+		}
+	}
+	const AIFloat3& pos = unit->GetPos(frame);
+	if (!circuit->GetTerrainManager()->CanBeBuiltAt(buildDef, pos, unit->GetCircuitDef()->GetBuildDistance())) {
+		return nullptr;
+	}
+	CRecruitTask* task = EnqueueTask(CRecruitTask::Priority::NORMAL, buildDef, pos, CRecruitTask::RecruitType::BUILDPOWER, 64.f);
+	CountBuilder(BuilderWhy::SPOTS);
+	return task;
+}
+
+bool CFactoryManager::IsArmyBehind() const
+{
+	float enemyPerTeam, ours;
+	return (circuit->GetBuilderManager()->GetBuilderLosses(FRAMES_PER_SEC * 60) >= 2)
+		|| (circuit->GetMilitaryManager()->GetEnemyArmyRatio(enemyPerTeam, ours) > 1.5f);
+}
+
 bool CFactoryManager::IsBuilderNeeded(CCircuitDef* buildDef, const AIFloat3& pos, BuilderWhy* outWhy) const
 {
 	// Cheapest rule first; the reclaim rule's feature scan (cached) runs only when the others are met
@@ -1196,10 +1246,10 @@ void CFactoryManager::LogBuilders()
 	const float income = std::min(em->GetAvgMetalIncome(), em->GetAvgEnergyIncome());
 	const float armyCost = circuit->GetMilitaryManager()->GetArmyCost();
 	const int* c = builderCounts;
-	circuit->LOG("BUILDERS last minute queued: income %i, army %i, reclaim %i, roll %i, opener %i | now %u workers"
+	circuit->LOG("BUILDERS last minute queued: income %i, army %i, reclaim %i, roll %i, opener %i, spots %i | now %u workers"
 			" (%.0f m, commanders not counted), build power %.0f vs income %.1f x %.2f = %.0f, army %.0f m x %.2f = %.0f%s,"
 			" reclaim %.0f m x %.2f = %.0f%s",
-			c[0], c[1], c[2], c[3], c[4], bm->GetWorkerCount(), bm->GetWorkerCost(), bm->GetBuildPower(),
+			c[0], c[1], c[2], c[3], c[4], c[5], bm->GetWorkerCount(), bm->GetWorkerCost(), bm->GetBuildPower(),
 			income, bpRatio, income * bpRatio, armyCost, bpArmy.ratio, armyCost * bpArmy.ratio,
 			(frame < bpArmy.frame) ? " (not yet)" : "", lastReclaim, bpReclaim.ratio, lastReclaim * bpReclaim.ratio,
 			(frame < bpReclaim.frame) ? " (not yet)" : "");
@@ -1596,9 +1646,11 @@ IUnitTask* CFactoryManager::DefaultMakeTask(CCircuitUnit* unit)
 
 	} else {
 
+		task = UpdateSpotsBuilder(unit);  // ahead of the queue
 		// Escalation pause: queued army jobs wait, constructors and anti-air still get built
 		const bool isEscalation = circuit->GetBuilderManager()->IsEscalationBusy();
-		for (const CRecruitTask* candy : factoryTasks) {
+		for (auto it = factoryTasks.begin(); (task == nullptr) && (it != factoryTasks.end()); ++it) {
+			const CRecruitTask* candy = *it;
 			if (isEscalation && (candy->GetRecruitType() != CRecruitTask::RecruitType::BUILDPOWER)
 				&& (candy->GetRecruitType() != CRecruitTask::RecruitType::AA))
 			{

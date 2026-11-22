@@ -274,6 +274,8 @@ public:
 	bool IsDeathBomb() const { return isDeathBomb; }
 	float GetPower() const { return power; }
 	float GetThreat() const { return threat; }
+	// The type's threat before any thr_mod (the "raw" threat the config comments give): guard.summon.min_threat
+	float GetRawThreat() const { return rawThreat; }
 	// How much one enemy of this type counts in the threat map's enemy unit count (CThreatMap squad layers):
 	// its thr_mod, at most 1, so types the config barely fears (artillery, bombers) barely count
 	float GetCountWeight() const { return std::min(std::max(thrMod, 0.f), 1.f); }
@@ -477,6 +479,7 @@ private:
 	bool isDeathBomb;  // IsDeathBomb
 	float power;  // ally max threat
 	float threat;  // enemy max threat
+	float rawThreat;  // threat before thr_mod
 	float minRange;
 	RangeType maxRangeType;
 	std::array<float, static_cast<RangeT>(RangeType::_SIZE_)> maxRange;

@@ -77,6 +77,7 @@ public:
 	virtual void OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 	virtual void OnTravelEnd(CCircuitUnit* unit) override;
+	virtual bool CanJumpTo(CCircuitUnit* unit, const springai::AIFloat3& pos) override;
 
 	void Activate();
 	void Deactivate();

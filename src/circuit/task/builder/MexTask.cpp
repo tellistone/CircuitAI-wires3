@@ -11,6 +11,7 @@
 #include "map/ThreatMap.h"
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
+#include "module/MexBoard.h"
 #include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "terrain/TerrainManager.h"
@@ -39,15 +40,19 @@ CBMexTask::~CBMexTask()
 
 bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!IBuilderTask::CanAssignTo(unit) || IsSpotTaken()) {  // an allied AI's builder heads there already
+	CCircuitAI* circuit = manager->GetCircuit();
+	const CCircuitUnit* holder = circuit->GetBuilderManager()->GetMexBoard()->GetHolder(this);  // economy.mex_board
+	if (!IBuilderTask::CanAssignTo(unit) || IsSpotTaken()  // an allied AI's builder heads there already
+		|| ((holder != nullptr) && (holder != unit)))
+	{
 		return false;
 	}
-	if (unit->GetCircuitDef()->IsAttacker()) {
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	// guard.summon: the guard is called as the builder heads off safe ground, never waited for
+	if (unit->GetCircuitDef()->IsAttacker() || militaryMgr->GetGuardCfg().isSummon) {
 		return true;
 	}
 	// TODO: Naked expansion on big maps
-	CCircuitAI* circuit = manager->GetCircuit();
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	int cluster = circuit->GetMetalManager()->FindNearestCluster(GetPosition());
 	if ((cluster < 0) || militaryMgr->HasDefence(cluster)) {
 		return true;
@@ -80,6 +85,17 @@ void CBMexTask::RemoveAssignee(CCircuitUnit* unit)
 	if (units.empty()) {
 		Unclaim();
 	}
+}
+
+bool CBMexTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	// Its mex board walk: the board judges threat at the spot (CMexBoard::RateBuilders), so a raider passing it
+	// doesn't end the job
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (circuit->GetBuilderManager()->GetMexBoard()->GetHolder(this) == unit) {
+		return circuit->GetTerrainManager()->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance());
+	}
+	return IBuilderTask::IsReachable(unit, endPos);
 }
 
 void CBMexTask::Update()
@@ -126,6 +142,18 @@ void CBMexTask::Cancel()
 	Unclaim();  // only our own claim: a spot an ally heads for stays closed
 }
 
+// guard.summon: no escort gate, so builders take undefended clusters at once. The cluster's preventive towers are
+// booked as its first mex starts, not once every spot is queued (the mex chain's rule below 10 m/s): a builder is
+// there, and the tower is its next job
+static void BookClusterDefence(CCircuitAI* circuit, int index, const AIFloat3& pos)
+{
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const int cluster = circuit->GetMetalManager()->GetCluster(index);
+	if (militaryMgr->GetGuardCfg().isSummon && (cluster >= 0) && !militaryMgr->HasDefence(cluster)) {
+		militaryMgr->MakeDefence(cluster, pos, nullptr, true);
+	}
+}
+
 void CBMexTask::Execute(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -162,6 +190,7 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 					TRY_UNIT(circuit, unit,
 						unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 					)
+					BookClusterDefence(circuit, index, buildPos);
 					return;
 				} else {
 					economyMgr->SetOpenSpot(index, true);
@@ -194,6 +223,7 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)
+		BookClusterDefence(circuit, index, buildPos);
 	} else {
 //		buildPos = -RgtVector;
 		// Fallback to Guard/Assist/Patrol

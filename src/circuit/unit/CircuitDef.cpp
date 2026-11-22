@@ -123,6 +123,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		, isDeathBomb(false)
 		, power(.0f)
 		, threat(.0f)
+		, rawThreat(.0f)
 		, minRange(.0f)
 		, maxRangeType(RangeType::AIR)
 		, shieldRadius(.0f)
@@ -567,7 +568,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	// TODO: Include projectile-speed/range, armor
 	//       health /= def->GetArmoredMultiple();
 	thrDmg = pwrDmg = dmg = sqrtf(dps) * std::pow(dmg, 0.25f) * THREAT_MOD;
-	threat = power = dmg * sqrtf(def->GetHealth() + maxShield * SHIELD_MOD);
+	threat = power = rawThreat = dmg * sqrtf(def->GetHealth() + maxShield * SHIELD_MOD);
 }
 
 int STargetPriority::GetTier(const CCircuitDef* edef, bool isInLos) const

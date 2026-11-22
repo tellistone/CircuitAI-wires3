@@ -1204,4 +1204,21 @@ const springai::AIFloat3* IFighterTask::PickFleeSpot(const springai::AIFloat3& p
 	return (nearestAway != nullptr) ? nearestAway : furthest;
 }
 
+bool IFighterTask::IsFighting() const
+{
+	// Engaged and some unit has the target within its own weapon range. ENGAGE alone starts at highestRange,
+	// which includes LOS radius: far too wide to keep groups from merging.
+	if ((State::ENGAGE != state) || (target == nullptr)) {
+		return false;
+	}
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const AIFloat3& tPos = target->GetPos();
+	for (CCircuitUnit* unit : units) {
+		if (unit->GetPos(frame).SqDistance2D(tPos) < SQUARE(unit->GetCircuitDef()->GetMaxRange())) {
+			return true;
+		}
+	}
+	return false;
+}
+
 } // namespace circuit

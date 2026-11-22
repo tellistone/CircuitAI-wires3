@@ -596,7 +596,7 @@ float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, const SStrength& stre
 	// At most 2x: under the base allowance a spot passes, at 2x it or more it fails, either way without cover.
 	// quota.protect: a committed group judges the commander's fight with the strength present (CProtect::GetBoost),
 	// which has the other committed groups there, the commander and the turrets in it already: no cover there
-	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos, highestRange);
+	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos);
 	const float allowed = GetBaseAllowedThreatAt(pos, strength.value * boost, refSqDist);
 	if (boost > 1.f) {
 		return allowed;
@@ -1265,9 +1265,9 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 void CAttackTask::WalkToProtect(int frame, bool isReuse)
 {
 	// Committed with nothing to fight in reach: walk to the commander's fight. Its safe edge as rally joiners find the
-	// host's (FindFightEdge: within our range of the commander the spots are judged with the strength present and
-	// ours); none: straight to the commander, the go was judged for all of us together. The route cap carries the
-	// same boost at the goal
+	// host's (FindFightEdge: in the protect's present radius the spots are judged with the strength present and ours);
+	// none: straight to the commander, the go was judged for all of us together. The route cap carries the same boost
+	// at the goal
 	SetTarget(nullptr);
 	ClearScaleAnchor();  // walking to the fight, not into an accepted one
 	state = State::ROAM;
@@ -1281,7 +1281,7 @@ void CAttackTask::WalkToProtect(int frame, bool isReuse)
 	if (!FindFightEdge(frame, hostPos, RALLY_EDGE_FAR_DIST, goal, edgeStrength)) {
 		goal = hostPos;
 	}
-	const SStrength routeStrength(GetSafeThreat() * protect->GetBoost(this, goal, highestRange));
+	const SStrength routeStrength(GetSafeThreat() * protect->GetBoost(this, goal));
 	position = goal;
 	if (isReuse && ReuseRoute(PROTECT_ROUTE_ID, goal, frame)) {
 		return;
@@ -2576,7 +2576,7 @@ float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals
 	const CProtect* protect = GetMilitaryMgr()->GetProtect();
 	float boost = 1.f;
 	for (const AIFloat3& g : goals) {
-		boost = std::max(boost, protect->GetBoost(this, g, highestRange));
+		boost = std::max(boost, protect->GetBoost(this, g));
 	}
 	return GetPathThreatCap(startPos, goals, GetSafeThreat() * boost);
 }
@@ -2709,29 +2709,16 @@ bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 	return pos.SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
 }
 
-bool CAttackTask::IsGuardPullable() const
+bool CAttackTask::IsGuardPullable(const CCircuitUnit* unit, bool isFromGroup) const
 {
-	// A squad of 2+ would get weaker (maybe below quota.attack); a lone unit's task just ends when it leaves.
-	// The rally host is left alone too: every compatible group is walking to it
-	return (units.size() == 1) && !IsFighting() && (static_cast<CMilitaryManager*>(manager)->GetRallyHost() != this)
-			&& !IsProtecting();  // quota.protect: committed
-}
-
-bool CAttackTask::IsFighting() const
-{
-	// Engaged and some unit has the target within its own weapon range. ENGAGE alone starts at highestRange,
-	// which includes LOS radius: far too wide to keep groups from merging.
-	if ((State::ENGAGE != state) || (target == nullptr)) {
+	// A lone unit's task just ends when it leaves. A squad of 2+ would get weaker: only for isFromGroup, and only while
+	// it keeps quota.attack power without the unit. Never a fighting group, nor the rally host: every compatible group
+	// is walking to it, nor a group quota.protect committed
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	if (IsFighting() || (militaryMgr->GetRallyHost() == this) || IsProtecting()) {
 		return false;
 	}
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	const AIFloat3& tPos = target->GetPos();
-	for (CCircuitUnit* unit : units) {
-		if (unit->GetPos(frame).SqDistance2D(tPos) < SQUARE(unit->GetCircuitDef()->GetMaxRange())) {
-			return true;
-		}
-	}
-	return false;
+	return (units.size() == 1) || (isFromGroup && (attackPower - unit->GetCircuitDef()->GetPower() >= minPower));
 }
 
 void CAttackTask::Engage(int frame)

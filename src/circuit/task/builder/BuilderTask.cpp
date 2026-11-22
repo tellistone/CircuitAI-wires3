@@ -13,6 +13,7 @@
 #include "map/InfluenceMap.h"
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
+#include "module/MexBoard.h"
 #include "module/MilitaryManager.h"
 #include "module/SensorPlanner.h"
 #include "module/SpotScorer.h"
@@ -126,7 +127,9 @@ void IBuilderTask::AssignTo(CCircuitUnit* unit)
 	}
 	unit->PushTravelAct(travelAction);
 	travelAction->StateWait();
-	unit->SetAllowedToJump(cdef->IsAbleToJump() && cdef->IsAttrJump());
+	// The "jump" attribute, or a commander with commander.json jobs.jump (CanJumpTo)
+	const CSetupManager::SCommInfo::SJobs* jobs = circuit->GetBuilderManager()->GetCommJobs(cdef);
+	unit->SetAllowedToJump(cdef->IsAbleToJump() && (cdef->IsAttrJump() || ((jobs != nullptr) && (jobs->jumpMinDist >= 0.f))));
 }
 
 void IBuilderTask::RemoveAssignee(CCircuitUnit* unit)
@@ -147,8 +150,13 @@ void IBuilderTask::Start(CCircuitUnit* unit)
 
 void IBuilderTask::Update()
 {
+	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
 	for (CCircuitUnit* unit : traveled) {
 		Execute(unit);
+		builderMgr->GetMexBoard()->OnBuildStart(unit, this);  // its next spot now
+		if (builderMgr->IsJobChain()) {
+			builderMgr->StartCostMap(unit);  // the next pick, from here
+		}
 	}
 	traveled.clear();
 
@@ -162,10 +170,27 @@ void IBuilderTask::Update()
 
 void IBuilderTask::Stop(bool done)
 {
+	// economy.builder_jobs.chain: the builders of a finished job take their next job now, not on the idle pass
+	// (those Finish sent to a build_delay wait aside)
+	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
+	const decltype(units) chained = (done && builderMgr->IsJobChain()) ? units : decltype(units)();
+	if (done && (buildType == BuildType::MEX)) {
+		for (CCircuitUnit* unit : units) {
+			CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(unit);
+			if (stats != nullptr) {
+				++stats->mexes;
+			}
+		}
+	}
+
 	IUnitTask::Stop(done);
 
 	if ((buildDef != nullptr) && !manager->GetCircuit()->GetEconomyManager()->IsIgnorePull(this)) {
 		manager->DelMetalPull(buildPower);
+	}
+
+	for (CCircuitUnit* unit : chained) {
+		builderMgr->AssignNext(unit);
 	}
 }
 
@@ -340,7 +365,11 @@ void IBuilderTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 
 void IBuilderTask::OnTravelEnd(CCircuitUnit* unit)
 {
-	traveled.insert(unit);
+	traveled.insert(unit);  // Execute(unit) in Update: not here, inside the unit's action update
+	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
+	if (builderMgr->IsJobChain() && (manager == builderMgr)) {
+		builderMgr->OnArrival(this);  // ... but on the next frame, not on this job's next turn
+	}
 }
 
 void IBuilderTask::Activate()
@@ -449,6 +478,20 @@ void IBuilderTask::Update(CCircuitUnit* unit)
 	}
 }
 
+// economy.opening.log: a walking builder's switch to task, by direction (CBuilderManager::IsJobForward)
+static void NoteSwitch(CCircuitAI* circuit, CCircuitUnit* unit, IUnitTask* task)
+{
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(unit);
+	if ((stats == nullptr) || (task->GetType() != IUnitTask::Type::BUILDER)) {
+		return;
+	}
+	const AIFloat3& newPos = static_cast<IBuilderTask*>(task)->GetPosition();
+	if (utils::is_valid(newPos)) {
+		++(builderMgr->IsJobForward(unit, newPos) ? stats->forward : stats->back);
+	}
+}
+
 bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -482,24 +525,15 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 			return true;
 		}
 	}
+	// Walking: a switch only as CBuilderManager::MakeSwitchTask allows (by direction, and in the opening only for
+	// danger or an urgent job)
 	HideAssignee(unit);
-	IUnitTask* task = manager->MakeTask(unit);
+	IUnitTask* task = circuit->GetBuilderManager()->MakeSwitchTask(unit, this);
 	ShowAssignee(unit);
-	if ((task != nullptr)
-		&& ((task->GetType() != IUnitTask::Type::BUILDER)
-			|| (static_cast<IBuilderTask*>(task)->GetBuildType() != buildType)))
-	{
+	if (task != nullptr) {
+		NoteSwitch(circuit, unit, task);
 		manager->AssignTask(unit, task);
 		return false;
-	}
-	// Same kind of job, but much nearer than the one we walk to (economy.builder_jobs.switch): take it
-	const float switchShare = circuit->GetBuilderManager()->GetJobSwitch();
-	if ((task != nullptr) && (task != this) && (switchShare > 0.f) && (priority != Priority::NOW)) {
-		const AIFloat3& newPos = static_cast<IBuilderTask*>(task)->GetPosition();
-		if (utils::is_valid(newPos) && (pos.SqDistance2D(newPos) < SQUARE(switchShare) * sqDist)) {
-			manager->AssignTask(unit, task);
-			return false;
-		}
 	}
 	return true;
 }
@@ -570,6 +604,34 @@ void IBuilderTask::ApplyPath(const CQueryPathSingle* query)
 	} else {
 		unit->GetTravelAct()->StateFinish();
 	}
+}
+
+bool IBuilderTask::CanJumpTo(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	// Never into enemy threat. A commander with commander.json jobs.jump: only on a walk over min_dist, and with
+	// keep_for_flee only from and onto safe ground (CMilitaryManager::IsSafeGround), so the jump it escapes with is
+	// spent only where no raider has been seen lately
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (circuit->GetThreatMap()->GetThreatAt(unit, pos) > THREAT_MIN) {
+		return false;
+	}
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const CSetupManager::SCommInfo::SJobs* jobs = builderMgr->GetCommJobs(unit->GetCircuitDef());
+	if ((jobs != nullptr) && !unit->GetCircuitDef()->IsAttrJump()) {
+		const AIFloat3& startPos = unit->GetPos(circuit->GetLastFrame());
+		if (startPos.SqDistance2D(GetPosition()) <= SQUARE(jobs->jumpMinDist)) {
+			return false;
+		}
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		if (jobs->isJumpKeep && (!militaryMgr->IsSafeGround(startPos) || !militaryMgr->IsSafeGround(pos))) {
+			return false;
+		}
+	}
+	CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(unit);
+	if (stats != nullptr) {
+		++stats->jumps;
+	}
+	return true;
 }
 
 void IBuilderTask::HideAssignee(CCircuitUnit* unit)
@@ -661,20 +723,11 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 		return;
 	}
 
-	if (chain->energy > 0.f) {
+	{
 		CEconomyManager* economyMgr = circuit->GetEconomyManager();
-		float energyMake;
-		// isOrFill: on ground too steep for any energy at this mex, the fill can still find a site beside it
-		CCircuitDef* energyDef = economyMgr->GetLowEnergy(buildPos, energyMake, true);
-		if (energyDef != nullptr) {
-			bool isValid = (economyMgr->GetAvgEnergyIncome() < chain->energy);
-			if (isValid && chain->isMexEngy) {
-				int index = circuit->GetMetalManager()->FindNearestSpot(buildPos);
-				isValid = (index >= 0) && (circuit->GetMetalManager()->GetSpots()[index].income > energyMake * 0.8f);
-			}
-			if (isValid) {  // economy.energy.fill places it (beside this mex while it is on no grid with energy)
-				economyMgr->EnqueueCheapEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL, SQUARE_SIZE * 8.0f);
-			}
+		CCircuitDef* energyDef = economyMgr->GetChainEnergy(chain, buildPos);
+		if (energyDef != nullptr) {  // economy.energy.fill places it (beside this mex while it is on no grid with energy)
+			economyMgr->EnqueueCheapEnergy(energyDef, buildPos, nullptr, IBuilderTask::Priority::NORMAL, SQUARE_SIZE * 8.0f);
 		}
 	}
 

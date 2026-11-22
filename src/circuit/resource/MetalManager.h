@@ -101,6 +101,10 @@ public:
 	using ClusterScore = std::function<float (int cluster, float dist)>;
 	int GetMexToBuild(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate,
 					  unsigned maxClusters, const ClusterScore& score);
+	// That walk's spots: every spot passing predicate in the first maxClusters clusters (by graph distance over safe
+	// clusters) that have one, added to outIndices; false if the walk can't start (no cluster, or ours is a wall)
+	bool FindNearSpots(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate, unsigned maxClusters,
+					   std::vector<int>& outIndices);
 	// Contested clusters: ones with threat at their centre that the last GetMexToBuild walks ran into
 	// (the start cluster, or a neighbour of a cluster the walk crossed). They act as walls: mexes behind
 	// them can't be found even if safe. A mark lasts maxAge frames unless the walk crosses it safely.

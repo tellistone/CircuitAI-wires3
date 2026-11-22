@@ -31,6 +31,7 @@ namespace springai {
 namespace circuit {
 
 class IGridLink;
+class CMexBoard;
 class CQueryCostMap;
 class CRetreatTask;
 class CBRepairTask;
@@ -43,6 +44,7 @@ struct SBuildChain;
 class CBuilderManager: public IUnitModule {
 public:
 	friend class CBuilderScript;
+	friend class CMexBoard;  // the cost maps and GetMexJobTest
 
 	CBuilderManager(CCircuitAI* circuit);
 	virtual ~CBuilderManager();
@@ -63,7 +65,35 @@ public:
 
 	unsigned int GetWorkerCount() const { return workers.size(); }
 	const std::set<CCircuitUnit*>& GetWorkers() const { return workers; }
-	float GetJobSwitch() const { return jobSwitch; }
+	CMexBoard* GetMexBoard() const { return mexBoard; }
+	// IBuilderTask::Reevaluate: the job a walking builder switches to, nullptr = it walks on. In the opening with the
+	// mex board on, only for danger, a NOW job or a stall fix (MakeUrgentTask). Else by direction (IsJobForward), on
+	// the walk left by its cost map (economy.builder_jobs): forward, a job of the same kind nearer than switch_forward x
+	// the current one, or of another kind that rates under switch_other x it; back, the same kind nearer than switch x
+	// and not within commit_sec of arrival, another kind only if NOW or a stall fix. Any job if the current one is cut off
+	IUnitTask* MakeSwitchTask(CCircuitUnit* unit, IBuilderTask* current);
+	// A job at jobPos is no nearer our base than unit is now, give or take its build range
+	bool IsJobForward(CCircuitUnit* unit, const springai::AIFloat3& jobPos) const;
+	// economy.builder_jobs.chain: a builder whose job ends takes its next job in the same frame (AssignNext), not on
+	// the idle pass, from a cost map started where it built (StartCostMap)
+	bool IsJobChain() const { return isJobChain; }
+	void StartCostMap(CCircuitUnit* unit);
+	bool AssignNext(CCircuitUnit* unit);
+	// A builder reached task's site: its update comes on the next frame (UpdateBuild), so the build starts then
+	void OnArrival(IBuilderTask* task);
+	// commander.json jobs of a commander def (looked up once), nullptr for other builders
+	const CSetupManager::SCommInfo::SJobs* GetCommJobs(const CCircuitDef* cdef) const;
+	// Constructors (commanders aside) lost within the last frames
+	unsigned int GetBuilderLosses(int frames) const;
+	// economy.opening.log: a builder's counts for its OPENING lines; nullptr when the log is off or over
+	struct SOpeningStats {
+		int idle = 0, walk = 0, build = 0, flee = 0;  // seconds
+		int forward = 0, back = 0;  // switches to another job while walking: away from our base, or back toward it
+		int moves = 0;  // walks the mex board ended (the spot failed its test for 3 s, or a commander left mex jobs)
+		int mexes = 0, jumps = 0, escorts = 0;
+		float escortWait = 0.f;  // seconds from the guard's pull to its arrival, summed over escorts
+	};
+	SOpeningStats* GetOpeningStats(const CCircuitUnit* unit);
 	// economy.builder_jobs.travel of priority, in seconds: a job farther than this walk is taken only with nothing
 	// nearer (max: no cap)
 	float GetJobTravel(IBuilderTask::Priority priority) const {
@@ -395,7 +425,6 @@ public:
 		float own = 0.f;  // its cover power (power x sqrt(health %))
 		float danger = 0.f;  // seen dangers (gunships and moving blips included) within the radius, summed
 		float airDanger = 0.f;  // the gunships' part of it
-		int count = 0;
 		springai::AIFloat3 dangerPos = -RgtVector;  // the nearest of them; invalid: none
 		float dangerRange = 0.f;  // its weapon range
 		bool isCornered = false;  // IsCommCornered
@@ -413,7 +442,8 @@ private:
 		float travelSec;  // economy.builder_jobs.travel of the priority; max = no cap
 	};
 	// By the job's priority, except mex drops to NORMAL while energy is worse off than metal (IsEnergyStalling).
-	// Not on the energy latch alone: then metal is as short, and a mex still helps
+	// Not on the energy latch alone: then metal is as short, and a mex still helps. In the opening (economy.
+	// builder_jobs.opening) a HIGH mex weighs mex_weight, and reclaim of less than reclaim_metal ranks as NORMAL
 	const SJobRank& GetJobRank(const IBuilderTask* task, bool isEnergyStalling) const;
 	IBuilderTask* MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
 
@@ -517,6 +547,19 @@ private:
 	// Cornered: a static defence on its far side from the danger; nullptr = none to build (or metal short), or one
 	// already on the go (the current task). Other builders keep it as cornerTask
 	IBuilderTask* MakeCommDefence(CCircuitUnit* unit, SCommState* state);
+	// The danger exits every pick starts with: true when one decides, outTask then its task, or nullptr to keep at the
+	// current one (a defence it was cornered into, or is building)
+	bool MakeDangerTask(CCircuitUnit* unit, SCommState* commState, IUnitTask*& outTask);
+	// A walking builder in the opening: the danger exits, then a pick only while a NOW job or a stall fix it could
+	// take waits, kept only if it is one
+	IUnitTask* MakeUrgentTask(CCircuitUnit* unit, const IBuilderTask* current);
+	// Hide mode for a commander now (commander.json hide; latches isCommHide): its jobs stay within hide.task_radius of
+	// base and on our ground (MakeCommTask). nullptr when it doesn't hide
+	const CSetupManager::SCommInfo::SHide* GetCommHide(CCircuitUnit* unit, const SCommState* commState);
+	// The mex board (CMexBoard): would unit's own picker put it on a mex job at pos, reach aside? Flee zones, threat it
+	// can't stand on enemy ground, a hiding commander's range and territory. Empty when it takes no mex job
+	// (commander.json jobs). Sets unit's threat type
+	std::function<bool (const springai::AIFloat3& pos)> GetMexJobTest(CCircuitUnit* unit);
 	// Hide mode: allied strength (the commander's own left out) at pos at least matches the enemy's, on our ground
 	bool IsCommTerritory(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	// A flee spot outside every seen flee zone, not at its feet; false = none (cornered)
@@ -572,7 +615,15 @@ private:
 	float prioRepairRange;  // range to pull busy workers onto NOW repair, 0 = disabled
 	float prioRepairShare;  // max share of workers that can be on NOW repair at once
 	SJobRank jobRanks[4];  // LOW, NORMAL, HIGH, NOW
-	float jobSwitch;  // walking builder switches to a same-type job nearer than this share of its current one; 0 = off
+	SJobRank openingMexRank;  // economy.builder_jobs.opening.mex_weight, HIGH's travel cap
+	float openingReclaimMetal;  // opening.reclaim_metal
+	int openingPatrolFrames;  // opening.patrol_sec: CreateBuilderTask's patrol with nothing to do
+	// MakeSwitchTask's shares of the current job's walk (0 = off) and commit_sec, in seconds
+	float jobSwitch;  // switch: back toward our base, same kind
+	float jobSwitchForward;  // switch_forward
+	float jobSwitchOther;  // switch_other
+	float jobCommitSec;
+	CMexBoard* mexBoard = nullptr;  // owner
 	bool isPrioRepairSafe;  // apply builder threat check to NOW repair of mobile units
 	bool isPrioRepairSafeStatic;  // same for static units
 	bool isPrioRepairSafeHeld;  // the threat check also needs an enemy-held area (as regular jobs); false = threat alone
@@ -588,6 +639,15 @@ private:
 	SEscort escort;
 	std::set<IUnitTask*> escortTasks;
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner
+	bool isJobChain;
+	std::vector<IBuilderTask*> arrivals;  // OnArrival's: live until UpdateBuild, the only place tasks are deleted
+	std::vector<int> builderLossFrames;  // GetBuilderLosses: the last minute's, oldest first
+	bool IsOpeningLog() const;
+	void UpdateOpeningLog();
+	void LogOpening(int frame);
+	std::map<ICoreUnit::Id, SOpeningStats> openingStats;
+	int energyStallSec = 0;
+	unsigned int buildersLost = 0, mexesLost = 0;
 
 	CCircuitDef* terraDef;
 	std::unordered_map<IBuilderTask::BT, std::unordered_map<CCircuitDef*, SBuildChain*>> buildChains;  // owner

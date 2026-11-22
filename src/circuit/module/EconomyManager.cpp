@@ -8,6 +8,7 @@
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
 #include "module/FactoryManager.h"
+#include "module/MexBoard.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
 #include "resource/MetalManager.h"
@@ -19,9 +20,12 @@
 #include "map/InfluenceMap.h"
 #include "unit/ally/AllyUnit.h"
 #include "unit/enemy/EnemyUnit.h"
+#include "task/IdleTask.h"
 #include "task/RetreatTask.h"
+#include "task/builder/BuildChain.h"
 #include "task/builder/EnergyTask.h"
 #include "CircuitAI.h"
+#include "util/GameAttribute.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
 #include "json/json.h"
@@ -49,6 +53,8 @@ using namespace springai;
 #define PYLON_RANGE		500.0f
 #define EXPAND_DEFENDED	0.3f  // choke.expand: score off a cluster behind a cut with towers at it
 #define EXPAND_GATED	0.15f  // and behind a defensible cut without
+#define PLOP_FIRST		5  // frames after the commander appears: the first try at its plop
+#define OPENING_NO_SPOT	(FRAMES_PER_SEC * 20)  // economy.opening ends this long after the last open spot went
 
 const char* RES_NAME_METAL = "Metal";
 const char* RES_NAME_ENERGY = "Energy";
@@ -165,52 +171,10 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		AddMorphee(unit);
 		this->circuit->GetSetupManager()->SetCommander(unit);
 
-		ICoreUnit::Id unitId = unit->GetId();
-		this->circuit->GetScheduler()->RunTaskAfter(std::make_shared<CGameTask>([this, unitId]() {
-			CCircuitUnit* unit = this->circuit->GetTeamUnit(unitId);
-			if (unit == nullptr) {
-				return;
-			}
-			int frame = this->circuit->GetLastFrame();
-			bool isStart = (frame < FRAMES_PER_SEC * 10);
-			AIFloat3 buildPos = -RgtVector;
-			if (unit->GetUnit()->GetRulesParamFloat("facplop", 0) == 1) {
-				// TODO: check factory's customparam ploppable=1
-				const AIFloat3& pos = unit->GetPos(frame);
-				CCircuitDef* facDef = this->circuit->GetFactoryManager()->GetFactoryToBuild(pos, isStart);
-				if (facDef != nullptr) {
-					// Enqueue factory
-					CTerrainManager* terrainMgr = this->circuit->GetTerrainManager();
-					const float range = std::max(facDef->GetDef()->GetXSize(), facDef->GetDef()->GetZSize())
-							* SQUARE_SIZE / 2 * 1.4f + unit->GetCircuitDef()->GetRadius();
-					buildPos = terrainMgr->ShiftPos(facDef, pos, range, true);
-					CBuilderManager* builderMgr = this->circuit->GetBuilderManager();
-					IBuilderTask* task = builderMgr->EnqueueFactory(IBuilderTask::Priority::NOW, facDef, buildPos,
-																	SQUARE_SIZE, true, true, 0);
-					static_cast<ITaskManager*>(builderMgr)->AssignTask(unit, task);
-				}
-			}
-
-			if (!isStart) {
-				return;
-			}
-			int morphFrame = this->circuit->GetSetupManager()->GetMorphFrame(unit->GetCircuitDef());
-			if (morphFrame >= 0) {
-				this->circuit->GetScheduler()->RunTaskAt(std::make_shared<CGameTask>([this, unitId]() {
-					// Force commander level 0 to morph
-					CCircuitUnit* unit = this->circuit->GetTeamUnit(unitId);
-					if ((unit != nullptr) && (unit->GetTask() != nullptr) &&
-						(unit->GetTask()->GetType() != IUnitTask::Type::PLAYER))
-					{
-						const std::map<std::string, std::string>& customParams = unit->GetCircuitDef()->GetDef()->GetCustomParams();
-						auto it = customParams.find("level");
-						if ((it != customParams.end()) && (utils::string_to_int(it->second) <= 1)) {
-							unit->Upgrade();  // Morph();
-						}
-					}
-				}), morphFrame);
-			}
-		}), FRAMES_PER_SEC);
+		// The plop goes as soon as the game allows it (its facplop rules param, set a few frames after the commander
+		// appears), not 1 s later
+		this->circuit->GetScheduler()->RunTaskAfter(std::make_shared<CGameTask>(&CEconomyManager::StartCommander, this,
+				unit->GetId(), FRAMES_PER_SEC - PLOP_FIRST), PLOP_FIRST);
 	};
 	auto comDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
 		RemoveMorphee(unit);
@@ -483,23 +447,20 @@ void CEconomyManager::Init()
 	mexFrontClusters = std::max(mexFront.get("clusters", 3).asInt(), 1);
 	mexFrontStarted = utils::clamp(mexFront.get("started", 0.3f).asFloat(), 0.f, 0.9f);
 
-	// mex_escort: [[<map size>, <seconds>], ...], linear between points, flat beyond the ends; missing = 300 s.
-	// Map size is sqrt(width * height) in 512-elmo map units, so 8x8 = 8 and 16x16 = 16.
+	// Seconds for this map: a number, or a map size curve (CMilitaryManager::ReadMapSeconds)
 	{
-		std::vector<std::pair<float, float>> curve;
-		const Json::Value& escort = econ["mex_escort"];
-		if (escort.isArray()) {
-			for (const Json::Value& pt : escort) {
-				if (pt.isArray() && (pt.size() >= 2) && pt[0].isNumeric() && pt[1].isNumeric()) {
-					curve.emplace_back(pt[0].asFloat(), pt[1].asFloat());
-				}
-			}
-		}
-		std::sort(curve.begin(), curve.end());
 		const float mapSize = std::sqrt(float(CTerrainManager::GetTerrainWidth()) * CTerrainManager::GetTerrainHeight()) / 512.f;
-		const float escortSec = std::max(utils::eval_curve(curve, mapSize, 300.f), 0.f);
+		// mex_escort: missing = 300 s
+		const float escortSec = CMilitaryManager::ReadMapSeconds(circuit, econ["mex_escort"], "mex_escort", 300.f);
 		mexEscortFrame = escortSec * FRAMES_PER_SEC;
-		circuit->LOG("mex_escort: map size %.1f -> %.0f seconds", mapSize, escortSec);
+		// opening: {"time": <seconds or curve>, "log": <OPENING lines>}; time 0 = no opening rules
+		const Json::Value& opening = econ["opening"];
+		const float openingSec = CMilitaryManager::ReadMapSeconds(circuit, opening["time"], "opening.time", 300.f);
+		openingEnd = openingSec * FRAMES_PER_SEC;
+		isOpening = (openingEnd > 0) && (spSize > 0);
+		openingLogEnd = (isOpening && opening.get("log", true).asBool()) ? openingEnd : -1;
+		circuit->LOG("mex_escort: map size %.1f -> %.0f seconds; opening %.0f seconds", mapSize, escortSec,
+				isOpening ? openingSec : 0.f);
 	}
 
 	const Json::Value& pull = econ["ms_pull"];
@@ -614,6 +575,11 @@ void CEconomyManager::Init()
 		if (gridLinkMaxPylons > 0) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CEconomyManager::UpdateGridLinks, this),
 									FRAMES_PER_SEC * 2, circuit->GetSkirmishAIId() + 3);
+		}
+
+		if (isOpening) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CEconomyManager::UpdateOpening, this),
+									FRAMES_PER_SEC, circuit->GetSkirmishAIId() + 4);
 		}
 	};
 
@@ -996,7 +962,10 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 	// Geo isn't only a stall fix: a free vent is the cheapest energy there is, so look for one on every pass
 	IBuilderTask* task = isEnergy ? UpdateEnergyTasks(position, unit) : UpdateGeoTasks(position, unit);
 	IBuilderTask* mexTask = UpdateMexTasks(position, unit);
-	IBuilderTask* reclaimTask = UpdateReclaimTasks(position, unit);
+	// Only a builder between jobs opens reclaim: a walking one's check (IBuilderTask::Reevaluate) doesn't
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	IBuilderTask* reclaimTask = ((unit == nullptr) || (unit->GetTask() == builderMgr->GetIdleTask()))
+			? UpdateReclaimTasks(position, unit) : nullptr;
 
 	return (task != nullptr) ? task : (mexTask != nullptr) ? mexTask : reclaimTask;
 }
@@ -1007,6 +976,10 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 		return nullptr;
 	}
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	// economy.mex_board, in the opening: the board makes the mex jobs, one per builder, and this is the unit's
+	if (builderMgr->GetMexBoard()->IsActive()) {
+		return (unit != nullptr) ? builderMgr->GetMexBoard()->GetMexJob(unit) : nullptr;
+	}
 	const float cost = mexDef->GetCostM();
 	const unsigned maxCount = (builderMgr->GetBuildPower() / cost * 8 + 2) * mexJobMod;
 	if (builderMgr->GetTasks(IBuilderTask::BuildType::MEX).size() >= maxCount) {
@@ -1014,21 +987,60 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	}
 
 	CMetalManager* metalMgr = circuit->GetMetalManager();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const CMetalData::Metals& spots = metalMgr->GetSpots();
-	CMap* map = circuit->GetMap();
+	CMetalData::PointPredicate predicate = GetMexSpotTest(unit);
+	// A commander's search uses its own bias (mex_front.comm_bias)
+	const CMetalManager::ClusterScore score = GetMexScore((unit != nullptr) && unit->GetCircuitDef()->IsRoleComm());
+	const int index = score
+			? metalMgr->GetMexToBuild(position, predicate, mexFrontClusters, score)
+			: metalMgr->GetMexToBuild(position, predicate);
+	return (index == -1) ? nullptr : EnqueueMex(index);
+}
+
+IBuilderTask* CEconomyManager::EnqueueMex(int index)
+{
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	const AIFloat3& pos = metalMgr->GetSpots()[index].position;
+	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos,
+			IBuilderTask::BuildType::MEX, mexDef->GetCostM(), .0f);
+	task->SetBuildPos(pos);
+	SetOpenSpot(index, false);
+	return task;
+}
+
+CCircuitDef* CEconomyManager::GetChainEnergy(const SBuildChain* chain, const AIFloat3& pos) const
+{
+	if ((chain == nullptr) || (chain->energy <= 0.f) || (GetAvgEnergyIncome() >= chain->energy)) {
+		return nullptr;
+	}
+	float make;
+	// isOrFill: on ground too steep for any energy beside it, the fill can still find a site
+	CCircuitDef* energyDef = GetLowEnergy(pos, make, true);
+	if ((energyDef == nullptr) || !chain->isMexEngy) {
+		return energyDef;
+	}
+	const CMetalManager* metalMgr = circuit->GetMetalManager();
+	const int index = metalMgr->FindNearestSpot(pos);
+	return ((index >= 0) && (metalMgr->GetSpots()[index].income > make * 0.8f)) ? energyDef : nullptr;
+}
+
+std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen) const
+{
 	// Open, not ours yet, no threat, reachable (by this unit, or by any builder) and free to build on. A spot an enemy
 	// mex we know of holds (seen now or before) is free when the builder can build the turret that clears it
 	// (CBMexTask), no friendly turret reaches it already and the turret account (porcupine.budget) can pay
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	CMap* map = circuit->GetMap();
+	const CMetalData::Metals* spots = &circuit->GetMetalManager()->GetSpots();
 	const CCircuitDef* escortDef = militaryMgr->GetDefaultPorc();
 	const bool isEscort = (escortDef != nullptr) && escortDef->IsAvailable(circuit->GetLastFrame())
 			&& ((unit == nullptr) || unit->GetCircuitDef()->CanBuild(escortDef->GetId()));
-	const std::set<int> enemyMexSpots = GetEnemyMexSpots();
-	CMetalData::PointPredicate predicate = [this, &spots, map, terrainMgr, builderMgr, unit, isEscort, militaryMgr,
-			escortDef, &enemyMexSpots](int index) {
-		const AIFloat3& pos = spots[index].position;
-		return (IsAllyOpenSpot(index) && !terrainMgr->IsZoneAlly(pos)
+	const CMexBoard* board = isHeldOpen ? builderMgr->GetMexBoard() : nullptr;
+	return [this, spots, map, terrainMgr, builderMgr, unit, isEscort, militaryMgr, escortDef, board,
+			enemyMexSpots = GetEnemyMexSpots()](int index) {
+		const AIFloat3& pos = (*spots)[index].position;
+		return ((IsAllyOpenSpot(index) || ((board != nullptr) && board->IsHeld(index))) && !terrainMgr->IsZoneAlly(pos)
 				&& terrainMgr->CanBeBuiltAtSafe(mexDef, pos)  // hostile environment
 				&& ((unit != nullptr)
 					? terrainMgr->CanReachAtSafe(unit, pos, unit->GetCircuitDef()->GetBuildDistance())
@@ -1037,21 +1049,84 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 					? (isEscort && !IsEnemyMexCovered(pos) && militaryMgr->CanAffordTurret(escortDef->GetCostM()))
 					: map->IsPossibleToBuildAt(mexDef->GetDef(), pos, UNIT_COMMAND_BUILD_NO_FACING)));
 	};
-	// A commander's search uses its own bias (mex_front.comm_bias)
-	const bool isComm = (unit != nullptr) && unit->GetCircuitDef()->IsRoleComm();
-	const CMetalManager::ClusterScore score = GetMexFrontScore(isComm ? mexFrontCommBias : mexFrontBias);
-	const int index = score
-			? metalMgr->GetMexToBuild(position, predicate, mexFrontClusters, score)
-			: metalMgr->GetMexToBuild(position, predicate);
-	if (index == -1) {
-		return nullptr;
-	}
+}
 
-	const AIFloat3& pos = spots[index].position;
-	IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos, IBuilderTask::BuildType::MEX, cost, .0f);
-	task->SetBuildPos(pos);
-	SetOpenSpot(index, false);
-	return task;
+std::vector<AIFloat3> CEconomyManager::GetAllyAnchors() const
+{
+	std::vector<AIFloat3> anchors;
+	if (circuit->GetAllyTeam()->GetSize() <= 1) {
+		return anchors;
+	}
+	for (CCircuitAI* ai : circuit->GetGameAttribute()->GetCircuits()) {
+		if ((ai != circuit) && ai->IsInitialized() && (ai->GetAllyTeamId() == circuit->GetAllyTeamId())
+			&& utils::is_valid(ai->GetSetupManager()->GetBasePos()))
+		{
+			anchors.push_back(ai->GetSetupManager()->GetBasePos());
+		}
+	}
+	const int frame = circuit->GetLastFrame();
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if ((cdef != nullptr) && !cdef->IsMobile() && cdef->IsBuilder() && (circuit->GetTeamUnit(kv.first) == nullptr)) {
+			anchors.push_back(kv.second->GetPos(frame));
+		}
+	}
+	return anchors;
+}
+
+const std::vector<int>& CEconomyManager::GetTestedSpots()
+{
+	const int frame = circuit->GetLastFrame();
+	if ((testedFrame < 0) || (frame - testedFrame >= FRAMES_PER_SEC)) {
+		testedFrame = frame;
+		testedSpots.clear();
+		// Not one nearer an ally's base or factory than our base: the ally takes it
+		const std::vector<AIFloat3> anchors = GetAllyAnchors();
+		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+		const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
+		const std::function<bool (int spot)> isOpen = GetMexSpotTest(nullptr, true);
+		for (int i = 0; i < (int)spots.size(); ++i) {
+			const AIFloat3& pos = spots[i].position;
+			const float sqOurs = basePos.SqDistance2D(pos);
+			if (std::none_of(anchors.begin(), anchors.end(), [&pos, sqOurs](const AIFloat3& a) {
+					return a.SqDistance2D(pos) < sqOurs;
+				}) && isOpen(i))
+			{
+				testedSpots.push_back(i);
+			}
+		}
+	}
+	return testedSpots;
+}
+
+void CEconomyManager::UpdateOpening()
+{
+	if (!isOpening) {
+		return;
+	}
+	// Spots the mex job search would take for some builder (not an ally's), and those on safe ground
+	// (economy.buildpower_spots)
+	const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	openSpotCount = safeSpotCount = 0;
+	for (int i : GetTestedSpots()) {
+		if (IsAllyOpenSpot(i)) {  // not one the mex board holds
+			++openSpotCount;
+			safeSpotCount += militaryMgr->IsSafeGround(spots[i].position) ? 1 : 0;
+		}
+	}
+	const int frame = circuit->GetLastFrame();
+	// A spot the mex board holds keeps it going: a builder is on the way or about to be
+	const bool isAnySpot = (openSpotCount > 0) || circuit->GetBuilderManager()->GetMexBoard()->IsHolding();
+	noSpotFrame = isAnySpot ? -1 : (noSpotFrame < 0) ? frame : noSpotFrame;
+	const bool isSpotless = (noSpotFrame >= 0) && (frame - noSpotFrame >= OPENING_NO_SPOT);
+	if (isSpotless || (frame >= openingEnd)) {
+		// Builders keep their jobs: nothing is picked again for it
+		isOpening = false;
+		circuit->LOG("OPENING ends at %i:%02i (%s)", frame / FRAMES_PER_SEC / 60, frame / FRAMES_PER_SEC % 60,
+				isSpotless ? "no open spot left" : "time");
+	}
 }
 
 CMetalManager::ClusterScore CEconomyManager::GetMexFrontScore(float bias) const
@@ -2298,6 +2373,59 @@ void CEconomyManager::UpdateMorph()
 			it = morphees.erase(it);
 			break;  // one unit at a time
 		}
+	}
+}
+
+void CEconomyManager::StartCommander(ICoreUnit::Id unitId, int retries)
+{
+	CCircuitUnit* unit = circuit->GetTeamUnit(unitId);
+	if (unit == nullptr) {
+		return;
+	}
+	const bool isPlop = (unit->GetUnit()->GetRulesParamFloat("facplop", 0) == 1);
+	if (!isPlop && (retries > 0)) {  // tried every frame, then without the plop, as at 1 s before
+		circuit->GetScheduler()->RunTaskAfter(std::make_shared<CGameTask>(&CEconomyManager::StartCommander, this,
+				unitId, retries - 1), 1);
+		return;
+	}
+	int frame = circuit->GetLastFrame();
+	bool isStart = (frame < FRAMES_PER_SEC * 10);
+	AIFloat3 buildPos = -RgtVector;
+	if (isPlop) {
+		// TODO: check factory's customparam ploppable=1
+		const AIFloat3& pos = unit->GetPos(frame);
+		CCircuitDef* facDef = circuit->GetFactoryManager()->GetFactoryToBuild(pos, isStart);
+		if (facDef != nullptr) {
+			// Enqueue factory
+			CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+			const float range = std::max(facDef->GetDef()->GetXSize(), facDef->GetDef()->GetZSize())
+					* SQUARE_SIZE / 2 * 1.4f + unit->GetCircuitDef()->GetRadius();
+			buildPos = terrainMgr->ShiftPos(facDef, pos, range, true);
+			CBuilderManager* builderMgr = circuit->GetBuilderManager();
+			IBuilderTask* task = builderMgr->EnqueueFactory(IBuilderTask::Priority::NOW, facDef, buildPos,
+															SQUARE_SIZE, true, true, 0);
+			static_cast<ITaskManager*>(builderMgr)->AssignTask(unit, task);
+		}
+	}
+
+	if (!isStart) {
+		return;
+	}
+	int morphFrame = circuit->GetSetupManager()->GetMorphFrame(unit->GetCircuitDef());
+	if (morphFrame >= 0) {
+		circuit->GetScheduler()->RunTaskAt(std::make_shared<CGameTask>([this, unitId]() {
+			// Force commander level 0 to morph
+			CCircuitUnit* unit = this->circuit->GetTeamUnit(unitId);
+			if ((unit != nullptr) && (unit->GetTask() != nullptr) &&
+				(unit->GetTask()->GetType() != IUnitTask::Type::PLAYER))
+			{
+				const std::map<std::string, std::string>& customParams = unit->GetCircuitDef()->GetDef()->GetCustomParams();
+				auto it = customParams.find("level");
+				if ((it != customParams.end()) && (utils::string_to_int(it->second) <= 1)) {
+					unit->Upgrade();  // Morph();
+				}
+			}
+		}), morphFrame);
 	}
 }
 

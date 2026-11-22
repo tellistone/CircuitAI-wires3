@@ -423,6 +423,11 @@ void CSetupManager::ReadConfig()
 			}
 			jobs.skipMask |= 1u << static_cast<IBuilderTask::BT>(it->second);
 		}
+		const Json::Value& jump = jbs["jump"];
+		if (jump.isObject()) {
+			jobs.jumpMinDist = std::max(jump.get("min_dist", 500.f).asFloat(), 0.f);
+			jobs.isJumpKeep = jump.get("keep_for_flee", true).asBool();
+		}
 	}
 
 	if (!commChoices.empty()) {
@@ -556,6 +561,8 @@ void CSetupManager::FindStart()
 			func(startPos);
 		}
 
+		// Now for the commander's first mex pick (mex_front), and again in 1 s with the allies that start later
+		CalcLanePos();
 		circuit->GetScheduler()->RunTaskAfter(std::make_shared<CGameTask>(&CSetupManager::CalcLanePos, this), FRAMES_PER_SEC);
 		return;
 	}
@@ -596,11 +603,17 @@ void CSetupManager::CalcLanePos()
 	std::vector<std::pair<int, AIFloat3>> points;
 	AIFloat3 midPos = ZeroVector;
 	for (CCircuitAI* ai : circuit->GetGameAttribute()->GetCircuits()) {
-		if (ai->IsInitialized() && (ai->GetAllyTeamId() == circuit->GetAllyTeamId())) {
-			const AIFloat3& pos = ai->GetSetupManager()->GetBasePos();
+		if (!ai->IsInitialized() || (ai->GetAllyTeamId() != circuit->GetAllyTeamId())) {
+			continue;
+		}
+		const AIFloat3& pos = ai->GetSetupManager()->GetBasePos();
+		if (utils::is_valid(pos)) {  // an ally yet to find its start (the run at start)
 			points.push_back(std::make_pair(ai->GetSkirmishAIId(), pos));
 			midPos += pos;
 		}
+	}
+	if (points.empty()) {
+		return;
 	}
 	midPos /= points.size();
 

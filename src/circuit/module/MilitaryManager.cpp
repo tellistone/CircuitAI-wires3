@@ -389,6 +389,17 @@ void CMilitaryManager::ReadCurve(CCircuitAI* circuit, const Json::Value& value, 
 	std::sort(curve.begin(), curve.end());
 }
 
+float CMilitaryManager::ReadMapSeconds(CCircuitAI* circuit, const Json::Value& value, const std::string& key, float defSec)
+{
+	if (value.isNumeric()) {
+		return std::max(value.asFloat(), 0.f);
+	}
+	std::vector<std::pair<float, float>> curve;
+	ReadCurve(circuit, value, key, "map size", curve);
+	const float mapSize = std::sqrt(float(CTerrainManager::GetTerrainWidth()) * CTerrainManager::GetTerrainHeight()) / 512.f;
+	return utils::eval_curve(curve, mapSize, defSec);
+}
+
 void CMilitaryManager::ReadConfig()
 {
 	const Json::Value& root = circuit->GetSetupManager()->GetConfig();
@@ -1072,6 +1083,15 @@ void CMilitaryManager::ReadConfig()
 	guard.guardedMaxShare = (guardedShare < 0.f) ? guard.maxShare : guardedShare;
 	guard.isDamageExit = guardCfg.get("damage_exit", true).asBool();
 	guard.isDebug = guardCfg.get("debug", false).asBool();
+	const Json::Value& summon = guardCfg["summon"];
+	const Json::Value& summonCfg = summon.isObject() ? summon : Json::Value::nullSingleton();
+	guard.isSummon = summon.isObject() || summon.isNull() || (summon.isBool() && summon.asBool());  // missing = on
+	guard.minThreat = summonCfg.get("min_threat", 1.f).asFloat();
+	guard.enemyFrames = std::max(summonCfg.get("enemy_sec", 30.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	guard.enemyRadius = summonCfg.get("enemy_radius", 800.f).asFloat();
+	guard.isFromGroups = summonCfg.get("from_groups", true).asBool();
+	guard.openingShare = std::max(summonCfg.get("opening_share", 1.f).asFloat(), 0.f);
+	guard.escortedAllyThreat = summonCfg.get("escorted_ally_threat", 0.f).asFloat();
 	guard.roleMask = 0;
 	const Json::Value& guardRoles = guardCfg["roles"];
 	if (guardRoles.isNull()) {  // legacy behaviour
@@ -1221,6 +1241,8 @@ void CMilitaryManager::ReadConfig()
 	tb.lossRefund = std::max(budget.get("loss_refund", tb.lossRefund).asFloat(), 0.f);
 	tb.balance = std::max(budget.get("start", tb.balance).asFloat(), 0.f);
 	tb.waitFrames = int(std::max(budget.get("wait_sec", tb.waitFrames / FRAMES_PER_SEC).asFloat(), 0.f) * FRAMES_PER_SEC);
+	tb.sinceFrame = int(ReadMapSeconds(circuit, budget["since"], "porcupine.budget.since", tb.sinceFrame / FRAMES_PER_SEC)
+			* FRAMES_PER_SEC);
 	// Missing or [] = x1
 	std::vector<std::pair<float, float>> budgetMap;
 	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);
@@ -1231,9 +1253,10 @@ void CMilitaryManager::ReadConfig()
 	tb.mapMult = utils::eval_curve(budgetMap, tb.mapX);
 	tb.mexMult = utils::eval_curve(tb.mexCurve, 0.f);
 	circuit->LOG("TURRET BUDGET config: share %.2f x income x min(ms_pull, 1) x map %.2f (%.0f per player on our team)"
-			" x mex curve (%u points) x army curve (%u points, from %i s), bank %.0f s, loss refund x%.1f",
+			" x mex curve (%u points) x army curve (%u points, from %i s), bank %.0f s, loss refund x%.1f,"
+			" planned towers from %i s",
 			tb.share, tb.mapMult, tb.mapX, (unsigned)tb.mexCurve.size(), (unsigned)tb.armyCurve.size(),
-			tb.armySince / FRAMES_PER_SEC, tb.bankSec, tb.lossRefund);
+			tb.armySince / FRAMES_PER_SEC, tb.bankSec, tb.lossRefund, tb.sinceFrame / FRAMES_PER_SEC);
 
 	const Json::Value& base = porc["base"];
 	baseDefence.reserve(base.size());
@@ -2070,7 +2093,7 @@ void CMilitaryManager::MakeDefence(int cluster)
 	MakeDefence(cluster, circuit->GetMetalManager()->GetClusters()[cluster].position);
 }
 
-void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef* sightDef)
+void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef* sightDef, bool isFirstMex)
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	if (terrainMgr->IsZoneAlly(pos)) {
@@ -2114,19 +2137,19 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	std::vector<CCircuitDef*>& defenders = isWater ? waterDefenders : landDefenders;
 
 	// porcupine.own_clusters (the sweeps skip the rest already). A vent's point is asked only for our geo there,
-	// or a sighting at it: never someone else's
-	if (!closestPoint->isGeo && !IsOurCluster(cluster)) {
+	// or a sighting at it: never someone else's. A first mex job's cluster may have no owner yet
+	if (!closestPoint->isGeo && !IsOurCluster(cluster, isFirstMex)) {
 		return;
 	}
 
-	// Front-line porc
-	bool isPorc = mm->GetMaxIncome() > mm->GetAvgIncome() + 1.f;
+	// Front-line porc. A first mex job books only the preventive roll: porc mode waits for the mex (its chain)
+	bool isPorc = !isFirstMex && (mm->GetMaxIncome() > mm->GetAvgIncome() + 1.f);
 	if (isPorc) {
 		const float income = (mm->GetAvgIncome() + mm->GetMaxIncome()) * 0.5f;
 		int spotId = mm->FindNearestSpot(pos);
 		isPorc = mm->GetSpots()[spotId].income > income;
 	}
-	if (!isPorc) {
+	if (!isPorc && !isFirstMex) {
 		unsigned threatCount = 0;
 		CThreatMap* threatMap = circuit->GetThreatMap();
 		const CMetalData::Clusters& clusters = mm->GetClusters();
@@ -2222,6 +2245,10 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 		chokeGoal.choke = plan.choke;
 		chokeGoal.innerRegion = plan.innerRegion;
 		QueueTowers(plan.chokePoint, plan.chokeList, plan.chokeCap, isPorc, isSpot ? &chokeGoal : nullptr);
+	}
+
+	if (isFirstMex) {
+		return;  // sensors wait for the mex
 	}
 
 	// Build sensors
@@ -2447,7 +2474,7 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 				// TODO: Auto-sort defenders by cost OR remove break?
 				return;
 			}
-			if (isPorc && IsAccountTurret(defDef) && !CanAffordTurret(defCost)) {
+			if (isPorc && IsAccountTurret(defDef) && (IsTurretEarly() || !CanAffordTurret(defCost))) {
 				return;
 			}
 			point->cost += defCost;
@@ -2614,14 +2641,15 @@ void CMilitaryManager::SweepByTraffic()
 	}
 }
 
-bool CMilitaryManager::IsOurCluster(int cluster) const
+bool CMilitaryManager::IsOurCluster(int cluster, bool isFreeOurs) const
 {
 	if (!prevent.isOwnOnly || (circuit->GetAllyTeam()->GetSize() <= 1)) {
 		return true;
 	}
 	CMetalManager* mm = circuit->GetMetalManager();
 	mm->MarkAllyMexes();  // the owner is as of the last mark
-	return mm->GetClusterOwner(cluster) == circuit->GetTeamId();
+	const int owner = mm->GetClusterOwner(cluster);
+	return (owner == circuit->GetTeamId()) || (isFreeOurs && (owner < 0));
 }
 
 float CMilitaryManager::GetBuiltCoverCost(int cluster, bool isWater) const
@@ -3699,7 +3727,8 @@ bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
 bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) const
 {
 	// Two pools: builder slots and "guarded"-unit slots, so builders can't use up the whole share
-	const float maxShare = isGuardedPool ? guard.guardedMaxShare : guard.maxShare;
+	const float maxShare = isGuardedPool ? guard.guardedMaxShare
+			: (guard.isSummon && circuit->GetEconomyManager()->IsOpening()) ? guard.openingShare : guard.maxShare;
 	if (maxShare >= 1.f) {
 		return false;
 	}
@@ -3727,6 +3756,48 @@ bool CMilitaryManager::IsGuardCapReached(CCircuitDef* cdef, bool isGuardedPool) 
 	}
 	// -1e-3: 0.3f * 10 is 3.0000001f in float, which would ceil to 4
 	return guarding >= std::ceil(maxShare * total - 1e-3f);
+}
+
+bool CMilitaryManager::IsSafeGround(const AIFloat3& pos)
+{
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	const bool isRegions = chokeMap->IsReady();
+	const int frame = circuit->GetLastFrame();
+	if ((recentEnemyFrame < 0) || (frame - recentEnemyFrame >= FRAMES_PER_SEC)) {
+		// Armed enemies we know the type of, under min_threat aside (a Flea scouting through)
+		recentEnemyFrame = frame;
+		recentEnemies.clear();
+		for (auto& kv : circuit->GetEnemyInfos()) {
+			const CEnemyInfo* enemy = kv.second;
+			const CCircuitDef* edef = enemy->GetCircuitDef();
+			if ((edef != nullptr) && edef->IsMobile() && edef->IsAttacker() && !enemy->IsHidden()
+				&& (edef->GetRawThreat() >= guard.minThreat) && enemy->IsRecentlySeen(frame, guard.enemyFrames))
+			{
+				recentEnemies.push_back({enemy->GetPos(), isRegions ? chokeMap->GetRegionAt(enemy->GetPos()) : -1});
+			}
+		}
+	}
+	const int region = isRegions ? chokeMap->GetRegionAt(pos) : -1;
+	for (const SRecentEnemy& e : recentEnemies) {
+		if (((region >= 0) && (e.region == region)) || (pos.SqDistance2D(e.pos) < SQUARE(guard.enemyRadius))) {
+			return false;
+		}
+	}
+	if (!isRegions) {
+		return chokeMap->IsOurHalf(pos) && (circuit->GetInflMap()->GetEnemyInflAt(pos) <= INFL_EPS);
+	}
+	if ((region < 0) || chokeMap->IsEnemySide(region) || chokeMap->IsEnemyGround(region)
+		|| (chokeMap->GetSettledOwner(region) == CChokeMap::Side::CONTESTED))
+	{
+		return false;
+	}
+	return chokeMap->IsOurGround(region) || chokeMap->IsOurSide(region) || chokeMap->IsOurHalf(pos);
+}
+
+bool CMilitaryManager::IsEscorted(CCircuitUnit* unit) const
+{
+	auto it = guardTasks.find(unit);
+	return (it != guardTasks.end()) && !it->second->GetAssignees().empty();
 }
 
 void CMilitaryManager::BanGuard(CCircuitUnit* unit, int frames)
@@ -4267,10 +4338,17 @@ void CMilitaryManager::UpdateDefence()
 	}
 }
 
+bool CMilitaryManager::IsTurretEarly() const
+{
+	return circuit->GetLastFrame() < turretBudget.sinceFrame;
+}
+
 bool CMilitaryManager::IsWaiting(const CCircuitDef* def, int sinceFrame)
 {
-	return IsAccountTurret(def) && (circuit->GetLastFrame() - sinceFrame < turretBudget.waitFrames)
-		&& !CanAffordTurret(def->GetCostM());
+	// Not before budget.since; from then (or when due, if later) up to wait_sec for the balance
+	const int waitFrom = std::max(sinceFrame, turretBudget.sinceFrame);
+	return IsAccountTurret(def) && (IsTurretEarly()
+		|| ((circuit->GetLastFrame() - waitFrom < turretBudget.waitFrames) && !CanAffordTurret(def->GetCostM())));
 }
 
 bool CMilitaryManager::TryBaseTower(const AIFloat3& pos, CCircuitDef* buildDef, int dueFrame)
@@ -4329,7 +4407,7 @@ bool CMilitaryManager::TryHubTower(const SHubTower& t)
 
 bool CMilitaryManager::HoldHubTower(CCircuitDef* def, const AIFloat3& pos, bool isScored, const CCircuitUnit* hub)
 {
-	if (!IsAccountTurret(def) || CanAffordTurret(def->GetCostM())) {
+	if (!IsAccountTurret(def) || (!IsTurretEarly() && CanAffordTurret(def->GetCostM()))) {
 		return false;
 	}
 	hubTowers.push_back({def, pos, isScored, (hub != nullptr) ? hub->GetId() : -1,
