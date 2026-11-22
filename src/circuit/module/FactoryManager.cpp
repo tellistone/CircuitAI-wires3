@@ -79,8 +79,16 @@ CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 
 		EnableFactory(unit);
 	};
-	auto factoryIdleHandler = [](CCircuitUnit* unit) {
-		unit->GetTask()->OnUnitIdle(unit);
+	// factory.restart: factories and nanos get their next job in the event their last one ended (UnitFinished,
+	// UnitCreated), not after the idle pass's 20 frames. A UnitIdle that comes once the new orders are given is the last
+	// job's: a unit with orders isn't idle. Acting on it would end a repair or queue a second unit
+	auto staticIdleHandler = [](CCircuitUnit* unit) {
+		auto commands = unit->GetUnit()->GetCurrentCommands();
+		const bool isIdle = commands.empty();
+		utils::free_clear(commands);
+		if (isIdle) {
+			unit->GetTask()->OnUnitIdle(unit);
+		}
 	};
 	auto factoryDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
 		IUnitTask* task = unit->GetTask();
@@ -144,9 +152,6 @@ CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 				// TODO: Send HavenFinished message?
 			}
 		}
-	};
-	auto assistIdleHandler = [](CCircuitUnit* unit) {
-		unit->GetTask()->OnUnitIdle(unit);
 	};
 	auto assistDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
 		IUnitTask* task = unit->GetTask();
@@ -216,14 +221,14 @@ CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 		if (cdef.IsBuilder() && (factoryDefs.find(unitDefId) != factoryDefs.end())) {
 			createdHandler[unitDefId] = factoryCreatedHandler;
 			finishedHandler[unitDefId] = factoryFinishedHandler;
-			idleHandler[unitDefId] = factoryIdleHandler;
+			idleHandler[unitDefId] = staticIdleHandler;
 			destroyedHandler[unitDefId] = factoryDestroyedHandler;
 		} else if (cdef.IsAbleToAssist() &&
 			(std::max(cdef.GetDef()->GetXSize(), cdef.GetDef()->GetZSize()) * SQUARE_SIZE < cdef.GetBuildDistance()))
 		{
 			createdHandler[unitDefId] = assistCreatedHandler;
 			finishedHandler[unitDefId] = assistFinishedHandler;
-			idleHandler[unitDefId] = assistIdleHandler;
+			idleHandler[unitDefId] = staticIdleHandler;
 			destroyedHandler[unitDefId] = assistDestroyedHandler;
 			if (commDef->CanBuild(&cdef) && (maxBuildDist < cdef.GetBuildDistance())) {
 				maxBuildDist = cdef.GetBuildDistance();
@@ -821,9 +826,8 @@ int CFactoryManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 	return 0; //signaling: OK
 }
 
-// nano.hand_off: the factory's waiting nanos look for a job the frame it starts a unit, not when their 3 s wait ends.
-// The same look as ever (CreateAssistTask). Idle ones are left to the idle pass: it is due, and a nano's late UnitIdle
-// from its last job would end a job handed to it now
+// nano.hand_off: the factory's waiting and idle nanos look for a job the frame it starts a unit, not when their 3 s
+// wait or the idle pass ends. The same look as ever (CreateAssistTask)
 void CFactoryManager::AssistNewUnit(CCircuitUnit* factory)
 {
 	auto it = std::find_if(factories.begin(), factories.end(), [factory](const SFactory& f) { return f.unit == factory; });
@@ -831,7 +835,8 @@ void CFactoryManager::AssistNewUnit(CCircuitUnit* factory)
 		return;
 	}
 	for (CCircuitUnit* nano : it->nanos) {
-		if (nano->GetTask()->GetType() == IUnitTask::Type::WAIT) {
+		const IUnitTask::Type type = nano->GetTask()->GetType();
+		if ((type == IUnitTask::Type::WAIT) || (type == IUnitTask::Type::IDLE)) {
 			AssignTask(nano, CreateAssistTask(nano));
 		}
 	}
@@ -843,7 +848,7 @@ int CFactoryManager::UnitFinished(CCircuitUnit* unit)
 	if (iter != unfinishedUnits.end()) {
 		const std::set<CCircuitUnit*> facs = iter->second->GetAssignees();  // copy: the task is gone after DoneTask
 		DoneTask(iter->second);
-		// factory.restart: the factory's next order now, not from the idle pass 20+ frames on (a build_delay wait stays)
+		// factory.restart: the factory's next order now, not from the idle pass (a build_delay wait stays)
 		for (CCircuitUnit* fac : facs) {
 			if (fac->GetTask() == idleTask) {
 				AssignTask(fac);
