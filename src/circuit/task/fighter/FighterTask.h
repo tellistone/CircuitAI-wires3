@@ -101,9 +101,12 @@ protected:
 	// kiting off
 	void GetKiteDiscs(CCircuitUnit* unit, std::vector<SKiteDisc>& outDiscs) const;
 	static const SKiteDisc* FindKiteDisc(const std::vector<SKiteDisc>& discs, const springai::AIFloat3& p);
-	// A straight walk from -> to crosses no disc that from is outside of
+	// A straight walk from -> to crosses no disc, and leaves one it starts in (KITE_WALK_IN)
 	static bool IsKiteWalkClear(const std::vector<SKiteDisc>& discs, const springai::AIFloat3& from,
 			const springai::AIFloat3& to);
+	// Re-spot it now (Attack, CAttackTask::OrderEscorts): where it is heading (its fresh fire spot, else where it
+	// stands) is in a kite disc, or its walk there crosses one
+	bool IsKiteRespot(CCircuitUnit* unit, int frame) const;
 	// Is this enemy's type kited (its firing spots: ring at KITE_RADIUS, band up to the full range)?
 	bool IsKited(const CEnemyInfo* enemy) const;
 	std::vector<const CEnemyInfo*> kited;

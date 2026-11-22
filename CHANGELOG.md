@@ -411,10 +411,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     elmos with slack) to 8 (about 512). Readers of the per-enemy range (threat layers, anti-heavy stand-off) follow.
   - `kite` (default 0.85, 0 = off) with the new `kite` attribute (on `jumpassault`): every ranged unit that fights
     from firing spots (not melee units, aircraft or mobile bombs) keeps out of 0.85 x its own range of each kited
-    enemy in LOS, whatever it targets. No firing spot inside such a disc, its kept spot and where it stands
-    included, and standing in one re-orders it at every task update. With no spot clear of the discs it steps out
-    to 0.95 x its range from that enemy (straight away, then 30 and 60 degrees either side, the first safe) and
-    fights from there without chasing (`FireSpot::KITE`); outside them it holds. On a kited target, spots go on a ring
+    enemy in LOS, whatever it targets. No firing spot inside such a disc or with a walk through one (a walk out of
+    one it stands in comes no nearer than 0.9 x where it starts). A unit, escorts too, whose spot or walk there is
+    caught by a disc is re-ordered at the next task update (`IsKiteRespot`). With no spot clear of the discs it
+    steps out to 0.95 x its range from that enemy (straight away, then 30 and 60 degrees either side, the first safe
+    one with a direct walk; with none safe, a hold if it is safe where it stands, else the least dangerous step) and
+    fights from there without chasing (`FireSpot::KITE`); outside them it holds. A jumper in flight gets the threat
+    map's speed slack of its walking speed, not the jump's. On a kited target, spots go on a ring
     at 0.95 x range and the fire band reaches the full range, so a unit Zero-K's own skirm keeps at the edge of its
     range is no longer pulled back in to 0.9 x range.
 

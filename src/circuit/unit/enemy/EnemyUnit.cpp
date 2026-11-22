@@ -187,10 +187,13 @@ bool CEnemyUnit::UpdateJump(int frame, CTerrainManager* terrainMgr, bool isLand)
 		}
 		jumpSamplePos = data.pos;
 		jumpSampleFrame = frame;
+		auto land = [&]() {  // down now: the reload starts
+			jumpReadyFrame = frame + cdef->GetJumpReload();
+			landFrame = -1;
+		};
 		if (!isAir) {
-			if (IsInFlight()) {  // down early (a building in the way) or late (slowed): the reload starts now
-				jumpReadyFrame = frame + cdef->GetJumpReload();
-				landFrame = -1;
+			if (IsInFlight()) {  // down early (a building in the way) or late (slowed)
+				land();
 			}
 		} else if (!IsInFlight() || (frame >= landFrame)) {  // took off, or still up past the guess: (re)estimate
 			// The arc (unit_jumpjets.lua): x, z linear from start to goal, y = 4 h i (1 - i) above that line, i = 0..1
@@ -213,17 +216,15 @@ bool CEnemyUnit::UpdateJump(int frame, CTerrainManager* terrainMgr, bool isLand)
 				isJump = (std::fabs(lift - 4.f * h * i * (1.f - i)) <= JUMP_LIFT_TOL * h + JUMP_AIR_MIN);
 				if (isJump) {
 					const float n = (1.f - i) / step;  // frames to go
-					AIFloat3 land = data.pos + AIFloat3(vel.x, 0.f, vel.z) * n;
-					CTerrainManager::CorrectPosition(land);
-					land.y = terrainMgr->GetHeightAt(land.x, land.z);
-					data.landPos = land;
+					data.landPos = data.pos + AIFloat3(vel.x, 0.f, vel.z) * n;
+					CTerrainManager::CorrectPosition(data.landPos);
+					data.landPos.y = terrainMgr->GetHeightAt(data.landPos.x, data.landPos.z);
 					landFrame = frame + std::max(int(n + 0.5f), 1);
 					jumpReadyFrame = landFrame + cdef->GetJumpReload();
 				}
 			}
 			if (!isJump && IsInFlight()) {  // up, but not on an arc (any more): down as far as jumps go
-				jumpReadyFrame = frame + cdef->GetJumpReload();
-				landFrame = -1;
+				land();
 			}
 		}
 	} else if (IsInFlight() && (frame >= landFrame)) {

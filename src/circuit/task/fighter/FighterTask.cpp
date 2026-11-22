@@ -60,6 +60,9 @@ const float CROWD_CLOSE   = 1.f;    // melee close spots: cost per crowding clai
 const float KITE_RADIUS   = 0.95f;
 const float KITE_STEP     = 0.95f;
 const float KITE_ANGLE    = static_cast<float>(M_PI) / 6.f;
+// A walk out of a kite disc it starts in comes no nearer its centre than this x where it starts (one across the middle
+// is no way out; a step at 2 KITE_ANGLE to the side dips about 0.93)
+const float KITE_WALK_IN  = 0.9f;
 }
 
 F3Vec IFighterTask::urgentPositions;  // NOTE: micro-opt
@@ -198,7 +201,6 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	const AIFloat3& tPos = target->GetFightPos();
 	GatherKited();
-	std::vector<SKiteDisc> discs;
 	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
 	// Longest range picks first; each pick replaces that unit's claim.
@@ -229,12 +231,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 
 		auto mit = meleeTargets.find(unit);
 		CEnemyInfo* enemy = (mit != meleeTargets.end()) ? mit->second : target;
-		// Standing too near a kited enemy: re-spotted now, not at the repeat (each update until it is out)
-		GetKiteDiscs(unit, discs);
+		// Too near a kited enemy, or heading there: re-spotted now, not at the repeat
 		if (isRepeatAttack
 			|| (unit->GetTarget() != enemy)
 			|| ((enemy == target) && (unit->GetTargetTile() != targetTile) && isTileMoveOrder)
-			|| (FindKiteDisc(discs, unit->GetPos(frame)) != nullptr))
+			|| IsKiteRespot(unit, frame))
 		{
 			orders.push_back({i, GetSpotRange(unit, enemy), enemy});
 		}
@@ -304,21 +305,34 @@ const IFighterTask::SKiteDisc* IFighterTask::FindKiteDisc(const std::vector<SKit
 
 bool IFighterTask::IsKiteWalkClear(const std::vector<SKiteDisc>& discs, const AIFloat3& from, const AIFloat3& to)
 {
-	// A straight walk that passes through a disc it doesn't start in (one it starts in, it is leaving)
-	AIFloat3 seg = to - from;
-	seg.y = 0.f;
+	// The straight walk's nearest point to each disc's centre: outside the disc, or for one it starts in, no nearer
+	// than KITE_WALK_IN x where it starts
+	const AIFloat3 seg = to - from;
 	const float sqLen = seg.SqLength2D();
 	for (const SKiteDisc& d : discs) {
-		if (from.SqDistance2D(d.pos) < SQUARE(d.range)) {
-			continue;
-		}
 		const float t = (sqLen > 1.f) ? utils::clamp(((d.pos.x - from.x) * seg.x + (d.pos.z - from.z) * seg.z) / sqLen, 0.f, 1.f) : 0.f;
 		const AIFloat3 closest(from.x + seg.x * t, 0.f, from.z + seg.z * t);
-		if (closest.SqDistance2D(d.pos) < SQUARE(d.range)) {
+		const float sqFrom = from.SqDistance2D(d.pos);
+		const float sqLimit = (sqFrom < SQUARE(d.range)) ? sqFrom * SQUARE(KITE_WALK_IN) : SQUARE(d.range);
+		if (closest.SqDistance2D(d.pos) < sqLimit) {
 			return false;
 		}
 	}
 	return true;
+}
+
+bool IFighterTask::IsKiteRespot(CCircuitUnit* unit, int frame) const
+{
+	static std::vector<SKiteDisc> discs;  // NOTE: micro-opt
+	GetKiteDiscs(unit, discs);
+	if (discs.empty()) {
+		return false;
+	}
+	// Where it is heading: the spot it was last sent to while fresh (a step out of a disc too), else where it stands
+	const AIFloat3& uPos = unit->GetPos(frame);
+	auto it = fireSpots.find(unit);
+	const AIFloat3& spot = ((it != fireSpots.end()) && (frame <= it->second.frame + SPOT_KEEP)) ? it->second.pos : uPos;
+	return (FindKiteDisc(discs, spot) != nullptr) || !IsKiteWalkClear(discs, uPos, spot);
 }
 
 bool IFighterTask::IsKited(const CEnemyInfo* enemy) const
@@ -897,49 +911,51 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		}
 	}
 	// KITE: it stands too near a kited enemy and no spot is clear of them all: a step out, straight away from the one it
-	// is deepest in first, then to either side; the first safe one with a safe walk, else the least dangerous
+	// is deepest in first, then to either side. The first safe one (spot and walk); else, unless here is safe (HOLD),
+	// the least dangerous one
+	AIFloat3 stepPos;
+	float stepWorst = std::numeric_limits<float>::max();  // < 0: safe; max: no step
 	if (const SKiteDisc* inDisc = FindKiteDisc(discs, uPos)) {
 		AIFloat3 away = uPos - inDisc->pos;
 		if (away.SqLength2D() < 1.f) {
 			away = uPos - tPos;  // right on it: away from the target
 		}
 		const float awayBearing = (away.SqLength2D() >= 1.f) ? atan2f(away.z, away.x) : 0.f;
-		const AIFloat3* best = nullptr;
-		float bestThreat = std::numeric_limits<float>::max();
-		AIFloat3 steps[5];
-		int count = 0;
 		for (int k : {0, 1, -1, 2, -2}) {
 			const float angle = awayBearing + k * KITE_ANGLE;
 			AIFloat3 p(inDisc->pos.x + inDisc->step * cosf(angle), inDisc->pos.y, inDisc->pos.z + inDisc->step * sinf(angle));
 			CTerrainManager::CorrectPosition(p);
-			if (!terrainMgr->CanMoveToPos(unit->GetArea(), p) || (FindKiteDisc(discs, p) != nullptr)
-				|| !IsKiteWalkClear(discs, uPos, p))
+			if (!terrainMgr->CanMoveToPos(unit->GetArea(), p) || !IsFireSpotAllowed(p)
+				|| (FindKiteDisc(discs, p) != nullptr) || !IsKiteWalkClear(discs, uPos, p)
+				|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p, WALK_CLIMB))
 			{
 				continue;
 			}
-			steps[count] = p;
 			const float threat = GetTaskThreatAt(unit, p);
-			float peak = 0.f;
+			float peak;
 			const bool isWalkDanger = checkWalk(p, peak);
-			if (!isDanger(p, threat) && !isWalkDanger) {
-				best = &steps[count];
+			const float worst = (isWalkDanger || isDanger(p, threat)) ? std::max(threat, peak) : -1.f;
+			if (worst < stepWorst) {
+				stepWorst = worst;
+				stepPos = p;
+			}
+			if (worst < 0.f) {
 				break;
 			}
-			if (std::max(threat, peak) < bestThreat) {
-				bestThreat = std::max(threat, peak);
-				best = &steps[count];
-			}
-			++count;
 		}
-		if (best != nullptr) {
-			outPos = *best;
-			return FireSpot::KITE;
-		}
+	}
+	if (stepWorst < 0.f) {
+		outPos = stepPos;
+		return FireSpot::KITE;
 	}
 	// HOLD: every spot is dangerous, here isn't
 	if (isSafeHere) {
 		outPos = uPos;
 		return FireSpot::HOLD;
+	}
+	if (stepWorst < std::numeric_limits<float>::max()) {
+		outPos = stepPos;
+		return FireSpot::KITE;
 	}
 	// RISKY: the least dangerous spot, judged by the worse of walk and spot
 	const SCandidate* risky = nullptr;

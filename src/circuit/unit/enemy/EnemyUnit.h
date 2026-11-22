@@ -62,6 +62,10 @@ struct SEnemyData {
 	springai::AIFloat3 landPos;
 	bool isJumping = false;
 	const springai::AIFloat3& GetFightPos() const { return isJumping ? landPos : pos; }
+	// Speed for the threat map's slack (elmos per frame): in flight its walking speed, as drawn at its landing spot
+	float GetSlackSpeed() const {
+		return (isJumping && (cdef != nullptr)) ? cdef->GetSpeed() / FRAMES_PER_SEC : vel.Length2D();
+	}
 
 	void SetRange(CCircuitDef::ThreatType t, int r) {
 		range[static_cast<CCircuitDef::ThreatT>(t)] = r;
@@ -148,6 +152,7 @@ public:
 	const springai::AIFloat3& GetPos() const { return data.pos; }
 	const springai::AIFloat3& GetVel() const { return data.vel; }
 	const springai::AIFloat3& GetFightPos() const { return data.GetFightPos(); }
+	float GetSlackSpeed() const { return data.GetSlackSpeed(); }
 
 	void SetThreat(float t) { data.threat = t; }
 	float GetThreat() const { return data.threat; }
