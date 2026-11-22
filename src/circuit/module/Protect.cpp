@@ -33,6 +33,7 @@ static constexpr int MIN_STATE_FRAMES = FRAMES_PER_SEC * 5;  // a go or no-go la
 static constexpr int ATTACKER_FRAMES = FRAMES_PER_SEC * 5;  // an enemy that hit the commander is ranked first this long
 static constexpr float COMMIT_MOD = 1.25f;  // groups are committed until groups + commander + static cover reach this x danger
 static constexpr float COMMIT_MARGIN = 0.25f;  // ... or the go line + this, if more (a go_ratio over 1.25 can still go)
+static constexpr float KEEP_REACH_MOD = 1.5f;  // a committed group is dropped past this x respond_sec of travel
 static constexpr float CORNERED_MOD = 0.6f;  // the go line x this once the commander is cornered or paralysed
 static constexpr float AIR_ON_SHARE = 0.6f;  // an air danger: gunships over this share of the commander's danger list
 static constexpr float AIR_OFF_SHARE = 0.4f;  // ... until under this
@@ -57,6 +58,7 @@ CProtect::CProtect(CCircuitAI* circuit, const SConfig& cfg)
 		, commPos(-RgtVector)
 		, dangerPos(-RgtVector)
 		, isAirDanger(false)
+		, airShare(0.f)
 		, dangerRange(0.f)
 		, own(0.f)
 		, danger(0.f)
@@ -191,12 +193,9 @@ void CProtect::Update()
 		dangerPos = view.dangerPos;
 		dangerRange = view.dangerRange;
 	}
-	if (view.danger > 0.f) {
-		const float airShare = view.airDanger / view.danger;
+	if (view.danger > 0.f) {  // kept while the list is empty: gunships out of sight would otherwise let a go start
+		airShare = view.airDanger / view.danger;
 		isAirDanger = (airShare > (isAirDanger ? AIR_OFF_SHARE : AIR_ON_SHARE));
-	}
-	if (isAirDanger && (state == State::GO)) {
-		SetState(State::NOGO, "nogo (air)", frame);  // at once: the committed ground groups can't shoot gunships
 	}
 	CCircuitDef* commDef = comm->GetCircuitDef();
 	own = (isAirDanger && !commDef->HasAntiAir()) ? 0.f : view.own;
@@ -216,12 +215,15 @@ void CProtect::Update()
 	UpdateTurretPoint(comm, frame);
 	commCover = GetStaticCover(commPos);
 	const float goLine = cfg.goRatio * (isCornered ? CORNERED_MOD : 1.f);
-	UpdateCommitted(comm, frame, danger * std::max(COMMIT_MOD, goLine + COMMIT_MARGIN));
+	UpdateCommitted(frame, danger * std::max(COMMIT_MOD, goLine + COMMIT_MARGIN));
 	ratio = (danger > 0.f) ? GetSum() / danger : std::numeric_limits<float>::max();
 
 	// Go or no-go, each for MIN_STATE_FRAMES at least. A go needs a group: with none there is nothing to send, and a
-	// no-go costs nothing (a poke with no danger would otherwise go at once and hold off a real no-go)
-	if (frame - stateFrame >= MIN_STATE_FRAMES) {
+	// no-go costs nothing (a poke with no danger would otherwise go at once and hold off a real no-go). An air danger
+	// ends a go at once: the committed ground groups can't shoot gunships
+	if ((state == State::GO) && isAirDanger) {
+		SetState(State::NOGO, "nogo (air)", frame);
+	} else if (frame - stateFrame >= MIN_STATE_FRAMES) {
 		if ((state == State::NOGO) && (ratio >= goLine) && !committed.empty()) {
 			SetState(State::GO, "go", frame);
 		} else if ((state == State::GO) && (ratio < goLine / circuit->GetMilitaryManager()->GetAttackKeepThreat())) {
@@ -237,6 +239,7 @@ void CProtect::Start(int frame)
 	stateFrame = -MIN_STATE_FRAMES;  // the first decision is at once
 	isCornered = false;
 	isAirDanger = false;
+	airShare = 0.f;
 	committed.clear();
 	turretPos = dangerPos = -RgtVector;
 	dangerRange = 0.f;
@@ -258,9 +261,9 @@ void CProtect::End(const char* reason, int frame)
 void CProtect::SetState(State value, const char* reason, int frame)
 {
 	circuit->LOG("PROTECT %s: ratio %.2f (groups %.1f + commander %.1f + static %.1f vs danger %.1f), %i groups "
-			"(present %.1f)%s%s%s, death in %.0f s", reason, std::min(ratio, 99.f), committedSum, own, staticCover,
-			danger, (int)committed.size(), presentSum, isCornered ? ", cornered" : "", isAirDanger ? ", air" : "",
-			utils::is_valid(turretPos) ? ", at turrets" : "", std::min(deathSec, 999.f));
+			"(present %.1f), gunships %.0f%%%s%s%s, death in %.0f s", reason, std::min(ratio, 99.f), committedSum, own,
+			staticCover, danger, (int)committed.size(), presentSum, airShare * 100.f, isAirDanger ? " (air danger)" : "",
+			isCornered ? ", cornered" : "", utils::is_valid(turretPos) ? ", at turrets" : "", std::min(deathSec, 999.f));
 	if (value == State::NOGO) {
 		committed.clear();  // no group is sent: they go back to what they would do
 	}
@@ -432,7 +435,12 @@ bool CProtect::IsInFight(const AIFloat3& pos, bool wasPresent) const
 	return pos.SqDistance2D(commPos) <= SQUARE(radius);
 }
 
-void CProtect::CollectCandidates(CCircuitUnit* comm, int frame, std::vector<SCandidate>& out) const
+float CProtect::GetTravelSec(const ISquadTask* task, int frame) const
+{
+	return task->GetLeader()->GetPos(frame).distance2D(commPos) / std::max(task->GetLowestSpeed(), 1.f);
+}
+
+void CProtect::CollectCandidates(int frame, std::vector<SCandidate>& out) const
 {
 	// Attack, raid and gathering (attack- or raid-bound) groups that reach the commander in time and aren't fleeing or
 	// busy fighting outside the zone
@@ -458,19 +466,17 @@ void CProtect::CollectCandidates(CCircuitUnit* comm, int frame, std::vector<SCan
 					continue;
 				}
 			}
-			const AIFloat3& pos = leader->GetPos(frame);
-			const float sqDist = pos.SqDistance2D(commPos);
-			const float travelSec = sqrtf(sqDist) / std::max(g->GetLowestSpeed(), 1.f);
-			if ((travelSec > maxSec) || !terrainMgr->CanMoveToPos(leader->GetArea(), commPos)) {
+			if ((GetTravelSec(g, frame) > maxSec) || !terrainMgr->CanMoveToPos(leader->GetArea(), commPos)) {
 				continue;
 			}
+			const AIFloat3& pos = leader->GetPos(frame);
 			const CEnemyInfo* target = g->GetTarget();
 			if ((target != nullptr) && (target->GetPos().SqDistance2D(commPos) > sqZone)
 				&& (target->GetPos().SqDistance2D(pos) < SQUARE(g->GetHighestRange() + ENGAGED_SLACK)))
 			{
 				continue;
 			}
-			out.push_back({g, sqDist});
+			out.push_back({g, pos.SqDistance2D(commPos)});
 		}
 	}
 	std::sort(out.begin(), out.end(), [](const SCandidate& a, const SCandidate& b) { return a.sqDist < b.sqDist; });
@@ -489,11 +495,12 @@ void CProtect::Refresh(const ISquadTask* task, int frame, SCommit& commit)
 	}
 }
 
-void CProtect::UpdateCommitted(CCircuitUnit* comm, int frame, float need)
+void CProtect::UpdateCommitted(int frame, float need)
 {
-	// Go: the committed groups stay (latched), dead ones drop out, new ones join while short. No-go: picked afresh.
-	// The go is judged with all of them; the boost only with those present (GetGoBoost). An air danger takes no new
-	// group: anti-air units are in anti-air tasks, not these
+	// Go: the committed groups stay (latched), new ones join while short. Dead ones drop out, and those gone out of
+	// reach (a flee to a haven, our base or a far cluster; past KEEP_REACH_MOD x respond_sec of travel, so a group near
+	// the join line doesn't flap). No-go: picked afresh. The go is judged with all of them; the boost only with those
+	// present (GetGoBoost). An air danger takes no new group: anti-air units are in anti-air tasks, not these
 	if (state != State::GO) {
 		committed.clear();
 	}
@@ -501,7 +508,7 @@ void CProtect::UpdateCommitted(CCircuitUnit* comm, int frame, float need)
 	presentSum = own + commCover;
 	for (auto it = committed.begin(); it != committed.end();) {
 		const ISquadTask* g = static_cast<const ISquadTask*>(it->first);  // an ended task is gone already (OnTaskEnd)
-		if (g->IsDead() || (g->GetLeader() == nullptr)) {
+		if (g->IsDead() || (g->GetLeader() == nullptr) || (GetTravelSec(g, frame) > cfg.respondSec * KEEP_REACH_MOD)) {
 			it = committed.erase(it);
 			continue;
 		}
@@ -512,7 +519,7 @@ void CProtect::UpdateCommitted(CCircuitUnit* comm, int frame, float need)
 		return;
 	}
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
-	CollectCandidates(comm, frame, candidates);
+	CollectCandidates(frame, candidates);
 	for (const SCandidate& c : candidates) {
 		Refresh(c.task, frame, committed[c.task]);
 		if (GetSum() >= need) {

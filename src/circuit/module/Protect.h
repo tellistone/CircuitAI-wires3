@@ -47,7 +47,8 @@ class ISquadTask;
  *    go_ratio with a group at least (0.6 x it once cornered: no escape or paralysed, latched for the anchor's life);
  *    no-go below the go line / quota.attack_keep_threat, at once when the danger turns to air. 5 s per state at least.
  *    On go the committed groups are latched until the anchor ends or no-go (a group that flees meanwhile still counts:
- *    a short flee doesn't end the fight); they merge only into each other.
+ *    a short flee doesn't end the fight), or until one is 1.5 x respond_sec of travel away; they merge only into each
+ *    other.
  * 5. Go: committed groups head for the commander and only take zone enemies (and those in contact), the commander's
  *    recent attackers first; zone enemies pass the own-ground check and the 3-group cap. In the fight (within half the
  *    zone of the commander, kept to 0.625: the present radius) they judge with the strength present (GetBoost: the
@@ -131,10 +132,11 @@ private:
 	void UpdateTurretPoint(CCircuitUnit* comm, int frame);
 	// The present radius: half the zone around the commander; once in it (wasPresent), 0.625 of it
 	bool IsInFight(const springai::AIFloat3& pos, bool wasPresent) const;
-	void CollectCandidates(CCircuitUnit* comm, int frame, std::vector<SCandidate>& out) const;
+	float GetTravelSec(const ISquadTask* task, int frame) const;  // its leader to the commander, at the group's pace
+	void CollectCandidates(int frame, std::vector<SCandidate>& out) const;
 	void Refresh(const ISquadTask* task, int frame, SCommit& commit);  // its strength and flags, added to the sums
 	// Committed groups refreshed, and new ones while the sum is short of need
-	void UpdateCommitted(CCircuitUnit* comm, int frame, float need);
+	void UpdateCommitted(int frame, float need);
 
 	CCircuitAI* circuit;
 	SConfig cfg;
@@ -148,6 +150,7 @@ private:
 	springai::AIFloat3 commPos;
 	springai::AIFloat3 dangerPos;  // the nearest seen danger, kept from the last update that saw one
 	bool isAirDanger;  // gunships over 60% of the commander's danger list, until under 40%
+	float airShare;  // the gunships' share of that list, kept while it is empty (logged)
 	float dangerRange;
 	float own;  // the commander's power (0 against an air danger it can't hit)
 	float danger;
