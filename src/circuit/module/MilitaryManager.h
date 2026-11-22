@@ -112,6 +112,20 @@ public:
 	// An attack-bound unit's first task: a gathering group at base (quota.attack_merge.base_gather true), else
 	// reinforce the rally host or the nearest compatible group, else a new attack group
 	IFighterTask* EnqueueAttackBound(CCircuitUnit* unit);
+	// quota.solo_hunt: a one-unit defend task that hunts enemies on our ground and never merges or promotes, until
+	// the one-off switch flips (IsSoloHuntOver); then the unit is attack-bound
+	IFighterTask* EnqueueSoloHunt();
+	bool IsSoloHuntRole(const CCircuitDef* cdef) const;
+	bool IsSoloHuntOver() const { return soloHunt.isOver; }
+	// quota.solo_hunt.choke_dist > 0: frontline chokes feed solo hunters' parking (CFrontline::Update builds them)
+	bool IsSoloParkOn() const { return !soloHunt.isOver && (soloHunt.chokeDist > 0.f); }
+	// Where a solo hunter with no target parks: a short choke of our line (CFrontline's C) whose inner region holds
+	// one of our structures, by shortness minus distance / choke_dist minus choke_spread per other hunter parked
+	// there; kept while the choke is on our line and was short within SOLO_PARK_KEEP.
+	// -RgtVector: none (no choke map yet, none short or reachable)
+	springai::AIFloat3 GetSoloPark(const IFighterTask* task, CCircuitUnit* leader);
+	// A solo hunter left for a quota.protect commit: it goes back to hunting alone once its group stops protecting
+	void NoteSoloProtect(CCircuitUnit* unit);
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
 	// Mines always get a new one (each lays its field somewhere else)
 	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
@@ -916,6 +930,24 @@ private:
 	std::vector<CEnemyUnit*> plantThreats;  // UpdatePlant: the threats that count now
 	std::unordered_map<CCircuitDef::Id, ballistics::SShell> plantShells;  // per plant type: its main weapon's shell
 	bool attackBaseGather;  // quota.attack_merge.base_gather
+	// quota.solo_hunt: units of these main roles hunt alone on our ground until the ally team first holds mex x the
+	// map's metal spots (finished mexes); one-off, it never switches back. No roles = off
+	struct SSoloHunt {
+		CCircuitDef::RoleM roleMask = 0;
+		float mexShare = 0.25f;
+		float chokeDist = 2000.f;  // choke_dist: elmos away that cost as much as a choke's whole shortness; 0 = no parking
+		float chokeSpread = 1.f;  // choke_spread: shortness taken off per other hunter parked at the choke
+		int maxFrame = 0;  // max_sec in frames: the switch flips by then whatever the mex share; 0 = no cap
+		bool isOver = true;
+	} soloHunt;
+	struct SSoloPark {
+		int chokeId;
+		springai::AIFloat3 spot;
+		int shortFrame;  // its choke was last short then: the claim holds SOLO_PARK_KEEP after
+	};
+	std::map<const IFighterTask*, SSoloPark> soloParks;
+	std::set<int> soloProtectIds;  // NoteSoloProtect
+	void UpdateSoloHunt();
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at
 	int heavySeenAge;  // frames since an enemy heavy was last in radar or LOS; max = none

@@ -32,6 +32,10 @@ public:
 //	void SetWantedTarget(CEnemyInfo* enemy) { SetTarget(enemy); }
 
 	FightType GetPromote() const { return promote; }
+	// quota.solo_hunt: one unit that hunts on our ground, never takes others, merges or promotes; once the one-off
+	// switch is over (CMilitaryManager::IsSoloHuntOver) it hands its unit over as attack-bound
+	void SetSolo() { isSolo = true; }
+	bool IsSolo() const { return isSolo; }
 
 protected:
 	float GetMaxPower() const { return maxPower; }
@@ -46,6 +50,7 @@ private:
 	void FallbackFrontPos();
 	void ApplyFrontPos(const CQueryPathMulti* query);
 	void FallbackBasePos();
+	void FallbackPatrol();
 	void ApplyBasePos(const CQueryPathSingle* query);
 	void Fallback();
 
@@ -54,6 +59,8 @@ private:
 	float maxPower;
 	float maxCost = 0.f;
 	float attackCost = 0.f;  // metal value of the units in the group
+	bool isSolo = false;
+	springai::AIFloat3 patrolPos = -RgtVector;  // solo: the held cluster it walks to while it has no target
 };
 
 } // namespace circuit

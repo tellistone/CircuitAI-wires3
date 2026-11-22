@@ -28,9 +28,13 @@
 #include "OOAICallback.h"
 #include "AISCommands.h"
 
+#include <algorithm>
+
 namespace circuit {
 
 using namespace springai;
+
+static constexpr size_t PATROL_NEAREST = 4;  // solo hunters patrol among this many held cluster points nearest them
 
 CDefendTask::CDefendTask(ITaskManager* mgr, const AIFloat3& position,
 						 FightType check, FightType promote, float maxPower, float powerMod)
@@ -48,7 +52,7 @@ CDefendTask::~CDefendTask()
 
 bool CDefendTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	return !IsGathered() && (static_cast<CDefendTask*>(unit->GetTask())->GetPromote() == promote);
+	return !isSolo && !IsGathered() && (static_cast<CDefendTask*>(unit->GetTask())->GetPromote() == promote);
 }
 
 void CDefendTask::AssignTo(CCircuitUnit* unit)
@@ -105,7 +109,24 @@ void CDefendTask::Update()
 	// committed instead
 	CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = IsProtecting();
-	if (isProtect || (updCount % 32 == 1)) {
+	if (isSolo) {
+		CCircuitUnit* unit = leader;
+		// quota.solo_hunt: the one-off switch is over, the unit joins the army as any attack-bound unit
+		if (militaryMgr->IsSoloHuntOver()) {
+			manager->AssignTask(unit, militaryMgr->EnqueueAttackBound(unit));  // RemoveAssignee aborts this task
+			return;
+		}
+		// quota.protect committed it: it leaves as a one-unit attack group, which is committed instead and acts on the
+		// protect as any; once that group no longer protects, the unit hunts alone again (UpdateSoloHunt)
+		if (isProtect) {
+			IFighterTask* task = militaryMgr->EnqueueTask(FightType::ATTACK);
+			protect->Transfer(this, task);  // before the unit leaves: leaving ends this task
+			militaryMgr->NoteSoloProtect(unit);
+			manager->AssignTask(unit, task);
+			return;
+		}
+	}
+	if (!isSolo && (isProtect || (updCount % 32 == 1))) {
 		IFighterTask* task = nullptr;
 		if (isProtect) {
 			task = militaryMgr->EnqueueTask(promote);
@@ -134,7 +155,7 @@ void CDefendTask::Update()
 	/*
 	 * Merge tasks if possible
 	 */
-	ISquadTask* task = GetMergeTask();
+	ISquadTask* task = isSolo ? nullptr : GetMergeTask();
 	if (task != nullptr) {
 		task->Merge(this);
 		units.clear();
@@ -179,7 +200,11 @@ void CDefendTask::Update()
 	}
 
 	if (!isTargetsFound) {  // enemyPositions.empty()
-		FallbackFrontPos();
+		if (isSolo) {
+			FallbackPatrol();
+		} else {
+			FallbackFrontPos();
+		}
 		return;
 	}
 
@@ -384,6 +409,55 @@ void CDefendTask::FallbackBasePos()
 	});
 }
 
+void CDefendTask::FallbackPatrol()
+{
+	// Solo hunters with no target park at a short choke of our line, spread out (CMilitaryManager::GetSoloPark).
+	// With none, each walks to a random cluster we hold, and picks another once there
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& startPos = leader->GetPos(frame);
+	const float sqNear = SQUARE(DEFAULT_SLACK * 4);
+	const AIFloat3 park = circuit->GetMilitaryManager()->GetSoloPark(this, leader);
+	if (utils::is_valid(park)) {
+		if (startPos.SqDistance2D(park) < sqNear) {
+			return;  // parked: wait for a target
+		}
+		patrolPos = park;
+	} else if (!utils::is_valid(patrolPos) || (startPos.SqDistance2D(patrolPos) < sqNear)) {
+		// A random one of the PATROL_NEAREST held cluster points nearest it, other than where it stands: it moves
+		// round our ground near it, not across the map to an ally's far flank
+		circuit->GetMilitaryManager()->FillFriendlyClusterPos(leader, urgentPositions);
+		urgentPositions.erase(std::remove_if(urgentPositions.begin(), urgentPositions.end(),
+				[&startPos, sqNear](const AIFloat3& p) { return startPos.SqDistance2D(p) < sqNear; }),
+				urgentPositions.end());
+		if (urgentPositions.empty()) {
+			patrolPos = -RgtVector;
+			FallbackBasePos();
+			return;
+		}
+		const size_t count = std::min(urgentPositions.size(), PATROL_NEAREST);
+		std::partial_sort(urgentPositions.begin(), urgentPositions.begin() + count, urgentPositions.end(),
+				[&startPos](const AIFloat3& a, const AIFloat3& b) {
+					return startPos.SqDistance2D(a) < startPos.SqDistance2D(b);
+				});
+		patrolPos = urgentPositions[rand() % count];
+	}
+
+	const float pathRange = DEFAULT_SLACK * 4;
+	CPathFinder* pathfinder = circuit->GetPathfinder();
+	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
+			leader, circuit->GetThreatMap(), frame,
+			startPos, patrolPos, pathRange);
+	pathQueries[leader] = query;
+	query->HoldTask(this);
+
+	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
+		if (this->IsQueryAlive(query)) {
+			this->ApplyBasePos(static_cast<const CQueryPathSingle*>(query));
+		}
+	});
+}
+
 void CDefendTask::ApplyBasePos(const CQueryPathSingle* query)
 {
 	pPath = query->GetPathInfo();
@@ -400,6 +474,7 @@ void CDefendTask::ApplyBasePos(const CQueryPathSingle* query)
 void CDefendTask::Fallback()
 {
 	// should never happen
+	patrolPos = -RgtVector;  // solo: no route there, pick another cluster next time
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
