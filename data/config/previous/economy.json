@@ -63,6 +63,8 @@
 	// New factory switch interval, in seconds (each new factory resets timer, switch event is also based on eco + caretakers)
 	// switch = random(<min_interval>..<max_interval>)
 	"switch": [800, 900],
+	// Minimum factory count from metal income (see the main economy.json); 0 = off, as the previous default
+	"factory_income": 0,
 
 	"terra": "terraunit",
 	"airpad": "staticrearm",
