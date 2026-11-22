@@ -287,6 +287,7 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		}
 		if (State::REGROUP != state) {
 			regroupFrame = frame;
+			circuit->GetFactoryManager()->AssistNear(unit);  // nano.hand_off: arrived in the nanos' reach, hurt
 		}
 		state = State::REGROUP;
 		lastHavenSqDist = -1.f;

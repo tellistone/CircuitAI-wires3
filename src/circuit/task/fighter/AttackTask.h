@@ -52,7 +52,7 @@ public:
 	// The cover log first: a unit that stood only by cover's licence (NoteCoverLoss)
 	virtual void OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
-	bool IsFleeing(int frame) const { return frame < fleeFrame; }  // running along an escape path
+	virtual bool IsFleeing(int frame) const override { return frame < fleeFrame; }  // running along an escape path
 	// The cover this group lends our other attack groups (quota.attack_ally_cover, CAllyCover): the strength it picks
 	// with (GetPickStrength: lower for a few seconds after an escape) around its leader, out to its fire range past its
 	// units' spread. false: none (fleeing)
@@ -238,9 +238,8 @@ private:
 	// the host for the spot beside it); false: nowhere to stand near its fight and we are close already
 	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, SStrength& inOutStrength) const;
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, float slack);
-	// together: the joint strength for the spot beside the host (nullptr: ours with the reinforce host's)
 	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, float farDist, springai::AIFloat3& outPos,
-			SStrength& outStrength, const SStrength* together = nullptr) const;
+			SStrength& outStrength) const;
 	// quota.protect (CProtect): committed with nothing to fight in reach, walk to the commander's fight
 	void WalkToProtect(int frame, bool isReuse);
 	// How far behind its line's front row our leader may stand (the line's depth; 0 with no line). A route's end is

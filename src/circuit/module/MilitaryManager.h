@@ -519,8 +519,6 @@ public:
 	CAttackBalance* GetAttackBalance() const { return attackBalance.get(); }
 	// quota.protect: one go or no-go for the groups that can reach our commander under a rush (CProtect)
 	CProtect* GetProtect() const { return protect.get(); }
-	// quota.attack_merge.rally seen_sec, in frames: the protect asks for enemy blobs with it, sharing their cache
-	int GetAttackRallySeenFrames() const { return attackRally.cfg.seenFrames; }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }

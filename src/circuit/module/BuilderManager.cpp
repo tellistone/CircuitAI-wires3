@@ -2629,12 +2629,14 @@ bool CBuilderManager::GetCommView(CCircuitUnit* unit, float radius, SCommView& o
 			continue;
 		}
 		out.danger += danger.threat;
+		if (danger.isAir) {
+			out.airDanger += danger.threat;
+		}
 		++out.count;
 		if (sqDist < minSqDist) {
 			minSqDist = sqDist;
 			out.dangerPos = danger.pos;
 			out.dangerRange = danger.range;
-			out.isAir = danger.isAir;
 		}
 	}
 	out.isCornered = IsCommCornered(unit, state);
@@ -2650,8 +2652,8 @@ bool CBuilderManager::IsCommFleeSpot(CCircuitUnit* unit, const AIFloat3& pos)
 
 bool CBuilderManager::GetProtectMeet(CCircuitUnit* unit, AIFloat3& outPos) const
 {
-	// Checked by the protect once a second: strong enough with the commander, reached in time, away from the danger and
-	// a safe flee spot, or the commander stands at it already
+	// Checked by the protect once a second: picked strong enough with the commander, reached in time, away from the
+	// danger and a safe flee spot; kept while it holds 1 / quota.attack_keep_threat of the danger and is reachable
 	if (unit != circuit->GetSetupManager()->GetCommander()) {
 		return false;
 	}
@@ -2934,11 +2936,15 @@ void CBuilderManager::ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat
 		return;
 	}
 	const AIFloat3& goal = retreat->GetFleeGoal();
-	// quota.protect: on to the meeting point while there is one (the protect keeps it safe, or the commander at it)
+	// quota.protect: on to the meeting point while there is one (the protect keeps it). Arrived there with no escape
+	// left: the flee ends, so UpdateCommFlee's next pass builds the emergency defence beside the turrets
 	AIFloat3 meetPos;
 	if (GetProtectMeet(unit, meetPos)) {
 		if (meetPos.SqDistance2D(goal) > SQUARE(DEFAULT_SLACK)) {
 			retreat->Redirect(unit, meetPos);
+		} else if (retreat->IsArrived() && !HasCommEscape(unit, state)) {
+			retreat->EndFlee(unit);
+			LogFlee(unit, "end: cornered at the meeting point", state);
 		}
 		return;
 	}
