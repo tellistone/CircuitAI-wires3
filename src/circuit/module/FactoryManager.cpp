@@ -815,9 +815,26 @@ int CFactoryManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 			taskR->SetTarget(unit);
 			unfinishedUnits[unit] = taskR;
 		}
+		AssistNewUnit(builder);
 	}
 
 	return 0; //signaling: OK
+}
+
+// nano.hand_off: the factory's waiting nanos look for a job the frame it starts a unit, not when their 3 s wait ends.
+// The same look as ever (CreateAssistTask). Idle ones are left to the idle pass: it is due, and a nano's late UnitIdle
+// from its last job would end a job handed to it now
+void CFactoryManager::AssistNewUnit(CCircuitUnit* factory)
+{
+	auto it = std::find_if(factories.begin(), factories.end(), [factory](const SFactory& f) { return f.unit == factory; });
+	if (it == factories.end()) {
+		return;
+	}
+	for (CCircuitUnit* nano : it->nanos) {
+		if (nano->GetTask()->GetType() == IUnitTask::Type::WAIT) {
+			AssignTask(nano, CreateAssistTask(nano));
+		}
+	}
 }
 
 int CFactoryManager::UnitFinished(CCircuitUnit* unit)

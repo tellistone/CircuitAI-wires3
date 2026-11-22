@@ -7,6 +7,12 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Nano towers start on a factory's new unit the moment it appears** (`nano.hand_off`). Before, a nano whose
+  repair ended with the last unit went idle, looked again 20+ frames later, found the factory's next unit not started
+  yet (the factory goes through the same idle pass) and waited 3 s, so each new unit could go about 3 s without
+  assist. Now, when a factory starts a unit, its waiting nanos look again at once (`CFactoryManager::AssistNewUnit`),
+  with the same choice as their periodic look (`CreateAssistTask`). Busy nanos keep their job.
+
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) no longer sit in the base when
   there is no heavy to shoot.**
   - Before, with no heavy in radar or LOS, or no covered firing spot by one, they held wherever they stood while it
