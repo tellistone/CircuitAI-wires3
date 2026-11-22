@@ -157,7 +157,7 @@
 	// and so does any job when the current one is cut off. A share of 0 disables that switch. Only a builder between
 	// jobs searches for reclaim.
 	// In the opening (below), with mex_board on, a walking constructor runs no pick: it leaves its job only for danger,
-	// a NOW job or a stall fix other than a mex it could take, or when the board gives its spot to another builder.
+	// a NOW job or a stall fix other than a mex it could take, or when its spot fails the board's test for 3 s.
 	// opening: in the opening, a HIGH mex job weighs <mex_weight> instead of weight.high (an energy stall still ranks it
 	//   as normal), reclaim of less than <reclaim_metal> metal ranks as normal, and a constructor with nothing to do
 	//   patrols <patrol_sec> seconds (else 20) before it looks again. mex_weight = weight.high, reclaim_metal 0 and
@@ -173,26 +173,26 @@
 		"chain": true
 	},
 
-	// Mex board, in the opening (false = off): builders are matched to mex spots by when each would get there, instead
-	// of mex jobs being made one at a time near whichever builder picks. Each builder holds one spot, the one it walks
-	// to, or while it builds something else its next. Its arrival is the time left on its job (and on the energy the
-	// mex chain queues after a mex) plus the walk from that job's site, scored as mex_front scores clusters (comm_bias
-	// for the commander, which never takes a spot another builder reaches sooner); lowest first. As in the mex search,
-	// only spots in the mex_front "clusters" nearest clusters (and the one it holds) count. A held spot goes to
-	// another builder only if it gets there <min_gain_sec> sooner, and a builder leaves its spot for another only if
-	// that scores <min_gain_sec> better; one walking to its spot within builder_jobs.commit_sec of it keeps it, and one
-	// fleeing keeps it for <hold_sec>. A job is made only for a matched builder, and no other builder takes it. Only
-	// spots the builder would take itself (reach, flee zones, threat, a hiding commander's range), and in team games
-	// not nearer an ally's base or factory than ours. A spot whose job failed (unreachable, the build failed) waits
-	// 30 s for that builder. Matching runs once a second, and at once when a builder needs a spot. The opening log
-	// counts the spots a walking builder lost to another ("board").
+	// Mex board, in the opening (false = off): builders are matched to mex spots by when each would get there, instead of
+	// mex jobs being made one at a time near whichever builder picks. Each builder holds one spot, the one it walks to, or
+	// while it builds something else its next. Its arrival is the time left on its job (and on the energy the mex chain
+	// queues after a mex) plus the walk from that job's site, scored as mex_front scores clusters (comm_bias for the
+	// commander, which never takes a spot another builder reaches sooner); lowest first. As in the mex search, only spots
+	// in the mex_front "clusters" nearest clusters (and the one it holds) count. One walking to its spot keeps it until
+	// the spot has failed the test below for 3 s, and one fleeing keeps it for <hold_sec>. A next spot (nobody walks to it
+	// yet) goes to another builder only if it gets there <min_gain_sec> sooner, and a builder leaves its next spot for
+	// another only if that scores <min_gain_sec> better. A job is made only for a matched builder, and no other builder
+	// takes it. Only spots the builder would take itself (reach, flee zones, threat, a hiding commander's range), and in
+	// team games not nearer an ally's base or factory than ours. A spot whose job failed (unreachable, the build failed)
+	// waits 30 s for that builder. Matching runs once a second, and at once when a builder needs a spot. The opening log
+	// counts the walks the board ended ("board"), and their next spots as forward or back.
 	"mex_board": {"min_gain_sec": 3, "hold_sec": 20},
 
 	// The opening, which some rules read (buildpower_spots, behaviour.json guard.summon.opening_share and
 	// choke.radar.opening_share): until "time" seconds (or a [[<map size>, <seconds>], ...] curve, as mex_escort), or 20 s
 	// after no open mex spot is left that a builder could take; time 0 = no opening. log: OPENING lines in infolog once
 	// a minute until "time", per builder (seconds idle, walking, building and fleeing, job switches away from our base
-	// and back toward it, spots the mex board moved, mexes, jumps, escorts and their wait) and for the team. While the
+	// and back toward it, walks the mex board ended, mexes, jumps, escorts and their wait) and for the team. While the
 	// mex board holds a spot the opening goes on
 	"opening": {"time": 300, "log": true},
 

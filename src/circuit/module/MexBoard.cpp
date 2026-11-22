@@ -30,6 +30,8 @@ namespace circuit {
 using namespace springai;
 
 static constexpr int SKIP_FRAMES = FRAMES_PER_SEC * 30;  // a spot whose job failed for a builder waits this long for it
+static constexpr int FAIL_FRAMES = FRAMES_PER_SEC * 3;  // a walker keeps its spot this long after it fails the test
+static constexpr float INF = std::numeric_limits<float>::max();
 
 CMexBoard::CMexBoard(CCircuitAI* circuit)
 		: circuit(circuit)
@@ -191,11 +193,8 @@ bool CMexBoard::GetStart(CCircuitUnit* unit, const SHold* hold, AIFloat3& outFro
 	const float progress = (target != nullptr) ? target->GetUnit()->GetBuildProgress() : 0.f;
 	outBusy += taskB->GetCost() * (1.f - progress) / std::max(taskB->GetBuildPower(), buildSpeed);
 	if (taskB->GetBuildType() == IBuilderTask::BuildType::MEX) {
-		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		const SBuildChain* chain = circuit->GetBuilderManager()->GetBuildChain(taskB->GetBuildType(), taskB->GetBuildDef());
-		float make;
-		const CCircuitDef* energyDef = ((chain != nullptr) && (chain->energy > economyMgr->GetAvgEnergyIncome()))
-				? economyMgr->GetLowEnergy(outFrom, make, true) : nullptr;
+		const CCircuitDef* energyDef = circuit->GetEconomyManager()->GetChainEnergy(chain, outFrom);
 		outBusy += (energyDef != nullptr) ? energyDef->GetCostM() / buildSpeed : 0.f;
 	}
 	return true;
@@ -225,6 +224,26 @@ std::vector<AIFloat3> CMexBoard::GetAllyAnchors() const
 	return anchors;
 }
 
+// One match's working set, by spot id
+struct CMexBoard::SMatch {
+	struct SBuilder {
+		CCircuitUnit* unit;
+		AIFloat3 from;  // where its walk to a spot would start
+		float busy;  // seconds before it can
+		int hold;  // the spot it holds, -1 = none
+		float holdArrival, holdKey;  // at that spot, INF if it no longer takes it
+		bool isFixed;  // keeps its spot: walking to it, or fleeing
+	};
+	struct SPair {
+		int b, spot;  // builder, spot
+		float arrival, key;
+	};
+	std::vector<bool> isSpot;  // one some builder could take, or one held
+	std::vector<SBuilder> builders;
+	std::vector<SPair> pairs;
+	std::vector<int> takenBy;  // builder, -1 = none
+};
+
 void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 {
 	const int frame = circuit->GetLastFrame();
@@ -233,130 +252,116 @@ void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 	skips.erase(std::remove_if(skips.begin(), skips.end(), [frame](const SSkip& s) { return s.until <= frame; }),
 			skips.end());
 
+	SMatch m;
+	MarkSpots(m.isSpot);
+	RateBuilders(asker, askerQuery, m);
+	Pick(m);
+	Apply(asker, m);
+}
+
+void CMexBoard::MarkSpots(std::vector<bool>& outIsSpot) const
+{
+	// Open ones some builder could take, and held ones; not nearer an ally's base or factory than our base
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const CMetalData::Metals& metalSpots = circuit->GetMetalManager()->GetSpots();
+	const std::vector<AIFloat3> anchors = GetAllyAnchors();
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	outIsSpot.assign(metalSpots.size(), false);
+	for (int i : economyMgr->GetTestedSpots()) {
+		const AIFloat3& pos = metalSpots[i].position;
+		const float sqOurs = basePos.SqDistance2D(pos);
+		outIsSpot[i] = (economyMgr->IsAllyOpenSpot(i) || IsHeld(i))
+			&& std::none_of(anchors.begin(), anchors.end(), [&pos, sqOurs](const AIFloat3& a) {
+				return a.SqDistance2D(pos) < sqOurs;
+			});
+	}
+}
+
+void CMexBoard::RateBuilders(CCircuitUnit* asker, const CQueryCostMap* askerQuery, SMatch& m)
+{
+	// Each builder, and every spot its own picker would take: the arrival, and the score pairs go by
+	const int frame = circuit->GetLastFrame();
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const CMetalData::Metals& metalSpots = metalMgr->GetSpots();
-	constexpr float INF = std::numeric_limits<float>::max();
-
-	// Spots: open ones some builder could take, and held ones; not nearer an ally's base or factory than our base
-	std::vector<int> spots;
-	std::vector<int> entryOf(metalSpots.size(), -1);
-	auto addSpot = [&spots, &entryOf](int spot) {
-		if (entryOf[spot] < 0) {
-			entryOf[spot] = spots.size();
-			spots.push_back(spot);
-		}
-		return entryOf[spot];
-	};
-	{
-		const std::vector<AIFloat3> anchors = GetAllyAnchors();
-		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-		for (int i : economyMgr->GetTestedSpots()) {
-			const AIFloat3& pos = metalSpots[i].position;
-			const float sqOurs = basePos.SqDistance2D(pos);
-			if ((economyMgr->IsAllyOpenSpot(i) || IsHeld(i))
-				&& std::none_of(anchors.begin(), anchors.end(), [&pos, sqOurs](const AIFloat3& a) {
-					return a.SqDistance2D(pos) < sqOurs;
-				}))
-			{
-				addSpot(i);
-			}
-		}
-	}
-
-	// Builders, and where each would start from. A fixed one keeps its spot: fleeing up to hold_sec, or walking to it
-	// within commit_sec of it
-	struct SBuilder {
-		CCircuitUnit* unit;
-		AIFloat3 from;
-		float busy;  // seconds
-		const CQueryCostMap* query;  // started at from, else nullptr: straight line
-		int hold;  // entry of the spot it holds, -1 = none
-		float holdArrival, holdKey;  // at that spot, INF if it no longer takes it
-		bool isFixed;
-	};
-	std::vector<SBuilder> builders;
+	const CMetalManager::ClusterScore scores[2] = {economyMgr->GetMexScore(false), economyMgr->GetMexScore(true)};
+	std::vector<int> nearSpots;
 	for (CCircuitUnit* unit : builderMgr->GetWorkers()) {
 		SHold* hold = FindHold(unit);
 		const IUnitTask* task = unit->GetTask();
 		const AIFloat3& pos = unit->GetPos(frame);
+		SMatch::SBuilder b = {unit, pos, 0.f, (hold != nullptr) ? hold->spot : -1, INF, INF, false};
 		if (hold != nullptr) {
 			const bool isFlee = (task->GetType() == IUnitTask::Type::RETREAT);
 			hold->fleeFrame = !isFlee ? -1 : (hold->fleeFrame < 0) ? frame : hold->fleeFrame;
-			const float speed = std::max(unit->GetCircuitDef()->GetSpeed(), 1.f);
-			if (isFlee ? (frame - hold->fleeFrame <= holdFrames)
-				: ((task == hold->task)
-					&& (pos.distance2D(hold->task->GetPosition()) <= builderMgr->jobCommitSec * speed)))
-			{
-				builders.push_back({unit, pos, 0.f, nullptr, addSpot(hold->spot), 0.f, 0.f, true});
+			if (task != hold->task) {
+				hold->failFrame = -1;  // counts only while it walks there
+			}
+			if (isFlee && (frame - hold->fleeFrame <= holdFrames)) {
+				b.isFixed = true;
+				m.builders.push_back(b);
 				continue;
 			}
 		}
-		SBuilder b = {unit, pos, 0.f, nullptr, -1, INF, INF, false};
 		if (!GetStart(unit, hold, b.from, b.busy)) {
 			continue;
 		}
-		const int buildDist = std::max<int>(unit->GetCircuitDef()->GetBuildDistance(), pathfinder->GetSquareSize());
+		const std::function<bool (const AIFloat3& pos)> isJobOk = builderMgr->GetMexJobTest(unit);  // sets its threat type
+		if (!isJobOk) {
+			continue;  // a commander off mex jobs
+		}
+		const CCircuitDef* cdef = unit->GetCircuitDef();
+		const ICoreUnit::Id unitId = unit->GetId();
+		CMetalData::PointPredicate isPairOk = [&](int spot) {
+			const AIFloat3& spotPos = metalSpots[spot].position;
+			return m.isSpot[spot]
+				&& std::none_of(skips.begin(), skips.end(), [unitId, spot](const SSkip& s) {
+					return (s.unitId == unitId) && (s.spot == spot);
+				})
+				&& terrainMgr->CanReachAtSafe(unit, spotPos, cdef->GetBuildDistance()) && isJobOk(spotPos);
+		};
+		// A walker keeps its spot until that has failed the test for FAIL_FRAMES (a raider passing it doesn't turn it),
+		// so min_gain only moves next spots, which nobody walks to
+		if ((hold != nullptr) && (task == hold->task)) {
+			hold->failFrame = isPairOk(hold->spot) ? -1 : (hold->failFrame < 0) ? frame : hold->failFrame;
+			if ((hold->failFrame < 0) || (frame - hold->failFrame < FAIL_FRAMES)) {
+				b.isFixed = true;
+				m.builders.push_back(b);
+				continue;
+			}
+		}
+
+		const float speed = std::max(cdef->GetSpeed(), 1.f);
+		const float costSpeed = speed / pathfinder->GetSquareSize() * COST_BASE;
+		const int buildDist = std::max<int>(cdef->GetBuildDistance(), pathfinder->GetSquareSize());
+		// Its cost map, if that started where its walk would (else a straight line)
 		const auto it = builderMgr->costQueries.find(unit);
 		const IPathQuery* query = ((unit == asker) && (askerQuery != nullptr)) ? askerQuery
 				: ((it != builderMgr->costQueries.end()) && (it->second->GetState() == IPathQuery::State::READY))
 					? it->second.get() : nullptr;
 		const CQueryCostMap* costMap = static_cast<const CQueryCostMap*>(query);
-		b.query = ((costMap != nullptr) && (costMap->GetStartPos().SqDistance2D(b.from) < SQUARE(buildDist)))
-				? costMap : nullptr;
-		b.hold = (hold != nullptr) ? entryOf[hold->spot] : -1;
-		builders.push_back(b);
-	}
-
-	// Every builder and spot its own picker would take: arrival, and the score pairs go by
-	struct SPair {
-		int b, s;  // builder, spot entry
-		float arrival, key;
-	};
-	std::vector<SPair> pairs;
-	const CMetalManager::ClusterScore scores[2] = {economyMgr->GetMexScore(false), economyMgr->GetMexScore(true)};
-	std::vector<int> nearSpots;
-	for (int bi = 0; bi < (int)builders.size(); ++bi) {
-		SBuilder& b = builders[bi];
-		if (b.isFixed) {
-			continue;
+		if ((costMap != nullptr) && (costMap->GetStartPos().SqDistance2D(b.from) >= SQUARE(buildDist))) {
+			costMap = nullptr;
 		}
-		const std::function<bool (const AIFloat3& pos)> isJobOk = builderMgr->GetMexJobTest(b.unit);  // sets its threat type
-		if (!isJobOk) {
-			continue;  // a commander off mex jobs
-		}
-		const CCircuitDef* cdef = b.unit->GetCircuitDef();
-		const float speed = std::max(cdef->GetSpeed(), 1.f);
-		const float costSpeed = speed / pathfinder->GetSquareSize() * COST_BASE;
-		const int buildDist = std::max<int>(cdef->GetBuildDistance(), pathfinder->GetSquareSize());
-		const CMetalManager::ClusterScore& score = scores[cdef->IsRoleComm() ? 1 : 0];
-		const ICoreUnit::Id unitId = b.unit->GetId();
-		CMetalData::PointPredicate isPairOk = [&](int spot) {
-			const AIFloat3& pos = metalSpots[spot].position;
-			return (entryOf[spot] >= 0)
-				&& std::none_of(skips.begin(), skips.end(), [unitId, spot](const SSkip& s) {
-					return (s.unitId == unitId) && (s.spot == spot);
-				})
-				&& terrainMgr->CanReachAtSafe(b.unit, pos, cdef->GetBuildDistance()) && isJobOk(pos);
-		};
 		// As the mex search: only the mex_front.clusters nearest clusters with such a spot, on its walk around threat
 		// walls (the front lean would pull a builder across the map), and the spot it holds
 		nearSpots.clear();
 		metalMgr->FindNearSpots(b.from, isPairOk, economyMgr->GetMexFrontClusters(), nearSpots);
-		if ((b.hold >= 0) && (std::find(nearSpots.begin(), nearSpots.end(), spots[b.hold]) == nearSpots.end())
-			&& isPairOk(spots[b.hold]))
+		if ((b.hold >= 0) && (std::find(nearSpots.begin(), nearSpots.end(), b.hold) == nearSpots.end())
+			&& isPairOk(b.hold))
 		{
-			nearSpots.push_back(spots[b.hold]);
+			nearSpots.push_back(b.hold);
 		}
+		const CMetalManager::ClusterScore& score = scores[cdef->IsRoleComm() ? 1 : 0];
+		const int bi = m.builders.size();
 		for (int spot : nearSpots) {
-			const int e = entryOf[spot];
-			const AIFloat3& pos = metalSpots[spot].position;
-			float walk = b.from.distance2D(pos) / speed;
-			if ((b.query != nullptr) && (b.from.SqDistance2D(pos) >= SQUARE(buildDist))) {
-				const float cost = b.query->GetCostAt(pos, buildDist);
+			const AIFloat3& spotPos = metalSpots[spot].position;
+			float walk = b.from.distance2D(spotPos) / speed;
+			if ((costMap != nullptr) && (b.from.SqDistance2D(spotPos) >= SQUARE(buildDist))) {
+				const float cost = costMap->GetCostAt(spotPos, buildDist);
 				if (cost < 0.f) {
 					continue;  // buildings block the way
 				}
@@ -365,87 +370,93 @@ void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 			const float arrival = b.busy + walk;
 			const int cluster = metalMgr->GetCluster(spot);
 			const float key = (score && (cluster >= 0)) ? score(cluster, arrival) : arrival;
-			if (e == b.hold) {
+			if (spot == b.hold) {
 				b.holdArrival = arrival;
 				b.holdKey = key;
 			}
-			pairs.push_back({bi, e, arrival, key});
+			m.pairs.push_back({bi, spot, arrival, key});
 		}
+		m.builders.push_back(b);
 	}
-	std::sort(pairs.begin(), pairs.end(), [](const SPair& a, const SPair& b) { return a.key < b.key; });
-	std::vector<std::vector<int>> bySpot(spots.size());  // pair indices
-	for (int i = 0; i < (int)pairs.size(); ++i) {
-		bySpot[pairs[i].s].push_back(i);
-	}
+}
 
+void CMexBoard::Pick(SMatch& m) const
+{
 	// Lowest score first. A spot's holder, while still free, keeps it unless this one gets there min_gain sooner; a
 	// builder, while its own spot is still free, keeps it unless this one scores min_gain better. The second pass takes
 	// what the first left because a holder it waited for went elsewhere
+	const std::vector<SMatch::SBuilder>& builders = m.builders;
+	std::vector<SMatch::SPair>& pairs = m.pairs;
+	std::sort(pairs.begin(), pairs.end(), [](const SMatch::SPair& a, const SMatch::SPair& b) { return a.key < b.key; });
+	std::vector<std::vector<int>> bySpot(m.isSpot.size());  // pair indices
+	for (int i = 0; i < (int)pairs.size(); ++i) {
+		bySpot[pairs[i].spot].push_back(i);
+	}
 	std::vector<int> matchOf(builders.size(), -1);
-	std::vector<int> takenBy(spots.size(), -1);
-	std::vector<int> heldBy(spots.size(), -1);
+	std::vector<int> heldBy(m.isSpot.size(), -1);
+	m.takenBy.assign(m.isSpot.size(), -1);
 	for (int bi = 0; bi < (int)builders.size(); ++bi) {
-		const int e = builders[bi].hold;
-		if (e >= 0) {
-			heldBy[e] = bi;
+		const int spot = builders[bi].hold;
+		if (spot >= 0) {
+			heldBy[spot] = bi;
 			if (builders[bi].isFixed) {
-				matchOf[bi] = e;
-				takenBy[e] = bi;
+				matchOf[bi] = spot;
+				m.takenBy[spot] = bi;
 			}
 		}
 	}
 	for (int pass = 0; pass < 2; ++pass) {
-		for (const SPair& p : pairs) {
-			if ((matchOf[p.b] >= 0) || (takenBy[p.s] >= 0)) {
+		for (const SMatch::SPair& p : pairs) {
+			if ((matchOf[p.b] >= 0) || (m.takenBy[p.spot] >= 0)) {
 				continue;
 			}
-			const SBuilder& b = builders[p.b];
-			const int v = heldBy[p.s];
+			const SMatch::SBuilder& b = builders[p.b];
+			const int v = heldBy[p.spot];
 			if ((v >= 0) && (v != p.b) && (matchOf[v] < 0) && (p.arrival + minGain > builders[v].holdArrival)) {
 				continue;
 			}
-			if ((b.hold >= 0) && (b.hold != p.s) && (takenBy[b.hold] < 0) && (p.key + minGain > b.holdKey)) {
+			if ((b.hold >= 0) && (b.hold != p.spot) && (m.takenBy[b.hold] < 0) && (p.key + minGain > b.holdKey)) {
 				continue;
 			}
 			// The commander's lean orders its own picks; it never takes a spot another free builder reaches sooner (but
 			// keeps its own as any builder does)
-			if (b.unit->GetCircuitDef()->IsRoleComm() && (p.s != b.hold)
-				&& std::any_of(bySpot[p.s].begin(), bySpot[p.s].end(), [&](int i) {
+			if (b.unit->GetCircuitDef()->IsRoleComm() && (p.spot != b.hold)
+				&& std::any_of(bySpot[p.spot].begin(), bySpot[p.spot].end(), [&](int i) {
 					return (pairs[i].b != p.b) && (matchOf[pairs[i].b] < 0) && (pairs[i].arrival < p.arrival);
 				}))
 			{
 				continue;
 			}
-			matchOf[p.b] = p.s;
-			takenBy[p.s] = p.b;
+			matchOf[p.b] = p.spot;
+			m.takenBy[p.spot] = p.b;
 		}
 	}
+}
 
-	// Apply. A spot held before keeps its job, for its new builder if it moved (one walking to it leaves it); one
-	// nobody holds now gives its job up; a newly held one gets a job
+void CMexBoard::Apply(CCircuitUnit* asker, SMatch& m)
+{
+	// A spot held before keeps its job, for its new builder if it moved (one walking to it leaves it); one nobody holds
+	// now gives its job up; a newly held one gets a job
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	std::vector<SHold> kept;
 	std::vector<IBuilderTask*> released;
 	std::vector<CCircuitUnit*> bumped;
 	for (SHold& h : holds) {
-		const int e = entryOf[h.spot];
-		const int bi = (e >= 0) ? takenBy[e] : -1;
-		CCircuitUnit* unit = (bi >= 0) ? builders[bi].unit : nullptr;
+		const int bi = m.takenBy[h.spot];
+		CCircuitUnit* unit = (bi >= 0) ? m.builders[bi].unit : nullptr;
 		if (unit != h.unit) {
 			if (h.unit->GetTask() == h.task) {
 				bumped.push_back(h.unit);
-				CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(h.unit);
-				if ((stats != nullptr) && (unit != nullptr)) {
-					++stats->moves;  // the spot it walked to went to another builder
-				}
 			}
 			if (unit == nullptr) {
 				released.push_back(h.task);
 				continue;
 			}
 			h.unit = unit;
-			h.fleeFrame = -1;
+			h.fleeFrame = h.failFrame = -1;
 		}
-		takenBy[e] = -1;  // has its job
+		m.takenBy[h.spot] = -1;  // has its job
 		kept.push_back(h);
 	}
 	holds.swap(kept);
@@ -455,9 +466,20 @@ void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 	for (IBuilderTask* task : released) {
 		builderMgr->AbortTask(task);  // its spot reopens (CBMexTask::Cancel)
 	}
-	for (int e = 0; e < (int)spots.size(); ++e) {
-		if (takenBy[e] >= 0) {
-			holds.push_back({builders[takenBy[e]].unit, economyMgr->EnqueueMex(spots[e]), spots[e], -1});
+	for (int spot = 0; spot < (int)m.takenBy.size(); ++spot) {
+		if (m.takenBy[spot] >= 0) {
+			holds.push_back({m.builders[m.takenBy[spot]].unit, economyMgr->EnqueueMex(spot), spot, -1, -1});
+		}
+	}
+	// economy.opening.log: a walk the board ended, and which way its builder's next spot lies
+	for (CCircuitUnit* unit : bumped) {
+		CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(unit);
+		const SHold* next = FindHold(unit);
+		if (stats != nullptr) {
+			++stats->moves;
+			if (next != nullptr) {
+				++(builderMgr->IsJobForward(unit, next->task->GetPosition()) ? stats->forward : stats->back);
+			}
 		}
 	}
 	// Between jobs with a spot, or off the one it walked to: picks on the next update (the asker picks now)

@@ -52,22 +52,22 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   before). In the opening the budget grows at `opening_share`, and a radar is a HIGH job that waits for a builder and
   ranks by walk like a mex, taken from the planner only when the builder has nothing else to do. In the opening its
   guard tower is queued only if the turret account can pay for it.
-- **A mex board matches builders to spots in the opening** (`economy.mex_board`, new; `false` = off). Mex jobs are
-  no longer made one at a time near whichever builder picks: each builder is matched to the spot it would reach
-  first, holds that one spot (the one it walks to, or while it builds something else its next), and no other builder
-  takes its job. Arrival counts the job left (and the energy the mex chain queues after a mex) plus the walk from
-  that job's site on its cost map, scored as `mex_front` scores clusters, and as in the mex search only spots in the
-  `mex_front.clusters` nearest clusters (its walk around threat walls) count; the commander uses `comm_bias` but
-  never takes a spot another builder reaches sooner. A held spot moves to another builder only if it gets there
-  `min_gain_sec` (3) sooner, a builder leaves its spot for another only if that scores 3 s better, one within
-  `commit_sec` of its spot keeps it, and a fleeing one keeps it for `hold_sec` (20). Only spots the builder's own pick
-  would take, and in team games not nearer an ally's base or factory than ours; a spot whose job failed waits 30 s
-  for that builder. A job is made only when a builder is matched, so there is no job cap and nothing is claimed
-  before someone heads there. Matching runs once a second, and at once (at most once a frame) when a builder needs a
-  spot, starts its build, loses its job or dies. A lost mex's spot just reopens for the board, with no 20 s rebuild
-  job. When the opening ends,
-  builders keep the job they walk to and the next jobs nobody walks to are dropped. The `OPENING` line counts spots a
-  walking builder lost to another (`board`), and the opening goes on while the board holds a spot.
+- **A mex board matches builders to spots in the opening** (`economy.mex_board`, new; `false` = off). Mex jobs are no
+  longer made one at a time near whichever builder picks: each builder is matched to the spot it would reach first,
+  holds that one spot (the one it walks to, or while it builds something else its next), and no other builder takes
+  its job. Arrival counts the job left (and the energy the mex chain queues after a mex) plus the walk from that job's
+  site on its cost map, scored as `mex_front` scores clusters, and as in the mex search only spots in the
+  `mex_front.clusters` nearest clusters (its walk around threat walls) count; the commander uses `comm_bias` but never
+  takes a spot another builder reaches sooner. A builder walking to its spot keeps it until the spot has failed its
+  test for 3 s (a raider passing it doesn't turn the builder), and a fleeing one keeps it for `hold_sec` (20); a next
+  spot moves to another builder only if it gets there `min_gain_sec` (3) sooner, and a builder leaves its next spot
+  for another only if that scores 3 s better. Only spots the builder's own pick would take, and in team games not
+  nearer an ally's base or factory than ours; a spot whose job failed waits 30 s for that builder. A job is made only
+  when a builder is matched, so there is no job cap and nothing is claimed before someone heads there. Matching runs
+  once a second, and at once (at most once a frame) when a builder needs a spot, starts its build, loses its job or
+  dies. A lost mex's spot just reopens for the board, with no 20 s rebuild job. When the opening ends, builders keep
+  the job they walk to and the next jobs nobody walks to are dropped. The `OPENING` line counts walks the board ended
+  (`board`) and their next spots as forward or back, and the opening goes on while the board holds a spot.
 - **Walking builders switch jobs by direction** (`economy.builder_jobs`: `switch` now 0.5 and only for turning back,
   `switch_forward` 0.8, `switch_other` 0.5, `commit_sec` 4, all new but `switch`). The walk is measured on the
   builder's cost map, not in a straight line. Forward (no nearer our base than it is now, give or take its build
