@@ -35,6 +35,7 @@ public:
 	virtual int UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder) override;
 	virtual int UnitFinished(CCircuitUnit* unit) override;
 	virtual int UnitIdle(CCircuitUnit* unit) override;
+	virtual int UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 	virtual int UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
 	CRecruitTask* EnqueueTask(CRecruitTask::Priority priority,
@@ -85,6 +86,9 @@ public:
 	// one at a time, queued as RecruitType::AA, which the pause lets through
 	CRecruitTask* UpdateEscalationAA(CCircuitUnit* unit);
 	bool IsHighPriority(CAllyUnit* unit) const;
+	// nano.hand_off: there may be work for nanos at unit (a new frame, a hit, a retreat arriving): the free ones in reach
+	// look for a job now, not when their 3 s wait or the idle pass ends
+	void AssistNear(CCircuitUnit* unit);
 
 	CCircuitDef* GetFactoryToBuild(springai::AIFloat3 position = -RgtVector,
 								   bool isStart = false, bool isReset = false);
@@ -100,7 +104,6 @@ private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
 	IUnitTask* CreateFactoryTask(CCircuitUnit* unit);
 	IUnitTask* CreateAssistTask(CCircuitUnit* unit);
-	void AssistNewUnit(CCircuitUnit* unit);
 
 	void Watchdog();
 	void UpdateIdle();

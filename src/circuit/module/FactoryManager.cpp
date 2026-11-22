@@ -823,14 +823,15 @@ int CFactoryManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 			unfinishedUnits[unit] = taskR;
 		}
 	}
-	AssistNewUnit(unit);  // after SetTarget: IsHighPriority reads unfinishedUnits
+	AssistNear(unit);  // after SetTarget: IsHighPriority reads unfinishedUnits
 
 	return 0; //signaling: OK
 }
 
-// nano.hand_off: waiting and idle nanos in reach of a frame look for a job the frame it is started, by a factory or a
-// constructor, not when their 3 s wait or the idle pass ends. The same look as ever (CreateAssistTask)
-void CFactoryManager::AssistNewUnit(CCircuitUnit* unit)
+// The same look as ever (CreateAssistTask). A waiting nano that looked in the last ASSIST_RELOOK frames is skipped:
+// hits come many a frame in a fight, and one that found nothing would scan again for each
+static constexpr int ASSIST_RELOOK = FRAMES_PER_SEC / 4;
+void CFactoryManager::AssistNear(CCircuitUnit* unit)
 {
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
@@ -838,9 +839,10 @@ void CFactoryManager::AssistNewUnit(CCircuitUnit* unit)
 	for (auto& kv : assists) {
 		CCircuitUnit* nano = kv.first;
 		const IUnitTask::Type type = nano->GetTask()->GetType();
-		if (((type == IUnitTask::Type::WAIT) || (type == IUnitTask::Type::IDLE))
-			&& (nano->GetPos(frame).SqDistance2D(pos) <= SQUARE(nano->GetCircuitDef()->GetBuildDistance() + radius)))
-		{
+		const bool isFree = (type == IUnitTask::Type::IDLE)
+				|| ((type == IUnitTask::Type::WAIT) && (frame >= nano->GetTaskFrame() + ASSIST_RELOOK));
+		const float reach = nano->GetCircuitDef()->GetBuildDistance() + radius;
+		if (isFree && (nano->GetPos(frame).SqDistance2D(pos) <= SQUARE(reach))) {
 			AssignTask(nano, CreateAssistTask(nano));
 		}
 	}
@@ -880,6 +882,12 @@ int CFactoryManager::UnitIdle(CCircuitUnit* unit)
 		search->second(unit);
 	}
 
+	return 0; //signaling: OK
+}
+
+int CFactoryManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
+{
+	AssistNear(unit);  // a repair job for the nanos in reach
 	return 0; //signaling: OK
 }
 
@@ -1707,8 +1715,8 @@ IUnitTask* CFactoryManager::CreateAssistTask(CCircuitUnit* unit)
 	auto units = circuit->GetCallback()->GetFriendlyUnitsIn(pos, radius * 0.9f);
 	for (Unit* u : units) {
 		CAllyUnit* candUnit = circuit->GetFriendlyUnit(u);
-		if ((candUnit == nullptr) || builderMgr->IsReclaimed(candUnit)) {
-			continue;
+		if ((candUnit == nullptr) || (candUnit == unit) || builderMgr->IsReclaimed(candUnit)) {
+			continue;  // a hit nano can't repair itself
 		}
 		if (u->IsBeingBuilt()) {
 			CCircuitDef* cdef = candUnit->GetCircuitDef();
