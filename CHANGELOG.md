@@ -7,6 +7,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
+  radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped
+  at the edge, below a hill or behind a ridge and couldn't fire. Now (a) counts within `plant.reach` (new, 0.9) x the
+  range, and for a Cannon the engine's height-adjusted range on a clear low arc (`ballistics::IsShotClear`, as static
+  guns check), so it walks on into range. Planted for (a) only with its weapon standing ready for `plant.idle_sec`
+  (new, 8 s), it isn't hitting: (a) is ignored that long, so its task can move it. (b) counted a threat while on
+  radar and for `keep_sec` after it left radar, at its old spot; now a threat counts in LOS, or on radar and in LOS
+  within `plant.keep_sec` (now 20 s: a recloaked Phantom stays a radar dot through its 17 s reload), and a ghost
+  doesn't. Also: a planted unit claims no firing spot it won't walk to, set-target is sent again after each new order
+  from its task, a unit the player took keeps its own set-target, and the job only runs with a type that has `plant`.
+
 - **Builders go from one job straight to the next** (`economy.builder_jobs.chain`, new, true). A builder whose job
   ends picks its next one in the same frame, not on the idle pass (20 frames later, one builder at a time), and so
   does a new builder the frame it is finished. The pick uses a cost map started where it built, not where it last

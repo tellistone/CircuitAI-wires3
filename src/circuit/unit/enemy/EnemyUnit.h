@@ -118,6 +118,12 @@ public:
 	bool IsKnown(int frame) const { return (knownFrame != -1) && (knownFrame != frame); }
 
 	void SetLastSeen(int frame) { lastSeen = frame; }
+	void SetLastLos(int frame) { lastLos = frame; }  // the frame it left LOS
+	// In LOS, or in radar and in LOS less than frames ago (a recloaked Phantom: radar, not LOS). A blip never seen
+	// lately and a ghost out of both don't count
+	bool IsSeenInLos(int frame, int frames) const {
+		return IsInLOS() || (IsInRadar() && (lastLos >= 0) && (frame - lastLos < frames));
+	}
 	int GetLastSeen() const { return lastSeen; }
 	// In radar or LOS, or out of both for less than frames (lastSeen: the frame it left radar): still there, as far
 	// as we can tell. A short gap (radar edge, a jammer) doesn't count as gone
@@ -144,6 +150,7 @@ public:
 	void SetThreat(float t) { data.threat = t; }
 	float GetThreat() const { return data.threat; }
 	float GetCountWeight() const { return data.GetCountWeight(); }
+	bool IsCounted() const { return data.IsCounted(); }  // can fight: known type, threat, not built/paralysed/disarmed
 	float GetRaidCountWeight() const { return data.GetRaidCountWeight(); }
 
 	void SetRange(CCircuitDef::ThreatType t, int r) { data.SetRange(t, r); }
@@ -172,6 +179,7 @@ private:
 
 	int knownFrame;
 	int lastSeen;
+	int lastLos;  // the frame it last left LOS; -1 = never
 
 	springai::Weapon* shield;
 
@@ -225,6 +233,7 @@ public:
 
 	float GetHealth() const { return data->GetHealth(); }
 	bool IsBeingBuilt() const { return data->IsBeingBuilt(); }
+	bool IsCounted() const { return data->IsCounted(); }  // can fight (CEnemyUnit::IsCounted)
 	bool IsParalyzed() const { return data->IsParalyzed(); }
 	bool IsDisarmed() const { return data->IsDisarmed(); }
 

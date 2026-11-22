@@ -156,6 +156,7 @@ bool CMapManager::EnemyEnterLOS(CEnemyUnit* enemy)
 void CMapManager::EnemyLeaveLOS(CEnemyUnit* enemy)
 {
 	enemy->ClearInLOS();
+	enemy->SetLastLos(circuit->GetLastFrame());
 }
 
 void CMapManager::EnemyEnterRadar(CEnemyUnit* enemy)

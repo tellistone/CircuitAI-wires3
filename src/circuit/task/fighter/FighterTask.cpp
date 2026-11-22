@@ -423,11 +423,7 @@ bool IFighterTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 
 float IFighterTask::GetFireRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const
 {
-	const AIFloat3& tPos = enemy->GetPos();
-	CCircuitDef* edef = enemy->GetCircuitDef();
-	const CCircuitDef::RangeType rt = ((edef != nullptr) && edef->IsAbleToFly()) ? CCircuitDef::RangeType::AIR
-			: (tPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-	return unit->GetCircuitDef()->GetMaxRange(rt);
+	return unit->GetCircuitDef()->GetMaxRange(CCircuitDef::GetRangeType(enemy->GetCircuitDef(), enemy->GetPos()));
 }
 
 float IFighterTask::GetSpotRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const
@@ -626,6 +622,10 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& tPos = enemy->GetPos();
 	const AIFloat3& uPos = unit->GetPos(circuit->GetLastFrame());
+	if (unit->IsPlanted()) {
+		outPos = uPos;  // "plant": it stands where it is (its orders become set-target), claiming no spot it won't use
+		return FireSpot::SPOT;
+	}
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const float strength = std::max(claims[self].power, THREAT_MIN);
 	const float wThreat = circuit->GetMilitaryManager()->GetAttackSpotThreat();

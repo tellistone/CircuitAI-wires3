@@ -72,7 +72,6 @@ using namespace springai;
 
 #define RESPONSE_HOLD		3  // UpdateResponseGates samples (2 s apart) a gate change or an unlock must hold
 #define POOL_COPIES			8  // QueueTowers: most walks of a pooled list
-#define PLANT_RADIUS_MAX	128.f  // plant (a): the query reaches this far past our range, for the enemy's radius
 #define SPOT_GIVE_UP		(FRAMES_PER_SEC * 600)  // choke.spot.enable: two failures this close give a type up this long
 
 CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
@@ -1143,8 +1142,10 @@ void CMilitaryManager::ReadConfig()
 	drownedFrames = (drownedTime < 0.f) ? -1 : int(drownedTime * FRAMES_PER_SEC);
 
 	const Json::Value& plantJson = root["plant"];
-	plantCfg.keepFrames = int(std::max(0.f, plantJson.get("keep_sec", 10.f).asFloat()) * FRAMES_PER_SEC);
+	plantCfg.reach = std::min(std::max(plantJson.get("reach", 0.9f).asFloat(), 0.1f), 1.f);
+	plantCfg.keepFrames = int(std::max(0.f, plantJson.get("keep_sec", 20.f).asFloat()) * FRAMES_PER_SEC);
 	plantCfg.holdFrames = int(std::max(0.f, plantJson.get("hold_sec", 2.f).asFloat()) * FRAMES_PER_SEC);
+	plantCfg.idleFrames = int(std::max(1.f, plantJson.get("idle_sec", 8.f).asFloat()) * FRAMES_PER_SEC);
 	for (const Json::Value& name : plantJson["threats"]) {
 		CCircuitDef* cdef = circuit->GetCircuitDef(name.asCString());
 		if (cdef == nullptr) {
@@ -1435,7 +1436,11 @@ void CMilitaryManager::Init()
 		if (drownedFrames >= 0) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateDrowned, this), FRAMES_PER_SEC, offset + 2);
 		}
-		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdatePlant, this), 8, offset + 1);
+		// "plant": only with a type that has the attribute (attributes are read by now)
+		auto& allDefs = circuit->GetCircuitDefs();
+		if (std::any_of(allDefs.begin(), allDefs.end(), [](const CCircuitDef& d) { return d.IsAttrPlant(); })) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdatePlant, this), 8, offset + 1);
+		}
 		if (isResponseGates) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateResponseGates, this), FRAMES_PER_SEC * 2, offset + 3);
 		}
@@ -4875,127 +4880,155 @@ void CMilitaryManager::UpdateResign()
 }
 
 /*
+ * "plant" attribute (per unit, behaviour.json; Crabe): the unit never moves while
+ *   a) its target or an armed enemy (IsCounted) in LOS that it can hit (its target category) is within reach: for a
+ *      Cannon the engine's height-adjusted range on a clear low arc (ballistics::IsShotClear, as static guns check),
+ *      else its flat range; either x "plant".reach, so it walks on into range instead of stopping at the edge. A
+ *      planted unit whose weapon stands ready for "plant".idle_sec with only (a) holding isn't hitting: (a) is muted
+ *      that long, so its task can move it, or
+ *   b) a "plant".threats enemy that can fight, in LOS or on radar and in LOS within "plant".keep_sec (a recloaked
+ *      Phantom shows on radar), has the unit within its weapon range. A blip never seen lately and a ghost don't count.
+ * Planting stops the unit and sets hold position; while planted CCircuitUnit drops every move, fight, jump, gather
+ * and orbit order (retreat included) and an attack becomes ZK's set-target (IsPlantHeld), and squads don't release
+ * it as stuck. It unplants "plant".hold_sec after the reason last held: the type's move state comes back, the
+ * set-target is cancelled and its task orders it again at once.
+ */
+void CMilitaryManager::UpdatePlant()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	const int frame = circuit->GetLastFrame();
+	ReadPlantThreats(frame);
+	for (CCircuitUnit* unit : army) {
+		if (!unit->GetCircuitDef()->IsAttrPlant()) {
+			continue;
+		}
+		CCircuitUnit::SPlant& plant = unit->GetPlant();
+		const bool isPlanted = unit->IsPlanted();
+		const bool isPlayer = (unit->GetTask() == nullptr) || (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER);
+		const PlantReason reason = isPlayer ? PlantReason::NONE : GetPlantReason(unit, frame);
+
+		// Idle watchdog: planted for a target only, and its weapon stands ready (not firing) for idle_sec
+		if (isPlanted && (reason == PlantReason::TARGET) && unit->IsWeaponReady(frame)) {
+			if (plant.idleFrame < 0) {
+				plant.idleFrame = frame;
+			} else if (frame - plant.idleFrame >= plantCfg.idleFrames) {
+				plant.muteFrame = frame + plantCfg.idleFrames;
+				plant.idleFrame = -1;
+				Unplant(unit, false);
+				continue;
+			}
+		} else {
+			plant.idleFrame = -1;
+		}
+
+		if (reason != PlantReason::NONE) {
+			plant.frame = frame;  // the last frame the reason held
+			if (!isPlanted) {
+				TRY_UNIT(circuit, unit,
+					unit->GetUnit()->Stop();
+					unit->GetUnit()->SetMoveState(0);  // hold position: no chasing while idle
+				)
+				unit->ClearTarget();  // its task orders it again: an attack becomes set-target now
+				unit->ForceUpdate(frame);
+			}
+		} else if (isPlanted && (isPlayer || (frame - plant.frame >= plantCfg.holdFrames))) {
+			Unplant(unit, isPlayer);
+		}
+	}
+}
+
+void CMilitaryManager::Unplant(CCircuitUnit* unit, bool isPlayer)
+{
+	unit->GetPlant().frame = -1;
+	TRY_UNIT(circuit, unit,
+		unit->GetUnit()->SetMoveState(unit->GetCircuitDef()->GetDefaultMoveState());
+		if (!isPlayer) {  // a player's own set-target stays
+			unit->CmdCancelTarget();
+		}
+	)
+	unit->ClearTarget();  // its task orders it again, the same target too
+	unit->ForceUpdate(circuit->GetLastFrame());
+}
+
+void CMilitaryManager::ReadPlantThreats(int frame)
+{
+	plantThreats.clear();
+	for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
+		CEnemyUnit* enemy = kv.second;
+		CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef != nullptr) && (plantCfg.threats.find(edef->GetId()) != plantCfg.threats.end())
+			&& !enemy->IsDead() && !enemy->IsIgnore() && enemy->IsCounted()
+			&& enemy->IsSeenInLos(frame, plantCfg.keepFrames))
+		{
+			plantThreats.push_back(enemy);
+		}
+	}
+}
+
+CMilitaryManager::PlantReason CMilitaryManager::GetPlantReason(CCircuitUnit* unit, int frame)
+{
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	const AIFloat3& pos = unit->GetPos(frame);
+
+	// b) a threat has us in its range
+	const CCircuitDef::RangeType ourRt = CCircuitDef::GetRangeType(cdef, pos);
+	for (CEnemyUnit* enemy : plantThreats) {
+		const float range = enemy->GetCircuitDef()->GetMaxRange(ourRt);
+		if ((range > 0.f) && (pos.SqDistance2D(enemy->GetPos()) <= SQUARE(range))) {
+			return PlantReason::THREAT;
+		}
+	}
+
+	// a) we can hit its target or an armed enemy in LOS from here
+	const float maxRange = cdef->GetMaxRange() * plantCfg.reach;
+	if ((maxRange <= 0.f) || (frame < unit->GetPlant().muteFrame)) {
+		return PlantReason::NONE;
+	}
+	auto it = plantShells.find(cdef->GetId());
+	if (it == plantShells.end()) {
+		ballistics::SShell shell;
+		CPriorityArtyTask::ReadShell(cdef, shell);  // no mount: not a cannon, flat range
+		it = plantShells.emplace(cdef->GetId(), shell).first;
+	}
+	const ballistics::SShell& shell = it->second;
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	auto groundAt = [terrainMgr](float x, float z) {
+		return std::max(terrainMgr->GetHeightAt(x, z), 0.f);  // shells fly over water
+	};
+	const int canTargetCat = cdef->GetTargetCategory();
+	const CEnemyInfo* target = unit->GetTarget();
+	const std::vector<int> enemies = circuit->GetCallback()->GetEnemyUnitIdsIn(pos, maxRange, false);
+	for (int eId : enemies) {
+		CEnemyInfo* enemy = (eId == -1) ? nullptr : circuit->GetEnemyInfo(eId);
+		if ((enemy == nullptr) || !enemy->IsInLOS() || enemy->IsHidden() || (enemy->GetCircuitDef() == nullptr)
+			|| ((enemy->GetCircuitDef()->GetCategory() & canTargetCat) == 0)
+			|| (!enemy->IsCounted() && (enemy != target)))
+		{
+			continue;
+		}
+		const AIFloat3& ePos = enemy->GetPos();
+		const float range = cdef->GetMaxRange(CCircuitDef::GetRangeType(enemy->GetCircuitDef(), ePos)) * plantCfg.reach;
+		if (range <= 0.f) {
+			continue;
+		}
+		const bool isInReach = (shell.isCannon && !enemy->GetCircuitDef()->IsAbleToFly())
+				? ballistics::IsShotClear(pos.x, std::max(pos.y, 0.f) + ballistics::AIM_HEIGHT, pos.z,
+						ePos.x, std::max(ePos.y, 0.f) + ballistics::AIM_HEIGHT, ePos.z, range, shell, groundAt)
+				: (pos.SqDistance2D(ePos) <= SQUARE(range));
+		if (isInReach) {
+			return PlantReason::TARGET;
+		}
+	}
+	return PlantReason::NONE;
+}
+
+/*
  * "drowned" (behaviour.json): a ground unit that ends up in water deeper than its move type allows (knocked or
  * pushed off a shore, dropped there, or the seabed terraformed under it) can't move or do anything useful.
  * After "time" seconds stuck there it self-destructs, so the squads and builder tasks waiting on it are freed.
  * @see CTerrainManager::IsStuckInWater. The order is sent once: CMD_SELFD toggles the countdown, the AI can't
  * read it back, and Zero-K gadgets (capture, unit given, mass self-D blocker) toggle it too.
  */
-/*
- * "plant" attribute (per unit, behaviour.json; Crabe): the unit never moves while
- *   a) an enemy in LOS that it can hit (its target category; air only with an anti-air range) is within its weapon
- *      range for that enemy (air, land or water), and is its target or armed (threat, not being built, paralysed or
- *      disarmed): a mex, a wall or a nanoframe in range doesn't pin it, or
- *   b) a "plant".threats enemy that can fight, seen within "plant".keep_sec (a cloaked Phantom between shots), has
- *      the unit within its weapon range from where it was last seen.
- * Ranges are to the edge of the other unit (its radius added), as the engine measures them.
- * Planting stops the unit and sets hold position, so it fires at what is in range without walking after it; while
- * planted CCircuitUnit drops every move, fight, jump, gather and orbit order (CmdMoveTo, CmdFightTo, Attack, ...),
- * retreat included, and an attack on an enemy becomes ZK's set-target (never moves). Squads don't release a planted
- * unit as stuck. It unplants "plant".hold_sec after the reason last held: the type's move state comes back, the set
- * target is cleared and its task sends its orders again at once.
- */
-void CMilitaryManager::UpdatePlant()
-{
-	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
-	const int frame = circuit->GetLastFrame();
-	bool isThreatsRead = false;
-	for (CCircuitUnit* unit : army) {
-		CCircuitDef* cdef = unit->GetCircuitDef();
-		if (!cdef->IsAttrPlant()) {
-			continue;
-		}
-		if (!isThreatsRead) {  // once per update, only with a plant unit about
-			isThreatsRead = true;
-			plantThreats.clear();
-			for (const auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
-				CEnemyUnit* enemy = kv.second;
-				CCircuitDef* edef = enemy->GetCircuitDef();
-				if ((edef != nullptr) && (plantCfg.threats.find(edef->GetId()) != plantCfg.threats.end())
-					&& !enemy->IsDead() && !enemy->IsIgnore() && enemy->IsRecentlySeen(frame, plantCfg.keepFrames)  // hidden counts: a cloaked one
-					&& (enemy->GetThreat() > 0.f) && !enemy->IsBeingBuilt() && !enemy->IsParalyzed() && !enemy->IsDisarmed())
-				{
-					plantThreats.push_back(enemy);
-				}
-			}
-		}
-		const bool isPlanted = unit->IsPlanted();
-		const bool isPlayer = (unit->GetTask() == nullptr) || (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER);
-		if (!isPlayer && IsPlantReason(unit, frame)) {
-			unit->SetPlantFrame(frame);  // the last frame the reason held
-			if (!isPlanted) {
-				TRY_UNIT(circuit, unit,
-					unit->GetUnit()->Stop();
-					unit->GetUnit()->SetMoveState(0);  // hold position: no chasing while idle
-				)
-				unit->ClearTarget();  // its task orders it again: Attack sets the target (set-target) now
-				unit->ForceUpdate(frame);
-			}
-		} else if (isPlanted && (isPlayer || (frame - unit->GetPlantFrame() >= plantCfg.holdFrames))) {
-			unit->SetPlantFrame(-1);
-			const int defState = cdef->GetDef()->GetMoveState();
-			TRY_UNIT(circuit, unit,
-				unit->GetUnit()->SetMoveState((defState >= 0) ? defState : 1);
-				unit->CmdCancelTarget();
-			)
-			unit->ClearTarget();  // its task orders it again, the same target too
-			unit->ForceUpdate(frame);
-		}
-	}
-}
-
-bool CMilitaryManager::IsPlantReason(CCircuitUnit* unit, int frame)
-{
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	const AIFloat3& pos = unit->GetPos(frame);
-	const float ourRadius = cdef->GetRadius();
-
-	// b) a threat has us in its range: which of its ranges reaches us (as IFighterTask::GetFireRange, other side)
-	const CCircuitDef::RangeType ourRt = cdef->IsAbleToFly() ? CCircuitDef::RangeType::AIR
-			: (pos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-	for (CEnemyUnit* enemy : plantThreats) {
-		const float range = enemy->GetCircuitDef()->GetMaxRange(ourRt) + ourRadius;
-		if ((range > ourRadius) && (pos.SqDistance2D(enemy->GetPos()) <= SQUARE(range))) {
-			return true;
-		}
-	}
-
-	// a) we can hit its target or an armed enemy in LOS from here
-	const float maxRange = cdef->GetMaxRange();
-	if (maxRange <= 0.f) {
-		return false;
-	}
-	const int canTargetCat = cdef->GetTargetCategory();
-	const CEnemyInfo* target = unit->GetTarget();
-	const std::vector<int> enemies = circuit->GetCallback()->GetEnemyUnitIdsIn(pos, maxRange + PLANT_RADIUS_MAX, false);
-	for (int eId : enemies) {
-		if (eId == -1) {
-			continue;
-		}
-		CEnemyInfo* enemy = circuit->GetEnemyInfo(eId);
-		if ((enemy == nullptr) || !enemy->IsInLOS() || enemy->IsHidden()) {
-			continue;
-		}
-		CCircuitDef* edef = enemy->GetCircuitDef();
-		if ((edef == nullptr) || ((edef->GetCategory() & canTargetCat) == 0)) {
-			continue;
-		}
-		const bool isArmed = (enemy->GetThreat() > 0.f) && !enemy->IsBeingBuilt() && !enemy->IsParalyzed()
-				&& !enemy->IsDisarmed();
-		if (!isArmed && (enemy != target)) {
-			continue;
-		}
-		const AIFloat3& ePos = enemy->GetPos();
-		const CCircuitDef::RangeType rt = edef->IsAbleToFly() ? CCircuitDef::RangeType::AIR
-				: (ePos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-		const float range = cdef->GetMaxRange(rt);
-		if ((range > 0.f) && (pos.SqDistance2D(ePos) <= SQUARE(range + enemy->GetData()->GetRadius()))) {
-			return true;
-		}
-	}
-	return false;
-}
-
 void CMilitaryManager::UpdateDrowned()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);

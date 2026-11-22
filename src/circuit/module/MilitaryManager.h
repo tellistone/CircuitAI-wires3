@@ -12,6 +12,7 @@
 #include "module/UnitModule.h"
 #include "setup/DefenceMatrix.h"
 #include "task/fighter/FighterTask.h"
+#include "task/static/ArtyMath.h"
 #include "unit/CircuitDef.h"
 
 #include <algorithm>
@@ -655,7 +656,10 @@ private:
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	void UpdatePlant();  // "plant" attribute: plant (Stop, hold position) and unplant units, every 8 frames
-	bool IsPlantReason(CCircuitUnit* unit, int frame);
+	void Unplant(CCircuitUnit* unit, bool isPlayer);
+	void ReadPlantThreats(int frame);  // plantThreats: the "plant".threats enemies that count now
+	enum class PlantReason: char {NONE, TARGET, THREAT};  // (a) a target in reach, (b) a threat has it in range
+	PlantReason GetPlantReason(CCircuitUnit* unit, int frame);
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
 	void UpdateAllyResponse();
@@ -898,10 +902,13 @@ private:
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	struct SPlantCfg {
 		std::unordered_set<CCircuitDef::Id> threats;  // "plant".threats: enemy types that plant a unit in their range
-		int keepFrames;  // "plant".keep_sec in frames: a threat counts this long after it was last seen
+		float reach;  // "plant".reach: (a) counts within this x its (height-adjusted) range
+		int keepFrames;  // "plant".keep_sec in frames: a threat on radar counts this long after it left LOS
 		int holdFrames;  // "plant".hold_sec in frames: a planted unit stays this long after the reason last held
+		int idleFrames;  // "plant".idle_sec in frames: planted for a target only, weapon ready this long: (a) muted
 	} plantCfg;
 	std::vector<CEnemyUnit*> plantThreats;  // UpdatePlant: the threats that count now
+	std::unordered_map<CCircuitDef::Id, ballistics::SShell> plantShells;  // per plant type: its main weapon's shell
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at

@@ -135,6 +135,8 @@ public:
 	enum FireType: int {HOLD = 0, RETURN = 1, OPEN = 2, _SIZE_};
 
 	static RoleM GetMask(RoleT type) { return CMaskHandler::GetMask(type); }
+	// Which of a weapon's ranges (GetMaxRange) reaches a unit of type cdef (nullptr: unknown, as land) standing at pos
+	static RangeType GetRangeType(const CCircuitDef* cdef, const springai::AIFloat3& pos);
 
 	using RoleName = const CMaskHandler::MaskName;
 	using AttrName = std::map<std::string, AttrType>;
@@ -418,6 +420,7 @@ public:
 	int GetFormationRow() const { return formationRow; }
 
 	float GetRadius();
+	int GetDefaultMoveState() const;  // the def's move state, else 1 (maneuver)
 	float GetHeight();
 	bool IsYTargetable(float elevation, float posY);
 	const springai::AIFloat3& GetMidPosOffset() const { return midPosOffset; }
