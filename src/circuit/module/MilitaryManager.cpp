@@ -2026,7 +2026,7 @@ void CMilitaryManager::MakeDefence(int cluster)
 	MakeDefence(cluster, circuit->GetMetalManager()->GetClusters()[cluster].position);
 }
 
-void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef* sightDef)
+void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef* sightDef, bool isFirstMex)
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	if (terrainMgr->IsZoneAlly(pos)) {
@@ -2070,19 +2070,19 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 	std::vector<CCircuitDef*>& defenders = isWater ? waterDefenders : landDefenders;
 
 	// porcupine.own_clusters (the sweeps skip the rest already). A vent's point is asked only for our geo there,
-	// or a sighting at it: never someone else's
-	if (!closestPoint->isGeo && !IsOurCluster(cluster)) {
+	// or a sighting at it: never someone else's. A first mex job's cluster may have no owner yet
+	if (!closestPoint->isGeo && !IsOurCluster(cluster, isFirstMex)) {
 		return;
 	}
 
-	// Front-line porc
-	bool isPorc = mm->GetMaxIncome() > mm->GetAvgIncome() + 1.f;
+	// Front-line porc. A first mex job books only the preventive roll: porc mode waits for the mex (its chain)
+	bool isPorc = !isFirstMex && (mm->GetMaxIncome() > mm->GetAvgIncome() + 1.f);
 	if (isPorc) {
 		const float income = (mm->GetAvgIncome() + mm->GetMaxIncome()) * 0.5f;
 		int spotId = mm->FindNearestSpot(pos);
 		isPorc = mm->GetSpots()[spotId].income > income;
 	}
-	if (!isPorc) {
+	if (!isPorc && !isFirstMex) {
 		unsigned threatCount = 0;
 		CThreatMap* threatMap = circuit->GetThreatMap();
 		const CMetalData::Clusters& clusters = mm->GetClusters();
@@ -2178,6 +2178,10 @@ void CMilitaryManager::MakeDefence(int cluster, const AIFloat3& pos, CCircuitDef
 		chokeGoal.choke = plan.choke;
 		chokeGoal.innerRegion = plan.innerRegion;
 		QueueTowers(plan.chokePoint, plan.chokeList, plan.chokeCap, isPorc, isSpot ? &chokeGoal : nullptr);
+	}
+
+	if (isFirstMex) {
+		return;  // sensors wait for the mex
 	}
 
 	// Build sensors
@@ -2570,14 +2574,15 @@ void CMilitaryManager::SweepByTraffic()
 	}
 }
 
-bool CMilitaryManager::IsOurCluster(int cluster) const
+bool CMilitaryManager::IsOurCluster(int cluster, bool isFreeOurs) const
 {
 	if (!prevent.isOwnOnly || (circuit->GetAllyTeam()->GetSize() <= 1)) {
 		return true;
 	}
 	CMetalManager* mm = circuit->GetMetalManager();
 	mm->MarkAllyMexes();  // the owner is as of the last mark
-	return mm->GetClusterOwner(cluster) == circuit->GetTeamId();
+	const int owner = mm->GetClusterOwner(cluster);
+	return (owner == circuit->GetTeamId()) || (isFreeOurs && (owner < 0));
 }
 
 float CMilitaryManager::GetBuiltCoverCost(int cluster, bool isWater) const
@@ -3699,7 +3704,7 @@ bool CMilitaryManager::IsSafeGround(const AIFloat3& pos)
 			const CEnemyInfo* enemy = kv.second;
 			const CCircuitDef* edef = enemy->GetCircuitDef();
 			if ((edef != nullptr) && edef->IsMobile() && edef->IsAttacker() && !enemy->IsHidden()
-				&& (edef->GetThreat() >= guard.minThreat) && enemy->IsRecentlySeen(frame, guard.enemyFrames))
+				&& (edef->GetRawThreat() >= guard.minThreat) && enemy->IsRecentlySeen(frame, guard.enemyFrames))
 			{
 				recentEnemies.push_back({enemy->GetPos(), isRegions ? chokeMap->GetRegionAt(enemy->GetPos()) : -1});
 			}

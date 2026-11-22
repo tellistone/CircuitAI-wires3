@@ -168,7 +168,6 @@ void CChokeMap::ReadConfig(const Json::Value& root)
 	config.radarShare = radar.get("share", config.radarShare).asFloat();
 	config.radarSince = std::max(radar.get("since", config.radarSince).asFloat(), 0.f);
 	config.radarOpeningShare = radar.get("opening_share", std::min(config.radarShare, 0.1f)).asFloat();
-	config.isRadarOpeningHigh = (radar.get("opening_priority", "high").asString() != "now");
 	config.radarEnemy = radar.get("enemy", config.radarEnemy).asFloat();
 	config.radarInside = radar.get("inside", config.radarInside).asFloat();
 	config.radarGuard = radar.get("guard", "").asString();

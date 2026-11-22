@@ -65,17 +65,10 @@ public:
 	const std::set<CCircuitUnit*>& GetWorkers() const { return workers; }
 	float GetJobSwitch() const { return jobSwitch; }
 	// economy.builder_jobs.chain: a builder whose job ends takes its next job in the same frame (AssignNext), not on
-	// the idle pass, from a cost map started where it built (StartCostMap), and walks straight while its path runs.
-	// chain_lead: seconds before a build ends, the pick it would make then and its path are worked out ahead
-	// (PrefetchPath); the finish uses that path when it makes the same pick
+	// the idle pass, from a cost map started where it built (StartCostMap)
 	bool IsJobChain() const { return isJobChain; }
-	float GetChainLead() const { return chainLead; }
 	void StartCostMap(CCircuitUnit* unit);
 	bool AssignNext(CCircuitUnit* unit);
-	void PrefetchPath(CCircuitUnit* unit, const springai::AIFloat3& endPos);
-	// The path PrefetchPath worked out for unit to endPos, ready; nullptr if none (a mismatch). Taken once
-	std::shared_ptr<IPathQuery> TakePrefetch(CCircuitUnit* unit, const springai::AIFloat3& endPos);
-	bool HasPrefetch(CCircuitUnit* unit) const { return prefetches.find(unit) != prefetches.end(); }
 	// A builder reached task's site: its update comes on the next frame (UpdateBuild), so the build starts then
 	void OnArrival(IBuilderTask* task);
 	// commander.json jobs of a commander def (looked up once), nullptr for other builders
@@ -596,10 +589,7 @@ private:
 	std::set<IUnitTask*> escortTasks;
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner
 	bool isJobChain;
-	float chainLead;
-	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> prefetches;  // PrefetchPath's
 	std::vector<IBuilderTask*> arrivals;  // OnArrival's: live until UpdateBuild, the only place tasks are deleted
-	unsigned int prefetchCount = 0, prefetchHits = 0;  // opening log
 	std::vector<int> builderLossFrames;  // GetBuilderLosses: the last minute's, oldest first
 	bool IsOpeningLog() const;
 	void UpdateOpeningLog();

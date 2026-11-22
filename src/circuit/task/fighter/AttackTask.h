@@ -473,7 +473,6 @@ private:
 	// Straggler: farther from the leader than GetGroupRadius and the target out of its weapon range.
 	// Gets no firing-spot order (keeps travelling)
 	virtual bool IsOutOfReach(CCircuitUnit* unit, int frame) const override;
-	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
 	// Attack (firing spots), and walk stragglers (IsOutOfReach) to the leader if they have no path
 	void Engage(int frame);
 	// Nothing to go to: hold at the quietest reachable spot within 2x our range (never head home), avoiding the spot

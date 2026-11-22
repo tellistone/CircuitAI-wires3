@@ -1008,6 +1008,13 @@ IBuilderTask* CEconomyManager::UpdateMexTasks(const AIFloat3& position, CCircuit
 	IBuilderTask* task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, mexDef, pos, IBuilderTask::BuildType::MEX, cost, .0f);
 	task->SetBuildPos(pos);
 	SetOpenSpot(index, false);
+	// guard.summon: no escort gate, so builders take undefended clusters at once. The cluster's preventive towers
+	// are booked with its first mex job, not once every spot is queued (the mex chain's rule below 10 m/s)
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const int cluster = metalMgr->GetCluster(index);
+	if (militaryMgr->GetGuardCfg().isSummon && (cluster >= 0) && !militaryMgr->HasDefence(cluster)) {
+		militaryMgr->MakeDefence(cluster, pos, nullptr, true);
+	}
 	return task;
 }
 

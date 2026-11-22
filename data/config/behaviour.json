@@ -212,8 +212,7 @@
 		"guard_radius": 300,  // elmos from the radar the guard tower may stand
 		"share": 0.05,  // share of metal income the radar budget grows by (it starts with one radar, holds two)
 		"since": 90,  // seconds of game time before the first planned radar (its budget starts then)
-		"opening_share": 0.05,  // the share while the opening lasts (economy.opening); missing = min(share, 0.1)
-		"opening_priority": "high",  // a planned radar's job in the opening: "high" ranks by walk like a mex and waits for a builder, its guard tower only if the turret account can pay; "now" = as after the opening
+		"opening_share": 0.05,  // the share while the opening lasts (economy.opening); missing = min(share, 0.1). In the opening a planned radar is also a HIGH job that ranks by walk like a mex and waits for a builder, and its guard tower is queued only if the turret account can pay
 		"heavy": "staticheavyradar",  // long-range radar the planner builds when one sees a lot that is still dark, before a small one; not by a commander; guarded by its build_chain "radar" hub; rebuilt 90 s after a loss; "" = none
 		"heavy_income": 40,  // metal/s of the ally team's income (mex, overdrive, misc) before one is considered
 		"heavy_min_gain": 0.15,  // it must add at least this share of the map's weight to the coverage
@@ -496,17 +495,19 @@
         "max_share": 0.3,  // max share of each role's units guarding at once, per acting main role (0.3 = 30% of raiders and 30% of riots), rounded up so 1 unit of a role may guard; 1.0 = no limit, 0 = none
         "guarded_max_share": 0.3, // as above, but for combat units instead of constructors.
         "damage_exit": true,  // a guard that takes damage is released at once, and its builder gets no guard for threat_cooldown seconds (10 if threat_cooldown is -1). A guard released by damage or threat can't guard any builder for that long
-	// Summoned escorts (builder slots; "summon": false = off, the safe test above instead). A builder's slot opens as soon
-	// as the builder or its job is off safe ground, and its builder never waits for a guard (economy.mex_escort is then
-	// unused). Safe ground: no enemy whose type's threat is at least min_threat seen within enemy_sec in its choke map
-	// region or within enemy_radius elmos, and the region is ours (held ground, our side or our half), not the enemy's
-	// nor contested; before the choke map is ready, our half with no enemy influence. The guard leaves after safe_time
-	// on safe ground with the job there too. The pull takes the unit that gets there first by straight line, one
-	// slower than the builder only within 600 elmos, a scout while another scouts on, and with from_groups one unit
-	// of an attack group that isn't fighting and keeps quota.attack without it. opening_share: max_share while the
-	// opening lasts (economy.opening). While its guard is with it, a builder's flee takes escorted_ally_threat
-	// instead of retreat.builder_flee's ally threat. Builder flee also ignores enemies under min_threat. A slot
-	// whose guard died takes the next one 10 s later at the soonest
+	// Summoned escorts (builder slots; "summon": false = off, the safe test above alone). A builder's slot opens as soon
+	// as the builder or its job is neither on safe ground nor safe by the test above (our army's bubble), and its
+	// builder never waits for a guard (economy.mex_escort is then unused). Safe ground: no enemy whose type's raw
+	// threat (before thr_mod) is at least min_threat seen within enemy_sec in its choke map region or within
+	// enemy_radius elmos, and the region is ours (held ground, our side or our half), not the enemy's nor contested;
+	// before the choke map is ready, our half with no enemy influence. The guard leaves after safe_time once both are
+	// safe again. The pull takes the unit that gets there first by straight line, one slower than the builder only
+	// within 600 elmos, and a scout while another scouts on. A raid or attack group gives up a unit only if it is
+	// alone, or with from_groups if the group isn't fighting and keeps quota.raid / quota.attack power without it.
+	// opening_share: max_share while the opening lasts (economy.opening). While its guard is with it, a builder's
+	// flee takes escorted_ally_threat instead of retreat.builder_flee's ally threat. Builder flee also ignores
+	// enemies under min_threat. A slot whose guard died takes the next one 10 s later at the soonest. A cluster's
+	// preventive towers (porcupine.prevent) are booked with its first mex job
 	"summon": {"min_threat": 1.0, "enemy_sec": 30, "enemy_radius": 800, "from_groups": true, "opening_share": 1.0,
 		"escorted_ally_threat": 0}
 },

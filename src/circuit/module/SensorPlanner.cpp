@@ -157,12 +157,10 @@ IBuilderTask* CSensorPlanner::MakeRadarTask(CCircuitUnit* unit, const std::funct
 	budget -= cost;
 	circuit->LOG("RADAR by %s at (%.0f, %.0f): %.0f%% covered with it", unit->GetCircuitDef()->GetDef()->GetName(),
 			spot.x, spot.z, planner->GetCoveredShare() * 100.f);
-	// In the opening a HIGH job (opening_priority) that waits for a builder and ranks by walk, so it never beats a mex
-	// across the map
-	const bool isHigh = isOpening && config.isRadarOpeningHigh;
+	// In the opening a HIGH job that waits for a builder and ranks by walk, so it never beats a mex across the map
 	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(
-			isHigh ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NOW, radarDef, spot,
-			IBuilderTask::BuildType::RADAR, cost, 0.f, true, isHigh ? ASSIGN_TIMEOUT : ORPHAN_TIMEOUT);  // no shake: built where it sees most
+			isOpening ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NOW, radarDef, spot,
+			IBuilderTask::BuildType::RADAR, cost, 0.f, true, isOpening ? ASSIGN_TIMEOUT : ORPHAN_TIMEOUT);  // no shake: built where it sees most
 	task->SetNextTask(MakeGuardTask(spot));  // queued once the radar stands; dropped with it
 	return task;
 }

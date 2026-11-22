@@ -24,7 +24,6 @@
 #include "unit/action/TravelAction.h"
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryCostMap.h"
-#include "terrain/path/QueryPathSingle.h"
 #include "task/NilTask.h"
 #include "task/IdleTask.h"
 #include "task/RetreatTask.h"
@@ -98,7 +97,6 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		, repairChaseClose(0.f)
 		, escort({0.f, 0.f, 0.f, 0.f, 0.f, false, static_cast<int>(IBuilderTask::Priority::HIGH)})
 		, isJobChain(false)
-		, chainLead(0.f)
 {
 	commDangerFrame = -1;
 	commCoverFrame = -1;
@@ -180,6 +178,8 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		IUnitTask* task = unit->GetTask();
 		task->OnUnitDestroyed(unit, attacker);  // can change task
 		unit->GetTask()->RemoveAssignee(unit);  // Remove unit from IdleTask
+		costQueries.erase(unit);  // a nanoframe's too (workerCreatedHandler)
+		openingStats.erase(unit->GetId());
 
 		if (task->GetType() == IUnitTask::Type::NIL) {
 			return;
@@ -193,9 +193,6 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 			builderLossFrames.push_back(this->circuit->GetLastFrame());
 			++buildersLost;
 		}
-		costQueries.erase(unit);
-		prefetches.erase(unit);
-		openingStats.erase(unit->GetId());
 
 		RemoveBuildList(unit);
 
@@ -385,7 +382,6 @@ void CBuilderManager::ReadConfig()
 	jobRanks[3] = {1.f / 10000.f, std::numeric_limits<float>::max()};  // NOW: wins at any distance, as before
 	jobSwitch = utils::clamp(jobs.get("switch", 0.5f).asFloat(), 0.f, 1.f);
 	isJobChain = jobs.get("chain", true).asBool();
-	chainLead = isJobChain ? std::max(jobs.get("chain_lead", 1.5f).asFloat(), 0.f) : 0.f;
 
 	const Json::Value& rest = root["economy"]["restore"];
 	restore.range = rest.get("range", 0.f).asFloat();
@@ -571,6 +567,7 @@ void CBuilderManager::Release()
 		task->ClearRelease();
 	}
 	buildUpdates.clear();
+	arrivals.clear();
 }
 
 int CBuilderManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
@@ -1719,8 +1716,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 	if ((unit->GetTask() == idleTask) && ((task == nullptr) || (task->GetPriority() != IBuilderTask::Priority::NOW))) {
 		IBuilderTask* radar = circuit->GetMilitaryManager()->GetSensorPlanner()->MakeRadarTask(unit,
 				[this, commState](const AIFloat3& spot) { return IsCommJobSafe(commState, spot); });
-		// A HIGH one (choke.radar.opening_priority) waits in the queue and ranks by walk like any job, unless there's
-		// nothing else to do
+		// A HIGH one (the opening's) waits in the queue and ranks by walk like any job, unless there's nothing else to do
 		if ((radar != nullptr) && ((task == nullptr) || (radar->GetPriority() == IBuilderTask::Priority::NOW))) {
 			return radar;
 		}
@@ -2327,7 +2323,7 @@ void CBuilderManager::UpdateCommDangers()
 			isSeen = false;
 		}
 		CCircuitDef* edef = enemy->GetCircuitDef();
-		if ((edef != nullptr) && (edef->GetThreat() < minThreat)) {
+		if ((edef != nullptr) && (edef->GetRawThreat() < minThreat)) {
 			continue;  // guard.summon.min_threat: a scout passing by doesn't chase builders off their jobs
 		}
 		float threat = enemy->GetThreat();
@@ -3266,7 +3262,6 @@ void CBuilderManager::StartCostMap(CCircuitUnit* unit)
 {
 	// DefaultMakeTask picks from the cost map it started last time: start one where unit stands now, unless the last
 	// one started nearer than its build range from here
-	prefetches.erase(unit);  // a new build: what an earlier one prefetched is no use
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
 	auto it = costQueries.find(unit);
@@ -3293,33 +3288,6 @@ bool CBuilderManager::AssignNext(CCircuitUnit* unit)
 	}
 	AssignTask(unit, task);
 	return true;
-}
-
-void CBuilderManager::PrefetchPath(CCircuitUnit* unit, const AIFloat3& endPos)
-{
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(unit, circuit->GetThreatMap(),
-			circuit->GetLastFrame(), unit->GetPos(circuit->GetLastFrame()), endPos, unit->GetCircuitDef()->GetBuildDistance());
-	prefetches[unit] = query;
-	pathfinder->RunQuery(query);
-	++prefetchCount;
-}
-
-std::shared_ptr<IPathQuery> CBuilderManager::TakePrefetch(CCircuitUnit* unit, const AIFloat3& endPos)
-{
-	auto it = prefetches.find(unit);
-	if (it == prefetches.end()) {
-		return nullptr;
-	}
-	std::shared_ptr<IPathQuery> query = it->second;
-	prefetches.erase(it);
-	if ((query->GetState() != IPathQuery::State::READY)
-		|| !utils::is_equal_pos(static_cast<CQueryPathSingle*>(query.get())->GetEndPos(), endPos))
-	{
-		return nullptr;
-	}
-	++prefetchHits;
-	return query;
 }
 
 unsigned int CBuilderManager::GetBuilderLosses(int frames) const
@@ -3388,10 +3356,9 @@ void CBuilderManager::LogOpening(int frame)
 		mexes += ((kv.second->GetCircuitDef() == mexDef) && !kv.second->GetUnit()->IsBeingBuilt()) ? 1 : 0;
 	}
 	circuit->LOG("OPENING %i:00 team | builders %u (%u lost) | mexes %u (%u lost) | metal %.1f/s | energy stall %is"
-			" | open spots %u (%u safe)%s | prefetch %u of %u matched",
+			" | open spots %u (%u safe)%s",
 			min, (unsigned)workers.size(), buildersLost, mexes, mexesLost, economyMgr->GetAvgMetalIncome(), energyStallSec,
-			economyMgr->GetOpenSpotCount(), economyMgr->GetSafeSpotCount(), economyMgr->IsOpening() ? "" : ", opening over",
-			prefetchHits, prefetchCount);
+			economyMgr->GetOpenSpotCount(), economyMgr->GetSafeSpotCount(), economyMgr->IsOpening() ? "" : ", opening over");
 }
 
 void CBuilderManager::UpdateIdle()

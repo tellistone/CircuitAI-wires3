@@ -75,8 +75,8 @@ public:
 
 	CRecruitTask* UpdateBuildPower(CCircuitUnit* unit);
 	// economy.buildpower_spots: in the opening, a constructor next (a queued one first, the opener's too) while open
-	// spots on safe ground outnumber per_builder x our builders (the commander one of them), up to max builders, and
-	// the army doesn't fall behind (IsArmyBehind)
+	// spots on safe ground outnumber per_builder x our builders (the commander one of them), up to max builders, once
+	// our first combat unit is finished, and while the army doesn't fall behind (IsArmyBehind)
 	CRecruitTask* UpdateSpotsBuilder(CCircuitUnit* unit);
 	// The known enemy army (no commanders or constructors) is over 1.5x ours, or two constructors died within a minute
 	bool IsArmyBehind() const;

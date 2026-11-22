@@ -118,7 +118,6 @@ public:
 protected:
 	CCircuitUnit* GetNextAssignee();
 	void Update(CCircuitUnit* unit);
-	void Prefetch(CCircuitUnit* unit);
 	virtual bool Reevaluate(CCircuitUnit* unit);
 	void UpdatePath(CCircuitUnit* unit);
 	// UpdatePath's reach and safety test of the job's position; false aborts the job

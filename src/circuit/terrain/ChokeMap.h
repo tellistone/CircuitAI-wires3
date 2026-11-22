@@ -104,7 +104,6 @@ public:
 		float radarShare = 0.05f;  // choke.radar.share
 		float radarSince = 90.f;  // choke.radar.since: seconds before the first planned radar
 		float radarOpeningShare = 0.05f;  // choke.radar.opening_share: the share in the opening; missing = min(share, 0.1)
-		bool isRadarOpeningHigh = true;  // choke.radar.opening_priority "high": a HIGH job in the opening ("now": NOW)
 		float radarEnemy = 2.f;  // choke.radar.enemy
 		float radarInside = 0.25f;  // choke.radar.inside
 		std::string radarGuard;  // choke.radar.guard: the tower def that guards a new radar, "" = none

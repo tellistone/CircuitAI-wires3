@@ -159,8 +159,10 @@ public:
 	void MakeDefence(const springai::AIFloat3& pos);
 	void MakeDefence(int cluster);
 	// sightDef: a sighting of that enemy near our mex at pos (UpdatePreventSight): the preventive roll can only
-	// raise the count, and a half-taken cluster below 10 m/s stays out of porc mode
-	void MakeDefence(int cluster, const springai::AIFloat3& pos, CCircuitDef* sightDef = nullptr);
+	// raise the count, and a half-taken cluster below 10 m/s stays out of porc mode.
+	// isFirstMex: the cluster's first mex job under guard.summon (UpdateMexTasks): only the preventive towers, and
+	// an unowned cluster counts as ours (porcupine.own_clusters)
+	void MakeDefence(int cluster, const springai::AIFloat3& pos, CCircuitDef* sightDef = nullptr, bool isFirstMex = false);
 	void AbortDefence(const CBDefenceTask* task);
 	// Aborts an unstarted tower the AI no longer wants there (porc mode ended, artillery near a choke). Unlike a
 	// tower that failed, its scored spot stays frozen and counts no failure
@@ -295,17 +297,18 @@ public:
 		int threatCooldown;
 		bool isDamageExit;  // a guard that takes damage is released at once and the slot cools down (threat_cooldown)
 		bool isDebug;  // log guard slot events and a 10 s status line per slot to infolog  // guard in enemy threat is cancelled and the slot closes for this long, < 0 = never cancel
-		// guard.summon: a builder's slot opens as soon as it or its job is off safe ground (IsSafeGround) and stays
-		// empty on it; a builder never waits for its guard (CBMexTask)
+		// guard.summon: a builder's slot opens as soon as it or its job is off safe ground (IsSafeGround) and outside
+		// our bubble (guard.safe), and stays empty in either; a builder never waits for its guard (CBMexTask)
 		bool isSummon;
 		float minThreat;  // min_threat: an enemy whose type's threat is below this doesn't count (nor for builder flee)
 		int enemyFrames;  // enemy_sec: an enemy seen this recently makes its region and enemy_radius around unsafe
 		float enemyRadius;
-		bool isFromGroups;  // from_groups: an attack group that isn't fighting gives up one unit, keeping quota.attack
+		bool isFromGroups;  // from_groups: a raid or attack group (not fighting) gives up a unit, keeping quota.raid/attack
 		float openingShare;  // opening_share: max_share during the opening (CEconomyManager::IsOpening)
 		float escortedAllyThreat;  // escorted_ally_threat: flee_ally_threat of a builder while its guard is with it
 	};
 	const SGuardCfg& GetGuardCfg() const { return guard; }
+	float GetRaidMinPower() const { return raid.min; }  // quota.raid[0]
 
 	struct SAntiAirCfg {
 		float leash;  // chase aircraft only within this distance of a home point (attack/defend group leader, base); < 0 = no leash
@@ -931,8 +934,9 @@ private:
 		bool isOwnOnly;  // porcupine.own_clusters: team games, towers only on clusters we own (IsOurCluster)
 		bool isAllyCover;  // porcupine.ally_cover: built towers near a cluster count towards its preventive total
 	} prevent;
-	// porcupine.own_clusters: in team games only clusters we own (CMetalManager::GetClusterOwner) get towers
-	bool IsOurCluster(int cluster) const;
+	// porcupine.own_clusters: in team games only clusters we own (CMetalManager::GetClusterOwner) get towers;
+	// isFreeOurs: one nobody owns counts too
+	bool IsOurCluster(int cluster, bool isFreeOurs = false) const;
 	// porcupine.ally_cover, team games: metal of the towers of the ally team (ours too, nanoframes and stunned ones
 	// included) that can hit ground (water when isWater) within range of a mex point of the cluster; 0 when off
 	float GetBuiltCoverCost(int cluster, bool isWater) const;

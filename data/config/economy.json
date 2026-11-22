@@ -152,19 +152,17 @@
 	// switch: a constructor walking to a job takes a job of the same kind that is nearer than <switch> x its current
 	//   distance (0.5 = less than half as far); 0 disables.
 	// chain: a builder whose job ends takes its next one in the same frame (not on the idle pass, 20 frames later and
-	// one unit at a time), picked from a cost map started where it built, and walks straight until its path comes; a
-	// build starts the frame after its builder arrives. chain_lead: seconds before a build ends, the next pick and its
-	// path are worked out, and the finish takes that path if it makes the same pick; 0 = off
+	// one unit at a time), picked from a cost map started where it built; a build starts the frame after its builder
+	// arrives
 	"builder_jobs": {
 		"weight": {"low": 1, "normal": 2, "high": 4},
 		"travel": {"low": 10, "normal": 20, "high": 30},
 		"switch": 0.5,
-		"chain": true,
-		"chain_lead": 1.5
+		"chain": true
 	},
 
 	// The opening, which some rules read (buildpower_spots, behaviour.json guard.summon.opening_share and
-	// choke.radar.opening_*): until "time" seconds (or a [[<map size>, <seconds>], ...] curve, as mex_escort), or 20 s
+	// choke.radar.opening_share): until "time" seconds (or a [[<map size>, <seconds>], ...] curve, as mex_escort), or 20 s
 	// after no open mex spot is left that a builder could take; time 0 = no opening. log: OPENING lines in infolog once
 	// a minute until "time", per builder (seconds idle, walking, building and fleeing, job switches away from our base
 	// and back toward it, mexes, jumps, escorts and their wait) and for the team
@@ -172,8 +170,8 @@
 
 	// In the opening, a factory makes a constructor next (a queued one first, the opener's too) while the open mex spots
 	// on safe ground (behaviour.json guard.summon) outnumber <per_builder> x our builders, the commander one of them, up
-	// to <max> builders; not while the known enemy army (no commanders or constructors) is over 1.5x ours, nor after
-	// two constructors died within a minute. per_builder 0 = off
+	// to <max> builders; not before our first combat unit is finished, nor while the known enemy army (no commanders or
+	// constructors) is over 1.5x ours, nor after two constructors died within a minute. per_builder 0 = off
 	"buildpower_spots": {"per_builder": 4, "max": 4},
 
 	// Restore terraformed ground (enemy trenches and walls) to the map's start height, as constructor jobs at

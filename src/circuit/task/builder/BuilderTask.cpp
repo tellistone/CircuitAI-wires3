@@ -471,42 +471,8 @@ CCircuitUnit* IBuilderTask::GetNextAssignee()
 
 void IBuilderTask::Update(CCircuitUnit* unit)
 {
-	if (!Reevaluate(unit)) {
-		return;
-	}
-	if (unit->GetTravelAct()->IsFinished()) {
-		Prefetch(unit);
-	} else {
+	if (Reevaluate(unit) && !unit->GetTravelAct()->IsFinished()) {
 		UpdatePath(unit);  // Execute(unit) within OnTravelEnd
-	}
-}
-
-void IBuilderTask::Prefetch(CCircuitUnit* unit)
-{
-	// economy.builder_jobs.chain_lead seconds before the build ends: the job unit would pick from here, and its path,
-	// so it walks the moment the build ends. The finish picks again (AssignNext) and takes the path only if it made
-	// the same pick
-	CCircuitAI* circuit = manager->GetCircuit();
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	if ((builderMgr->GetChainLead() <= 0.f) || (manager != builderMgr) || (buildType >= BuildType::REPAIR)
-		|| (target == nullptr) || (buildPower <= 0.f) || builderMgr->HasPrefetch(unit)
-		|| (cost * (1.f - target->GetUnit()->GetBuildProgress()) > builderMgr->GetChainLead() * buildPower))
-	{
-		return;
-	}
-	// The finish queues the chain's energy beside it (ExecuteChain): that is the next job, and needs no path
-	SBuildChain* chain = (buildDef != nullptr) ? builderMgr->GetBuildChain(buildType, buildDef) : nullptr;
-	if ((chain != nullptr) && (chain->energy > circuit->GetEconomyManager()->GetAvgEnergyIncome())) {
-		return;
-	}
-	HideAssignee(unit);
-	IUnitTask* task = manager->MakeTask(unit);
-	ShowAssignee(unit);
-	if ((task != nullptr) && (task != this) && (task->GetType() == IUnitTask::Type::BUILDER)) {
-		const AIFloat3& pos = static_cast<IBuilderTask*>(task)->GetPosition();
-		if (utils::is_valid(pos)) {
-			builderMgr->PrefetchPath(unit, pos);
-		}
 	}
 }
 
@@ -604,21 +570,6 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	if (startPos.SqDistance2D(endPos) < SQUARE(range)) {
 		unit->GetTravelAct()->StateFinish();
 		return;
-	}
-
-	// economy.builder_jobs.chain, the job's first path: the one worked out before the last build ended, if it leads
-	// here (Prefetch); else walk straight while the query runs
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	if ((pathQueries.find(unit) == pathQueries.end()) && builderMgr->IsJobChain() && (manager == builderMgr)) {
-		std::shared_ptr<IPathQuery> prefetch = builderMgr->TakePrefetch(unit, endPos);
-		if (prefetch != nullptr) {
-			pathQueries[unit] = prefetch;
-			ApplyPath(static_cast<const CQueryPathSingle*>(prefetch.get()));
-			return;
-		}
-		TRY_UNIT(circuit, unit,
-			unit->CmdMoveTo(endPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-		)
 	}
 
 	if (!IsQueryReady(unit)) {

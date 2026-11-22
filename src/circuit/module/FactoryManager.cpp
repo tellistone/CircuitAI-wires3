@@ -1122,7 +1122,10 @@ CRecruitTask* CFactoryManager::UpdateSpotsBuilder(CCircuitUnit* unit)
 	for (const CRecruitTask* t : factoryTasks) {
 		builders += (t->GetBuildDef()->IsRoleBuilder() && !t->GetAssignees().empty()) ? 1 : 0;  // in a factory now
 	}
-	if ((builders >= bpSpotsMax) || (economyMgr->GetSafeSpotCount() <= bpSpotsPer * builders) || IsArmyBehind()) {
+	// Not before our first combat unit is finished: the opener's raider comes first, and is the escort to summon
+	if ((builders >= bpSpotsMax) || (economyMgr->GetSafeSpotCount() <= bpSpotsPer * builders)
+		|| (circuit->GetMilitaryManager()->GetArmyCost() <= 0.f) || IsArmyBehind())
+	{
 		return nullptr;
 	}
 	for (CRecruitTask* t : factoryTasks) {
