@@ -7,6 +7,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Factories order their next unit the frame the last one finishes** (`factory.restart`). Before, a finished unit
+  sent the factory to the idle pass, which skips a unit for 20 frames after a task change, so every factory stood
+  about 0.7 s or more between units. Now `UnitFinished` gives it its next job at once, the same choice the idle pass
+  makes. A `build_delay` wait (economy.json) still applies. Nanos, waiting or idle, now look again the frame any
+  frame in their reach is started, by a factory or a constructor (`nano.hand_off` took a factory's waiting nanos only),
+  so a turret or energy started by the base gets them at once too. The same goes for repairs: a hit on one of our
+  units in their reach that leaves it below full health, or a retreating unit arriving at its haven
+  (`CFactoryManager::AssistNear`). A waiting nano
+  looks at most every 1/4 s this way, as hits come many a frame in a fight; a nano no longer picks itself to repair. The 20 frames kept a late
+  UnitIdle from the last job off the new one: now factories and nanos act on a UnitIdle only if they have no orders
+  left, so it can't end a nano's new repair or queue a second unit.
+
 - **Nano towers start on a factory's new unit the moment it appears** (`nano.hand_off`). Before, a nano whose
   repair ended with the last unit went idle, looked again 20+ frames later, found the factory's next unit not started
   yet (the factory goes through the same idle pass) and waited 3 s, so each new unit could go about 3 s without
