@@ -42,7 +42,7 @@ class ISquadTask;
  *    holds 1 / quota.attack_keep_threat of the danger and it can get there. The commander flees to it when it flees,
  *    and stays once at it (cornered there, it ends its flee and builds its defence). Without one it flees as it would.
  * 4. Commit: attack, raid and gathering groups that can reach the commander within respond_sec (or its time to death
- *    if shorter, checked when a group joins), not fleeing or fighting elsewhere, nearest first, until groups +
+ *    if shorter, checked when a group joins), not fleeing or fighting elsewhere, soonest there first, until groups +
  *    commander + static cover reach 1.25x the danger (or the go line + 0.25). Ratio = that sum / danger. Go at
  *    go_ratio with a group at least (0.6 x it once cornered: no escape or paralysed, latched for the anchor's life);
  *    no-go below the go line / quota.attack_keep_threat, at once when the danger turns to air. 5 s per state at least.
@@ -104,7 +104,7 @@ public:
 private:
 	struct SCandidate {
 		ISquadTask* task;
-		float sqDist;
+		float travelSec;  // GetTravelSec
 	};
 	struct STurret {
 		springai::AIFloat3 pos;
@@ -151,6 +151,8 @@ private:
 	springai::AIFloat3 dangerPos;  // the nearest seen danger, kept from the last update that saw one
 	bool isAirDanger;  // gunships over 60% of the commander's danger list, until under 40%
 	float airShare;  // the gunships' share of that list, kept while it is empty (logged)
+	float peakAirShare;  // the highest airShare of this protect (the end line)
+	int goCount;  // goes in this protect (the end line)
 	float dangerRange;
 	float own;  // the commander's power (0 against an air danger it can't hit)
 	float danger;

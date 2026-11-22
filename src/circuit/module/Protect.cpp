@@ -59,6 +59,8 @@ CProtect::CProtect(CCircuitAI* circuit, const SConfig& cfg)
 		, dangerPos(-RgtVector)
 		, isAirDanger(false)
 		, airShare(0.f)
+		, peakAirShare(0.f)
+		, goCount(0)
 		, dangerRange(0.f)
 		, own(0.f)
 		, danger(0.f)
@@ -196,6 +198,7 @@ void CProtect::Update()
 	if (view.danger > 0.f) {  // kept while the list is empty: gunships out of sight would otherwise let a go start
 		airShare = view.airDanger / view.danger;
 		isAirDanger = (airShare > (isAirDanger ? AIR_OFF_SHARE : AIR_ON_SHARE));
+		peakAirShare = std::max(peakAirShare, airShare);
 	}
 	CCircuitDef* commDef = comm->GetCircuitDef();
 	own = (isAirDanger && !commDef->HasAntiAir()) ? 0.f : view.own;
@@ -207,8 +210,9 @@ void CProtect::Update()
 	circuit->GetMilitaryManager()->GetAttackBalance()->GetForceAt(commPos, nullptr, commDef->IsAmphibious(), force);
 	danger = std::max(force.enemy, view.danger);
 	if (isStart) {
-		circuit->LOG("PROTECT start: commander power %.1f, danger %.1f (force %.1f, its own list %.1f)%s at (%.0f, %.0f)",
-				own, danger, force.enemy, view.danger, isDamaged ? ", damaged" : "", commPos.x, commPos.z);
+		circuit->LOG("PROTECT start: commander power %.1f, danger %.1f (force %.1f, its own list %.1f), gunships %.0f%%%s"
+				" at (%.0f, %.0f)", own, danger, force.enemy, view.danger, airShare * 100.f, isDamaged ? ", damaged" : "",
+				commPos.x, commPos.z);
 	}
 
 	// 3. and 4. Turret point and commit
@@ -239,7 +243,8 @@ void CProtect::Start(int frame)
 	stateFrame = -MIN_STATE_FRAMES;  // the first decision is at once
 	isCornered = false;
 	isAirDanger = false;
-	airShare = 0.f;
+	airShare = peakAirShare = 0.f;
+	goCount = 0;
 	committed.clear();
 	turretPos = dangerPos = -RgtVector;
 	dangerRange = 0.f;
@@ -247,7 +252,9 @@ void CProtect::Start(int frame)
 
 void CProtect::End(const char* reason, int frame)
 {
-	circuit->LOG("PROTECT end (%s) after %.0f s", reason, (frame - startFrame) / float(FRAMES_PER_SEC));
+	// One summary per protect, gone or not: an air-heavy rush never goes, so its share shows only here
+	circuit->LOG("PROTECT end (%s) after %.0f s: %i go%s, gunships up to %.0f%%", reason,
+			(frame - startFrame) / float(FRAMES_PER_SEC), goCount, (goCount == 1) ? "" : "s", peakAirShare * 100.f);
 	state = State::OFF;
 	committed.clear();
 	committedSum = presentSum = 0.f;
@@ -266,6 +273,8 @@ void CProtect::SetState(State value, const char* reason, int frame)
 			isCornered ? ", cornered" : "", utils::is_valid(turretPos) ? ", at turrets" : "", std::min(deathSec, 999.f));
 	if (value == State::NOGO) {
 		committed.clear();  // no group is sent: they go back to what they would do
+	} else {
+		++goCount;
 	}
 	state = value;
 	stateFrame = frame;
@@ -466,7 +475,8 @@ void CProtect::CollectCandidates(int frame, std::vector<SCandidate>& out) const
 					continue;
 				}
 			}
-			if ((GetTravelSec(g, frame) > maxSec) || !terrainMgr->CanMoveToPos(leader->GetArea(), commPos)) {
+			const float travelSec = GetTravelSec(g, frame);
+			if ((travelSec > maxSec) || !terrainMgr->CanMoveToPos(leader->GetArea(), commPos)) {
 				continue;
 			}
 			const AIFloat3& pos = leader->GetPos(frame);
@@ -476,10 +486,11 @@ void CProtect::CollectCandidates(int frame, std::vector<SCandidate>& out) const
 			{
 				continue;
 			}
-			out.push_back({g, pos.SqDistance2D(commPos)});
+			out.push_back({g, travelSec});
 		}
 	}
-	std::sort(out.begin(), out.end(), [](const SCandidate& a, const SCandidate& b) { return a.sqDist < b.sqDist; });
+	// The soonest there first: a fast group from farther out beats a slow one nearby
+	std::sort(out.begin(), out.end(), [](const SCandidate& a, const SCandidate& b) { return a.travelSec < b.travelSec; });
 }
 
 void CProtect::Refresh(const ISquadTask* task, int frame, SCommit& commit)
