@@ -90,9 +90,9 @@ CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 
 		EnableFactory(unit);
 	};
-	// factory.restart: factories and nanos get their next job in the event their last one ended (UnitFinished,
-	// UnitCreated), not after the idle pass's 20 frames. A UnitIdle that comes once the new orders are given is the last
-	// job's: a unit with orders isn't idle. Acting on it would end a repair or queue a second unit
+	// factory.restart: factories and nanos get jobs in events (UnitFinished, AssistNear), not only from the idle pass
+	// 20 frames on. A UnitIdle that comes once the new orders are given is the last job's: a unit with orders isn't
+	// idle. Acting on it would end a repair or queue a second unit
 	auto staticIdleHandler = [](CCircuitUnit* unit) {
 		if (IsIdle(unit)) {
 			unit->GetTask()->OnUnitIdle(unit);
@@ -1768,6 +1768,8 @@ IUnitTask* CFactoryManager::CreateAssistTask(CCircuitUnit* unit)
 	CCircuitDef* terraDef = builderMgr->GetTerraDef();
 	const float maxCost = MAX_BUILD_SEC * economyMgr->GetAvgMetalIncome() * economyMgr->GetEcoFactor();
 	float curCost = std::numeric_limits<float>::max();
+	bool isBuildHigh = false;
+	float curLoss = 0.f;
 	circuit->UpdateFriendlyUnits();
 	// NOTE: OOAICallback::GetFriendlyUnitsIn depends on unit's radius
 	auto units = circuit->GetCallback()->GetFriendlyUnitsIn(pos, radius * 0.9f);
@@ -1776,45 +1778,47 @@ IUnitTask* CFactoryManager::CreateAssistTask(CCircuitUnit* unit)
 		if ((candUnit == nullptr) || (candUnit == unit) || builderMgr->IsReclaimed(candUnit)) {
 			continue;  // a nano can't repair itself
 		}
+		CCircuitDef* cdef = candUnit->GetCircuitDef();
+		const float maxHealth = u->GetMaxHealth();
+		const float missing = (maxHealth - u->GetHealth()) / maxHealth;
 		if (u->IsBeingBuilt()) {
-			CCircuitDef* cdef = candUnit->GetCircuitDef();
-			const float maxHealth = u->GetMaxHealth();
-			const float buildTime = cdef->GetBuildTime() * (maxHealth - u->GetHealth()) / maxHealth;
-			if (buildTime >= curCost) {
+			// Frames: high priority first, then the least build time left
+			const bool isHigh = IsHighPriority(candUnit);
+			const float buildTime = cdef->GetBuildTime() * missing;
+			if ((!isHigh && isBuildHigh) || ((isHigh == isBuildHigh) && (buildTime >= curCost))) {
 				continue;
 			}
-			if (IsHighPriority(candUnit) ||
-				(!isMetalEmpty && cdef->IsAssistable()) ||
-				(*cdef == *terraDef) ||
-				(buildTime < maxCost))
-			{
+			if (isHigh || (!isMetalEmpty && cdef->IsAssistable()) || (*cdef == *terraDef) || (buildTime < maxCost)) {
+				isBuildHigh = isHigh;
 				curCost = buildTime;
 				buildTarget = candUnit;
 			}
-		} else if ((repairTarget == nullptr) && (u->GetHealth() < u->GetMaxHealth())) {
+		} else if (cdef->GetCostM() * missing > curLoss) {
+			// Repairs: the most metal value its lost health stands for, not the first damaged one
+			curLoss = cdef->GetCostM() * missing;
 			repairTarget = candUnit;
-			if (isMetalEmpty) {
-				break;
-			}
 		}
 	}
 	utils::free_clear(units);
-	if (/*!isMetalEmpty && */(buildTarget != nullptr)) {
-		// Construction task
-		IBuilderTask::Priority priority = buildTarget->GetCircuitDef()->IsMobile() ?
-										  IBuilderTask::Priority::HIGH :
-										  IBuilderTask::Priority::NORMAL;
-		return EnqueueRepair(priority, buildTarget);
+	// Construction task. Metal empty: a damaged unit and reclaim first, as CSRepairTask::Update would move the nano on
+	// from a frame that isn't high priority to them
+	auto assistFrame = [this, buildTarget]() {
+		return EnqueueRepair(buildTarget->GetCircuitDef()->IsMobile() ? IBuilderTask::Priority::HIGH
+				: IBuilderTask::Priority::NORMAL, buildTarget);
+	};
+	if ((buildTarget != nullptr) && (!isMetalEmpty || isBuildHigh)) {
+		return assistFrame();
 	}
 	if (repairTarget != nullptr) {
 		// Repair task
 		return EnqueueRepair(IBuilderTask::Priority::NORMAL, repairTarget);
 	}
-	if (isMetalEmpty) {
+	if (isMetalEmpty && circuit->GetCallback()->IsFeaturesIn(pos, radius)) {
 		// Reclaim task
-		if (circuit->GetCallback()->IsFeaturesIn(pos, radius)) {
-			return EnqueueReclaim(IBuilderTask::Priority::NORMAL, pos, radius);
-		}
+		return EnqueueReclaim(IBuilderTask::Priority::NORMAL, pos, radius);
+	}
+	if (buildTarget != nullptr) {
+		return assistFrame();
 	}
 
 	return EnqueueWait(false, FRAMES_PER_SEC * 3);
