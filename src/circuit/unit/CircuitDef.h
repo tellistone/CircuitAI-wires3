@@ -116,19 +116,21 @@ public:
 	 * PLANT:     never moves (no move, fight, jump or gather orders) while its target or an armed enemy it can hit is
 	 *            in LOS and in its weapon range, or a "plant".threats enemy seen lately has it in its weapon range
 	 *            (behaviour.json "plant"; CMilitaryManager::UpdatePlant)
+	 * KITE:      an enemy of this type is kited: our ranged units with firing spots keep out of quota.kite x their range
+	 *            of it, whatever they target (IFighterTask::FindFireSpot)
 	 */
 	enum class AttrType: RoleT {NONE = -1,
 		MELEE = 0, BOOST, NO_JUMP, NO_STRAFE,
 		STOCK, SIEGE, RET_HOLD, RET_FIGHT,
 		JUMP, DG_COST, DG_STILL, ANTI_STAT,
-		REARM, NO_DGUN, PRIO_REPAIR, GUARDED, RAID_TARGET, NO_FORM, CLOAK_ROUTE, PLANT, _SIZE_};
+		REARM, NO_DGUN, PRIO_REPAIR, GUARDED, RAID_TARGET, NO_FORM, CLOAK_ROUTE, PLANT, KITE, _SIZE_};
 	enum AttrMask: RoleM {
 		MELEE = 0x00000001, BOOST   = 0x00000002, NO_JUMP  = 0x00000004, NO_STRAFE = 0x00000008,
 		STOCK = 0x00000010, SIEGE   = 0x00000020, RET_HOLD = 0x00000040, RET_FIGHT = 0x00000080,
 		JUMP  = 0x00000100, DG_COST = 0x00000200, DG_STILL = 0x00000400, ANTI_STAT = 0x00000800,
 		REARM = 0x00001000, NO_DGUN = 0x00002000, PRIO_REPAIR = 0x00004000, GUARDED = 0x00008000,
 		RAID_TARGET = 0x00010000, NO_FORM = 0x00020000, CLOAK_ROUTE = 0x00040000,
-		PLANT = 0x00080000};
+		PLANT = 0x00080000, KITE = 0x00100000};
 	using AttrT = std::underlying_type<AttrType>::type;
 	using AttrM = std::underlying_type<AttrMask>::type;
 
@@ -214,6 +216,7 @@ public:
 	bool IsAttrNoForm()     const { return attr & AttrMask::NO_FORM; }
 	bool IsAttrCloakRoute() const { return attr & AttrMask::CLOAK_ROUTE; }
 	bool IsAttrPlant()      const { return attr & AttrMask::PLANT; }
+	bool IsAttrKite()       const { return attr & AttrMask::KITE; }
 	bool IsAttrAny(AttrM value) const { return (attr & value) != 0; }
 
 	bool IsHoldFire()   const { return fireState == FireType::HOLD; }
@@ -363,6 +366,19 @@ public:
 	float GetBuildTime() const { return buildTime; }
 //	float GetAltitude()  const { return altitude; }
 	float GetJumpRange() const { return jumpRange; }
+	// Zero-K jump defs (customparams; unitdefs_post fills the defaults): flight speed (elmos per frame along the arc),
+	// the arc's height above the line from start to landing (elmos), reload after landing (frames; 0 with charges)
+	float GetJumpSpeed()  const { return jumpSpeed; }
+	float GetJumpHeight() const { return jumpHeight; }
+	int GetJumpReload()   const { return jumpReload; }
+	// Elmos its jump adds to its threat range while ready: quota.jump_threat (or its behaviour "jump_threat") x jump
+	// range (CThreatMap)
+	void SetJumpReach(float value) { jumpReach = value; }
+	float GetJumpReach() const { return jumpReach; }
+	// Threat-map squares the jump adds to GetThreatRange while it is ready (CThreatMap: the jump's reach is added to the
+	// weapon range before rounding); 0 for CLOAK and SHIELD
+	void SetJumpThreatExtra(ThreatType type, int extra) { jumpThreatExtra[static_cast<ThreatT>(type)] = extra; }
+	int GetJumpThreatExtra(ThreatType type) const { return jumpThreatExtra[static_cast<ThreatT>(type)]; }
 
 	void SetRetreat(float value) { retreat = value; }
 	float GetRetreat()   const { return retreat; }  // health share, nothing to do with the shield
@@ -531,6 +547,11 @@ private:
 	float buildTime;
 //	float altitude;
 	float jumpRange;
+	float jumpSpeed = 0.f;
+	float jumpHeight = 0.f;
+	int jumpReload = 0;
+	float jumpReach = 0.f;
+	std::array<int, static_cast<ThreatT>(ThreatType::_SIZE_)> jumpThreatExtra = {};
 	float retreat;
 	float retreatShield = -1.f;
 	float artyFleeMargin = -1.f;
