@@ -40,7 +40,8 @@ static constexpr float PRESENT_SHARE = 0.5f;  // a group is present within this 
 static constexpr float PRESENT_KEEP_SHARE = 0.625f;  // ... and stays present within this x zone
 static constexpr size_t MAX_TURRET_SPOTS = 6;  // turret spots weighed as the meeting point per update
 static constexpr float TURRET_SPOT_GAP = 150.f;  // turrets closer than this to a weighed spot count as that spot
-static constexpr float AT_SPOT_DIST = DEFAULT_SLACK * 4;  // the commander stands at a meeting point (as COMM_ESCAPE_MIN)
+static constexpr float AT_SPOT_DIST = DEFAULT_SLACK * 4;  // the commander stands at the meeting point within this
+static constexpr float MEET_BACK_DIST = 100.f;  // the meeting point is this far behind its turret, away from the danger
 static constexpr float MAX_TURRET_RANGE = 2000.f;  // static anti-air beyond this reach is no cover (IsStaticDefence's line)
 static constexpr float ENGAGED_SLACK = 200.f;  // a group with a target out of the zone within its range + this is busy
 
@@ -110,26 +111,20 @@ bool CProtect::IsRecentAttacker(ICoreUnit::Id id, int frame) const
 	return (it != attackers.end()) && (frame - it->second <= ATTACKER_FRAMES);
 }
 
-float CProtect::GetJointMod(const IFighterTask* task) const
+bool CProtect::IsAtMeetingPoint(const AIFloat3& pos) const
 {
-	if (state != State::GO) {
-		return 1.f;
-	}
+	return utils::is_valid(turretPos) && (pos.SqDistance2D(turretPos) < SQUARE(AT_SPOT_DIST));
+}
+
+float CProtect::GetGoBoost(const IFighterTask* task, const AIFloat3& pos) const
+{
 	auto it = committed.find(task);
-	if (it == committed.end()) {
+	if ((it == committed.end()) || !IsInFight(pos, it->second.isPresent)) {
 		return 1.f;
 	}
 	// The strength there now (a group still on its way isn't), and itself wherever it is
 	const float self = std::max(it->second.strength, 1e-3f);
 	return std::max((presentSum + (it->second.isPresent ? 0.f : self)) / self, 1.f);
-}
-
-float CProtect::GetBoost(const IFighterTask* task, const AIFloat3& pos, float range) const
-{
-	if ((state != State::GO) || (pos.SqDistance2D(commPos) > SQUARE(range))) {
-		return 1.f;  // the usual path: one compare
-	}
-	return GetJointMod(task);
 }
 
 void CProtect::Transfer(const IFighterTask* from, const IFighterTask* to)
@@ -149,9 +144,7 @@ void CProtect::OnTaskEnd(const IFighterTask* task)
 	if (it == committed.end()) {
 		return;
 	}
-	if (!it->second.isFleeing) {
-		committedSum -= it->second.strength;
-	}
+	committedSum -= it->second.strength;
 	if (it->second.isPresent) {
 		presentSum -= it->second.strength;
 	}
@@ -202,6 +195,9 @@ void CProtect::Update()
 		const float airShare = view.airDanger / view.danger;
 		isAirDanger = (airShare > (isAirDanger ? AIR_OFF_SHARE : AIR_ON_SHARE));
 	}
+	if (isAirDanger && (state == State::GO)) {
+		SetState(State::NOGO, "nogo (air)", frame);  // at once: the committed ground groups can't shoot gunships
+	}
 	CCircuitDef* commDef = comm->GetCircuitDef();
 	own = (isAirDanger && !commDef->HasAntiAir()) ? 0.f : view.own;
 	isCornered |= view.isCornered || comm->GetUnit()->IsParalyzed();
@@ -221,8 +217,7 @@ void CProtect::Update()
 	commCover = GetStaticCover(commPos);
 	const float goLine = cfg.goRatio * (isCornered ? CORNERED_MOD : 1.f);
 	UpdateCommitted(comm, frame, danger * std::max(COMMIT_MOD, goLine + COMMIT_MARGIN));
-	const float sum = committedSum + own + staticCover;
-	ratio = (danger > 0.f) ? sum / danger : std::numeric_limits<float>::max();
+	ratio = (danger > 0.f) ? GetSum() / danger : std::numeric_limits<float>::max();
 
 	// Go or no-go, each for MIN_STATE_FRAMES at least. A go needs a group: with none there is nothing to send, and a
 	// no-go costs nothing (a poke with no danger would otherwise go at once and hold off a real no-go)
@@ -339,6 +334,23 @@ float CProtect::GetStaticCover(const AIFloat3& pos) const
 	return cover;
 }
 
+AIFloat3 CProtect::GetBehind(CCircuitUnit* comm, const AIFloat3& turret) const
+{
+	// Behind the turret line rather than in it: the turrets take the first shots
+	if (!utils::is_valid(dangerPos)) {
+		return turret;
+	}
+	AIFloat3 dir = turret - dangerPos;
+	dir.y = 0.f;
+	const float dist = dir.Length2D();
+	if (dist < 1.f) {
+		return turret;
+	}
+	AIFloat3 spot = turret + dir * (MEET_BACK_DIST / dist);
+	CTerrainManager::CorrectPosition(spot);
+	return circuit->GetTerrainManager()->CanMoveToPos(comm->GetArea(), spot) ? spot : turret;
+}
+
 bool CProtect::IsTurretSpotValid(CCircuitUnit* comm, const AIFloat3& spot, float cover) const
 {
 	// Strong enough with the commander. Once it stands there, that is all: the danger follows it into the turrets.
@@ -369,8 +381,8 @@ bool CProtect::IsTurretSpotHeld(CCircuitUnit* comm, const AIFloat3& spot, float 
 
 void CProtect::UpdateTurretPoint(CCircuitUnit* comm, int frame)
 {
-	// Kept while it holds (IsTurretSpotHeld), replaced only when it fails: the nearest of the turret spots near the
-	// commander that passes IsTurretSpotValid
+	// Kept while it holds (IsTurretSpotHeld), replaced only when it fails: the spot behind the nearest turret group
+	// near the commander that passes IsTurretSpotValid, with the cover where the commander would stand
 	CollectTurrets(frame);
 	if (utils::is_valid(turretPos)) {
 		const float cover = GetStaticCover(turretPos);
@@ -400,9 +412,10 @@ void CProtect::UpdateTurretPoint(CCircuitUnit* comm, int frame)
 		}
 	}
 	for (const AIFloat3& s : spots) {  // the nearest first
-		const float cover = GetStaticCover(s);
-		if (IsTurretSpotValid(comm, s, cover)) {
-			turretPos = s;
+		const AIFloat3 meet = GetBehind(comm, s);
+		const float cover = GetStaticCover(meet);
+		if (IsTurretSpotValid(comm, meet, cover)) {
+			turretPos = meet;
 			staticCover = cover;
 			return;
 		}
@@ -413,10 +426,10 @@ void CProtect::UpdateTurretPoint(CCircuitUnit* comm, int frame)
  * Commit
  */
 
-bool CProtect::IsPresent(const ISquadTask* task, bool wasPresent, int frame) const
+bool CProtect::IsInFight(const AIFloat3& pos, bool wasPresent) const
 {
 	const float radius = cfg.zone * (wasPresent ? PRESENT_KEEP_SHARE : PRESENT_SHARE);
-	return task->GetLeader()->GetPos(frame).SqDistance2D(commPos) <= SQUARE(radius);
+	return pos.SqDistance2D(commPos) <= SQUARE(radius);
 }
 
 void CProtect::CollectCandidates(CCircuitUnit* comm, int frame, std::vector<SCandidate>& out) const
@@ -465,13 +478,12 @@ void CProtect::CollectCandidates(CCircuitUnit* comm, int frame, std::vector<SCan
 
 void CProtect::Refresh(const ISquadTask* task, int frame, SCommit& commit)
 {
-	// Its strength now; fleeing, it counts 0 (and isn't present): enough of them flee and the go ends
+	// Its strength now. A fleeing group isn't present (no boost to the others), but still counts for keeping a go: a
+	// short flee on the way in doesn't release every group. A go starts only with groups that aren't fleeing
+	// (CollectCandidates skips them)
 	commit.strength = task->GetRallyStrength();
-	commit.isFleeing = task->IsFleeing(frame);
-	commit.isPresent = !commit.isFleeing && IsPresent(task, commit.isPresent, frame);
-	if (!commit.isFleeing) {
-		committedSum += commit.strength;
-	}
+	commit.isPresent = !task->IsFleeing(frame) && IsInFight(task->GetLeader()->GetPos(frame), commit.isPresent);
+	committedSum += commit.strength;
 	if (commit.isPresent) {
 		presentSum += commit.strength;
 	}
@@ -480,7 +492,7 @@ void CProtect::Refresh(const ISquadTask* task, int frame, SCommit& commit)
 void CProtect::UpdateCommitted(CCircuitUnit* comm, int frame, float need)
 {
 	// Go: the committed groups stay (latched), dead ones drop out, new ones join while short. No-go: picked afresh.
-	// The go is judged with all of them; the boost only with those present (GetJointMod). An air danger takes no new
+	// The go is judged with all of them; the boost only with those present (GetGoBoost). An air danger takes no new
 	// group: anti-air units are in anti-air tasks, not these
 	if (state != State::GO) {
 		committed.clear();
@@ -496,14 +508,14 @@ void CProtect::UpdateCommitted(CCircuitUnit* comm, int frame, float need)
 		Refresh(g, frame, it->second);
 		++it;
 	}
-	if (isAirDanger || (committedSum + own + staticCover >= need)) {
+	if (isAirDanger || (GetSum() >= need)) {
 		return;
 	}
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
 	CollectCandidates(comm, frame, candidates);
 	for (const SCandidate& c : candidates) {
 		Refresh(c.task, frame, committed[c.task]);
-		if (committedSum + own + staticCover >= need) {
+		if (GetSum() >= need) {
 			break;
 		}
 	}

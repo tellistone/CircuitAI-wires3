@@ -425,7 +425,6 @@ public:
 		float own = 0.f;  // its cover power (power x sqrt(health %))
 		float danger = 0.f;  // seen dangers (gunships and moving blips included) within the radius, summed
 		float airDanger = 0.f;  // the gunships' part of it
-		int count = 0;
 		springai::AIFloat3 dangerPos = -RgtVector;  // the nearest of them; invalid: none
 		float dangerRange = 0.f;  // its weapon range
 		bool isCornered = false;  // IsCommCornered
