@@ -2439,7 +2439,6 @@ bool CBuilderManager::GetCommView(CCircuitUnit* unit, float radius, SCommView& o
 		if (danger.isAir) {
 			out.airDanger += danger.threat;
 		}
-		++out.count;
 		if (sqDist < minSqDist) {
 			minSqDist = sqDist;
 			out.dangerPos = danger.pos;
@@ -2465,7 +2464,7 @@ bool CBuilderManager::GetProtectMeet(CCircuitUnit* unit, AIFloat3& outPos) const
 		return false;
 	}
 	const CProtect* protect = circuit->GetMilitaryManager()->GetProtect();
-	if (!protect->IsActive() || !utils::is_valid(protect->GetMeetingPoint())) {
+	if (!utils::is_valid(protect->GetMeetingPoint())) {  // invalid whenever the protect is off
 		return false;
 	}
 	outPos = protect->GetMeetingPoint();
@@ -2698,7 +2697,7 @@ void CBuilderManager::StartCommFlee(CCircuitUnit* unit, SCommState* state)
 	// already, it stays and fights there with them, and cornered there it still builds its defence, beside them
 	AIFloat3 meetPos;
 	const bool isMeet = GetProtectMeet(unit, meetPos);
-	const bool isAtMeet = isMeet && (unit->GetPos(frame).SqDistance2D(meetPos) < SQUARE(COMM_ESCAPE_MIN));
+	const bool isAtMeet = isMeet && circuit->GetMilitaryManager()->GetProtect()->IsAtMeetingPoint(unit->GetPos(frame));
 	if ((!isMeet || isAtMeet) && !HasCommEscape(unit, state)) {
 		IBuilderTask* defence = MakeCommDefence(unit, state);
 		if (defence != nullptr) {
