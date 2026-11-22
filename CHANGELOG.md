@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Nanos pick their job better** (`CFactoryManager::CreateAssistTask`, `nano.hand_off` review). Repairs: the unit
+  whose lost health stands for the most metal (cost x missing share), not the first damaged one the scan returned,
+  so in a fight they go to the turret about to fall rather than a scratched wall. Frames: high-priority factory
+  units first, then the least build time left, as before. With metal empty the order is now the one
+  `CSRepairTask::Update` keeps (high-priority frame, damaged unit, reclaim, other frame); a nano no longer takes a
+  frame that its next update moves it off.
+
 - **Builders go from one job straight to the next** (`economy.builder_jobs.chain`, new, true). A builder whose job
   ends picks its next one in the same frame, not on the idle pass (20 frames later, one builder at a time), and so
   does a new builder the frame it is finished. The pick uses a cost map started where it built, not where it last
