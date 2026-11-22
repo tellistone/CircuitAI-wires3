@@ -811,38 +811,36 @@ int CFactoryManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 		search->second(unit, builder);
 	}
 
-	if (builder == nullptr) {
+	if ((builder == nullptr) || !unit->GetUnit()->IsBeingBuilt()) {
 		return 0; //signaling: OK
 	}
 
 	IUnitTask* task = builder->GetTask();
-	if ((task == nullptr) || task->GetType() != IUnitTask::Type::FACTORY) {
-		return 0; //signaling: OK
-	}
-
-	if (unit->GetUnit()->IsBeingBuilt()) {
+	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FACTORY)) {
 		CRecruitTask* taskR = static_cast<CRecruitTask*>(task);
 		if (taskR->GetTarget() == nullptr) {
 			taskR->SetTarget(unit);
 			unfinishedUnits[unit] = taskR;
 		}
-		AssistNewUnit(builder);
 	}
+	AssistNewUnit(unit);  // after SetTarget: IsHighPriority reads unfinishedUnits
 
 	return 0; //signaling: OK
 }
 
-// nano.hand_off: the factory's waiting and idle nanos look for a job the frame it starts a unit, not when their 3 s
-// wait or the idle pass ends. The same look as ever (CreateAssistTask)
-void CFactoryManager::AssistNewUnit(CCircuitUnit* factory)
+// nano.hand_off: waiting and idle nanos in reach of a frame look for a job the frame it is started, by a factory or a
+// constructor, not when their 3 s wait or the idle pass ends. The same look as ever (CreateAssistTask)
+void CFactoryManager::AssistNewUnit(CCircuitUnit* unit)
 {
-	auto it = std::find_if(factories.begin(), factories.end(), [factory](const SFactory& f) { return f.unit == factory; });
-	if (it == factories.end()) {
-		return;
-	}
-	for (CCircuitUnit* nano : it->nanos) {
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	const float radius = unit->GetCircuitDef()->GetRadius();
+	for (auto& kv : assists) {
+		CCircuitUnit* nano = kv.first;
 		const IUnitTask::Type type = nano->GetTask()->GetType();
-		if ((type == IUnitTask::Type::WAIT) || (type == IUnitTask::Type::IDLE)) {
+		if (((type == IUnitTask::Type::WAIT) || (type == IUnitTask::Type::IDLE))
+			&& (nano->GetPos(frame).SqDistance2D(pos) <= SQUARE(nano->GetCircuitDef()->GetBuildDistance() + radius)))
+		{
 			AssignTask(nano, CreateAssistTask(nano));
 		}
 	}
