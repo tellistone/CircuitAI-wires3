@@ -106,6 +106,7 @@ private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
 	IUnitTask* CreateFactoryTask(CCircuitUnit* unit);
 	IUnitTask* CreateAssistTask(CCircuitUnit* unit);
+	void AssistNewUnit(CCircuitUnit* factory);
 
 	void Watchdog();
 	void UpdateIdle();

@@ -9,6 +9,7 @@
 #include "module/AATurretPicker.h"
 #include "module/AllyCover.h"
 #include "module/AttackBalance.h"
+#include "module/Protect.h"
 #include "module/BuilderManager.h"
 #include "module/ChokeDefence.h"
 #include "module/Frontline.h"
@@ -684,6 +685,43 @@ void CMilitaryManager::ReadConfig()
 			cfg.isLogOnly = qlog.isBool() ? qlog.asBool() : true;
 		}
 		attackBalance = std::make_unique<CAttackBalance>(circuit, cfg);
+	}
+	{
+		// quota.protect: {enable, zone, keep_sec, respond_sec, go_ratio} (CProtect). Missing (or not an object): off; a
+		// missing key uses its default, a non-number logs and uses it, others are clamped (as attack_balance)
+		const Json::Value& q = quotas["protect"];
+		if (!q.isNull() && !q.isObject()) {
+			circuit->LOG("CONFIG %s: quota.protect must be an object, it is off", cfgName.c_str());
+		}
+		CProtect::SConfig cfg;  // off
+		if (q.isObject()) {
+			auto num = [&](const char* key, float def, float lo, float hi) {
+				const Json::Value& v = q[key];
+				if (v.isNull()) {
+					return def;
+				}
+				if (!v.isNumeric()) {
+					circuit->LOG("CONFIG %s: quota.protect.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
+					return def;
+				}
+				const float val = v.asFloat();
+				const float clamped = utils::clamp(val, lo, hi);
+				if (clamped != val) {
+					circuit->LOG("CONFIG %s: quota.protect.%s %g clamped to %g", cfgName.c_str(), key, val, clamped);
+				}
+				return clamped;
+			};
+			const Json::Value& qen = q["enable"];
+			if (!qen.isNull() && !qen.isBool()) {
+				circuit->LOG("CONFIG %s: quota.protect.enable must be true or false, it is off", cfgName.c_str());
+			}
+			cfg.isEnabled = qen.isBool() && qen.asBool();
+			cfg.zone = num("zone", 1200.f, 200.f, 4000.f);
+			cfg.keepFrames = static_cast<int>(num("keep_sec", 12.f, 1.f, 120.f) * FRAMES_PER_SEC);
+			cfg.respondSec = num("respond_sec", 12.f, 1.f, 120.f);
+			cfg.goRatio = num("go_ratio", 1.f, 0.1f, 10.f);
+		}
+		protect = std::make_unique<CProtect>(circuit, cfg);
 	}
 	{
 		// Each route kind on or off (default on); a bare true/false sets them all
@@ -1365,6 +1403,11 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhPull, this), FRAMES_PER_SEC * 2, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhStats, this), FRAMES_PER_SEC, offset + 2);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogAhStats, this), FRAMES_PER_SEC * 60, offset + 3);
+		// Before the rallies, which leave its committed groups out: same frame as the attack rally, registered first, so
+		// the per-frame blob cache (CEnemyManager::GetBlobs) serves both
+		if (protect->IsEnabled()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateProtect, this), FRAMES_PER_SEC, offset + 2);
+		}
 		if (attackRally.cfg.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
 		}
@@ -1760,7 +1803,10 @@ void CMilitaryManager::CollectRallyGroups(const SRally& rally, std::vector<ISqua
 	outGroups.clear();
 	for (IFighterTask* t : GetTasks(rally.type)) {
 		ISquadTask* g = static_cast<ISquadTask*>(t);  // attack and raid tasks are squads
-		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()) {
+		// Not a group committed to the commander protect (CProtect): it answers that fight, not the blob
+		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()
+			&& !protect->IsActing(g))
+		{
 			outGroups.push_back(g);
 		}
 	}
@@ -1832,6 +1878,12 @@ void CMilitaryManager::OnRallyTaskEnd(SRally& rally, const IFighterTask* task)
 	if (task == rally.prevHost) {
 		rally.prevHost = nullptr;
 	}
+}
+
+void CMilitaryManager::UpdateProtect()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	protect->Update();
 }
 
 void CMilitaryManager::UpdateAttackRally()
@@ -1975,6 +2027,7 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 			frontline->ReleaseHold(taskF, 0);
 			OnRallyTaskEnd(attackRally, taskF);
 			OnRallyTaskEnd(raidRally, taskF);
+			protect->OnTaskEnd(taskF);  // its address may be reused by a new task before the next update
 			if (taskF->GetFightType() == IFighterTask::FightType::GUARD) {
 				// A guard slot can abort itself (builder gone): drop its builder entry so nothing points at a dead task
 				for (auto it = guardTasks.begin(); it != guardTasks.end();) {

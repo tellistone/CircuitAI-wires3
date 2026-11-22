@@ -83,6 +83,32 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   base timetable (the Lotus at 10 s waits until then, and `wait_sec` counts from then), hub towers, the creep,
   `choke.radar.guard` and the short choke, enemy line and artillery callers wait. Preventive towers are free and
   don't wait.
+- **Nano towers start on a factory's new unit the moment it appears** (`nano.hand_off`). Before, a nano whose
+  repair ended with the last unit went idle, looked again 20+ frames later, found the factory's next unit not started
+  yet (the factory goes through the same idle pass) and waited 3 s, so each new unit could go about 3 s without
+  assist. Now, when a factory starts a unit, its waiting nanos look again at once (`CFactoryManager::AssistNewUnit`),
+  with the same choice as their periodic look (`CreateAssistTask`). Busy nanos keep their job.
+
+- **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) no longer sit in the base when
+  there is no heavy to shoot.**
+  - Before, with no heavy in radar or LOS, or no covered firing spot by one, they held wherever they stood while it
+    was safe and covered. The base nearly always has that cover (new units, defenders, the commander), so they stayed
+    there for long periods.
+  - Now, in order (`CArtilleryTask::WalkAntiHeavy`): a covered firing spot by a heavy, as before; else the front: a
+    covered firing spot in range of an enemy it can shoot (aircraft aside) within its range + `ally_radius` of our
+    army, enemies in LOS first and radar dots only if none, held where it stands if it already is one; else behind
+    the army, holding once within 256 elmos of its spot there, covered or not (the flee guards it). With
+    `ally_threat` < 0 there is no front step.
+  - The army (`GetArmySpot`): one attack group, the strongest over walking time (`GetCoverDisc` power / (1 + walk /
+    60 s), the one followed now x1.5), not fleeing and outside our base defence range, so a group still forming in
+    base doesn't hold them there. Each unit has its own side slot `follow_dist` behind the leader, 144 elmos apart.
+    With no such group: attack/defend group leaders, a defended mex cluster, the base, as before.
+  - Long-reload units (reload of 5 s or more) no longer walk to a static heavy seen only on radar: they would wait
+    in range for it unseen. It counts as a front radar dot.
+  - Firing spots (heavy or front) stay 96 elmos clear of the other artillery-mode anti-heavies, where they stand or
+    walk to, so one shell doesn't hit several.
+  - A search that finds nothing, or a kind of goal with no route under `max_path_threat`, waits 6 s. After a flee
+    the front waits 5 s. The `ANTIHEAVY` log counts a walk to the front as PARK, so HUNT means heavies only.
 
 - **The turret account slows while our army is small next to our turrets** (`porcupine.budget.army`, new curve).
   Every 10 s, x = the metal of our finished turrets on the account / our army's (finished combat units, as the
@@ -348,6 +374,22 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   nothing.
 
 ### Added
+
+- **Commander protect against rushes** (`quota.protect`, new, off by default: `enable`, `zone` 1200, `keep_sec` 12,
+  `respond_sec` 12, `go_ratio` 1.0). When the commander's seen danger within `zone` beats its own power, or it takes
+  damage, one central go or no-go decides once a second for every group that can reach it, so they commit together
+  or not at all instead of each judging the fight alone and trickling in.
+  - Danger: the larger of the enemy blobs centred in the zone and the commander's own danger list, plus enemy static
+    defences whose range reaches into the zone.
+  - Commit: attack, raid and gathering groups that reach the commander within `respond_sec` (or its time to death)
+    and aren't fighting elsewhere (against gunships, anti-air groups only), nearest first, until groups + commander +
+    turrets reach 1.25x the danger. Go at `go_ratio` with one group at least (0.6x once cornered or paralysed),
+    no-go under `go_ratio` / `attack_keep_threat`, 5 s per state at least.
+  - On go, committed groups leave rallies and guard pulls, merge only with each other, take only enemies in the zone
+    (the commander's attackers first), and near the commander judge with the strength present there.
+  - Meeting point: our or allied turrets near the commander that hold the danger with it, reached in time and safe to
+    flee to. The commander flees there and stays; committed groups head there while it does.
+  - `PROTECT` log lines on start, go, nogo and end.
 
 - **`plant` unit attribute: stay put next to targets and anti-heavies** (Crabe has it). A unit with it never moves
   (move, fight, jump, gather and orbit orders are dropped, retreat included) while an enemy in LOS that it can hit is

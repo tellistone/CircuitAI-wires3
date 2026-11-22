@@ -43,6 +43,7 @@ class CSensorPlanner;
 class CCreepPlanner;
 class CAllyCover;
 class CAttackBalance;
+class CProtect;
 class CFrontline;
 class CTurretPicker;
 class CAATurretPicker;
@@ -512,6 +513,10 @@ public:
 	CAllyCover* GetAllyCover() const { return allyCover.get(); }
 	// quota.attack_balance: the enemy forces that could join a fight soon against ours there (CAttackBalance)
 	CAttackBalance* GetAttackBalance() const { return attackBalance.get(); }
+	// quota.protect: one go or no-go for the groups that can reach our commander under a rush (CProtect)
+	CProtect* GetProtect() const { return protect.get(); }
+	// quota.attack_merge.rally seen_sec, in frames: the protect asks for enemy blobs with it, sharing their cache
+	int GetAttackRallySeenFrames() const { return attackRally.cfg.seenFrames; }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
@@ -641,6 +646,7 @@ private:
 	void UpdateAhPull();
 	void UpdateAhStats();  // every second (NoteAh)
 	void LogAhStats();
+	void UpdateProtect();  // quota.protect, once a second
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
@@ -872,6 +878,7 @@ private:
 	float attackPathIgnoreThreat;  // quota.attack_path_ignore_threat
 	std::unique_ptr<CAllyCover> allyCover;  // quota.attack_ally_cover
 	std::unique_ptr<CAttackBalance> attackBalance;  // quota.attack_balance
+	std::unique_ptr<CProtect> protect;  // quota.protect
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat

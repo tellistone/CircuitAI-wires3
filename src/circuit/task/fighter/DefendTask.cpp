@@ -10,6 +10,7 @@
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -99,10 +100,17 @@ void CDefendTask::Update()
 	/*
 	 * Promote task if possible
 	 */
-	if (updCount % 32 == 1) {
-		CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	// quota.protect: committed to the commander's fight, the gathering group leaves at once as a new group, which is
+	// committed instead
+	CProtect* protect = militaryMgr->GetProtect();
+	const bool isProtect = protect->IsActing(this);
+	if (isProtect || (updCount % 32 == 1)) {
 		IFighterTask* task = nullptr;
-		if (IsGathered()) {
+		if (isProtect) {
+			task = militaryMgr->EnqueueTask(promote);
+			protect->Transfer(this, task);  // before the units leave: the last one leaving ends this task
+		} else if (IsGathered()) {
 			task = militaryMgr->EnqueueTask(promote);  // big enough: leave as a new group
 		} else if (!militaryMgr->GetTasks(check).empty()) {
 			// Attack-bound groups reinforce the nearest army they can join; with none, leave as a small group

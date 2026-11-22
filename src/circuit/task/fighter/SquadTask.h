@@ -41,6 +41,8 @@ public:
 	virtual void Merge(ISquadTask* task);
 
 	CCircuitUnit* GetLeader() const { return leader; }
+	float GetLowestSpeed() const { return lowestSpeed; }  // elmos per second: the pace the group walks at
+	float GetHighestRange() const { return highestRange; }
 	const springai::AIFloat3& GetLeaderPos(int frame) const;
 	// A turret seen for the first time (CMilitaryManager::ReactSuddenThreat) at pos: if its reach (ground or air range,
 	// as the leader, at most SUDDEN_RANGE_MAX) is within GetLookAhead of the leader, re-plan at the next threat-map

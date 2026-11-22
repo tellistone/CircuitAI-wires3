@@ -11,6 +11,7 @@
 #include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -136,6 +137,7 @@ void ISquadTask::Merge(ISquadTask* task)
 
 	FindLeader(rookies.begin(), rookies.end());
 	task->leader = nullptr;  // its units are ours now, and it is aborted: no pointer left to one that may die first
+	manager->GetCircuit()->GetMilitaryManager()->GetProtect()->Transfer(task, this);  // quota.protect: its commit too
 }
 
 const AIFloat3& ISquadTask::GetLeaderPos(int frame) const
@@ -301,11 +303,17 @@ ISquadTask* ISquadTask::CheckMergeTask()
 	const float sqMaxDistCost = SQUARE(MAX_TRAVEL_SEC * lowestSpeed);
 	float metric = std::numeric_limits<float>::max();
 
-	const std::set<IFighterTask*>& tasks = static_cast<CMilitaryManager*>(manager)->GetTasks(fightType);
+	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	// quota.protect: a group committed to the commander's fight joins only another committed one, or Merge would hand
+	// the commit to a group that is busy elsewhere
+	const CProtect* protect = militaryMgr->GetProtect();
+	const bool isProtect = protect->IsActing(this);
+	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(fightType);
 	for (const IFighterTask* candidate : tasks) {
 		if ((candidate == this) ||
 			(candidate->GetAttackPower() < attackPower) ||
-			!candidate->CanAssignTo(leader))
+			!candidate->CanAssignTo(leader) ||
+			(isProtect && !protect->IsActing(candidate)))
 		{
 			continue;
 		}

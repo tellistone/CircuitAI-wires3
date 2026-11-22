@@ -238,8 +238,11 @@ private:
 	// the host for the spot beside it); false: nowhere to stand near its fight and we are close already
 	bool PickRallyGoal(int frame, springai::AIFloat3& inOutGoal, SStrength& inOutStrength) const;
 	void ApplyReinforcePath(const CQueryPathSingle* query, const springai::AIFloat3& goal, float slack);
+	// together: the joint strength for the spot beside the host (nullptr: ours with the reinforce host's)
 	bool FindFightEdge(int frame, const springai::AIFloat3& hostPos, float farDist, springai::AIFloat3& outPos,
-			SStrength& outStrength) const;
+			SStrength& outStrength, const SStrength* together = nullptr) const;
+	// quota.protect (CProtect): committed with nothing to fight in reach, walk to the commander's fight
+	void WalkToProtect(int frame, bool isReuse);
 	// How far behind its line's front row our leader may stand (the line's depth; 0 with no line). A route's end is
 	// where the front row stands, but merging is judged at the leader
 	float GetLineDepth() const;

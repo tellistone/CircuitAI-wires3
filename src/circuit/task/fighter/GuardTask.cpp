@@ -10,6 +10,7 @@
 #include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "task/builder/BuilderTask.h"
 #include "task/fighter/AttackTask.h"
 #include "terrain/TerrainManager.h"
@@ -365,7 +366,8 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 				|| ((ft == FightType::ATTACK) && !static_cast<CAttackTask*>(curTask)->IsGuardPullable(unit, isFromGroup))
 				|| (isSummon && (ft == FightType::RAID) && (fightTask->GetAssignees().size() > 1)
 					&& !(cfg.isFromGroups && !fightTask->IsFighting()
-						&& (fightTask->GetAttackPower() - unit->GetCircuitDef()->GetPower() >= militaryMgr->GetRaidMinPower()))))
+						&& (fightTask->GetAttackPower() - unit->GetCircuitDef()->GetPower() >= militaryMgr->GetRaidMinPower())))
+				|| militaryMgr->GetProtect()->IsActing(fightTask))  // quota.protect
 			{
 				continue;
 			}

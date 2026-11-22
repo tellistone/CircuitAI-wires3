@@ -418,6 +418,22 @@ public:
 	bool IsHomeFight(CCircuitUnit* unit);
 	// An uncovered danger (recently seen ones included) within the wide (stop-fleeing) line: no morph now
 	bool IsCommInDanger(CCircuitUnit* unit);
+	/*
+	 * Commander protect (quota.protect, CProtect): the commander's view of its dangers, and where it may flee to
+	 */
+	struct SCommView {
+		float own = 0.f;  // its cover power (power x sqrt(health %))
+		float danger = 0.f;  // seen dangers (gunships and moving blips included) within the radius, summed
+		int count = 0;
+		springai::AIFloat3 dangerPos = -RgtVector;  // the nearest of them; invalid: none
+		float dangerRange = 0.f;  // its weapon range
+		bool isAir = false;  // it is a gunship
+		bool isCornered = false;  // IsCommCornered
+	};
+	// false: no flee state for it (a flying builder, or its flee is off)
+	bool GetCommView(CCircuitUnit* unit, float radius, SCommView& out);
+	// It can move to pos, and pos is outside every seen flee zone (its stop-fleeing line, as a flee goal)
+	bool IsCommFleeSpot(CCircuitUnit* unit, const springai::AIFloat3& pos);
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
@@ -551,6 +567,8 @@ private:
 	bool FindCommFleeGoal(CCircuitUnit* unit, const springai::AIFloat3& dangerPos, bool isAir, float margin,
 						  springai::AIFloat3& outGoal);
 	void UpdateCommFlee();
+	// Commander protect: the protect's meeting point for our commander while it has one (CProtect::GetMeetingPoint)
+	bool GetProtectMeet(CCircuitUnit* unit, springai::AIFloat3& outPos) const;
 	void StartCommFlee(CCircuitUnit* unit, SCommState* state);
 	void ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat, SCommState* state);
 	void LogFlee(CCircuitUnit* unit, const char* event, const SCommState* state) const;

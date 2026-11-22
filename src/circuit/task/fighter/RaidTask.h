@@ -83,6 +83,12 @@ private:
 
 	// Escape: current group strength vs threat where the units are and just ahead on the path
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
+	// Without quota.protect's boost (CProtect::GetBoost, a per-spot term): only the part that depends on distance from
+	// our base, as routes sample it along one ray (SetRouteAllowance)
+	float GetBaseSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
+	virtual float GetRadialAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override {
+		return GetBaseSafeThreatAt(pos, strength);
+	}
 	// Firing spots (IFighterTask::Attack) skip spots the escape would call dangerous
 	virtual float GetEscapeSafeThreat() const override { return GetSafeThreat(); }
 	virtual float GetAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override {
