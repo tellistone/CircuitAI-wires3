@@ -2382,6 +2382,7 @@ bool CMilitaryManager::CanAffordTurret(float cost)
 
 void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 {
+	task->SetCharge(0.f, static_cast<int>(turretSpend));  // who asked, for every tower (TURRET dropped, cornered)
 	CCircuitDef* def = task->GetBuildDef();
 	if (!IsAccountTurret(def)) {
 		return;  // a shield, storage, caretaker, radar, Claw mine, missile, turret.not_defence or anti-air only
@@ -2391,8 +2392,7 @@ void CMilitaryManager::ChargeTurret(CBDefenceTask* task)
 	const float cost = def->GetCostM();
 	b.spent[static_cast<int>(turretSpend)] += cost;
 	if (turretSpend == TurretSpend::PREVENT) {
-		task->SetCharge(0.f, static_cast<int>(turretSpend));  // free: the spender only names it (TURRET dropped)
-		return;
+		return;  // free
 	}
 	b.balance -= cost;
 	task->SetCharge(cost, static_cast<int>(turretSpend));

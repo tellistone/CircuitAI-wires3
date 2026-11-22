@@ -118,7 +118,7 @@ void CBDefenceTask::Cancel()
 		const char* why = militaryMgr->IsCallingOff() ? "called off"
 				: (buildFails > TASK_RETRIES) ? "the engine refused the build"
 				: !traveled.empty() ? "on arrival: no site, or a picker's spot no longer worth it"
-				: !units.empty() ? "unreachable or in a flee zone, with a builder on it"
+				: !units.empty() ? "unreachable or unsafe, or one of its builders died or retreated"
 				: ((lastTouched >= 0) && (frame - lastTouched >= timeout)) ? "nobody took it in time"
 				: "its builder died or retreated";
 		circuit->LOG("TURRET dropped: %s (%s%s) at (%.0f, %.0f) %i s after it was queued: %s",
@@ -195,15 +195,17 @@ void CBDefenceTask::Execute(CCircuitUnit* unit)
 
 bool CBDefenceTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
 {
-	// An armed tower is taken under threat (CBuilderManager::MakeBuilderTask, the turret is what makes the spot safe),
-	// so the walk keeps that rule: reach, and the builder's flee zones. The any-threat test dropped it on the update
-	// after a builder took it
-	if (buildDef->GetPower() < THREAT_MIN) {
+	// An armed tower is taken under threat (IsFightBack), so a builder with the flee on walks it by the pick's rule:
+	// reach, and its flee zones (known enemy turrets included); a cornered one's, built in the danger it is cornered by
+	// (MakeCommDefence), on reach only. Its flee still runs. Others keep the any-threat test
+	CCircuitAI* circuit = manager->GetCircuit();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	if (!IsFightBack() || !builderMgr->IsFleeOn(unit)) {
 		return IBuilderTask::IsReachable(unit, endPos);
 	}
-	CCircuitAI* circuit = manager->GetCircuit();
+	const bool isCornered = (spend == static_cast<int>(CMilitaryManager::TurretSpend::CORNERED));
 	return circuit->GetTerrainManager()->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
-		&& circuit->GetBuilderManager()->IsTurretJobSafe(unit, endPos, this);
+		&& (isCornered || builderMgr->IsTurretJobSafe(unit, endPos, this));
 }
 
 } // namespace circuit

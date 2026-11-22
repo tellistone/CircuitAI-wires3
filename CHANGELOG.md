@@ -278,13 +278,21 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   site with `CanReachAtSafe`, which fails on any threat in the threat map, last-known ghosts of enemies long gone
   included, and aborted it. The tower's booking on its defence point was freed, so it came back only when the sweep
   reached its cluster again, and a scored spot that failed twice in 10 minutes was given up.
-  `CBDefenceTask::IsReachable` now keeps the pick's rule for an armed tower: reachable, and outside the builder's flee
-  zones (`IsTurretJobSafe`, measured as a fight-back job). Unarmed builds keep the old test. The build site search
-  uses the job's own rule too (`IBuilderTask::FindBuildSite` calls `IsReachable`), so an armed tower no longer slides
-  off threatened ground. A `TURRET dropped` line now logs every tower job that ends before it starts: the def, its
-  spender (`prevent (free)`, `porc`, ...), where, how long after it was queued, and why (called off, the engine
-  refused the build, no site on arrival, unreachable or in a flee zone with a builder on it, nobody took it in time,
-  or its builder died or retreated).
+  `CBDefenceTask::IsReachable` now keeps the pick's rule for an armed tower (`IBuilderTask::IsFightBack`) and a
+  builder with the flee on: reachable, and outside its flee zones (`IsTurretJobSafe`, measured as a fight-back job).
+  A cornered builder's own tower (`MakeCommDefence`) only needs to be reachable: it stands in the danger by design,
+  and the new rule would have dropped it at once and queued it again every 0.5 s. Unarmed builds, and builders with
+  no flee state (`retreat.builder_flee` off, flying builders), keep the old test. The build site search keeps a
+  site out of flee zones too, and still skips surface threat on its own, so a tower walked into threat stands at the
+  nearest clear site. A `TURRET dropped` line now logs every tower job that ends before it starts: the def, its
+  spender (`prevent (free)`, `porc`, `cornered`, ...; every tower records it now), where, how long after it was
+  queued, and why (called off, the engine refused the build, no site on arrival, unreachable or unsafe with a builder
+  still on it, nobody took it in time, or its builder died or retreated). A resign logs one for each open job.
+- **Builder jobs keep out of enemy turrets' reach.** Flee zones counted mobile enemies only, so a job near a known
+  enemy turret passed `IsCommJobSafe`, and an armed one (which skips the threat test) sent the builder into the
+  turret's range. Armed enemy buildings we know of, seen now or not, now count for job tests (pick, walk, radar and
+  reclaim spots) of builders with the flee on and commanders, at the same lines as other dangers. No flee runs from
+  them, and a flee's end and a morph start don't count them.
 
 - **behaviour.json `limit` counts queued jobs.** A unit type's limit only counted our units (nanoframes included),
   so several jobs could be queued before the first nanoframe stood, and each was built: the Advanced Radar (limit 1)

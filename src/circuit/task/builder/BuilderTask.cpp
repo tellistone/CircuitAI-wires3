@@ -577,6 +577,13 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	});
 }
 
+bool IBuilderTask::IsFightBack() const
+{
+	const CCircuitDef* def = (buildType != BuildType::REPAIR) ? buildDef
+			: (target != nullptr) ? target->GetCircuitDef() : nullptr;
+	return (def != nullptr) && (def->GetPower() >= THREAT_MIN);
+}
+
 bool IBuilderTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -706,7 +713,8 @@ void IBuilderTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, flo
 
 	CEconomyManager* economyMgr = manager->GetCircuit()->GetEconomyManager();
 	CCircuitDef* cdef = buildDef;
-	// The walk's own rule (an armed tower's: CBDefenceTask::IsReachable), so the site isn't one its walk would drop
+	// The walk's own rule (an armed tower's: flee zones, CBDefenceTask::IsReachable). The search itself skips any site
+	// with surface threat, so a tower walked into threat stands at the nearest site clear of it
 	CTerrainManager::TerrainPredicate predicate = [this, economyMgr, cdef, builder](const AIFloat3& p) {
 		return IsReachable(builder, p) && economyMgr->IsAllowedAt(cdef, p);  // economy.energy.base_only
 	};

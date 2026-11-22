@@ -1348,17 +1348,6 @@ static bool IsBuildingDefence(CCircuitUnit* unit)
 		&& (static_cast<IBuilderTask*>(task)->GetBuildType() == IBuilderTask::BuildType::DEFENCE);
 }
 
-// The job adds or brings back firepower where it is: an armed build (the old safety check's buildThreat), or a repair
-// of an armed unit or turret
-static bool IsFightBackJob(const IBuilderTask* task)
-{
-	const CCircuitUnit* target = task->GetTarget();
-	const CCircuitDef* def = (task->GetBuildType() == IBuilderTask::BuildType::REPAIR)
-			? ((target != nullptr) ? target->GetCircuitDef() : nullptr)
-			: task->GetBuildDef();
-	return (def != nullptr) && (def->GetPower() >= THREAT_MIN);
-}
-
 IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 {
 	CThreatMap* threatMap = circuit->GetThreatMap();
@@ -2440,7 +2429,8 @@ void CBuilderManager::UpdateCommDangers()
 	// gunships included), unidentified blips while they move and sit low. Seen: in radar or LOS now; the flee only
 	// counts those (the threat map keeps last-known ghosts, which would hold it back for long). Jobs and morph starts
 	// also count known enemies gone from radar and LOS within COMM_DANGER_MEMORY, at their last spot, so an enemy at
-	// the edge of sight doesn't pull the commander to a job and back. Rebuilt every COMM_STATE_FRAMES
+	// the edge of sight doesn't pull the commander to a job and back; and only jobs count the armed enemy buildings
+	// we know of, seen or not (isStatic: no flee runs from them). Rebuilt every COMM_STATE_FRAMES
 	const int frame = circuit->GetLastFrame();
 	if ((commDangerFrame >= 0) && (frame - commDangerFrame < COMM_STATE_FRAMES)) {
 		return;
@@ -2454,12 +2444,21 @@ void CBuilderManager::UpdateCommDangers()
 	CMap* map = circuit->GetMap();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
+		CCircuitDef* edef = enemy->GetCircuitDef();
 		float range;
 		bool isSeen = true;
+		bool isStatic = false;
 		if (IFighterTask::IsGroundDanger(enemy, true, range)) {
-			if ((enemy->GetCircuitDef() == nullptr) && ISquadTask::IsHighBlip(map, enemy->GetPos())) {
+			if ((edef == nullptr) && ISquadTask::IsHighBlip(map, enemy->GetPos())) {
 				continue;  // a plane
 			}
+		} else if ((edef != nullptr) && !edef->IsMobile() && edef->IsAttacker() && !enemy->IsHidden()
+			&& !enemy->IsBeingBuilt() && (edef->HasAntiLand() || edef->HasAntiWater()))
+		{
+			range = std::max(edef->GetMaxRange(CCircuitDef::RangeType::LAND),
+					edef->GetMaxRange(CCircuitDef::RangeType::WATER));
+			isSeen = false;
+			isStatic = true;
 		} else {
 			const int lastSeen = enemy->GetData()->GetLastSeen();
 			if (enemy->IsHidden() || enemy->IsInRadarOrLOS() || (enemy->GetCircuitDef() == nullptr)
@@ -2470,7 +2469,6 @@ void CBuilderManager::UpdateCommDangers()
 			}
 			isSeen = false;
 		}
-		CCircuitDef* edef = enemy->GetCircuitDef();
 		if ((edef != nullptr) && (edef->GetRawThreat() < minThreat)) {
 			continue;  // guard.summon.min_threat: a scout passing by doesn't chase builders off their jobs
 		}
@@ -2478,7 +2476,8 @@ void CBuilderManager::UpdateCommDangers()
 		if ((edef != nullptr) && edef->IsRoleComm() && (commThrMod > 0.f)) {
 			threat /= commThrMod;  // quota.thr_mod.comm scales every commander down, ours is the one at risk
 		}
-		commDangers.push_back({enemy->GetPos(), range, threat, (edef != nullptr) && edef->IsAbleToFly(), isSeen});
+		const bool isAir = (edef != nullptr) && edef->IsAbleToFly();
+		commDangers.push_back({enemy->GetPos(), range, threat, isAir, isSeen, isStatic});
 	}
 }
 
@@ -2564,8 +2563,8 @@ CBuilderManager::SCommState* CBuilderManager::GetCommState(CCircuitUnit* unit)
 	float minSqDist = std::numeric_limits<float>::max();
 	for (const SCommDanger& danger : commDangers) {
 		const float sqDist = pos.SqDistance2D(danger.pos);
-		if (sqDist > SQUARE(danger.range + state.wideMargin)) {
-			continue;
+		if (danger.isStatic || (sqDist > SQUARE(danger.range + state.wideMargin))) {
+			continue;  // an enemy building counts for jobs only (IsCommJobSafe)
 		}
 		state.allZone.Add(danger.threat);
 		if (!danger.isSeen) {
@@ -2692,7 +2691,7 @@ bool CBuilderManager::IsCommJobSafe(const SCommState* state, const AIFloat3& pos
 		return true;
 	}
 	const bool isBuilder = !state->IsComm();
-	const bool isFightBack = isBuilder && (task != nullptr) && IsFightBackJob(task);
+	const bool isFightBack = isBuilder && (task != nullptr) && task->IsFightBack();
 	const float line = isFightBack ? state->cfg.margin : state->wideMargin;
 	UpdateCommDangers();
 	SCommZone zone;
