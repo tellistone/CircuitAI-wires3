@@ -565,7 +565,7 @@ bool CRaidTask::FindTarget()
 		}
 
 		const float sqEBDist = basePos.SqDistance2D(ePos);
-		const float boost = isProtect ? protect->GetBoost(this, ePos, highestRange) : 1.f;  // quota.protect
+		const float boost = protect->GetBoost(this, ePos);  // quota.protect
 		const float distMod = GetThrDistModAt(ePos) / boost;  // thr_mod.distance curve at the enemy's spot
 		float checkPower = maxPower / distMod;
 		float sqCheckSpeed = sqMaxSpeed;
@@ -1002,7 +1002,7 @@ void CRaidTask::SendPendingFight(int frame)
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 {
 	// quota.protect: a committed group judges the commander's fight with the strength present
-	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos, highestRange);
+	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos);
 	return GetBaseSafeThreatAt(pos, safeThreat * boost);
 }
 

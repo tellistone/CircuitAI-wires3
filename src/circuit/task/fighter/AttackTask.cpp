@@ -596,7 +596,7 @@ float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, const SStrength& stre
 	// At most 2x: under the base allowance a spot passes, at 2x it or more it fails, either way without cover.
 	// quota.protect: a committed group judges the commander's fight with the strength present (CProtect::GetBoost),
 	// which has the other committed groups there, the commander and the turrets in it already: no cover there
-	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos, highestRange);
+	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos);
 	const float allowed = GetBaseAllowedThreatAt(pos, strength.value * boost, refSqDist);
 	if (boost > 1.f) {
 		return allowed;
@@ -1265,9 +1265,9 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 void CAttackTask::WalkToProtect(int frame, bool isReuse)
 {
 	// Committed with nothing to fight in reach: walk to the commander's fight. Its safe edge as rally joiners find the
-	// host's (FindFightEdge: within our range of the commander the spots are judged with the strength present and
-	// ours); none: straight to the commander, the go was judged for all of us together. The route cap carries the
-	// same boost at the goal
+	// host's (FindFightEdge: in the protect's present radius the spots are judged with the strength present and ours);
+	// none: straight to the commander, the go was judged for all of us together. The route cap carries the same boost
+	// at the goal
 	SetTarget(nullptr);
 	ClearScaleAnchor();  // walking to the fight, not into an accepted one
 	state = State::ROAM;
@@ -1281,7 +1281,7 @@ void CAttackTask::WalkToProtect(int frame, bool isReuse)
 	if (!FindFightEdge(frame, hostPos, RALLY_EDGE_FAR_DIST, goal, edgeStrength)) {
 		goal = hostPos;
 	}
-	const SStrength routeStrength(GetSafeThreat() * protect->GetBoost(this, goal, highestRange));
+	const SStrength routeStrength(GetSafeThreat() * protect->GetBoost(this, goal));
 	position = goal;
 	if (isReuse && ReuseRoute(PROTECT_ROUTE_ID, goal, frame)) {
 		return;
@@ -2576,7 +2576,7 @@ float CAttackTask::GetPathThreatCap(const AIFloat3& startPos, const F3Vec& goals
 	const CProtect* protect = GetMilitaryMgr()->GetProtect();
 	float boost = 1.f;
 	for (const AIFloat3& g : goals) {
-		boost = std::max(boost, protect->GetBoost(this, g, highestRange));
+		boost = std::max(boost, protect->GetBoost(this, g));
 	}
 	return GetPathThreatCap(startPos, goals, GetSafeThreat() * boost);
 }
