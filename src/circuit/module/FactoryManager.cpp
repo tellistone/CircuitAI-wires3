@@ -833,6 +833,9 @@ int CFactoryManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 static constexpr int ASSIST_RELOOK = FRAMES_PER_SEC / 4;
 void CFactoryManager::AssistNear(CCircuitUnit* unit)
 {
+	if (assists.empty()) {
+		return;
+	}
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
 	const float radius = unit->GetCircuitDef()->GetRadius();
@@ -887,7 +890,10 @@ int CFactoryManager::UnitIdle(CCircuitUnit* unit)
 
 int CFactoryManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
-	AssistNear(unit);  // a repair job for the nanos in reach
+	// A repair job for the nanos in reach. Not for a hit that left full health (EMP, slow, capture): nothing to repair
+	if (unit->GetUnit()->GetHealth() < unit->GetUnit()->GetMaxHealth()) {
+		AssistNear(unit);
+	}
 	return 0; //signaling: OK
 }
 
@@ -1716,7 +1722,7 @@ IUnitTask* CFactoryManager::CreateAssistTask(CCircuitUnit* unit)
 	for (Unit* u : units) {
 		CAllyUnit* candUnit = circuit->GetFriendlyUnit(u);
 		if ((candUnit == nullptr) || (candUnit == unit) || builderMgr->IsReclaimed(candUnit)) {
-			continue;  // a hit nano can't repair itself
+			continue;  // a nano can't repair itself
 		}
 		if (u->IsBeingBuilt()) {
 			CCircuitDef* cdef = candUnit->GetCircuitDef();
