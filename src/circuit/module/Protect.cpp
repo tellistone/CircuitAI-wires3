@@ -453,8 +453,12 @@ void CProtect::CollectCandidates(CCircuitUnit* comm, int frame, std::vector<SCan
 				continue;
 			}
 			if (type == IFighterTask::FightType::DEFEND) {
-				const IFighterTask::FightType promote = static_cast<CDefendTask*>(g)->GetPromote();
-				if ((promote != IFighterTask::FightType::ATTACK) && (promote != IFighterTask::FightType::RAID)) {
+				// quota.solo_hunt hunters too: on go each leaves as a one-unit attack group (CDefendTask::Update)
+				const CDefendTask* dt = static_cast<CDefendTask*>(g);
+				const IFighterTask::FightType promote = dt->GetPromote();
+				if ((promote != IFighterTask::FightType::ATTACK) && (promote != IFighterTask::FightType::RAID)
+					&& !dt->IsSolo())
+				{
 					continue;
 				}
 			}

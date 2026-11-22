@@ -103,16 +103,25 @@ void CDefendTask::Update()
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	// quota.protect: committed to the commander's fight, the gathering group leaves at once as a new group, which is
 	// committed instead
+	CProtect* protect = militaryMgr->GetProtect();
+	const bool isProtect = IsProtecting();
 	if (isSolo) {
+		CCircuitUnit* unit = leader;
 		// quota.solo_hunt: the one-off switch is over, the unit joins the army as any attack-bound unit
 		if (militaryMgr->IsSoloHuntOver()) {
-			CCircuitUnit* unit = leader;
 			manager->AssignTask(unit, militaryMgr->EnqueueAttackBound(unit));  // RemoveAssignee aborts this task
 			return;
 		}
+		// quota.protect committed it: it leaves as a one-unit attack group, which is committed instead and acts on the
+		// protect as any; once that group no longer protects, the unit hunts alone again (UpdateSoloHunt)
+		if (isProtect) {
+			IFighterTask* task = militaryMgr->EnqueueTask(FightType::ATTACK);
+			protect->Transfer(this, task);  // before the unit leaves: leaving ends this task
+			militaryMgr->NoteSoloProtect(unit);
+			manager->AssignTask(unit, task);
+			return;
+		}
 	}
-	CProtect* protect = militaryMgr->GetProtect();
-	const bool isProtect = IsProtecting();
 	if (!isSolo && (isProtect || (updCount % 32 == 1))) {
 		IFighterTask* task = nullptr;
 		if (isProtect) {

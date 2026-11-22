@@ -122,6 +122,8 @@ public:
 	// distance / choke_dist minus choke_spread per other hunter parked there; kept while it stays short.
 	// -RgtVector: none (no choke map yet, none short or reachable)
 	springai::AIFloat3 GetSoloPark(const IFighterTask* task, CCircuitUnit* leader);
+	// A solo hunter left for a quota.protect commit: it goes back to hunting alone once its group stops protecting
+	void NoteSoloProtect(CCircuitUnit* unit);
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
 	// Mines always get a new one (each lays its field somewhere else)
 	IFighterTask* EnqueueAntiHeavy(CCircuitUnit* unit);
@@ -928,6 +930,7 @@ private:
 		springai::AIFloat3 spot;
 	};
 	std::map<const IFighterTask*, SSoloPark> soloParks;
+	std::set<int> soloProtectIds;  // NoteSoloProtect
 	void UpdateSoloHunt();
 	bool attackIdleMerge;  // quota.attack_merge.idle_merge
 	int heavySeenFrame;  // IsEnemyHeavySeen cache: frame heavySeenAge was measured at

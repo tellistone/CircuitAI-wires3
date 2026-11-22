@@ -2053,6 +2053,11 @@ bool CMilitaryManager::IsSoloHuntRole(const CCircuitDef* cdef) const
 	return !soloHunt.isOver && ((soloHunt.roleMask & mask) != 0);
 }
 
+void CMilitaryManager::NoteSoloProtect(CCircuitUnit* unit)
+{
+	soloProtectIds.insert(unit->GetId());
+}
+
 void CMilitaryManager::UpdateSoloHunt()
 {
 	// One-off: once the ally team's finished mexes reach mex x the map's spots, solo hunters turn attack-bound for
@@ -2060,6 +2065,23 @@ void CMilitaryManager::UpdateSoloHunt()
 	if (soloHunt.isOver) {
 		return;
 	}
+	// Hunters that went to a quota.protect fight: back to hunting alone once their attack group (or the one it merged
+	// into) no longer protects. Anything else they went to (retreat, a guard slot, ...) brings them back by MakeTask
+	for (auto it = soloProtectIds.begin(); it != soloProtectIds.end();) {
+		CCircuitUnit* unit = circuit->GetTeamUnit(*it);
+		IUnitTask* task = (unit != nullptr) ? unit->GetTask() : nullptr;
+		const bool isAttack = (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+				&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK);
+		if (isAttack && static_cast<ISquadTask*>(task)->IsProtecting()) {
+			++it;
+			continue;
+		}
+		if (isAttack && IsSoloHuntRole(unit->GetCircuitDef())) {  // the role check: a unit id can be reused
+			AssignTask(unit, EnqueueSoloHunt());
+		}
+		it = soloProtectIds.erase(it);
+	}
+
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	metalMgr->MarkAllyMexes();
 	const int spotCount = metalMgr->GetSpots().size();
@@ -2070,6 +2092,7 @@ void CMilitaryManager::UpdateSoloHunt()
 	if (share >= soloHunt.mexShare) {
 		soloHunt.isOver = true;
 		soloParks.clear();
+		soloProtectIds.clear();  // the ones still in a protect fight stay in the army
 		circuit->LOG("SOLO_HUNT: over at frame %i (ally mexes %i / %i = %.2f >= %.2f)", circuit->GetLastFrame(),
 				metalMgr->GetMexCount(), spotCount, share, soloHunt.mexShare);
 	}
