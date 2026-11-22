@@ -130,6 +130,18 @@ void CBMexTask::Cancel()
 	Unclaim();  // only our own claim: a spot an ally heads for stays closed
 }
 
+// guard.summon: no escort gate, so builders take undefended clusters at once. The cluster's preventive towers are
+// booked as its first mex starts, not once every spot is queued (the mex chain's rule below 10 m/s): a builder is
+// there, and the tower is its next job
+static void BookClusterDefence(CCircuitAI* circuit, int index, const AIFloat3& pos)
+{
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	const int cluster = circuit->GetMetalManager()->GetCluster(index);
+	if (militaryMgr->GetGuardCfg().isSummon && (cluster >= 0) && !militaryMgr->HasDefence(cluster)) {
+		militaryMgr->MakeDefence(cluster, pos, nullptr, true);
+	}
+}
+
 void CBMexTask::Execute(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -166,6 +178,7 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 					TRY_UNIT(circuit, unit,
 						unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 					)
+					BookClusterDefence(circuit, index, buildPos);
 					return;
 				} else {
 					economyMgr->SetOpenSpot(index, true);
@@ -198,6 +211,7 @@ void CBMexTask::Execute(CCircuitUnit* unit)
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)
+		BookClusterDefence(circuit, index, buildPos);
 	} else {
 //		buildPos = -RgtVector;
 		// Fallback to Guard/Assist/Patrol

@@ -157,7 +157,7 @@
 	// and so does any job when the current one is cut off. A share of 0 disables that switch. Only a builder between
 	// jobs searches for reclaim.
 	// In the opening (below), with mex_board on, a walking constructor runs no pick: it leaves its job only for danger,
-	// a NOW job or a stall fix it could take, or when the board gives its spot to another builder.
+	// a NOW job or a stall fix other than a mex it could take, or when the board gives its spot to another builder.
 	// opening: in the opening, a HIGH mex job weighs <mex_weight> instead of weight.high (an energy stall still ranks it
 	//   as normal), reclaim of less than <reclaim_metal> metal ranks as normal, and a constructor with nothing to do
 	//   patrols <patrol_sec> seconds (else 20) before it looks again. mex_weight = weight.high, reclaim_metal 0 and
@@ -177,13 +177,15 @@
 	// of mex jobs being made one at a time near whichever builder picks. Each builder holds one spot, the one it walks
 	// to, or while it builds something else its next. Its arrival is the time left on its job (and on the energy the
 	// mex chain queues after a mex) plus the walk from that job's site, scored as mex_front scores clusters (comm_bias
-	// for the commander, which never takes a spot another builder reaches sooner); lowest first. A held spot goes to
+	// for the commander, which never takes a spot another builder reaches sooner); lowest first. As in the mex search,
+	// only spots in the mex_front "clusters" nearest clusters (and the one it holds) count. A held spot goes to
 	// another builder only if it gets there <min_gain_sec> sooner, and a builder leaves its spot for another only if
 	// that scores <min_gain_sec> better; one walking to its spot within builder_jobs.commit_sec of it keeps it, and one
 	// fleeing keeps it for <hold_sec>. A job is made only for a matched builder, and no other builder takes it. Only
 	// spots the builder would take itself (reach, flee zones, threat, a hiding commander's range), and in team games
 	// not nearer an ally's base or factory than ours. A spot whose job failed (unreachable, the build failed) waits
-	// 30 s for that builder. The opening log counts the spots a walking builder lost to another ("board").
+	// 30 s for that builder. Matching runs once a second, and at once when a builder needs a spot. The opening log
+	// counts the spots a walking builder lost to another ("board").
 	"mex_board": {"min_gain_sec": 3, "hold_sec": 20},
 
 	// The opening, which some rules read (buildpower_spots, behaviour.json guard.summon.opening_share and

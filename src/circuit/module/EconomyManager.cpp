@@ -22,6 +22,7 @@
 #include "unit/enemy/EnemyUnit.h"
 #include "task/IdleTask.h"
 #include "task/RetreatTask.h"
+#include "task/builder/BuildChain.h"
 #include "task/builder/EnergyTask.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
@@ -445,31 +446,15 @@ void CEconomyManager::Init()
 	mexFrontClusters = std::max(mexFront.get("clusters", 3).asInt(), 1);
 	mexFrontStarted = utils::clamp(mexFront.get("started", 0.3f).asFloat(), 0.f, 0.9f);
 
-	// Seconds for this map: a number, or [[<map size>, <seconds>], ...], linear between points, flat beyond the ends.
-	// Map size is sqrt(width * height) in 512-elmo map units, so 8x8 = 8 and 16x16 = 16.
+	// Seconds for this map: a number, or a map size curve (CMilitaryManager::ReadMapSeconds)
 	{
 		const float mapSize = std::sqrt(float(CTerrainManager::GetTerrainWidth()) * CTerrainManager::GetTerrainHeight()) / 512.f;
-		auto mapSeconds = [mapSize](const Json::Value& value, float defSec) {
-			if (value.isNumeric()) {
-				return std::max(value.asFloat(), 0.f);
-			}
-			std::vector<std::pair<float, float>> curve;
-			if (value.isArray()) {
-				for (const Json::Value& pt : value) {
-					if (pt.isArray() && (pt.size() >= 2) && pt[0].isNumeric() && pt[1].isNumeric()) {
-						curve.emplace_back(pt[0].asFloat(), pt[1].asFloat());
-					}
-				}
-			}
-			std::sort(curve.begin(), curve.end());
-			return std::max(utils::eval_curve(curve, mapSize, defSec), 0.f);
-		};
 		// mex_escort: missing = 300 s
-		const float escortSec = mapSeconds(econ["mex_escort"], 300.f);
+		const float escortSec = CMilitaryManager::ReadMapSeconds(circuit, econ["mex_escort"], "mex_escort", 300.f);
 		mexEscortFrame = escortSec * FRAMES_PER_SEC;
 		// opening: {"time": <seconds or curve>, "log": <OPENING lines>}; time 0 = no opening rules
 		const Json::Value& opening = econ["opening"];
-		const float openingSec = mapSeconds(opening["time"], 300.f);
+		const float openingSec = CMilitaryManager::ReadMapSeconds(circuit, opening["time"], "opening.time", 300.f);
 		openingEnd = openingSec * FRAMES_PER_SEC;
 		isOpening = (openingEnd > 0) && (spSize > 0);
 		openingLogEnd = (isOpening && opening.get("log", true).asBool()) ? openingEnd : -1;
@@ -1018,14 +1003,23 @@ IBuilderTask* CEconomyManager::EnqueueMex(int index)
 			IBuilderTask::BuildType::MEX, mexDef->GetCostM(), .0f);
 	task->SetBuildPos(pos);
 	SetOpenSpot(index, false);
-	// guard.summon: no escort gate, so builders take undefended clusters at once. The cluster's preventive towers
-	// are booked with its first mex job, not once every spot is queued (the mex chain's rule below 10 m/s)
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	const int cluster = metalMgr->GetCluster(index);
-	if (militaryMgr->GetGuardCfg().isSummon && (cluster >= 0) && !militaryMgr->HasDefence(cluster)) {
-		militaryMgr->MakeDefence(cluster, pos, nullptr, true);
-	}
 	return task;
+}
+
+CCircuitDef* CEconomyManager::GetChainEnergy(const SBuildChain* chain, const AIFloat3& pos) const
+{
+	if ((chain == nullptr) || (chain->energy <= 0.f) || (GetAvgEnergyIncome() >= chain->energy)) {
+		return nullptr;
+	}
+	float make;
+	// isOrFill: on ground too steep for any energy beside it, the fill can still find a site
+	CCircuitDef* energyDef = GetLowEnergy(pos, make, true);
+	if ((energyDef == nullptr) || !chain->isMexEngy) {
+		return energyDef;
+	}
+	const CMetalManager* metalMgr = circuit->GetMetalManager();
+	const int index = metalMgr->FindNearestSpot(pos);
+	return ((index >= 0) && (metalMgr->GetSpots()[index].income > make * 0.8f)) ? energyDef : nullptr;
 }
 
 std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen) const
@@ -1056,18 +1050,34 @@ std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* uni
 	};
 }
 
+const std::vector<int>& CEconomyManager::GetTestedSpots()
+{
+	const int frame = circuit->GetLastFrame();
+	if ((testedFrame < 0) || (frame - testedFrame >= FRAMES_PER_SEC)) {
+		testedFrame = frame;
+		testedSpots.clear();
+		const std::function<bool (int spot)> isOpen = GetMexSpotTest(nullptr, true);
+		const unsigned count = circuit->GetMetalManager()->GetSpots().size();
+		for (unsigned i = 0; i < count; ++i) {
+			if (isOpen(i)) {
+				testedSpots.push_back(i);
+			}
+		}
+	}
+	return testedSpots;
+}
+
 void CEconomyManager::UpdateOpening()
 {
 	if (!isOpening) {
 		return;
 	}
 	// Spots the mex job search would take for some builder, and those on safe ground (economy.buildpower_spots)
-	const std::function<bool (int spot)> isOpen = GetMexSpotTest(nullptr);
 	const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	openSpotCount = safeSpotCount = 0;
-	for (unsigned i = 0; i < spots.size(); ++i) {
-		if (isOpen(i)) {
+	for (int i : GetTestedSpots()) {
+		if (IsAllyOpenSpot(i)) {  // not one the mex board holds
 			++openSpotCount;
 			safeSpotCount += militaryMgr->IsSafeGround(spots[i].position) ? 1 : 0;
 		}

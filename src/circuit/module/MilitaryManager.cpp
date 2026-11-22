@@ -389,6 +389,17 @@ void CMilitaryManager::ReadCurve(CCircuitAI* circuit, const Json::Value& value, 
 	std::sort(curve.begin(), curve.end());
 }
 
+float CMilitaryManager::ReadMapSeconds(CCircuitAI* circuit, const Json::Value& value, const std::string& key, float defSec)
+{
+	if (value.isNumeric()) {
+		return std::max(value.asFloat(), 0.f);
+	}
+	std::vector<std::pair<float, float>> curve;
+	ReadCurve(circuit, value, key, "map size", curve);
+	const float mapSize = std::sqrt(float(CTerrainManager::GetTerrainWidth()) * CTerrainManager::GetTerrainHeight()) / 512.f;
+	return utils::eval_curve(curve, mapSize, defSec);
+}
+
 void CMilitaryManager::ReadConfig()
 {
 	const Json::Value& root = circuit->GetSetupManager()->GetConfig();
@@ -1229,7 +1240,8 @@ void CMilitaryManager::ReadConfig()
 	tb.lossRefund = std::max(budget.get("loss_refund", tb.lossRefund).asFloat(), 0.f);
 	tb.balance = std::max(budget.get("start", tb.balance).asFloat(), 0.f);
 	tb.waitFrames = int(std::max(budget.get("wait_sec", tb.waitFrames / FRAMES_PER_SEC).asFloat(), 0.f) * FRAMES_PER_SEC);
-	tb.sinceFrame = int(std::max(budget.get("since", tb.sinceFrame / FRAMES_PER_SEC).asFloat(), 0.f) * FRAMES_PER_SEC);
+	tb.sinceFrame = int(ReadMapSeconds(circuit, budget["since"], "porcupine.budget.since", tb.sinceFrame / FRAMES_PER_SEC)
+			* FRAMES_PER_SEC);
 	// Missing or [] = x1
 	std::vector<std::pair<float, float>> budgetMap;
 	ReadCurve(budget["map"], "porcupine.budget.map", "map area per player", budgetMap);

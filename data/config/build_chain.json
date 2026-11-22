@@ -79,7 +79,8 @@
 	// army we'd need to hold the ground; x1 before <army_since> seconds of game time (the opening's base towers come
 	// before its army). The preventive chance (above) takes the same army multiplier.
 	// <start>: metal the account holds at the start, so the first base tower goes on time.
-	// <since>: seconds of game time before planned towers may spend it: porc, the base timetable (a base tower due
+	// <since>: seconds of game time (or a [[<map size>, <seconds>], ...] curve, as economy.json mex_escort) before
+	// planned towers may spend it: porc, the base timetable (a base tower due
 	// earlier, such as the Lotus at 10 s, waits until then, and wait_sec counts from then), hub towers, the creep,
 	// choke.radar.guard and the short choke, enemy line and artillery callers. Before it only the reactive ones: a
 	// turret near an enemy or after a flee, a cornered builder's, a tower against an enemy mex, so the opening's metal

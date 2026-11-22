@@ -67,6 +67,10 @@ private:
 public:
 	static void ReadCurve(CCircuitAI* circuit, const Json::Value& value, const std::string& key, const char* xName,
 			std::vector<std::pair<float, float>>& curve);
+	// Seconds for this map: a number, or [[<map size>, <seconds>], ...] (linear between points, flat beyond the ends),
+	// map size = sqrt(width x height) in 512-elmo map units (8x8 = 8); missing = defSec. economy.mex_escort,
+	// economy.opening.time, porcupine.budget.since
+	static float ReadMapSeconds(CCircuitAI* circuit, const Json::Value& value, const std::string& key, float defSec);
 	// Map player density = map area / 2 / allied team size, sides in map units (512 elmos, the 16x16 players quote):
 	// 16x16 1v1 = 128, 8x8 5v5 = 6.4. x of response.<role>.density_curve and factory.json income_tier_density
 	static float GetMapDensity(CCircuitAI* circuit);

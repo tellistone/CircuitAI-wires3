@@ -508,7 +508,7 @@
 	// opening_share: max_share while the opening lasts (economy.opening). While its guard is with it, a builder's
 	// flee takes escorted_ally_threat instead of retreat.builder_flee's ally threat. Builder flee also ignores
 	// enemies under min_threat. A slot whose guard died takes the next one 10 s later at the soonest. A cluster's
-	// preventive towers (porcupine.prevent) are booked with its first mex job
+	// preventive towers (porcupine.prevent) are booked as its first mex starts
 	"summon": {"min_threat": 1.0, "enemy_sec": 30, "enemy_radius": 800, "from_groups": true, "opening_share": 1.0,
 		"escorted_ally_threat": 0}
 },

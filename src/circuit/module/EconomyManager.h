@@ -39,6 +39,7 @@ class IBuilderTask;
 struct STerrainMapArea;
 class CGameTask;
 class CEnergyGrid;
+struct SBuildChain;
 
 class CEconomyManager: public IModule {
 public:
@@ -166,12 +167,19 @@ public:
 	// The mex job search's spot test: open, not ours yet, no threat, reachable (by unit, or by any builder) and free
 	// to build on, or held by an enemy mex we can clear. isHeldOpen: a spot the mex board holds counts as open
 	std::function<bool (int spot)> GetMexSpotTest(CCircuitUnit* unit, bool isHeldOpen = false) const;
-	// mex_front cluster score of a commander's search (comm_bias) or another builder's; empty = plain nearest spot
+	// The spots that pass it for any builder, the mex board's held ones too; worked out at most once a second (the
+	// opening's spot count and the board share it), so a spot may have closed since: check IsAllyOpenSpot
+	const std::vector<int>& GetTestedSpots();
+	// mex_front cluster score of a commander's search (comm_bias) or another builder's; empty = plain nearest spot.
+	// It ranks only the mex_front.clusters nearest clusters (CMetalManager::FindNearSpots)
 	std::function<float (int cluster, float dist)> GetMexScore(bool isComm) const {
 		return GetMexFrontScore(isComm ? mexFrontCommBias : mexFrontBias);
 	}
-	// A HIGH mex job on spot index; with guard.summon, the cluster's preventive towers are booked with its first one
-	IBuilderTask* EnqueueMex(int index);
+	unsigned GetMexFrontClusters() const { return mexFrontClusters; }
+	IBuilderTask* EnqueueMex(int index);  // a HIGH mex job on spot index
+	// The energy a build chain queues beside its building at pos (IBuilderTask::ExecuteChain): the low energy there
+	// while our income is under the chain's energy, beside a spot worth it on a "mex" chain; nullptr = none
+	CCircuitDef* GetChainEnergy(const SBuildChain* chain, const springai::AIFloat3& pos) const;
 	IBuilderTask* UpdateEnergyTasks(const springai::AIFloat3& position, CCircuitUnit* unit = nullptr);
 	// Escalation mode: a NOW job for cdef at its rear site (economy.energy.rear), else near the base; nullptr = no site
 	IBuilderTask* EnqueueEscalationEnergy(CCircuitDef* cdef);
@@ -330,6 +338,8 @@ private:
 	int noSpotFrame = -1;  // since then no open spot passed the test, -1 = some did
 	unsigned openSpotCount = 0;
 	unsigned safeSpotCount = 0;
+	std::vector<int> testedSpots;  // GetTestedSpots
+	int testedFrame = -1;
 	float mexJobMod;
 	float mexFrontBias;
 	float mexFrontCommBias;  // mex_front.comm_bias: bias when a commander starts the search

@@ -327,9 +327,9 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 			return;
 		}
 		++mexesLost;
-		// Check mex position in 20 seconds
+		// Check mex position in 20 seconds. While the mex board is on the spot is just open again: it places it
 		this->circuit->GetScheduler()->RunTaskAfter(std::make_shared<CGameTask>([this, mexDef, pos, index]() {
-			if (this->circuit->GetEconomyManager()->IsAllyOpenSpot(index) &&
+			if (!mexBoard->IsActive() && this->circuit->GetEconomyManager()->IsAllyOpenSpot(index) &&
 				this->circuit->GetBuilderManager()->IsBuilderInArea(mexDef, pos) &&
 				this->circuit->GetTerrainManager()->CanBeBuiltAtSafe(mexDef, pos))  // hostile environment
 			{
@@ -1502,8 +1502,10 @@ IUnitTask* CBuilderManager::MakeUrgentTask(CCircuitUnit* unit, const IBuilderTas
 	}
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	economyMgr->IsStalling();  // the latches IsStallFix reads
+	// Not a mex: IsStallFix counts every one in a metal stall, most of an opening, and the board places them
 	auto isUrgent = [economyMgr](const IBuilderTask* t) {
-		return (t->GetPriority() == IBuilderTask::Priority::NOW) || economyMgr->IsStallFix(t);
+		return (t->GetPriority() == IBuilderTask::Priority::NOW)
+			|| ((t->GetBuildType() != IBuilderTask::BuildType::MEX) && economyMgr->IsStallFix(t));
 	};
 	// No pick (nor its cost map) while nothing urgent it could take waits: the board moves its mex spots
 	const bool isWaiting = std::any_of(buildTasks.begin(), buildTasks.end(), [&](const std::set<IBuilderTask*>& tasks) {
@@ -3039,7 +3041,8 @@ void CBuilderManager::UpdateTurrets()
 	const CRegionGraph& graph = chokeMap->GetGraph();
 	std::vector<int> shortChokes, lineChokes;
 	std::vector<bool> isOnEnemyLine;  // enemy_line_budget and no A for a choke on it, whichever caller takes it
-	if (cfg.isShortChoke || cfg.isEnemyLine) {
+	const bool isEarly = circuit->GetMilitaryManager()->IsTurretEarly();  // porcupine.budget.since: near enemy only
+	if ((cfg.isShortChoke || cfg.isEnemyLine) && !isEarly) {
 		if (chokeMap->IsReady()) {
 			isOnEnemyLine.assign(graph.GetChokes().size(), false);
 			for (int c : chokeMap->GetEnemyLine()) {
@@ -3085,7 +3088,7 @@ void CBuilderManager::UpdateTurrets()
 	// not mines or aircraft), only a building in anti-heavy mode; centred on it (a squad: its leader), unless a turret
 	// that hits ground (ours or an ally's, being built or queued too) stands within defended_radius of it
 	std::vector<AIFloat3> artillery;
-	if (cfg.isArtillery) {
+	if (cfg.isArtillery && !isEarly) {
 		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 		auto isBuilding = [](const CEnemyInfo* e) {
 			return (e != nullptr) && (e->GetCircuitDef() != nullptr) && !e->GetCircuitDef()->IsMobile();
@@ -3107,7 +3110,6 @@ void CBuilderManager::UpdateTurrets()
 	}
 	const float sqArtilleryReach = SQUARE(cfg.artilleryReach);
 	auto isGround = [](const CCircuitDef* d) { return d->HasAntiLand(); };
-	const bool isEarly = circuit->GetMilitaryManager()->IsTurretEarly();  // porcupine.budget.since: near enemy only
 
 	for (CCircuitUnit* unit : builders) {
 		const AIFloat3& pos = unit->GetPos(frame);

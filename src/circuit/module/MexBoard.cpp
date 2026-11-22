@@ -54,14 +54,27 @@ bool CMexBoard::IsHeld(int spot) const
 
 bool CMexBoard::IsHeldByOther(const IBuilderTask* task, const CCircuitUnit* unit) const
 {
-	auto it = std::find_if(holds.begin(), holds.end(), [task](const SHold& h) { return h.task == task; });
-	return (it != holds.end()) && (it->unit != unit);
+	return std::any_of(holds.begin(), holds.end(), [task, unit](const SHold& h) {
+		return (h.task == task) && (h.unit != unit);
+	});
 }
 
 CMexBoard::SHold* CMexBoard::FindHold(const CCircuitUnit* unit)
 {
 	auto it = std::find_if(holds.begin(), holds.end(), [unit](const SHold& h) { return h.unit == unit; });
 	return (it != holds.end()) ? &*it : nullptr;
+}
+
+CMexBoard::SHold* CMexBoard::FindHold(const IBuilderTask* task)
+{
+	auto it = std::find_if(holds.begin(), holds.end(), [task](const SHold& h) { return h.task == task; });
+	return (it != holds.end()) ? &*it : nullptr;
+}
+
+void CMexBoard::DropHold(const SHold* hold)
+{
+	holds.erase(holds.begin() + (hold - holds.data()));
+	isDirty = true;
 }
 
 IBuilderTask* CMexBoard::GetMexJob(CCircuitUnit* unit, const CQueryCostMap* query)
@@ -83,52 +96,44 @@ IBuilderTask* CMexBoard::GetMexJob(CCircuitUnit* unit, const CQueryCostMap* quer
 
 void CMexBoard::OnBuildStart(CCircuitUnit* unit, const IBuilderTask* task)
 {
-	auto it = std::find_if(holds.begin(), holds.end(), [unit, task](const SHold& h) {
-		return (h.unit == unit) && (h.task == task);
-	});
-	if (it != holds.end()) {
-		holds.erase(it);
-		isDirty = true;
+	const SHold* hold = FindHold(task);
+	if ((hold != nullptr) && (hold->unit == unit)) {
+		DropHold(hold);
 	}
 }
 
 void CMexBoard::OnTaskRemoved(const IBuilderTask* task, bool done)
 {
-	auto it = std::find_if(holds.begin(), holds.end(), [task](const SHold& h) { return h.task == task; });
-	if (it == holds.end()) {
+	const SHold* hold = FindHold(task);
+	if (hold == nullptr) {
 		return;
 	}
 	if (!done) {  // unreachable, the build failed, a flee from damage: not that spot again soon
-		skips.push_back({it->unit->GetId(), it->spot, circuit->GetLastFrame() + SKIP_FRAMES});
+		skips.push_back({hold->unit->GetId(), hold->spot, circuit->GetLastFrame() + SKIP_FRAMES});
 	}
-	holds.erase(it);
-	isDirty = true;
+	DropHold(hold);
 }
 
 void CMexBoard::OnBuilderDestroyed(CCircuitUnit* unit)
 {
 	toAssign.erase(std::remove(toAssign.begin(), toAssign.end(), unit), toAssign.end());
-	auto it = std::find_if(holds.begin(), holds.end(), [unit](const SHold& h) { return h.unit == unit; });
-	if (it != holds.end()) {  // its next spot (the one it walked to ended with it)
-		IBuilderTask* task = it->task;
-		holds.erase(it);
-		Release(task);
+	const SHold* hold = FindHold(unit);
+	if (hold != nullptr) {  // its next spot (the one it walked to ended with it)
+		IBuilderTask* task = hold->task;
+		DropHold(hold);
+		circuit->GetBuilderManager()->AbortTask(task);  // its spot reopens (CBMexTask::Cancel)
 	}
 	isDirty = true;
-}
-
-void CMexBoard::Release(IBuilderTask* task)
-{
-	circuit->GetBuilderManager()->AbortTask(task);  // its spot reopens (CBMexTask::Cancel)
 }
 
 void CMexBoard::End()
 {
 	std::vector<SHold> old;
 	old.swap(holds);
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	for (const SHold& h : old) {
 		if (h.unit->GetTask() != h.task) {
-			Release(h.task);
+			builderMgr->AbortTask(h.task);
 		}
 	}
 	toAssign.clear();
@@ -143,7 +148,9 @@ void CMexBoard::Update()
 		}
 		return;
 	}
-	if (isDirty && (matchFrame != circuit->GetLastFrame())) {
+	// Also once a second: a spot can turn unsafe, open or close with no builder event
+	const int frame = circuit->GetLastFrame();
+	if ((isDirty || (frame - matchFrame >= FRAMES_PER_SEC)) && (matchFrame != frame)) {
 		Match(nullptr, nullptr);
 	}
 	std::vector<CCircuitUnit*> units;
@@ -245,13 +252,13 @@ void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 		return entryOf[spot];
 	};
 	{
-		const std::function<bool (int spot)> isOpen = economyMgr->GetMexSpotTest(nullptr, true);
 		const std::vector<AIFloat3> anchors = GetAllyAnchors();
 		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-		for (unsigned i = 0; i < metalSpots.size(); ++i) {
+		for (int i : economyMgr->GetTestedSpots()) {
 			const AIFloat3& pos = metalSpots[i].position;
 			const float sqOurs = basePos.SqDistance2D(pos);
-			if (isOpen(i) && std::none_of(anchors.begin(), anchors.end(), [&pos, sqOurs](const AIFloat3& a) {
+			if ((economyMgr->IsAllyOpenSpot(i) || IsHeld(i))
+				&& std::none_of(anchors.begin(), anchors.end(), [&pos, sqOurs](const AIFloat3& a) {
 					return a.SqDistance2D(pos) < sqOurs;
 				}))
 			{
@@ -311,6 +318,7 @@ void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 	};
 	std::vector<SPair> pairs;
 	const CMetalManager::ClusterScore scores[2] = {economyMgr->GetMexScore(false), economyMgr->GetMexScore(true)};
+	std::vector<int> nearSpots;
 	for (int bi = 0; bi < (int)builders.size(); ++bi) {
 		SBuilder& b = builders[bi];
 		if (b.isFixed) {
@@ -326,16 +334,26 @@ void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 		const int buildDist = std::max<int>(cdef->GetBuildDistance(), pathfinder->GetSquareSize());
 		const CMetalManager::ClusterScore& score = scores[cdef->IsRoleComm() ? 1 : 0];
 		const ICoreUnit::Id unitId = b.unit->GetId();
-		for (int e = 0; e < (int)spots.size(); ++e) {
-			const int spot = spots[e];
+		CMetalData::PointPredicate isPairOk = [&](int spot) {
 			const AIFloat3& pos = metalSpots[spot].position;
-			if (std::any_of(skips.begin(), skips.end(), [unitId, spot](const SSkip& s) {
+			return (entryOf[spot] >= 0)
+				&& std::none_of(skips.begin(), skips.end(), [unitId, spot](const SSkip& s) {
 					return (s.unitId == unitId) && (s.spot == spot);
 				})
-				|| !terrainMgr->CanReachAtSafe(b.unit, pos, cdef->GetBuildDistance()) || !isJobOk(pos))
-			{
-				continue;
-			}
+				&& terrainMgr->CanReachAtSafe(b.unit, pos, cdef->GetBuildDistance()) && isJobOk(pos);
+		};
+		// As the mex search: only the mex_front.clusters nearest clusters with such a spot, on its walk around threat
+		// walls (the front lean would pull a builder across the map), and the spot it holds
+		nearSpots.clear();
+		metalMgr->FindNearSpots(b.from, isPairOk, economyMgr->GetMexFrontClusters(), nearSpots);
+		if ((b.hold >= 0) && (std::find(nearSpots.begin(), nearSpots.end(), spots[b.hold]) == nearSpots.end())
+			&& isPairOk(spots[b.hold]))
+		{
+			nearSpots.push_back(spots[b.hold]);
+		}
+		for (int spot : nearSpots) {
+			const int e = entryOf[spot];
+			const AIFloat3& pos = metalSpots[spot].position;
 			float walk = b.from.distance2D(pos) / speed;
 			if ((b.query != nullptr) && (b.from.SqDistance2D(pos) >= SQUARE(buildDist))) {
 				const float cost = b.query->GetCostAt(pos, buildDist);
@@ -415,6 +433,10 @@ void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 		if (unit != h.unit) {
 			if (h.unit->GetTask() == h.task) {
 				bumped.push_back(h.unit);
+				CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(h.unit);
+				if ((stats != nullptr) && (unit != nullptr)) {
+					++stats->moves;  // the spot it walked to went to another builder
+				}
 			}
 			if (unit == nullptr) {
 				released.push_back(h.task);
@@ -429,13 +451,9 @@ void CMexBoard::Match(CCircuitUnit* asker, const CQueryCostMap* askerQuery)
 	holds.swap(kept);
 	for (CCircuitUnit* unit : bumped) {
 		unit->GetTask()->RemoveAssignee(unit);  // to idle
-		CBuilderManager::SOpeningStats* stats = builderMgr->GetOpeningStats(unit);
-		if (stats != nullptr) {
-			++stats->moves;
-		}
 	}
 	for (IBuilderTask* task : released) {
-		Release(task);
+		builderMgr->AbortTask(task);  // its spot reopens (CBMexTask::Cancel)
 	}
 	for (int e = 0; e < (int)spots.size(); ++e) {
 		if (takenBy[e] >= 0) {
