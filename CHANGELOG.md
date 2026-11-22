@@ -8,12 +8,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Changed
 
 - **Nano towers start on a factory's new unit the moment it appears** (`nano.hand_off`). Before, a nano whose
-  repair ended with the last unit went idle, and the idle pass only looked again 20+ frames later; if the factory's
-  next frame wasn't there yet it got a 3 s wait, so each new unit could go up to about 4 s without assist. Now, when a
-  factory starts a unit, its nanos that are waiting or idle and in reach are handed the repair of it at once
-  (`CFactoryManager::AssistNewUnit`), with the same choice as before: high-priority units always, else assistable
-  ones while metal isn't empty, else ones cheap enough. Busy nanos (repairing a damaged unit, reclaiming) keep their
-  job. A late UnitIdle from the finished job no longer ends the new one within 20 frames: the order is given again.
+  repair ended with the last unit went idle, looked again 20+ frames later, found the factory's next unit not started
+  yet (the factory goes through the same idle pass) and waited 3 s, so each new unit could go about 3 s without
+  assist. Now, when a factory starts a unit, its waiting nanos look again at once (`CFactoryManager::AssistNewUnit`),
+  with the same choice as their periodic look (`CreateAssistTask`). Busy nanos keep their job.
 
 - **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) no longer sit in the base when
   there is no heavy to shoot.**
