@@ -28,19 +28,19 @@ class IBuilderTask;
  * on the energy the mex chain queues after a mex), plus the walk from that job's site (from where it stands between
  * jobs or walking to its spot), on its cost map when that started there, else in a straight line (a walker's map
  * started where it picked, so a walker measures straight). As the mex search, a builder rates only spots in the
- * mex_front.clusters nearest clusters (CMetalManager::FindNearSpots: its walk stops at threat walls) and the spot it
- * holds. Pairs go by mex_front's score of the arrival (comm_bias for a commander), lowest first, so no builder takes a
- * spot another reaches sooner; a commander never takes a spot another free builder reaches sooner. A builder walking to
- * its spot keeps it until the spot has failed the test below for 3 s (a raider passing it doesn't turn the builder),
- * and one fleeing keeps it for hold_sec. Other held spots, next spots nobody walks to, go to another builder only if it
- * gets there min_gain_sec sooner, and a builder leaves its next spot for another only if that scores min_gain_sec
- * better. A mex job is made only when a builder is matched (no job cap), and no other builder takes it
- * (CBMexTask::CanAssignTo). Only spots the builder's own picker would take (reach, flee zones, threat, a hiding
- * commander's range and territory), and not nearer an ally's base or factory than ours. A job that ended without its
- * mex (unreachable, the build failed) keeps its spot from that builder for 30 s. Matching runs once a second, and at
- * once (at most once a frame) when a builder with no spot asks for a job, a builder starts building its spot, a held
- * job ends or a builder dies. When the opening ends, builders keep the job they walk to; the next jobs nobody walks to
- * are dropped
+ * mex_front.clusters nearest clusters (CMetalManager::FindNearSpots: its walk stops at threat walls). A builder walking
+ * to its spot keeps it until the spot has failed its test for 3 s (a raider passing it doesn't turn the builder):
+ * reach, skips and the builder's own danger rule (CBuilderManager::GetMexJobTest), not any threat there. One fleeing
+ * keeps its spot for hold_sec. The rest go by mex_front's score of the arrival (comm_bias for a commander), lowest
+ * first, so no builder takes a spot another reaches sooner; a commander never takes a spot another free builder reaches
+ * sooner. A next spot nobody walks to yet may move to another builder on any match, which costs nothing. A mex job is
+ * made only when a builder is matched (no job cap), and no other builder takes it (CBMexTask::CanAssignTo). A builder
+ * takes a spot only with no threat there, and only if its own picker would (reach, flee zones, threat, a hiding
+ * commander's range and territory), and in team games not an ally's (CEconomyManager::GetTestedSpots). A job that ended
+ * without its mex (unreachable, the build failed) keeps its spot from that builder for 30 s. Matching runs once a
+ * second, and at once (at most once a frame) when a builder with no spot asks for a job, a builder starts building its
+ * spot, a held job ends or a builder dies. When the opening ends, builders keep the job they walk to; the next jobs
+ * nobody walks to are dropped
  */
 class CMexBoard {
 public:
@@ -89,12 +89,10 @@ private:
 	// Where unit's walk to a spot would start, and the seconds before it can (its job's walk and build left). false:
 	// on a job that doesn't end in a building (reclaim, repair, a fight, a flee), so no spot for it
 	bool GetStart(CCircuitUnit* unit, const SHold* hold, springai::AIFloat3& outFrom, float& outBusy) const;
-	std::vector<springai::AIFloat3> GetAllyAnchors() const;  // team games: allied AI bases and allied factories
 	void End();
 
 	CCircuitAI* circuit;
 	bool isOn;
-	float minGain;  // seconds
 	int holdFrames;
 	std::vector<SHold> holds;
 	std::vector<SSkip> skips;

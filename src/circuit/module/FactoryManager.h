@@ -78,7 +78,8 @@ public:
 	// spots on safe ground outnumber per_builder x our builders (the commander one of them), up to max builders, once
 	// our first combat unit is finished, and while the army doesn't fall behind (IsArmyBehind)
 	CRecruitTask* UpdateSpotsBuilder(CCircuitUnit* unit);
-	// The known enemy army (no commanders or constructors) is over 1.5x ours, or two constructors died within a minute
+	// The known enemy army per enemy team (CMilitaryManager::GetEnemyArmyRatio: no commanders or constructors, unseen
+	// enemies fade) is over 1.5x ours, or two constructors died within a minute
 	bool IsArmyBehind() const;
 	// Why a constructor was queued, for the once-a-minute BUILDERS log line
 	enum class BuilderWhy: int {INCOME = 0, ARMY, RECLAIM, ROLL, OPENER, SPOTS, _SIZE_};

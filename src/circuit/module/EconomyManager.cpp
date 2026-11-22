@@ -25,6 +25,7 @@
 #include "task/builder/BuildChain.h"
 #include "task/builder/EnergyTask.h"
 #include "CircuitAI.h"
+#include "util/GameAttribute.h"
 #include "util/Scheduler.h"
 #include "util/Utils.h"
 #include "json/json.h"
@@ -1050,16 +1051,48 @@ std::function<bool (int spot)> CEconomyManager::GetMexSpotTest(CCircuitUnit* uni
 	};
 }
 
+std::vector<AIFloat3> CEconomyManager::GetAllyAnchors() const
+{
+	std::vector<AIFloat3> anchors;
+	if (circuit->GetAllyTeam()->GetSize() <= 1) {
+		return anchors;
+	}
+	for (CCircuitAI* ai : circuit->GetGameAttribute()->GetCircuits()) {
+		if ((ai != circuit) && ai->IsInitialized() && (ai->GetAllyTeamId() == circuit->GetAllyTeamId())
+			&& utils::is_valid(ai->GetSetupManager()->GetBasePos()))
+		{
+			anchors.push_back(ai->GetSetupManager()->GetBasePos());
+		}
+	}
+	const int frame = circuit->GetLastFrame();
+	circuit->UpdateFriendlyUnits();
+	for (const auto& kv : circuit->GetFriendlyUnits()) {
+		const CCircuitDef* cdef = kv.second->GetCircuitDef();
+		if ((cdef != nullptr) && !cdef->IsMobile() && cdef->IsBuilder() && (circuit->GetTeamUnit(kv.first) == nullptr)) {
+			anchors.push_back(kv.second->GetPos(frame));
+		}
+	}
+	return anchors;
+}
+
 const std::vector<int>& CEconomyManager::GetTestedSpots()
 {
 	const int frame = circuit->GetLastFrame();
 	if ((testedFrame < 0) || (frame - testedFrame >= FRAMES_PER_SEC)) {
 		testedFrame = frame;
 		testedSpots.clear();
+		// Not one nearer an ally's base or factory than our base: the ally takes it
+		const std::vector<AIFloat3> anchors = GetAllyAnchors();
+		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+		const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
 		const std::function<bool (int spot)> isOpen = GetMexSpotTest(nullptr, true);
-		const unsigned count = circuit->GetMetalManager()->GetSpots().size();
-		for (unsigned i = 0; i < count; ++i) {
-			if (isOpen(i)) {
+		for (int i = 0; i < (int)spots.size(); ++i) {
+			const AIFloat3& pos = spots[i].position;
+			const float sqOurs = basePos.SqDistance2D(pos);
+			if (std::none_of(anchors.begin(), anchors.end(), [&pos, sqOurs](const AIFloat3& a) {
+					return a.SqDistance2D(pos) < sqOurs;
+				}) && isOpen(i))
+			{
 				testedSpots.push_back(i);
 			}
 		}
@@ -1072,7 +1105,8 @@ void CEconomyManager::UpdateOpening()
 	if (!isOpening) {
 		return;
 	}
-	// Spots the mex job search would take for some builder, and those on safe ground (economy.buildpower_spots)
+	// Spots the mex job search would take for some builder (not an ally's), and those on safe ground
+	// (economy.buildpower_spots)
 	const CMetalData::Metals& spots = circuit->GetMetalManager()->GetSpots();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	openSpotCount = safeSpotCount = 0;

@@ -1163,17 +1163,9 @@ CRecruitTask* CFactoryManager::UpdateSpotsBuilder(CCircuitUnit* unit)
 
 bool CFactoryManager::IsArmyBehind() const
 {
-	if (circuit->GetBuilderManager()->GetBuilderLosses(FRAMES_PER_SEC * 60) >= 2) {
-		return true;
-	}
-	float enemyArmy = 0.f;
-	for (auto& kv : circuit->GetEnemyManager()->GetEnemyUnits()) {
-		const CCircuitDef* edef = kv.second->GetCircuitDef();
-		if ((edef != nullptr) && edef->IsMobile() && edef->IsAttacker() && !edef->IsRoleComm() && !edef->IsRoleBuilder()) {
-			enemyArmy += kv.second->GetCost();
-		}
-	}
-	return enemyArmy > 1.5f * circuit->GetMilitaryManager()->GetArmyCost();
+	float enemyPerTeam, ours;
+	return (circuit->GetBuilderManager()->GetBuilderLosses(FRAMES_PER_SEC * 60) >= 2)
+		|| (circuit->GetMilitaryManager()->GetEnemyArmyRatio(enemyPerTeam, ours) > 1.5f);
 }
 
 bool CFactoryManager::IsBuilderNeeded(CCircuitDef* buildDef, const AIFloat3& pos, BuilderWhy* outWhy) const

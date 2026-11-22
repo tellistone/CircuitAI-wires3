@@ -89,7 +89,7 @@ public:
 	struct SOpeningStats {
 		int idle = 0, walk = 0, build = 0, flee = 0;  // seconds
 		int forward = 0, back = 0;  // switches to another job while walking: away from our base, or back toward it
-		int moves = 0;  // walks the mex board ended (the spot failed its test for 3 s, or went to another builder)
+		int moves = 0;  // walks the mex board ended (the spot failed its test for 3 s, or a commander left mex jobs)
 		int mexes = 0, jumps = 0, escorts = 0;
 		float escortWait = 0.f;  // seconds from the guard's pull to its arrival, summed over escorts
 	};

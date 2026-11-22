@@ -178,28 +178,29 @@
 	// while it builds something else its next. Its arrival is the time left on its job (and on the energy the mex chain
 	// queues after a mex) plus the walk from that job's site, scored as mex_front scores clusters (comm_bias for the
 	// commander, which never takes a spot another builder reaches sooner); lowest first. As in the mex search, only spots
-	// in the mex_front "clusters" nearest clusters (and the one it holds) count. One walking to its spot keeps it until
-	// the spot has failed the test below for 3 s, and one fleeing keeps it for <hold_sec>. A next spot (nobody walks to it
-	// yet) goes to another builder only if it gets there <min_gain_sec> sooner, and a builder leaves its next spot for
-	// another only if that scores <min_gain_sec> better. A job is made only for a matched builder, and no other builder
-	// takes it. Only spots the builder would take itself (reach, flee zones, threat, a hiding commander's range), and in
-	// team games not nearer an ally's base or factory than ours. A spot whose job failed (unreachable, the build failed)
-	// waits 30 s for that builder. Matching runs once a second, and at once when a builder needs a spot. The opening log
-	// counts the walks the board ended ("board"), and their next spots as forward or back.
-	"mex_board": {"min_gain_sec": 3, "hold_sec": 20},
+	// in the mex_front "clusters" nearest clusters count. One walking to its spot keeps it until the spot has failed its
+	// test for 3 s (reach and the builder's own danger rule, so a raider passing doesn't turn a commander that would win),
+	// and one fleeing keeps it for <hold_sec>. A next spot nobody walks to yet can move to another builder on any match. A
+	// job is made only for a matched builder, and no other builder takes it. Only spots with no threat that the builder
+	// would take itself (reach, flee zones, threat, a hiding commander's range), and in team games not nearer an ally's
+	// base or factory than ours. A spot whose job failed (unreachable, the build failed) waits 30 s for that builder.
+	// Matching runs once a second, and at once when a builder needs a spot. The opening log counts the walks the board
+	// ended ("board"), and their next spots as forward or back.
+	"mex_board": {"hold_sec": 20},
 
 	// The opening, which some rules read (buildpower_spots, behaviour.json guard.summon.opening_share and
 	// choke.radar.opening_share): until "time" seconds (or a [[<map size>, <seconds>], ...] curve, as mex_escort), or 20 s
-	// after no open mex spot is left that a builder could take; time 0 = no opening. log: OPENING lines in infolog once
-	// a minute until "time", per builder (seconds idle, walking, building and fleeing, job switches away from our base
-	// and back toward it, walks the mex board ended, mexes, jumps, escorts and their wait) and for the team. While the
-	// mex board holds a spot the opening goes on
+	// after no open mex spot is left that a builder could take (in team games, not an ally's); time 0 = no opening. log:
+	// OPENING lines in infolog once a minute until "time", per builder (seconds idle, walking, building and fleeing, job
+	// switches away from our base and back toward it, walks the mex board ended, mexes, jumps, escorts and their wait) and
+	// for the team. While the mex board holds a spot the opening goes on
 	"opening": {"time": 300, "log": true},
 
 	// In the opening, a factory makes a constructor next (a queued one first, the opener's too) while the open mex spots
-	// on safe ground (behaviour.json guard.summon) outnumber <per_builder> x our builders, the commander one of them, up
-	// to <max> builders; not before our first combat unit is finished, nor while the known enemy army (no commanders or
-	// constructors) is over 1.5x ours, nor after two constructors died within a minute. per_builder 0 = off
+	// on safe ground (behaviour.json guard.summon; in team games not an ally's, as mex_board) outnumber <per_builder> x
+	// our builders, the commander one of them, up to <max> builders; not before our first combat unit is finished, nor
+	// while the known enemy army per enemy team (no commanders or constructors, faded as ms_pull_army) is over 1.5x ours,
+	// nor after two constructors died within a minute. per_builder 0 = off
 	"buildpower_spots": {"per_builder": 4, "max": 4},
 
 	// Restore terraformed ground (enemy trenches and walls) to the map's start height, as constructor jobs at
