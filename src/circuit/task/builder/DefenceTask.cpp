@@ -12,6 +12,7 @@
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
 #include "module/CreepPlanner.h"
+#include "terrain/TerrainManager.h"
 #include "unit/CircuitDef.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -42,6 +43,7 @@ CBDefenceTask::CBDefenceTask(ITaskManager* mgr, Priority priority,
 		, normalCost(cost)
 		, charged(0.f)
 		, spend(0)
+		, queueFrame(mgr->GetCircuit()->GetLastFrame())
 {
 }
 
@@ -107,7 +109,22 @@ void CBDefenceTask::Finish()
 
 void CBDefenceTask::Cancel()
 {
-	CMilitaryManager* militaryMgr = manager->GetCircuit()->GetMilitaryManager();
+	CCircuitAI* circuit = manager->GetCircuit();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	if ((target == nullptr) && (militaryMgr != nullptr)) {
+		// A tower that ends before it starts, and why, from the job's state as it ends (Stop: before its builders
+		// leave): a damage retreat and a death take the builder off first
+		const int frame = circuit->GetLastFrame();
+		const char* why = militaryMgr->IsCallingOff() ? "called off"
+				: (buildFails > TASK_RETRIES) ? "the engine refused the build"
+				: !traveled.empty() ? "on arrival: no site, or a picker's spot no longer worth it"
+				: !units.empty() ? "unreachable or unsafe, or one of its builders died or retreated"
+				: ((lastTouched >= 0) && (frame - lastTouched >= timeout)) ? "nobody took it in time"
+				: "its builder died or retreated";
+		circuit->LOG("TURRET dropped: %s (%s%s) at (%.0f, %.0f) %i s after it was queued: %s",
+				buildDef->GetDef()->GetName(), CMilitaryManager::GetSpendName(spend), isOffPoints ? ", off points" : "",
+				position.x, position.z, (frame - queueFrame) / FRAMES_PER_SEC, why);
+	}
 	if (!isOffPoints) {
 		militaryMgr->AbortDefence(this);
 	}
@@ -174,6 +191,21 @@ void CBDefenceTask::Execute(CCircuitUnit* unit)
 		return;
 	}
 	IBuilderTask::Execute(unit);
+}
+
+bool CBDefenceTask::IsReachable(CCircuitUnit* unit, const AIFloat3& endPos)
+{
+	// An armed tower is taken under threat (IsFightBack), so a builder with the flee on walks it by the pick's rule:
+	// reach, and its flee zones (known enemy turrets included); a cornered one's, built in the danger it is cornered by
+	// (MakeCommDefence), on reach only. Its flee still runs. Others keep the any-threat test
+	CCircuitAI* circuit = manager->GetCircuit();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	if (!IsFightBack() || !builderMgr->IsFleeOn(unit)) {
+		return IBuilderTask::IsReachable(unit, endPos);
+	}
+	const bool isCornered = (spend == static_cast<int>(CMilitaryManager::TurretSpend::CORNERED));
+	return circuit->GetTerrainManager()->CanReachAt(unit, endPos, unit->GetCircuitDef()->GetBuildDistance())
+		&& (isCornered || builderMgr->IsTurretJobSafe(unit, endPos, this));
 }
 
 } // namespace circuit

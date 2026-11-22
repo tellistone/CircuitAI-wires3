@@ -18,6 +18,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   doesn't. Also: a planted unit claims no firing spot it won't walk to, set-target is sent again after each new order
   from its task, a unit the player took keeps its own set-target, and the job only runs with a type that has `plant`.
 
+- **Nanos pick their job better** (`CFactoryManager::CreateAssistTask`, `nano.hand_off` review). Repairs: the unit
+  whose lost health stands for the most metal (cost x missing share), not the first damaged one the scan returned,
+  so in a fight they go to the turret about to fall rather than a scratched wall. Frames: high-priority factory
+  units first, then the least build time left, as before. With metal empty the order is now the one
+  `CSRepairTask::Update` keeps (high-priority frame, damaged unit, reclaim, other frame); a nano no longer takes a
+  frame that its next update moves it off.
+
 - **Builders go from one job straight to the next** (`economy.builder_jobs.chain`, new, true). A builder whose job
   ends picks its next one in the same frame, not on the idle pass (20 frames later, one builder at a time), and so
   does a new builder the frame it is finished. The pick uses a cost map started where it built, not where it last
@@ -71,17 +78,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   site on its cost map, scored as `mex_front` scores clusters, and as in the mex search only spots in the
   `mex_front.clusters` nearest clusters (its walk around threat walls) count; the commander uses `comm_bias` but never
   takes a spot another builder reaches sooner. A builder walking to its spot keeps it until the spot has failed its
-  test for 3 s: the builder's own danger rule, and threat there within its own strength (any threat for a
-  constructor), so a raider passing it doesn't turn a commander that would win. Its job leaves threat at the spot to
-  the board meanwhile. A fleeing one keeps it for `hold_sec` (20), and a next spot nobody walks to yet can move to
-  another builder on any match. Only spots with no threat that the builder's own pick would take, and in team games
-  not nearer an ally's base or factory than ours (the opening's spot counts skip those too); a spot whose job failed
-  waits 30 s for that builder. A job is made only when a builder is matched, so there is no job cap and nothing is
-  claimed before someone heads there. Matching runs once a second, and at once (at most once a frame) when a builder
-  needs a spot, starts its build, loses its job or dies. A lost mex's spot just reopens for the board, with no 20 s
-  rebuild job. When the opening ends, builders keep the job they walk to and the next jobs nobody walks to are
-  dropped. The `OPENING` line counts walks the board ended (`board`) and their next spots as forward or back, and the
-  opening goes on while the board holds a spot.
+  test for 3 s: the pick's spot test with threat aside (an enemy or ally may build there meanwhile), the builder's own
+  danger rule, and threat there within its own strength (any threat for a constructor), so a raider passing it doesn't
+  turn a commander that would win. Its job leaves threat at the spot to the board meanwhile. A fleeing builder holds
+  no spot (`hold_sec` is gone, and ignored if set), and a next spot nobody walks to yet can move to another builder on
+  any match. Only spots with no threat that the builder's own pick would take, and in team games not nearer an ally's
+  base or factory than ours (the opening's spot counts skip those too); a spot whose job failed waits 30 s for that
+  builder. A job is made only when a builder is matched, so there is no job cap and nothing is claimed before someone
+  heads there. Matching runs once a second, and at once (at most once a frame) when a builder needs a spot, starts its
+  build, loses its job or dies. A lost mex's spot just reopens for the board, with no 20 s rebuild job. When the
+  opening ends, builders keep the job they walk to and the next jobs nobody walks to are dropped. The `OPENING` line
+  counts walks the board ended (`board`) and their next spots as forward or back, and the opening goes on while the
+  board holds a spot.
 - **Walking builders switch jobs by direction** (`economy.builder_jobs`: `switch` now 0.5 and only for turning back,
   `switch_forward` 0.8, `switch_other` 0.5, `commit_sec` 4, all new but `switch`). The walk is measured on the
   builder's cost map, not in a straight line. Forward (no nearer our base than it is now, give or take its build
@@ -282,6 +290,27 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     backs off from a heavy that closes in. Before, it shot from wherever it stood. With no such spot it still does.
 
 ### Fixed
+
+- **Tower jobs are no longer dropped for any threat at their site.** The pick lets a builder take an armed build under
+  threat (the turret makes the spot safe), and keeps it out of flee zones only. But the job's next update tested the
+  site with `CanReachAtSafe`, which fails on any threat in the threat map, last-known ghosts of enemies long gone
+  included, and aborted it. The tower's booking on its defence point was freed, so it came back only when the sweep
+  reached its cluster again, and a scored spot that failed twice in 10 minutes was given up.
+  `CBDefenceTask::IsReachable` now keeps the pick's rule for an armed tower (`IBuilderTask::IsFightBack`) and a
+  builder with the flee on: reachable, and outside its flee zones (`IsTurretJobSafe`, measured as a fight-back job).
+  A cornered builder's own tower (`MakeCommDefence`) only needs to be reachable: it stands in the danger by design,
+  and the new rule would have dropped it at once and queued it again every 0.5 s. Unarmed builds, and builders with
+  no flee state (`retreat.builder_flee` off, flying builders), keep the old test. The build site search keeps a
+  site out of flee zones too, and still skips surface threat on its own, so a tower walked into threat stands at the
+  nearest clear site. A `TURRET dropped` line now logs every tower job that ends before it starts: the def, its
+  spender (`prevent (free)`, `porc`, `cornered`, ...; every tower records it now), where, how long after it was
+  queued, and why (called off, the engine refused the build, no site on arrival, unreachable or unsafe with a builder
+  still on it, nobody took it in time, or its builder died or retreated). A resign logs one for each open job.
+- **Builder jobs keep out of enemy turrets' reach.** Flee zones counted mobile enemies only, so a job near a known
+  enemy turret passed `IsCommJobSafe`, and an armed one (which skips the threat test) sent the builder into the
+  turret's range. Armed enemy buildings we know of, seen now or not, now count for job tests (pick, walk, radar and
+  reclaim spots) of builders with the flee on and commanders, at the same lines as other dangers. No flee runs from
+  them, and a flee's end and a morph start don't count them.
 
 - **behaviour.json `limit` counts queued jobs.** A unit type's limit only counted our units (nanoframes included),
   so several jobs could be queued before the first nanoframe stood, and each was built: the Advanced Radar (limit 1)

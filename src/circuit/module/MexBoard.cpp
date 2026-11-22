@@ -33,11 +33,9 @@ static constexpr int FAIL_FRAMES = FRAMES_PER_SEC * 3;  // a walker keeps its sp
 CMexBoard::CMexBoard(CCircuitAI* circuit)
 		: circuit(circuit)
 {
-	// "mex_board": false = off; missing = on with the defaults
+	// "mex_board": false = off; missing (or an old config's object) = on
 	const Json::Value& board = circuit->GetSetupManager()->GetConfig()["economy"]["mex_board"];
-	const Json::Value& cfg = board.isObject() ? board : Json::Value::nullSingleton();
-	isOn = board.isObject() || board.isNull() || (board.isBool() && board.asBool());
-	holdFrames = std::max(cfg.get("hold_sec", 20.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+	isOn = !board.isBool() || board.asBool();
 }
 
 bool CMexBoard::IsActive() const
@@ -52,8 +50,8 @@ bool CMexBoard::IsHeld(int spot) const
 
 const CCircuitUnit* CMexBoard::GetHolder(const IBuilderTask* task) const
 {
-	auto it = std::find_if(holds.begin(), holds.end(), [task](const SHold& h) { return h.task == task; });
-	return (it != holds.end()) ? it->unit : nullptr;
+	const SHold* hold = FindHold(task);
+	return (hold != nullptr) ? hold->unit : nullptr;
 }
 
 CMexBoard::SHold* CMexBoard::FindHold(const CCircuitUnit* unit)
@@ -62,7 +60,7 @@ CMexBoard::SHold* CMexBoard::FindHold(const CCircuitUnit* unit)
 	return (it != holds.end()) ? &*it : nullptr;
 }
 
-CMexBoard::SHold* CMexBoard::FindHold(const IBuilderTask* task)
+const CMexBoard::SHold* CMexBoard::FindHold(const IBuilderTask* task) const
 {
 	auto it = std::find_if(holds.begin(), holds.end(), [task](const SHold& h) { return h.task == task; });
 	return (it != holds.end()) ? &*it : nullptr;
@@ -201,7 +199,7 @@ struct CMexBoard::SMatch {
 		CCircuitUnit* unit;
 		AIFloat3 from;  // where its walk to a spot would start
 		float busy;  // seconds before it can
-		int keep;  // the spot it keeps (walking to it, or fleeing), -1 = none
+		int keep;  // the spot it walks to and keeps, -1 = none
 	};
 	struct SPair {
 		int b, spot;  // builder, spot
@@ -250,25 +248,17 @@ void CMexBoard::RateBuilders(CCircuitUnit* asker, const CQueryCostMap* askerQuer
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const CMetalData::Metals& metalSpots = metalMgr->GetSpots();
 	const CMetalManager::ClusterScore scores[2] = {economyMgr->GetMexScore(false), economyMgr->GetMexScore(true)};
+	const std::function<bool (int spot)> isSpotFree = economyMgr->GetMexSpotTest(nullptr, true, false);  // threat aside
 	std::vector<int> nearSpots;
 	for (CCircuitUnit* unit : builderMgr->GetWorkers()) {
 		SHold* hold = FindHold(unit);
 		const IUnitTask* task = unit->GetTask();
 		const AIFloat3& pos = unit->GetPos(frame);
 		SMatch::SBuilder b = {unit, pos, 0.f, -1};
-		if (hold != nullptr) {
-			const bool isFlee = (task->GetType() == IUnitTask::Type::RETREAT);
-			hold->fleeFrame = !isFlee ? -1 : (hold->fleeFrame < 0) ? frame : hold->fleeFrame;
-			if (task != hold->task) {
-				hold->failFrame = -1;  // counts only while it walks there
-			}
-			if (isFlee && (frame - hold->fleeFrame <= holdFrames)) {
-				b.keep = hold->spot;
-				m.builders.push_back(b);
-				continue;
-			}
+		if ((hold != nullptr) && (task != hold->task)) {
+			hold->failFrame = -1;  // counts only while it walks there
 		}
-		if (!GetStart(unit, hold, b.from, b.busy)) {
+		if (!GetStart(unit, hold, b.from, b.busy)) {  // a flee too: its spot goes to others meanwhile
 			continue;
 		}
 		const std::function<bool (const AIFloat3& pos)> isJobOk = builderMgr->GetMexJobTest(unit);  // sets its threat type
@@ -276,11 +266,12 @@ void CMexBoard::RateBuilders(CCircuitUnit* asker, const CQueryCostMap* askerQuer
 			continue;  // a commander off mex jobs
 		}
 		// A walker keeps its spot until the spot has failed this for FAIL_FRAMES (a raider passing doesn't turn it):
-		// its own danger rule, and threat there within its own (THREAT_MIN for a constructor). Picks refuse any threat
-		// (the spot list, CanReachAtSafe); the walk's reach is its job's (CBMexTask::IsReachable)
+		// the pick's spot test with threat aside (an enemy or ally may build there meanwhile), its own danger rule, and
+		// threat there within its own (THREAT_MIN for a constructor). Picks refuse any threat (the spot list,
+		// CanReachAtSafe); the walk's reach is its job's (CBMexTask::IsReachable)
 		if ((hold != nullptr) && (task == hold->task)) {
 			const AIFloat3& spotPos = metalSpots[hold->spot].position;
-			const bool isOk = isJobOk(spotPos)
+			const bool isOk = isSpotFree(hold->spot) && isJobOk(spotPos)
 				&& (threatMap->GetThreatAt(spotPos) <= std::max(threatMap->GetUnitThreat(unit), THREAT_MIN));
 			hold->failFrame = isOk ? -1 : (hold->failFrame < 0) ? frame : hold->failFrame;
 			if ((hold->failFrame < 0) || (frame - hold->failFrame < FAIL_FRAMES)) {
@@ -395,7 +386,7 @@ void CMexBoard::Apply(CCircuitUnit* asker, SMatch& m)
 				continue;
 			}
 			h.unit = unit;
-			h.fleeFrame = h.failFrame = -1;
+			h.failFrame = -1;
 		}
 		m.takenBy[h.spot] = -1;  // has its job
 		kept.push_back(h);
@@ -409,7 +400,7 @@ void CMexBoard::Apply(CCircuitUnit* asker, SMatch& m)
 	}
 	for (int spot = 0; spot < (int)m.takenBy.size(); ++spot) {
 		if (m.takenBy[spot] >= 0) {
-			holds.push_back({m.builders[m.takenBy[spot]].unit, economyMgr->EnqueueMex(spot), spot, -1, -1});
+			holds.push_back({m.builders[m.takenBy[spot]].unit, economyMgr->EnqueueMex(spot), spot, -1});
 		}
 	}
 	// economy.opening.log: a walk the board ended, and which way its builder's next spot lies

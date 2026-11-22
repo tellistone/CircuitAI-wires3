@@ -52,6 +52,7 @@ protected:
 	virtual void Finish() override;
 	virtual void Cancel() override;
 	virtual void Execute(CCircuitUnit* unit) override;
+	virtual bool IsReachable(CCircuitUnit* unit, const springai::AIFloat3& endPos) override;
 
 	bool isUrgent;
 	bool isOffPoints;
@@ -62,6 +63,7 @@ protected:
 	float normalCost;
 	float charged;
 	int spend;
+	int queueFrame;  // the TURRET dropped line's age
 };
 
 } // namespace circuit
