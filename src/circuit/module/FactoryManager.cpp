@@ -815,9 +815,52 @@ int CFactoryManager::UnitCreated(CCircuitUnit* unit, CCircuitUnit* builder)
 			taskR->SetTarget(unit);
 			unfinishedUnits[unit] = taskR;
 		}
+		AssistNewUnit(builder, unit);
 	}
 
 	return 0; //signaling: OK
+}
+
+// nano.hand_off: the factory's nanos that wait or idle start on its new unit the frame it appears,
+// not on their next look (up to a 3s wait plus the idle pass). Same choice as CreateAssistTask makes
+void CFactoryManager::AssistNewUnit(CCircuitUnit* factory, CCircuitUnit* unit)
+{
+	SFactory* fac = nullptr;
+	for (SFactory& f : factories) {
+		if (f.unit == factory) {
+			fac = &f;
+			break;
+		}
+	}
+	if ((fac == nullptr) || fac->nanos.empty() || circuit->GetBuilderManager()->IsReclaimed(unit)) {
+		return;
+	}
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	const float maxCost = MAX_BUILD_SEC * economyMgr->GetAvgMetalIncome() * economyMgr->GetEcoFactor();
+	if (!IsHighPriority(unit) && (economyMgr->IsMetalEmpty() || !cdef->IsAssistable())
+		&& (cdef->GetBuildTime() >= maxCost))
+	{
+		return;
+	}
+	const int frame = circuit->GetLastFrame();
+	const AIFloat3& pos = unit->GetPos(frame);
+	IBuilderTask* task = nullptr;
+	for (CCircuitUnit* nano : fac->nanos) {
+		const IUnitTask::Type type = nano->GetTask()->GetType();
+		if ((type != IUnitTask::Type::WAIT) && (type != IUnitTask::Type::IDLE)) {
+			continue;  // busy: a repair, reclaim or the player's
+		}
+		const float reach = nano->GetCircuitDef()->GetBuildDistance() + cdef->GetRadius();
+		if (nano->GetPos(frame).SqDistance2D(pos) > SQUARE(reach)) {
+			continue;
+		}
+		if (task == nullptr) {
+			const IBuilderTask::Priority priority = cdef->IsMobile() ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
+			task = EnqueueRepair(priority, unit);
+		}
+		AssignTask(nano, task);
+	}
 }
 
 int CFactoryManager::UnitFinished(CCircuitUnit* unit)

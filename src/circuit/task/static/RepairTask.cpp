@@ -174,6 +174,16 @@ void CSRepairTask::Finish()
 
 void CSRepairTask::OnUnitIdle(CCircuitUnit* unit)
 {
+	// nano.hand_off: a nano handed this job the frame its last one ended can still get that job's late UnitIdle.
+	// The target is still a frame: give the order again instead of ending the job
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (circuit->GetLastFrame() < unit->GetTaskFrame() + 20) {
+		CAllyUnit* repTarget = circuit->GetFriendlyUnit(targetId);
+		if ((repTarget != nullptr) && repTarget->GetUnit()->IsBeingBuilt()) {
+			Execute(unit);
+			return;
+		}
+	}
 	manager->DoneTask(this);
 }
 
