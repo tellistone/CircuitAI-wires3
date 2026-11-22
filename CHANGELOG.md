@@ -7,6 +7,24 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
+  radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped
+  at the edge, below a hill or behind a ridge and couldn't fire. Now (a) counts within `plant.reach` (new, 0.9) x the
+  range, and for a Cannon the engine's height-adjusted range on a clear low arc (`ballistics::IsShotClear`, as static
+  guns check), so it walks on into range. Planted for (a) only with its weapon standing ready for `plant.idle_sec`
+  (new, 8 s), it isn't hitting: (a) is ignored that long, so its task can move it. (b) counted a threat while on
+  radar and for `keep_sec` after it left radar, at its old spot; now a threat counts in LOS, or on radar and in LOS
+  within `plant.keep_sec` (now 20 s: a recloaked Phantom stays a radar dot through its 17 s reload), and a ghost
+  doesn't. Also: a planted unit claims no firing spot it won't walk to, set-target is sent again after each new order
+  from its task, a unit the player took keeps its own set-target, and the job only runs with a type that has `plant`.
+
+- **Nanos pick their job better** (`CFactoryManager::CreateAssistTask`, `nano.hand_off` review). Repairs: the unit
+  whose lost health stands for the most metal (cost x missing share), not the first damaged one the scan returned,
+  so in a fight they go to the turret about to fall rather than a scratched wall. Frames: high-priority factory
+  units first, then the least build time left, as before. With metal empty the order is now the one
+  `CSRepairTask::Update` keeps (high-priority frame, damaged unit, reclaim, other frame); a nano no longer takes a
+  frame that its next update moves it off.
+
 - **Builders go from one job straight to the next** (`economy.builder_jobs.chain`, new, true). A builder whose job
   ends picks its next one in the same frame, not on the idle pass (20 frames later, one builder at a time), and so
   does a new builder the frame it is finished. The pick uses a cost map started where it built, not where it last
@@ -60,17 +78,18 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   site on its cost map, scored as `mex_front` scores clusters, and as in the mex search only spots in the
   `mex_front.clusters` nearest clusters (its walk around threat walls) count; the commander uses `comm_bias` but never
   takes a spot another builder reaches sooner. A builder walking to its spot keeps it until the spot has failed its
-  test for 3 s: the builder's own danger rule, and threat there within its own strength (any threat for a
-  constructor), so a raider passing it doesn't turn a commander that would win. Its job leaves threat at the spot to
-  the board meanwhile. A fleeing one keeps it for `hold_sec` (20), and a next spot nobody walks to yet can move to
-  another builder on any match. Only spots with no threat that the builder's own pick would take, and in team games
-  not nearer an ally's base or factory than ours (the opening's spot counts skip those too); a spot whose job failed
-  waits 30 s for that builder. A job is made only when a builder is matched, so there is no job cap and nothing is
-  claimed before someone heads there. Matching runs once a second, and at once (at most once a frame) when a builder
-  needs a spot, starts its build, loses its job or dies. A lost mex's spot just reopens for the board, with no 20 s
-  rebuild job. When the opening ends, builders keep the job they walk to and the next jobs nobody walks to are
-  dropped. The `OPENING` line counts walks the board ended (`board`) and their next spots as forward or back, and the
-  opening goes on while the board holds a spot.
+  test for 3 s: the pick's spot test with threat aside (an enemy or ally may build there meanwhile), the builder's own
+  danger rule, and threat there within its own strength (any threat for a constructor), so a raider passing it doesn't
+  turn a commander that would win. Its job leaves threat at the spot to the board meanwhile. A fleeing builder holds
+  no spot (`hold_sec` is gone, and ignored if set), and a next spot nobody walks to yet can move to another builder on
+  any match. Only spots with no threat that the builder's own pick would take, and in team games not nearer an ally's
+  base or factory than ours (the opening's spot counts skip those too); a spot whose job failed waits 30 s for that
+  builder. A job is made only when a builder is matched, so there is no job cap and nothing is claimed before someone
+  heads there. Matching runs once a second, and at once (at most once a frame) when a builder needs a spot, starts its
+  build, loses its job or dies. A lost mex's spot just reopens for the board, with no 20 s rebuild job. When the
+  opening ends, builders keep the job they walk to and the next jobs nobody walks to are dropped. The `OPENING` line
+  counts walks the board ended (`board`) and their next spots as forward or back, and the opening goes on while the
+  board holds a spot.
 - **Walking builders switch jobs by direction** (`economy.builder_jobs`: `switch` now 0.5 and only for turning back,
   `switch_forward` 0.8, `switch_other` 0.5, `commit_sec` 4, all new but `switch`). The walk is measured on the
   builder's cost map, not in a straight line. Forward (no nearer our base than it is now, give or take its build
@@ -272,6 +291,27 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Fixed
 
+- **Tower jobs are no longer dropped for any threat at their site.** The pick lets a builder take an armed build under
+  threat (the turret makes the spot safe), and keeps it out of flee zones only. But the job's next update tested the
+  site with `CanReachAtSafe`, which fails on any threat in the threat map, last-known ghosts of enemies long gone
+  included, and aborted it. The tower's booking on its defence point was freed, so it came back only when the sweep
+  reached its cluster again, and a scored spot that failed twice in 10 minutes was given up.
+  `CBDefenceTask::IsReachable` now keeps the pick's rule for an armed tower (`IBuilderTask::IsFightBack`) and a
+  builder with the flee on: reachable, and outside its flee zones (`IsTurretJobSafe`, measured as a fight-back job).
+  A cornered builder's own tower (`MakeCommDefence`) only needs to be reachable: it stands in the danger by design,
+  and the new rule would have dropped it at once and queued it again every 0.5 s. Unarmed builds, and builders with
+  no flee state (`retreat.builder_flee` off, flying builders), keep the old test. The build site search keeps a
+  site out of flee zones too, and still skips surface threat on its own, so a tower walked into threat stands at the
+  nearest clear site. A `TURRET dropped` line now logs every tower job that ends before it starts: the def, its
+  spender (`prevent (free)`, `porc`, `cornered`, ...; every tower records it now), where, how long after it was
+  queued, and why (called off, the engine refused the build, no site on arrival, unreachable or unsafe with a builder
+  still on it, nobody took it in time, or its builder died or retreated). A resign logs one for each open job.
+- **Builder jobs keep out of enemy turrets' reach.** Flee zones counted mobile enemies only, so a job near a known
+  enemy turret passed `IsCommJobSafe`, and an armed one (which skips the threat test) sent the builder into the
+  turret's range. Armed enemy buildings we know of, seen now or not, now count for job tests (pick, walk, radar and
+  reclaim spots) of builders with the flee on and commanders, at the same lines as other dangers. No flee runs from
+  them, and a flee's end and a morph start don't count them.
+
 - **behaviour.json `limit` counts queued jobs.** A unit type's limit only counted our units (nanoframes included),
   so several jobs could be queued before the first nanoframe stood, and each was built: the Advanced Radar (limit 1)
   went up at the base (`porcupine.base`) and in several porc clusters at once. Now a queued construction job holds a
@@ -394,6 +434,42 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Fighting jumpers and kiting Jack** (`quota.jump_land`, `quota.jump_threat`, `quota.kite`, new attribute `kite`).
+  - Jump tracking (`CEnemyUnit::UpdateJump`). Zero-K keeps `is_jumping`, the jump's goal and (but for Detriment) its
+    reload private to the jumper's team, so an enemy jumper in LOS is seen in flight by its height above the ground
+    (over 20 elmos). Its landing spot and frame are worked out once from the velocity the jump gadget sets each
+    frame: horizontal speed v gives the jump's length (L = 2rh / sqrt(1 - r^2), r = v / jump_speed, h =
+    jump_height), vertical speed and its height above the landing how far along the arc it is (first as if it lands
+    level with the ground under it, then again from the height of that spot, as the gadget aims at the ground there).
+    A height that doesn't fit the arc there (a unit walking on freshly raised ground) is no jump. Up but off a jump's
+    arc (carried by a transport, thrown) it isn't taken as jumping until it's seen down or out of LOS, so a transport
+    slowing down to drop a Jack doesn't read as a jump that used it. Out of LOS a flight ends when the guess says.
+    Reload: `jump_reload` from the landing (none with several `jump_charges`: Detriment); a jumper never seen jumping,
+    or whose flight turns out off the arc, counts as ready, the safe side. Checked offline against a port of the
+    gadget's arc: Jack lands within 5 elmos of the guess on average (19 at worst, on long jumps to ground 100 elmos
+    higher or lower), Detriment within 8 at worst, Skuttle and Jugglenaut (flat, fast arcs) within 19 on average and
+    about 70 at worst (a full-range jump with that height change).
+  - `jump_land` (default true): while it flies, the jumper's fight position (`CEnemyInfo::GetFightPos`) is its
+    landing spot. Firing spots, the fire band, the target's tile (so take-off re-orders units at their next update),
+    `IsOutOfReach`, melee picks (`AssignMeleeTargets`), reload scoots and its threat on the threat map
+    (`AddEnemyUnit`, and the single-enemy `GetThreatAt` that `GetTaskThreatExcl` subtracts) all use it. LOS, routes
+    and orders keep its real position. In flight it moves at its walking speed for the threat map's slack and for
+    `IsRunningAway` (`GetGroundSpeed`), so a jump away isn't read as a run.
+  - `jump_threat` (default 0.5; per unit `jump_threat` for one type): while the jump is ready, that share of the jump
+    range is added to its weapon range on the threat map, before rounding to squares. Jack: 5 squares (about 320
+    elmos with slack) to 8 (about 512). Readers of the per-enemy range (threat layers, anti-heavy stand-off) follow.
+  - `kite` (default 0.85, 0 = off) with the new `kite` attribute (on `jumpassault`): every ranged unit that fights
+    from firing spots (not melee units, aircraft or mobile bombs) keeps out of 0.85 x its own range of each kited
+    enemy in LOS, whatever it targets. No firing spot inside such a disc or with a walk through one (a walk out of
+    one it stands in comes no nearer than 0.9 x where it starts). A unit, escorts too, whose spot or walk there is
+    caught by a disc is re-ordered at the next task update (`IsKiteRespot`). With no spot clear of the discs it
+    steps out to 0.95 x its range from that enemy (straight away, then 30 and 60 degrees either side, the first safe
+    one with a direct walk; with none safe, a hold if it is safe where it stands, else the least dangerous step) and
+    fights from there without chasing (`FireSpot::KITE`); outside them it holds. A jumper in flight gets the threat
+    map's speed slack of its walking speed, not the jump's. On a kited target, spots go on a ring
+    at 0.95 x range and the fire band reaches the full range, so a unit Zero-K's own skirm keeps at the edge of its
+    range is no longer pulled back in to 0.9 x range.
+
 - **Commander protect against rushes** (`quota.protect`, new, off by default: `enable`, `zone` 1200, `keep_sec` 12,
   `respond_sec` 12, `go_ratio` 1.0). When the commander's seen danger within `zone` beats its own power, or it takes
   damage, one central go or no-go decides once a second for every group that can reach it, so they commit together
@@ -402,17 +478,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     enemy statics by their cover falloff) and the commander's own danger list. Against gunships (over 60% of that
     list, until under 40%) no group is sent: only anti-air turrets count, and the commander if it hits air.
   - Commit: attack, raid and gathering groups that reach the commander within `respond_sec` (or its time to death)
-    and aren't fleeing or fighting elsewhere, nearest first, until groups + commander + turrets reach 1.25x the danger
-    (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or paralysed), no-go
-    under `go_ratio` / `attack_keep_threat` (at once when the danger turns to air), 5 s per state at least. A
-    committed group that flees still counts for keeping a go, not for starting one.
+    and aren't fleeing or fighting elsewhere, soonest there first, until groups + commander + turrets reach 1.25x the
+    danger (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or paralysed),
+    no-go under `go_ratio` / `attack_keep_threat` (at once when the danger turns to air), 5 s per state at least. A
+    committed group that flees still counts for keeping a go, not for starting one, and a committed group 1.5x
+    `respond_sec` of travel away is dropped.
   - On go, committed groups leave rallies and guard pulls, merge only with each other, head for the commander, take
     only enemies in the zone (the commander's attackers first), and within half the zone of it (kept to 0.625) judge
     with the strength present there.
   - Meeting point: a spot 100 elmos behind our or allied turrets near the commander, away from the danger, where they
     hold the danger with it, reached in time and safe to flee to; kept while they hold 1 / `attack_keep_threat` of it.
     The commander flees there and stays; cornered there, it ends its flee and builds its defence.
-  - `PROTECT` log lines on start, go, nogo and end.
+  - `PROTECT` log lines on start, go, nogo and end, with the gunships' share of the danger. The end line sums up the
+    protect: its goes and the highest gunship share.
 
 - **`plant` unit attribute: stay put next to targets and anti-heavies** (Crabe has it). A unit with it never moves
   (move, fight, jump, gather and orbit orders are dropped, retreat included) while an enemy in LOS that it can hit is

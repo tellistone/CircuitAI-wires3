@@ -51,6 +51,7 @@ CCircuitDef::AttrName CCircuitDef::attrNames = {
 	{"no_formation", CCircuitDef::AttrType::NO_FORM},
 	{"cloak_route",  CCircuitDef::AttrType::CLOAK_ROUTE},
 	{"plant",        CCircuitDef::AttrType::PLANT},
+	{"kite",         CCircuitDef::AttrType::KITE},
 };
 CCircuitDef::FireName CCircuitDef::fireNames = {
 	{"hold",   CCircuitDef::FireType::HOLD},
@@ -202,8 +203,16 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	auto it = customParams.find("canjump");
 	isAbleToJump = (it != customParams.end()) && (utils::string_to_int(it->second) == 1);
 	if (isAbleToJump) {
-		it = customParams.find("jump_range");
-		jumpRange = (it != customParams.end()) ? utils::string_to_float(it->second) : 400.0f;
+		// Zero-K's defaults (gamedata/unitdef_defaults/jump_defs.lua) where a def has none
+		auto jumpParam = [&customParams](const char* name, float defValue) {
+			auto it = customParams.find(name);
+			return (it != customParams.end()) ? utils::string_to_float(it->second) : defValue;
+		};
+		jumpRange = jumpParam("jump_range", 400.f);
+		jumpSpeed = jumpParam("jump_speed", 6.f);
+		jumpHeight = jumpParam("jump_height", 200.f);
+		// Several charges (Detriment, 3): one used leaves another ready, so none counts as reloading (the safe side)
+		jumpReload = (jumpParam("jump_charges", 1.f) > 1.f) ? 0 : int(jumpParam("jump_reload", 10.f) * FRAMES_PER_SEC);
 	}
 
 	isMobileBuilding = customParams.find("mobilebuilding") != customParams.end();  // Zero-K tests it is there
@@ -646,6 +655,18 @@ void CCircuitDef::RemDGun()
 	dgunMount = nullptr;
 	hasDGun = false;
 	hasDGunAA = false;
+}
+
+CCircuitDef::RangeType CCircuitDef::GetRangeType(const CCircuitDef* cdef, const AIFloat3& pos)
+{
+	return ((cdef != nullptr) && cdef->IsAbleToFly()) ? RangeType::AIR
+			: (pos.y < -SQUARE_SIZE * 5) ? RangeType::WATER : RangeType::LAND;
+}
+
+int CCircuitDef::GetDefaultMoveState() const
+{
+	const int state = def->GetMoveState();
+	return (state >= 0) ? state : 1;
 }
 
 float CCircuitDef::GetRadius()

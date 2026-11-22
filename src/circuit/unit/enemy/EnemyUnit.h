@@ -20,6 +20,7 @@ namespace springai {
 namespace circuit {
 
 class IFighterTask;
+class CTerrainManager;
 
 /*
  * Data only structure ease of copy (double-buffer)
@@ -55,6 +56,17 @@ struct SEnemyData {
 	springai::AIFloat3 vel;  // elmos per frame
 	float threat;
 	RangeArray range;
+
+	// A jumper in flight (CEnemyUnit::UpdateJump, quota.jump_land): where it lands. Until then the threat map and
+	// firing spots take that as its place (GetFightPos); everything else (LOS, routes, orders) keeps pos
+	springai::AIFloat3 landPos;
+	bool isJumping = false;
+	const springai::AIFloat3& GetFightPos() const { return isJumping ? landPos : pos; }
+	// Its speed over the ground (elmos per frame), but in flight its walking speed: it is drawn and fought at its
+	// landing spot, and walks on from there (the threat map's slack, ISquadTask::IsRunningAway)
+	float GetGroundSpeed() const {
+		return (isJumping && (cdef != nullptr)) ? cdef->GetSpeed() / FRAMES_PER_SEC : vel.Length2D();
+	}
 
 	void SetRange(CCircuitDef::ThreatType t, int r) {
 		range[static_cast<CCircuitDef::ThreatT>(t)] = r;
@@ -118,6 +130,12 @@ public:
 	bool IsKnown(int frame) const { return (knownFrame != -1) && (knownFrame != frame); }
 
 	void SetLastSeen(int frame) { lastSeen = frame; }
+	void SetLastLos(int frame) { lastLos = frame; }  // the frame it left LOS
+	// In LOS, or in radar and in LOS less than frames ago (a recloaked Phantom: radar, not LOS). A blip never seen
+	// lately and a ghost out of both don't count
+	bool IsSeenInLos(int frame, int frames) const {
+		return IsInLOS() || (IsInRadar() && (lastLos >= 0) && (frame - lastLos < frames));
+	}
 	int GetLastSeen() const { return lastSeen; }
 	// In radar or LOS, or out of both for less than frames (lastSeen: the frame it left radar): still there, as far
 	// as we can tell. A short gap (radar edge, a jammer) doesn't count as gone
@@ -140,10 +158,13 @@ public:
 
 	const springai::AIFloat3& GetPos() const { return data.pos; }
 	const springai::AIFloat3& GetVel() const { return data.vel; }
+	const springai::AIFloat3& GetFightPos() const { return data.GetFightPos(); }
+	float GetGroundSpeed() const { return data.GetGroundSpeed(); }
 
 	void SetThreat(float t) { data.threat = t; }
 	float GetThreat() const { return data.threat; }
 	float GetCountWeight() const { return data.GetCountWeight(); }
+	bool IsCounted() const { return data.IsCounted(); }  // can fight: known type, threat, not built/paralysed/disarmed
 	float GetRaidCountWeight() const { return data.GetRaidCountWeight(); }
 
 	void SetRange(CCircuitDef::ThreatType t, int r) { data.SetRange(t, r); }
@@ -162,6 +183,18 @@ public:
 	// new epoch)
 	bool GetParkedSpot(int frame, int parkedFrames, springai::AIFloat3& outPos, int& outEpoch) const;
 
+	// Jumpers (CCircuitDef::IsAbleToJump), from the staggered enemy update after UpdateInRadarData. Zero-K keeps
+	// is_jumping, the jump's goal and (but for Detriment) its reload private, so a flight is seen in LOS by height above
+	// the ground, and its landing (spot and frame) is worked out once from the velocity the jump gadget sets each
+	// frame: horizontal speed gives the jump's length, vertical speed and the height above the landing how far along it
+	// is. Up off a jump's arc (carried, thrown) it isn't taken as jumping until seen down or out of LOS. The reload is
+	// timed from the landing (jump_reload); a jump never seen leaves it ready, the safe side. isLand: quota.jump_land
+	// (landPos as the fight position). true: IsJumpReady changed (the caller updates its threat range)
+	bool UpdateJump(int frame, CTerrainManager* terrainMgr, bool isLand);
+	// Not in flight and reloaded (or never seen jumping)
+	bool IsJumpReady() const { return isJumpReady; }
+	bool IsInFlight() const { return landFrame >= 0; }
+
 	// Shots priority artillery (CPriorityArtyTask) fired at it while it was out of LOS and radar, by all of the
 	// ally team's guns; back to 0 once it's seen again (UpdateInRadarData)
 	void AddBlindShot() { ++blindShots; }
@@ -172,6 +205,7 @@ private:
 
 	int knownFrame;
 	int lastSeen;
+	int lastLos;  // the frame it last left LOS; -1 = never
 
 	springai::Weapon* shield;
 
@@ -181,6 +215,12 @@ private:
 	springai::AIFloat3 stillPos = springai::AIFloat3(-1.f, 0.f, -1.f);
 	int stillSince = -1;  // -1: no spot (moving, or not seen in LOS on it yet)
 	int blindShots = 0;  // AddBlindShot
+	// UpdateJump: the landing frame of the flight under way (-1: none), when the jump is ready again; seen up off a
+	// jump's arc since it was last seen down or out of LOS
+	int landFrame = -1;
+	int jumpReadyFrame = 0;
+	bool isJumpReady = true;
+	bool isOffArc = false;
 
 public:
 	void SetInLOS()     { data.SetInLOS(); }
@@ -225,6 +265,7 @@ public:
 
 	float GetHealth() const { return data->GetHealth(); }
 	bool IsBeingBuilt() const { return data->IsBeingBuilt(); }
+	bool IsCounted() const { return data->IsCounted(); }  // can fight (CEnemyUnit::IsCounted)
 	bool IsParalyzed() const { return data->IsParalyzed(); }
 	bool IsDisarmed() const { return data->IsDisarmed(); }
 
@@ -234,6 +275,9 @@ public:
 
 	const springai::AIFloat3& GetPos() const { return data->GetPos(); }
 	const springai::AIFloat3& GetVel() const { return data->GetVel(); }
+	// Where to fight it: its landing spot while it jumps (CEnemyUnit::UpdateJump), else GetPos
+	const springai::AIFloat3& GetFightPos() const { return data->GetFightPos(); }
+	float GetGroundSpeed() const { return data->GetGroundSpeed(); }
 
 	float GetThreat() const { return data->GetThreat(); }
 	bool GetParkedSpot(int frame, int parkedFrames, springai::AIFloat3& outPos, int& outEpoch) const {

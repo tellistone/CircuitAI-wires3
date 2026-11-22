@@ -539,9 +539,7 @@ bool CArtilleryTask::IsPopupTargetNear(CEnemyInfo* enemy, int frame) const
 			return true;  // not listed yet: assume the turret is open for it
 		}
 		const AIFloat3& aPos = ally->GetPos(frame);
-		const CCircuitDef::RangeType rt = ally->GetCircuitDef()->IsAbleToFly() ? CCircuitDef::RangeType::AIR
-				: (aPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
-		const float range = edef->GetMaxRange(rt);  // 0: can't hit that layer
+		const float range = edef->GetMaxRange(CCircuitDef::GetRangeType(ally->GetCircuitDef(), aPos));  // 0: can't hit that layer
 		if ((range > 0.f) && (ePos.SqDistance2D(aPos) < SQUARE(range + margin))) {
 			return true;
 		}

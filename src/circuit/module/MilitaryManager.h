@@ -12,6 +12,7 @@
 #include "module/UnitModule.h"
 #include "setup/DefenceMatrix.h"
 #include "task/fighter/FighterTask.h"
+#include "task/static/ArtyMath.h"
 #include "unit/CircuitDef.h"
 
 #include <algorithm>
@@ -186,6 +187,7 @@ public:
 	// Aborts an unstarted tower the AI no longer wants there (porc mode ended, artillery near a choke). Unlike a
 	// tower that failed, its scored spot stays frozen and counts no failure
 	void CallOffDefence(IBuilderTask* task);
+	bool IsCallingOff() const { return isCallingOff; }
 	bool HasDefence(int cluster);
 	// MakeDefence's cap on a point's towers: MIN_BUILD_SEC x porcupine.amount x income
 	float GetDefenceCap() const;
@@ -222,6 +224,7 @@ public:
 	float GetTurretSpare() { UpdateTurretBudget(); return turretBudget.balance - turretBudget.askCost; }
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
+	static const char* GetSpendName(int spend);  // a TurretSpend, as the TURRET BUDGET line names it
 	// turret.crowd_count: true when a light def at pos would join enough light turrets; logs and credits the account
 	// (CTurretPicker::RefuseCrowdedLight)
 	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
@@ -538,6 +541,9 @@ public:
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
 	float GetThrScaleMin() const { return thrScaleMin; }
 	float GetAttackSpotThreat() const { return attackSpotThreat; }
+	// quota.kite: ranged units with firing spots keep out of this x their range of enemies with the "kite" attribute;
+	// 0: off (IFighterTask::FindFireSpot)
+	float GetKiteRange() const { return kiteRange; }
 	// quota.attack_melee_spot: melee units pick a firing spot this many elmos beyond both units' bodies; < 0: off
 	float GetAttackMeleeSpot() const { return attackMeleeSpot; }
 	// quota.attack_melee_max: at most this many melee units of a group close in on one target (fewer if its ring
@@ -669,7 +675,10 @@ private:
 	void UpdateResign();  // "resign": concede a lost 1v1, every 10 seconds
 	void UpdateDrowned();  // "drowned": self-destruct units stuck in water too deep for them, every second
 	void UpdatePlant();  // "plant" attribute: plant (Stop, hold position) and unplant units, every 8 frames
-	bool IsPlantReason(CCircuitUnit* unit, int frame);
+	void Unplant(CCircuitUnit* unit, bool isPlayer);
+	void ReadPlantThreats(int frame);  // plantThreats: the "plant".threats enemies that count now
+	enum class PlantReason: char {NONE, TARGET, THREAT};  // (a) a target in reach, (b) a threat has it in range
+	PlantReason GetPlantReason(CCircuitUnit* unit, int frame);
 	// Response gates and income multipliers (response.<role>.territory_max, unlock_after, income_curve), every 2 s
 	void UpdateResponseGates();
 	void UpdateAllyResponse();
@@ -898,6 +907,7 @@ private:
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat
+	float kiteRange;  // quota.kite
 	float attackMeleeSpot;  // quota.attack_melee_spot
 	int attackMeleeMax;  // quota.attack_melee_max
 	float attackMeleeSpread;  // quota.attack_melee_spread
@@ -912,10 +922,13 @@ private:
 	std::unordered_map<int, int> drownedSince;  // unit id -> first frame stuck in water; -1 = self-destruct ordered
 	struct SPlantCfg {
 		std::unordered_set<CCircuitDef::Id> threats;  // "plant".threats: enemy types that plant a unit in their range
-		int keepFrames;  // "plant".keep_sec in frames: a threat counts this long after it was last seen
+		float reach;  // "plant".reach: (a) counts within this x its (height-adjusted) range
+		int keepFrames;  // "plant".keep_sec in frames: a threat on radar counts this long after it left LOS
 		int holdFrames;  // "plant".hold_sec in frames: a planted unit stays this long after the reason last held
+		int idleFrames;  // "plant".idle_sec in frames: planted for a target only, weapon ready this long: (a) muted
 	} plantCfg;
 	std::vector<CEnemyUnit*> plantThreats;  // UpdatePlant: the threats that count now
+	std::unordered_map<CCircuitDef::Id, ballistics::SShell> plantShells;  // per plant type: its main weapon's shell
 	bool attackBaseGather;  // quota.attack_merge.base_gather
 	// quota.solo_hunt: units of these main roles hunt alone on our ground until the ally team first holds mex x the
 	// map's metal spots (finished mexes); one-off, it never switches back. No roles = off
