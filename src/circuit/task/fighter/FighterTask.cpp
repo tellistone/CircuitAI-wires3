@@ -54,6 +54,14 @@ const float ARC_SPAN_CLOSE  = 0.5f; // melee close spots: half the arc, x PI (ro
 const float MELEE_STICK   = 100.f;  // a melee unit already on an enemy counts this much nearer it (AssignMeleeTargets)
 const int   MELEE_BAN     = FRAMES_PER_SEC * 5;  // another target with no safe close spot is passed over this long
 const float CROWD_CLOSE   = 1.f;    // melee close spots: cost per crowding claim, x close range of walk (~4 arc steps)
+// Kiting (quota.kite): where a unit stands off a kited enemy, x range: the ring of spots on a kited target, and a step
+// out of a disc (its disc keeps them past quota.kite x range, so a unit has 0.1x range to give before it is
+// re-spotted). A step goes straight away from the enemy first, then KITE_ANGLE either side, then twice that
+const float KITE_STAND    = 0.95f;
+const float KITE_ANGLE    = static_cast<float>(M_PI) / 6.f;
+// A walk out of a kite disc it starts in comes no nearer its centre than this x where it starts (one across the middle
+// is no way out; a step at 2 KITE_ANGLE to the side dips about 0.93)
+const float KITE_WALK_IN  = 0.9f;
 }
 
 F3Vec IFighterTask::urgentPositions;  // NOTE: micro-opt
@@ -186,10 +194,12 @@ void IFighterTask::SetTarget(CEnemyInfo* enemy)
 
 void IFighterTask::Attack(const int frame, const bool isDirect)
 {
-	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
+	// A jumper in flight: where it lands (GetFightPos), so take-off moves the target's tile and re-orders at once
+	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetFightPos());
 	const bool isRepeatAttack = (frame >= attackFrame + attackRepeat);
 	attackFrame = isRepeatAttack ? frame : attackFrame;
-	const AIFloat3& tPos = target->GetPos();
+	const AIFloat3& tPos = target->GetFightPos();
+	GatherKited();
 	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
 	// Longest range picks first; each pick replaces that unit's claim.
@@ -220,9 +230,11 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 
 		auto mit = meleeTargets.find(unit);
 		CEnemyInfo* enemy = (mit != meleeTargets.end()) ? mit->second : target;
+		// Too near a kited enemy, or heading there: re-spotted now, not at the repeat
 		if (isRepeatAttack
 			|| (unit->GetTarget() != enemy)
-			|| ((enemy == target) && (unit->GetTargetTile() != targetTile) && isTileMoveOrder))
+			|| ((enemy == target) && (unit->GetTargetTile() != targetTile) && isTileMoveOrder)
+			|| IsKiteRespot(unit, frame))
 		{
 			orders.push_back({i, GetSpotRange(unit, enemy), enemy});
 		}
@@ -232,13 +244,104 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	if (!orders.empty()) {
 		OrderOnTarget(claims, orders, frame, isDirect, GetEscapeSafeThreat(), timeout);
 	}
+	kited.clear();  // pointers: only good for this pass
+}
+
+void IFighterTask::GatherKited()
+{
+	kited.clear();
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (circuit->GetMilitaryManager()->GetKiteRange() <= 0.f) {
+		return;
+	}
+	for (const auto& kv : circuit->GetEnemyInfos()) {
+		const CEnemyInfo* enemy = kv.second;
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef != nullptr) && edef->IsAttrKite() && enemy->IsInLOS() && !enemy->IsHidden()
+			&& !enemy->IsBeingBuilt() && !enemy->IsParalyzed() && !enemy->IsDisarmed())
+		{
+			kited.push_back(enemy);
+		}
+	}
+}
+
+void IFighterTask::GetKiteDiscs(CCircuitUnit* unit, std::vector<SKiteDisc>& outDiscs) const
+{
+	outDiscs.clear();
+	if (kited.empty()) {
+		return;
+	}
+	const CCircuitDef* cdef = unit->GetCircuitDef();
+	if (cdef->IsAttrMelee() || cdef->IsAbleToFly() || !IsArmedUnit(cdef)) {
+		return;  // melee closes in; aircraft and bombs don't kite
+	}
+	const float kite = manager->GetCircuit()->GetMilitaryManager()->GetKiteRange();
+	for (const CEnemyInfo* enemy : kited) {
+		const float range = GetFireRange(unit, enemy);  // 0: can't hit it (anti-air on a ground unit): no disc
+		if (range * kite >= SQUARE_SIZE * 4) {
+			outDiscs.push_back({enemy->GetFightPos(), range * kite, range * KITE_STAND});
+		}
+	}
+}
+
+const IFighterTask::SKiteDisc* IFighterTask::FindKiteDisc(const std::vector<SKiteDisc>& discs, const AIFloat3& p)
+{
+	// The one p is deepest in (share of its radius, squared)
+	const SKiteDisc* best = nullptr;
+	float bestShare = 1.f;
+	for (const SKiteDisc& d : discs) {
+		const float share = p.SqDistance2D(d.pos) / SQUARE(d.range);
+		if (share < bestShare) {
+			bestShare = share;
+			best = &d;
+		}
+	}
+	return best;
+}
+
+bool IFighterTask::IsKiteWalkClear(const std::vector<SKiteDisc>& discs, const AIFloat3& from, const AIFloat3& to)
+{
+	// The straight walk's nearest point to each disc's centre: outside the disc, or for one it starts in, no nearer
+	// than KITE_WALK_IN x where it starts
+	const AIFloat3 seg = to - from;
+	const float sqLen = seg.SqLength2D();
+	for (const SKiteDisc& d : discs) {
+		const float t = (sqLen > 1.f) ? utils::clamp(((d.pos.x - from.x) * seg.x + (d.pos.z - from.z) * seg.z) / sqLen, 0.f, 1.f) : 0.f;
+		const AIFloat3 closest(from.x + seg.x * t, 0.f, from.z + seg.z * t);
+		const float sqFrom = from.SqDistance2D(d.pos);
+		const float sqLimit = (sqFrom < SQUARE(d.range)) ? sqFrom * SQUARE(KITE_WALK_IN) : SQUARE(d.range);
+		if (closest.SqDistance2D(d.pos) < sqLimit) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool IFighterTask::IsKiteRespot(CCircuitUnit* unit, int frame) const
+{
+	static std::vector<SKiteDisc> discs;  // NOTE: micro-opt
+	GetKiteDiscs(unit, discs);
+	if (discs.empty()) {
+		return false;
+	}
+	// Where it is heading: the spot it was last sent to while fresh (a step out of a disc too), else where it stands
+	const AIFloat3& uPos = unit->GetPos(frame);
+	auto it = fireSpots.find(unit);
+	const AIFloat3& spot = ((it != fireSpots.end()) && (frame <= it->second.frame + SPOT_KEEP)) ? it->second.pos : uPos;
+	return (FindKiteDisc(discs, spot) != nullptr) || !IsKiteWalkClear(discs, uPos, spot);
+}
+
+bool IFighterTask::IsKited(const CEnemyInfo* enemy) const
+{
+	const CCircuitDef* edef = enemy->GetCircuitDef();
+	return (edef != nullptr) && edef->IsAttrKite() && (manager->GetCircuit()->GetMilitaryManager()->GetKiteRange() > 0.f);
 }
 
 void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SOrder>& orders, int frame,
 		bool isDirect, float safeThreat, int timeout)
 {
-	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetPos());
-	const AIFloat3& tPos = target->GetPos();
+	const int targetTile = manager->GetCircuit()->GetInflMap()->Pos2Index(target->GetFightPos());
+	const AIFloat3& tPos = target->GetFightPos();
 	if (std::any_of(orders.begin(), orders.end(), [](const SOrder& o) { return o.discRadius <= 0.f; })) {
 		lastOrderTargetPos = tPos;  // units ordered on the group's target (escorts alone don't reset its drift)
 	}
@@ -273,10 +376,11 @@ void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SO
 		}
 		switch (spot) {
 			case FireSpot::SPOT:
-			case FireSpot::RISKY: {  // RISKY: nowhere safe, not here either: the least dangerous spot
+			case FireSpot::RISKY:  // RISKY: nowhere safe, not here either: the least dangerous spot
+			case FireSpot::KITE: {  // KITE: too near a kited enemy: step out, fight from there (no chase back in)
 				claim.pos = firePos;
 				fireSpots[unit] = {firePos, frame, FireSpot::RISKY == spot};
-				if (isFireSpotChase) {
+				if (isFireSpotChase && (FireSpot::KITE != spot)) {
 					unit->AttackFrom(firePos, target, targetTile, timeout);
 				} else {
 					unit->FightFrom(firePos, target, targetTile, timeout);
@@ -296,7 +400,7 @@ void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SO
 				if (isDirect) {
 					unit->Attack(target, targetTile, timeout);  // keeps target priority
 				} else {
-					unit->Attack(target->GetPos(), target, targetTile, timeout);
+					unit->Attack(target->GetFightPos(), target, targetTile, timeout);
 				}
 			} break;
 		}
@@ -326,7 +430,7 @@ bool IFighterTask::IsDiscBanned(const CEnemyInfo* enemy, const CCircuitDef* cdef
 bool IFighterTask::IsDiscReach(CCircuitUnit* unit, const CEnemyInfo* enemy, float r) const
 {
 	const float range = GetFireRange(unit, enemy);
-	return (range >= SQUARE_SIZE * 4) && (enemy->GetPos().SqDistance2D(spotDiscPos) <= SQUARE(r + range * FIRE_RADIUS));
+	return (range >= SQUARE_SIZE * 4) && (enemy->GetFightPos().SqDistance2D(spotDiscPos) <= SQUARE(r + range * FIRE_RADIUS));
 }
 
 bool IFighterTask::OrderInDisc(std::vector<SFireClaim>& claims, const SOrder& order, float safeThreat, int timeout)
@@ -341,14 +445,14 @@ bool IFighterTask::OrderInDisc(std::vector<SFireClaim>& claims, const SOrder& or
 			continue;
 		}
 		// Spots on the arc from the enemy towards the disc's centre (not towards the unit, which may stand at its edge)
-		const AIFloat3 toDisc = spotDiscPos - enemy->GetPos();
+		const AIFloat3 toDisc = spotDiscPos - enemy->GetFightPos();
 		const float bearing = (toDisc.SqLength2D() > 1.f) ? atan2f(toDisc.z, toDisc.x) : 0.f;
 		isSpotDisc = true;
 		spotDiscSqRadius = SQUARE((i == 0) ? order.discRadius : order.altRadius);
 		AIFloat3 firePos;
 		const FireSpot spot = FindFireSpot(claims, order.claim, safeThreat, &bearing, false, enemy, firePos);
 		isSpotDisc = false;
-		if (FireSpot::SPOT != spot) {
+		if ((FireSpot::SPOT != spot) && (FireSpot::KITE != spot)) {  // KITE: a step out of a kite disc, fought from too
 			spotDiscBans[std::make_pair(enemy, static_cast<int>(unit->GetCircuitDef()->GetId()))] = frame + DISC_BAN;
 			continue;
 		}
@@ -359,7 +463,7 @@ bool IFighterTask::OrderInDisc(std::vector<SFireClaim>& claims, const SOrder& or
 		}
 		claim.pos = firePos;
 		fireSpots[unit] = {firePos, frame, false};
-		unit->FightFrom(firePos, enemy, circuit->GetInflMap()->Pos2Index(enemy->GetPos()), timeout);
+		unit->FightFrom(firePos, enemy, circuit->GetInflMap()->Pos2Index(enemy->GetFightPos()), timeout);
 		return true;
 	}
 	return false;
@@ -404,7 +508,7 @@ bool IFighterTask::AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self
 		meleeBans[enemy] = frame + MELEE_BAN;  // no safe spot by it: not a valid target for a while, for any of ours
 		return false;
 	}
-	const int tile = circuit->GetInflMap()->Pos2Index(enemy->GetPos());
+	const int tile = circuit->GetInflMap()->Pos2Index(enemy->GetFightPos());
 	claim.pos = firePos;
 	fireSpots[unit] = {firePos, frame, false};
 	if (isFireSpotChase) {
@@ -418,12 +522,12 @@ bool IFighterTask::AttackMeleeOther(std::vector<SFireClaim>& claims, size_t self
 bool IFighterTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 {
 	return (fireSpotReach > 0.f)
-		&& (unit->GetPos(frame).SqDistance2D(target->GetPos()) > SQUARE(GetFireRange(unit) * fireSpotReach));
+		&& (unit->GetPos(frame).SqDistance2D(target->GetFightPos()) > SQUARE(GetFireRange(unit) * fireSpotReach));
 }
 
 float IFighterTask::GetFireRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const
 {
-	const AIFloat3& tPos = enemy->GetPos();
+	const AIFloat3& tPos = enemy->GetFightPos();  // a jumper in flight: by where it lands (water or not)
 	CCircuitDef* edef = enemy->GetCircuitDef();
 	const CCircuitDef::RangeType rt = ((edef != nullptr) && edef->IsAbleToFly()) ? CCircuitDef::RangeType::AIR
 			: (tPos.y < -SQUARE_SIZE * 5) ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND;
@@ -492,7 +596,7 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 	}
 	// Melee units Attack may order that close in on the target, nearest first; already on it: a head start, so they
 	// keep it rather than swap with one that walked a little closer
-	const AIFloat3& tPos = target->GetPos();
+	const AIFloat3& tPos = target->GetFightPos();  // where its close spots are (a jumper's landing spot)
 	struct SMelee {
 		CCircuitUnit* unit;
 		float dist;
@@ -523,7 +627,7 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		CCircuitDef* edef = enemy->GetCircuitDef();
-		const AIFloat3& ePos = enemy->GetPos();
+		const AIFloat3& ePos = enemy->GetFightPos();
 		if ((enemy != target) && enemy->IsInLOS() && !enemy->IsHidden() && (edef != nullptr) && !edef->IsAbleToFly()
 			&& (ePos.y >= -SQUARE_SIZE * 5) && (ePos.SqDistance2D(tPos) <= SQUARE(spread))
 			&& (meleeBans.find(enemy) == meleeBans.end()))
@@ -573,7 +677,7 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 		CEnemyInfo* best = nullptr;
 		float bestDist = std::numeric_limits<float>::max();
 		for (CEnemyInfo* enemy : others) {
-			const float dist = enemy->GetPos().distance2D(uPos) - ((unit->GetTarget() == enemy) ? MELEE_STICK : 0.f);
+			const float dist = enemy->GetFightPos().distance2D(uPos) - ((unit->GetTarget() == enemy) ? MELEE_STICK : 0.f);
 			if ((dist < bestDist) && isValid(unit, enemy)
 				&& circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), enemy->GetPos()))
 			{
@@ -590,10 +694,11 @@ void IFighterTask::AssignMeleeTargets(const std::vector<SFireClaim>& claims, int
 bool IFighterTask::IsInFireBand(CCircuitUnit* unit, const AIFloat3& pos, bool isClose, const CEnemyInfo* enemy) const
 {
 	const float range = isClose ? GetCloseRange(unit, enemy) : GetFireRange(unit, enemy);
-	// Close (melee): no lower bound, closer is fine
+	// Close (melee): no lower bound, closer is fine. Kited: up to the full range (the kite disc is its lower bound)
 	const float bandMin = isClose ? 0.f : FIRE_BAND_MIN;
-	const float sqDist = pos.SqDistance2D(enemy->GetPos());
-	return (sqDist >= SQUARE(range * bandMin)) && (sqDist <= SQUARE(range * FIRE_BAND_MAX));
+	const float bandMax = (!isClose && IsKited(enemy)) ? 1.f : FIRE_BAND_MAX;
+	const float sqDist = pos.SqDistance2D(enemy->GetFightPos());
+	return (sqDist >= SQUARE(range * bandMin)) && (sqDist <= SQUARE(range * bandMax));
 }
 
 bool IFighterTask::GetKeptFireSpot(CCircuitUnit* unit, bool isClose, const CEnemyInfo* enemy, AIFloat3& outPos) const
@@ -624,9 +729,15 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		return FireSpot::NONE;
 	}
 	CCircuitAI* circuit = manager->GetCircuit();
-	const AIFloat3& tPos = enemy->GetPos();
+	const AIFloat3& tPos = enemy->GetFightPos();  // a jumper in flight: where it lands
 	const AIFloat3& uPos = unit->GetPos(circuit->GetLastFrame());
 	CThreatMap* threatMap = circuit->GetThreatMap();
+	// Kited enemies' keep-out discs: no spot inside one, whatever the target (melee close spots have none)
+	std::vector<SKiteDisc> discs;
+	if (!isClose) {
+		GetKiteDiscs(unit, discs);
+	}
+	bool isKiteDropped = false;  // a candidate fell in a disc
 	const float strength = std::max(claims[self].power, THREAT_MIN);
 	const float wThreat = circuit->GetMilitaryManager()->GetAttackSpotThreat();
 	const float step = threatMap->GetSquareSize();
@@ -720,6 +831,10 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		{
 			return;
 		}
+		if ((FindKiteDisc(discs, p) != nullptr) || !IsKiteWalkClear(discs, uPos, p)) {
+			isKiteDropped = true;
+			return;
+		}
 		int crowd = 0;
 		for (size_t i = 0; i < claims.size(); ++i) {
 			if ((i != self) && (claims[i].pos.SqDistance2D(p) < SQUARE(crowdR))) {
@@ -750,7 +865,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	// melee close spots +-90, see crowdR)
 	AIFloat3 dir = uPos - tPos;
 	const float bearing = (arcBearing != nullptr) ? *arcBearing : (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
-	const float radius = range * FIRE_RADIUS;
+	const float radius = range * ((!isClose && IsKited(enemy)) ? KITE_STAND : FIRE_RADIUS);
 	for (int i = -arcSteps; i <= arcSteps; ++i) {
 		const float angle = bearing + i * static_cast<float>(M_PI) * arcSpan / arcSteps;
 		AIFloat3 p(tPos.x + radius * cosf(angle), tPos.y, tPos.z + radius * sinf(angle));
@@ -787,10 +902,52 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 			return FireSpot::SPOT;
 		}
 	}
+	// KITE: it stands too near a kited enemy and no spot is clear of them all: a step out, straight away from the one it
+	// is deepest in first, then to either side. The first safe one (spot and walk); else, unless here is safe (HOLD),
+	// the least dangerous one
+	AIFloat3 stepPos;
+	float stepWorst = std::numeric_limits<float>::max();  // < 0: safe; max: no step
+	if (const SKiteDisc* inDisc = FindKiteDisc(discs, uPos)) {
+		AIFloat3 away = uPos - inDisc->pos;
+		if (away.SqLength2D() < 1.f) {
+			away = uPos - tPos;  // right on it: away from the target
+		}
+		const float awayBearing = (away.SqLength2D() >= 1.f) ? atan2f(away.z, away.x) : 0.f;
+		for (int k : {0, 1, -1, 2, -2}) {
+			const float angle = awayBearing + k * KITE_ANGLE;
+			AIFloat3 p(inDisc->pos.x + inDisc->step * cosf(angle), inDisc->pos.y, inDisc->pos.z + inDisc->step * sinf(angle));
+			CTerrainManager::CorrectPosition(p);
+			if (!terrainMgr->CanMoveToPos(unit->GetArea(), p) || !IsFireSpotAllowed(p)
+				|| (FindKiteDisc(discs, p) != nullptr) || !IsKiteWalkClear(discs, uPos, p)
+				|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p, WALK_CLIMB))
+			{
+				continue;
+			}
+			const float threat = GetTaskThreatAt(unit, p);
+			float peak;
+			const bool isWalkDanger = checkWalk(p, peak);
+			const float worst = (isWalkDanger || isDanger(p, threat)) ? std::max(threat, peak) : -1.f;
+			if (worst < stepWorst) {
+				stepWorst = worst;
+				stepPos = p;
+			}
+			if (worst < 0.f) {
+				break;
+			}
+		}
+	}
+	if (stepWorst < 0.f) {
+		outPos = stepPos;
+		return FireSpot::KITE;
+	}
 	// HOLD: every spot is dangerous, here isn't
 	if (isSafeHere) {
 		outPos = uPos;
 		return FireSpot::HOLD;
+	}
+	if (stepWorst < std::numeric_limits<float>::max()) {
+		outPos = stepPos;
+		return FireSpot::KITE;
 	}
 	// RISKY: the least dangerous spot, judged by the worse of walk and spot
 	const SCandidate* risky = nullptr;
@@ -812,7 +969,8 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	// No spot in sight of the target that we walk to directly (or none we can stand on): hold rather than a direct
 	// Attack, which the engine would turn into a walk round to wherever it can fire from. isHoldAttack (anti-heavy):
 	// also with no lifts, so it never walks in to a spot it doesn't allow
-	if (isSight || isHoldAttack) {
+	// Kiting too: every spot fell in a kite disc and it stands outside them, so it holds rather than walk in
+	if (isSight || isHoldAttack || isKiteDropped) {
 		outPos = uPos;
 		return FireSpot::HOLD;
 	}
@@ -825,7 +983,7 @@ bool IFighterTask::IsAllHolding() const
 	CCircuitAI* circuit = manager->GetCircuit();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
-	const AIFloat3& tPos = target->GetPos();
+	const AIFloat3& tPos = target->GetFightPos();
 	int ranged = 0;
 	for (CCircuitUnit* unit : units) {
 		if ((GetSpotRange(unit) < SQUARE_SIZE * 4) || (unit->Blocker() != nullptr) || IsOutOfReach(unit, frame)

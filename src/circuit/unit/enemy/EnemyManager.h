@@ -162,6 +162,7 @@ private:
 		float inStatic;
 	} initThrMod;
 	float maxAAThreat;
+	bool isJumpLand = true;  // quota.jump_land: a jumper in flight is fought at its landing spot (CEnemyUnit::UpdateJump)
 	struct SEnemyInfo {
 		float cost;
 		float threat;
