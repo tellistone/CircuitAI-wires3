@@ -7,6 +7,27 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Anti-heavy units with artillery behaviour (Lance, Merlin, Phantom, Racketeer) no longer sit in the base when
+  there is no heavy to shoot.**
+  - Before, with no heavy in radar or LOS, or no covered firing spot by one, they held wherever they stood while it
+    was safe and covered. The base nearly always has that cover (new units, defenders, the commander), so they stayed
+    there for long periods.
+  - Now, in order (`CArtilleryTask::WalkAntiHeavy`): a covered firing spot by a heavy, as before; else the front: a
+    covered firing spot in range of an enemy it can shoot (aircraft aside) within its range + `ally_radius` of our
+    army, enemies in LOS first and radar dots only if none, held where it stands if it already is one; else behind
+    the army, holding once within 256 elmos of its spot there, covered or not (the flee guards it). With
+    `ally_threat` < 0 there is no front step.
+  - The army (`GetArmySpot`): one attack group, the strongest over walking time (`GetCoverDisc` power / (1 + walk /
+    60 s), the one followed now x1.5), not fleeing and outside our base defence range, so a group still forming in
+    base doesn't hold them there. Each unit has its own side slot `follow_dist` behind the leader, 144 elmos apart.
+    With no such group: attack/defend group leaders, a defended mex cluster, the base, as before.
+  - Long-reload units (reload of 5 s or more) no longer walk to a static heavy seen only on radar: they would wait
+    in range for it unseen. It counts as a front radar dot.
+  - Firing spots (heavy or front) stay 96 elmos clear of the other artillery-mode anti-heavies, where they stand or
+    walk to, so one shell doesn't hit several.
+  - A search that finds nothing, or a kind of goal with no route under `max_path_threat`, waits 6 s. After a flee
+    the front waits 5 s. The `ANTIHEAVY` log counts a walk to the front as PARK, so HUNT means heavies only.
+
 - **The turret account slows while our army is small next to our turrets** (`porcupine.budget.army`, new curve).
   Every 10 s, x = the metal of our finished turrets on the account / our army's (finished combat units, as the
   factory's army cost counts them; no army counts as 1 metal). The account's fill rate, and so its cap, takes the
