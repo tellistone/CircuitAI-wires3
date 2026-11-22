@@ -37,6 +37,15 @@ namespace circuit {
 
 using namespace springai;
 
+// The engine's idle: no orders left
+static bool IsIdle(CCircuitUnit* unit)
+{
+	auto commands = unit->GetUnit()->GetCurrentCommands();
+	const bool isIdle = commands.empty();
+	utils::free_clear(commands);
+	return isIdle;
+}
+
 CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 		: IUnitModule(circuit)
 		, updateIterator(0)
@@ -83,10 +92,7 @@ CFactoryManager::CFactoryManager(CCircuitAI* circuit)
 	// UnitCreated), not after the idle pass's 20 frames. A UnitIdle that comes once the new orders are given is the last
 	// job's: a unit with orders isn't idle. Acting on it would end a repair or queue a second unit
 	auto staticIdleHandler = [](CCircuitUnit* unit) {
-		auto commands = unit->GetUnit()->GetCurrentCommands();
-		const bool isIdle = commands.empty();
-		utils::free_clear(commands);
-		if (isIdle) {
+		if (IsIdle(unit)) {
 			unit->GetTask()->OnUnitIdle(unit);
 		}
 	};
@@ -850,7 +856,7 @@ int CFactoryManager::UnitFinished(CCircuitUnit* unit)
 		DoneTask(iter->second);
 		// factory.restart: the factory's next order now, not from the idle pass (a build_delay wait stays)
 		for (CCircuitUnit* fac : facs) {
-			if (fac->GetTask() == idleTask) {
+			if (fac->GetTask() == idleTask) {  // as the idle pass does: MakeTask may give nothing
 				AssignTask(fac);
 				fac->GetTask()->Start(fac);
 			}
@@ -1757,11 +1763,7 @@ void CFactoryManager::Watchdog()
 		if (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER) {
 			return;
 		}
-		auto commands = unit->GetUnit()->GetCurrentCommands();
-		if (commands.empty()) {
-			UnitIdle(unit);
-		}
-		utils::free_clear(commands);
+		UnitIdle(unit);  // acts only if the unit has no orders
 	};
 
 	for (SFactory& fac : factories) {
