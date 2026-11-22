@@ -178,17 +178,10 @@ bool CEnemyUnit::UpdateJump(int frame, CTerrainManager* terrainMgr, bool isLand)
 	if (data.IsInLOS()) {
 		const float lift = data.pos.y - std::max(terrainMgr->GetHeightAt(data.pos.x, data.pos.z), 0.f);
 		const bool isAir = (lift > JUMP_AIR_MIN);
-		// The gadget sets the unit's velocity to its step each frame; should the engine report none, the move since the
-		// last sample (x, z are linear in a flight)
-		AIFloat3 vel = data.vel;
-		const int dt = frame - jumpSampleFrame;
-		if ((vel.SqLength2D() < SQUARE(0.1f)) && (jumpSampleFrame >= 0) && (dt > 0) && (dt <= FRAMES_PER_SEC)) {
-			vel = (data.pos - jumpSamplePos) / float(dt);
-		}
-		jumpSamplePos = data.pos;
-		jumpSampleFrame = frame;
-		auto land = [&]() {  // down now: the reload starts
-			jumpReadyFrame = frame + cdef->GetJumpReload();
+		// The gadget sets the unit's velocity to its step each frame (MoveCtrl.SetVelocity: the unit's speed)
+		const AIFloat3& vel = data.vel;
+		auto land = [&]() {  // down now: the reload starts, no later than the guess said (seen up to a sample late)
+			jumpReadyFrame = std::min(jumpReadyFrame, frame + cdef->GetJumpReload());
 			landFrame = -1;
 		};
 		if (!isAir) {

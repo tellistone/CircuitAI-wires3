@@ -94,7 +94,7 @@ protected:
 	struct SKiteDisc {
 		springai::AIFloat3 pos;
 		float range;  // quota.kite x our unit's range against it
-		float step;  // a step out goes this far from it: KITE_STEP x that range
+		float step;  // a step out goes this far from it: KITE_STAND x our range against it
 	};
 	void GatherKited();
 	// Keep-out discs round the kited enemies for this unit; none for melee units, aircraft, mobile bombs or with
@@ -107,7 +107,7 @@ protected:
 	// Re-spot it now (Attack, CAttackTask::OrderEscorts): where it is heading (its fresh fire spot, else where it
 	// stands) is in a kite disc, or its walk there crosses one
 	bool IsKiteRespot(CCircuitUnit* unit, int frame) const;
-	// Is this enemy's type kited (its firing spots: ring at KITE_RADIUS, band up to the full range)?
+	// Is this enemy's type kited (its firing spots: ring at KITE_STAND, band up to the full range)?
 	bool IsKited(const CEnemyInfo* enemy) const;
 	std::vector<const CEnemyInfo*> kited;
 	// Firing spot for a unit: within its spot range (GetSpotRange) of the target, trading walking distance against

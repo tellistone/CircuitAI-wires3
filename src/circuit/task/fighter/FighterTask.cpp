@@ -54,11 +54,10 @@ const float ARC_SPAN_CLOSE  = 0.5f; // melee close spots: half the arc, x PI (ro
 const float MELEE_STICK   = 100.f;  // a melee unit already on an enemy counts this much nearer it (AssignMeleeTargets)
 const int   MELEE_BAN     = FRAMES_PER_SEC * 5;  // another target with no safe close spot is passed over this long
 const float CROWD_CLOSE   = 1.f;    // melee close spots: cost per crowding claim, x close range of walk (~4 arc steps)
-// Kiting (quota.kite): spots on a kited target's ring at this x range (its disc keeps them past quota.kite x range,
-// so a unit has 0.1x range to give before it is re-spotted); a step out of a disc goes to KITE_STEP x range from the
-// kited enemy, straight away from it first, then KITE_ANGLE either side, then twice that
-const float KITE_RADIUS   = 0.95f;
-const float KITE_STEP     = 0.95f;
+// Kiting (quota.kite): where a unit stands off a kited enemy, x range: the ring of spots on a kited target, and a step
+// out of a disc (its disc keeps them past quota.kite x range, so a unit has 0.1x range to give before it is
+// re-spotted). A step goes straight away from the enemy first, then KITE_ANGLE either side, then twice that
+const float KITE_STAND    = 0.95f;
 const float KITE_ANGLE    = static_cast<float>(M_PI) / 6.f;
 // A walk out of a kite disc it starts in comes no nearer its centre than this x where it starts (one across the middle
 // is no way out; a step at 2 KITE_ANGLE to the side dips about 0.93)
@@ -280,24 +279,21 @@ void IFighterTask::GetKiteDiscs(CCircuitUnit* unit, std::vector<SKiteDisc>& outD
 	for (const CEnemyInfo* enemy : kited) {
 		const float range = GetFireRange(unit, enemy);  // 0: can't hit it (anti-air on a ground unit): no disc
 		if (range * kite >= SQUARE_SIZE * 4) {
-			outDiscs.push_back({enemy->GetFightPos(), range * kite, range * KITE_STEP});
+			outDiscs.push_back({enemy->GetFightPos(), range * kite, range * KITE_STAND});
 		}
 	}
 }
 
 const IFighterTask::SKiteDisc* IFighterTask::FindKiteDisc(const std::vector<SKiteDisc>& discs, const AIFloat3& p)
 {
-	// The one p is deepest in (share of its radius)
+	// The one p is deepest in (share of its radius, squared)
 	const SKiteDisc* best = nullptr;
 	float bestShare = 1.f;
 	for (const SKiteDisc& d : discs) {
-		const float sqDist = p.SqDistance2D(d.pos);
-		if (sqDist < SQUARE(d.range)) {
-			const float share = sqrtf(sqDist) / d.range;
-			if (share < bestShare) {
-				bestShare = share;
-				best = &d;
-			}
+		const float share = p.SqDistance2D(d.pos) / SQUARE(d.range);
+		if (share < bestShare) {
+			bestShare = share;
+			best = &d;
 		}
 	}
 	return best;
@@ -380,19 +376,15 @@ void IFighterTask::OrderOnTarget(std::vector<SFireClaim>& claims, std::vector<SO
 		}
 		switch (spot) {
 			case FireSpot::SPOT:
-			case FireSpot::RISKY: {  // RISKY: nowhere safe, not here either: the least dangerous spot
+			case FireSpot::RISKY:  // RISKY: nowhere safe, not here either: the least dangerous spot
+			case FireSpot::KITE: {  // KITE: too near a kited enemy: step out, fight from there (no chase back in)
 				claim.pos = firePos;
 				fireSpots[unit] = {firePos, frame, FireSpot::RISKY == spot};
-				if (isFireSpotChase) {
+				if (isFireSpotChase && (FireSpot::KITE != spot)) {
 					unit->AttackFrom(firePos, target, targetTile, timeout);
 				} else {
 					unit->FightFrom(firePos, target, targetTile, timeout);
 				}
-			} break;
-			case FireSpot::KITE: {  // too near a kited enemy: step out, fight from there (no chase back in)
-				claim.pos = firePos;
-				fireSpots[unit] = {firePos, frame, false};
-				unit->FightFrom(firePos, target, targetTile, timeout);
 			} break;
 			case FireSpot::HOLD: {  // every spot dangerous, here is safe: stay, fight what comes into range
 				claim.pos = firePos;
@@ -873,7 +865,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	// melee close spots +-90, see crowdR)
 	AIFloat3 dir = uPos - tPos;
 	const float bearing = (arcBearing != nullptr) ? *arcBearing : (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
-	const float radius = range * ((!isClose && IsKited(enemy)) ? KITE_RADIUS : FIRE_RADIUS);
+	const float radius = range * ((!isClose && IsKited(enemy)) ? KITE_STAND : FIRE_RADIUS);
 	for (int i = -arcSteps; i <= arcSteps; ++i) {
 		const float angle = bearing + i * static_cast<float>(M_PI) * arcSpan / arcSteps;
 		AIFloat3 p(tPos.x + radius * cosf(angle), tPos.y, tPos.z + radius * sinf(angle));

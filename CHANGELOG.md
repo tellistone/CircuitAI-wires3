@@ -401,7 +401,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     frame: horizontal speed v gives the jump's length (L = 2rh / sqrt(1 - r^2), r = v / jump_speed, h =
     jump_height), vertical speed how far along the arc it is. A height that doesn't fit the arc there (a unit walking
     on freshly raised ground) is no jump. Out of LOS a flight ends when the guess says. Reload: `jump_reload` from
-    the landing; a jumper never seen jumping counts as ready, the safe side.
+    the landing (none with several `jump_charges`: Detriment); a jumper never seen jumping counts as ready, the safe
+    side.
   - `jump_land` (default true): while it flies, the jumper's fight position (`CEnemyInfo::GetFightPos`) is its
     landing spot. Firing spots, the fire band, the target's tile (so take-off re-orders units at their next update),
     `IsOutOfReach` and its threat on the threat map (`AddEnemyUnit`, and the single-enemy `GetThreatAt` that

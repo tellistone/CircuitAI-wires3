@@ -205,13 +205,10 @@ private:
 	springai::AIFloat3 stillPos = springai::AIFloat3(-1.f, 0.f, -1.f);
 	int stillSince = -1;  // -1: no spot (moving, or not seen in LOS on it yet)
 	int blindShots = 0;  // AddBlindShot
-	// UpdateJump: the landing frame of the flight under way (-1: none), when the jump is ready again, and the last
-	// sample (a fallback for the velocity)
+	// UpdateJump: the landing frame of the flight under way (-1: none), when the jump is ready again
 	int landFrame = -1;
 	int jumpReadyFrame = 0;
 	bool isJumpReady = true;
-	springai::AIFloat3 jumpSamplePos;
-	int jumpSampleFrame = -1;
 
 public:
 	void SetInLOS()     { data.SetInLOS(); }

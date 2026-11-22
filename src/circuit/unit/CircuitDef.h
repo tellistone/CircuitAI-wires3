@@ -365,14 +365,14 @@ public:
 //	float GetAltitude()  const { return altitude; }
 	float GetJumpRange() const { return jumpRange; }
 	// Zero-K jump defs (customparams; unitdefs_post fills the defaults): flight speed (elmos per frame along the arc),
-	// the arc's height above the line from start to landing (elmos), reload after landing (frames)
+	// the arc's height above the line from start to landing (elmos), reload after landing (frames; 0 with charges)
 	float GetJumpSpeed()  const { return jumpSpeed; }
 	float GetJumpHeight() const { return jumpHeight; }
 	int GetJumpReload()   const { return jumpReload; }
-	// behaviour.json per unit "jump_threat": share of its jump range added to its threat range while its jump is ready;
-	// < 0: quota.jump_threat
-	void SetJumpThreat(float value) { jumpThreat = value; }
-	float GetJumpThreat() const { return jumpThreat; }
+	// Elmos its jump adds to its threat range while ready: quota.jump_threat (or its behaviour "jump_threat") x jump
+	// range (CThreatMap)
+	void SetJumpReach(float value) { jumpReach = value; }
+	float GetJumpReach() const { return jumpReach; }
 	// Threat-map squares the jump adds to GetThreatRange while it is ready (CThreatMap: the jump's reach is added to the
 	// weapon range before rounding); 0 for CLOAK and SHIELD
 	void SetJumpThreatExtra(ThreatType type, int extra) { jumpThreatExtra[static_cast<ThreatT>(type)] = extra; }
@@ -547,7 +547,7 @@ private:
 	float jumpSpeed = 0.f;
 	float jumpHeight = 0.f;
 	int jumpReload = 0;
-	float jumpThreat = -1.f;
+	float jumpReach = 0.f;
 	std::array<int, static_cast<ThreatT>(ThreatType::_SIZE_)> jumpThreatExtra = {};
 	float retreat;
 	float retreatShield = -1.f;
