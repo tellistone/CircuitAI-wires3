@@ -6,6 +6,7 @@
  */
 
 #include "module/AllyCover.h"
+#include "module/Protect.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
@@ -95,6 +96,20 @@ float CAllyCover::GetCommRange(CCircuitUnit* comm) const
 	return cdef->GetMaxRange(CCircuitDef::RangeType::LAND);  // its real reach, as the statics' (no threat-range slack)
 }
 
+bool CAllyCover::IsLeftOut(const SDisc& d, const SJudge& judge, const CProtect* protect)
+{
+	if (d.task == nullptr) {
+		return false;
+	}
+	return (d.task == judge.self) || (d.task == judge.partner) || ((protect != nullptr) && protect->IsActing(d.task));
+}
+
+const CProtect* CAllyCover::GetJudgeProtect(const SJudge& judge) const
+{
+	const CProtect* protect = circuit->GetMilitaryManager()->GetProtect();
+	return ((judge.self != nullptr) && protect->IsActing(judge.self)) ? protect : nullptr;
+}
+
 CAllyCover::SParts CAllyCover::GetCoverAt(const AIFloat3& p, const SJudge& judge)
 {
 	// Water: the defences layer has none there, and neither do the discs (as the route layer)
@@ -104,8 +119,9 @@ CAllyCover::SParts CAllyCover::GetCoverAt(const AIFloat3& p, const SJudge& judge
 		return parts;
 	}
 	parts.at[static_cast<int>(Source::DEFENCES)] = threatMap->GetDefenceCoverAt(p);
+	const CProtect* protect = GetJudgeProtect(judge);
 	for (const SDisc& d : GetDiscs()) {
-		if (IsLeftOut(d, judge)) {
+		if (IsLeftOut(d, judge, protect)) {
 			continue;
 		}
 		const float sqDist = p.SqDistance2D(d.pos);
@@ -155,8 +171,9 @@ std::shared_ptr<FloatVec> CAllyCover::MakeRouteLayer(const float* threat, const 
 	static std::vector<SDiscCells> counted;  // NOTE: micro-opt
 	counted.clear();
 	CThreatMap::SCoverBox box = threatMap->GetCoverBox();
+	const CProtect* protect = GetJudgeProtect(judge);
 	for (const SDisc& d : GetDiscs()) {
-		if (IsLeftOut(d, judge)) {
+		if (IsLeftOut(d, judge, protect)) {
 			continue;
 		}
 		const float range = sqrtf(d.sqRange);

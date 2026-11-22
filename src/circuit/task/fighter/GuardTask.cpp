@@ -9,6 +9,7 @@
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "task/builder/BuilderTask.h"
 #include "task/fighter/AttackTask.h"
 #include "terrain/TerrainManager.h"
@@ -321,7 +322,8 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 			const FightType ft = static_cast<IFighterTask*>(curTask)->GetFightType();
 			if ((ft == FightType::GUARD) || (ft == FightType::SCOUT)
 				|| militaryMgr->IsScoutStint(unit)
-				|| ((ft == FightType::ATTACK) && !static_cast<CAttackTask*>(curTask)->IsGuardPullable()))
+				|| ((ft == FightType::ATTACK) && !static_cast<CAttackTask*>(curTask)->IsGuardPullable())
+				|| militaryMgr->GetProtect()->IsActing(static_cast<IFighterTask*>(curTask)))  // quota.protect
 			{
 				continue;
 			}

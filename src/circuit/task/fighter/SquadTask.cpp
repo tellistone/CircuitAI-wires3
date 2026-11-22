@@ -11,6 +11,7 @@
 #include "map/ThreatMap.h"
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -136,6 +137,7 @@ void ISquadTask::Merge(ISquadTask* task)
 
 	FindLeader(rookies.begin(), rookies.end());
 	task->leader = nullptr;  // its units are ours now, and it is aborted: no pointer left to one that may die first
+	manager->GetCircuit()->GetMilitaryManager()->GetProtect()->Transfer(task, this);  // quota.protect: its commit too
 }
 
 const AIFloat3& ISquadTask::GetLeaderPos(int frame) const
