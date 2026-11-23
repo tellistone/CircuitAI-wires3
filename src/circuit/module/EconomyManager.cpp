@@ -1528,6 +1528,9 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	{
 		auto it = rearInfos.find(bestDef);
 		if (it == rearInfos.end()) {
+			if (IsFillDef(bestDef)) {
+				LogEnergyJob(bestDef, "nearest-spot", buildPos);
+			}
 			return builderMgr->EnqueueTask(priority, bestDef, buildPos, IBuilderTask::BuildType::ENERGY, SQUARE_SIZE * 16.0f, true);
 		}
 		// Rear: build exactly on the open site found, reserved now (like mex and geo) so the next search skips it
@@ -2073,10 +2076,12 @@ IBuilderTask* CEconomyManager::EnqueueFillEnergy(CCircuitDef* cdef, const AIFloa
 	energyGrid->SetAuthority(circuit);
 	CEnergyGrid::SLinkSite site;
 	AIFloat3 buildPos;
-	IGridLink* gap = energyGrid->FindFillSite(cdef, pos, maxDist, GetFillPredicate(cdef, unit), site, buildPos);
+	int step;
+	IGridLink* gap = energyGrid->FindFillSite(cdef, pos, maxDist, GetFillPredicate(cdef, unit), site, buildPos, step);
 	if (!utils::is_valid(buildPos)) {
 		return nullptr;
 	}
+	LogEnergyJob(cdef, (step == 1) ? "fill-bare-mex" : (step == 2) ? "fill-gap" : "fill-poor-grid", buildPos, &site.from, &site.to);
 	// An energy job on that exact site, so every energy rule applies; it holds the gap (one piece per gap at a time)
 	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(priority, cdef, buildPos, IBuilderTask::BuildType::ENERGY, 0.f, true);
 	task->SetBuildPos(buildPos);
@@ -2101,8 +2106,24 @@ IBuilderTask* CEconomyManager::EnqueueCheapEnergy(CCircuitDef* cdef, const AIFlo
 	IBuilderTask* task = EnqueueFillEnergy(cdef, pos, unit, priority);
 	if ((task == nullptr) && !IsBaseOnlyAt(cdef, pos) && circuit->GetTerrainManager()->CanBeBuiltAt(cdef, pos)) {
 		task = circuit->GetBuilderManager()->EnqueueTask(priority, cdef, pos, IBuilderTask::BuildType::ENERGY, shake, true);
+		if (IsFillDef(cdef)) {
+			LogEnergyJob(cdef, "here", pos);  // the mex chain's (at its mex) or a builder's last resort (where it stands)
+		}
 	}
 	return task;
+}
+
+void CEconomyManager::LogEnergyJob(const CCircuitDef* cdef, const char* path, const AIFloat3& pos,
+		const AIFloat3* from, const AIFloat3* to) const
+{
+	const int sec = circuit->GetLastFrame() / FRAMES_PER_SEC;
+	const char* name = cdef->GetDef()->GetName();
+	if ((from != nullptr) && (to != nullptr)) {
+		circuit->LOG("ENERGY_JOB %i:%02i %s %s at (%.0f, %.0f) from (%.0f, %.0f) to (%.0f, %.0f)", sec / 60, sec % 60,
+				name, path, pos.x, pos.z, from->x, from->z, to->x, to->z);
+	} else {
+		circuit->LOG("ENERGY_JOB %i:%02i %s %s at (%.0f, %.0f)", sec / 60, sec % 60, name, path, pos.x, pos.z);
+	}
 }
 
 bool CEconomyManager::IsBaseOnlyAt(CCircuitDef* cdef, const AIFloat3& pos) const
@@ -2153,6 +2174,7 @@ IBuilderTask* CEconomyManager::UpdatePylonTasks()
 		// Exactly there (CEnergyGrid::FindLinkSite's site links), reserved now so the next search skips it
 		IBuilderTask* task = builderMgr->EnqueuePylon(IBuilderTask::Priority::NORMAL, buildDef, buildPos, link, buildDef->GetCostM());
 		task->SetBuildPos(buildPos);
+		LogEnergyJob(buildDef, "linker", buildPos);
 		return task;
 	} else {
 		link->SetValid(false);

@@ -7,7 +7,6 @@
 
 #include "task/builder/PylonTask.h"
 #include "task/TaskManager.h"
-#include "map/ThreatMap.h"
 #include "module/EconomyManager.h"
 #include "resource/EnergyGrid.h"
 #include "resource/GridLink.h"
@@ -75,29 +74,14 @@ void CBPylonTask::Execute(CCircuitUnit* unit)
 		)
 		return;
 	}
+	// Both planners (UpdatePylonTasks, the grid link watchdog) reserve a site that links. Taken by now: planned again,
+	// as one found around it may not link and the next piece would go beside it
 	UnitDef* buildUDef = buildDef->GetDef();
-	if (utils::is_valid(buildPos)) {
-		if (circuit->GetMap()->IsPossibleToBuildAt(buildUDef, buildPos, facing)) {
-			TRY_UNIT(circuit, unit,
-				unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
-			)
-		} else {
-			// Its site links; one found around it may not, and the next piece would go beside it. Planned again instead
-			manager->FallbackTask(unit);
-		}
-		return;
-	}
-
-	circuit->GetThreatMap()->SetThreatType(unit);
-	const float searchRadius = circuit->GetEconomyManager()->GetPylonRange() * 0.5f;
-	FindBuildSite(unit, position, searchRadius);
-
-	if (utils::is_valid(buildPos)) {
+	if (utils::is_valid(buildPos) && circuit->GetMap()->IsPossibleToBuildAt(buildUDef, buildPos, facing)) {
 		TRY_UNIT(circuit, unit,
 			unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)
 	} else {
-		// Fallback to Guard/Assist/Patrol
 		manager->FallbackTask(unit);
 	}
 }

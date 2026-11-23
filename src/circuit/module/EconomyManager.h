@@ -215,6 +215,10 @@ public:
 	// base defence radius (0.3 of the map diagonal, clamped to defence.base_rad). Checked on sites only, never on where
 	// the builder stands
 	bool IsAllowedAt(CCircuitDef* cdef, const springai::AIFloat3& pos) const;
+	// An infolog line for a solar or wind job (economy.energy.fill defs) or grid linker piece just queued, naming the
+	// path that placed it: ENERGY_JOB <m:ss> <def> <path> at (x, z) [from (x, z) to (x, z): the gap's ends]
+	void LogEnergyJob(const CCircuitDef* cdef, const char* path, const springai::AIFloat3& pos,
+			const springai::AIFloat3* from = nullptr, const springai::AIFloat3* to = nullptr) const;
 
 	// Grid consumers (customParams.neededlink: Big Bertha, Cerberus, superweapons, ...) work only on a grid with
 	// that much energy. False before Init

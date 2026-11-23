@@ -763,6 +763,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     taken the head didn't move, and the next piece went beside the last. They now use the fill's `FindLinkSite`
     (links to the head and gets a quarter of its reach closer, or closes the gap), on that exact site, reserved when
     queued. A grid link job whose site is taken by the time its builder gets there is planned again, not moved.
+    Both now share one helper (`FindPieceDef`), which searches at most 250 elmos around the piece's ideal spot (a
+    failed search costs an engine call per open cell, and an energypylon's reach would otherwise double it).
+  - Each solar or wind job (`economy.energy.fill` defs) and grid linker piece the AI queues writes one infolog line
+    naming the path that placed it: `ENERGY_JOB <m:ss> <def> <path> at (x, z) [from (x, z) to (x, z)]`, path one of
+    `fill-bare-mex`, `fill-gap`, `fill-poor-grid` (with the gap's or mex's ends), `here` (the mex chain at its mex, a
+    builder's last resort where it stands), `nearest-spot` and `linker`. `grep ENERGY_JOB infolog.txt` shows
+    which path built a cluster.
 
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own
