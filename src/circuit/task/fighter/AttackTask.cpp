@@ -192,6 +192,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, anchorTargetId(-1)
 		, pickSqDist(0.f)
 		, targetSqKey(0.f)
+		, isHomeGround(false)
 		, regionPickMode(-1)
 		, contactSpread(0.f)
 		, contactFrame(-1)
@@ -1964,6 +1965,7 @@ bool CAttackTask::FindTarget()
 		bool isInRange;  // IsInLeaderRange, or in contact: engaged at once, no route
 		int coverSource;  // the cover log: passed its own spot or approach line only with cover, by source (-1: not)
 		bool isZone;  // quota.protect: a zone enemy while committed (CProtect::IsZoneEnemy)
+		bool isAway;  // quota.attack_region_home: outside our and contested regions while the leader is in one
 	};
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
 	// quota.attack_own_ground_time: early on, a target we'd walk to must be on our ground (in the loop).
@@ -1978,45 +1980,32 @@ bool CAttackTask::FindTarget()
 	// commander lately rank 3x nearer
 	const CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = IsProtecting();
-	// quota.attack_region_pick: by the owner of the region the leader stands in (CChokeMap, settled owner). In one of
-	// ours or a contested one: only targets in such regions (region-only). Elsewhere: a target nearer the enemy base
-	// than the group ranks up to bonus nearer, one farther from it up to bonus farther (tanh curve of the difference).
-	// Off until the choke map is ready, and with no enemy base known
+	// quota.attack_region_home: the leader stands in one of our or contested regions (CChokeMap, settled owner): targets
+	// there first, others only when none passes (sorted after them, skipped once a home target is the pick). Kept
+	// through a fight, so a leader stepping over a region border doesn't flip it. The current target always counts
+	// as home. quota.attack_base_pull: elsewhere, and for those others, a target nearer the enemy base than the group
+	// ranks up to bonus nearer, one farther from it up to bonus farther. Both off until the choke map is ready
 	const CMilitaryManager::SAttackRegionPick& regionCfg = militaryMgr->GetAttackRegionPick();
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
-	auto isAlliedRegion = [chokeMap](const AIFloat3& p) {
-		const CChokeMap::Side side = chokeMap->GetSettledOwnerSafe(chokeMap->GetRegionAt(p));
-		return (side == CChokeMap::Side::OURS) || (side == CChokeMap::Side::CONTESTED);
+	const bool isRegionReady = (chokeMap != nullptr) && chokeMap->IsReady();
+	if (!isEngaged) {
+		isHomeGround = regionCfg.isHome && isRegionReady && chokeMap->IsAlliedRegionAt(pos);
+	}
+	// Distance to the nearest enemy base (its factories once seen, else its start box): a continuous field, so the
+	// ranking doesn't jump when another base becomes the nearest one
+	static F3Vec enemyBases;  // NOTE: micro-opt
+	enemyBases.clear();
+	if ((regionCfg.bonus > 0.f) && isRegionReady) {
+		enemyBases = chokeMap->GetEnemyBases();
+	}
+	auto baseDistAt = [](const AIFloat3& p) {
+		float minSqDist = std::numeric_limits<float>::max();
+		for (const AIFloat3& b : enemyBases) {
+			minSqDist = std::min(minSqDist, p.SqDistance2D(b));
+		}
+		return sqrtf(minSqDist);
 	};
-	bool isRegionOnly = false;
-	bool isBaseCurve = false;
-	AIFloat3 enemyBase;
-	float groupEnemyDist = 0.f;
-	if (regionCfg.isOn && (chokeMap != nullptr) && chokeMap->IsReady()) {
-		isRegionOnly = isAlliedRegion(pos);
-		if (!isRegionOnly && (regionCfg.bonus > 0.f)) {
-			// The enemy base nearest the group: its factories once seen, else its start box
-			float minSqDist = std::numeric_limits<float>::max();
-			for (const AIFloat3& b : chokeMap->GetEnemyBases()) {
-				const float sqDist = pos.SqDistance2D(b);
-				if (sqDist < minSqDist) {
-					minSqDist = sqDist;
-					enemyBase = b;
-				}
-			}
-			isBaseCurve = (minSqDist < std::numeric_limits<float>::max());
-			groupEnemyDist = isBaseCurve ? sqrtf(minSqDist) : 0.f;
-		}
-	}
-	const int newRegionMode = isRegionOnly ? 1 : isBaseCurve ? 2 : 0;
-	if (newRegionMode != regionPickMode) {
-		static const char* const modeNames[] = {"off", "region-only", "base-curve"};
-		if (regionCfg.isOn) {
-			circuit->LOG("ATTACK region pick: group %i (%i units) %s -> %s", leader->GetId(), (int)units.size(),
-					(regionPickMode >= 0) ? modeNames[regionPickMode] : "start", modeNames[newRegionMode]);
-		}
-		regionPickMode = newRegionMode;
-	}
+	const float leaderBaseDist = enemyBases.empty() ? 0.f : baseDistAt(pos);
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -2053,7 +2042,7 @@ bool CAttackTask::FindTarget()
 		{
 			continue;
 		}
-		SCandidate c = {0.f, 0.f, enemy, false, ePos, -1, ePos, isContact, false, spotSource, isZone};
+		SCandidate c = {0.f, 0.f, enemy, false, ePos, -1, ePos, isContact, false, spotSource, isZone, false};
 		c.hasAnchor = GetCellAnchor(enemy, frame, c.anchor, c.epoch);
 		if (c.hasAnchor && !enemy->IsInLOS()) {
 			c.rangePos = c.anchor;
@@ -2076,20 +2065,18 @@ bool CAttackTask::FindTarget()
 		{
 			continue;
 		}
-		// quota.attack_region_pick, region-only: a target we'd walk to must be in one of our or a contested region
-		// (in contact, or a quota.protect zone enemy: always fair game, as for the own-ground rule)
-		if (isRegionOnly && !isContact && !isZone && !isAlliedRegion(c.rangePos)) {
-			continue;
-		}
+		// quota.attack_region_home: not in one of our or a contested region (in contact, a quota.protect zone enemy or
+		// the current target: home all the same)
+		c.isAway = isHomeGround && !isContact && !isZone && !isPrev && !chokeMap->IsAlliedRegionAt(c.rangePos);
 		c.isInRange = isContact || IsInLeaderRange(enemy, c.rangePos, isPrev, frame);
 		c.rawKey = (isContact ? contactSqDist : sqOEDist) * scale;
 		c.key = c.rawKey * SQUARE(distModFor(enemy));
-		if (isBaseCurve) {
-			// quota.attack_region_pick, base curve: delta > 0, the target is nearer the enemy base than the group.
-			// The key is a squared distance, so the distance factor goes in squared
-			const float delta = groupEnemyDist - c.rangePos.distance2D(enemyBase);
-			const float distMod = 1.f - regionCfg.bonus * tanhf(delta / regionCfg.curve);
-			c.key *= SQUARE(distMod);
+		if (!enemyBases.empty() && (!isHomeGround || c.isAway)) {
+			// quota.attack_base_pull: d > 0, the target is nearer the enemy base than the group. The key is a squared
+			// distance, so the factor goes in squared; and without the near-base scale, which favours targets towards
+			// our base and would undo the pull (rawKey keeps it: it models what the route reaches first)
+			const float d = leaderBaseDist - baseDistAt(c.rangePos);
+			c.key *= SQUARE(1.f - regionCfg.bonus * tanhf(d / regionCfg.curve)) / std::max(scale, 1e-6f);
 		}
 		if (IsSiegeTarget(enemy, frame)) {  // quota.attack_static_cells.siege_bonus
 			c.key /= SQUARE(cellCfg.siegeBonus);
@@ -2117,8 +2104,10 @@ bool CAttackTask::FindTarget()
 	// While engaged, enemies in contact come first: finish the fight we're in before walking off to another target (a
 	// preferred type, a contested cluster), which would also put the line back on mid-fight. Roaming, target_dist_mod
 	// ranks them as any other (a scout poking the front row doesn't pull the group off its walk)
+	// quota.attack_region_home: then home targets ahead of the others
 	std::sort(candidates.begin(), candidates.end(), [isEngaged](const SCandidate& a, const SCandidate& b) {
-		return (isEngaged && (a.isContact != b.isContact)) ? a.isContact : (a.key < b.key);
+		return (isEngaged && (a.isContact != b.isContact)) ? a.isContact
+				: (a.isAway != b.isAway) ? b.isAway : (a.key < b.key);
 	});
 	routeGoals.clear();
 	const SCandidate* best = nullptr;
@@ -2143,6 +2132,9 @@ bool CAttackTask::FindTarget()
 		const ICoreUnit::Id id = c.enemy->GetId();
 		if (IsBanned(heldBans, id, frame)) {
 			continue;  // the whole group held off it last time (no safe firing spot): something else for a while
+		}
+		if (c.isAway && (best != nullptr) && !best->isAway) {
+			break;  // quota.attack_region_home: a home target is the pick, the rest are away (sorted last)
 		}
 		const AIFloat3& rangePos = c.rangePos;  // a radar-only parked mobile's spot (GetRangePos)
 		const bool isPrev = (id == prevTargetId);
@@ -2273,6 +2265,14 @@ bool CAttackTask::FindTarget()
 	if (isBalanceSkip && !isBalancePass) {
 		NoteBlocked(frame);  // quota.attack_balance: blocked time (log-only: what would have been)
 	}
+	// quota.attack_region_home / attack_base_pull: one line per group when its mode changes
+	const int regionMode = isHomeGround ? (((best != nullptr) && !best->isAway) ? 1 : 2) : enemyBases.empty() ? 0 : 3;
+	if ((regionMode != regionPickMode) && (regionCfg.isHome || (regionCfg.bonus > 0.f))) {
+		static const char* const modeNames[] = {"off", "home", "home, hunting away", "base pull"};
+		circuit->LOG("ATTACK region pick: group %i (%i units) %s -> %s", leader->GetId(), (int)units.size(),
+				(regionPickMode >= 0) ? modeNames[regionPickMode] : "start", modeNames[regionMode]);
+	}
+	regionPickMode = regionMode;
 	if (best == nullptr) {
 		ClearScaleAnchor();  // no fight accepted: no near-base discount
 		return false;

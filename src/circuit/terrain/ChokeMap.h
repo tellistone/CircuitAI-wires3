@@ -257,10 +257,14 @@ public:
 	// where we don't. Each only where it joins its side's main ground. Contested and nobody's regions are neither
 	bool IsOurGround(int region) const { return isOurGround[region]; }
 	bool IsEnemyGround(int region) const { return isEnemyGround[region]; }
-	Side GetSettledOwner(int region) const { return settledOwner[region]; }  // the owner once settled, before joining
-	// The same, NONE for no region (a wall, NO_REGION) or before the first owner update
-	Side GetSettledOwnerSafe(int region) const {
+	// The owner once settled, before joining; NONE for no region (a wall, NO_REGION) or before the first owner update
+	Side GetSettledOwner(int region) const {
 		return ((region >= 0) && (region < (int)settledOwner.size())) ? settledOwner[region] : Side::NONE;
+	}
+	// pos's region is ours or contested (both sides have buildings there), by its settled owner
+	bool IsAlliedRegionAt(const springai::AIFloat3& pos) const {
+		const Side side = GetSettledOwner(GetRegionAt(pos));
+		return (side == Side::OURS) || (side == Side::CONTESTED);
 	}
 	std::vector<int> GetOurRegions() const;  // our held ground, or our side before we hold any
 	// Nearer our start box than any enemy source (true until both are known): the half of the map we defend

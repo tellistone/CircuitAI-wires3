@@ -628,13 +628,14 @@ public:
 		float siegeBonus;
 	};
 	const SAttackCells& GetAttackCells() const { return attackCells; }
-	// quota.attack_region_pick: attack target choice by region owner (CChokeMap) and the enemy base. A group whose
-	// leader stands in one of our or contested regions picks only targets in such regions; elsewhere targets nearer
-	// the enemy base than the group rank closer, those farther from it rank farther, by up to bonus on a curve
+	// quota.attack_region_home / attack_base_pull: attack target choice by region owner (CChokeMap) and the enemy base.
+	// Home: a group whose leader stands in one of our or contested regions picks targets there first (others only when
+	// none there passes). Base pull: otherwise, targets nearer the enemy base than the group rank up to bonus nearer,
+	// those farther from it up to bonus farther (tanh curve of the difference, curve elmos)
 	struct SAttackRegionPick {
-		bool isOn = false;
-		float bonus = 0.33f;  // distance x (1 - bonus x tanh(delta / curve)): at most 33% nearer or farther
-		float curve = 1000.f;  // elmos of delta (group's distance to the enemy base - the target's) for tanh 0.76
+		bool isHome = false;
+		float bonus = 0.f;  // 0: no base pull
+		float curve = 1000.f;
 	};
 	const SAttackRegionPick& GetAttackRegionPick() const { return attackRegionPick; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured

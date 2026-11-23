@@ -574,7 +574,8 @@ private:
 	ICoreUnit::Id anchorTargetId;  // target that scaleRefSqDist belongs to (-1: none)
 	float pickSqDist;  // leader-to-base distance^2 at the last FindTarget (0: on enemy-held ground)
 	float targetSqKey;  // the last FindTarget's pick: its ranking key (squared distance, scaled), for SeekMerge
-	int regionPickMode;  // quota.attack_region_pick at the last FindTarget: 0 off, 1 region-only, 2 base curve; -1 none yet (logged on change)
+	bool isHomeGround;  // quota.attack_region_home: the leader stood in one of our or contested regions (kept while engaged)
+	int regionPickMode;  // the last FindTarget: 0 off, 1 home, 2 home but hunting away, 3 base pull; -1 none yet (logged)
 	// The cover log: the last new pick that passed only with cover, and the fight engaged (NoteCoverPick, ...Engage)
 	struct SCoverLog {
 		ICoreUnit::Id pickId = -1;  // -1: none

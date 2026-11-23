@@ -929,32 +929,21 @@ void CMilitaryManager::ReadConfig()
 		c.siegeBonus = num("siege_bonus", 1.f, 1.f, 10.f);
 	}
 	{
-		// quota.attack_region_pick: {on, bonus, curve}. Missing object or key: the default (off when the object is
-		// missing); a wrong value logs and uses the default
-		const Json::Value& q = quotas["attack_region_pick"];
-		if (!q.isNull() && !q.isObject()) {
-			circuit->LOG("CONFIG %s: quota.attack_region_pick must be an object, it is off", cfgName.c_str());
+		const Json::Value& qhome = quotas.get("attack_region_home", false);
+		if (!qhome.isBool()) {
+			circuit->LOG("CONFIG %s: quota.attack_region_home must be true or false, using false", cfgName.c_str());
 		}
-		const Json::Value& qc = q.isObject() ? q : Json::Value::nullSingleton();
-		auto num = [&](const char* key, float def, float lo, float hi) {
-			const Json::Value& v = qc[key];
-			if (v.isNull()) {
-				return def;
-			}
-			if (!v.isNumeric() || (v.asFloat() < lo) || (v.asFloat() > hi)) {
-				circuit->LOG("CONFIG %s: quota.attack_region_pick.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
-				return def;
-			}
-			return v.asFloat();
-		};
-		SAttackRegionPick& rp = attackRegionPick;
-		const Json::Value& qon = qc["on"];
-		if (!qon.isNull() && !qon.isBool()) {
-			circuit->LOG("CONFIG %s: quota.attack_region_pick.on must be true or false, using false", cfgName.c_str());
+		attackRegionPick.isHome = qhome.isBool() && qhome.asBool();
+		const Json::Value& q = quotas["attack_base_pull"];
+		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
+				&& (q[0u].asFloat() >= 0.f) && (q[0u].asFloat() <= 0.9f) && (q[1u].asFloat() >= 1.f));
+		if (!isOk) {
+			circuit->LOG("CONFIG %s: quota.attack_base_pull must be [<bonus 0..0.9>, <curve elmos >= 1>], it is off", cfgName.c_str());
 		}
-		rp.isOn = qon.isBool() && qon.asBool();
-		rp.bonus = num("bonus", 0.33f, 0.f, 0.9f);
-		rp.curve = num("curve", 1000.f, 1.f, 100000.f);
+		if (isOk && !q.isNull()) {
+			attackRegionPick.bonus = q[0u].asFloat();
+			attackRegionPick.curve = q[1u].asFloat();
+		}
 	}
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
