@@ -334,7 +334,7 @@ AIFloat3 CEnergyGrid::FindLinkSite(CCircuitDef* cdef, const SLinkSite& link, flo
 }
 
 IGridLink* CEnergyGrid::FindFillSite(CCircuitDef* cdef, const AIFloat3& pos, float maxDist, const Predicate& predicate,
-		SLinkSite& outSite, AIFloat3& outPos)
+		SLinkSite& outSite, AIFloat3& outPos, int& outStep)
 {
 	outPos = -RgtVector;
 	const float range = GetPylonRange(cdef->GetId());
@@ -347,11 +347,14 @@ IGridLink* CEnergyGrid::FindFillSite(CCircuitDef* cdef, const AIFloat3& pos, flo
 	unsigned bareCount;
 	const std::vector<SFill> mexes = GetMexFills(range, pos, maxDist, queued, bareCount);
 	const std::vector<SFill> gaps = GetGapFills(range, pos, maxDist, queued);
+	outStep = 1;
 	const SFill* fill = TryFills(cdef, mexes.data(), mexes.data() + bareCount, predicate, outPos);  // 1. bare mexes
 	if (fill == nullptr) {
+		outStep = 2;
 		fill = TryFills(cdef, gaps.data(), gaps.data() + gaps.size(), predicate, outPos);  // 2. the plan's gaps
 	}
 	if (fill == nullptr) {  // 3. poor grids; not a base_only piece on land: after a mex's first, those only fill gaps
+		outStep = 3;
 		CEconomyManager* economyMgr = circuit->GetEconomyManager();
 		fill = TryFills(cdef, mexes.data() + bareCount, mexes.data() + mexes.size(), [&predicate, economyMgr, cdef](const AIFloat3& p) {
 			return !economyMgr->IsBaseOnlyAt(cdef, p) && predicate(p);
@@ -651,137 +654,68 @@ const std::vector<CEnergyGrid::SGridNode>& CEnergyGrid::GetGridNodes()
 
 CEnergyNode* CEnergyGrid::FindNodeDef(CCircuitDef*& outDef, AIFloat3& outPos, CEnergyNode* node)
 {
-	outDef = nullptr;
-	outPos = -RgtVector;
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const float searchRadius = economyMgr->GetPylonRange() * 0.5f;
-	const int frame = circuit->GetLastFrame();
-	const float metalIncome = economyMgr->GetAvgMetalIncome();
-
 	const CCircuitDef* pylonDef = economyMgr->GetPylonDef();
 	if (node->IsPylonable(economyMgr->GetPylonRange())
-		&& pylonDef->IsAvailable(frame)
-		&& (metalIncome > pylonDef->GetCostM() * 0.15f))
+		&& pylonDef->IsAvailable(circuit->GetLastFrame())
+		&& (economyMgr->GetAvgMetalIncome() > pylonDef->GetCostM() * 0.15f))
 	{
 		outDef = const_cast<CCircuitDef*>(pylonDef);
-		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, node->GetCenterPos(), searchRadius, UNIT_COMMAND_BUILD_NO_FACING);
+		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, node->GetCenterPos(), economyMgr->GetPylonRange() * 0.5f,
+															 UNIT_COMMAND_BUILD_NO_FACING);
 		return node;
 	}
 
 	const CEnergyNode::SPylon& pylon0 = node->GetSourceHead();
 	const CEnergyNode::SPylon& pylon1 = node->GetTargetHead();
-
-	decltype(rangePylons) candDefs = rangePylons;
-	while (!candDefs.empty()) {
-		CCircuitDef::Id defId = -1;
-		float range = 0.f;
-		auto it = candDefs.rbegin();
-		for (; it != candDefs.rend(); ++it) {
-			defId = it->second;
-			range = it->first;
-			const float dist = pylon0.range + pylon1.range + range/* * 1.2f*/;
-			if (pylon0.pos.SqDistance2D(pylon1.pos) > SQUARE(dist)) {
-				break;
-			}
-		}
-
-		outDef = circuit->GetCircuitDef(defId);
-		if ((outDef == nullptr) || !outDef->IsAvailable(frame)
-			|| ((metalIncome < outDef->GetCostM() * 0.1f) && (outDef->GetCostM() > 100.f)))
-		{
-			candDefs.erase(range);
-			continue;
-		}
-
-		AIFloat3 dir = pylon1.pos - pylon0.pos;
-		AIFloat3 sweetPos;
-		const float dist = pylon0.range + pylon1.range + range * 1.95f;
-		if (dir.SqLength2D() < SQUARE(dist)) {
-			sweetPos = (pylon0.pos + dir.Normalize2D() * (pylon0.range - pylon1.range) + pylon1.pos) * 0.5f;
-		} else {
-			sweetPos = pylon0.pos + dir.Normalize2D() * (pylon0.range + range) * 0.95f;
-		}
-
-		CTerrainManager::TerrainPredicate isAllowed = [economyMgr, outDef](const AIFloat3& p) {
-			return economyMgr->IsAllowedAt(outDef, p);  // economy.energy.base_only: no wind away from the base
-		};
-		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isAllowed);
-		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)) {
-			break;
-		} else {
-			outPos = -RgtVector;
-//			candDefs.erase(std::next(it).base());  // http://stackoverflow.com/questions/1830158/how-to-call-erase-with-a-reverse-iterator
-			candDefs.erase(range);
-		}
-	}
-
+	FindPieceDef(outDef, outPos, pylon0.pos, pylon0.range, pylon1.pos, pylon1.range, 1.f, 0.1f);
 	return node;
 }
 
 CEnergyLink* CEnergyGrid::FindLinkDef(CCircuitDef*& outDef, AIFloat3& outPos, CEnergyLink* link)
 {
-	outDef = nullptr;
-	outPos = -RgtVector;
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	CBuilderManager* builderMgr = circuit->GetBuilderManager();
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const float searchRadius = economyMgr->GetPylonRange() * 0.5f;
-
 	const CEnergyLink::SPylon* pylon0 = link->GetSourceHead();
 	const CEnergyLink::SPylon* pylon1 = link->GetTargetHead();
+	FindPieceDef(outDef, outPos, pylon0->pos, pylon0->range, pylon1->pos, pylon1->range, 1.2f, 0.2f);
+	return link;
+}
 
+void CEnergyGrid::FindPieceDef(CCircuitDef*& outDef, AIFloat3& outPos, const AIFloat3& pos0, float range0,
+		const AIFloat3& pos1, float range1, float reachMul, float incomeMul)
+{
+	outDef = nullptr;
+	outPos = -RgtVector;
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
 	const float metalIncome = economyMgr->GetAvgMetalIncome();
 	const int frame = circuit->GetLastFrame();
+	const float sqDist = pos0.SqDistance2D(pos1);
+	const float maxRadius = economyMgr->GetPylonRange() * 0.5f;  // a failed search costs an engine call per open cell
 	decltype(rangePylons) candDefs = rangePylons;
 	while (!candDefs.empty()) {
-		CCircuitDef::Id defId = -1;
-		float range = 0.f;
+		// The longest reach the gap still exceeds (one more piece after it), else the shortest
 		auto it = candDefs.rbegin();
-		for (; it != candDefs.rend(); ++it) {
-			defId = it->second;
-			range = it->first;
-			const float dist = pylon0->range + pylon1->range + range * 1.2f;
-			if (pylon0->pos.SqDistance2D(pylon1->pos) > SQUARE(dist)) {
-				break;
-			}
+		while ((std::next(it) != candDefs.rend()) && (sqDist <= SQUARE(range0 + range1 + it->first * reachMul))) {
+			++it;
 		}
-
-		outDef = circuit->GetCircuitDef(defId);
+		const float range = it->first;
+		outDef = circuit->GetCircuitDef(it->second);
+		candDefs.erase(range);  // tried once
 		if ((outDef == nullptr) || !outDef->IsAvailable(frame)
-			|| ((metalIncome < outDef->GetCostM() * 0.2f) && (outDef->GetCostM() > 100.f)))
+			|| ((metalIncome < outDef->GetCostM() * incomeMul) && (outDef->GetCostM() > 100.f)))
 		{
-			candDefs.erase(range);
 			continue;
 		}
-
-		AIFloat3 dir = pylon1->pos - pylon0->pos;
-		AIFloat3 sweetPos;
-		const float dist = pylon0->range + pylon1->range + range * 1.95f;
-		if (dir.SqLength2D() < SQUARE(dist)) {
-			sweetPos = (pylon0->pos + dir.Normalize2D() * (pylon0->range - pylon1->range) + pylon1->pos) * 0.5f;
-		} else {
-			sweetPos = pylon0->pos + dir.Normalize2D() * (pylon0->range + range) * 0.95f;
-		}
-		// TODO: replace line placement by pathfinder
-		if (!circuit->GetMap()->IsPossibleToBuildAt(outDef->GetDef(), sweetPos, 0)) {
-			candDefs.erase(range);
-			continue;
-		}
-
-		CTerrainManager::TerrainPredicate isAllowed = [economyMgr, outDef](const AIFloat3& p) {
+		// A site that links to the head and gets closer to the other end, as the fill's: the open cell nearest a fixed
+		// spot could stand beside the head without either, and the next piece would go beside it
+		const SLinkSite site = MakeLinkSite(range, pos0, range0, pos1, range1);
+		outPos = FindLinkSite(outDef, site, std::min(site.fromReach * 0.5f, maxRadius), [economyMgr, outDef](const AIFloat3& p) {
 			return economyMgr->IsAllowedAt(outDef, p);  // economy.energy.base_only: no wind away from the base
-		};
-		outPos = terrainMgr->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isAllowed);
-		if (utils::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)) {
-			break;
-		} else {
-			outPos = -RgtVector;
-//			candDefs.erase(std::next(it).base());  // http://stackoverflow.com/questions/1830158/how-to-call-erase-with-a-reverse-iterator
-			candDefs.erase(range);
+		});
+		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)) {
+			return;
 		}
 	}
-
-	return link;
+	outPos = -RgtVector;
 }
 
 void CEnergyGrid::MarkAllyPylons(const std::vector<CAllyUnit*>& pylons)

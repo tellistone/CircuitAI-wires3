@@ -36,6 +36,9 @@ private:
 
 public:
 	void Update();
+	// A grid building of ours just finished: the next Update reads the grid again even in this frame, so a job planned
+	// now (a builder takes its next job at once) starts from the new piece, not beside it from the old head
+	void SetDirty() { markFrame = -1; }
 	void SetForceRebuild(bool value) { isForceRebuild = value; }
 	IGridLink* GetLinkToBuild(CCircuitDef*& outDef, springai::AIFloat3& outPos);
 	using Predicate = std::function<bool (const springai::AIFloat3& p)>;  // CTerrainManager::TerrainPredicate
@@ -65,7 +68,7 @@ public:
 	// Never beside a mex or at a gap end with an energy job queued there. Returns the planned link for the job to
 	// hold; nullptr within a cluster, beside a mex or none
 	IGridLink* FindFillSite(CCircuitDef* cdef, const springai::AIFloat3& pos, float maxDist, const Predicate& predicate,
-			SLinkSite& outSite, springai::AIFloat3& outPos);
+			SLinkSite& outSite, springai::AIFloat3& outPos, int& outStep);  // outStep: the step that found it
 
 	float GetPylonRange(CCircuitDef::Id defId);
 	// Makes energy (customParams.income_energy or windgen)
@@ -95,6 +98,12 @@ public:
 private:
 	CEnergyNode* FindNodeDef(CCircuitDef*& outDef, springai::AIFloat3& outPos, CEnergyNode* node);
 	CEnergyLink* FindLinkDef(CCircuitDef*& outDef, springai::AIFloat3& outPos, CEnergyLink* link);
+	// A grid linker piece from the head at pos0 towards the one at pos1: of the pylon defs, the longest reach
+	// (range x reachMul) the gap still exceeds, else the shortest; one too dear for income (cost over 100 and above
+	// income / incomeMul) or with no site that links and gets closer (FindLinkSite) gives way to the next.
+	// outPos invalid = none
+	void FindPieceDef(CCircuitDef*& outDef, springai::AIFloat3& outPos, const springai::AIFloat3& pos0, float range0,
+			const springai::AIFloat3& pos1, float range1, float reachMul, float incomeMul);
 	struct SPiece {  // a grid building, or one to be: where, and its link range
 		springai::AIFloat3 pos;
 		float range;
