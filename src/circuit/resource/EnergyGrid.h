@@ -36,6 +36,9 @@ private:
 
 public:
 	void Update();
+	// A grid building of ours just finished: the next Update reads the grid again even in this frame, so a job planned
+	// now (a builder takes its next job at once) starts from the new piece, not beside it from the old head
+	void SetDirty() { markFrame = -1; }
 	void SetForceRebuild(bool value) { isForceRebuild = value; }
 	IGridLink* GetLinkToBuild(CCircuitDef*& outDef, springai::AIFloat3& outPos);
 	using Predicate = std::function<bool (const springai::AIFloat3& p)>;  // CTerrainManager::TerrainPredicate

@@ -2150,7 +2150,10 @@ IBuilderTask* CEconomyManager::UpdatePylonTasks()
 	}
 
 	if (utils::is_valid(buildPos)) {
-		return builderMgr->EnqueuePylon(IBuilderTask::Priority::NORMAL, buildDef, buildPos, link, buildDef->GetCostM());
+		// Exactly there (CEnergyGrid::FindLinkSite's site links), reserved now so the next search skips it
+		IBuilderTask* task = builderMgr->EnqueuePylon(IBuilderTask::Priority::NORMAL, buildDef, buildPos, link, buildDef->GetCostM());
+		task->SetBuildPos(buildPos);
+		return task;
 	} else {
 		link->SetValid(false);
 		energyGrid->SetForceRebuild(true);

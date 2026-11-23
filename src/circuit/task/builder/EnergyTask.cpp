@@ -50,6 +50,10 @@ void CBEnergyTask::Update()
 void CBEnergyTask::Finish()
 {
 	ReleaseLink();
+	CEnergyGrid* energyGrid = manager->GetCircuit()->GetEconomyManager()->GetEnergyGrid();
+	if (energyGrid != nullptr) {
+		energyGrid->SetDirty();  // a job planned now (the builder's next, at once) starts from this piece
+	}
 	IBuilderTask::Finish();
 }
 

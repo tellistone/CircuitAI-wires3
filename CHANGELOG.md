@@ -754,6 +754,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   its `tidalHeight`, -10) anywhere, as before. A plain list of names (the older form) still works, with radius 1500.
   The mex chain on ground too steep for any energy at the mex (and no threat there) now asks the fill for a solar,
   which finds a flatter site beside the mex; before, a steep mex outside the base got no energy.
+  Grid pieces no longer pile up beside one head (winds clustered at a mex after its first piece):
+  - A builder takes its next job in the frame its piece finishes (`builder_jobs.chain`), but the grid model was read
+    at most once a frame and could miss that piece, so the next fill piece was planned from the old head and stood
+    beside the one just built. A finished energy or grid link job now marks the grid to be read again.
+  - The grid linker's pieces (`CEnergyGrid::FindNodeDef`, `FindLinkDef`) took the open cell nearest a fixed spot
+    within 250 elmos, with no rule that it links to the head or gets closer to the other end; when that spot was
+    taken the head didn't move, and the next piece went beside the last. They now use the fill's `FindLinkSite`
+    (links to the head and gets a quarter of its reach closer, or closes the gap), on that exact site, reserved when
+    queued. A grid link job whose site is taken by the time its builder gets there is planned again, not moved.
 
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own

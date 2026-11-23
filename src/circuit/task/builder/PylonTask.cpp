@@ -9,6 +9,7 @@
 #include "task/TaskManager.h"
 #include "map/ThreatMap.h"
 #include "module/EconomyManager.h"
+#include "resource/EnergyGrid.h"
 #include "resource/GridLink.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
@@ -42,7 +43,11 @@ void CBPylonTask::Finish()
 	if (link != nullptr) {
 		link->SetBeingBuilt(false);
 	}
-	manager->GetCircuit()->GetEconomyManager()->UpdatePylonTasks();
+	CEconomyManager* economyMgr = manager->GetCircuit()->GetEconomyManager();
+	if (economyMgr->GetEnergyGrid() != nullptr) {
+		economyMgr->GetEnergyGrid()->SetDirty();  // the next piece starts from this one
+	}
+	economyMgr->UpdatePylonTasks();
 
 	IBuilderTask::Finish();
 }
@@ -76,10 +81,11 @@ void CBPylonTask::Execute(CCircuitUnit* unit)
 			TRY_UNIT(circuit, unit,
 				unit->GetUnit()->Build(buildUDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 			)
-			return;
-//		} else {
-//			SetBuildPos(-RgtVector);
+		} else {
+			// Its site links; one found around it may not, and the next piece would go beside it. Planned again instead
+			manager->FallbackTask(unit);
 		}
+		return;
 	}
 
 	circuit->GetThreatMap()->SetThreatType(unit);

@@ -693,19 +693,12 @@ CEnergyNode* CEnergyGrid::FindNodeDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 			continue;
 		}
 
-		AIFloat3 dir = pylon1.pos - pylon0.pos;
-		AIFloat3 sweetPos;
-		const float dist = pylon0.range + pylon1.range + range * 1.95f;
-		if (dir.SqLength2D() < SQUARE(dist)) {
-			sweetPos = (pylon0.pos + dir.Normalize2D() * (pylon0.range - pylon1.range) + pylon1.pos) * 0.5f;
-		} else {
-			sweetPos = pylon0.pos + dir.Normalize2D() * (pylon0.range + range) * 0.95f;
-		}
-
-		CTerrainManager::TerrainPredicate isAllowed = [economyMgr, outDef](const AIFloat3& p) {
+		// A site that links to the head and gets closer to the other end, as the fill's: the open cell nearest a fixed
+		// spot could stand beside the head without linking or getting closer, and the next piece would go beside it
+		const SLinkSite site = MakeLinkSite(range, pylon0.pos, pylon0.range, pylon1.pos, pylon1.range);
+		outPos = FindLinkSite(outDef, site, site.fromReach * 0.5f, [economyMgr, outDef](const AIFloat3& p) {
 			return economyMgr->IsAllowedAt(outDef, p);  // economy.energy.base_only: no wind away from the base
-		};
-		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isAllowed);
+		});
 		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)) {
 			break;
 		} else {
@@ -722,10 +715,8 @@ CEnergyLink* CEnergyGrid::FindLinkDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 {
 	outDef = nullptr;
 	outPos = -RgtVector;
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const float searchRadius = economyMgr->GetPylonRange() * 0.5f;
 
 	const CEnergyLink::SPylon* pylon0 = link->GetSourceHead();
 	const CEnergyLink::SPylon* pylon1 = link->GetTargetHead();
@@ -754,24 +745,11 @@ CEnergyLink* CEnergyGrid::FindLinkDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 			continue;
 		}
 
-		AIFloat3 dir = pylon1->pos - pylon0->pos;
-		AIFloat3 sweetPos;
-		const float dist = pylon0->range + pylon1->range + range * 1.95f;
-		if (dir.SqLength2D() < SQUARE(dist)) {
-			sweetPos = (pylon0->pos + dir.Normalize2D() * (pylon0->range - pylon1->range) + pylon1->pos) * 0.5f;
-		} else {
-			sweetPos = pylon0->pos + dir.Normalize2D() * (pylon0->range + range) * 0.95f;
-		}
-		// TODO: replace line placement by pathfinder
-		if (!circuit->GetMap()->IsPossibleToBuildAt(outDef->GetDef(), sweetPos, 0)) {
-			candDefs.erase(range);
-			continue;
-		}
-
-		CTerrainManager::TerrainPredicate isAllowed = [economyMgr, outDef](const AIFloat3& p) {
+		// A site that links to the head and gets closer to the other end (as in FindNodeDef)
+		const SLinkSite site = MakeLinkSite(range, pylon0->pos, pylon0->range, pylon1->pos, pylon1->range);
+		outPos = FindLinkSite(outDef, site, site.fromReach * 0.5f, [economyMgr, outDef](const AIFloat3& p) {
 			return economyMgr->IsAllowedAt(outDef, p);  // economy.energy.base_only: no wind away from the base
-		};
-		outPos = terrainMgr->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_COMMAND_BUILD_NO_FACING, isAllowed);
+		});
 		if (utils::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)) {
 			break;
 		} else {
