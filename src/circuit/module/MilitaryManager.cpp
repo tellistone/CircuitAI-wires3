@@ -928,6 +928,34 @@ void CMilitaryManager::ReadConfig()
 		c.parkedFrames = static_cast<int>(num("parked_sec", 0.f, 0.f, 600.f) * FRAMES_PER_SEC);
 		c.siegeBonus = num("siege_bonus", 1.f, 1.f, 10.f);
 	}
+	{
+		// quota.attack_region_pick: {on, bonus, curve}. Missing object or key: the default (off when the object is
+		// missing); a wrong value logs and uses the default
+		const Json::Value& q = quotas["attack_region_pick"];
+		if (!q.isNull() && !q.isObject()) {
+			circuit->LOG("CONFIG %s: quota.attack_region_pick must be an object, it is off", cfgName.c_str());
+		}
+		const Json::Value& qc = q.isObject() ? q : Json::Value::nullSingleton();
+		auto num = [&](const char* key, float def, float lo, float hi) {
+			const Json::Value& v = qc[key];
+			if (v.isNull()) {
+				return def;
+			}
+			if (!v.isNumeric() || (v.asFloat() < lo) || (v.asFloat() > hi)) {
+				circuit->LOG("CONFIG %s: quota.attack_region_pick.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
+				return def;
+			}
+			return v.asFloat();
+		};
+		SAttackRegionPick& rp = attackRegionPick;
+		const Json::Value& qon = qc["on"];
+		if (!qon.isNull() && !qon.isBool()) {
+			circuit->LOG("CONFIG %s: quota.attack_region_pick.on must be true or false, using false", cfgName.c_str());
+		}
+		rp.isOn = qon.isBool() && qon.asBool();
+		rp.bonus = num("bonus", 0.33f, 0.f, 0.9f);
+		rp.curve = num("curve", 1000.f, 1.f, 100000.f);
+	}
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
 		if (!raidTargets.isNull()) {

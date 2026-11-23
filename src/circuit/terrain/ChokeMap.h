@@ -258,6 +258,10 @@ public:
 	bool IsOurGround(int region) const { return isOurGround[region]; }
 	bool IsEnemyGround(int region) const { return isEnemyGround[region]; }
 	Side GetSettledOwner(int region) const { return settledOwner[region]; }  // the owner once settled, before joining
+	// The same, NONE for no region (a wall, NO_REGION) or before the first owner update
+	Side GetSettledOwnerSafe(int region) const {
+		return ((region >= 0) && (region < (int)settledOwner.size())) ? settledOwner[region] : Side::NONE;
+	}
 	std::vector<int> GetOurRegions() const;  // our held ground, or our side before we hold any
 	// Nearer our start box than any enemy source (true until both are known): the half of the map we defend
 	bool IsOurHalf(const springai::AIFloat3& pos) const;
