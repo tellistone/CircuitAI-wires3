@@ -58,6 +58,7 @@ private:
 	bool IsPopupShut(CEnemyInfo* enemy, int frame) const;
 	bool IsPopupTargetNear(CEnemyInfo* enemy, int frame) const;  // an ally unit it can hit within its range + margin
 	void StopAttack(CCircuitUnit* unit);  // cancel our attack order, if one is live
+	void SetAttacking(CCircuitUnit* unit, bool isOn);  // isAttacking; anti-heavy: return fire while on
 	// What a firing route is for: the task's targets (enemyPositions: buildings, anti-heavy: heavies), or (anti-heavy)
 	// the front (frontGoals)
 	enum Goal: int { TARGET = 0, FRONT = 1 };

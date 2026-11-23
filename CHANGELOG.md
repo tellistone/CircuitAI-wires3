@@ -7,6 +7,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Anti-heavies go to return fire while they attack a heavy, and only then.** Squads (`CAntiHeavyTask::UpdateHolds`)
+  used hold fire for that, and only for snipers that park (Lance, Merlin); now every squad goes to return fire while
+  it attacks its heavy (not in the LOS grace, nor fleeing). Artillery-mode anti-heavies (`CArtilleryTask::SetAttacking`)
+  do the same while their attack order on a heavy is live; a scoot, a flee or losing the target gives back the
+  unit's own fire state (`fire_state`, default fire at will), and so does leaving the task. The attack order still
+  fires, and return fire also shoots back at whoever hits them, so the reload isn't spent on chaff.
+
 - **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
   radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped
   at the edge, below a hill or behind a ridge and couldn't fire. Now (a) counts within `plant.reach` (new, 0.9) x the

@@ -170,7 +170,7 @@ private:
 	void FallbackPark();
 	void ApplyParkPath(const CQueryPathSingle* query);
 	void SpreadOut(CCircuitUnit* unit, int frame);  // parked: the others stand to alternate sides of the leader
-	// Hold position while parked; hold fire (parkers) only while attacking a heavy (isAttack), fire at will otherwise
+	// Hold position while parked; return fire only while attacking a heavy (isAttack), the unit's own fire state otherwise
 	void UpdateHolds(bool isAttack);
 	void ApplyHolds(CCircuitUnit* unit);
 
@@ -195,7 +195,7 @@ private:
 	bool isParking = false;  // nothing to attack or walk to: the squad parks
 	int walkInFrame = 0;  // no new walk-in to a heavy before this (after a flee, or no route to any heavy)
 	bool isParkHold = false;  // units on hold position (UpdateHolds)
-	bool isFireHold = false;  // units on hold fire
+	bool isReturnFire = false;  // units on return fire (attacking a heavy)
 };
 
 } // namespace circuit

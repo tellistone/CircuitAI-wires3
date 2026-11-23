@@ -101,6 +101,7 @@ void CArtilleryTask::AssignTo(CCircuitUnit* unit)
 
 void CArtilleryTask::RemoveAssignee(CCircuitUnit* unit)
 {
+	SetAttacking(unit, false);  // its own fire state back
 	IFighterTask::RemoveAssignee(unit);
 	if (units.empty()) {
 		manager->AbortTask(this);
@@ -203,7 +204,7 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 			return;
 		}
 		const bool wasAttacking = isAttacking;
-		isAttacking = true;
+		SetAttacking(unit, true);
 		attackPos = bestTarget->GetPos();
 		if (isAntiHeavy) {
 			// The attack task's firing spots: the cheapest allowed spot (threat, walk) at ~90% of our range, re-picked
@@ -862,11 +863,26 @@ void CArtilleryTask::StopAttack(CCircuitUnit* unit)
 	if (!isAttacking) {
 		return;
 	}
-	isAttacking = false;
+	SetAttacking(unit, false);
 	CCircuitAI* circuit = manager->GetCircuit();
 	TRY_UNIT(circuit, unit,
 		unit->GetUnit()->Stop();
 	)
+}
+
+void CArtilleryTask::SetAttacking(CCircuitUnit* unit, bool isOn)
+{
+	// Anti-heavy: return fire while the attack order on a heavy is live, so the reload isn't spent on chaff (the attack
+	// order still fires, and so do shots back at whoever hits it); the unit's own fire state otherwise
+	if (isAttacking == isOn) {
+		return;
+	}
+	isAttacking = isOn;
+	if (isAntiHeavy) {
+		TRY_UNIT(manager->GetCircuit(), unit,
+			unit->GetUnit()->SetFireState(isOn ? CCircuitDef::FireType::RETURN : unit->GetCircuitDef()->GetFireState());
+		)
+	}
 }
 
 void CArtilleryTask::ApplyPathOrHold(CCircuitUnit* unit, const std::shared_ptr<PathInfo>& pPath)
@@ -1411,7 +1427,7 @@ void CArtilleryTask::StartScoot(CCircuitUnit* unit, int frame)
 	}
 
 	SetTarget(nullptr);  // not attacking: no ready shot for the others' overkill check
-	isAttacking = false;  // the move replaces the attack order
+	SetAttacking(unit, false);  // the move replaces the attack order
 	isScooting = true;
 	scootFrom = pos;
 	circuit->GetMilitaryManager()->NoteAh(unit->GetCircuitDef(), CMilitaryManager::AhNote::SCOOT);
