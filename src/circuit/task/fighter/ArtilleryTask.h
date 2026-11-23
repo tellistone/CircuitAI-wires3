@@ -143,9 +143,10 @@ private:
 	// reaches ally_threat, as the flee judges it. isWalk: a spot to walk to, also no more threat than the route cap
 	bool IsThreatOk(CCircuitUnit* unit, const springai::AIFloat3& spot, float threat, bool isWalk) const;
 	// Shoot and scoot (antiheavy.artillery_scoot): after each shot (once its burst is over) the unit steps that far back,
-	// away from the target, threatened or not, and holds there; it turns back in time to be in place when its weapon
-	// is ready, then decides as usual. No scoot when there isn't time to get there and back, or every spot back is
-	// hotter than here. Every update: true while a shot's burst or a scoot is on (no Execute then)
+	// away from the target, threatened or not, and holds there with the attack queued behind (CCircuitUnit::ScootAttack);
+	// it turns back in time to be in place when its weapon is ready, then decides as usual. No scoot when there isn't
+	// time to get there and back, or every spot back is hotter than here. Every update: true while a shot's burst or a
+	// scoot is on (no Execute then)
 	bool UpdateScoot(CCircuitUnit* unit, int frame);
 	void StartScoot(CCircuitUnit* unit, int frame);
 
@@ -168,7 +169,7 @@ private:
 	bool isFleeing = false;
 	int fleeFrame = 0;  // re-plan the flee after this frame
 	const bool isAntiHeavy;  // heavies instead of buildings
-	bool isAttacking = false;  // our attack order is live (StopAttack)
+	bool isAttacking = false;  // our attack order is live, also queued behind a scoot (StopAttack)
 	springai::AIFloat3 attackPos;  // where the target of our attack order was (scoot direction)
 	int shotFrame = -1;  // a shot's first frame, until its scoot starts; -1 = none
 	bool wasReady = false;  // the weapon was ready on the last update (a shot = ready, then not)

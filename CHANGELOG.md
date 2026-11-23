@@ -10,9 +10,17 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 - **Anti-heavies go to return fire while they attack a heavy, and only then.** Squads (`CAntiHeavyTask::UpdateHolds`)
   used hold fire for that, and only for snipers that park (Lance, Merlin); now every squad goes to return fire while
   it attacks its heavy (not in the LOS grace, nor fleeing). Artillery-mode anti-heavies (`CArtilleryTask::SetAttacking`)
-  do the same while their attack order on a heavy is live; a scoot, a flee or losing the target gives back the
-  unit's own fire state (`fire_state`, default fire at will), and so does leaving the task. The attack order still
-  fires, and return fire also shoots back at whoever hits them, so the reload isn't spent on chaff.
+  do the same while their attack order on a heavy is live; a flee or losing the target gives back the unit's own fire
+  state (`fire_state`, default fire at will), and so does leaving the task. The attack order still fires, and return
+  fire also shoots back at whoever hits them, so the reload isn't spent on chaff.
+
+- **Scoots keep the attack order, queued behind the step back** (`CCircuitUnit::ScootAttack`), for artillery-mode
+  anti-heavies and squads alike: move to the scoot spot, wait there, then attack the target again. The wait is the
+  engine's plain wait with a timeout (its timed wait is for players only; an AI's is dropped at once), set to when
+  walking back into place takes as long as the reload left, so a unit can never be left waiting. The AI's own scoot
+  end still re-orders the attack about then (a firing spot), so the queued attack is the fallback. Artillery mode now
+  keeps return fire and its target through the scoot. A scoot that ends with the fight (squad no longer engaged,
+  leaving the task or squad, the task stopping) drops the queued wait and attack.
 
 - **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
   radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped

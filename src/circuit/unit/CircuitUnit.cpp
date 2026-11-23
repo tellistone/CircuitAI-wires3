@@ -536,6 +536,31 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 	)
 }
 
+void CCircuitUnit::ScootAttack(const AIFloat3& pos, CEnemyInfo* enemy, float walkBack, int timeout)
+{
+	if (IsPlanted()) {
+		return;
+	}
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const float speed = circuitDef->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
+	const int waitEnd = frame + GetWeaponReloadLeft(frame) - ((speed > 0.f) ? static_cast<int>(walkBack / speed) : 0);
+	TRY_UNIT(manager->GetCircuit(), this,
+		CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+		if (enemy != nullptr) {
+			unit->Wait(UNIT_COMMAND_OPTION_SHIFT_KEY, waitEnd);
+			unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+		}
+		CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
+}
+
+void CCircuitUnit::CancelScootAttack()
+{
+	TRY_UNIT(manager->GetCircuit(), this,
+		CmdRemove({static_cast<float>(CMD_WAIT), static_cast<float>(CMD_ATTACK)}, UNIT_COMMAND_OPTION_ALT_KEY);
+	)
+}
+
 void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 {
 	if (IsPlanted()) {

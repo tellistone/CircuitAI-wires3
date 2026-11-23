@@ -102,6 +102,9 @@ void CArtilleryTask::AssignTo(CCircuitUnit* unit)
 void CArtilleryTask::RemoveAssignee(CCircuitUnit* unit)
 {
 	SetAttacking(unit, false);  // its own fire state back
+	if (isScooting) {
+		unit->CancelScootAttack();  // the step back's queued attack isn't the next task's
+	}
 	IFighterTask::RemoveAssignee(unit);
 	if (units.empty()) {
 		manager->AbortTask(this);
@@ -211,7 +214,7 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 			// every 3 s and when the heavy moves a tile, so the unit backs off as it closes in; none: from here
 			SetTarget(bestTarget);  // also for the other anti-heavy units' overkill check (GetAhReadyDamage)
 			if (!wasAttacking) {
-				unit->ClearTarget();  // our own Stop, scoot or flee came in between: order at once
+				unit->ClearTarget();  // our own Stop or flee came in between: order at once
 			}
 			Attack(frame, true);
 			return;
@@ -872,8 +875,8 @@ void CArtilleryTask::StopAttack(CCircuitUnit* unit)
 
 void CArtilleryTask::SetAttacking(CCircuitUnit* unit, bool isOn)
 {
-	// Anti-heavy: return fire while the attack order on a heavy is live, so the reload isn't spent on chaff (the attack
-	// order still fires, and so do shots back at whoever hits it); the unit's own fire state otherwise
+	// Anti-heavy: return fire while the attack order on a heavy is live (also queued behind a scoot), so the reload
+	// isn't spent on chaff (the attack order still fires, and so do shots back at whoever hits it); its own otherwise
 	if (isAttacking == isOn) {
 		return;
 	}
@@ -1374,6 +1377,7 @@ bool CArtilleryTask::UpdateScoot(CCircuitUnit* unit, int frame)
 	const float backDist = unit->GetPos(frame).distance2D(scootFrom);
 	if (unit->IsWeaponReady(frame) || ((speed > 0.f) && (backDist / speed >= unit->GetWeaponReloadLeft(frame)))) {
 		isScooting = false;
+		unit->ClearTarget();  // Attack re-orders it: a firing spot (the queued attack would walk straight in)
 		unit->ForceUpdate(frame);  // Execute now
 		return false;
 	}
@@ -1426,16 +1430,17 @@ void CArtilleryTask::StartScoot(CCircuitUnit* unit, int frame)
 		return;
 	}
 
-	SetTarget(nullptr);  // not attacking: no ready shot for the others' overkill check
-	SetAttacking(unit, false);  // the move replaces the attack order
+	// The attack stays queued behind the step back, so return fire and the target stay too (a reloading unit adds no
+	// ready shot to the others' overkill check): it waits there until the walk back takes as long as the reload left,
+	// then attacks again. The heavy died in the meantime: the move alone
+	if (target == nullptr) {
+		SetAttacking(unit, false);
+	}
 	isScooting = true;
 	scootFrom = pos;
 	circuit->GetMilitaryManager()->NoteAh(unit->GetCircuitDef(), CMilitaryManager::AhNote::SCOOT);
 	unit->GetTravelAct()->StateWait();
-	TRY_UNIT(circuit, unit,
-		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
-	)
+	unit->ScootAttack(dest, target, pos.distance2D(dest), frame + FRAMES_PER_SEC * 60);
 }
 
 /*

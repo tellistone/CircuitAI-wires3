@@ -164,6 +164,12 @@ public:
 	void FightFrom(const springai::AIFloat3& firePos, CEnemyInfo* enemy, int tile, int timeout);
 	// Stay at pos (no Attack order: the engine fires at whatever comes into range); remembers enemy/tile
 	void HoldFire(const springai::AIFloat3& pos, CEnemyInfo* enemy, int tile, int timeout);
+	// A reloading unit's step back that keeps its attack order: move to pos, wait there until walking walkBack elmos
+	// takes as long as the reload it has left, then attack the enemy again (queued; no enemy: the move alone).
+	// The engine drops the wait once its timeout is past (its timed wait is for players: an AI's is dropped at once)
+	void ScootAttack(const springai::AIFloat3& pos, CEnemyInfo* enemy, float walkBack, int timeout);
+	// Drops a step back's queued wait and attack (the fight is over); a move still under way goes on
+	void CancelScootAttack();
 	void Guard(CCircuitUnit* target, int timeout);
 	void Gather(const springai::AIFloat3& groupPos, int timeout);
 
