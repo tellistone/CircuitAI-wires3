@@ -472,25 +472,32 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Commander protect against rushes** (`quota.protect`, new, off by default: `enable`, `zone` 1200, `keep_sec` 12,
   `respond_sec` 12, `go_ratio` 1.0). When the commander's seen danger within `zone` beats its own power, or it takes
-  damage, one central go or no-go decides once a second for every group that can reach it, so they commit together
-  or not at all instead of each judging the fight alone and trickling in.
+  damage, or seen bombers within `zone` heading for it beat its anti-air bubble, one central go or no-go decides once
+  a second for every group that can reach it, so they commit together or not at all instead of each judging the
+  fight alone and trickling in.
   - Danger: the larger of the force balance's enemy force at the commander (mobiles by how soon they can shoot it,
-    enemy statics by their cover falloff) and the commander's own danger list. Against gunships (over 60% of that
-    list, until under 40%) no group is sent: only anti-air turrets count, and the commander if it hits air.
-  - Commit: attack, raid and gathering groups that reach the commander within `respond_sec` (or its time to death)
-    and aren't fleeing or fighting elsewhere, soonest there first, until groups + commander + turrets reach 1.25x the
-    danger (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or paralysed),
-    no-go under `go_ratio` / `attack_keep_threat` (at once when the danger turns to air), 5 s per state at least. A
-    committed group that flees still counts for keeping a go, not for starting one, and a committed group 1.5x
-    `respond_sec` of travel away is dropped.
+    enemy statics by their cover falloff) and the commander's own danger list plus the bombers. Bombers count when
+    seen with a ground weapon, their track passing within 300 elmos of the commander (or they hit it in the last 5 s),
+    at their threat before `thr_mod`. The bubble: the commander's own power if it hits air, and the anti-air turrets
+    covering it. Against aircraft (gunships and bombers over 60% of that danger, until under 40%) anti-air groups are
+    sent instead of ground ones: only anti-air turrets count, and the commander if it hits air.
+  - Commit: groups of the danger's kind (ground: attack, raid and gathering groups; air: anti-air groups, flying ones
+    included) that reach the commander within `respond_sec` (or its time to death) and aren't fleeing or fighting
+    elsewhere, soonest there first, until groups + commander + turrets reach 1.25x the danger (`go_ratio` + 0.25 if
+    more). Go at `go_ratio` with one group at least (0.6x once cornered or paralysed), no-go under `go_ratio` /
+    `attack_keep_threat`, 5 s per state at least. One kind per go: when the danger turns to the other kind, the go
+    ends at once (`nogo (air)`, `nogo (ground)`). A committed group that flees still counts for keeping a go, not for
+    starting one, and a committed group 1.5x `respond_sec` of travel away is dropped.
   - On go, committed groups leave rallies and guard pulls, merge only with each other, head for the commander, take
-    only enemies in the zone (the commander's attackers first), and within half the zone of it (kept to 0.625) judge
-    with the strength present there.
+    the commander's attackers first and within half the zone of it (kept to 0.625) judge with the strength present
+    there. Ground groups take only enemies in the zone; anti-air groups count the commander as a leash home point
+    and wait beside it with nothing to shoot.
   - Meeting point: a spot 100 elmos behind our or allied turrets near the commander, away from the danger, where they
     hold the danger with it, reached in time and safe to flee to; kept while they hold 1 / `attack_keep_threat` of it.
-    The commander flees there and stays; cornered there, it ends its flee and builds its defence.
-  - `PROTECT` log lines on start, go, nogo and end, with the gunships' share of the danger. The end line sums up the
-    protect: its goes and the highest gunship share.
+    The commander flees there and stays; cornered there, it ends its flee and builds its defence. Its flee ignores
+    planes, so bombers alone don't move it.
+  - `PROTECT` log lines on start, go, nogo and end, with the aircraft's share of the danger; the start line also gives
+    the bombers' count and danger. The end line sums up the protect: its goes and the highest aircraft share.
 
 - **`plant` unit attribute: stay put next to targets and anti-heavies** (Crabe has it). A unit with it never moves
   (move, fight, jump, gather and orbit orders are dropped, retreat included) while an enemy in LOS that it can hit is

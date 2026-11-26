@@ -30,30 +30,34 @@ class ISquadTask;
  * Commander protect (quota.protect): one central go or no-go decision for the groups that can reach our commander when
  * an enemy force threatens it, so they never judge that fight one by one and trickle in. Updated once a second.
  * 1. Anchor: the commander's seen danger (CBuilderManager's danger list within the zone) beats its own power, or it
- *    took damage. It ends keep_sec after the last danger seen. Zone: zone elmos around the commander, mobile armed
- *    enemies (and moving radar dots) only.
+ *    took damage, or seen planes with a ground weapon (bombers) within the zone and heading for it beat its anti-air
+ *    bubble (its own power if it hits air, and the anti-air turrets covering it). It ends keep_sec after the last such
+ *    second. Zone: zone elmos around the commander, mobile armed enemies (and moving radar dots) only.
  * 2. Danger: the force balance's enemy force at the commander (CAttackBalance::GetForceAt: mobiles by how soon they can
- *    shoot it, statics by their cover falloff), or the commander's own list (gunships on their way too), the larger.
- *    An air danger: gunships over 60% of the list's threat, until under 40%. Then no group is sent (anti-air units are
- *    in anti-air tasks), only anti-air turrets count, and the commander only if it hits air.
+ *    shoot it, statics by their cover falloff), or the commander's own list (gunships on their way too) plus those
+ *    planes at their threat before thr_mod, the larger. An air danger: aircraft over 60% of the list and the planes,
+ *    until under 40%. Then anti-air groups are sent instead of ground ones, only anti-air turrets count, and the
+ *    commander only if it hits air.
  * 3. Meeting point: a spot just behind our or allied turrets near the commander (away from the danger) when the static
  *    cover there plus the commander beats the danger, the commander reaches it before its time to death, and it is a
  *    safe flee spot (outside the seen flee zones, farther from the danger than the commander). Kept while the cover
  *    holds 1 / quota.attack_keep_threat of the danger and it can get there. The commander flees to it when it flees,
  *    and stays once at it (cornered there, it ends its flee and builds its defence). Without one it flees as it would.
- * 4. Commit: attack, raid and gathering groups that can reach the commander within respond_sec (or its time to death
- *    if shorter, checked when a group joins), not fleeing or fighting elsewhere, soonest there first, until groups +
- *    commander + static cover reach 1.25x the danger (or the go line + 0.25). Ratio = that sum / danger. Go at
- *    go_ratio with a group at least (0.6 x it once cornered: no escape or paralysed, latched for the anchor's life);
- *    no-go below the go line / quota.attack_keep_threat, at once when the danger turns to air. 5 s per state at least.
- *    On go the committed groups are latched until the anchor ends or no-go (a group that flees meanwhile still counts:
- *    a short flee doesn't end the fight), or until one is 1.5 x respond_sec of travel away; they merge only into each
- *    other.
- * 5. Go: committed groups head for the commander and only take zone enemies (and those in contact), the commander's
- *    recent attackers first; zone enemies pass the own-ground check and the 3-group cap. In the fight (within half the
- *    zone of the commander, kept to 0.625: the present radius) they judge with the strength present (GetBoost: the
- *    commander, the static cover where it stands, the committed groups present and themselves), with no allied cover
- *    on top.
+ *    Its flee ignores planes, so planes alone don't move it.
+ * 4. Commit: groups of the danger's kind (ground: attack, raid and gathering groups; air: anti-air groups, flying ones
+ *    too) that can reach the commander within respond_sec (or its time to death if shorter, checked when a group
+ *    joins), not fleeing or fighting elsewhere, soonest there first, until groups + commander + static cover reach
+ *    1.25x the danger (or the go line + 0.25). Ratio = that sum / danger. Go at go_ratio with a group at least (0.6 x
+ *    it once cornered: no escape or paralysed, latched for the anchor's life); no-go below the go line /
+ *    quota.attack_keep_threat, and at once when the danger turns to the other kind (one kind per go). 5 s per state at
+ *    least. On go the committed groups are latched until the anchor ends or no-go (a group that flees meanwhile still
+ *    counts: a short flee doesn't end the fight), or until one is 1.5 x respond_sec of travel away; they merge only
+ *    into each other.
+ * 5. Go: committed groups head for the commander, the commander's recent attackers first. Ground groups only take zone
+ *    enemies (and those in contact), which pass the own-ground check and the 3-group cap; anti-air groups count the
+ *    commander as a leash home point. In the fight (within half the zone of the commander, kept to 0.625: the present
+ *    radius) they judge with the strength present (GetBoost: the commander, the static cover where it stands, the
+ *    committed groups present and themselves), with no allied cover on top.
  */
 class CProtect {
 public:
@@ -110,6 +114,8 @@ private:
 		springai::AIFloat3 pos;
 		float power;
 		const CCircuitDef* def;
+		bool isDefence;  // against ground (IFighterTask::IsStaticDefence)
+		bool isAntiAir;  // against aircraft, within MAX_TURRET_RANGE
 	};
 	struct SCommit {
 		float strength = 0.f;  // health-scaled power (ISquadTask::GetRallyStrength)
@@ -121,8 +127,10 @@ private:
 	float GetGoBoost(const IFighterTask* task, const springai::AIFloat3& pos) const;
 	float GetSum() const { return committedSum + own + staticCover; }  // the ratio's numerator
 	void UpdateDeathTime(CCircuitUnit* comm, int frame);
-	void CollectTurrets(int frame);
-	float GetStaticCover(const springai::AIFloat3& pos) const;
+	// Seen planes with a ground weapon in the zone heading for the commander (or that just hit it): planeDanger
+	void UpdatePlanes(int frame);
+	void CollectTurrets(int frame);  // both kinds
+	float GetStaticCover(const springai::AIFloat3& pos, bool isAir) const;
 	// The spot just behind a turret, away from the danger, where the commander can stand (else the turret's own)
 	springai::AIFloat3 GetBehind(CCircuitUnit* comm, const springai::AIFloat3& turret) const;
 	// A new turret point: strong enough, reached in time, away from the danger and a safe flee spot
@@ -149,11 +157,14 @@ private:
 	bool isCornered;  // latched for the anchor's life
 	springai::AIFloat3 commPos;
 	springai::AIFloat3 dangerPos;  // the nearest seen danger, kept from the last update that saw one
-	bool isAirDanger;  // gunships over 60% of the commander's danger list, until under 40%
-	float airShare;  // the gunships' share of that list, kept while it is empty (logged)
+	bool isAirDanger;  // aircraft over 60% of the commander's danger list and the planes heading for it, until under 40%
+	bool isAirGo;  // the kind of the go: air (anti-air groups) or ground, set when it starts
+	float airShare;  // the aircraft's share of that danger, kept while it is empty (logged)
 	float peakAirShare;  // the highest airShare of this protect (the end line)
 	int goCount;  // goes in this protect (the end line)
 	float dangerRange;
+	float planeDanger;  // UpdatePlanes: their threat before thr_mod (CCircuitDef::GetRawThreat)
+	int planeCount;
 	float own;  // the commander's power (0 against an air danger it can't hit)
 	float danger;
 	float staticCover;  // at the turret point, else where the commander stands

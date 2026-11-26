@@ -10,6 +10,7 @@
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -201,7 +202,11 @@ void CAntiAirTask::Update()
 		return;
 	}
 	if (target == nullptr) {
-		FallbackSafePos();
+		if (IsProtecting()) {
+			FallbackCommPos();  // quota.protect: committed, it waits at the commander's side
+		} else {
+			FallbackSafePos();
+		}
 		return;
 	}
 	QueryPath(leader, approachPos, circuit->GetPathfinder()->GetSquareSize(), true,
@@ -278,6 +283,12 @@ void CAntiAirTask::FindTarget()
 	std::sort(targetCandidates.begin(), targetCandidates.end(), [](const auto& a, const auto& b) {
 		return (a.first < b.first) || ((a.first == b.first) && (a.second->GetId() < b.second->GetId()));
 	});
+	if (IsProtecting()) {  // quota.protect: the commander's attackers of the last 5 s first, each group nearest first
+		const CProtect* protect = circuit->GetMilitaryManager()->GetProtect();
+		std::stable_partition(targetCandidates.begin(), targetCandidates.end(), [protect, frame](const auto& c) {
+			return protect->IsRecentAttacker(c.second->GetId(), frame);
+		});
+	}
 
 	const CMilitaryManager::SAntiAirCfg& aaCfg = circuit->GetMilitaryManager()->GetAntiAirCfg();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -329,11 +340,14 @@ void CAntiAirTask::FindTarget()
 
 void CAntiAirTask::FillHomePoints()
 {
-	// Leash anchors: our attack and defend group leaders, and the base
+	// Leash anchors: our attack and defend group leaders, and the base; committed to the protect, the commander too
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	const int frame = circuit->GetLastFrame();
 	homePoints.clear();
+	if (IsProtecting()) {
+		homePoints.push_back(militaryMgr->GetProtect()->GetGoal());
+	}
 	const std::array<IFighterTask::FightType, 2> types = {IFighterTask::FightType::ATTACK, IFighterTask::FightType::DEFEND};
 	for (IFighterTask::FightType type : types) {
 		for (IFighterTask* task : militaryMgr->GetTasks(type)) {
@@ -597,7 +611,9 @@ float CAntiAirTask::GetAllowedThreatAt(const AIFloat3& pos, float strength) cons
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float bonus = circuit->GetMilitaryManager()->GetBaseThrBonus(basePos.SqDistance2D(pos));
-	return strength * bonus / GetThrDistModAt(pos);
+	// quota.protect: committed, it judges the commander's fight with the strength present
+	const float boost = circuit->GetMilitaryManager()->GetProtect()->GetBoost(this, pos);
+	return strength * bonus * boost / GetThrDistModAt(pos);
 }
 
 void CAntiAirTask::HoldAll()

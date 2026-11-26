@@ -22,6 +22,7 @@
 #include "Log.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -45,6 +46,11 @@ static constexpr float AT_SPOT_DIST = DEFAULT_SLACK * 4;  // the commander stand
 static constexpr float MEET_BACK_DIST = 100.f;  // the meeting point is this far behind its turret, away from the danger
 static constexpr float MAX_TURRET_RANGE = 2000.f;  // static anti-air beyond this reach is no cover (IsStaticDefence's line)
 static constexpr float ENGAGED_SLACK = 200.f;  // a group with a target out of the zone within its range + this is busy
+static constexpr float PLANE_PASS_DIST = 300.f;  // a plane heads for the commander when its track passes this close
+// The groups a go of each kind takes: ground (attack, raid and gathering) or air (anti-air, flying ones too)
+static const std::array<IFighterTask::FightType, 3> GROUND_TYPES = {IFighterTask::FightType::ATTACK,
+		IFighterTask::FightType::RAID, IFighterTask::FightType::DEFEND};
+static const std::array<IFighterTask::FightType, 1> AIR_TYPES = {IFighterTask::FightType::AA};
 
 CProtect::CProtect(CCircuitAI* circuit, const SConfig& cfg)
 		: circuit(circuit)
@@ -58,10 +64,13 @@ CProtect::CProtect(CCircuitAI* circuit, const SConfig& cfg)
 		, commPos(-RgtVector)
 		, dangerPos(-RgtVector)
 		, isAirDanger(false)
+		, isAirGo(false)
 		, airShare(0.f)
 		, peakAirShare(0.f)
 		, goCount(0)
 		, dangerRange(0.f)
+		, planeDanger(0.f)
+		, planeCount(0)
 		, own(0.f)
 		, danger(0.f)
 		, staticCover(0.f)
@@ -174,10 +183,18 @@ void CProtect::Update()
 	}
 	commPos = comm->GetPos(frame);
 	UpdateDeathTime(comm, frame);
+	CCircuitDef* commDef = comm->GetCircuitDef();
+	UpdatePlanes(frame);
+	if (planeDanger > 0.f) {
+		CollectTurrets(frame);  // for the bubble; else once the protect is on, below
+	}
 
-	// 1. Anchor: the seen danger beats the commander, or it took damage since the last update
+	// 1. Anchor: the seen danger beats the commander, or it took damage since the last update, or planes heading for
+	// it beat its anti-air bubble (its own power if it hits air, and the anti-air turrets covering it)
 	const bool isDamaged = (damagedFrame >= 0) && (frame - damagedFrame <= FRAMES_PER_SEC);
-	const bool isThreat = (view.danger > view.own) || isDamaged;
+	const bool isPlaneThreat = (planeDanger > 0.f)
+			&& (planeDanger > (commDef->HasAntiAir() ? view.own : 0.f) + GetStaticCover(commPos, true));
+	const bool isThreat = (view.danger > view.own) || isDamaged || isPlaneThreat;
 	if (isThreat) {
 		lastDangerFrame = frame;
 	}
@@ -191,42 +208,50 @@ void CProtect::Update()
 		End("clear", frame);
 		return;
 	}
+	if (planeDanger <= 0.f) {
+		CollectTurrets(frame);
+	}
 	if (utils::is_valid(view.dangerPos)) {
 		dangerPos = view.dangerPos;
 		dangerRange = view.dangerRange;
 	}
-	if (view.danger > 0.f) {  // kept while the list is empty: gunships out of sight would otherwise let a go start
-		airShare = view.airDanger / view.danger;
+	// The air share: gunships of the commander's list and the planes heading for it, of both. Kept while both are
+	// empty: gunships out of sight would otherwise let a ground go start
+	const float listDanger = view.danger + planeDanger;
+	if (listDanger > 0.f) {
+		airShare = (view.airDanger + planeDanger) / listDanger;
 		isAirDanger = (airShare > (isAirDanger ? AIR_OFF_SHARE : AIR_ON_SHARE));
 		peakAirShare = std::max(peakAirShare, airShare);
 	}
-	CCircuitDef* commDef = comm->GetCircuitDef();
 	own = (isAirDanger && !commDef->HasAntiAir()) ? 0.f : view.own;
 	isCornered |= view.isCornered || comm->GetUnit()->IsParalyzed();
 
 	// 2. Danger: the enemy force that could shoot the commander soon (the force balance's, statics included), or its
-	// own list (gunships on their way, moving radar dots), whichever is more
+	// own list (gunships on their way, moving radar dots) and the planes heading for it, whichever is more
 	CAttackBalance::SForce force;
 	circuit->GetMilitaryManager()->GetAttackBalance()->GetForceAt(commPos, nullptr, commDef->IsAmphibious(), force);
-	danger = std::max(force.enemy, view.danger);
+	danger = std::max(force.enemy, listDanger);
 	if (isStart) {
-		circuit->LOG("PROTECT start: commander power %.1f, danger %.1f (force %.1f, its own list %.1f), gunships %.0f%%%s"
-				" at (%.0f, %.0f)", own, danger, force.enemy, view.danger, airShare * 100.f, isDamaged ? ", damaged" : "",
-				commPos.x, commPos.z);
+		circuit->LOG("PROTECT start: commander power %.1f, danger %.1f (force %.1f, its own list %.1f, bombers %i: %.1f),"
+				" aircraft %.0f%%%s at (%.0f, %.0f)", own, danger, force.enemy, view.danger, planeCount, planeDanger,
+				airShare * 100.f, isDamaged ? ", damaged" : "", commPos.x, commPos.z);
 	}
 
 	// 3. and 4. Turret point and commit
 	UpdateTurretPoint(comm, frame);
-	commCover = GetStaticCover(commPos);
+	commCover = GetStaticCover(commPos, isAirDanger);
 	const float goLine = cfg.goRatio * (isCornered ? CORNERED_MOD : 1.f);
 	UpdateCommitted(frame, danger * std::max(COMMIT_MOD, goLine + COMMIT_MARGIN));
 	ratio = (danger > 0.f) ? GetSum() / danger : std::numeric_limits<float>::max();
 
 	// Go or no-go, each for MIN_STATE_FRAMES at least. A go needs a group: with none there is nothing to send, and a
-	// no-go costs nothing (a poke with no danger would otherwise go at once and hold off a real no-go). An air danger
-	// ends a go at once: the committed ground groups can't shoot gunships
-	if ((state == State::GO) && isAirDanger) {
-		SetState(State::NOGO, "nogo (air)", frame);
+	// no-go costs nothing (a poke with no danger would otherwise go at once and hold off a real no-go). One kind per
+	// go: when the danger turns to the other kind, the go ends at once (ground groups can't shoot gunships, anti-air
+	// can't hold ground), and the timer stays, as the air flag's own band damps the switch
+	if ((state == State::GO) && (isAirDanger != isAirGo)) {
+		const int goFrame = stateFrame;
+		SetState(State::NOGO, isAirDanger ? "nogo (air)" : "nogo (ground)", frame);
+		stateFrame = goFrame;
 	} else if (frame - stateFrame >= MIN_STATE_FRAMES) {
 		if ((state == State::NOGO) && (ratio >= goLine) && !committed.empty()) {
 			SetState(State::GO, "go", frame);
@@ -248,17 +273,19 @@ void CProtect::Start(int frame)
 	committed.clear();
 	turretPos = dangerPos = -RgtVector;
 	dangerRange = 0.f;
+	isAirGo = false;
 }
 
 void CProtect::End(const char* reason, int frame)
 {
 	// One summary per protect, gone or not: an air-heavy rush never goes, so its share shows only here
-	circuit->LOG("PROTECT end (%s) after %.0f s: %i go%s, gunships up to %.0f%%", reason,
+	circuit->LOG("PROTECT end (%s) after %.0f s: %i go%s, aircraft up to %.0f%%", reason,
 			(frame - startFrame) / float(FRAMES_PER_SEC), goCount, (goCount == 1) ? "" : "s", peakAirShare * 100.f);
 	state = State::OFF;
 	committed.clear();
 	committedSum = presentSum = 0.f;
 	turretPos = -RgtVector;
+	dangerRange = 0.f;  // the plane bubble is checked while off: a plane's bombs land at its spot
 	isCornered = false;
 	prevHealth = -1.f;
 	dps = 0.f;
@@ -268,13 +295,14 @@ void CProtect::End(const char* reason, int frame)
 void CProtect::SetState(State value, const char* reason, int frame)
 {
 	circuit->LOG("PROTECT %s: ratio %.2f (groups %.1f + commander %.1f + static %.1f vs danger %.1f), %i groups "
-			"(present %.1f), gunships %.0f%%%s%s%s, death in %.0f s", reason, std::min(ratio, 99.f), committedSum, own,
+			"(present %.1f), aircraft %.0f%%%s%s%s, death in %.0f s", reason, std::min(ratio, 99.f), committedSum, own,
 			staticCover, danger, (int)committed.size(), presentSum, airShare * 100.f, isAirDanger ? " (air danger)" : "",
 			isCornered ? ", cornered" : "", utils::is_valid(turretPos) ? ", at turrets" : "", std::min(deathSec, 999.f));
 	if (value == State::NOGO) {
 		committed.clear();  // no group is sent: they go back to what they would do
 	} else {
 		++goCount;
+		isAirGo = isAirDanger;
 	}
 	state = value;
 	stateFrame = frame;
@@ -293,6 +321,41 @@ void CProtect::UpdateDeathTime(CCircuitUnit* comm, int frame)
 	deathSec = (dps > 1.f) ? health / dps : std::numeric_limits<float>::max();
 }
 
+void CProtect::UpdatePlanes(int frame)
+{
+	// Seen enemy planes with a ground or water weapon (bombers; gunships are in the commander's list) within the zone,
+	// heading for the commander (the track ahead passes within PLANE_PASS_DIST) or that hit it in the last 5 s. At
+	// their threat before thr_mod: bombers' thr_mod (0.01..0.1) keeps the threat map's readers from shying away from
+	// planes overhead, and would hide them here
+	planeDanger = 0.f;
+	planeCount = 0;
+	const float sqZone = SQUARE(cfg.zone);
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		const CEnemyInfo* enemy = kv.second;
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef == nullptr) || !edef->IsPlane() || !(edef->HasAntiLand() || edef->HasAntiWater())
+			|| enemy->IsHidden() || !enemy->IsInRadarOrLOS() || enemy->IsBeingBuilt() || enemy->IsParalyzed()
+			|| enemy->IsDisarmed())
+		{
+			continue;
+		}
+		const AIFloat3 toComm = commPos - enemy->GetPos();
+		if (toComm.SqLength2D() > sqZone) {
+			continue;
+		}
+		if (!IsRecentAttacker(enemy->GetId(), frame)) {
+			const AIFloat3& vel = enemy->GetVel();
+			const float sqSpeed = vel.SqLength2D();
+			const float t = (sqSpeed > 1e-3f) ? std::max((toComm.x * vel.x + toComm.z * vel.z) / sqSpeed, 0.f) : 0.f;
+			if (SQUARE(toComm.x - vel.x * t) + SQUARE(toComm.z - vel.z * t) > SQUARE(PLANE_PASS_DIST)) {
+				continue;
+			}
+		}
+		planeDanger += edef->GetRawThreat();
+		++planeCount;
+	}
+}
+
 /*
  * Static cover: our and allied finished turrets that hit what the danger is and reach the defence of a spot
  */
@@ -308,10 +371,10 @@ void CProtect::CollectTurrets(int frame)
 			continue;
 		}
 		// Against ground: a defence by the threat map's rule (no static AA, no superweapon or long-range artillery).
-		// Against gunships: anti-air within the same reach
+		// Against aircraft: anti-air within the same reach. Both kinds: the plane bubble is checked before the flag
 		const bool isDefence = IFighterTask::IsStaticDefence(adef);
 		const bool isAntiAir = adef->HasAntiAir() && (adef->GetMaxRange(CCircuitDef::RangeType::AIR) <= MAX_TURRET_RANGE);
-		if (!(isAirDanger ? isAntiAir : isDefence)) {
+		if (!isDefence && !isAntiAir) {
 			continue;
 		}
 		const AIFloat3& allyPos = ally->GetPos(frame);
@@ -320,21 +383,21 @@ void CProtect::CollectTurrets(int frame)
 		}
 		const float power = IFighterTask::GetCoverPower(ally);  // 0 for a nanoframe
 		if (power > 0.f) {
-			turrets.push_back({allyPos, power, adef});
+			turrets.push_back({allyPos, power, adef, isDefence, isAntiAir});
 		}
 	}
 }
 
-float CProtect::GetStaticCover(const AIFloat3& pos) const
+float CProtect::GetStaticCover(const AIFloat3& pos, bool isAir) const
 {
-	// A turret counts when it hits the danger's kind (gunships: anti-air only) and its range covers the spot plus half
+	// A turret counts when it hits the danger's kind (aircraft: anti-air only) and its range covers the spot plus half
 	// the danger's range, where an enemy attacking the commander there stands on average
 	const bool isWater = circuit->GetTerrainManager()->IsDeepWaterAt(pos);
-	const CCircuitDef::RangeType rangeType = isAirDanger ? CCircuitDef::RangeType::AIR
+	const CCircuitDef::RangeType rangeType = isAir ? CCircuitDef::RangeType::AIR
 			: (isWater ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND);
 	float cover = 0.f;
 	for (const STurret& t : turrets) {
-		const bool isHit = isAirDanger ? t.def->HasAntiAir() : (isWater ? t.def->HasAntiWater() : t.def->HasAntiLand());
+		const bool isHit = isAir ? t.isAntiAir : (t.isDefence && (isWater ? t.def->HasAntiWater() : t.def->HasAntiLand()));
 		if (!isHit) {
 			continue;
 		}
@@ -394,17 +457,17 @@ bool CProtect::IsTurretSpotHeld(CCircuitUnit* comm, const AIFloat3& spot, float 
 void CProtect::UpdateTurretPoint(CCircuitUnit* comm, int frame)
 {
 	// Kept while it holds (IsTurretSpotHeld), replaced only when it fails: the spot behind the nearest turret group
-	// near the commander that passes IsTurretSpotValid, with the cover where the commander would stand
-	CollectTurrets(frame);
+	// near the commander that passes IsTurretSpotValid, with the cover where the commander would stand. The turrets
+	// are collected in Update
 	if (utils::is_valid(turretPos)) {
-		const float cover = GetStaticCover(turretPos);
+		const float cover = GetStaticCover(turretPos, isAirDanger);
 		if (IsTurretSpotHeld(comm, turretPos, cover)) {
 			staticCover = cover;
 			return;
 		}
 		turretPos = -RgtVector;
 	}
-	staticCover = GetStaticCover(commPos);  // turrets that already cover the commander where it stands
+	staticCover = GetStaticCover(commPos, isAirDanger);  // turrets that already cover the commander where it stands
 	if (turrets.empty()) {
 		return;
 	}
@@ -414,7 +477,7 @@ void CProtect::UpdateTurretPoint(CCircuitUnit* comm, int frame)
 	static F3Vec spots;  // NOTE: micro-opt
 	spots.clear();
 	for (const STurret& t : turrets) {
-		if (std::none_of(spots.begin(), spots.end(), [&t](const AIFloat3& s) {
+		if ((isAirDanger ? t.isAntiAir : t.isDefence) && std::none_of(spots.begin(), spots.end(), [&t](const AIFloat3& s) {
 			return s.SqDistance2D(t.pos) < SQUARE(TURRET_SPOT_GAP);
 		})) {
 			spots.push_back(t.pos);
@@ -425,7 +488,7 @@ void CProtect::UpdateTurretPoint(CCircuitUnit* comm, int frame)
 	}
 	for (const AIFloat3& s : spots) {  // the nearest first
 		const AIFloat3 meet = GetBehind(comm, s);
-		const float cover = GetStaticCover(meet);
+		const float cover = GetStaticCover(meet, isAirDanger);
 		if (IsTurretSpotValid(comm, meet, cover)) {
 			turretPos = meet;
 			staticCover = cover;
@@ -451,20 +514,23 @@ float CProtect::GetTravelSec(const ISquadTask* task, int frame) const
 
 void CProtect::CollectCandidates(int frame, std::vector<SCandidate>& out) const
 {
-	// Attack, raid and gathering (attack- or raid-bound) groups that reach the commander in time and aren't fleeing or
-	// busy fighting outside the zone
+	// Groups of the danger's kind (GROUND_TYPES: attack, raid and gathering attack- or raid-bound ones, no flying
+	// leader; AIR_TYPES: anti-air, flying ones too) that reach the commander in time and aren't fleeing or busy
+	// fighting outside the zone
 	out.clear();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const float maxSec = std::min(cfg.respondSec, deathSec);
 	const float sqZone = SQUARE(cfg.zone);
-	for (IFighterTask::FightType type : {IFighterTask::FightType::ATTACK, IFighterTask::FightType::RAID,
-		IFighterTask::FightType::DEFEND})
-	{
+	const IFighterTask::FightType* types = isAirDanger ? AIR_TYPES.data() : GROUND_TYPES.data();
+	const size_t typeCount = isAirDanger ? AIR_TYPES.size() : GROUND_TYPES.size();
+	for (size_t i = 0; i < typeCount; ++i) {
+		const IFighterTask::FightType type = types[i];
 		for (IFighterTask* t : militaryMgr->GetTasks(type)) {
-			ISquadTask* g = static_cast<ISquadTask*>(t);  // attack, raid and defend tasks are squads
+			ISquadTask* g = static_cast<ISquadTask*>(t);  // attack, raid, defend and anti-air tasks are squads
 			CCircuitUnit* leader = g->GetLeader();
-			if (g->IsDead() || (leader == nullptr) || leader->GetCircuitDef()->IsAbleToFly() || g->IsFleeing(frame)
+			if (g->IsDead() || (leader == nullptr) || (!isAirDanger && leader->GetCircuitDef()->IsAbleToFly())
+				|| g->IsFleeing(frame)
 				|| (committed.find(g) != committed.end()))
 			{
 				continue;
@@ -515,7 +581,7 @@ void CProtect::UpdateCommitted(int frame, float need)
 	// Go: the committed groups stay (latched), new ones join while short. Dead ones drop out, and those gone out of
 	// reach (a flee to a haven, our base or a far cluster; past KEEP_REACH_MOD x respond_sec of travel, so a group near
 	// the join line doesn't flap). No-go: picked afresh. The go is judged with all of them; the boost only with those
-	// present (GetGoBoost). An air danger takes no new group: anti-air units are in anti-air tasks, not these
+	// present (GetGoBoost). New groups are of the danger's kind (CollectCandidates)
 	if (state != State::GO) {
 		committed.clear();
 	}
@@ -530,7 +596,7 @@ void CProtect::UpdateCommitted(int frame, float need)
 		Refresh(g, frame, it->second);
 		++it;
 	}
-	if (isAirDanger || (GetSum() >= need)) {
+	if (GetSum() >= need) {
 		return;
 	}
 	static std::vector<SCandidate> candidates;  // NOTE: micro-opt
