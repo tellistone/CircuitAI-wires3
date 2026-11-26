@@ -36,8 +36,8 @@ class ISquadTask;
  * 2. Danger: the force balance's enemy force at the commander (CAttackBalance::GetForceAt: mobiles by how soon they can
  *    shoot it, statics by their cover falloff), or the commander's own list (gunships on their way too) plus, in air
  *    mode only, those planes at their threat before thr_mod (held 5 s after they last headed for it), the larger. An
- *    air danger: aircraft over 60% of the list and the planes, until under 40%. Then anti-air groups are sent instead of ground ones, only anti-air turrets count, and the
- *    commander only if it hits air.
+ *    air danger: aircraft over 60% of the list and the planes, until under 40%. Then anti-air groups are sent instead
+ *    of ground ones, only anti-air turrets count, and the commander only if it hits air.
  * 3. Meeting point: a spot just behind our or allied turrets near the commander (away from the danger) when the static
  *    cover there plus the commander beats the danger, the commander reaches it before its time to death, and it is a
  *    safe flee spot (outside the seen flee zones, farther from the danger than the commander). Kept while the cover
@@ -130,7 +130,10 @@ private:
 	// Seen planes with a ground weapon in the zone heading for the commander (or that just hit it): planeDanger
 	void UpdatePlanes(int frame);
 	void CollectTurrets(int frame);  // both kinds
-	float GetStaticCover(const springai::AIFloat3& pos, bool isAir) const;
+	float GetStaticCover(const springai::AIFloat3& pos, bool isAir, float range) const;  // range: the attacker's
+	float GetStaticCover(const springai::AIFloat3& pos, bool isAir) const {
+		return GetStaticCover(pos, isAir, dangerRange);
+	}
 	// The spot just behind a turret, away from the danger, where the commander can stand (else the turret's own)
 	springai::AIFloat3 GetBehind(CCircuitUnit* comm, const springai::AIFloat3& turret) const;
 	// A new turret point: strong enough, reached in time, away from the danger and a safe flee spot

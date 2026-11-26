@@ -52,6 +52,22 @@ static const std::vector<IFighterTask::FightType> GROUND_TYPES = {IFighterTask::
 		IFighterTask::FightType::RAID, IFighterTask::FightType::DEFEND};
 static const std::vector<IFighterTask::FightType> AIR_TYPES = {IFighterTask::FightType::AA};
 
+// Drops the entries stamped more than maxFrames ago
+static void EraseOlder(std::unordered_map<ICoreUnit::Id, int>& stamps, int frame, int maxFrames)
+{
+	for (auto it = stamps.begin(); it != stamps.end();) {
+		it = (frame - it->second > maxFrames) ? stamps.erase(it) : std::next(it);
+	}
+}
+
+// The track ahead (straight on at vel) passes within PLANE_PASS_DIST of the point toPos away
+static bool IsHeadingFor(const AIFloat3& toPos, const AIFloat3& vel)
+{
+	const float sqSpeed = vel.SqLength2D();
+	const float t = (sqSpeed > 1e-3f) ? std::max((toPos.x * vel.x + toPos.z * vel.z) / sqSpeed, 0.f) : 0.f;
+	return SQUARE(toPos.x - vel.x * t) + SQUARE(toPos.z - vel.z * t) <= SQUARE(PLANE_PASS_DIST);
+}
+
 CProtect::CProtect(CCircuitAI* circuit, const SConfig& cfg)
 		: circuit(circuit)
 		, cfg(cfg)
@@ -170,9 +186,7 @@ void CProtect::Update()
 		return;
 	}
 	const int frame = circuit->GetLastFrame();
-	for (auto it = attackers.begin(); it != attackers.end();) {
-		it = (frame - it->second > ATTACKER_FRAMES) ? attackers.erase(it) : std::next(it);
-	}
+	EraseOlder(attackers, frame, ATTACKER_FRAMES);
 	CCircuitUnit* comm = circuit->GetSetupManager()->GetCommander();
 	CBuilderManager::SCommView view;
 	if ((comm == nullptr) || comm->IsDead() || !circuit->GetBuilderManager()->GetCommView(comm, cfg.zone, view)) {
@@ -193,7 +207,7 @@ void CProtect::Update()
 	// it beat its anti-air bubble (its own power if it hits air, and the anti-air turrets covering it)
 	const bool isDamaged = (damagedFrame >= 0) && (frame - damagedFrame <= FRAMES_PER_SEC);
 	const bool isPlaneThreat = (planeDanger > 0.f)
-			&& (planeDanger > (commDef->HasAntiAir() ? view.own : 0.f) + GetStaticCover(commPos, true));
+			&& (planeDanger > (commDef->HasAntiAir() ? view.own : 0.f) + GetStaticCover(commPos, true, 0.f));  // bombs land at the plane's spot
 	const bool isThreat = (view.danger > view.own) || isDamaged || isPlaneThreat;
 	if (isThreat) {
 		lastDangerFrame = frame;
@@ -286,7 +300,6 @@ void CProtect::End(const char* reason, int frame)
 	committed.clear();
 	committedSum = presentSum = 0.f;
 	turretPos = -RgtVector;
-	dangerRange = 0.f;  // the plane bubble is checked while off: a plane's bombs land at its spot
 	isCornered = false;
 	prevHealth = -1.f;
 	dps = 0.f;
@@ -331,9 +344,7 @@ void CProtect::UpdatePlanes(int frame)
 	// planes overhead, and would hide them here
 	planeDanger = 0.f;
 	planeCount = 0;
-	for (auto it = planes.begin(); it != planes.end();) {
-		it = (frame - it->second > PLANE_HOLD_FRAMES) ? planes.erase(it) : std::next(it);
-	}
+	EraseOlder(planes, frame, PLANE_HOLD_FRAMES);
 	const float sqZone = SQUARE(cfg.zone);
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		const CEnemyInfo* enemy = kv.second;
@@ -348,12 +359,7 @@ void CProtect::UpdatePlanes(int frame)
 		if (toComm.SqLength2D() > sqZone) {
 			continue;
 		}
-		const AIFloat3& vel = enemy->GetVel();
-		const float sqSpeed = vel.SqLength2D();
-		const float t = (sqSpeed > 1e-3f) ? std::max((toComm.x * vel.x + toComm.z * vel.z) / sqSpeed, 0.f) : 0.f;
-		if (IsRecentAttacker(enemy->GetId(), frame)
-			|| (SQUARE(toComm.x - vel.x * t) + SQUARE(toComm.z - vel.z * t) <= SQUARE(PLANE_PASS_DIST)))
-		{
+		if (IsRecentAttacker(enemy->GetId(), frame) || IsHeadingFor(toComm, enemy->GetVel())) {
 			planes[enemy->GetId()] = frame;
 		} else if (planes.find(enemy->GetId()) == planes.end()) {
 			continue;
@@ -395,10 +401,10 @@ void CProtect::CollectTurrets(int frame)
 	}
 }
 
-float CProtect::GetStaticCover(const AIFloat3& pos, bool isAir) const
+float CProtect::GetStaticCover(const AIFloat3& pos, bool isAir, float range) const
 {
 	// A turret counts when it hits the danger's kind (aircraft: anti-air only) and its range covers the spot plus half
-	// the danger's range, where an enemy attacking the commander there stands on average
+	// the attacker's range, where an enemy attacking the commander there stands on average
 	const bool isWater = circuit->GetTerrainManager()->IsDeepWaterAt(pos);
 	const CCircuitDef::RangeType rangeType = isAir ? CCircuitDef::RangeType::AIR
 			: (isWater ? CCircuitDef::RangeType::WATER : CCircuitDef::RangeType::LAND);
@@ -408,7 +414,7 @@ float CProtect::GetStaticCover(const AIFloat3& pos, bool isAir) const
 		if (!isHit) {
 			continue;
 		}
-		const float reach = t.def->GetMaxRange(rangeType) - 0.5f * dangerRange;
+		const float reach = t.def->GetMaxRange(rangeType) - 0.5f * range;
 		if ((reach > 0.f) && (t.pos.SqDistance2D(pos) <= SQUARE(reach))) {
 			cover += t.power;
 		}
