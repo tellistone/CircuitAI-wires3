@@ -346,7 +346,7 @@ void CAntiAirTask::FillHomePoints()
 	const int frame = circuit->GetLastFrame();
 	homePoints.clear();
 	if (IsProtecting()) {
-		homePoints.push_back(militaryMgr->GetProtect()->GetGoal());
+		homePoints.push_back(militaryMgr->GetProtect()->GetGoal(this));
 	}
 	const std::array<IFighterTask::FightType, 2> types = {IFighterTask::FightType::ATTACK, IFighterTask::FightType::DEFEND};
 	for (IFighterTask::FightType type : types) {
@@ -490,16 +490,16 @@ void CAntiAirTask::ApplySafePos(const CQueryPathMulti* query)
 
 void CAntiAirTask::FallbackCommPos()
 {
-	// Go to the commander along a threat-aware path
+	// Go to the commander along a threat-aware path (committed to the protect: its ward's goal)
 	CCircuitAI* circuit = manager->GetCircuit();
 	CCircuitUnit* commander = circuit->GetSetupManager()->GetCommander();
-	if ((commander == nullptr) ||
-		!circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), commander->GetPos(circuit->GetLastFrame())))
-	{
+	const AIFloat3 goal = IsProtecting() ? circuit->GetMilitaryManager()->GetProtect()->GetGoal(this)
+			: (commander != nullptr) ? commander->GetPos(circuit->GetLastFrame()) : AIFloat3(-RgtVector);
+	if (!utils::is_valid(goal) || !circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), goal)) {
 		HoldAll();
 		return;
 	}
-	QueryPath(leader, commander->GetPos(circuit->GetLastFrame()), FALLBACK_PATH_RANGE, true,
+	QueryPath(leader, goal, FALLBACK_PATH_RANGE, true,
 			[this](const CQueryPathSingle* query) { ApplyFallbackPath(query, false, true); });
 }
 

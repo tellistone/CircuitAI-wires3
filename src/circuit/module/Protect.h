@@ -14,6 +14,8 @@
 
 #include "AIFloat3.h"
 
+#include <map>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -27,47 +29,52 @@ class IFighterTask;
 class ISquadTask;
 
 /*
- * Commander protect (quota.protect): one central go or no-go decision for the groups that can reach our commander when
- * an enemy force threatens it, so they never judge that fight one by one and trickle in. Updated once a second.
- * 1. Anchor: the commander's seen danger (CBuilderManager's danger list within the zone) beats its own power, or it
- *    took damage, or seen planes with a ground weapon (bombers) within the zone and heading for it beat its anti-air
- *    bubble (its own power if it hits air, and the anti-air turrets covering it). It ends keep_sec after the last such
- *    second. Zone: zone elmos around the commander, mobile armed enemies (and moving radar dots) only.
- * 2. Danger, in two sides answered together. Ground: the commander's list without its gunships, or the force balance's
- *    enemy force at the commander (CAttackBalance::GetForceAt: mobiles by how soon they can shoot it, statics by their
- *    cover falloff) without its aircraft, the larger. Air: the list's gunships and those planes at their threat
- *    before thr_mod (held 5 s after they last headed for it). The commander counts on the ground side, and on the air
- *    side only if it hits air; ground turrets on the ground side, anti-air turrets on the air side.
- * 3. Meeting point: a spot just behind our or allied turrets near the commander (away from the danger) when the static
- *    cover there plus the commander beats the danger (the ground side against its part and the gunships the anti-air
- *    turrets there leave; air only: the anti-air turrets against the air part), the commander reaches it before its
- *    time to death, and it is a safe flee spot (outside the seen flee zones, farther from the danger than the
- *    commander). Kept while that holds 1 / quota.attack_keep_threat and it can get there. The commander flees to it
- *    when it flees, and stays once at it (cornered there, it ends its flee and builds its defence). Without one it
- *    flees as it would. Its flee ignores planes, so planes alone don't move it.
- * 4. Commit, by side: groups of its kind (ground: attack, raid and gathering groups; air: anti-air groups, flying ones
- *    too) that can reach the commander within respond_sec (or its time to death if shorter, checked when a group
- *    joins), not fleeing or fighting elsewhere, soonest there first, until groups + commander + static cover reach
- *    1.25x its danger (or the go line + 0.25). The ground side adds the gunships the air side leaves unanswered (its
- *    anti-air turrets, the commander if it hits air, and its groups in a go): to its ratio, and to its commit up to
- *    its danger again (they shoot the ground groups too; gunships alone, or far past the ground part, pull none in).
- *    Bombers don't count there: they make one pass. Ratio = that sum / its danger (and the spill). Go at go_ratio with
- *    a group at least (0.6 x it once cornered: no escape or paralysed, latched for the anchor's life); no-go below the
- *    go line / quota.attack_keep_threat. 5 s per state at least, each side on its own. On go the side's committed
- *    groups are latched until the anchor ends or its no-go (a group that flees meanwhile still counts: a short flee
- *    doesn't end the fight), or until one is 1.5 x respond_sec of travel away; they merge only into each other.
- * 5. Go: a side's committed groups head for the commander, the commander's recent attackers first. Ground groups only
- *    take zone enemies (and those in contact), which pass the own-ground check and the 3-group cap; anti-air groups
- *    count the commander as a leash home point. In the fight (within half the zone of the commander, kept to 0.625:
- *    the present radius) they judge with their side's strength present (GetBoost: the commander, the side's static
- *    cover where it stands, its committed groups present and themselves), with no allied cover on top.
+ * Protect (quota.protect): one central go or no-go decision, per threatened ward, for the groups that can reach it, so
+ * they never judge that fight one by one and trickle in. Updated once a second.
+ * 0. Wards: our commanders (role comm, with the builder flee), and anti-heavy squads (not flying ones) and artillery
+ *    tasks holding a unit with the "protect" attribute. Those within 600 elmos of each other are one ward (and stay
+ *    one until 800 apart). A ward's value is its members' summed metal cost; its goal is its costliest commander,
+ *    else its costliest member. Its identity is kept while its members change.
+ * 1. Anchor: a commander's seen danger (CBuilderManager's danger list within the zone) beats its own power, or it
+ *    took damage; a group member is outnumbered by the force balance at the goal (enemy force over ours, our and
+ *    allied mobiles nearby at 0.75: an army standing by holds it); or seen planes with a ground weapon (bombers)
+ *    within the zone and heading for the goal beat its anti-air bubble (its anti-air members' power and the anti-air
+ *    turrets covering it). It ends keep_sec after the last such second. Zone: zone elmos around the goal.
+ * 2. Danger, in two sides answered together. Ground: its commanders' list without its gunships (the largest of
+ *    them), or the force balance's enemy force at the goal (CAttackBalance::GetForceAt: mobiles by how soon they can
+ *    shoot it, statics by their cover falloff) without its aircraft, the larger. Air: the list's gunships (a group
+ *    ward: the force's aircraft) and those planes at their threat before thr_mod (held 5 s after they last headed
+ *    for it). Its members count on the ground side, and on the air side if they hit air; ground turrets on the
+ *    ground side, anti-air turrets on the air side.
+ * 3. Meeting point, for a ward with a commander: a spot just behind our or allied turrets near the goal (away from
+ *    the danger) when the static cover there plus the ward beats the danger (the ground side against its part and
+ *    the gunships the anti-air turrets there leave; air only: the anti-air turrets against the air part), its lead
+ *    commander reaches it before its time to death, and it is a safe flee spot. Kept while that holds
+ *    1 / quota.attack_keep_threat and it can get there. Its commanders flee to it, and stay once at it. Group wards
+ *    keep their own retreat.
+ * 4. The pick, by side (air first, as its answer sets the gunship spill): goes keep their groups, then groups of the
+ *    side's kind (ground: attack, raid and gathering groups; air: anti-air groups, flying ones too) that can reach a
+ *    ward within respond_sec (a commander ward: or its time to death if shorter), not fleeing or fighting elsewhere,
+ *    go to the best ward by value / (travel sec + 3 s): wards in a go first, then the others, each until groups +
+ *    members + static cover reach 1.25x its danger (or the go line + 0.25). The ground side adds the gunships the
+ *    air side leaves unanswered, to its ratio and to its commit up to its danger again. A ward in a no-go still
+ *    under its go line after the pick hands its groups back, the lowest value first, and the others pick again. A
+ *    committed group not yet present moves, once, to a ward that scores it at least twice as high. Go at go_ratio
+ *    with a group at least (0.6 x it once cornered); no-go below the go line / quota.attack_keep_threat. 5 s per
+ *    state at least, each ward and side on its own. On go the groups are latched until the anchor ends or its
+ *    no-go, or until one is 1.5 x respond_sec of travel away; they merge only into each other.
+ * 5. Go: a side's committed groups head for their ward's goal, recent attackers of our commanders first. Ground
+ *    groups only take enemies in their ward's zone (and those in contact), which pass the own-ground check and the
+ *    3-group cap; anti-air groups count the goal as a leash home point. In the fight (within half the zone of the
+ *    goal, kept to 0.625: the present radius) they judge with their ward side's strength present (GetBoost: the
+ *    members, the side's static cover at the goal, its committed groups present and themselves).
  */
 class CProtect {
 public:
 	enum class State: char {NOGO, GO};
 	struct SConfig {
 		bool isEnabled = false;
-		float zone = 1200.f;  // elmos around the commander
+		float zone = 1200.f;  // elmos around a ward's goal
 		int keepFrames = FRAMES_PER_SEC * 12;  // keep_sec
 		float respondSec = 12.f;  // travel time
 		float goRatio = 1.f;
@@ -79,36 +86,31 @@ public:
 	bool IsEnabled() const { return cfg.isEnabled; }
 
 	void Update();  // once a second
-	void OnCommDamaged(CCircuitUnit* comm, CEnemyInfo* attacker);
+	void OnCommDamaged(CCircuitUnit* comm, CEnemyInfo* attacker);  // any of our commanders
 
-	bool IsActive() const { return isOn; }
-	// A committed group while its side is in a go: it acts on the protect
-	bool IsActing(const IFighterTask* task) const {
-		auto it = committed.find(task);
-		return (it != committed.end()) && (sides[it->second.side].state == State::GO);
-	}
-	// A mobile armed enemy (or a moving radar dot) inside the zone, while the ground side is in a go
-	bool IsZoneEnemy(const CEnemyInfo* enemy) const;
-	// It hit the commander within the last 5 s
+	// A committed group while its ward's side is in a go: it acts on the protect
+	bool IsActing(const IFighterTask* task) const;
+	// A mobile armed enemy (or a moving radar dot) inside the zone of the task's ward, while its ground side is in a go
+	bool IsZoneEnemy(const IFighterTask* task, const CEnemyInfo* enemy) const;
+	// It hit one of our commanders within the last 5 s
 	bool IsRecentAttacker(ICoreUnit::Id id, int frame) const;
-	// What an acting group's own strength is multiplied by where it judges the commander's fight: in the present
-	// radius, (the strength present, with itself) / its own, at least 1; elsewhere, or for any other task, 1
+	// What an acting group's own strength is multiplied by where it judges its ward's fight: in the present radius,
+	// (the strength present, with itself) / its own, at least 1; elsewhere, or for any other task, 1
 	float GetBoost(const IFighterTask* task, const springai::AIFloat3& pos) const {
-		// The usual path (every threat check): two compares
-		return ((sides[GROUND].state == State::GO) || (sides[AIR].state == State::GO)) ? GetGoBoost(task, pos) : 1.f;
+		return isAnyGo ? GetGoBoost(task, pos) : 1.f;  // the usual path (every threat check): one compare
 	}
-	// A committed group's units went over to another task (CDefendTask's promotion, ISquadTask::Merge): that one is
-	// committed instead
+	// A task's units went over to another task (CDefendTask's promotion, ISquadTask::Merge): that one is committed, or
+	// a ward member, instead
 	void Transfer(const IFighterTask* from, const IFighterTask* to);
-	// A task ended (CMilitaryManager::DequeueTask): it is dropped at once, so no committed pointer outlives its task
+	// A task ended (CMilitaryManager::DequeueTask): it is dropped at once, so no pointer outlives its task
 	void OnTaskEnd(const IFighterTask* task);
-	// Where acting groups head: the commander
-	const springai::AIFloat3& GetGoal() const { return commPos; }
-	// Where the commander flees: the turret point; invalid: none (always while off). Asked only while it flees (not on
-	// a health retreat)
-	const springai::AIFloat3& GetMeetingPoint() const { return turretPos; }
-	// pos stands at the meeting point
-	bool IsAtMeetingPoint(const springai::AIFloat3& pos) const;
+	// Where an acting group heads: its ward's goal (invalid for any other task)
+	springai::AIFloat3 GetGoal(const IFighterTask* task) const;
+	// Where the commander flees: its ward's turret point; invalid: none (always while off). Asked only while it flees
+	// (not on a health retreat)
+	springai::AIFloat3 GetMeetingPoint(const CCircuitUnit* comm) const;
+	// pos stands at the commander's meeting point
+	bool IsAtMeetingPoint(const CCircuitUnit* comm, const springai::AIFloat3& pos) const;
 
 private:
 	enum Side: char {GROUND = 0, AIR, SIDE_COUNT};
@@ -116,20 +118,53 @@ private:
 		State state = State::NOGO;
 		int stateFrame = -1;
 		int goCount = 0;  // goes in this protect (the end line)
-		float own = 0.f;  // the commander's power (on the air side 0 if it can't hit air)
-		float cover = 0.f;  // turrets of the side's kind at the turret point, else where the commander stands
-		float commCover = 0.f;  // ... where the commander stands
+		float own = 0.f;  // the members' power (on the air side those that hit air)
+		float cover = 0.f;  // turrets of the side's kind at the turret point, else at the goal
+		float commCover = 0.f;  // ... at the goal
 		float danger = 0.f;
 		float spill = 0.f;  // ground: the unanswered gunships (GetGunshipSpill), committed against up to danger again
+		float need = 0.f;  // the commit's target this update
 		float committedSum = 0.f;  // its committed groups
 		float presentSum = 0.f;  // own + commCover + its present committed groups
 		float ratio = 0.f;
 		int count = 0;  // its committed groups
 		float GetSum() const { return committedSum + own + cover; }  // the ratio's numerator
 	};
+	struct SWard {
+		int id = 0;
+		bool isOn = false;
+		int startFrame = -1;
+		int lastDangerFrame = -1;
+		bool isCornered = false;  // latched for the anchor's life (commander wards)
+		CCircuitUnit* comm = nullptr;  // the lead commander this update; nullptr: a group ward
+		const char* name = "";  // the lead member's def (logs)
+		int memberCount = 0;
+		float value = 0.f;  // the members' metal cost
+		float goLine = 1.f;
+		springai::AIFloat3 goal = -RgtVector;
+		springai::AIFloat3 dangerPos = -RgtVector;  // the nearest seen danger, kept from the last update that saw one
+		float dangerRange = 0.f;
+		float airShare = 0.f;  // the air side's share of the danger, kept while it is empty (logged)
+		float peakAirShare = 0.f;  // the highest airShare of this protect (the end line)
+		float planeDanger = 0.f;  // UpdatePlanes: their threat before thr_mod (CCircuitDef::GetRawThreat)
+		int planeCount = 0;
+		float gunshipDanger = 0.f;
+		SSide sides[SIDE_COUNT];
+		float deathSec = 0.f;  // the lead commander's estimated time to death (max: unhurt, or a group ward)
+		ICoreUnit::Id healthId = -1;  // whose health it tracks
+		float prevHealth = -1.f;
+		int prevHealthFrame = -1;
+		float dps = 0.f;  // smoothed damage rate
+		springai::AIFloat3 turretPos = -RgtVector;  // the meeting point (GetBehind a turret); invalid: none
+		std::unordered_map<ICoreUnit::Id, int> planes;  // plane id -> frame it last headed for the goal
+		bool isReleased = false;  // the pick: handed its groups back this update
+		bool isSeen = false;  // still has members this update
+	};
+	struct SMember;
 	struct SCandidate {
 		ISquadTask* task;
-		float travelSec;  // GetTravelSec
+		std::vector<float> travelSec;  // per on ward (Pick's order), < 0: can't answer it
+		SWard* ward = nullptr;  // where the pick put it
 	};
 	struct STurret {
 		springai::AIFloat3 pos;
@@ -139,72 +174,62 @@ private:
 		bool isAntiAir;  // against aircraft, within MAX_TURRET_RANGE
 	};
 	struct SCommit {
+		int ward = 0;
+		Side side = GROUND;
 		float strength = 0.f;  // health-scaled power (ISquadTask::GetRallyStrength)
 		bool isPresent = false;  // its leader in the present radius (IsInFight), not fleeing
-		Side side = GROUND;
+		bool isMoved = false;  // it moved to another ward once (the pick)
 	};
-	void Start(int frame);
-	void End(const char* reason, int frame);
-	void SetState(Side side, State value, int frame);
-	// Its committed groups refreshed (and new ones), then go or no-go
-	void UpdateSide(Side side, int frame, float goLine);
-	// The gunships of the air side's danger that airAnswer leaves unanswered: the ground side's spill
-	float GetGunshipSpill(float airAnswer) const;
+
+	void CollectMembers(int frame, std::vector<SMember>& out);
+	void AssignWards(std::vector<SMember>& members);  // clusters, with the wards' identities kept
+	void UpdateWard(SWard& w, const std::vector<const SMember*>& members, int frame);
+	void Start(SWard& w, int frame);
+	void End(SWard& w, const char* reason, int frame);
+	void SetState(SWard& w, Side side, State value, int frame);
+	std::string GetLabel(const SWard& w) const;  // the logs' [ward N: lead +others, value m]
+	const SWard* FindWard(const IFighterTask* task, Side* outSide = nullptr) const;  // its ward, if committed
 	float GetGoBoost(const IFighterTask* task, const springai::AIFloat3& pos) const;
-	void UpdateDeathTime(CCircuitUnit* comm, int frame);
-	// Seen planes with a ground weapon in the zone heading for the commander (or that just hit it): planeDanger
-	void UpdatePlanes(int frame);
-	void CollectTurrets(int frame);  // both kinds
+	// The gunships of the ward's air danger that airAnswer leaves unanswered: the ground side's spill
+	float GetGunshipSpill(const SWard& w, float airAnswer) const;
+	void UpdateDeathTime(SWard& w, int frame);
+	// Seen planes with a ground weapon in the zone heading for the goal (or that just hit a commander): planeDanger
+	void UpdatePlanes(SWard& w, int frame);
+	void CollectTurrets(int frame);  // both kinds, once per update when first needed
 	float GetStaticCover(const springai::AIFloat3& pos, bool isAir, float range) const;  // range: the attacker's
-	float GetStaticCover(const springai::AIFloat3& pos, bool isAir) const {
-		return GetStaticCover(pos, isAir, dangerRange);
-	}
 	// The spot just behind a turret, away from the danger, where the commander can stand (else the turret's own)
-	springai::AIFloat3 GetBehind(CCircuitUnit* comm, const springai::AIFloat3& turret) const;
-	// The turrets at pos and the commander against the danger: the ground side (with the gunships those turrets leave),
+	springai::AIFloat3 GetBehind(const SWard& w, const springai::AIFloat3& turret) const;
+	// The turrets at pos and the ward against the danger: the ground side (with the gunships those turrets leave),
 	// or the air side when there is no ground danger
-	float GetSpotRatio(const springai::AIFloat3& pos) const;
-	void SetCover(const springai::AIFloat3& pos);  // both sides' cover
-	// A new turret point: strong enough, reached in time, away from the danger and a safe flee spot
-	bool IsTurretSpotValid(CCircuitUnit* comm, const springai::AIFloat3& spot) const;
-	// The turret point kept: 1 / attack_keep_threat of the danger, and reachable (the chasers near it are the point)
-	bool IsTurretSpotHeld(CCircuitUnit* comm, const springai::AIFloat3& spot) const;
-	void UpdateTurretPoint(CCircuitUnit* comm, int frame);
-	// The present radius: half the zone around the commander; once in it (wasPresent), 0.625 of it
-	bool IsInFight(const springai::AIFloat3& pos, bool wasPresent) const;
-	float GetTravelSec(const ISquadTask* task, int frame) const;  // its leader to the commander, at the group's pace
-	void CollectCandidates(bool isAir, int frame, std::vector<SCandidate>& out) const;
+	float GetSpotRatio(const SWard& w, const springai::AIFloat3& pos) const;
+	void SetCover(SWard& w, const springai::AIFloat3& pos);  // both sides' cover
+	bool IsTurretSpotValid(const SWard& w, const springai::AIFloat3& spot) const;
+	bool IsTurretSpotHeld(const SWard& w, const springai::AIFloat3& spot) const;
+	void UpdateTurretPoint(SWard& w);
+	// The present radius: half the zone around the goal; once in it (wasPresent), 0.625 of it
+	bool IsInFight(const SWard& w, const springai::AIFloat3& pos, bool wasPresent) const;
+	float GetTravelSec(const ISquadTask* task, const springai::AIFloat3& goal, int frame) const;
+	void CollectCandidates(bool isAir, int frame, const std::vector<SWard*>& on, std::vector<SCandidate>& out) const;
 	// Its strength and flags, added to its side's sums
-	void Refresh(const ISquadTask* task, int frame, SCommit& commit, SSide& s);
-	// The side's committed groups refreshed, and new ones while its sum is short of need
-	void UpdateCommitted(Side side, int frame, float need);
+	void Refresh(const ISquadTask* task, int frame, SCommit& commit, SWard& w);
+	// The side's commit and go or no-go over all on wards
+	void Pick(Side side, int frame, const std::vector<SWard*>& on);
+	// The best (candidate, ward) pairs by value / (travel + 3 s), for the wards in state that are short of their need
+	void Fill(Side side, State state, int frame, const std::vector<SWard*>& on, std::vector<SCandidate>& pool);
 
 	CCircuitAI* circuit;
 	SConfig cfg;
 
-	bool isOn;
-	int startFrame;
-	int lastDangerFrame;
-	int damagedFrame;
-	bool isCornered;  // latched for the anchor's life
-	springai::AIFloat3 commPos;
-	springai::AIFloat3 dangerPos;  // the nearest seen danger, kept from the last update that saw one
-	float airShare;  // the air side's share of the danger, kept while it is empty (logged)
-	float peakAirShare;  // the highest airShare of this protect (the end line)
-	float dangerRange;
-	float planeDanger;  // UpdatePlanes: their threat before thr_mod (CCircuitDef::GetRawThreat)
-	int planeCount;
-	float gunshipDanger;  // the gunships of the commander's list
-	SSide sides[SIDE_COUNT];
-	float deathSec;  // estimated time to death, std::numeric_limits<float>::max() while unhurt
-	float prevHealth;
-	int prevHealthFrame;
-	float dps;  // smoothed damage rate
-	springai::AIFloat3 turretPos;  // the meeting point (GetBehind a turret); invalid: none
-	std::vector<STurret> turrets;  // CollectTurrets, each update
+	std::map<int, SWard> wards;  // id -> ward (on or off; off ones are kept while they have members)
+	int nextWardId;
+	bool isAnyGo;  // a side of some ward is in a go (GetBoost's quick path)
+	int turretFrame;  // the frame turrets were collected at
+	std::vector<springai::AIFloat3> goals;  // this update's ward goals (the turrets' reach)
+	std::vector<STurret> turrets;
 	std::unordered_map<const IFighterTask*, SCommit> committed;
-	std::unordered_map<ICoreUnit::Id, int> attackers;  // enemy id -> frame it last hit the commander
-	std::unordered_map<ICoreUnit::Id, int> planes;  // UpdatePlanes: plane id -> frame it last headed for the commander
+	std::unordered_map<const void*, int> memberWard;  // a commander (unit) or protected task -> its ward's id
+	std::unordered_map<ICoreUnit::Id, int> attackers;  // enemy id -> frame it last hit one of our commanders
+	std::unordered_map<ICoreUnit::Id, int> damaged;  // commander id -> frame it was last hit
 };
 
 } // namespace circuit

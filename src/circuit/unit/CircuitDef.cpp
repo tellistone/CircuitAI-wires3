@@ -52,6 +52,7 @@ CCircuitDef::AttrName CCircuitDef::attrNames = {
 	{"cloak_route",  CCircuitDef::AttrType::CLOAK_ROUTE},
 	{"plant",        CCircuitDef::AttrType::PLANT},
 	{"kite",         CCircuitDef::AttrType::KITE},
+	{"protect",      CCircuitDef::AttrType::PROTECT},
 };
 CCircuitDef::FireName CCircuitDef::fireNames = {
 	{"hold",   CCircuitDef::FireType::HOLD},

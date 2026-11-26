@@ -470,11 +470,20 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     at 0.95 x range and the fire band reaches the full range, so a unit Zero-K's own skirm keeps at the edge of its
     range is no longer pulled back in to 0.9 x range.
 
-- **Commander protect against rushes** (`quota.protect`, new, off by default: `enable`, `zone` 1200, `keep_sec` 12,
-  `respond_sec` 12, `go_ratio` 1.0). When the commander's seen danger within `zone` beats its own power, or it takes
-  damage, or seen bombers within `zone` heading for it beat its anti-air bubble, one central go or no-go decides once
-  a second for every group that can reach it, so they commit together or not at all instead of each judging the
-  fight alone and trickling in.
+- **Protect against rushes on commanders and protected groups** (`quota.protect`, new, off by default: `enable`,
+  `zone` 1200, `keep_sec` 12, `respond_sec` 12, `go_ratio` 1.0). When a commander's seen danger within `zone` beats
+  its own power, or it takes damage, or seen bombers within `zone` heading for it beat its anti-air bubble, one central
+  go or no-go decides once a second for every group that can reach it, so they commit together or not at all instead
+  of each judging the fight alone and trickling in.
+  - Wards: every commander of ours (each one, not only the last built, and on after one dies), and anti-heavy squads
+    (not flying ones) and artillery tasks holding a unit with the new `protect` attribute (none by default). Those
+    within 600 elmos of each other are one ward until 800 apart, worth their summed metal cost. A group ward starts
+    when the force balance at it says it is outnumbered (our army nearby counts, so the army isn't held at its
+    artillery), or on bombers; it has no meeting point and no time to death. Each ward and side has its own go.
+  - The pick: a go keeps its groups; then groups go to the ward with the best value / (travel sec + 3), wards in a go
+    first. A ward in a no-go still under its go line after the pick hands its groups back, the lowest value first,
+    so two wards don't split the same groups and both stay out. A committed group not yet present moves once to a
+    ward scoring it twice as high (`PROTECT move`). Every `PROTECT` line names its ward.
   - Danger, in two sides answered together. Ground: the commander's danger list without its gunships, or the force
     balance's enemy force at the commander (mobiles by how soon they can shoot it, enemy statics by their cover
     falloff) without its aircraft, the larger. Air: the list's gunships and the bombers. Bombers count when seen
