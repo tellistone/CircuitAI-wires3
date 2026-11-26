@@ -22,7 +22,6 @@
 #include "Log.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <limits>
 
@@ -47,10 +46,11 @@ static constexpr float MEET_BACK_DIST = 100.f;  // the meeting point is this far
 static constexpr float MAX_TURRET_RANGE = 2000.f;  // static anti-air beyond this reach is no cover (IsStaticDefence's line)
 static constexpr float ENGAGED_SLACK = 200.f;  // a group with a target out of the zone within its range + this is busy
 static constexpr float PLANE_PASS_DIST = 300.f;  // a plane heads for the commander when its track passes this close
+static constexpr int PLANE_HOLD_FRAMES = FRAMES_PER_SEC * 5;  // ... and counts this long after it last did
 // The groups a go of each kind takes: ground (attack, raid and gathering) or air (anti-air, flying ones too)
-static const std::array<IFighterTask::FightType, 3> GROUND_TYPES = {IFighterTask::FightType::ATTACK,
+static const std::vector<IFighterTask::FightType> GROUND_TYPES = {IFighterTask::FightType::ATTACK,
 		IFighterTask::FightType::RAID, IFighterTask::FightType::DEFEND};
-static const std::array<IFighterTask::FightType, 1> AIR_TYPES = {IFighterTask::FightType::AA};
+static const std::vector<IFighterTask::FightType> AIR_TYPES = {IFighterTask::FightType::AA};
 
 CProtect::CProtect(CCircuitAI* circuit, const SConfig& cfg)
 		: circuit(circuit)
@@ -227,10 +227,11 @@ void CProtect::Update()
 	isCornered |= view.isCornered || comm->GetUnit()->IsParalyzed();
 
 	// 2. Danger: the enemy force that could shoot the commander soon (the force balance's, statics included), or its
-	// own list (gunships on their way, moving radar dots) and the planes heading for it, whichever is more
+	// own list (gunships on their way, moving radar dots), whichever is more. The planes heading for it count in air
+	// mode only: ground groups can't shoot them, so a few bombers with a ground push would sink a ground go
 	CAttackBalance::SForce force;
 	circuit->GetMilitaryManager()->GetAttackBalance()->GetForceAt(commPos, nullptr, commDef->IsAmphibious(), force);
-	danger = std::max(force.enemy, listDanger);
+	danger = std::max(force.enemy, view.danger + (isAirDanger ? planeDanger : 0.f));
 	if (isStart) {
 		circuit->LOG("PROTECT start: commander power %.1f, danger %.1f (force %.1f, its own list %.1f, bombers %i: %.1f),"
 				" aircraft %.0f%%%s at (%.0f, %.0f)", own, danger, force.enemy, view.danger, planeCount, planeDanger,
@@ -324,11 +325,15 @@ void CProtect::UpdateDeathTime(CCircuitUnit* comm, int frame)
 void CProtect::UpdatePlanes(int frame)
 {
 	// Seen enemy planes with a ground or water weapon (bombers; gunships are in the commander's list) within the zone,
-	// heading for the commander (the track ahead passes within PLANE_PASS_DIST) or that hit it in the last 5 s. At
+	// heading for the commander (the track ahead passes within PLANE_PASS_DIST) or that hit it in the last 5 s, and
+	// held PLANE_HOLD_FRAMES after either, so a bomber turning or lining up doesn't drop in and out each second. At
 	// their threat before thr_mod: bombers' thr_mod (0.01..0.1) keeps the threat map's readers from shying away from
 	// planes overhead, and would hide them here
 	planeDanger = 0.f;
 	planeCount = 0;
+	for (auto it = planes.begin(); it != planes.end();) {
+		it = (frame - it->second > PLANE_HOLD_FRAMES) ? planes.erase(it) : std::next(it);
+	}
 	const float sqZone = SQUARE(cfg.zone);
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		const CEnemyInfo* enemy = kv.second;
@@ -343,13 +348,15 @@ void CProtect::UpdatePlanes(int frame)
 		if (toComm.SqLength2D() > sqZone) {
 			continue;
 		}
-		if (!IsRecentAttacker(enemy->GetId(), frame)) {
-			const AIFloat3& vel = enemy->GetVel();
-			const float sqSpeed = vel.SqLength2D();
-			const float t = (sqSpeed > 1e-3f) ? std::max((toComm.x * vel.x + toComm.z * vel.z) / sqSpeed, 0.f) : 0.f;
-			if (SQUARE(toComm.x - vel.x * t) + SQUARE(toComm.z - vel.z * t) > SQUARE(PLANE_PASS_DIST)) {
-				continue;
-			}
+		const AIFloat3& vel = enemy->GetVel();
+		const float sqSpeed = vel.SqLength2D();
+		const float t = (sqSpeed > 1e-3f) ? std::max((toComm.x * vel.x + toComm.z * vel.z) / sqSpeed, 0.f) : 0.f;
+		if (IsRecentAttacker(enemy->GetId(), frame)
+			|| (SQUARE(toComm.x - vel.x * t) + SQUARE(toComm.z - vel.z * t) <= SQUARE(PLANE_PASS_DIST)))
+		{
+			planes[enemy->GetId()] = frame;
+		} else if (planes.find(enemy->GetId()) == planes.end()) {
+			continue;
 		}
 		planeDanger += edef->GetRawThreat();
 		++planeCount;
@@ -522,10 +529,7 @@ void CProtect::CollectCandidates(int frame, std::vector<SCandidate>& out) const
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const float maxSec = std::min(cfg.respondSec, deathSec);
 	const float sqZone = SQUARE(cfg.zone);
-	const IFighterTask::FightType* types = isAirDanger ? AIR_TYPES.data() : GROUND_TYPES.data();
-	const size_t typeCount = isAirDanger ? AIR_TYPES.size() : GROUND_TYPES.size();
-	for (size_t i = 0; i < typeCount; ++i) {
-		const IFighterTask::FightType type = types[i];
+	for (IFighterTask::FightType type : isAirDanger ? AIR_TYPES : GROUND_TYPES) {
 		for (IFighterTask* t : militaryMgr->GetTasks(type)) {
 			ISquadTask* g = static_cast<ISquadTask*>(t);  // attack, raid, defend and anti-air tasks are squads
 			CCircuitUnit* leader = g->GetLeader();

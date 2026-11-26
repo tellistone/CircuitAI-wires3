@@ -34,9 +34,9 @@ class ISquadTask;
  *    bubble (its own power if it hits air, and the anti-air turrets covering it). It ends keep_sec after the last such
  *    second. Zone: zone elmos around the commander, mobile armed enemies (and moving radar dots) only.
  * 2. Danger: the force balance's enemy force at the commander (CAttackBalance::GetForceAt: mobiles by how soon they can
- *    shoot it, statics by their cover falloff), or the commander's own list (gunships on their way too) plus those
- *    planes at their threat before thr_mod, the larger. An air danger: aircraft over 60% of the list and the planes,
- *    until under 40%. Then anti-air groups are sent instead of ground ones, only anti-air turrets count, and the
+ *    shoot it, statics by their cover falloff), or the commander's own list (gunships on their way too) plus, in air
+ *    mode only, those planes at their threat before thr_mod (held 5 s after they last headed for it), the larger. An
+ *    air danger: aircraft over 60% of the list and the planes, until under 40%. Then anti-air groups are sent instead of ground ones, only anti-air turrets count, and the
  *    commander only if it hits air.
  * 3. Meeting point: a spot just behind our or allied turrets near the commander (away from the danger) when the static
  *    cover there plus the commander beats the danger, the commander reaches it before its time to death, and it is a
@@ -180,6 +180,7 @@ private:
 	std::vector<STurret> turrets;  // CollectTurrets, each update
 	std::unordered_map<const IFighterTask*, SCommit> committed;
 	std::unordered_map<ICoreUnit::Id, int> attackers;  // enemy id -> frame it last hit the commander
+	std::unordered_map<ICoreUnit::Id, int> planes;  // UpdatePlanes: plane id -> frame it last headed for the commander
 };
 
 } // namespace circuit

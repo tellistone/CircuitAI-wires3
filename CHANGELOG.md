@@ -476,9 +476,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   a second for every group that can reach it, so they commit together or not at all instead of each judging the
   fight alone and trickling in.
   - Danger: the larger of the force balance's enemy force at the commander (mobiles by how soon they can shoot it,
-    enemy statics by their cover falloff) and the commander's own danger list plus the bombers. Bombers count when
-    seen with a ground weapon, their track passing within 300 elmos of the commander (or they hit it in the last 5 s),
-    at their threat before `thr_mod`. The bubble: the commander's own power if it hits air, and the anti-air turrets
+    enemy statics by their cover falloff) and the commander's own danger list, plus the bombers in air mode (ground
+    groups can't shoot them). Bombers count when seen with a ground weapon, their track passing within 300 elmos of
+    the commander (or they hit it in the last 5 s), held 5 s after, at their threat before `thr_mod`. The bubble: the commander's own power if it hits air, and the anti-air turrets
     covering it. Against aircraft (gunships and bombers over 60% of that danger, until under 40%) anti-air groups are
     sent instead of ground ones: only anti-air turrets count, and the commander if it hits air.
   - Commit: groups of the danger's kind (ground: attack, raid and gathering groups; air: anti-air groups, flying ones
