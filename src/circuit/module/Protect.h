@@ -35,7 +35,7 @@ class ISquadTask;
  *    second. Zone: zone elmos around the commander, mobile armed enemies (and moving radar dots) only.
  * 2. Danger, in two sides answered together. Ground: the commander's list without its gunships, or the force balance's
  *    enemy force at the commander (CAttackBalance::GetForceAt: mobiles by how soon they can shoot it, statics by their
- *    cover falloff) in the list's proportion, the larger. Air: the list's gunships and those planes at their threat
+ *    cover falloff) without its aircraft, the larger. Air: the list's gunships and those planes at their threat
  *    before thr_mod (held 5 s after they last headed for it). The commander counts on the ground side, and on the air
  *    side only if it hits air; ground turrets on the ground side, anti-air turrets on the air side.
  * 3. Meeting point: a spot just behind our or allied turrets near the commander (away from the danger) when the static
@@ -48,9 +48,10 @@ class ISquadTask;
  * 4. Commit, by side: groups of its kind (ground: attack, raid and gathering groups; air: anti-air groups, flying ones
  *    too) that can reach the commander within respond_sec (or its time to death if shorter, checked when a group
  *    joins), not fleeing or fighting elsewhere, soonest there first, until groups + commander + static cover reach
- *    1.25x its danger (or the go line + 0.25). Ratio = that sum / its danger; the ground side adds the gunships the
- *    air side leaves unanswered (its anti-air turrets, the commander if it hits air, and its groups in a go), so ground
- *    groups don't walk into gunships no one shoots. Bombers don't count there: they make one pass. Go at go_ratio with
+ *    1.25x its danger (or the go line + 0.25). The ground side adds the gunships the air side leaves unanswered (its
+ *    anti-air turrets, the commander if it hits air, and its groups in a go): to its ratio, and to its commit up to
+ *    its danger again (they shoot the ground groups too; gunships alone, or far past the ground part, pull none in).
+ *    Bombers don't count there: they make one pass. Ratio = that sum / its danger (and the spill). Go at go_ratio with
  *    a group at least (0.6 x it once cornered: no escape or paralysed, latched for the anchor's life); no-go below the
  *    go line / quota.attack_keep_threat. 5 s per state at least, each side on its own. On go the side's committed
  *    groups are latched until the anchor ends or its no-go (a group that flees meanwhile still counts: a short flee
@@ -119,7 +120,7 @@ private:
 		float cover = 0.f;  // turrets of the side's kind at the turret point, else where the commander stands
 		float commCover = 0.f;  // ... where the commander stands
 		float danger = 0.f;
-		float spill = 0.f;  // ground: the unanswered gunships (GetGunshipSpill), judged with but not committed against
+		float spill = 0.f;  // ground: the unanswered gunships (GetGunshipSpill), committed against up to danger again
 		float committedSum = 0.f;  // its committed groups
 		float presentSum = 0.f;  // own + commCover + its present committed groups
 		float ratio = 0.f;
@@ -145,7 +146,6 @@ private:
 	void Start(int frame);
 	void End(const char* reason, int frame);
 	void SetState(Side side, State value, int frame);
-	void ClearSide(Side side);  // its committed groups dropped
 	// Its committed groups refreshed (and new ones), then go or no-go
 	void UpdateSide(Side side, int frame, float goLine);
 	// The gunships of the air side's danger that airAnswer leaves unanswered: the ground side's spill

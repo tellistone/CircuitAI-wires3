@@ -226,8 +226,13 @@ void CAttackBalance::GetForceAt(const AIFloat3& F, const CAttackTask* self, bool
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const bool isWater = threatMap->IsWaterAt(F);
 	float enemy = 0.f;
+	float air = 0.f;
 	for (const SEntry& e : enemies) {
-		enemy += e.power * GetWeight(e, F.SqDistance2D(e.pos), isWater, isAmph);
+		const float power = e.power * GetWeight(e, F.SqDistance2D(e.pos), isWater, isAmph);
+		enemy += power;
+		if (e.kind == Kind::AIR) {
+			air += power;
+		}
 	}
 	float allied = 0.f;
 	for (const SEntry& a : allies) {
@@ -244,6 +249,7 @@ void CAttackBalance::GetForceAt(const AIFloat3& F, const CAttackTask* self, bool
 		}
 	}
 	outForce.enemy = enemy;
+	outForce.air = air;
 	outForce.allied = allied;
 	outForce.cover = threatMap->GetDefenceCoverAt(F);  // none on water
 	outForce.blip = blip;

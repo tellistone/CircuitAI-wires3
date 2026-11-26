@@ -61,6 +61,7 @@ public:
 	// The force at a spot. own: the judging group's (CAttackTask fills it in, x powerMod)
 	struct SForce {
 		float enemy = 0.f;
+		float air = 0.f;  // the aircraft's part of enemy
 		float own = 0.f;
 		float allied = 0.f;  // raw: x ALLY_SHARE in GetOurs
 		float cover = 0.f;  // allied statics, raw

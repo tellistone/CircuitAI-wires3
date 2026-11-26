@@ -477,7 +477,7 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   fight alone and trickling in.
   - Danger, in two sides answered together. Ground: the commander's danger list without its gunships, or the force
     balance's enemy force at the commander (mobiles by how soon they can shoot it, enemy statics by their cover
-    falloff) in the list's proportion, the larger. Air: the list's gunships and the bombers. Bombers count when seen
+    falloff) without its aircraft, the larger. Air: the list's gunships and the bombers. Bombers count when seen
     with a ground weapon, their track passing within 300 elmos of the commander (or they hit it in the last 5 s), held
     5 s after, at their threat before `thr_mod`. The bubble: the commander's own power if it hits air, and the anti-air
     turrets covering it. The ground side counts the commander and ground turrets; the air side anti-air turrets, and
@@ -488,8 +488,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     side's danger (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or
     paralysed), no-go under `go_ratio` / `attack_keep_threat`, 5 s per state at least. The ground side's ratio also
     counts the gunships the air side leaves unanswered (its turrets, the commander, and its groups in a go), so ground
-    groups don't walk into gunships no one shoots; bombers don't count there (one pass), and that spill never pulls
-    in more ground groups. A committed group that flees still counts for keeping a go, not for starting one, and a
+    groups don't walk into gunships no one shoots, and the commit counts them too, up to the ground danger again
+    (they shoot the ground groups as well; gunships alone, or far past the ground part, pull none in). Bombers don't
+    count there (one pass). A committed group that flees still counts for keeping a go, not for starting one, and a
     committed group 1.5x `respond_sec` of travel away is dropped.
   - On go, committed groups leave rallies and guard pulls, merge only with each other, head for the commander, take
     the commander's attackers first and within half the zone of it (kept to 0.625) judge with the strength present
