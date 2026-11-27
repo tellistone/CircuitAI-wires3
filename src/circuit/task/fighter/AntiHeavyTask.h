@@ -202,7 +202,7 @@ private:
 	int walkInFrame = 0;  // no new walk-in to a heavy before this (after a flee, or no route to any heavy)
 	bool isParkHold = false;  // units on hold position (UpdateHolds)
 	bool isReturnFire = false;  // units on return fire (attacking a heavy)
-	int aimId = -1;  // the heavy their set-target is on (in sight); -1: none
+	int aimId = -1;  // the heavy their set-target is on (UpdateHolds); -1: none
 };
 
 } // namespace circuit

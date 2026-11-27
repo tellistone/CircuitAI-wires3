@@ -6,7 +6,6 @@
  */
 
 #include "task/fighter/ArtilleryTask.h"
-#include "task/fighter/AntiHeavyTask.h"
 #include "task/fighter/AttackTask.h"
 #include "task/TaskManager.h"
 #include "map/ThreatMap.h"
@@ -106,10 +105,7 @@ void CArtilleryTask::AssignTo(CCircuitUnit* unit)
 
 void CArtilleryTask::RemoveAssignee(CCircuitUnit* unit)
 {
-	SetAttacking(unit, false);  // its own fire state back
-	if (isScooting) {
-		unit->CancelScootAttack();  // the step back's queued attack isn't the next task's
-	}
+	SetAttacking(unit, nullptr);  // its own fire state back
 	IFighterTask::RemoveAssignee(unit);
 	if (units.empty()) {
 		manager->AbortTask(this);
@@ -212,13 +208,12 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 			return;
 		}
 		const bool wasAttacking = isAttacking;
-		SetAttacking(unit, true);
+		SetAttacking(unit, bestTarget);
 		attackPos = bestTarget->GetPos();
 		if (isAntiHeavy) {
 			// The attack task's firing spots: the cheapest allowed spot (threat, walk) at ~90% of our range, re-picked
 			// every 3 s and when the heavy moves a tile, so the unit backs off as it closes in; none: from here
 			SetTarget(bestTarget);  // also for the other anti-heavy units' overkill check (GetAhReadyDamage)
-			unit->CmdHoldTarget(bestTarget->GetId());  // on return fire: shoots it on a walk to a spot too (SetAttacking)
 			if (!wasAttacking) {
 				unit->ClearTarget();  // our own Stop or flee came in between: order at once
 			}
@@ -883,30 +878,29 @@ void CArtilleryTask::StopAttack(CCircuitUnit* unit)
 	if (!isAttacking) {
 		return;
 	}
-	SetAttacking(unit, false);
+	SetAttacking(unit, nullptr);
 	CCircuitAI* circuit = manager->GetCircuit();
 	TRY_UNIT(circuit, unit,
 		unit->GetUnit()->Stop();
 	)
 }
 
-void CArtilleryTask::SetAttacking(CCircuitUnit* unit, bool isOn)
+void CArtilleryTask::SetAttacking(CCircuitUnit* unit, CEnemyInfo* enemy)
 {
-	// Anti-heavy: return fire while the attack order on a heavy is live (also queued behind a scoot), so the reload
-	// isn't spent on chaff that comes into range; its own fire state otherwise. Execute also sets ZK's set-target on
-	// the heavy (CmdHoldTarget), which fires whatever the order: on the walk to each firing spot and back from a scoot,
-	// where the attack order isn't at the front of the queue. Cancelled here with the attack
-	if (isAttacking == isOn) {
-		return;
-	}
-	isAttacking = isOn;
-	if (isAntiHeavy) {
-		TRY_UNIT(manager->GetCircuit(), unit,
-			unit->GetUnit()->SetFireState(isOn ? CCircuitDef::FireType::RETURN : unit->GetCircuitDef()->GetFireState());
-		)
-		if (!isOn) {
-			unit->CmdHoldTarget(-1);
+	// Anti-heavy: return fire while the attack order on a heavy is live, so the reload isn't spent on chaff that comes
+	// into range; its own fire state otherwise. And ZK's set-target on the heavy (CmdHoldTarget), which fires whatever
+	// the order: on the walk to each firing spot. Sent after the fire state, as the fire state's change drops it
+	const bool isOn = (enemy != nullptr);
+	if (isAttacking != isOn) {
+		isAttacking = isOn;
+		if (isAntiHeavy) {
+			TRY_UNIT(manager->GetCircuit(), unit,
+				unit->GetUnit()->SetFireState(isOn ? CCircuitDef::FireType::RETURN : unit->GetCircuitDef()->GetFireState());
+			)
 		}
+	}
+	if (isAntiHeavy) {
+		unit->CmdHoldTarget(isOn ? enemy->GetId() : -1);
 	}
 }
 
@@ -997,8 +991,7 @@ bool CArtilleryTask::GetArmySpot(CCircuitUnit* unit, AIFloat3& outPos)
 	}
 
 	// Its slot: the n-th of the artillery-mode anti-heavies following that group (by unit id) takes the n-th slot, on
-	// alternate sides of the point follow_dist back towards our base, that isn't on a squad's park spot (squads keep
-	// theirs: AntiHeavyTask's AddParkSpot)
+	// alternate sides of the point follow_dist back towards our base, (n + 1) / 2 slot gaps out
 	int n = 0;
 	for (IFighterTask* task : militaryMgr->GetTasks(FightType::ARTY)) {
 		const CArtilleryTask* other = static_cast<const CArtilleryTask*>(task);
@@ -1018,28 +1011,11 @@ bool CArtilleryTask::GetArmySpot(CCircuitUnit* unit, AIFloat3& outPos)
 	back /= len;
 	const AIFloat3 side(-back.z, 0.f, back.x);
 	const AIFloat3 straight = groupPos + back * std::max(0.f, std::min(GetCfg().followDist, len));
-	const float groupRadius = GetCrowdRadius();
-	const float slotGap = std::max(1.5f * CROWD_RADIUS, groupRadius);  // between side slots: groups apart
-	F3Vec parks;
-	for (IFighterTask* task : militaryMgr->GetTasks(FightType::AH)) {
-		const AIFloat3& parkPos = static_cast<CAntiHeavyTask*>(task)->GetParkPos();
-		if (utils::is_valid(parkPos)) {
-			parks.push_back(parkPos);
-		}
-	}
-	// A park spot is near at most 3 slots (they're a group radius apart or more): one of these is clear
-	AIFloat3 slot = straight;
-	for (int i = 0, clear = 0; i <= n + 3 * static_cast<int>(parks.size()); ++i) {
-		const int k = (i % 2 == 1) ? (i + 1) / 2 : -(i / 2);  // 0, 1, -1, 2, -2, ...
-		const AIFloat3 p = straight + side * (k * slotGap);
-		if (!IsNearAny(p, parks, groupRadius) && (clear++ == n)) {
-			slot = p;
-			break;
-		}
-	}
+	const int k = (n % 2 == 1) ? (n + 1) / 2 : -(n / 2);  // 0, 1, -1, 2, -2, ...
+	const float slotGap = std::max(1.5f * CROWD_RADIUS, GetCrowdRadius());  // between side slots: groups apart
 	STerrainMapArea* area = unit->GetArea();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const AIFloat3 tries[] = {slot, straight, groupPos};  // its slot, straight back, the leader
+	const AIFloat3 tries[] = {straight + side * (k * slotGap), straight, groupPos};  // its slot, straight back, the leader
 	for (const AIFloat3& p : tries) {
 		AIFloat3 spot = p;
 		CTerrainManager::CorrectPosition(spot);
@@ -1420,7 +1396,8 @@ bool CArtilleryTask::UpdateScoot(CCircuitUnit* unit, int frame)
 	const float backDist = unit->GetPos(frame).distance2D(scootFrom);
 	if (unit->IsWeaponReady(frame) || ((speed > 0.f) && (backDist / speed >= unit->GetWeaponReloadLeft(frame)))) {
 		isScooting = false;
-		unit->ClearTarget();  // Attack re-orders it: a firing spot (the queued attack would walk straight in)
+		unit->ClearTarget();  // Attack orders it again at once: isAttacking stayed through the move
+		unit->ForgetHeldTarget();  // and the set-target: the heavy may have left radar for a while meanwhile
 		unit->ForceUpdate(frame);  // Execute now
 		return false;
 	}
@@ -1473,17 +1450,20 @@ void CArtilleryTask::StartScoot(CCircuitUnit* unit, int frame)
 		return;
 	}
 
-	// The attack stays queued behind the step back, so return fire and the target stay too (a reloading unit adds no
-	// ready shot to the others' overkill check): it waits there until the walk back takes as long as the reload left,
-	// then attacks again. The heavy died in the meantime: the move alone
+	// A plain move: return fire, the target and ZK's set-target stay (a reloading unit adds no ready shot to the
+	// others' overkill check), until the walk back takes as long as the reload left. The heavy died in the meantime:
+	// its own fire state back
 	if (target == nullptr) {
-		SetAttacking(unit, false);
+		SetAttacking(unit, nullptr);
 	}
 	isScooting = true;
 	scootFrom = pos;
 	circuit->GetMilitaryManager()->NoteAh(unit->GetCircuitDef(), CMilitaryManager::AhNote::SCOOT);
 	unit->GetTravelAct()->StateWait();
-	unit->ScootAttack(dest, target, pos.distance2D(dest), frame + FRAMES_PER_SEC * 60);
+	TRY_UNIT(circuit, unit,
+		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
 }
 
 /*

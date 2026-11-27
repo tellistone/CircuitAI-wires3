@@ -73,14 +73,16 @@ public:
 	float GetTaskThreatExcl(CCircuitUnit* unit, const springai::AIFloat3& pos, float exclThreat) const;
 	CEnemyInfo* GetTarget() const { return target; }
 	bool IsFighting() const;  // ENGAGE with the target within some unit's weapon range: no merging away
-	void ClearTarget() { target = nullptr; }  // Only for ~CEnemyUnit
+	void ClearTarget() { target = nullptr; targetFrame = NO_TARGET_FRAME; }  // Only for ~CEnemyUnit
 	void ReleaseTarget() { SetTarget(nullptr); }  // unbound too: for a task that ends (CMilitaryManager::DequeueTask)
 
 	const std::set<CCircuitUnit*>& GetShields() const { return shields; }
 	// Where this group's units stand or head, one point each: the firing spot it was sent to in the last two attack
 	// repeats, else where it stands (CMilitaryManager::GetAhClaims; tasks add where they walk or park)
 	virtual void AddSpreadClaims(F3Vec& outClaims) const;
-	int GetSeniority() const { return seniority; }  // fighter tasks in creation order: lower is older (GetAhClaims)
+	// Who gives way between anti-heavy groups (FindFireSpot): the group that took its current target later, ties the
+	// newer task; a group without a target last. Lower = first; unique per group
+	int64_t GetSpreadRank() const { return (static_cast<int64_t>(targetFrame) << 32) | static_cast<uint32_t>(seniority); }
 
 protected:
 	void SetTarget(CEnemyInfo* enemy);
@@ -237,10 +239,11 @@ protected:
 	float crowdRadius = 80.f;  // other claims within this of a firing spot crowd it (FindFireSpot)
 	// > 0: each other group with a claim (CMilitaryManager::GetAhClaims, read once per Attack) within this of a firing
 	// spot costs it half a range of walk (FindFireSpot): different anti-heavy groups spread out. The spot a unit holds
-	// (kept, or where it stands) pays only for older groups: the newcomer gives way, the incumbent fires on
+	// (kept, or where it stands) pays only for groups on their target before it (GetSpreadRank): the newcomer gives
+	// way, the incumbent fires on
 	float spreadRadius = 0.f;
 	F3Vec spreadClaims;
-	std::vector<int> spreadRanks;  // each claim's group (GetSeniority)
+	std::vector<int64_t> spreadRanks;  // each claim's group (GetSpreadRank)
 	// May a unit fire from p (FindFireSpot skips the spot if not)? Default: yes. Anti-heavy: outside its pick zones
 	virtual bool IsFireSpotAllowed(const springai::AIFloat3& p) const { return true; }
 	// While isSpotDisc: FindFireSpot only weighs spots within the disc (an escort's stay disc, CAttackTask)
@@ -333,8 +336,10 @@ private:
 	mutable std::vector<SUnitStrength> unitStrengths;  // GetUnitStrengths cache
 	mutable float strengthSum = 0.f;
 	mutable int strengthFrame = STALE_FRAME;  // frame it was read at
+	static constexpr int NO_TARGET_FRAME = std::numeric_limits<int>::max();
+	int targetFrame = NO_TARGET_FRAME;  // when the current target was set (SetTarget)
 	static int nextSeniority;
-	const int seniority = nextSeniority++;  // GetSeniority
+	const int seniority = nextSeniority++;  // fighter tasks in creation order (GetSpreadRank)
 
 #ifdef DEBUG_VIS
 public:

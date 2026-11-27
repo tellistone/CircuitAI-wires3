@@ -4883,7 +4883,7 @@ float CMilitaryManager::GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* 
 	return damage;
 }
 
-void CMilitaryManager::GetAhClaims(const IFighterTask* skip, F3Vec& outClaims, std::vector<int>* outRanks) const
+void CMilitaryManager::GetAhClaims(const IFighterTask* skip, F3Vec& outClaims, std::vector<int64_t>* outRanks) const
 {
 	outClaims.clear();
 	if (outRanks != nullptr) {
@@ -4892,7 +4892,7 @@ void CMilitaryManager::GetAhClaims(const IFighterTask* skip, F3Vec& outClaims, s
 	auto addClaims = [&](const IFighterTask* task) {
 		task->AddSpreadClaims(outClaims);
 		if (outRanks != nullptr) {
-			outRanks->resize(outClaims.size(), task->GetSeniority());
+			outRanks->resize(outClaims.size(), task->GetSpreadRank());
 		}
 	};
 	for (IFighterTask* task : GetTasks(IFighterTask::FightType::AH)) {

@@ -84,7 +84,7 @@ void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 	formation.Remove(unit);
 	joinFrames.erase(unit);
 	if (scoots.erase(unit) > 0) {
-		ReleaseScoot(unit);  // leaves the squad mid-scoot (retreat, reassign)
+		SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
 	}
 	leader = nullptr;
 	lowestRange = lowestSpeed = std::numeric_limits<float>::max();
@@ -99,7 +99,7 @@ void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 void ISquadTask::Stop(bool done)
 {
 	for (const auto& kv : scoots) {
-		ReleaseScoot(kv.first);
+		SetScootHold(kv.first, false);
 	}
 	scoots.clear();
 	IFighterTask::Stop(done);
@@ -807,6 +807,7 @@ void ISquadTask::UpdateScoots(int frame)
 
 void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margin)
 {
+	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& uPos = unit->GetPos(frame);
 	// Out of the target's reach: no new scoot, the unit reloads where it stands. A scooting unit keeps its order (no
 	// stop and go at the edge; the turn-back still brings it in on time)
@@ -819,12 +820,12 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 	if (GetTaskThreatAt(unit, dest) > GetTaskThreatAt(unit, uPos)) {
 		return;
 	}
-	const float walkBack = std::max(dest.distance2D(target->GetFightPos()) - GetFireRange(unit), 0.f);  // into range
 
 	if (scoot == nullptr) {
 		// Too slow to get there and back into fire range before the weapon is ready (short reload, slow unit): it
 		// would only lose its spot. Fights on instead
-		if (IsWalkLongerThanReload(unit, frame, uPos.distance2D(dest) + walkBack)) {
+		const float walk = uPos.distance2D(dest) + std::max(dest.distance2D(target->GetFightPos()) - GetFireRange(unit), 0.f);
+		if (IsWalkLongerThanReload(unit, frame, walk)) {
 			return;
 		}
 		scoot = &scoots[unit];
@@ -835,9 +836,10 @@ void ISquadTask::Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margi
 	}
 	*scoot = {frame, dest};
 	unit->GetTravelAct()->StateWait();
-	// The attack on the target stays queued behind the step back: it waits there until walking back into range takes
-	// as long as the reload left (UpdateScoots ends the scoot about then, and Attack re-orders it)
-	unit->ScootAttack(dest, target, walkBack, frame + FRAMES_PER_SEC * 60);
+	TRY_UNIT(circuit, unit,
+		unit->CmdMoveTo(dest, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
+	)
 }
 
 bool ISquadTask::IsRunningAway(CEnemyInfo* enemy, const AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
@@ -911,16 +913,8 @@ void ISquadTask::EndScoot(Scoots::iterator it, int frame, bool isEngaged)
 {
 	CCircuitUnit* unit = it->first;
 	scoots.erase(it);
-	ReleaseScoot(unit);
-	OnScootEnd(unit, frame, isEngaged);
-}
-
-void ISquadTask::ReleaseScoot(CCircuitUnit* unit)
-{
-	// Its move state back, and its queued wait and attack dropped: the task orders it from here on (a queued attack
-	// out of LOS would shoot the target's radar blip)
 	SetScootHold(unit, false);
-	unit->CancelScootAttack();
+	OnScootEnd(unit, frame, isEngaged);
 }
 
 /*

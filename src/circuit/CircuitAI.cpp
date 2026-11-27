@@ -972,6 +972,9 @@ int CCircuitAI::UnitFinished(CCircuitUnit* unit)
 	}
 	TRY_UNIT(this, unit,
 		unit->CmdFireAtRadar(true);
+		if (GetBindedRole(unit->GetCircuitDef()->GetMainRole()) == ROLE_TYPE(AH)) {
+			unit->CmdPreventOverkill();  // anti-heavies go to return fire while they attack a heavy
+		}
 //		if (unit->GetCircuitDef()->GetDef()->IsAbleToCloak()) {
 //			unit->CmdCloak(true);
 //		}
@@ -1068,6 +1071,9 @@ int CCircuitAI::UnitGiven(ICoreUnit::Id unitId, int oldTeamId, int newTeamId)
 	TRY_UNIT(this, unit,
 		unit->GetUnit()->Stop();
 		unit->CmdFireAtRadar(true);
+		if (GetBindedRole(unit->GetCircuitDef()->GetMainRole()) == ROLE_TYPE(AH)) {
+			unit->CmdPreventOverkill();
+		}
 //		if (unit->GetCircuitDef()->GetDef()->IsAbleToCloak()) {
 //			unit->CmdCloak(true);
 //		}

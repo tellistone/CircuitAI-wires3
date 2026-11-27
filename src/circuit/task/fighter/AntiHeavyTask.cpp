@@ -258,8 +258,10 @@ void CAntiHeavyTask::Update()
 		checkFrame = 0;  // back from a fight or a walk-in: the park spot (or the way to the army) is looked at at once
 	}
 	// Return fire while attacking it, LOS grace included (they stand idle then: no chaff shot as it reappears);
-	// set-target on it only while it's in sight (no shot at its radar blip)
-	UpdateHolds(target != nullptr, ((target != nullptr) && !isLosGrace) ? target->GetId() : -1);
+	// set-target on it only while we may shoot it (no LOS grace) and see it on radar or LOS (ZK drops a set-target
+	// gone from both: CmdHoldTarget sends only changes)
+	const bool isAim = (target != nullptr) && !isLosGrace && target->IsInRadarOrLOS();
+	UpdateHolds(target != nullptr, isAim ? target->GetId() : -1);
 	if (target != nullptr) {
 		position = target->GetPos();
 		if (isLosGrace) {

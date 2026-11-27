@@ -22,6 +22,7 @@
 #include "AISCommands.h"
 #include "Sim/Units/CommandAI/Command.h"
 #include "Weapon.h"
+#include "CommandDescription.h"
 #include "WrappWeaponMount.h"
 
 namespace circuit {
@@ -364,18 +365,16 @@ bool CCircuitUnit::IsPlantHeld(CEnemyInfo* enemy)
 
 void CCircuitUnit::CmdCancelTarget()
 {
-	plant.targetId = heldTarget.id = -1;  // sent whatever it says: a task's ClearTarget clears it too
+	plant.targetId = heldTargetId = -1;  // sent whatever it says: a task's ClearTarget clears it too
 	unit->ExecuteCustomCommand(CMD_UNIT_CANCEL_TARGET, {});
 }
 
 void CCircuitUnit::CmdHoldTarget(int enemyId)
 {
-	// The same one again: sent anew every few seconds, as ZK drops it after a few seconds out of LOS and radar
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	if ((enemyId == heldTarget.id) && ((enemyId < 0) || (frame < heldTarget.frame + FRAMES_PER_SEC * 3))) {
+	if (enemyId == heldTargetId) {
 		return;
 	}
-	heldTarget = {enemyId, frame};
+	heldTargetId = enemyId;
 	TRY_UNIT(manager->GetCircuit(), this,
 		if (enemyId >= 0) {
 			unit->ExecuteCustomCommand(CMD_UNIT_SET_TARGET, {static_cast<float>(enemyId)});
@@ -390,6 +389,18 @@ void CCircuitUnit::CmdCloak(bool state)
 	unit->ExecuteCustomCommand(CMD_WANT_CLOAK, {state ? 1.f : 0.f});  // personal
 	unit->ExecuteCustomCommand(CMD_CLOAK_SHIELD, {state ? 1.f : 0.f});  // area
 	unit->Cloak(state);
+}
+
+void CCircuitUnit::CmdPreventOverkill()
+{
+	// Only to a unit that has the command: on another the engine would queue it as an order
+	std::vector<springai::CommandDescription*> cmdDescs = unit->GetSupportedCommands();
+	const bool isHas = std::any_of(cmdDescs.begin(), cmdDescs.end(),
+			[](springai::CommandDescription* desc) { return desc->GetId() == CMD_PREVENT_OVERKILL; });
+	utils::free_clear(cmdDescs);
+	if (isHas) {
+		unit->ExecuteCustomCommand(CMD_PREVENT_OVERKILL, {4.f});  // "Prevent Overkill": whatever the fire state or order
+	}
 }
 
 void CCircuitUnit::CmdFireAtRadar(bool state)
@@ -550,31 +561,6 @@ void CCircuitUnit::HoldFire(const AIFloat3& pos, CEnemyInfo* enemy, int tile, in
 	TRY_UNIT(manager->GetCircuit(), this,
 		unit->Fight(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 		CmdWantedSpeed(NO_SPEED_LIMIT);
-	)
-}
-
-void CCircuitUnit::ScootAttack(const AIFloat3& pos, CEnemyInfo* enemy, float walkBack, int timeout)
-{
-	if (IsPlanted()) {
-		return;
-	}
-	const int frame = manager->GetCircuit()->GetLastFrame();
-	const float speed = circuitDef->GetSpeed() / FRAMES_PER_SEC;  // elmos per frame
-	const int waitEnd = frame + GetWeaponReloadLeft(frame) - ((speed > 0.f) ? static_cast<int>(walkBack / speed) : 0);
-	TRY_UNIT(manager->GetCircuit(), this,
-		CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-		if (enemy != nullptr) {
-			unit->Wait(UNIT_COMMAND_OPTION_SHIFT_KEY, waitEnd);
-			unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
-		}
-		CmdWantedSpeed(NO_SPEED_LIMIT);
-	)
-}
-
-void CCircuitUnit::CancelScootAttack()
-{
-	TRY_UNIT(manager->GetCircuit(), this,
-		CmdRemove({static_cast<float>(CMD_WAIT), static_cast<float>(CMD_ATTACK)}, UNIT_COMMAND_OPTION_ALT_KEY);
 	)
 }
 

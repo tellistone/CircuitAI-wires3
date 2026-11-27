@@ -186,6 +186,9 @@ float IFighterTask::GetThrDistModAt(const AIFloat3& pos) const
 
 void IFighterTask::SetTarget(CEnemyInfo* enemy)
 {
+	if (enemy != target) {
+		targetFrame = (enemy != nullptr) ? manager->GetCircuit()->GetLastFrame() : NO_TARGET_FRAME;
+	}
 	if (target != nullptr) {
 		target->UnbindTask(this);
 	}
@@ -843,13 +846,15 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	const int arcSteps = isClose ? ARC_STEPS_CLOSE : ARC_STEPS;
 	const float arcSpan = isClose ? ARC_SPAN_CLOSE : ARC_SPAN;
 	// Other groups with a claim within spreadRadius of p, one count each (a group's claims come together); a spot the
-	// unit holds (isHeld) counts only older groups, so the newcomer gives way rather than both shuffling
+	// unit holds (isHeld) counts only groups on their target before us, so the newcomer gives way rather than both
+	// shuffling
+	const int64_t spreadRank = GetSpreadRank();
 	auto countSpread = [&](const AIFloat3& p, bool isHeld) {
 		int count = 0;
-		int counted = -1;  // the group last counted
+		int64_t counted = -1;  // the group last counted
 		for (size_t i = 0; i < spreadClaims.size(); ++i) {
-			const int rank = spreadRanks[i];
-			if ((rank != counted) && (!isHeld || (rank < seniority))
+			const int64_t rank = spreadRanks[i];
+			if ((rank != counted) && (!isHeld || (rank < spreadRank))
 				&& (spreadClaims[i].SqDistance2D(p) < SQUARE(spreadRadius)))
 			{
 				++count;
