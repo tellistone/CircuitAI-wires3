@@ -37,15 +37,32 @@ public:
 	bool IsSpeedSpreadOk(CCircuitUnit* unit) const;
 	virtual bool IsFleeing(int frame) const override { return frame < fleeFrame; }  // running from an escape
 
-private:
-	CMilitaryManager* GetMilitaryMgr() const;
+protected:
+	/*
+	 * Hooks for tasks built on the raid group (CRaidDefendTask). The defaults are the raid group's own behaviour
+	 */
 	// May take more units: up to maxPower, and during a raid rally until its strength (with the group size bonus)
 	// reaches the rally's goal. Units of other types may join only during a raid rally, and only compatible ones
-	bool HasRoom() const;
+	virtual bool HasRoom() const;
+	// GetMergeTask, but in a rally every 2 updates, and judged by the straight line (IsSafeMergeLine), not influence
+	virtual ISquadTask* GetRaidMergeTask();
+	// May it chase a bigger raid group to join it (quota.raid_rally)? Default: yes
+	virtual bool IsChaseAllowed() const { return true; }
+	// May FindTarget pick this enemy, or route to it? isZone: in our protect ward's zone (CProtect::IsZoneEnemy);
+	// isCurrent: our target until this pick. Default: any (the pick's own checks still apply)
+	virtual bool IsTargetAllowed(const CEnemyInfo* enemy, bool isZone, bool isCurrent) const { return true; }
+	// A preferred target: the nearest one wins over the most threatening. Default: CMilitaryManager::IsRaidPreferred
+	virtual bool IsPreferredTarget(const CEnemyInfo* enemy, const CCircuitDef* edef) const;
+	// May it route to enemies in contested clusters (quota.contested)? Default: yes
+	virtual bool IsContestedAllowed() const { return true; }
+	// Nothing to hunt (no target, no route to one). Default: FallbackRaid (roam the raid spots)
+	virtual void OnNoTarget(bool isContestedAllowed) { FallbackRaid(isContestedAllowed); }
+	// Where the escape runs to. Default: the closest haven (FactoryManager), else our base
+	virtual springai::AIFloat3 GetFleeHaven() const;
+
+	CMilitaryManager* GetMilitaryMgr() const;
 	bool IsInRally() const;  // a raid rally is on and we are its host or a joiner
 	bool IsCautious(int frame) const { return frame < fleeFrame + FRAMES_PER_SEC * 4; }  // just escaped
-	// GetMergeTask, but in a rally every 2 updates, and judged by the straight line (IsSafeMergeLine), not influence
-	ISquadTask* GetRaidMergeTask();
 	// In a rally: the straight line to the other leader under our allowance, as our escape judges it. Else the default
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
 	// The chase route's cap (the only capped QueryPath of a raid group): x0.75 for 4 s after an escape, as FindTarget
@@ -126,6 +143,7 @@ private:
 	bool UpdateScoutStints(int frame, bool isInDanger);
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	void SendPendingFight(int frame);  // short roam path: the Fight order sent from Update() (not from the path callback)
+	int engageFrame;  // the last decision that took a target
 };
 
 } // namespace circuit

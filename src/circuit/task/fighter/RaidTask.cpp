@@ -73,6 +73,7 @@ CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		, raidSpotFailFrame(-FRAMES_PER_SEC * 60)
 		, roamPathFrame(-FRAMES_PER_SEC * 60)
 		, roamGoal(-RgtVector)
+		, engageFrame(-FRAMES_PER_SEC * 60)
 {
 	isRaidView = true;  // CThreatMap raid layers
 	isNewcomerOn = true;  // newcomers never make the group stop for them (ISquadTask::IsNewcomer)
@@ -133,7 +134,7 @@ bool CRaidTask::IsSpeedSpreadOk(CCircuitUnit* unit) const
 	float fastest = slowest;
 	IUnitTask* task = unit->GetTask();
 	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
-		&& (static_cast<IFighterTask*>(task)->GetFightType() == FightType::RAID))
+		&& (static_cast<IFighterTask*>(task)->GetFightType() == fightType))  // a group of our kind
 	{
 		const CRaidTask* group = static_cast<const CRaidTask*>(task);
 		if (group->GetLeader() == unit) {
@@ -333,7 +334,7 @@ void CRaidTask::Update()
 	// Raid rally joiner: with no target in range (FindTarget picks only those) and no enemy at our base to defend,
 	// head for the bigger group
 	// quota.protect: not while committed to the commander's fight
-	if ((target == nullptr) && urgentPositions.empty() && !IsProtecting()) {
+	if ((target == nullptr) && urgentPositions.empty() && !IsProtecting() && IsChaseAllowed()) {
 		const CRaidTask* chase = UpdateChase(frame);
 		if (chase != nullptr) {
 			state = State::ROAM;
@@ -346,6 +347,7 @@ void CRaidTask::Update()
 	state = State::ROAM;
 	if (target != nullptr) {
 		state = State::ENGAGE;
+		engageFrame = frame;
 		position = target->GetPos();
 		if (leader->GetCircuitDef()->IsAbleToFly()) {
 			if (target->GetUnit()->IsCloaked()) {
@@ -395,7 +397,7 @@ void CRaidTask::Update()
 	}
 
 	if (!isTargetsFound) {  // urgentPositions.empty() && enemyPositions.empty()
-		FallbackRaid();
+		OnNoTarget(true);
 		return;
 	}
 
@@ -522,8 +524,11 @@ bool CRaidTask::FindTarget()
 	// Contested clusters (threat there blocks our mex expansion) that this group can take: an enemy there counts
 	// quota.contested.bonus times closer as a route goal
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
-	militaryMgr->GetTakeableContested(leader, highestRange,
-			[this, maxPower](const AIFloat3& p, float) { return GetSafeThreatAt(p, maxPower); }, contested);
+	contested.clear();
+	if (IsContestedAllowed()) {
+		militaryMgr->GetTakeableContested(leader, highestRange,
+				[this, maxPower](const AIFloat3& p, float) { return GetSafeThreatAt(p, maxPower); }, contested);
+	}
 	const float contestedBonus = militaryMgr->GetContested().bonus;
 	F3Vec contestedPositions;
 	float sqContestedDist = std::numeric_limits<float>::max();
@@ -537,7 +542,9 @@ bool CRaidTask::FindTarget()
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
 		const bool isZone = isProtect && protect->IsZoneEnemy(this, enemy);
-		if (isProtect && !isZone && (pos.SqDistance2D(enemy->GetPos()) > SQUARE(range))) {
+		if ((isProtect && !isZone && (pos.SqDistance2D(enemy->GetPos()) > SQUARE(range)))
+			|| !IsTargetAllowed(enemy, isZone, enemy == prevTarget))
+		{
 			continue;
 		}
 		// Not one another raid group already targets from clearly nearer, unless within our fire range + 64 elmos
@@ -603,7 +610,7 @@ bool CRaidTask::FindTarget()
 				continue;
 			}
 			defThreat = edef->GetPower();
-			isBuilder = militaryMgr->IsRaidPreferred(edef)  // configurable preferred target
+			isBuilder = IsPreferredTarget(enemy, edef)  // configurable preferred target
 					|| (isZone && protect->IsRecentAttacker(enemy->GetId(), circuit->GetLastFrame()));  // quota.protect
 		} else {
 			if (notAW && (ePos.y < -SQUARE_SIZE * 5)) {
@@ -685,7 +692,7 @@ void CRaidTask::ApplyTargetPath(const CQueryPathMulti* query)
 			contestedFailFrame = manager->GetCircuit()->GetLastFrame();
 		}
 		// Not to a contested cluster: the capped route just failed, and the roam path has no cap
-		FallbackRaid(false);
+		OnNoTarget(false);
 	}
 }
 
@@ -1027,13 +1034,22 @@ bool CRaidTask::IsFightOn(int frame) const
 	return GetTaskThreatAt(leader, tPos) < GetSafeThreatAt(tPos, power);
 }
 
+bool CRaidTask::IsPreferredTarget(const CEnemyInfo* enemy, const CCircuitDef* edef) const
+{
+	return GetMilitaryMgr()->IsRaidPreferred(edef);
+}
+
+AIFloat3 CRaidTask::GetFleeHaven() const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const AIFloat3 haven = circuit->GetFactoryManager()->GetClosestHaven(leader);
+	return utils::is_valid(haven) ? haven : circuit->GetSetupManager()->GetBasePos();
+}
+
 bool CRaidTask::Flee(int frame)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	AIFloat3 dest = circuit->GetFactoryManager()->GetClosestHaven(leader);
-	if (!utils::is_valid(dest)) {
-		dest = circuit->GetSetupManager()->GetBasePos();
-	}
+	const AIFloat3 dest = GetFleeHaven();
 	if (leader->GetPos(frame).SqDistance2D(dest) < SQUARE(400.f)) {
 		// End the "keep running" hold, but keep the 4 s cautious window of the last escape
 		fleeFrame = std::min(fleeFrame, frame);

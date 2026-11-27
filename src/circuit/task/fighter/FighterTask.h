@@ -88,7 +88,8 @@ protected:
 	void SetTarget(CEnemyInfo* enemy);
 	// The task's thr_mod multiplier from its distance-from-base curve (quota.thr_mod.distance.<task>), read at the spot
 	// being judged (an enemy, a destination, a unit's own position): divide a threat allowance by it. 1 if not configured.
-	float GetThrDistModAt(const springai::AIFloat3& pos) const;
+	// Tasks may add a term of their own (CRaidDefendTask: courage around the posts)
+	virtual float GetThrDistModAt(const springai::AIFloat3& pos) const;
 	// Units move to a firing spot (FindFireSpot; melee: one right next to the target, else a safe one within weapon
 	// range), then Attack the target.
 	// isDirect: units without a spot (no usable range, or quota.attack_melee_spot < 0 for melee) get a direct Attack instead of a fight-move, so the target keeps priority.
