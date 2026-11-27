@@ -338,8 +338,8 @@ void CRaidTask::Update()
 	const bool isTargetsFound = FindTarget();
 	// Raid rally joiner: with no target in range (FindTarget picks only those) and no enemy at our base to defend,
 	// head for the bigger group
-	// quota.protect: not while committed to the commander's fight
-	if ((target == nullptr) && urgentPositions.empty() && !IsProtecting() && IsChaseAllowed()) {
+	// quota.protect: not while committed to the commander's fight, or gathering for one
+	if ((target == nullptr) && urgentPositions.empty() && !IsProtecting() && !IsGathering() && IsChaseAllowed()) {
 		const CRaidTask* chase = UpdateChase(frame);
 		if (chase != nullptr) {
 			state = State::ROAM;
@@ -401,7 +401,8 @@ void CRaidTask::Update()
 		return;
 	}
 
-	if (!isTargetsFound) {  // urgentPositions.empty() && enemyPositions.empty()
+	// quota.protect: a gathering group doesn't route to enemies out of range, it waits at the gathering post
+	if (!isTargetsFound || IsGathering()) {  // urgentPositions.empty() && enemyPositions.empty()
 		OnNoTarget(true);
 		return;
 	}
@@ -713,9 +714,11 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
 	// unless we're already there; else the usual mex-spot roaming
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	// quota.protect: committed with nothing to hunt, head for the commander (the protect's goal)
+	// quota.protect: committed with nothing to hunt, head for the protect's goal (the commander), or for a raid
+	// incident's gathering post in its no-go
 	const CProtect* protect = militaryMgr->GetProtect();
-	const bool isProtect = IsProtecting();
+	const AIFloat3 gather = protect->GetGather(this);
+	const bool isProtect = IsProtecting() || utils::is_valid(gather);
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	contested.clear();
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
@@ -750,7 +753,8 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	}
 	if (isProtect) {
 		// The goal moves with the commander: the route is kept while it stays within a few squares of the last one
-		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(), protect->GetGoal(this));
+		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(),
+				utils::is_valid(gather) ? gather : protect->GetGoal(this));
 		position = (utils::is_valid(roamGoal) && (goal.SqDistance2D(roamGoal) < SQUARE(DEFAULT_SLACK * 2))) ? roamGoal : goal;
 	} else if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);

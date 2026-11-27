@@ -413,8 +413,9 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	// quota.attack_merge.rally: every compatible group that can reach the host reinforces it, whatever its size (no
 	// retry cooldown); the host carries on as usual and never waits for them
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	// quota.protect: committed to the commander's fight, the group neither walks to merge nor joins a rally
-	const bool isProtect = IsProtecting();
+	// quota.protect: committed to the commander's fight, or gathering for a raid incident's, the group neither walks to
+	// merge nor joins a rally
+	const bool isProtect = IsProtecting() || IsGathering();
 	CAttackTask* rallyHost = isProtect ? nullptr : militaryMgr->GetRallyHost();
 	const bool isHost = (rallyHost == this);
 	const bool isJoiner = !isHost && !isProtect && militaryMgr->IsRallyJoiner(this);
@@ -1264,10 +1265,10 @@ void CAttackTask::ApplyReinforcePath(const CQueryPathSingle* query, const AIFloa
 
 void CAttackTask::WalkToProtect(int frame, bool isReuse)
 {
-	// Committed with nothing to fight in reach: walk to the commander's fight. Its safe edge as rally joiners find the
-	// host's (FindFightEdge: in the protect's present radius the spots are judged with the strength present and ours);
-	// none: straight to the commander, the go was judged for all of us together. The route cap carries the same boost
-	// at the goal
+	// Committed with nothing to fight in reach: walk to the commander's fight (a raid incident's gathering post in its
+	// no-go). Its safe edge as rally joiners find the host's (FindFightEdge: in the protect's present radius the spots
+	// are judged with the strength present and ours); none: straight to the commander, the go was judged for all of
+	// us together. The route cap carries the same boost at the goal
 	SetTarget(nullptr);
 	ClearScaleAnchor();  // walking to the fight, not into an accepted one
 	state = State::ROAM;
@@ -1275,7 +1276,8 @@ void CAttackTask::WalkToProtect(int frame, bool isReuse)
 		return;
 	}
 	const CProtect* protect = GetMilitaryMgr()->GetProtect();
-	const AIFloat3 hostPos = protect->GetGoal(this);
+	const AIFloat3 gather = protect->GetGather(this);
+	const AIFloat3 hostPos = utils::is_valid(gather) ? gather : protect->GetGoal(this);
 	AIFloat3 goal = hostPos;
 	SStrength edgeStrength = GetSafeThreat();
 	if (!FindFightEdge(frame, hostPos, RALLY_EDGE_FAR_DIST, goal, edgeStrength)) {

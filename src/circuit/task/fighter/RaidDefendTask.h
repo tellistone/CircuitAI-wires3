@@ -17,13 +17,15 @@ namespace circuit {
  * our undefended mexes and factories, or an escort beside an exposed constructor. Everything else is the raid
  * group's own: target pick and fight check, escape, flee grace, scoots, regroup, firing spots, routes under its
  * strength. Its hooks (CRaidTask):
- * - merges only with defence groups of the same slot; never in a raid rally, never chases a bigger group
+ * - merges only with defence groups of the same slot or the same protect commit; never in a raid rally, never chases
+ *   a bigger group
  * - new targets: on our ground within react_sec of its slot (threat-aware travel, CRaidDefence::GetSlotSec), or in
  *   contact; its current target is kept out to TARGET_KEEP x react_sec on any ground; any in its protect ward's zone
  * - preferred targets: the raid's, and enemies that hit our mexes, constructors or factories in the last 5 s
  * - no contested-cluster routes, no roaming: with nothing to hunt it walks to its slot on a threat-aware route (the
  *   raid's roam route, same allowance) and waits there in a small patrol, or guarding the constructor. No path
- *   queries while it waits
+ *   queries while it waits. Committed to a raid incident in its no-go: the same at the gathering post (quota.protect);
+ *   in its go: the raid's way to the goal
  * - its escape runs to the nearest post with no more threat than the raid's haven
  */
 class CRaidDefendTask: public CRaidTask {
@@ -40,6 +42,9 @@ public:
 
 	void SetSlot(int id);  // CRaidDefence: where it waits from now on
 	int GetSlot() const { return slotId; }  // -1: none
+	// CRaidDefence: a recruit held at its post while a raid incident is in a no-go: not lent to protect, not moved
+	void SetHold(bool value) { isHold = value; }
+	bool IsHold() const { return isHold; }
 
 protected:
 	virtual bool HasRoom() const override;  // its slot holds less than it needs
@@ -66,6 +71,7 @@ private:
 	void WalkTo(int frame, const springai::AIFloat3& dest);
 
 	int slotId;
+	bool isHold;
 	bool isParked;
 	springai::AIFloat3 parkPos;
 	ICoreUnit::Id parkVipId;  // escort: the constructor its units guard; -1: a post

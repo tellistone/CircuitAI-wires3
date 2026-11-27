@@ -145,6 +145,11 @@ bool ISquadTask::IsProtecting() const
 	return static_cast<CMilitaryManager*>(manager)->GetProtect()->IsActing(this);
 }
 
+bool ISquadTask::IsGathering() const
+{
+	return utils::is_valid(static_cast<CMilitaryManager*>(manager)->GetProtect()->GetGather(this));
+}
+
 const AIFloat3& ISquadTask::GetLeaderPos(int frame) const
 {
 	return (leader != nullptr) ? leader->GetPos(frame) : GetPosition();

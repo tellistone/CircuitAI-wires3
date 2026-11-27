@@ -45,9 +45,10 @@ struct STerrainMapArea;
  *   half the members of the incident's blob a second ago.
  * - Answerable (CanOpenIncident): an area our raiders move in reaches it (none yet: any), and an undefended asset of
  *   ours is within protect's zone of it.
- * - T: the answerable incidents' threat summed; B: the biggest. Bmax: the biggest blob of counted enemies anywhere,
- *   a peak halving every BMAX_HALF_FRAMES, never below oneRaider: the most threat one enemy raider has shown (with
- *   its own count bonus).
+ * - T: the answerable incidents' threat summed, half of it for one whose protect ward has been in a no-go for
+ *   NOGO_HALF_FRAMES (a raid we don't answer can't pin the whole reserve); B: the biggest. Bmax: the biggest blob of
+ *   counted enemies anywhere, a peak halving every BMAX_HALF_FRAMES, never below oneRaider: the most threat one enemy
+ *   raider has shown (with its own count bonus).
  * - Assets: our finished mexes (value: half the metal cost + the spot's income x INCOME_SEC), our constructors and
  *   factories (half the metal cost). A mex cluster is defended once our and allied ground turrets covering its
  *   weakest mex (power x sqrt(health share), IFighterTask::GetCoverPower) reach Bmax, and undefended again below
@@ -77,8 +78,22 @@ struct STerrainMapArea;
  *   strength; escorts stay. A group without a slot takes the nearest one short of strength, else the nearest post.
  * - Release while R > D / RELEASE_RATIO for RELEASE_FRAMES: calm groups back to raiding (a new raid group each), those
  *   without a slot first, then those at slots that need nothing, then by the slot's value, the warm floor's post
- *   last, never below D. Calm: no target, not fleeing, not committed by quota.protect.
+ *   last, never below D. Calm: no target, not fleeing, not committed by quota.protect (acting or gathering).
+ * - While a raid incident is in a no-go, a new raider (tier 1) starts its group at the post nearest it instead, held
+ *   there (not lent to protect, not moved) until its group reaches post_min x oneRaider or no incident is in a no-go.
  * - The window closing releases every group for good.
+ * Response (quota.protect, which must be on): each answerable incident is a protect ward (CProtect::SetIncidents).
+ * - Goal: the first undefended asset within GOAL_TRACK_DIST of the blob's track ahead, else the nearest, within
+ *   protect's zone. It changes when it is gone or defended, or once another asset has been the better pick for
+ *   GOAL_SWITCH_FRAMES.
+ * - Concede and ambush: once protect finds no committed group reaching a dying goal in time (isLate), the goal moves
+ *   on to the next asset outside its cluster, where the groups gather and meet the raid. Not for a constructor: it
+ *   flees.
+ * - Gathering post, where committed groups meet in a no-go: kept while it has no threat and stays within the zone of
+ *   the goal; else the post nearest the goal within the zone with no threat; else the first spot with no threat
+ *   stepping from the goal away from the blob, up to the zone; else none (they head for the goal).
+ * - Lending (CanLend): not a held recruit; an escort only to its own constructor, or while that constructor has no
+ *   threat and the goal is within escort_leash_sec of it.
  * Logs: RAIDDEF state every 10 s while there is something to show, RAIDDEF recruit and release, RAIDDEF minute every
  * minute.
  */
@@ -115,6 +130,13 @@ public:
 		std::vector<ICoreUnit::Id> members;  // ascending
 		bool isAnswerable;  // CanOpenIncident
 		int openFrame;
+		// Response
+		ICoreUnit::Id goalId = -1;  // the asset it heads for (SAsset::unitId)
+		ICoreUnit::Id candId = -1;  // a better pick since candFrame (GOAL_SWITCH_FRAMES)
+		int candFrame = -1;
+		ICoreUnit::Id concededId = -1;  // the goal it gave up, and that goal's cluster (-1: none)
+		int concededCluster = -1;
+		springai::AIFloat3 gather = -RgtVector;  // the gathering post; invalid: none
 	};
 	// Where defence groups wait: a post by our undefended mexes and factories, or an escort beside an exposed
 	// constructor
@@ -171,6 +193,8 @@ public:
 	// Seconds from the slot to pos at speed (elmos per second): its travel map when that is ready, for this movement
 	// type and reaches pos, else the straight line. < 0: no such slot
 	float GetSlotSec(int slotId, int mobileId, const springai::AIFloat3& pos, float speed) const;
+	// quota.protect may commit the group to a ward with this goal (goalId: its commander or asset)
+	bool CanLend(const CRaidDefendTask* group, const springai::AIFloat3& goal, ICoreUnit::Id goalId) const;
 
 private:
 	static constexpr int SEEN_FRAMES = FRAMES_PER_SEC * 20;
@@ -200,6 +224,11 @@ private:
 	static constexpr float RELEASE_RATIO = 0.7f;
 	static constexpr int RELEASE_FRAMES = FRAMES_PER_SEC * 5;
 	static constexpr int RELEASE_IMMUNE_FRAMES = FRAMES_PER_SEC * 30;
+	static constexpr int NOGO_HALF_FRAMES = FRAMES_PER_SEC * 45;
+	static constexpr float GOAL_TRACK_DIST = 600.f;
+	static constexpr float GOAL_TRACK_SPEED = 0.5f;  // a blob slower than this (elmos per frame) has no track: nearest
+	static constexpr int GOAL_SWITCH_FRAMES = FRAMES_PER_SEC * 3;
+	static constexpr float GATHER_STEP = 150.f;
 
 	struct SCounted;
 	struct SCluster {  // a metal cluster's cover, every COVER_FRAMES
@@ -239,7 +268,7 @@ private:
 
 	// Reserve
 	void UpdateWarm(int frame, float cap);
-	void UpdateReserve(int frame);
+	void UpdateReserve(int frame, CCircuitUnit* rep);
 	CCircuitUnit* FindRepUnit() const;  // a raider of the roles of the most common movement type among them
 	void RefreshPosts(int frame, CCircuitUnit* rep);
 	springai::AIFloat3 GetPocketPost(int pocket, const springai::AIFloat3& centre, CCircuitUnit* rep) const;
@@ -261,7 +290,14 @@ private:
 	float GetGuardStrength(CCircuitUnit* builder, int frame) const;  // its riot guards with it (CFGuardTask)
 	float GetSlotSec(const SSlot& slot, int mobileId, const springai::AIFloat3& pos, float speed) const;
 	bool IsReleased(const CCircuitUnit* unit, int frame) const;  // released within RELEASE_IMMUNE_FRAMES
-	static bool IsCalm(const CRaidTask* group, int frame);  // no target, not fleeing, not committed by protect
+	static bool IsCalm(const CRaidTask* group, int frame);  // no target, not fleeing, not acting or gathering for protect
+
+	// Response
+	void UpdateResponse(int frame, CCircuitUnit* rep);  // the incidents' goals and gathering posts, sent to protect
+	void UpdateGoal(SIncident& inc, int frame);
+	const SAsset* PickGoal(const SIncident& inc) const;  // nullptr: none
+	const SAsset* FindAsset(ICoreUnit::Id unitId) const;  // an undefended asset; nullptr: none (any more)
+	springai::AIFloat3 GetGather(const SIncident& inc, const springai::AIFloat3& goal, CCircuitUnit* rep) const;
 
 	CCircuitAI* circuit;
 	SConfig cfg;
@@ -307,6 +343,7 @@ private:
 	bool isWarm;
 	int warmSlotId;  // the warm floor's post
 	std::unordered_map<ICoreUnit::Id, int> releasedFrames;  // unit id -> the frame it was released
+	bool isNogo;  // a raid incident's protect ward is in a no-go (its last update)
 
 	// RAIDDEF minute
 	float lostMetal;  // our assets killed by counted enemy roles

@@ -71,6 +71,8 @@ public:
 	 */
 	// Committed to the commander's fight while the protect says go (CProtect::IsActing)
 	bool IsProtecting() const;
+	// Committed to a raid incident in its no-go: it waits at the gathering post (CProtect::GetGather)
+	bool IsGathering() const;
 	// Running along an escape path: a committed group counts 0 meanwhile. Default: never
 	virtual bool IsFleeing(int frame) const { return false; }
 

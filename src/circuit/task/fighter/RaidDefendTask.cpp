@@ -8,6 +8,7 @@
 #include "task/fighter/RaidDefendTask.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
+#include "module/Protect.h"
 #include "module/RaidDefence.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -27,6 +28,7 @@ using namespace springai;
 CRaidDefendTask::CRaidDefendTask(ITaskManager* mgr, float powerMod)
 		: CRaidTask(mgr, FightType::RAID_DEFEND, 0.f, powerMod)
 		, slotId(-1)
+		, isHold(false)
 		, isParked(false)
 		, parkPos(-RgtVector)
 		, parkVipId(-1)
@@ -55,9 +57,10 @@ bool CRaidDefendTask::CanAssignTo(CCircuitUnit* unit) const
 	if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
 		&& (static_cast<const IFighterTask*>(task)->GetFightType() == FightType::RAID_DEFEND))
 	{
-		// A merge: two groups of one slot become one, whatever its room
+		// A merge: two groups of one slot, or committed to the same protect ward (gathering), become one, whatever its room
 		const CRaidDefendTask* group = static_cast<const CRaidDefendTask*>(task);
-		return (group->GetLeader() == unit) && (group->GetSlot() == slotId);
+		return (group->GetLeader() == unit)
+				&& ((group->GetSlot() == slotId) || militaryMgr->GetProtect()->IsSameCommit(this, group));
 	}
 	return HasRoom();
 }
@@ -136,10 +139,14 @@ void CRaidDefendTask::OnNoTarget(bool isContestedAllowed)
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = leader->GetPos(frame);
-	const CRaidDefence::SSlot* slot = GetMilitaryMgr()->GetRaidDefence()->FindSlot(slotId);
-	CCircuitUnit* vip = ((slot != nullptr) && slot->isEscort) ? circuit->GetTeamUnit(slot->builderId) : nullptr;
+	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	// quota.protect: committed to a raid incident in its no-go, wait at the gathering post; else at the slot
+	const AIFloat3 gather = militaryMgr->GetProtect()->GetGather(this);
+	const bool isGather = utils::is_valid(gather);
+	const CRaidDefence::SSlot* slot = militaryMgr->GetRaidDefence()->FindSlot(slotId);
+	CCircuitUnit* vip = (!isGather && (slot != nullptr) && slot->isEscort) ? circuit->GetTeamUnit(slot->builderId) : nullptr;
 	// No slot yet: wait where it is (CRaidDefence gives it one, or releases it, within a second)
-	AIFloat3 dest = (vip != nullptr) ? vip->GetPos(frame) : (slot != nullptr) ? slot->pos : pos;
+	AIFloat3 dest = isGather ? gather : (vip != nullptr) ? vip->GetPos(frame) : (slot != nullptr) ? slot->pos : pos;
 	dest = circuit->GetTerrainManager()->GetMovePosition(leader->GetArea(), dest);
 	if (pos.SqDistance2D(dest) <= SQUARE(PARK_RADIUS)) {
 		Park(frame, dest, vip);
