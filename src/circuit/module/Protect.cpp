@@ -254,6 +254,7 @@ void CProtect::Update()
 	}
 
 	// 1-3. Each ward: anchor, danger by side, turret point
+	CollectPlanes();
 	for (auto& kv : byWard) {
 		UpdateWard(wards[kv.first], kv.second, frame);
 	}
@@ -331,7 +332,10 @@ void CProtect::CollectMembers(int frame, std::vector<SMember>& out)
 				m.value += u->GetCircuitDef()->GetCostM();
 				m.isAntiAir |= u->GetCircuitDef()->HasAntiAir();
 			}
-			m.own = isSquad ? static_cast<ISquadTask*>(t)->GetRallyStrength() : t->GetAttackPower();
+			m.own = 0.f;  // health-scaled power, as squad strength is
+			for (CCircuitUnit* u : units) {
+				m.own += IFighterTask::GetCoverPower(u);
+			}
 			m.isDamaged = false;  // a hit isn't a rush for a group (far artillery): only the force balance starts it
 			out.push_back(m);
 		}
@@ -341,7 +345,7 @@ void CProtect::CollectMembers(int frame, std::vector<SMember>& out)
 void CProtect::AssignWards(std::vector<SMember>& members)
 {
 	// Members within WARD_JOIN_DIST are one ward; members of one ward stay so until WARD_LEAVE_DIST apart. A cluster
-	// keeps the oldest ward id among its members, else gets a new one. A ward left with no member ends
+	// keeps a ward id among its members', else gets a new one. A ward left with no member ends
 	const size_t n = members.size();
 	std::vector<int> prev(n);
 	std::vector<size_t> root(n);
@@ -382,14 +386,22 @@ void CProtect::AssignWards(std::vector<SMember>& members)
 	std::stable_sort(clusters.begin(), clusters.end(), [](const auto& a, const auto& b) {
 		return (a.first > b.first) || ((a.first == b.first) && (a.second->size() > b.second->size()));
 	});
+	// A cluster keeps the id of its members' ward in a go first, then on, then the oldest: a threatened commander
+	// walking past its idle artillery keeps its protect
+	auto getRank = [this](int id) {
+		const SWard& w = wards.at(id);
+		const bool isGo = (w.sides[GROUND].state == State::GO) || (w.sides[AIR].state == State::GO);
+		return w.isOn ? (isGo ? 2 : 1) : 0;
+	};
 	std::set<int> taken;
 	for (const auto& kc : clusters) {
 		const std::vector<size_t>* c = kc.second;
 		int id = -1;
 		for (size_t i : *c) {
-			if ((prev[i] >= 0) && (taken.find(prev[i]) == taken.end()) && (wards.find(prev[i]) != wards.end())
-				&& ((id < 0) || (prev[i] < id)))
-			{
+			if ((prev[i] < 0) || (taken.find(prev[i]) != taken.end()) || (wards.find(prev[i]) == wards.end())) {
+				continue;
+			}
+			if ((id < 0) || (getRank(prev[i]) > getRank(id)) || ((getRank(prev[i]) == getRank(id)) && (prev[i] < id))) {
 				id = prev[i];
 			}
 		}
@@ -640,26 +652,33 @@ void CProtect::UpdateDeathTime(SWard& w, int frame)
 	w.deathSec = (w.dps > 1.f) ? health / w.dps : std::numeric_limits<float>::max();
 }
 
+void CProtect::CollectPlanes()
+{
+	// Seen enemy planes with a ground or water weapon (bombers; gunships are in the commander's list) that can act
+	enemyPlanes.clear();
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		const CEnemyInfo* enemy = kv.second;
+		const CCircuitDef* edef = enemy->GetCircuitDef();
+		if ((edef != nullptr) && edef->IsPlane() && (edef->HasAntiLand() || edef->HasAntiWater())
+			&& !enemy->IsHidden() && enemy->IsInRadarOrLOS() && !enemy->IsBeingBuilt() && !enemy->IsParalyzed()
+			&& !enemy->IsDisarmed())
+		{
+			enemyPlanes.push_back(enemy);
+		}
+	}
+}
+
 void CProtect::UpdatePlanes(SWard& w, int frame)
 {
-	// Seen enemy planes with a ground or water weapon (bombers; gunships are in the commander's list) within the zone,
-	// heading for the goal (the track ahead passes within PLANE_PASS_DIST) or that hit a commander in the last 5 s,
-	// and held PLANE_HOLD_FRAMES after either, so a bomber turning or lining up doesn't drop in and out each second.
-	// At their threat before thr_mod: bombers' thr_mod (0.01..0.1) keeps the threat map's readers from shying away
-	// from planes overhead, and would hide them here
+	// Those planes within the zone, heading for the goal (the track ahead passes within PLANE_PASS_DIST) or that hit
+	// a commander in the last 5 s, and held PLANE_HOLD_FRAMES after either, so a bomber turning or lining up doesn't
+	// drop in and out each second. At their threat before thr_mod: bombers' thr_mod (0.01..0.1) keeps the threat
+	// map's readers from shying away from planes overhead, and would hide them here
 	w.planeDanger = 0.f;
 	w.planeCount = 0;
 	EraseOlder(w.planes, frame, PLANE_HOLD_FRAMES);
 	const float sqZone = SQUARE(cfg.zone);
-	for (auto& kv : circuit->GetEnemyInfos()) {
-		const CEnemyInfo* enemy = kv.second;
-		const CCircuitDef* edef = enemy->GetCircuitDef();
-		if ((edef == nullptr) || !edef->IsPlane() || !(edef->HasAntiLand() || edef->HasAntiWater())
-			|| enemy->IsHidden() || !enemy->IsInRadarOrLOS() || enemy->IsBeingBuilt() || enemy->IsParalyzed()
-			|| enemy->IsDisarmed())
-		{
-			continue;
-		}
+	for (const CEnemyInfo* enemy : enemyPlanes) {
 		const AIFloat3 toGoal = w.goal - enemy->GetPos();
 		if (toGoal.SqLength2D() > sqZone) {
 			continue;
@@ -669,7 +688,7 @@ void CProtect::UpdatePlanes(SWard& w, int frame)
 		} else if (w.planes.find(enemy->GetId()) == w.planes.end()) {
 			continue;
 		}
-		w.planeDanger += edef->GetRawThreat();
+		w.planeDanger += enemy->GetCircuitDef()->GetRawThreat();
 		++w.planeCount;
 	}
 }
@@ -858,6 +877,13 @@ float CProtect::GetTravelSec(const ISquadTask* task, const AIFloat3& goal, int f
 	return task->GetLeader()->GetPos(frame).distance2D(goal) / std::max(task->GetLowestSpeed(), 1.f);
 }
 
+float CProtect::GetReachSec(const ISquadTask* task, const SWard& w, int frame) const
+{
+	const float travelSec = GetTravelSec(task, w.goal, frame);
+	return ((travelSec <= std::min(cfg.respondSec, w.deathSec))
+			&& circuit->GetTerrainManager()->CanMoveToPos(task->GetLeader()->GetArea(), w.goal)) ? travelSec : -1.f;
+}
+
 void CProtect::CollectCandidates(bool isAir, int frame, const std::vector<SWard*>& on, std::vector<SCandidate>& out) const
 {
 	// Groups of the side's kind (GROUND_TYPES: attack, raid and gathering attack- or raid-bound ones, no flying
@@ -865,7 +891,6 @@ void CProtect::CollectCandidates(bool isAir, int frame, const std::vector<SWard*
 	// in time (respond_sec, or the ward's time to death if shorter), and not busy fighting outside its zone
 	out.clear();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const float sqZone = SQUARE(cfg.zone);
 	for (IFighterTask::FightType type : isAir ? AIR_TYPES : GROUND_TYPES) {
 		for (IFighterTask* t : militaryMgr->GetTasks(type)) {
@@ -896,10 +921,8 @@ void CProtect::CollectCandidates(bool isAir, int frame, const std::vector<SWard*
 			bool isAny = false;
 			for (size_t i = 0; i < on.size(); ++i) {
 				const SWard* w = on[i];
-				const float travelSec = GetTravelSec(g, w->goal, frame);
-				if ((travelSec > std::min(cfg.respondSec, w->deathSec))
-					|| !terrainMgr->CanMoveToPos(leader->GetArea(), w->goal))
-				{
+				const float travelSec = GetReachSec(g, *w, frame);
+				if (travelSec < 0.f) {
 					continue;
 				}
 				if ((target != nullptr) && (target->GetPos().SqDistance2D(w->goal) > sqZone)
@@ -932,7 +955,8 @@ void CProtect::Refresh(const ISquadTask* task, int frame, SCommit& commit, SWard
 	++s.count;
 }
 
-void CProtect::Fill(Side side, State state, int frame, const std::vector<SWard*>& on, std::vector<SCandidate>& pool)
+void CProtect::Fill(Side side, State state, int frame, const std::vector<SWard*>& on, std::vector<SCandidate>& pool,
+		const SWard* only)
 {
 	// The best pair first, until no ward in state is short of its need or no group is left: the soonest there for one
 	// ward, the most valuable for groups that could answer several
@@ -947,7 +971,9 @@ void CProtect::Fill(Side side, State state, int frame, const std::vector<SWard*>
 			for (size_t i = 0; i < on.size(); ++i) {
 				SWard* w = on[i];
 				const SSide& s = w->sides[side];
-				if ((s.state != state) || w->isReleased || (c.travelSec[i] < 0.f) || (s.GetSum() >= s.need)) {
+				if ((s.state != state) || w->isReleased || ((only != nullptr) && (w != only)) || (c.travelSec[i] < 0.f)
+					|| (s.GetSum() >= s.need))
+				{
 					continue;
 				}
 				const float score = w->value / (c.travelSec[i] + SCORE_SEC);
@@ -980,9 +1006,7 @@ void CProtect::Pick(Side side, int frame, const std::vector<SWard*>& on)
 	for (SWard* w : on) {
 		SSide& s = w->sides[side];
 		s.need = (s.danger + std::min(s.spill, s.danger)) * std::max(COMMIT_MOD, w->goLine + COMMIT_MARGIN);
-		s.committedSum = 0.f;
-		s.presentSum = s.own + s.commCover;
-		s.count = 0;
+		s.ClearSums();
 		w->isReleased = false;
 	}
 	const float maxReachSec = cfg.respondSec * KEEP_REACH_MOD;
@@ -1004,100 +1028,54 @@ void CProtect::Pick(Side side, int frame, const std::vector<SWard*>& on)
 		++it;
 	}
 
-	// 2. A committed group not yet present moves, once, to a ward short of its need that scores it MOVE_SCORE_MOD x
-	// higher: a commander rushed after the groups were latched to a Lance group
-	if (on.size() > 1) {
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		for (auto& kv : committed) {
-			SCommit& c = kv.second;
-			if ((c.side != side) || c.isPresent || c.isMoved) {
-				continue;
-			}
-			const ISquadTask* g = static_cast<const ISquadTask*>(kv.first);
-			SWard& from = wards[c.ward];
-			float bestScore = MOVE_SCORE_MOD * from.value / (GetTravelSec(g, from.goal, frame) + SCORE_SEC);
-			SWard* best = nullptr;
-			for (SWard* w : on) {
-				const SSide& s = w->sides[side];
-				if ((w == &from) || (s.GetSum() >= s.need)) {
-					continue;
-				}
-				const float travelSec = GetTravelSec(g, w->goal, frame);
-				if ((travelSec > std::min(cfg.respondSec, w->deathSec))
-					|| !terrainMgr->CanMoveToPos(g->GetLeader()->GetArea(), w->goal))
-				{
-					continue;
-				}
-				const float score = w->value / (travelSec + SCORE_SEC);
-				if (score >= bestScore) {
-					best = w;
-					bestScore = score;
-				}
-			}
-			if (best == nullptr) {
-				continue;
-			}
-			circuit->LOG("PROTECT move (%s): a group of %.1f from [%s] to [%s]", (side == AIR) ? "air" : "ground",
-					c.strength, GetLabel(from).c_str(), GetLabel(*best).c_str());
-			SSide& fs = from.sides[side];
-			fs.committedSum -= c.strength;
-			--fs.count;
-			SSide& bs = best->sides[side];
-			bs.committedSum += c.strength;
-			++bs.count;
-			c.ward = best->id;
-			c.isMoved = true;
-		}
-	}
-
-	// 3. The fill: wards in a go first (their fight is on), then the others. A ward in a no-go still under its go
-	// line hands its groups back, the lowest value first, and the others fill again: two wards splitting the same
-	// groups would otherwise both stay out
+	// 2. The fill: wards in a go first (their fight is on), then the others
 	static std::vector<SCandidate> pool;  // NOTE: micro-opt
 	CollectCandidates(side == AIR, frame, on, pool);
 	Fill(side, State::GO, frame, on, pool);
 	Fill(side, State::NOGO, frame, on, pool);
-	auto getRatio = [](const SSide& s) {
-		const float judged = s.danger + s.spill;
-		return (judged > 0.f) ? s.GetSum() / judged : std::numeric_limits<float>::max();
-	};
-	while (on.size() > 1) {
-		SWard* worst = nullptr;
-		for (SWard* w : on) {
-			const SSide& s = w->sides[side];
-			if ((s.state == State::NOGO) && !w->isReleased && (s.count > 0) && (getRatio(s) < w->goLine)
-				&& ((worst == nullptr) || (w->value < worst->value)))
-			{
-				worst = w;
+	if (on.size() > 1) {
+		// 3. A ward in a no-go still under its go line hands its groups back, the lowest value first, and the others
+		// fill again: two wards splitting the same groups would otherwise both stay out. Then those handed back try
+		// again alone, the highest value first, from the groups left: one may go where the other couldn't
+		static std::vector<SWard*> released;  // NOTE: micro-opt
+		released.clear();
+		while (true) {
+			SWard* worst = nullptr;
+			for (SWard* w : on) {
+				const SSide& s = w->sides[side];
+				if ((s.state == State::NOGO) && !w->isReleased && (s.count > 0) && (s.GetRatio() < w->goLine)
+					&& ((worst == nullptr) || (w->value < worst->value)))
+				{
+					worst = w;
+				}
+			}
+			if (worst == nullptr) {
+				break;
+			}
+			Release(*worst, side, pool);
+			released.push_back(worst);
+			Fill(side, State::GO, frame, on, pool);
+			Fill(side, State::NOGO, frame, on, pool);
+		}
+		std::sort(released.begin(), released.end(), [](const SWard* a, const SWard* b) { return a->value > b->value; });
+		for (SWard* w : released) {
+			w->isReleased = false;
+			Fill(side, State::NOGO, frame, on, pool, w);
+			if (w->sides[side].GetRatio() < w->goLine) {
+				Release(*w, side, pool);
 			}
 		}
-		if (worst == nullptr) {
-			break;
-		}
-		worst->isReleased = true;
-		for (auto it = committed.begin(); it != committed.end();) {
-			const bool isOurs = (it->second.ward == worst->id) && (it->second.side == side);
-			it = isOurs ? committed.erase(it) : std::next(it);
-		}
-		for (SCandidate& c : pool) {
-			if (c.ward == worst) {
-				c.ward = nullptr;
-			}
-		}
-		SSide& s = worst->sides[side];
-		s.committedSum = 0.f;
-		s.presentSum = s.own + s.commCover;
-		s.count = 0;
-		Fill(side, State::GO, frame, on, pool);
-		Fill(side, State::NOGO, frame, on, pool);
+
+		// 4. Moves, after the fill so a hand-back never erases a moved group
+		MoveGroups(side, frame, on);
 	}
 
-	// 4. Go or no-go, each for MIN_STATE_FRAMES at least. A go needs a group: with none there is nothing to send, and
+	// 5. Go or no-go, each for MIN_STATE_FRAMES at least. A go needs a group: with none there is nothing to send, and
 	// a no-go costs nothing (a poke with no danger would otherwise go at once and hold off a real no-go)
 	const float keepThreat = circuit->GetMilitaryManager()->GetAttackKeepThreat();
 	for (SWard* w : on) {
 		SSide& s = w->sides[side];
-		s.ratio = getRatio(s);
+		s.ratio = s.GetRatio();
 		if (frame - s.stateFrame < MIN_STATE_FRAMES) {
 			continue;
 		}
@@ -1106,6 +1084,73 @@ void CProtect::Pick(Side side, int frame, const std::vector<SWard*>& on)
 		} else if ((s.state == State::GO) && (s.ratio < w->goLine / keepThreat)) {
 			SetState(*w, side, State::NOGO, frame);
 		}
+	}
+}
+
+void CProtect::Release(SWard& w, Side side, std::vector<SCandidate>& pool)
+{
+	w.isReleased = true;
+	for (auto it = committed.begin(); it != committed.end();) {
+		const bool isOurs = (it->second.ward == w.id) && (it->second.side == side);
+		it = isOurs ? committed.erase(it) : std::next(it);
+	}
+	for (SCandidate& c : pool) {
+		if (c.ward == &w) {
+			c.ward = nullptr;
+		}
+	}
+	w.sides[side].ClearSums();
+}
+
+void CProtect::MoveGroups(Side side, int frame, const std::vector<SWard*>& on)
+{
+	// A group latched to a go and not yet present moves, once, to a ward short of its need that scores it
+	// MOVE_SCORE_MOD x higher (a commander rushed after the groups were latched to a Lance group), while the go it
+	// leaves stays above its keep line without it
+	const float keepThreat = circuit->GetMilitaryManager()->GetAttackKeepThreat();
+	for (auto& kv : committed) {
+		SCommit& c = kv.second;
+		if ((c.side != side) || c.isPresent || c.isMoved) {
+			continue;
+		}
+		SWard& from = wards.at(c.ward);
+		SSide& fs = from.sides[side];
+		const float judged = fs.danger + fs.spill;
+		if ((fs.state != State::GO)
+			|| ((judged > 0.f) && ((fs.GetSum() - c.strength) / judged < from.goLine / keepThreat)))
+		{
+			continue;
+		}
+		const ISquadTask* g = static_cast<const ISquadTask*>(kv.first);
+		float bestScore = MOVE_SCORE_MOD * from.value / (GetTravelSec(g, from.goal, frame) + SCORE_SEC);
+		SWard* best = nullptr;
+		for (SWard* w : on) {
+			const SSide& s = w->sides[side];
+			if ((w == &from) || (s.GetSum() >= s.need)) {
+				continue;
+			}
+			const float travelSec = GetReachSec(g, *w, frame);
+			if (travelSec < 0.f) {
+				continue;
+			}
+			const float score = w->value / (travelSec + SCORE_SEC);
+			if (score >= bestScore) {
+				best = w;
+				bestScore = score;
+			}
+		}
+		if (best == nullptr) {
+			continue;
+		}
+		circuit->LOG("PROTECT move (%s): a group of %.1f from [%s] to [%s]", (side == AIR) ? "air" : "ground",
+				c.strength, GetLabel(from).c_str(), GetLabel(*best).c_str());
+		fs.committedSum -= c.strength;
+		--fs.count;
+		SSide& bs = best->sides[side];
+		bs.committedSum += c.strength;
+		++bs.count;
+		c.ward = best->id;
+		c.isMoved = true;
 	}
 }
 

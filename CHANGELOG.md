@@ -482,8 +482,10 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     artillery), or on bombers; it has no meeting point and no time to death. Each ward and side has its own go.
   - The pick: a go keeps its groups; then groups go to the ward with the best value / (travel sec + 3), wards in a go
     first. A ward in a no-go still under its go line after the pick hands its groups back, the lowest value first,
-    so two wards don't split the same groups and both stay out. A committed group not yet present moves once to a
-    ward scoring it twice as high (`PROTECT move`). Every `PROTECT` line names its ward.
+    so two wards don't split the same groups and both stay out; those handed back then try alone, the highest value
+    first. A group latched to a go and not yet present moves once to a ward scoring it twice as high, if that go
+    stays above its keep line (`PROTECT move`). Merged wards keep the one in a go, else on, else the oldest, so a
+    commander walking past its artillery keeps its protect. Every `PROTECT` line names its ward.
   - Danger, in two sides answered together. Ground: the commander's danger list without its gunships, or the force
     balance's enemy force at the commander (mobiles by how soon they can shoot it, enemy statics by their cover
     falloff) without its aircraft, the larger. Air: the list's gunships and the bombers. Bombers count when seen

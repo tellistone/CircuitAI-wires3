@@ -14,6 +14,7 @@
 
 #include "AIFloat3.h"
 
+#include <limits>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -34,7 +35,8 @@ class ISquadTask;
  * 0. Wards: our commanders (role comm, with the builder flee), and anti-heavy squads (not flying ones) and artillery
  *    tasks holding a unit with the "protect" attribute. Those within 600 elmos of each other are one ward (and stay
  *    one until 800 apart). A ward's value is its members' summed metal cost; its goal is its costliest commander,
- *    else its costliest member. Its identity is kept while its members change.
+ *    else its costliest member. Its identity is kept while its members change (merged: the ward in a go, else on,
+ *    else the oldest).
  * 1. Anchor: a commander's seen danger (CBuilderManager's danger list within the zone) beats its own power, or it
  *    took damage; a group member is outnumbered by the force balance at the goal (enemy force over ours, our and
  *    allied mobiles nearby at 0.75: an army standing by holds it); or seen planes with a ground weapon (bombers)
@@ -58,8 +60,9 @@ class ISquadTask;
  *    go to the best ward by value / (travel sec + 3 s): wards in a go first, then the others, each until groups +
  *    members + static cover reach 1.25x its danger (or the go line + 0.25). The ground side adds the gunships the
  *    air side leaves unanswered, to its ratio and to its commit up to its danger again. A ward in a no-go still
- *    under its go line after the pick hands its groups back, the lowest value first, and the others pick again. A
- *    committed group not yet present moves, once, to a ward that scores it at least twice as high. Go at go_ratio
+ *    under its go line after the pick hands its groups back, the lowest value first, and the others pick again; then
+ *    those handed back try alone, the highest value first. A group latched to a go and not yet present moves, once,
+ *    to a ward that scores it at least twice as high, if that go stays above its keep line. Go at go_ratio
  *    with a group at least (0.6 x it once cornered); no-go below the go line / quota.attack_keep_threat. 5 s per
  *    state at least, each ward and side on its own. On go the groups are latched until the anchor ends or its
  *    no-go, or until one is 1.5 x respond_sec of travel away; they merge only into each other.
@@ -129,6 +132,11 @@ private:
 		float ratio = 0.f;
 		int count = 0;  // its committed groups
 		float GetSum() const { return committedSum + own + cover; }  // the ratio's numerator
+		float GetRatio() const {  // against its danger and the spill
+			const float judged = danger + spill;
+			return (judged > 0.f) ? GetSum() / judged : std::numeric_limits<float>::max();
+		}
+		void ClearSums() { committedSum = 0.f; presentSum = own + commCover; count = 0; }
 	};
 	struct SWard {
 		int id = 0;
@@ -193,7 +201,8 @@ private:
 	// The gunships of the ward's air danger that airAnswer leaves unanswered: the ground side's spill
 	float GetGunshipSpill(const SWard& w, float airAnswer) const;
 	void UpdateDeathTime(SWard& w, int frame);
-	// Seen planes with a ground weapon in the zone heading for the goal (or that just hit a commander): planeDanger
+	void CollectPlanes();  // seen enemy planes with a ground weapon, once per update
+	// Those in the zone heading for the goal (or that just hit a commander): planeDanger
 	void UpdatePlanes(SWard& w, int frame);
 	void CollectTurrets(int frame);  // both kinds, once per update when first needed
 	float GetStaticCover(const springai::AIFloat3& pos, bool isAir, float range) const;  // range: the attacker's
@@ -209,13 +218,21 @@ private:
 	// The present radius: half the zone around the goal; once in it (wasPresent), 0.625 of it
 	bool IsInFight(const SWard& w, const springai::AIFloat3& pos, bool wasPresent) const;
 	float GetTravelSec(const ISquadTask* task, const springai::AIFloat3& goal, int frame) const;
+	// Its travel to the ward when it can answer it (in time, and it can move there), else -1
+	float GetReachSec(const ISquadTask* task, const SWard& w, int frame) const;
 	void CollectCandidates(bool isAir, int frame, const std::vector<SWard*>& on, std::vector<SCandidate>& out) const;
 	// Its strength and flags, added to its side's sums
 	void Refresh(const ISquadTask* task, int frame, SCommit& commit, SWard& w);
 	// The side's commit and go or no-go over all on wards
 	void Pick(Side side, int frame, const std::vector<SWard*>& on);
 	// The best (candidate, ward) pairs by value / (travel + 3 s), for the wards in state that are short of their need
-	void Fill(Side side, State state, int frame, const std::vector<SWard*>& on, std::vector<SCandidate>& pool);
+	// (only: that ward alone)
+	void Fill(Side side, State state, int frame, const std::vector<SWard*>& on, std::vector<SCandidate>& pool,
+			const SWard* only = nullptr);
+	// Its picks of the side handed back to the pool
+	void Release(SWard& w, Side side, std::vector<SCandidate>& pool);
+	// Committed groups not yet present move, once, to a ward short of its need that scores them 2x higher
+	void MoveGroups(Side side, int frame, const std::vector<SWard*>& on);
 
 	CCircuitAI* circuit;
 	SConfig cfg;
@@ -226,6 +243,7 @@ private:
 	int turretFrame;  // the frame turrets were collected at
 	std::vector<springai::AIFloat3> goals;  // this update's ward goals (the turrets' reach)
 	std::vector<STurret> turrets;
+	std::vector<const CEnemyInfo*> enemyPlanes;  // CollectPlanes
 	std::unordered_map<const IFighterTask*, SCommit> committed;
 	std::unordered_map<const void*, int> memberWard;  // a commander (unit) or protected task -> its ward's id
 	std::unordered_map<ICoreUnit::Id, int> attackers;  // enemy id -> frame it last hit one of our commanders
