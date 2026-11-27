@@ -50,6 +50,7 @@ public:
 	const springai::AIFloat3& GetPosition() const { return position; }
 
 	float GetAttackPower() const { return attackPower; }
+	float GetPowerMod() const { return powerMod; }  // its own power's multiplier where it judges threat
 	float GetAreaPower() const { return areaPower; }  // of the units that are area damage (CMilitaryManager::IsAreaDamage)
 	// Group size bonus to the group's own power where it is compared against enemy threat (Lanchester's square
 	// law): 1 + quota.group_count_power x count, so 10 units at 0.025 count as 1.25x. The no-argument form uses
@@ -90,8 +91,7 @@ protected:
 	void SetTarget(CEnemyInfo* enemy);
 	// The task's thr_mod multiplier from its distance-from-base curve (quota.thr_mod.distance.<task>), read at the spot
 	// being judged (an enemy, a destination, a unit's own position): divide a threat allowance by it. 1 if not configured.
-	// Tasks may add a term of their own (CRaidDefendTask: courage around the posts)
-	virtual float GetThrDistModAt(const springai::AIFloat3& pos) const;
+	float GetThrDistModAt(const springai::AIFloat3& pos) const;
 	// Units move to a firing spot (FindFireSpot; melee: one right next to the target, else a safe one within weapon
 	// range), then Attack the target.
 	// isDirect: units without a spot (no usable range, or quota.attack_melee_spot < 0 for melee) get a direct Attack instead of a fight-move, so the target keeps priority.

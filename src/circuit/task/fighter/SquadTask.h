@@ -147,7 +147,9 @@ protected:
 	// Is the straight line from our leader to the host's leader safe to walk for merging?
 	// Default: walkable and no threat at all (CQueryLineMap::IsSafeLine)
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const;
-	ISquadTask* GetMergeTask();
+	// Every period updates (on updCount % period == 1, so any period that divides 32 also checks on the default's
+	// updates), if the group stands where merging is safe (IsMergeSafe)
+	ISquadTask* GetMergeTask(unsigned int period = 32);
 	// Also releases stuck units (far from the regroup spot after 60 s, or a leader that didn't move between
 	// regroups) to the idle pool; leader == nullptr afterwards if none are left
 	bool IsMustRegroup();

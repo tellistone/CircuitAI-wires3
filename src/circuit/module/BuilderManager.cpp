@@ -2810,8 +2810,8 @@ bool CBuilderManager::FindCommFleeGoal(CCircuitUnit* unit, const AIFloat3& dange
 									   AIFloat3& outGoal)
 {
 	// As ISquadTask::FindFleeGoal (attack/defend groups, else defended clusters; then the base) plus the closest
-	// factory and quota.raid_defence's posts that hold defence groups and its gathering posts (the raiders chasing it
-	// meet the defenders), leaving out spots inside a seen flee zone. Gunships: factory and base only, where anti-air
+	// factory and quota.raid_defence's posts that hold defence groups (the raiders chasing it meet the defenders),
+	// leaving out spots inside a seen flee zone. Gunships: factory and base only, where anti-air
 	// is likely. Other builders skip the groups: one heads on to the front, and the builder would follow it there.
 	// false: no such spot, or only one at its feet (cornered)
 	const int frame = circuit->GetLastFrame();

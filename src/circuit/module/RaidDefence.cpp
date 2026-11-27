@@ -7,7 +7,6 @@
 
 #include "module/RaidDefence.h"
 #include "module/BuilderManager.h"
-#include "module/EconomyManager.h"
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
 #include "module/MilitaryManager.h"
@@ -17,8 +16,6 @@
 #include "map/ThreatMap.h"
 #include "module/SpotScorer.h"
 #include "resource/MetalManager.h"
-#include "setup/SetupManager.h"
-#include "task/builder/BuilderTask.h"
 #include "task/fighter/DefendTask.h"
 #include "task/fighter/RaidDefendTask.h"
 #include "terrain/ChokeMap.h"
@@ -45,6 +42,7 @@ using namespace springai;
 // A counted enemy this second
 struct CRaidDefence::SCounted {
 	CEnemyManager::SBlobMember m;  // threat x raid_thr_mod and the raid view's count weight, faded
+	float rawThreat;  // its threat alone, faded: the measure of our groups' strength (protect's danger)
 	AIFloat3 vel;
 	bool isComm;
 };
@@ -75,7 +73,6 @@ CRaidDefence::CRaidDefence(CCircuitAI* circuit, const SConfig& cfg)
 		, warmFrame(-1)
 		, isWarm(false)
 		, warmSlotId(-1)
-		, isNogo(false)
 		, lostMetal(0.f)
 		, defendKills(0.f)
 		, raidKills(0.f)
@@ -125,7 +122,7 @@ void CRaidDefence::Update()
 		it = (frame - it->second > ATTACKER_FRAMES) ? attackers.erase(it) : std::next(it);
 	}
 
-	UpdateDefenderAreas(frame);
+	CCircuitUnit* rep = ScanRaiders();
 	if (frame - coverFrame >= COVER_FRAMES) {
 		coverFrame = frame;
 		UpdateCover(frame);
@@ -141,13 +138,11 @@ void CRaidDefence::Update()
 	// An incident whose protect ward has been in a no-go for NOGO_HALF_FRAMES counts at half its threat
 	const CProtect* protect = circuit->GetMilitaryManager()->GetProtect();
 	threatT = threatB = 0.f;
-	isNogo = false;
 	for (const SIncident& inc : incidents) {
 		if (!inc.isAnswerable) {
 			continue;
 		}
 		const CProtect::SIncidentState state = protect->GetIncidentState(inc.id);
-		isNogo |= state.isOn && !state.isGo;
 		const float threat = inc.threat * ((state.nogoFrames >= NOGO_HALF_FRAMES) ? 0.5f : 1.f);
 		threatT += threat;
 		threatB = std::max(threatB, threat);
@@ -156,30 +151,8 @@ void CRaidDefence::Update()
 	needD = std::min(cfg.margin * threatT, cap);
 	UpdateWarm(frame, cap);
 
-	CCircuitUnit* rep = FindRepUnit();
 	UpdateReserve(frame, rep);
 	UpdateResponse(frame, rep);
-
-	// The share of our raiders defending, for the minute line
-	unsigned int raiders = 0;
-	unsigned int defending = 0;
-	for (CCircuitUnit* unit : circuit->GetMilitaryManager()->GetArmy()) {
-		if (!IsRole(unit->GetCircuitDef())) {
-			continue;
-		}
-		++raiders;
-		const IUnitTask* task = unit->GetTask();
-		if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
-			&& (static_cast<const IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::RAID_DEFEND))
-		{
-			++defending;
-		}
-	}
-	if (raiders > 0) {
-		shareSum += (float)defending / raiders;
-		++shareSamples;
-	}
-
 	LogState(frame);
 }
 
@@ -201,12 +174,25 @@ void CRaidDefence::CheckWindow(int frame)
 	ReleaseAll(frame);
 }
 
-void CRaidDefence::UpdateDefenderAreas(int frame)
+CCircuitUnit* CRaidDefence::ScanRaiders()
 {
 	defenderAreas.clear();
+	std::map<int, std::pair<int, CCircuitUnit*>> byMobile;  // mobile id -> count, its first unit
+	unsigned int raiders = 0;
+	unsigned int defending = 0;
 	for (CCircuitUnit* unit : circuit->GetMilitaryManager()->GetArmy()) {
 		const CCircuitDef* cdef = unit->GetCircuitDef();
-		if (!IsRole(cdef) || (unit->GetArea() == nullptr)) {
+		if (!IsRole(cdef)) {
+			continue;
+		}
+		++raiders;
+		const IUnitTask* task = unit->GetTask();
+		if ((task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
+			&& (static_cast<const IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::RAID_DEFEND))
+		{
+			++defending;
+		}
+		if (unit->GetArea() == nullptr) {
 			continue;
 		}
 		auto it = std::find_if(defenderAreas.begin(), defenderAreas.end(), [unit](const SArea& a) {
@@ -217,7 +203,23 @@ void CRaidDefence::UpdateDefenderAreas(int frame)
 		} else {
 			it->range = std::max(it->range, cdef->GetMaxRange());
 		}
+		std::pair<int, CCircuitUnit*>& entry = byMobile[cdef->GetMobileId()];
+		entry.second = (entry.second == nullptr) ? unit : entry.second;
+		++entry.first;
 	}
+	if (raiders > 0) {
+		shareSum += (float)defending / raiders;
+		++shareSamples;
+	}
+	CCircuitUnit* rep = nullptr;
+	int maxCount = 0;
+	for (const auto& kv : byMobile) {
+		if (kv.second.first > maxCount) {
+			maxCount = kv.second.first;
+			rep = kv.second.second;
+		}
+	}
+	return rep;
 }
 
 /*
@@ -257,12 +259,14 @@ void CRaidDefence::CollectEnemies(int frame, std::vector<SCounted>& outAll, std:
 		SCounted c;
 		c.m.pos = e->GetPos();
 		c.m.threat = threat * fade;
+		c.rawThreat = e->GetThreat() * fade;
 		c.m.count = e->GetRaidCountWeight() * fade;
 		c.m.id = e->GetId();
 		c.vel = e->GetVel();
 		c.isComm = isComm;
-		// On our ground, and kept so until GROUND_KEEP_FRAMES off it
-		if (IsOurGround(c.m.pos)) {
+		// On our ground, and kept so until GROUND_KEEP_FRAMES off it or out of sight (a ghost's last spot doesn't pin
+		// the defence)
+		if (e->IsInRadarOrLOS() && IsOurGround(c.m.pos)) {
 			groundFrames[c.m.id] = frame;
 		}
 		auto it = groundFrames.find(c.m.id);
@@ -317,15 +321,15 @@ void CRaidDefence::UpdateBmax(std::vector<SCounted>& all)
 
 void CRaidDefence::UpdateIncidents(int frame, std::vector<SCounted>& ground)
 {
-	// The blobs on our ground. Each keeps the id of the incident a second ago it shares at least half of that one's
-	// members with (the most shared first, hottest blob first), else it is a new incident
+	// The blobs on our ground. Each keeps the id of an incident a second ago it shares members with (see below),
+	// else it is a new incident
 	static std::vector<CEnemyManager::SBlobMember> members;  // NOTE: micro-opt
 	static std::vector<CEnemyManager::SEnemyBlob> blobs;  // NOTE: micro-opt
 	members.clear();
-	std::unordered_map<ICoreUnit::Id, AIFloat3> vels;
+	std::unordered_map<ICoreUnit::Id, const SCounted*> counted;
 	for (const SCounted& c : ground) {
 		members.push_back(c.m);
-		vels[c.m.id] = c.vel;
+		counted[c.m.id] = &c;
 	}
 	CEnemyManager::MakeBlobs(members, members.size(), blobs);
 
@@ -337,46 +341,58 @@ void CRaidDefence::UpdateIncidents(int frame, std::vector<SCounted>& ground)
 		next[i].threat = blobs[i].threat * threatMap->GetCountMod(blobs[i].count);
 	}
 	for (const CEnemyManager::SBlobMember& m : members) {
+		const SCounted* c = counted[m.id];
 		next[m.blob].members.push_back(m.id);
-		next[m.blob].vel += vels[m.id];
+		next[m.blob].vel += c->vel;
+		next[m.blob].rawThreat += c->rawThreat;
 	}
 	std::sort(next.begin(), next.end(), [](const SIncident& a, const SIncident& b) { return a.threat > b.threat; });
 
-	std::vector<bool> isTaken(incidents.size(), false);
-	for (SIncident& inc : next) {
+	// Each pair that shares at least half of the smaller one's members, the most shared first: a raid we cut down
+	// keeps its id (2 left of 5 share all 2), and of a split raid the bigger part does
+	struct SMatch { size_t next, prev, shared; };
+	std::vector<SMatch> matches;
+	for (size_t i = 0; i < next.size(); ++i) {
+		SIncident& inc = next[i];
 		std::sort(inc.members.begin(), inc.members.end());
 		inc.vel /= std::max<size_t>(inc.members.size(), 1);
-		int best = -1;
-		size_t bestShared = 0;
 		for (size_t j = 0; j < incidents.size(); ++j) {
-			if (isTaken[j]) {
-				continue;
-			}
 			const std::vector<ICoreUnit::Id>& prev = incidents[j].members;
 			std::vector<ICoreUnit::Id> shared;
 			std::set_intersection(inc.members.begin(), inc.members.end(), prev.begin(), prev.end(),
 					std::back_inserter(shared));
-			if ((shared.size() * 2 >= prev.size()) && (shared.size() > bestShared)) {
-				best = j;
-				bestShared = shared.size();
+			if (!shared.empty() && (shared.size() * 2 >= std::min(inc.members.size(), prev.size()))) {
+				matches.push_back({i, j, shared.size()});
 			}
 		}
-		if (best >= 0) {
-			isTaken[best] = true;
-			const SIncident& prev = incidents[best];
-			inc.id = prev.id;
-			inc.openFrame = prev.openFrame;
-			inc.goalId = prev.goalId;
-			inc.candId = prev.candId;
-			inc.candFrame = prev.candFrame;
-			inc.concededId = prev.concededId;
-			inc.concededCluster = prev.concededCluster;
-			inc.gather = prev.gather;
-		} else {
-			inc.id = nextIncidentId++;
-			inc.openFrame = frame;
+	}
+	std::stable_sort(matches.begin(), matches.end(), [](const SMatch& a, const SMatch& b) {
+		return a.shared > b.shared;  // ties: the hotter blob (next is sorted by threat)
+	});
+	std::vector<bool> isNextTaken(next.size(), false);
+	std::vector<bool> isPrevTaken(incidents.size(), false);
+	for (const SMatch& m : matches) {
+		if (isNextTaken[m.next] || isPrevTaken[m.prev]) {
+			continue;
 		}
-		inc.isAnswerable = CanOpenIncident(inc);
+		isNextTaken[m.next] = isPrevTaken[m.prev] = true;
+		SIncident& inc = next[m.next];
+		const SIncident& prev = incidents[m.prev];
+		inc.id = prev.id;
+		inc.openFrame = prev.openFrame;
+		inc.goalId = prev.goalId;
+		inc.candId = prev.candId;
+		inc.candFrame = prev.candFrame;
+		inc.conceded = prev.conceded;
+		inc.gather = prev.gather;
+		inc.gatherFrame = prev.gatherFrame;
+	}
+	for (size_t i = 0; i < next.size(); ++i) {
+		if (!isNextTaken[i]) {
+			next[i].id = nextIncidentId++;
+			next[i].openFrame = frame;
+		}
+		next[i].isAnswerable = CanOpenIncident(next[i]);
 	}
 	incidents.swap(next);
 }
@@ -536,18 +552,26 @@ int CRaidDefence::GetPocketAt(const AIFloat3& pos) const
 	const std::vector<CChokeMap::SPocket>& pockets = chokeMap->GetPockets();
 	int best = -1;
 	int bestInner = 0;
-	for (size_t p = 0; p < pockets.size(); ++p) {
+	for (size_t p = 0; (p < pockets.size()) && (p < pocketInner.size()); ++p) {
 		const std::vector<bool>& isInner = pockets[p].isInner;
-		if ((region >= (int)isInner.size()) || !isInner[region]) {
-			continue;
-		}
-		const int inner = std::count(isInner.begin(), isInner.end(), true);
-		if (inner > bestInner) {
+		if ((region < (int)isInner.size()) && isInner[region] && (pocketInner[p] > bestInner)) {
 			best = p;
-			bestInner = inner;
+			bestInner = pocketInner[p];
 		}
 	}
 	return best;
+}
+
+void CRaidDefence::CountPocketInner()
+{
+	pocketInner.clear();
+	const CChokeMap* chokeMap = circuit->GetChokeMap();
+	if (!chokeMap->IsReady()) {
+		return;
+	}
+	for (const CChokeMap::SPocket& p : chokeMap->GetPockets()) {
+		pocketInner.push_back(std::count(p.isInner.begin(), p.isInner.end(), true));
+	}
 }
 
 bool CRaidDefence::IsPocketHeld(int pocket) const
@@ -569,6 +593,7 @@ void CRaidDefence::CollectAssets(int frame)
 {
 	// Our finished mexes, constructors (the commander too) and factories, each second. Allies' aren't ours to defend
 	assets.clear();
+	CountPocketInner();
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	const CMetalData::Metals& spots = metalMgr->GetSpots();
 	const CMetalData::Clusters& metalClusters = metalMgr->GetClusters();
@@ -668,11 +693,11 @@ void CRaidDefence::UpdateReserve(int frame, CCircuitUnit* rep)
 		splitFrame = frame;
 		splitD = needD;
 		splitWarm = isWarm;
-		Split(frame, rep);
+		Split();
 	}
-	UpdateNeeds(frame);
 	for (SSlot& slot : slots) {
-		slot.map.Refresh(circuit, rep, slot.pos, POST_FRAMES, slot.isEscort ? MAP_MOVE_DIST : 1.f);
+		slot.need = needD * slot.weight;
+		slot.map.Refresh(circuit, rep, slot.pos, POST_FRAMES, 1.f);
 	}
 	CountHave(frame);
 	if (isSplit) {
@@ -697,30 +722,6 @@ void CRaidDefence::UpdateReserve(int frame, CCircuitUnit* rep)
 	} else {
 		surplusFrame = -1;
 	}
-}
-
-CCircuitUnit* CRaidDefence::FindRepUnit() const
-{
-	// Posts are placed and travel maps made for one movement type: the most common among our raiders of the roles
-	std::map<int, std::pair<int, CCircuitUnit*>> byMobile;  // mobile id -> count, its first unit
-	for (CCircuitUnit* unit : circuit->GetMilitaryManager()->GetArmy()) {
-		const CCircuitDef* cdef = unit->GetCircuitDef();
-		if (!IsRole(cdef) || (unit->GetArea() == nullptr)) {
-			continue;
-		}
-		std::pair<int, CCircuitUnit*>& entry = byMobile[cdef->GetMobileId()];
-		entry.second = (entry.second == nullptr) ? unit : entry.second;
-		++entry.first;
-	}
-	CCircuitUnit* rep = nullptr;
-	int maxCount = 0;
-	for (const auto& kv : byMobile) {
-		if (kv.second.first > maxCount) {
-			maxCount = kv.second.first;
-			rep = kv.second.second;
-		}
-	}
-	return rep;
 }
 
 void CRaidDefence::RefreshPosts(int frame, CCircuitUnit* rep)
@@ -779,7 +780,11 @@ void CRaidDefence::RefreshPosts(int frame, CCircuitUnit* rep)
 	for (const auto& kv : pocketSites) {
 		SSlot post;
 		post.pocketKey = circuit->GetChokeMap()->GetPockets()[kv.first].chokeIds;
-		post.pos = GetPocketPost(kv.first, getCentre(kv.second, post.value), rep);
+		auto prev = std::find_if(slots.begin(), slots.end(), [&post](const SSlot& s) {
+			return s.pocketKey == post.pocketKey;
+		});
+		post.pos = GetPocketPost(kv.first, getCentre(kv.second, post.value), rep,
+				(prev != slots.end()) ? &*prev : nullptr);
 		next.push_back(std::move(post));
 	}
 
@@ -787,7 +792,7 @@ void CRaidDefence::RefreshPosts(int frame, CCircuitUnit* rep)
 	// map (the old ones, then those opened before it), else opens one
 	std::vector<SSlot> open;
 	for (const SSlot& s : slots) {
-		if (!s.isEscort && s.pocketKey.empty()) {
+		if (s.pocketKey.empty()) {
 			open.push_back(s);
 		}
 	}
@@ -820,26 +825,36 @@ void CRaidDefence::RefreshPosts(int frame, CCircuitUnit* rep)
 		}
 	}
 
+	// At most MAX_SLOTS: the least valuable folds its value into the nearest other while there are more
+	while (next.size() > MAX_SLOTS) {
+		auto least = std::min_element(next.begin(), next.end(), [](const SSlot& a, const SSlot& b) {
+			return a.value < b.value;
+		});
+		SSlot* nearest = nullptr;
+		for (SSlot& s : next) {
+			if ((&s != &*least)
+				&& ((nearest == nullptr) || (s.pos.SqDistance2D(least->pos) < nearest->pos.SqDistance2D(least->pos))))
+			{
+				nearest = &s;
+			}
+		}
+		nearest->value += least->value;
+		next.erase(least);
+	}
 	// A new post count waits POST_COUNT_FRAMES: meanwhile the posts stay, each site's value with the nearest
-	const size_t postCount = std::count_if(slots.begin(), slots.end(), [](const SSlot& s) { return !s.isEscort; });
-	if ((next.size() != postCount) && (postCount > 0)) {
+	if ((next.size() != slots.size()) && !slots.empty()) {
 		if ((int)next.size() != pendingPostCount) {
 			pendingPostCount = next.size();
 			pendingPostFrame = frame;
 		}
 		if (frame - pendingPostFrame < POST_COUNT_FRAMES) {
 			for (SSlot& s : slots) {
-				s.value = s.isEscort ? s.value : 0.f;
+				s.value = 0.f;
 			}
 			for (const SSite& site : sites) {
-				SSlot* nearest = nullptr;
-				for (SSlot& s : slots) {
-					if (!s.isEscort && ((nearest == nullptr)
-						|| (s.pos.SqDistance2D(site.pos) < nearest->pos.SqDistance2D(site.pos))))
-					{
-						nearest = &s;
-					}
-				}
+				auto nearest = std::min_element(slots.begin(), slots.end(), [&site](const SSlot& a, const SSlot& b) {
+					return a.pos.SqDistance2D(site.pos) < b.pos.SqDistance2D(site.pos);
+				});
 				nearest->value += site.value;
 			}
 			return;
@@ -851,7 +866,7 @@ void CRaidDefence::RefreshPosts(int frame, CCircuitUnit* rep)
 	// moved beyond POST_MOVE_DIST
 	for (SSlot& post : next) {
 		auto it = std::find_if(slots.begin(), slots.end(), [&post](const SSlot& s) {
-			return !s.isEscort && ((post.id >= 0) ? (s.id == post.id) : (!post.pocketKey.empty() && (s.pocketKey == post.pocketKey)));
+			return (post.id >= 0) ? (s.id == post.id) : (!post.pocketKey.empty() && (s.pocketKey == post.pocketKey));
 		});
 		if (it == slots.end()) {
 			post.id = nextSlotId++;
@@ -863,22 +878,14 @@ void CRaidDefence::RefreshPosts(int frame, CCircuitUnit* rep)
 			post.pos = it->pos;
 		}
 	}
-	std::vector<SSlot> escorts;
-	for (SSlot& s : slots) {
-		if (s.isEscort) {
-			escorts.push_back(std::move(s));
-		}
-	}
 	slots.swap(next);
-	for (SSlot& e : escorts) {
-		slots.push_back(std::move(e));
-	}
 }
 
-AIFloat3 CRaidDefence::GetPocketPost(int pocket, const AIFloat3& centre, CCircuitUnit* rep) const
+AIFloat3 CRaidDefence::GetPocketPost(int pocket, const AIFloat3& centre, CCircuitUnit* rep, const SSlot* prev) const
 {
-	// A pocket with 1 or 2 entrances, all defensible: the hold spot at its busiest one (as CFrontline's holds), if no
-	// threat reaches it. Else the centre of its assets
+	// A pocket with 1 or 2 entrances, all defensible: the hold spot at its busiest one (as CFrontline's holds), taken
+	// with no threat there and kept while its threat stays under the post's need (prev: the post there now). Else
+	// the centre of its assets
 	CChokeMap* chokeMap = circuit->GetChokeMap();
 	const CChokeMap::SPocket& p = chokeMap->GetPockets()[pocket];
 	if (p.isQualified && !p.chokes.empty() && (p.chokes.size() <= 2)) {
@@ -894,181 +901,67 @@ AIFloat3 CRaidDefence::GetPocketPost(int pocket, const AIFloat3& centre, CCircui
 		goal.innerRegion = isInnerA ? choke.regionA : choke.regionB;
 		goal.area = rep->GetArea();
 		const AIFloat3 spot = circuit->GetMilitaryManager()->GetSpotScorer()->FindSpot(rep->GetCircuitDef(), goal);
-		if (utils::is_valid(spot) && (circuit->GetThreatMap()->GetThreatAt(rep, spot) < THREAT_MIN)) {
+		const bool isKept = (prev != nullptr) && utils::is_valid(spot)
+				&& (prev->pos.SqDistance2D(spot) <= SQUARE(POST_MOVE_DIST));
+		const float maxThreat = isKept ? std::max(prev->need, THREAT_MIN) : THREAT_MIN;
+		if (utils::is_valid(spot) && (circuit->GetThreatMap()->GetThreatAt(rep, spot) < maxThreat)) {
 			return spot;
 		}
 	}
 	return circuit->GetTerrainManager()->GetMovePosition(rep->GetArea(), centre);
 }
 
-void CRaidDefence::Split(int frame, CCircuitUnit* rep)
+void CRaidDefence::Split()
 {
-	// The posts, the most valuable first: H = min(D, margin x B) by value, each share at least post_min x oneRaider.
-	// The warm floor: all of it at the biggest post
+	// The posts, the most valuable first: H = min(D, margin x B) by value, each share at least post_min x oneRaider
+	// (the smallest folds into the nearest other while it is under that); D goes by those shares. The warm floor: all
+	// of it at the biggest post
 	const float minShare = cfg.postMin * oneRaider;
 	std::vector<SSlot*> posts;
 	for (SSlot& s : slots) {
 		s.weight = 0.f;
-		if (!s.isEscort && (s.value > 0.f)) {
+		if (s.value > 0.f) {
 			posts.push_back(&s);
 		}
 	}
 	std::sort(posts.begin(), posts.end(), [](const SSlot* a, const SSlot* b) { return a->value > b->value; });
 	warmSlotId = -1;
-	float postShare = 0.f;
-	size_t keep = posts.size();
-	if (isWarm && !posts.empty()) {
+	if (posts.empty()) {
+		return;
+	}
+	if (isWarm) {
 		posts.front()->weight = 1.f;
 		warmSlotId = posts.front()->id;
-		postShare = needD;
-		keep = 1;
-	} else if (!posts.empty()) {
-		postShare = std::min(needD, cfg.margin * threatB);
-		// The smallest post folds into the nearest kept one while there are too many, or its share is under the minimum
-		std::vector<float> values(posts.size());
-		for (size_t i = 0; i < posts.size(); ++i) {
-			values[i] = posts[i]->value;
-		}
-		const float total = std::accumulate(values.begin(), values.end(), 0.f);
-		while ((keep > 1) && ((keep > MAX_SLOTS) || (postShare * values[keep - 1] < minShare * total))) {
-			--keep;
-			const AIFloat3& pos = posts[keep]->pos;
-			size_t nearest = 0;
-			for (size_t i = 1; i < keep; ++i) {
-				nearest = (posts[i]->pos.SqDistance2D(pos) < posts[nearest]->pos.SqDistance2D(pos)) ? i : nearest;
-			}
-			values[nearest] += values[keep];
-		}
-		for (size_t i = 0; i < keep; ++i) {
-			posts[i]->weight = values[i] / total;
-		}
+		return;
 	}
-
-	// Escorts from the rest, up to half of it (all of D without a post), while the slots last: exposed constructors
-	// outside defended clusters, those with an escort already first, then the nearest to a post by its travel map.
-	// Each needs post_min x oneRaider less its riot guards there. What is left goes to the posts (UpdateNeeds)
-	float budget = posts.empty() ? needD : (needD - postShare) * 0.5f;
-	struct SCand {
-		const SAsset* asset;
-		float need;
-		bool isOpen;
-		float sec;
-	};
-	std::vector<SCand> cands;
-	if ((rep != nullptr) && (budget > 0.f)) {
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		const int mobileId = rep->GetCircuitDef()->GetMobileId();
-		const float speed = std::max(rep->GetCircuitDef()->GetSpeed(), 1.f);
-		const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
-		for (const SAsset& a : assets) {
-			CCircuitUnit* builder = ((a.kind == SAsset::Kind::BUILDER) && !a.isDefended) ? circuit->GetTeamUnit(a.unitId) : nullptr;
-			if ((builder == nullptr) || !IsExposed(builder, frame) || !terrainMgr->CanMoveToPos(rep->GetArea(), a.pos)) {
-				continue;
-			}
-			const float need = minShare - GetGuardStrength(builder, frame);
-			if (need <= 0.f) {
-				continue;  // its riot guards cover it
-			}
-			float sec = (keep > 0) ? std::numeric_limits<float>::max() : basePos.distance2D(a.pos) / speed;
-			for (size_t i = 0; i < keep; ++i) {
-				sec = std::min(sec, GetSlotSec(*posts[i], mobileId, a.pos, speed));
-			}
-			const bool isOpen = std::any_of(slots.begin(), slots.end(), [&a](const SSlot& s) {
-				return s.isEscort && (s.builderId == a.unitId);
-			});
-			cands.push_back({&a, need, isOpen, sec});
-		}
+	const float postShare = std::min(needD, cfg.margin * threatB);
+	std::vector<float> values(posts.size());
+	for (size_t i = 0; i < posts.size(); ++i) {
+		values[i] = posts[i]->value;
 	}
-	std::sort(cands.begin(), cands.end(), [](const SCand& a, const SCand& b) {
-		return (a.isOpen != b.isOpen) ? a.isOpen : (a.sec < b.sec);
-	});
-	std::vector<SSlot> escorts;
-	size_t count = keep;
-	for (const SCand& c : cands) {
-		if ((count >= MAX_SLOTS) || (c.need > budget)) {
+	const float total = std::accumulate(values.begin(), values.end(), 0.f);
+	std::vector<size_t> kept(posts.size());
+	std::iota(kept.begin(), kept.end(), 0);
+	while (kept.size() > 1) {
+		auto least = std::min_element(kept.begin(), kept.end(), [&values](size_t a, size_t b) {
+			return values[a] < values[b];
+		});
+		if (postShare * values[*least] >= minShare * total) {
 			break;
 		}
-		auto it = std::find_if(slots.begin(), slots.end(), [&c](const SSlot& s) {
-			return s.isEscort && (s.builderId == c.asset->unitId);
-		});
-		SSlot escort;
-		if (it != slots.end()) {
-			escort = std::move(*it);
-		} else {
-			escort.id = nextSlotId++;
-			escort.isEscort = true;
-			escort.builderId = c.asset->unitId;
+		const AIFloat3& pos = posts[*least]->pos;
+		size_t nearest = (least == kept.begin()) ? kept.back() : kept.front();
+		for (size_t k : kept) {
+			if ((k != *least) && (posts[k]->pos.SqDistance2D(pos) < posts[nearest]->pos.SqDistance2D(pos))) {
+				nearest = k;
+			}
 		}
-		escort.pos = c.asset->pos;
-		escort.value = c.asset->value;
-		escort.need = c.need;
-		escorts.push_back(std::move(escort));
-		budget -= c.need;
-		++count;
+		values[nearest] += values[*least];
+		values[*least] = 0.f;
+		kept.erase(least);
 	}
-	slots.erase(std::remove_if(slots.begin(), slots.end(), [](const SSlot& s) { return s.isEscort; }), slots.end());
-	for (SSlot& e : escorts) {
-		slots.push_back(std::move(e));
-	}
-}
-
-bool CRaidDefence::IsExposed(CCircuitUnit* builder, int frame) const
-{
-	// guard.summon's test: on ground that isn't safe, or its job is; not while it retreats
-	const IUnitTask* task = builder->GetTask();
-	if ((task == nullptr) || (task->GetType() == IUnitTask::Type::RETREAT)) {
-		return false;
-	}
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	if (!militaryMgr->IsSafeGround(builder->GetPos(frame))) {
-		return true;
-	}
-	if (task->GetType() != IUnitTask::Type::BUILDER) {
-		return false;
-	}
-	const IBuilderTask* job = static_cast<const IBuilderTask*>(task);
-	const AIFloat3 dest = (job->GetTarget() != nullptr) ? job->GetTarget()->GetPos(frame) : job->GetPosition();
-	return utils::is_valid(dest) && !militaryMgr->IsSafeGround(dest);
-}
-
-float CRaidDefence::GetGuardStrength(CCircuitUnit* builder, int frame) const
-{
-	const IFighterTask* guard = circuit->GetMilitaryManager()->GetGuardTask(builder);
-	if (guard == nullptr) {
-		return 0.f;
-	}
-	const AIFloat3& pos = builder->GetPos(frame);
-	float sum = 0.f;
-	for (CCircuitUnit* unit : guard->GetAssignees()) {
-		if (unit->GetPos(frame).SqDistance2D(pos) <= SQUARE(GUARD_NEAR_DIST)) {
-			sum += IFighterTask::GetCoverPower(unit);
-		}
-	}
-	return sum;
-}
-
-void CRaidDefence::UpdateNeeds(int frame)
-{
-	// Escorts follow their constructors (one that is gone needs nothing until the next split closes it); the posts
-	// share D less the escorts' needs
-	float escortSum = 0.f;
-	for (SSlot& s : slots) {
-		if (!s.isEscort) {
-			continue;
-		}
-		CCircuitUnit* builder = circuit->GetTeamUnit(s.builderId);
-		if (builder == nullptr) {
-			s.need = 0.f;
-			continue;
-		}
-		s.pos = builder->GetPos(frame);
-		escortSum += s.need;
-	}
-	const float pool = std::max(needD - escortSum, 0.f);
-	for (SSlot& s : slots) {
-		if (!s.isEscort) {
-			s.need = pool * s.weight;
-		}
+	for (size_t k : kept) {
+		posts[k]->weight = values[k] / total;
 	}
 }
 
@@ -1087,9 +980,6 @@ void CRaidDefence::CountHave(int frame)
 		}
 		const float strength = group->GetSafeThreat();
 		reserveR += strength;
-		if (group->IsHold() && (!isNogo || (strength >= cfg.postMin * oneRaider))) {
-			group->SetHold(false);  // a held recruit's group is big enough, or no raid is in a no-go any more
-		}
 		SSlot* slot = FindSlotToEdit(group->GetSlot());
 		if (slot != nullptr) {
 			slot->have += strength;
@@ -1108,22 +998,19 @@ void CRaidDefence::CountHave(int frame)
 		if (!utils::is_valid(spot) || (leader->GetPos(frame).SqDistance2D(spot) > SQUARE(HUNTER_PARK_DIST))) {
 			continue;
 		}
-		SSlot* post = nullptr;
-		for (SSlot& s : slots) {
-			if (!s.isEscort && ((post == nullptr) || (s.pos.SqDistance2D(spot) < post->pos.SqDistance2D(spot)))) {
-				post = &s;
-			}
-		}
-		if (post == nullptr) {
+		if (slots.empty()) {
 			break;
 		}
+		auto post = std::min_element(slots.begin(), slots.end(), [&spot](const SSlot& a, const SSlot& b) {
+			return a.pos.SqDistance2D(spot) < b.pos.SqDistance2D(spot);
+		});
 		const float strength = hunter->GetSafeThreat();
 		post->have += strength;
 		reserveR += strength;
 	}
-	// A group without a slot takes the nearest one short of strength, else the nearest post
+	// A group without a slot takes the nearest post short of strength, else the nearest post
 	auto isShort = [](const SSlot& s) { return s.have < s.need; };
-	auto isPost = [](const SSlot& s) { return !s.isEscort; };
+	auto isPost = [](const SSlot&) { return true; };
 	for (CRaidDefendTask* group : slotless) {
 		CCircuitUnit* leader = group->GetLeader();
 		const AIFloat3& pos = leader->GetPos(frame);
@@ -1141,14 +1028,13 @@ void CRaidDefence::CountHave(int frame)
 
 void CRaidDefence::Rebalance(int frame)
 {
-	// A calm group whose post keeps its need without it goes to the nearest slot short of strength. Escorts and held
-	// recruits stay
+	// A calm group whose post keeps its need without it goes to the nearest post short of strength
 	auto isShort = [](const SSlot& s) { return s.have < s.need; };
 	for (IFighterTask* t : circuit->GetMilitaryManager()->GetTasks(IFighterTask::FightType::RAID_DEFEND)) {
 		CRaidDefendTask* group = static_cast<CRaidDefendTask*>(t);
 		CCircuitUnit* leader = group->GetLeader();
 		SSlot* from = FindSlotToEdit(group->GetSlot());
-		if ((leader == nullptr) || (from == nullptr) || from->isEscort || group->IsHold() || !IsCalm(group, frame)) {
+		if ((leader == nullptr) || (from == nullptr) || !IsCalm(group, frame)) {
 			continue;
 		}
 		const float strength = group->GetSafeThreat();
@@ -1243,37 +1129,31 @@ void CRaidDefence::Recruit(int frame)
 
 IFighterTask* CRaidDefence::MakeTask(CCircuitUnit* unit)
 {
-	// Tier 1: a new raider of the roles starts a group at the slot short the most that it reaches. While a raid
-	// incident is in a no-go: at the post nearest it, held there until its group is big enough (CountHave), so
-	// recruits don't walk one by one into the raid
+	// Tier 1: a new raider of the roles starts a group at the post short the most that it reaches. While a raid is
+	// in a no-go, quota.protect's gathering post keeps it out of the raid
 	const CCircuitDef* cdef = unit->GetCircuitDef();
 	if (!IsOn() || !IsRole(cdef) || !IFighterTask::IsArmedUnit(cdef) || (reserveR >= RECRUIT_SHORT * needD)) {
 		return nullptr;
 	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	SSlot* best = nullptr;
-	if (isNogo) {
-		best = FindNearestSlot(unit->GetArea(), cdef->GetMobileId(), unit->GetPos(circuit->GetLastFrame()),
-				cdef->GetSpeed(), [](const SSlot& s) { return !s.isEscort; });
-	} else {
-		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		float maxShort = 0.f;
-		for (SSlot& s : slots) {
-			if ((s.need - s.have > maxShort) && terrainMgr->CanMoveToPos(unit->GetArea(), s.pos)) {
-				maxShort = s.need - s.have;
-				best = &s;
-			}
+	float maxShort = 0.f;
+	for (SSlot& s : slots) {
+		if ((s.need - s.have > maxShort) && terrainMgr->CanMoveToPos(unit->GetArea(), s.pos)) {
+			maxShort = s.need - s.have;
+			best = &s;
 		}
 	}
 	if (best == nullptr) {
 		return nullptr;
 	}
-	const float strength = IFighterTask::GetCoverPower(unit);  // counted until the next second
+	CRaidDefendTask* group = NewGroup(*best);
+	// Counted until the next second as a one-unit group's GetSafeThreat
+	const float strength = IFighterTask::GetCoverPower(unit) * group->GetPowerMod() * group->GetCountPowerMod(1);
 	best->have += strength;
 	reserveR += strength;
-	circuit->LOG("RAIDDEF recruit: a new %s to slot #%i%s, R %.1f / D %.1f", cdef->GetDef()->GetName(), best->id,
-			isNogo ? " (held)" : "", reserveR, needD);
-	CRaidDefendTask* group = NewGroup(*best);
-	group->SetHold(isNogo);
+	circuit->LOG("RAIDDEF recruit: a new %s to slot #%i, R %.1f / D %.1f", cdef->GetDef()->GetName(), best->id,
+			reserveR, needD);
 	return group;
 }
 
@@ -1416,56 +1296,28 @@ bool CRaidDefence::IsCalm(const CRaidTask* group, int frame)
 	return (group->GetTarget() == nullptr) && !group->IsFleeing(frame) && !group->IsProtecting() && !group->IsGathering();
 }
 
-bool CRaidDefence::CanLend(const CRaidDefendTask* group, const AIFloat3& goal, ICoreUnit::Id goalId) const
-{
-	// Not a held recruit. An escort to its own constructor; to anything else only while the constructor has no threat
-	// and the goal is within escort_leash_sec of it (its slot's travel map)
-	if (group->IsHold()) {
-		return false;
-	}
-	const SSlot* slot = FindSlot(group->GetSlot());
-	if ((slot == nullptr) || !slot->isEscort || (slot->builderId == goalId)) {
-		return true;
-	}
-	CCircuitUnit* leader = group->GetLeader();
-	CCircuitUnit* builder = circuit->GetTeamUnit(slot->builderId);
-	if ((leader == nullptr) || (builder == nullptr)) {
-		return true;  // a constructor gone: the escort guards nothing
-	}
-	if (circuit->GetThreatMap()->GetThreatAt(leader, builder->GetPos(circuit->GetLastFrame())) >= THREAT_MIN) {
-		return false;
-	}
-	return GetSlotSec(*slot, leader->GetCircuitDef()->GetMobileId(), goal, group->GetLowestSpeed())
-			<= cfg.escortLeashSec;
-}
-
-float CRaidDefence::GetPostBonus(const AIFloat3& pos) const
-{
-	const CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	float bonus = 1.f;
-	for (const SSlot& s : slots) {
-		if (!s.isEscort) {
-			bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(s.pos.SqDistance2D(pos)));
-		}
-	}
-	return bonus;
-}
-
 void CRaidDefence::FillFleeSpots(F3Vec& out) const
 {
 	if (!IsOn()) {
 		return;
 	}
+	// Posts that hold defence groups: the raiders chasing a constructor meet them. Not gathering posts: there the
+	// groups are weaker than the raid
 	for (const SSlot& s : slots) {
-		if (!s.isEscort && (s.have > 0.f)) {
+		if (s.have > 0.f) {
 			out.push_back(s.pos);
 		}
 	}
-	for (const SIncident& inc : incidents) {
-		if (inc.isAnswerable && utils::is_valid(inc.gather)) {
-			out.push_back(inc.gather);
+}
+
+const CTravelMap* CRaidDefence::GetPostMap(const AIFloat3& pos, int mobileId) const
+{
+	for (const SSlot& s : slots) {
+		if ((s.pos.SqDistance2D(pos) < 1.f) && s.map.IsReady() && (s.map.GetMobileId() == mobileId)) {
+			return &s.map;
 		}
 	}
+	return nullptr;
 }
 
 /*
@@ -1483,21 +1335,32 @@ void CRaidDefence::UpdateResponse(int frame, CCircuitUnit* rep)
 		}
 		const SAsset* goal = FindAsset(inc.goalId);
 		if ((goal != nullptr) && (goal->kind != SAsset::Kind::BUILDER) && protect->GetIncidentState(inc.id).isLate) {
-			// Concede and ambush: no group gets there before it dies, so meet the raid at its next asset
-			inc.concededId = goal->unitId;
-			inc.concededCluster = goal->cluster;
-			inc.goalId = -1;
-			circuit->LOG("RAIDDEF concede: incident #%i gives up %i (cluster %i)", inc.id, goal->unitId, goal->cluster);
+			// Concede and ambush: no group gets there before it dies, so meet the raid at its next asset, if any
+			inc.conceded.push_back(goal->unitId);
+			if (PickGoal(inc) != nullptr) {
+				inc.goalId = -1;
+				circuit->LOG("RAIDDEF concede: incident #%i gives up %i", inc.id, goal->unitId);
+			} else {
+				inc.conceded.pop_back();
+			}
 		}
 		UpdateGoal(inc, frame);
 		goal = FindAsset(inc.goalId);
 		if (goal == nullptr) {
 			continue;
 		}
-		inc.gather = GetGather(inc, goal->pos, rep);
+		// A spot that stops holding is kept for GATHER_KEEP_FRAMES: a post that blinks out for a second doesn't
+		// switch protect's go rule to all committed groups
+		const AIFloat3 gather = GetGather(inc, goal->pos, rep);
+		if (utils::is_valid(gather)) {
+			inc.gather = gather;
+			inc.gatherFrame = frame;
+		} else if (frame - inc.gatherFrame > GATHER_KEEP_FRAMES) {
+			inc.gather = -RgtVector;
+		}
 		CCircuitUnit* unit = circuit->GetTeamUnit(goal->unitId);
 		const char* name = (unit != nullptr) ? unit->GetCircuitDef()->GetDef()->GetName() : "?";
-		list.push_back({inc.id, goal->unitId, goal->pos, inc.gather, name, goal->value, inc.threat});
+		list.push_back({inc.id, goal->unitId, goal->pos, inc.gather, name, goal->value, inc.rawThreat});
 	}
 	protect->SetIncidents(list);
 }
@@ -1507,10 +1370,6 @@ void CRaidDefence::UpdateGoal(SIncident& inc, int frame)
 	// The pick at once when there is no goal (or it is gone or defended), else only once another asset has been the
 	// better pick for GOAL_SWITCH_FRAMES: a weaving blob doesn't drag the response back and forth
 	const SAsset* pick = PickGoal(inc);
-	if ((pick == nullptr) && (inc.concededId >= 0)) {
-		inc.concededId = inc.concededCluster = -1;  // nothing left outside what it conceded: that lapses
-		pick = PickGoal(inc);
-	}
 	if (pick == nullptr) {
 		inc.goalId = inc.candId = -1;
 		return;
@@ -1541,8 +1400,7 @@ const CRaidDefence::SAsset* CRaidDefence::PickGoal(const SIncident& inc) const
 	float minAhead = std::numeric_limits<float>::max();
 	float minSqDist = std::numeric_limits<float>::max();
 	for (const SAsset& a : assets) {
-		const bool isConceded = (a.unitId == inc.concededId)
-				|| ((inc.concededCluster >= 0) && (a.cluster == inc.concededCluster));
+		const bool isConceded = std::find(inc.conceded.begin(), inc.conceded.end(), a.unitId) != inc.conceded.end();
 		const AIFloat3 to = a.pos - inc.pos;
 		const float sqDist = to.SqLength2D();
 		if (a.isDefended || isConceded || (sqDist > sqZone)) {
@@ -1592,8 +1450,7 @@ AIFloat3 CRaidDefence::GetGather(const SIncident& inc, const AIFloat3& goal, CCi
 	}
 	const SSlot* best = nullptr;
 	for (const SSlot& s : slots) {
-		if (!s.isEscort && isSafe(s.pos)
-			&& ((best == nullptr) || (s.pos.SqDistance2D(goal) < best->pos.SqDistance2D(goal))))
+		if (isSafe(s.pos) && ((best == nullptr) || (s.pos.SqDistance2D(goal) < best->pos.SqDistance2D(goal))))
 		{
 			best = &s;
 		}
@@ -1706,17 +1563,12 @@ void CRaidDefence::LogState(int frame)
 	std::string slotList;
 	for (const SSlot& slot : slots) {
 		char entry[96];
-		if (slot.isEscort) {
-			snprintf(entry, sizeof(entry), "%sescort #%i of %i %.1f/%.1f", slotList.empty() ? "" : ", ", slot.id,
-					slot.builderId, slot.have, slot.need);
-		} else {
-			snprintf(entry, sizeof(entry), "%spost #%i (%.0f, %.0f) %.1f/%.1f%s", slotList.empty() ? "" : ", ", slot.id,
-					slot.pos.x, slot.pos.z, slot.have, slot.need, (slot.id == warmSlotId) ? " warm" : "");
-		}
+		snprintf(entry, sizeof(entry), "%spost #%i (%.0f, %.0f) %.1f/%.1f%s", slotList.empty() ? "" : ", ", slot.id,
+				slot.pos.x, slot.pos.z, slot.have, slot.need, (slot.id == warmSlotId) ? " warm" : "");
 		slotList += entry;
 	}
 	circuit->LOG("RAIDDEF state: T %.1f, B %.1f (c %.2f), Bmax %.1f, one raider %.1f, D %.1f%s, R %.1f; clusters %i "
-			"defended, %i not; slots (have/need): %s; incidents: %s", threatT, threatB,
+			"defended, %i not; posts (have/need): %s; incidents: %s", threatT, threatB,
 			(threatT > 0.f) ? threatB / threatT : 0.f, threatBmax, oneRaider, needD, isWarm ? " (warm)" : "", reserveR,
 			defended, undefended, slotList.empty() ? "none" : slotList.c_str(), list.empty() ? "none" : list.c_str());
 }

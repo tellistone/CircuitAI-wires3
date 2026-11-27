@@ -100,7 +100,23 @@ protected:
 	// quota.raider_spot: keep or pick the scored spot to roam to. true = 'position' is that spot; false = roam the
 	// old way, which must pick a new destination now if isSpotDone (the spot we were heading to is done, no next one)
 	bool UpdateRaidSpot(float safeThreat, bool mustRepick, bool isDanger, bool& isSpotDone);
+	// The roam route to 'position': threat as a cost, the group's strength as the allowance. isKeep: the route the
+	// leader walks is kept instead while it goes to the same spot, was planned under ROAM_KEEP_FRAMES ago, and has no
+	// danger on the stretch ahead or to any unit
+	void PlanRoamRoute(int frame, bool isKeep);
 	void ApplyRaidPath(const CQueryPathSingle* query);
+	// Wait at a spot (CRaidDefendTask's post, quota.protect's gathering post): within PARK_RADIUS a small patrol there
+	// (Park), else the roam route there, kept while the spot stays within REPATH_DIST of its goal. No path queries
+	// while it waits
+	void WaitAt(int frame, const springai::AIFloat3& spot);
+	// Wait orders, sent again only when something changed: the spot, a fight or an escape since, a merge, a regroup,
+	// a route walked, or every PARK_ORDER_FRAMES
+	void Park(int frame, const springai::AIFloat3& dest);
+	void ParkUnit(CCircuitUnit* unit, int frame);
+	bool isParked;
+	springai::AIFloat3 parkPos;
+	int parkFrame;  // the last wait orders
+	size_t parkCount;  // units then: after a merge the newcomers get them too
 
 	// Escape: current group strength vs threat where the units are and just ahead on the path
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;

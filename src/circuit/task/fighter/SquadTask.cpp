@@ -172,9 +172,10 @@ bool ISquadTask::IsClaimedByNearer(const CEnemyInfo* enemy, const AIFloat3& pos,
 	}
 	const float sqClaimDist = sqDist * SQUARE(CLAIM_NEARER);
 	for (const IFighterTask* t : enemy->GetTasks()) {
+		// Raid claims: raid and raid defence groups alike (CRaidDefendTask is a raid group)
 		const FightType ft = t->GetFightType();
-		if ((t == this) || t->IsDead()
-			|| !((isRaidClaim && (ft == FightType::RAID)) || (isAttackClaim && (ft == FightType::ATTACK))))
+		const bool isRaid = (ft == FightType::RAID) || (ft == FightType::RAID_DEFEND);
+		if ((t == this) || t->IsDead() || !((isRaidClaim && isRaid) || (isAttackClaim && (ft == FightType::ATTACK))))
 		{
 			continue;
 		}
@@ -368,9 +369,9 @@ bool ISquadTask::IsSafeMergeLine(const ISquadTask* host) const
 	return query->IsSafeLine(pos, utils::is_valid(tp) ? tp : pos);
 }
 
-ISquadTask* ISquadTask::GetMergeTask()
+ISquadTask* ISquadTask::GetMergeTask(unsigned int period)
 {
-	if (updCount % 32 == 1) {
+	if (updCount % period == 1) {
 		return IsMergeSafe() ? CheckMergeTask() : nullptr;
 	}
 	return nullptr;

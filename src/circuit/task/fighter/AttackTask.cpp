@@ -415,7 +415,8 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
 	// quota.protect: committed to the commander's fight, or gathering for a raid incident's, the group neither walks to
 	// merge nor joins a rally
-	const bool isProtect = IsProtecting() || IsGathering();
+	const bool isGathering = IsGathering();
+	const bool isProtect = IsProtecting() || isGathering;
 	CAttackTask* rallyHost = isProtect ? nullptr : militaryMgr->GetRallyHost();
 	const bool isHost = (rallyHost == this);
 	const bool isJoiner = !isHost && !isProtect && militaryMgr->IsRallyJoiner(this);
@@ -460,6 +461,15 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	UpdateOutnumbered(frame);
 	if (isOutnumbered) {
 		NoteBlocked(frame);
+	}
+
+	// quota.protect, gathering for a raid incident: fight back on the way, else walk to where it waits (no hunt: the
+	// group counts towards the go only once it is there)
+	if (isGathering) {
+		if (!EngageInRange(frame, true)) {
+			WalkToProtect(frame, isReuse);
+		}
+		return;
 	}
 
 	// A route is still being worked out: keep the current pick until it comes back, unless the target is

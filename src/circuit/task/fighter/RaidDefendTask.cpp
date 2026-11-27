@@ -6,21 +6,13 @@
  */
 
 #include "task/fighter/RaidDefendTask.h"
-#include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
 #include "module/Protect.h"
 #include "module/RaidDefence.h"
-#include "setup/SetupManager.h"
-#include "terrain/TerrainManager.h"
-#include "terrain/path/PathFinder.h"
-#include "terrain/path/QueryPathSingle.h"
-#include "unit/action/TravelAction.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
-
-#include "AISCommands.h"
 
 namespace circuit {
 
@@ -29,12 +21,6 @@ using namespace springai;
 CRaidDefendTask::CRaidDefendTask(ITaskManager* mgr, float powerMod)
 		: CRaidTask(mgr, FightType::RAID_DEFEND, 0.f, powerMod)
 		, slotId(-1)
-		, isHold(false)
-		, isParked(false)
-		, parkPos(-RgtVector)
-		, parkVipId(-1)
-		, parkFrame(-FRAMES_PER_SEC * 60)
-		, parkCount(0)
 {
 }
 
@@ -66,15 +52,6 @@ bool CRaidDefendTask::CanAssignTo(CCircuitUnit* unit) const
 	return HasRoom();
 }
 
-void CRaidDefendTask::Start(CCircuitUnit* unit)
-{
-	if (isParked && (State::ROAM == state)) {
-		ParkUnit(unit, manager->GetCircuit()->GetLastFrame());  // the group waits: so does it, no old route
-		return;
-	}
-	CRaidTask::Start(unit);
-}
-
 void CRaidDefendTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	ISquadTask::OnUnitIdle(unit);  // not the raid's: no random destination
@@ -97,6 +74,12 @@ void CRaidDefendTask::SetSlot(int id)
 bool CRaidDefendTask::HasRoom() const
 {
 	return GetMilitaryMgr()->GetRaidDefence()->HasRoom(slotId);
+}
+
+ISquadTask* CRaidDefendTask::GetRaidMergeTask()
+{
+	// A new recruit starts alone: while waiting, merge often (there are few defence groups)
+	return isParked ? GetMergeTask(MERGE_PARK_UPDATES) : GetMergeTask();
 }
 
 bool CRaidDefendTask::IsTargetAllowed(const CEnemyInfo* enemy, bool isZone, bool isCurrent) const
@@ -125,124 +108,18 @@ bool CRaidDefendTask::IsPreferredTarget(const CEnemyInfo* enemy, const CCircuitD
 			|| GetMilitaryMgr()->GetRaidDefence()->IsRecentAttacker(enemy->GetId(), manager->GetCircuit()->GetLastFrame());
 }
 
-float CRaidDefendTask::GetThrDistModAt(const AIFloat3& pos) const
-{
-	// Its own curve, eased by what a post's bonus adds over the base's (FindTarget and the escape apply the base's)
-	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	const float sqBaseDist = manager->GetCircuit()->GetSetupManager()->GetBasePos().SqDistance2D(pos);
-	const float baseBonus = std::max(militaryMgr->GetBaseThrBonus(sqBaseDist), 1.f);  // a base malus stays
-	return IFighterTask::GetThrDistModAt(pos) / std::max(militaryMgr->GetRaidDefence()->GetPostBonus(pos) / baseBonus, 1.f);
-}
-
-float CRaidDefendTask::GetRadialAllowedThreatAt(const AIFloat3& pos, float strength) const
-{
-	// CRaidTask's, without the posts' bonus: routes sample it along one ray from the base
-	const float sqBaseDist = manager->GetCircuit()->GetSetupManager()->GetBasePos().SqDistance2D(pos);
-	return strength * GetMilitaryMgr()->GetBaseThrBonus(sqBaseDist) / IFighterTask::GetThrDistModAt(pos);
-}
-
 void CRaidDefendTask::OnNoTarget(bool isContestedAllowed)
 {
-	if (IsProtecting()) {
-		isParked = false;
-		FallbackRaid(false);  // quota.protect: committed with nothing to hunt, head for the ward's goal as a raid does
+	// quota.protect: committed with nothing to hunt, head for the ward's goal as a raid does, or wait where protect
+	// says (FallbackRaid); else wait at the post (no post yet: where it is; CRaidDefence gives it one, or releases it,
+	// within a second)
+	if (IsProtecting() || IsGathering()) {
+		FallbackRaid(false);
 		return;
 	}
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& pos = leader->GetPos(frame);
-	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	// quota.protect: committed to a raid incident in its no-go, wait at the gathering post; else at the slot
-	const AIFloat3 gather = militaryMgr->GetProtect()->GetGather(this);
-	const bool isGather = utils::is_valid(gather);
-	const CRaidDefence::SSlot* slot = militaryMgr->GetRaidDefence()->FindSlot(slotId);
-	CCircuitUnit* vip = (!isGather && (slot != nullptr) && slot->isEscort) ? circuit->GetTeamUnit(slot->builderId) : nullptr;
-	// No slot yet: wait where it is (CRaidDefence gives it one, or releases it, within a second)
-	AIFloat3 dest = isGather ? gather : (vip != nullptr) ? vip->GetPos(frame) : (slot != nullptr) ? slot->pos : pos;
-	dest = circuit->GetTerrainManager()->GetMovePosition(leader->GetArea(), dest);
-	if (pos.SqDistance2D(dest) <= SQUARE(PARK_RADIUS)) {
-		Park(frame, dest, vip);
-	} else {
-		WalkTo(frame, dest);
-	}
-}
-
-void CRaidDefendTask::Park(int frame, const AIFloat3& dest, CCircuitUnit* vip)
-{
-	// Orders again only when something changed: the spot or the constructor, a fight or an escape since, a merge,
-	// or now and then
-	const ICoreUnit::Id vipId = (vip != nullptr) ? vip->GetId() : -1;
-	if (isParked && (vipId == parkVipId) && (dest.SqDistance2D(parkPos) < SQUARE(REPATH_DIST))
-		&& (engageFrame < parkFrame) && (fleeFrame <= parkFrame) && (units.size() == parkCount)
-		&& (frame < parkFrame + PARK_ORDER_FRAMES))
-	{
-		return;
-	}
-	isParked = true;
-	parkPos = dest;
-	parkVipId = vipId;
-	parkFrame = frame;
-	parkCount = units.size();
-	position = dest;
-	isFightPending = false;
-	roamPath = nullptr;
-	pPath = std::make_shared<PathInfo>();  // nothing to walk: a regroup or Start doesn't send an old route again
-	for (CCircuitUnit* unit : units) {
-		if ((unit->Blocker() == nullptr) && !IsScooting(unit)) {
-			ParkUnit(unit, frame);
-		}
-	}
-}
-
-void CRaidDefendTask::ParkUnit(CCircuitUnit* unit, int frame)
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	CCircuitUnit* vip = (parkVipId >= 0) ? circuit->GetTeamUnit(parkVipId) : nullptr;
-	unit->GetTravelAct()->StateWait();
-	TRY_UNIT(circuit, unit,
-		if (vip != nullptr) {
-			unit->GetUnit()->Guard(vip->GetUnit());  // follows the constructor, shoots what hits it
-		} else {
-			unit->CmdMoveTo(parkPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-			unit->GetUnit()->PatrolTo(utils::get_radial_pos(parkPos, SQUARE_SIZE * 8),
-					UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, frame + FRAMES_PER_SEC * 60);
-		}
-	)
-}
-
-void CRaidDefendTask::WalkTo(int frame, const AIFloat3& dest)
-{
-	isParked = false;
-	position = dest;
-	// The route asked for a moment ago, or the one it walks with nothing unsafe on it, still goes (nearly) here
-	const bool isSameGoal = utils::is_valid(roamGoal) && (dest.SqDistance2D(roamGoal) < SQUARE(REPATH_DIST));
-	const bool isWalking = (roamPath != nullptr) && leader->GetTravelAct()->IsActive()
-			&& (leader->GetTravelAct()->GetPath() == roamPath);
-	if (isSameGoal && ((isWalking && !isPathAheadUnsafe && endangered.empty()) || (frame < roamPathFrame + ROUTE_FRAMES))) {
-		if (isWalking) {
-			pPath = roamPath;  // a failed target route may have replaced it, and Start() and regroups re-send pPath
-		}
-		return;
-	}
-	roamGoal = dest;
-	roamPathFrame = frame;
-	roamPath = nullptr;  // set again when this route arrives (ApplyRaidPath)
-
-	// The raid's roam route: threat as a cost, the group's strength as the allowance
-	CCircuitAI* circuit = manager->GetCircuit();
-	CPathFinder* pathfinder = circuit->GetPathfinder();
-	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, circuit->GetThreatMap(), frame,
-			leader->GetPos(frame), dest, pathfinder->GetSquareSize());
-	SetRouteAllowance(query.get(), GetSafeThreat(), /*isDynamic*/ false, /*isMargin*/ true);
-	pathQueries[leader] = query;
-	query->HoldTask(this);
-
-	pathfinder->RunQuery(query, [this](const IPathQuery* query) {
-		if (this->IsQueryAlive(query)) {
-			this->ApplyRaidPath(static_cast<const CQueryPathSingle*>(query));
-		}
-	});
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	const CRaidDefence::SSlot* slot = GetMilitaryMgr()->GetRaidDefence()->FindSlot(slotId);
+	WaitAt(frame, (slot != nullptr) ? slot->pos : leader->GetPos(frame));
 }
 
 AIFloat3 CRaidDefendTask::GetFleeHaven() const
@@ -255,7 +132,7 @@ AIFloat3 CRaidDefendTask::GetFleeHaven() const
 	float minSqDist = pos.SqDistance2D(haven);
 	for (const CRaidDefence::SSlot& slot : GetMilitaryMgr()->GetRaidDefence()->GetSlots()) {
 		const float sqDist = pos.SqDistance2D(slot.pos);
-		if (slot.isEscort || (sqDist < SQUARE(FLEE_HOME_DIST)) || (sqDist >= minSqDist)
+		if ((sqDist < SQUARE(FLEE_HOME_DIST)) || (sqDist >= minSqDist)
 			|| (GetTaskThreatAt(leader, slot.pos) > havenThreat))
 		{
 			continue;

@@ -737,8 +737,8 @@ void CMilitaryManager::ReadConfig()
 		protect = std::make_unique<CProtect>(circuit, cfg);
 	}
 	{
-		// quota.raid_defence: {enable, roles, enemy_roles, mex_share, margin, max_share, post_min, react_sec,
-		// escort_leash_sec} (CRaidDefence). Missing (or not an object): off; keys as quota.protect's
+		// quota.raid_defence: {enable, roles, enemy_roles, mex_share, margin, max_share, post_min, react_sec}
+		// (CRaidDefence). Missing (or not an object): off; keys as quota.protect's
 		const Json::Value& q = quotas["raid_defence"];
 		if (!q.isNull() && !q.isObject()) {
 			circuit->LOG("CONFIG %s: quota.raid_defence must be an object, it is off", cfgName.c_str());
@@ -792,10 +792,9 @@ void CMilitaryManager::ReadConfig()
 			cfg.maxShare = num("max_share", 0.6f, 0.f, 1.f);
 			cfg.postMin = num("post_min", 1.25f, 0.f, 10.f);
 			cfg.reactSec = num("react_sec", 8.f, 1.f, 60.f);
-			cfg.escortLeashSec = num("escort_leash_sec", 10.f, 0.f, 60.f);
 		}
 		if (cfg.isEnabled && !protect->IsEnabled()) {
-			circuit->LOG("CONFIG %s: quota.raid_defence is on but quota.protect is off: posts and escorts only, raids "
+			circuit->LOG("CONFIG %s: quota.raid_defence is on but quota.protect is off: posts only, raids "
 					"get no incident wards", cfgName.c_str());
 		}
 		raidDefence = std::make_unique<CRaidDefence>(circuit, cfg);
@@ -2168,13 +2167,14 @@ void CMilitaryManager::UpdateSoloHunt()
 		return;
 	}
 	// Hunters that went to a quota.protect fight: back to hunting alone once their attack group (or the one it merged
-	// into) no longer protects. Anything else they went to (retreat, a guard slot, ...) brings them back by MakeTask
+	// into) no longer protects or gathers. Anything else they went to (retreat, a guard slot, ...) brings them back by
+	// MakeTask
 	for (auto it = soloProtectIds.begin(); it != soloProtectIds.end();) {
 		CCircuitUnit* unit = circuit->GetTeamUnit(*it);
 		IUnitTask* task = (unit != nullptr) ? unit->GetTask() : nullptr;
 		const bool isAttack = (task != nullptr) && (task->GetType() == IUnitTask::Type::FIGHTER)
 				&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK);
-		if (isAttack && static_cast<ISquadTask*>(task)->IsProtecting()) {
+		if (isAttack && (static_cast<ISquadTask*>(task)->IsProtecting() || static_cast<ISquadTask*>(task)->IsGathering())) {
 			++it;
 			continue;
 		}
@@ -4005,9 +4005,6 @@ bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
 {
 	if (cdef->IsAttrGuarded()) {  // guarded units are protected, never protectors
 		return false;
-	}
-	if (raidDefence->IsOn() && raidDefence->IsRole(cdef)) {
-		return false;  // quota.raid_defence: its escorts stand in for raider guards while it is on
 	}
 	// Match the main role by its own name ("bullshit_raider") or by the role it acts as ("raider")
 	const CCircuitDef::RoleT mainRole = cdef->GetMainRole();

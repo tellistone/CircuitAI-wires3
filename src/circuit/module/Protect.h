@@ -76,18 +76,23 @@ class ISquadTask;
  *    3-group cap; anti-air groups count the goal as a leash home point. In the fight (within half the zone of the
  *    goal, kept to 0.625: the present radius) they judge with their ward side's strength present (GetBoost: the
  *    members, the side's static cover at the goal, its committed groups present and themselves).
- * Travel: threat-aware walking time (CTravelMap cost maps, the raid view's squad threat as a cost). A defence group
- * at its slot reads its slot's map (CRaidDefence); every other group a map of its ward, one per movement type among
- * the candidates, from the goal (from the gathering post for a raid incident), made again every WARD_MAP_FRAMES
+ * Travel: threat-aware walking time (CTravelMap: the length of the cheapest route on the raid view's squad threat as a
+ * cost, at the group's speed). A map of its ward per movement type among the candidates, from its start (a raid
+ * incident's gathering post in a no-go, else the goal; the post's own map when the gathering post is a raid defence
+ * post with a map for the type), then the straight hop to the goal; made again every WARD_MAP_FRAMES
  * (WARD_MAP_GO_FRAMES in a go) or once the start moved REMAP_DIST. A ward's first pick waits for its maps. Defence
- * groups (RAID_DEFEND) answer within DEFENDER_RESPOND_MOD x respond_sec; an escort only when CRaidDefence lends it.
+ * groups (RAID_DEFEND) answer within DEFENDER_RESPOND_MOD x respond_sec. The go line logs the committed groups' map
+ * time against the straight line.
  * Raid incidents (quota.raid_defence, SetIncidents): each answerable incident is a ward of its own, never a member (so
  * chaining never makes a whole base one ward), ended INCIDENT_KEEP_FRAMES after its incident is gone. Its goal and
- * value are the asset it heads for (CRaidDefence picks it); ground danger the larger of the blob's threat (with the
- * count bonus) and the force balance's ground force at the goal; no air side. Time to death: the goal's measured
- * damage rate, as a commander's. In a no-go its committed groups wait at its gathering post (GetGather) and merge
- * there; its go then needs the go line with only the groups gathered there (within GATHERED_DIST), and they head for
- * the goal together. Its keep line counts all its committed groups, as any ward's.
+ * value are the asset it heads for (CRaidDefence picks it); ground danger the larger of the blob's threat (as our
+ * groups' strength is measured: no raid_thr_mod, no count bonus) and the force balance's ground force at the goal;
+ * no air side. Time to death: the goal's measured damage rate, as a commander's. In a no-go with a gathering post
+ * its committed groups stay committed while in reach (the fill adds only what is short), and each waits: at the post,
+ * or where it is once in the fight or no farther from the goal than the post (GetGather); attack groups only fight
+ * back on the way, defend tasks leave as groups at once. They merge there. Its go needs the go line with only the
+ * groups gathered (at the post within GATHERED_DIST, or waiting nearer), and they head for the goal together. Its
+ * keep line counts all its committed groups, as any ward's.
  */
 class CProtect {
 public:
@@ -143,7 +148,7 @@ public:
 		springai::AIFloat3 gather;  // where committed groups meet in a no-go; invalid: at the goal
 		const char* goalName;  // its def (logs)
 		float value;  // the goal's metal
-		float danger;  // the blob's threat, with the count bonus
+		float danger;  // the blob's threat on the measure of our groups' strength (no raid_thr_mod, no count bonus)
 	};
 	// The answerable incidents this second (before the protect's update)
 	void SetIncidents(const std::vector<SIncident>& list) { incidentList = list; }
@@ -220,6 +225,7 @@ private:
 		bool isLate = false;  // a raid incident: no committed group there before its time to death
 		std::map<int, CTravelMap> maps;  // threat-aware travel from it, per movement type
 		bool IsGo() const { return (sides[GROUND].state == State::GO) || (sides[AIR].state == State::GO); }
+		bool IsGathering() const;  // a raid incident with a gathering post, its ground side in a no-go
 	};
 	struct SMember;
 	struct SSums;
@@ -240,7 +246,10 @@ private:
 		Side side = GROUND;
 		float strength = 0.f;  // health-scaled power (ISquadTask::GetRallyStrength)
 		bool isPresent = false;  // its leader in the present radius (IsInFight), not fleeing
-		bool isGathered = false;  // a raid incident: its leader at the gathering post, not fleeing
+		bool isGathered = false;  // a raid incident: its leader at the gathering post or near (waitPos), not fleeing
+		// A raid incident: where it waits when it is in the fight or no farther from the goal than the gathering post
+		// (kept while that holds); invalid: it walks to the post
+		springai::AIFloat3 waitPos = -RgtVector;
 		bool isMoved = false;  // it moved to another ward once (the pick)
 	};
 
@@ -281,8 +290,13 @@ private:
 	void UpdateTurretPoint(SWard& w);
 	// The present radius: half the zone around the goal; once in it (wasPresent), 0.625 of it
 	bool IsInFight(const SWard& w, const springai::AIFloat3& pos, bool wasPresent) const;
-	// Threat-aware seconds to the ward's goal (a raid incident's: to its gathering post, then the hop); < 0: no map yet
+	// Threat-aware seconds to the ward's goal (a raid incident's in a no-go: to its gathering post, then the hop);
+	// < 0: no map yet
 	float GetTravelSec(const ISquadTask* task, const SWard& w, int frame) const;
+	float GetLineSec(const ISquadTask* task, const SWard& w, int frame) const;  // ... on the straight line
+	// The ward's travel map for the movement type: a raid incident gathering at a post reads that post's map
+	// (CRaidDefence::GetPostMap) when it is for the type; nullptr: none
+	const CTravelMap* GetMap(const SWard& w, int mobileId) const;
 	float GetRespondSec(const ISquadTask* task) const;  // respond_sec, x DEFENDER_RESPOND_MOD for a defence group
 	// Its travel to the ward when it can answer it (in time, and it can move there), else -1
 	float GetReachSec(const ISquadTask* task, const SWard& w, int frame) const;

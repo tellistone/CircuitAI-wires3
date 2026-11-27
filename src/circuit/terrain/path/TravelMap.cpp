@@ -55,9 +55,9 @@ void CTravelMap::Refresh(CCircuitAI* circuit, CCircuitUnit* unit, const AIFloat3
 	}
 	const int frame = circuit->GetLastFrame();
 	const int mobileId = unit->GetCircuitDef()->GetMobileId();
-	if ((ready != nullptr) && (frame - readyFrame < maxFrames) && (readyStart.SqDistance2D(pos) <= SQUARE(maxMove))
-		&& (readyMobileId == mobileId))
-	{
+	const int age = frame - readyFrame;
+	const bool isMoved = (readyStart.SqDistance2D(pos) > SQUARE(maxMove)) && (age >= MOVE_MIN_FRAMES);
+	if ((ready != nullptr) && (age < maxFrames) && !isMoved && (readyMobileId == mobileId)) {
 		return;
 	}
 	AIFloat3 start = pos;

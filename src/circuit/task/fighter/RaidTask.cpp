@@ -48,6 +48,12 @@ namespace circuit {
 
 using namespace springai;
 
+// Waiting at a spot (WaitAt)
+static constexpr float PARK_RADIUS = 300.f;  // the leader this near the spot: wait there
+static constexpr float REPATH_DIST = 200.f;  // a new route, or new wait orders, once the spot moved this far
+static constexpr int PARK_ORDER_FRAMES = FRAMES_PER_SEC * 10;  // wait orders sent again at least this often
+static constexpr int ROAM_KEEP_FRAMES = FRAMES_PER_SEC * 3;  // a roam route walked safely is kept this long
+
 CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
 		: CRaidTask(mgr, FightType::RAID, maxPower, powerMod)
 {
@@ -64,6 +70,10 @@ CRaidTask::CRaidTask(ITaskManager* mgr, FightType type, float maxPower, float po
 		, isChaseDest(false)
 		, nearFightFrame(-FRAMES_PER_SEC * 60)
 		, nearFightPos(-RgtVector)
+		, isParked(false)
+		, parkPos(-RgtVector)
+		, parkFrame(-FRAMES_PER_SEC * 60)
+		, parkCount(0)
 		, maxPower(maxPower)
 		, fleeFrame(0)
 		, fleePathFrame(0)
@@ -228,6 +238,10 @@ void CRaidTask::Start(CCircuitUnit* unit)
 	if ((State::REGROUP == state) || (State::ENGAGE == state)) {
 		return;
 	}
+	if (isParked) {
+		ParkUnit(unit, manager->GetCircuit()->GetLastFrame());  // the group waits: so does it, no old route
+		return;
+	}
 	if (!pPath->posPath.empty()) {
 		unit->GetTravelAct()->SetPath(pPath);
 		unit->GetTravelAct()->StateActivate();
@@ -303,6 +317,7 @@ void CRaidTask::Update()
 	}
 	if (State::REGROUP == state) {
 		if (mustRegroup) {
+			isParked = false;  // the regroup's orders replace the wait orders
 			const int timeout = frame + FRAMES_PER_SEC * 60;
 			for (CCircuitUnit* unit : units) {
 				const AIFloat3& pos = utils::get_radial_pos(groupPos, SQUARE_SIZE * 8);
@@ -343,6 +358,7 @@ void CRaidTask::Update()
 		const CRaidTask* chase = UpdateChase(frame);
 		if (chase != nullptr) {
 			state = State::ROAM;
+			isParked = false;
 			Chase(frame, chase);
 			return;
 		}
@@ -442,7 +458,7 @@ void CRaidTask::OnUnitIdle(CCircuitUnit* unit)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
-	if (position.SqDistance2D(leader->GetPos(circuit->GetLastFrame())) < SQUARE(maxDist)) {
+	if (!isParked && (position.SqDistance2D(leader->GetPos(circuit->GetLastFrame())) < SQUARE(maxDist))) {
 		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 		float x = rand() % terrainMgr->GetTerrainWidth();
 		float z = rand() % terrainMgr->GetTerrainHeight();
@@ -548,9 +564,7 @@ bool CRaidTask::FindTarget()
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
 		const bool isZone = isProtect && protect->IsZoneEnemy(this, enemy);
-		if ((isProtect && !isZone && (pos.SqDistance2D(enemy->GetPos()) > SQUARE(range)))
-			|| !IsTargetAllowed(enemy, isZone, enemy == prevTarget))
-		{
+		if (isProtect && !isZone && (pos.SqDistance2D(enemy->GetPos()) > SQUARE(range))) {
 			continue;
 		}
 		// Not one another raid group already targets from clearly nearer, unless within our fire range + 64 elmos
@@ -572,7 +586,8 @@ bool CRaidTask::FindTarget()
 		const AIFloat3& ePos = enemy->GetPos();
 		const bool isEnemyUrgent = isDefender && (inflMap->GetAllyDefendInflAt(ePos) > INFL_EPS);
 		if ((!isEnemyUrgent && !urgentPositions.empty())
-			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange))
+			|| !terrainMgr->CanMobileReachAt(area, ePos, highestRange)
+			|| !IsTargetAllowed(enemy, isZone, enemy == prevTarget))  // the hook last: it may read a travel map
 		{
 			continue;
 		}
@@ -706,19 +721,24 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
+	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	// quota.protect: gathering for a raid incident in its no-go, wait where the protect says (its gathering post)
+	const CProtect* protect = militaryMgr->GetProtect();
+	const AIFloat3 gather = protect->GetGather(this);
+	if (utils::is_valid(gather)) {
+		WaitAt(frame, gather);
+		return;
+	}
+	isParked = false;
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	const AIFloat3& pos = leader->GetPos(frame);
 	const AIFloat3& threatPos = leader->GetTravelAct()->IsActive() ? position : pos;
 	const float safeThreat = GetSafeThreat();
 	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
-	// unless we're already there; else the usual mex-spot roaming
-	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	// quota.protect: committed with nothing to hunt, head for the protect's goal (the commander), or for a raid
-	// incident's gathering post in its no-go
-	const CProtect* protect = militaryMgr->GetProtect();
-	const AIFloat3 gather = protect->GetGather(this);
-	const bool isProtect = IsProtecting() || utils::is_valid(gather);
+	// unless we're already there; else the usual mex-spot roaming. quota.protect: committed with nothing to hunt,
+	// head for the protect's goal (the commander, a raid incident's asset)
+	const bool isProtect = IsProtecting();
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	contested.clear();
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
@@ -753,8 +773,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	}
 	if (isProtect) {
 		// The goal moves with the commander: the route is kept while it stays within a few squares of the last one
-		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(),
-				utils::is_valid(gather) ? gather : protect->GetGoal(this));
+		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(), protect->GetGoal(this));
 		position = (utils::is_valid(roamGoal) && (goal.SqDistance2D(roamGoal) < SQUARE(DEFAULT_SLACK * 2))) ? roamGoal : goal;
 	} else if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);
@@ -783,10 +802,13 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
 	}
 
-	// Still walking the roam route to this same destination, planned under 3 s ago, with no danger at the
-	// destination, on the stretch ahead or to any unit: keep it instead of planning the same route again
-	if (!isDanger && !isPathAheadUnsafe && endangered.empty() && (position.SqDistance2D(roamGoal) < 1.f)
-		&& (frame < roamPathFrame + FRAMES_PER_SEC * 3) && (roamPath != nullptr)
+	PlanRoamRoute(frame, !isDanger);
+}
+
+void CRaidTask::PlanRoamRoute(int frame, bool isKeep)
+{
+	if (isKeep && !isPathAheadUnsafe && endangered.empty() && (position.SqDistance2D(roamGoal) < 1.f)
+		&& (frame < roamPathFrame + ROAM_KEEP_FRAMES) && (roamPath != nullptr)
 		&& leader->GetTravelAct()->IsActive() && (leader->GetTravelAct()->GetPath() == roamPath))
 	{
 		pPath = roamPath;  // a failed target route may have replaced it, and Start() and regrouping re-send pPath
@@ -796,10 +818,11 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	roamPathFrame = frame;
 	roamPath = nullptr;  // set again when this route arrives: an older route must not pass for it
 
+	CCircuitAI* circuit = manager->GetCircuit();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
-			leader, threatMap, frame,
-			pos, position, pathfinder->GetSquareSize());
+			leader, circuit->GetThreatMap(), frame,
+			leader->GetPos(frame), position, pathfinder->GetSquareSize());
 	SetRouteAllowance(query.get(), GetSafeThreat(), /*isDynamic*/ false, /*isMargin*/ true);
 	pathQueries[leader] = query;
 	query->HoldTask(this);
@@ -809,6 +832,53 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 			this->ApplyRaidPath(static_cast<const CQueryPathSingle*>(query));
 		}
 	});
+}
+
+void CRaidTask::WaitAt(int frame, const AIFloat3& spot)
+{
+	const AIFloat3 dest = manager->GetCircuit()->GetTerrainManager()->GetMovePosition(leader->GetArea(), spot);
+	if (leader->GetPos(frame).SqDistance2D(dest) <= SQUARE(PARK_RADIUS)) {
+		Park(frame, dest);
+		return;
+	}
+	isParked = false;
+	const bool isSameGoal = utils::is_valid(roamGoal) && (dest.SqDistance2D(roamGoal) < SQUARE(REPATH_DIST));
+	position = isSameGoal ? roamGoal : dest;
+	PlanRoamRoute(frame, true);
+}
+
+void CRaidTask::Park(int frame, const AIFloat3& dest)
+{
+	if (isParked && (dest.SqDistance2D(parkPos) < SQUARE(REPATH_DIST)) && (engageFrame < parkFrame)
+		&& (fleeFrame <= parkFrame) && (units.size() == parkCount) && !leader->GetTravelAct()->IsActive()
+		&& (frame < parkFrame + PARK_ORDER_FRAMES))
+	{
+		return;
+	}
+	isParked = true;
+	parkPos = dest;
+	parkFrame = frame;
+	parkCount = units.size();
+	position = dest;
+	isFightPending = false;
+	roamPath = nullptr;
+	pPath = std::make_shared<PathInfo>();  // nothing to walk: a regroup or Start doesn't send an old route again
+	for (CCircuitUnit* unit : units) {
+		if ((unit->Blocker() == nullptr) && !IsScooting(unit)) {
+			ParkUnit(unit, frame);
+		}
+	}
+}
+
+void CRaidTask::ParkUnit(CCircuitUnit* unit, int frame)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	unit->GetTravelAct()->StateWait();
+	TRY_UNIT(circuit, unit,
+		unit->CmdMoveTo(parkPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		unit->GetUnit()->PatrolTo(utils::get_radial_pos(parkPos, SQUARE_SIZE * 8),
+				UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, frame + FRAMES_PER_SEC * 60);
+	)
 }
 
 bool CRaidTask::UpdateRaidSpot(float safeThreat, bool mustRepick, bool isDanger, bool& isSpotDone)
