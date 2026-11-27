@@ -20,6 +20,9 @@ class CMilitaryManager;
 class CRaidTask: public ISquadTask {
 public:
 	CRaidTask(ITaskManager* mgr, float maxPower, float powerMod);
+protected:
+	CRaidTask(ITaskManager* mgr, FightType type, float maxPower, float powerMod);  // tasks built on the raid group
+public:
 	virtual ~CRaidTask();
 
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;

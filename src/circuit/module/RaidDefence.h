@@ -8,12 +8,14 @@
 #ifndef SRC_CIRCUIT_MODULE_RAIDDEFENCE_H_
 #define SRC_CIRCUIT_MODULE_RAIDDEFENCE_H_
 
+#include "terrain/path/TravelMap.h"
 #include "unit/CircuitDef.h"
 #include "unit/CoreUnit.h"
 #include "util/Defines.h"
 
 #include "AIFloat3.h"
 
+#include <functional>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -23,6 +25,9 @@ namespace circuit {
 class CCircuitAI;
 class CCircuitUnit;
 class CEnemyInfo;
+class CRaidDefendTask;
+class CRaidTask;
+class IFighterTask;
 struct STerrainMapArea;
 
 /*
@@ -50,7 +55,32 @@ struct STerrainMapArea;
  *   asset in a pocket whose entrances the army holds (quota.hold_choke, CFrontline) is defended, and so is a
  *   constructor inside a defended cluster.
  * - D, the reserve's target strength: margin x T, at most max_share of our raid groups' strength (GetSafeThreat).
- * Logs: RAIDDEF state every 10 s while there is something to show, RAIDDEF minute every minute.
+ *   Warm floor: for WARM_FRAMES after a wave (T back to 0), at least post_min x oneRaider, all at the biggest post.
+ * Reserve (defence groups, CRaidDefendTask), its strength R the groups' GetSafeThreat summed:
+ * - Slots, at most MAX_SLOTS: posts first, then escorts. A post per pocket (CChokeMap) holding undefended mex
+ *   clusters or factories of ours: at its busiest entrance's hold spot (CSpotScorer, as CFrontline holds) when it has
+ *   1 or 2 entrances and the spot has no threat, else at the value-weighted centre. On open ground a cluster joins the
+ *   nearest post within POST_JOIN_SEC, else opens one. Re-placed every POST_FRAMES, moved only beyond POST_MOVE_DIST;
+ *   a new post count waits POST_COUNT_FRAMES. An escort beside each constructor that guard.summon's safe ground calls
+ *   exposed (itself or its job) and no defended cluster covers, nearest first, while the budget lasts.
+ * - Travel: every slot has a threat-aware travel map (CTravelMap) for the most common movement type of our raiders
+ *   of the roles, from the post (every POST_FRAMES) or the constructor (once it moved MAP_MOVE_DIST).
+ * - Split, every SPLIT_FRAMES and when a wave starts or ends: H = min(D, margin x B) for the posts by value, each
+ *   share at least post_min x oneRaider (a smaller one folds into the nearest post); escorts from the rest, up to
+ *   half of it, each post_min x oneRaider less the riot guards with it; what is left goes to the posts. Each second
+ *   the posts share D less the escorts' needs.
+ * - Recruit while R < RECRUIT_SHORT x D. Tier 1 (MakeTask, at once): a new raider starts a group at the slot short
+ *   the most. Tier 2 (after TIER2_FRAMES): calm raid groups on our ground or within respond_sec of a slot short of
+ *   strength, nearest first; a whole group while it is at most WHOLE_GROUP_MOD x the shortfall, else its units
+ *   nearest the slot. Never a group released within RELEASE_IMMUNE_FRAMES, in a raid rally, or with scouts.
+ * - Every SPLIT_FRAMES a calm group whose post keeps its need without it moves to the nearest slot short of
+ *   strength; escorts stay. A group without a slot takes the nearest one short of strength, else the nearest post.
+ * - Release while R > D / RELEASE_RATIO for RELEASE_FRAMES: calm groups back to raiding (a new raid group each), those
+ *   without a slot first, then those at slots that need nothing, then by the slot's value, the warm floor's post
+ *   last, never below D. Calm: no target, not fleeing, not committed by quota.protect.
+ * - The window closing releases every group for good.
+ * Logs: RAIDDEF state every 10 s while there is something to show, RAIDDEF recruit and release, RAIDDEF minute every
+ * minute.
  */
 class CRaidDefence {
 public:
@@ -86,6 +116,20 @@ public:
 		bool isAnswerable;  // CanOpenIncident
 		int openFrame;
 	};
+	// Where defence groups wait: a post by our undefended mexes and factories, or an escort beside an exposed
+	// constructor
+	struct SSlot {
+		int id = -1;
+		bool isEscort = false;
+		ICoreUnit::Id builderId = -1;  // escort: its constructor; -1: a post
+		springai::AIFloat3 pos;  // escort: its constructor's, each second
+		std::vector<int> pocketKey;  // post: its pocket's choke ids (CChokeMap::SPocket); empty: open ground
+		float value = 0.f;  // post: the undefended metal it covers; escort: the constructor's
+		float weight = 0.f;  // post: its share of what the posts get (Split)
+		float need = 0.f;  // the strength it should hold (GetSafeThreat's measure)
+		float have = 0.f;  // the defence groups' strength there now, and parked solo hunters at a post
+		CTravelMap map;  // threat-aware travel from it
+	};
 
 	CRaidDefence(CCircuitAI* circuit, const SConfig& cfg);
 	~CRaidDefence();
@@ -114,8 +158,19 @@ public:
 	float GetBmax() const { return threatBmax; }
 	float GetOneRaider() const { return oneRaider; }
 	float GetD() const { return needD; }
+	float GetR() const { return reserveR; }
 	const std::vector<SAsset>& GetAssets() const { return assets; }
 	const std::vector<SIncident>& GetIncidents() const { return incidents; }
+
+	// Tier 1 (CMilitaryManager::DefaultMakeTask, before guard slots): while the reserve is short, a new raider of the
+	// roles starts a defence group at the slot short the most that it can reach. nullptr: not wanted
+	IFighterTask* MakeTask(CCircuitUnit* unit);
+	const std::vector<SSlot>& GetSlots() const { return slots; }
+	const SSlot* FindSlot(int id) const;  // nullptr: no such slot (any more)
+	bool HasRoom(int slotId) const;  // the slot holds less than it needs
+	// Seconds from the slot to pos at speed (elmos per second): its travel map when that is ready, for this movement
+	// type and reaches pos, else the straight line. < 0: no such slot
+	float GetSlotSec(int slotId, int mobileId, const springai::AIFloat3& pos, float speed) const;
 
 private:
 	static constexpr int SEEN_FRAMES = FRAMES_PER_SEC * 20;
@@ -129,6 +184,22 @@ private:
 	static constexpr int ATTACKER_FRAMES = FRAMES_PER_SEC * 5;
 	static constexpr int COVER_FRAMES = FRAMES_PER_SEC * 5;  // the turret cover test's interval
 	static constexpr int STATE_LOG_FRAMES = FRAMES_PER_SEC * 10;
+	static constexpr int WARM_FRAMES = FRAMES_PER_SEC * 60;
+	static constexpr size_t MAX_SLOTS = 6;
+	static constexpr int POST_FRAMES = FRAMES_PER_SEC * 10;
+	static constexpr int POST_COUNT_FRAMES = FRAMES_PER_SEC * 20;
+	static constexpr float POST_MOVE_DIST = 400.f;
+	static constexpr float POST_JOIN_SEC = 15.f;
+	static constexpr float MAP_MOVE_DIST = 400.f;
+	static constexpr float GUARD_NEAR_DIST = 600.f;  // a riot guard this near its constructor counts for its escort
+	static constexpr float HUNTER_PARK_DIST = 400.f;  // a solo hunter this near its parking spot is parked
+	static constexpr int SPLIT_FRAMES = FRAMES_PER_SEC * 5;
+	static constexpr float RECRUIT_SHORT = 0.8f;
+	static constexpr int TIER2_FRAMES = FRAMES_PER_SEC * 2;
+	static constexpr float WHOLE_GROUP_MOD = 1.5f;
+	static constexpr float RELEASE_RATIO = 0.7f;
+	static constexpr int RELEASE_FRAMES = FRAMES_PER_SEC * 5;
+	static constexpr int RELEASE_IMMUNE_FRAMES = FRAMES_PER_SEC * 30;
 
 	struct SCounted;
 	struct SCluster {  // a metal cluster's cover, every COVER_FRAMES
@@ -166,6 +237,32 @@ private:
 	bool IsCoverKept(const std::vector<ICoreUnit::Id>& turrets) const;  // none of them gone
 	void LogState(int frame);
 
+	// Reserve
+	void UpdateWarm(int frame, float cap);
+	void UpdateReserve(int frame);
+	CCircuitUnit* FindRepUnit() const;  // a raider of the roles of the most common movement type among them
+	void RefreshPosts(int frame, CCircuitUnit* rep);
+	springai::AIFloat3 GetPocketPost(int pocket, const springai::AIFloat3& centre, CCircuitUnit* rep) const;
+	void Split(int frame, CCircuitUnit* rep);
+	void UpdateNeeds(int frame);  // each second: escorts follow their constructors, the posts share D
+	void CountHave(int frame);  // R and each slot's have; a group without a slot gets one
+	void Rebalance(int frame);
+	void Recruit(int frame);  // tier 2
+	void Release(int frame);
+	void ReleaseAll(int frame);
+	void ReleaseGroup(CRaidDefendTask* group, int frame);
+	CRaidDefendTask* NewGroup(const SSlot& slot);
+	// The slot nearest pos by its travel that passes isOk and that a unit in area reaches; nullptr: none
+	SSlot* FindNearestSlot(STerrainMapArea* area, int mobileId, const springai::AIFloat3& pos, float speed,
+			const std::function<bool (const SSlot&)>& isOk, float* outSec = nullptr);
+	SSlot* FindSlotToEdit(int id);
+	// guard.summon's safe ground calls the constructor or its job exposed, and it isn't retreating
+	bool IsExposed(CCircuitUnit* builder, int frame) const;
+	float GetGuardStrength(CCircuitUnit* builder, int frame) const;  // its riot guards with it (CFGuardTask)
+	float GetSlotSec(const SSlot& slot, int mobileId, const springai::AIFloat3& pos, float speed) const;
+	bool IsReleased(const CCircuitUnit* unit, int frame) const;  // released within RELEASE_IMMUNE_FRAMES
+	static bool IsCalm(const CRaidTask* group, int frame);  // no target, not fleeing, not committed by protect
+
 	CCircuitAI* circuit;
 	SConfig cfg;
 	bool isOver;  // the window closed
@@ -192,6 +289,24 @@ private:
 
 	std::unordered_map<ICoreUnit::Id, int> attackers;  // enemy id -> the frame it last hit one of our assets
 	int stateLogFrame;
+
+	// Reserve
+	std::vector<SSlot> slots;  // posts first, then escorts
+	int nextSlotId;
+	int postFrame;  // RefreshPosts
+	int pendingPostCount;  // a new post count (-1: none), and since when (POST_COUNT_FRAMES)
+	int pendingPostFrame;
+	int splitFrame;
+	float splitD;  // D at the last split, and the warm floor then
+	bool splitWarm;
+	float reserveR;
+	int shortFrame;  // R < RECRUIT_SHORT x D since this frame; -1: not short
+	int surplusFrame;  // R > D / RELEASE_RATIO since this frame; -1: no surplus
+	bool isWaveOn;  // T above 0 at the last update
+	int warmFrame;  // the last wave's end; -1: none
+	bool isWarm;
+	int warmSlotId;  // the warm floor's post
+	std::unordered_map<ICoreUnit::Id, int> releasedFrames;  // unit id -> the frame it was released
 
 	// RAIDDEF minute
 	float lostMetal;  // our assets killed by counted enemy roles

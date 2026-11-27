@@ -33,6 +33,7 @@
 #include "task/fighter/DefendTask.h"
 #include "task/fighter/ScoutTask.h"
 #include "task/fighter/RaidTask.h"
+#include "task/fighter/RaidDefendTask.h"
 #include "task/fighter/AttackTask.h"
 #include "task/fighter/BombTask.h"
 #include "task/fighter/ArtilleryTask.h"
@@ -1704,6 +1705,11 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 			task = new CRaidTask(this, raid.avg, 0.75f / mod);
 			break;
 		}
+		case IFighterTask::FightType::RAID_DEFEND: {  // quota.raid_defence: a raid group's strength measure
+			const float mod = (float)rand() / RAND_MAX * raidMod.len + raidMod.min;
+			task = new CRaidDefendTask(this, 0.75f / mod);
+			break;
+		}
 		case IFighterTask::FightType::ATTACK: {
 			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
 			task = new CAttackTask(this, minAttackers, 0.8f / mod);
@@ -2265,6 +2271,12 @@ AIFloat3 CMilitaryManager::GetSoloPark(const IFighterTask* task, CCircuitUnit* l
 	}
 	soloParks[task] = {best->chokeId, spot, frame};
 	return spot;
+}
+
+AIFloat3 CMilitaryManager::GetSoloParkSpot(const IFighterTask* task) const
+{
+	auto it = soloParks.find(task);
+	return (it != soloParks.end()) ? it->second.spot : AIFloat3(-RgtVector);
 }
 
 IFighterTask* CMilitaryManager::EnqueueGuard(CCircuitUnit* vip)
@@ -3984,6 +3996,9 @@ bool CMilitaryManager::IsGuardRole(CCircuitDef* cdef) const
 	if (cdef->IsAttrGuarded()) {  // guarded units are protected, never protectors
 		return false;
 	}
+	if (raidDefence->IsOn() && raidDefence->IsRole(cdef)) {
+		return false;  // quota.raid_defence: its escorts stand in for raider guards while it is on
+	}
 	// Match the main role by its own name ("bullshit_raider") or by the role it acts as ("raider")
 	const CCircuitDef::RoleT mainRole = cdef->GetMainRole();
 	const CCircuitDef::RoleM mask = CCircuitDef::GetMask(mainRole)
@@ -4735,7 +4750,9 @@ void CMilitaryManager::ReactSuddenThreat(CEnemyInfo* enemy)
 		return;
 	}
 	const int frame = circuit->GetLastFrame();
-	for (IFighterTask::FightType type : {IFighterTask::FightType::ATTACK, IFighterTask::FightType::RAID}) {
+	for (IFighterTask::FightType type : {IFighterTask::FightType::ATTACK, IFighterTask::FightType::RAID,
+		IFighterTask::FightType::RAID_DEFEND})
+	{
 		for (IFighterTask* task : GetTasks(type)) {
 			static_cast<ISquadTask*>(task)->OnSuddenThreat(edef, enemy->GetPos(), frame);
 		}
@@ -4803,10 +4820,14 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		// orders. Neither takes guard slots
 		task = IFighterTask::IsArmedUnit(cdef) ? EnqueueAttackBound(unit) : EnqueueTask(IFighterTask::FightType::SUPPORT);
 	} else {
-		// Any configured role may take a free guard slot
-		task = FindGuardTask(unit);
+		// quota.raid_defence (tier 1): while the reserve is short, a new raider defends; else any configured role may
+		// take a free guard slot
+		task = raidDefence->MakeTask(unit);
+		if (task == nullptr) {
+			task = FindGuardTask(unit);
+		}
 		if (task != nullptr) {
-			// guard picked above
+			// defence group or guard picked above
 		} else if (IsSoloHuntRole(cdef) && IFighterTask::IsArmedUnit(cdef)) {
 			// quota.solo_hunt: alone on our ground until the one-off mex switch, then attack-bound
 			task = EnqueueSoloHunt();

@@ -125,6 +125,9 @@ public:
 	// there; kept while the choke is on our line and was short within SOLO_PARK_KEEP.
 	// -RgtVector: none (no choke map yet, none short or reachable)
 	springai::AIFloat3 GetSoloPark(const IFighterTask* task, CCircuitUnit* leader);
+	// The spot the hunter's task holds now (GetSoloPark's last pick), -RgtVector: none. quota.raid_defence counts a
+	// parked hunter at the post nearest it
+	springai::AIFloat3 GetSoloParkSpot(const IFighterTask* task) const;
 	// A solo hunter left for a quota.protect commit: it goes back to hunting alone once its group stops protecting
 	void NoteSoloProtect(CCircuitUnit* unit);
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.

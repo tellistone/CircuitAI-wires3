@@ -92,6 +92,7 @@ public:
 
 	bool IsEnabled() const { return cfg.isEnabled; }
 	float GetZone() const { return cfg.zone; }
+	float GetRespondSec() const { return cfg.respondSec; }
 
 	void Update();  // once a second
 	void OnCommDamaged(CCircuitUnit* comm, CEnemyInfo* attacker);  // any of our commanders

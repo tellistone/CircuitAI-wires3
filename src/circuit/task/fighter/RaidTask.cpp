@@ -49,7 +49,12 @@ namespace circuit {
 using namespace springai;
 
 CRaidTask::CRaidTask(ITaskManager* mgr, float maxPower, float powerMod)
-		: ISquadTask(mgr, FightType::RAID, powerMod)
+		: CRaidTask(mgr, FightType::RAID, maxPower, powerMod)
+{
+}
+
+CRaidTask::CRaidTask(ITaskManager* mgr, FightType type, float maxPower, float powerMod)
+		: ISquadTask(mgr, type, powerMod)
 		, chaseTask(nullptr)
 		, chaseFails(0)
 		, chaseRetryFrame(-FRAMES_PER_SEC * 60)
@@ -1061,8 +1066,8 @@ bool CRaidTask::Flee(int frame)
 	isFightPending = false;  // the escape replaces any pending roam order
 	nearFightPos = -RgtVector;  // and any Fight order beside a chased group
 	const bool wasFleeing = (frame < fleeFrame + FRAMES_PER_SEC);  // grace: still in the same escape
-	if (!wasFleeing) {
-		GetMilitaryMgr()->AddRaidEscape();  // for tuning raid_thr_mod (RAID log)
+	if (!wasFleeing && (fightType == FightType::RAID)) {
+		GetMilitaryMgr()->AddRaidEscape();  // for tuning raid_thr_mod (RAID log): raid groups only
 		if (utils::is_valid(raidSpot)) {
 			// As a scout's flee: other groups don't pick it for a while, nor get its mex bonus (quota.raider_spot.mex)
 			GetMilitaryMgr()->BlockRaidSpot(raidSpot, FRAMES_PER_SEC * 10);
