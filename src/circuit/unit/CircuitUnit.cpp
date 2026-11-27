@@ -24,6 +24,7 @@
 #include "Weapon.h"
 #include "CommandDescription.h"
 #include "WrappWeaponMount.h"
+#include "Log.h"
 
 namespace circuit {
 
@@ -288,6 +289,48 @@ float CCircuitUnit::GetDGunRange()
 float CCircuitUnit::GetHealthPercent()
 {
 	return unit->GetHealth() / unit->GetMaxHealth() - unit->GetCaptureProgress() * 16.f;
+}
+
+const CCircuitDef::SCommWeapons* CCircuitUnit::GetCommWeapons() const
+{
+	if (!circuitDef->IsDynamicComm() || (manager == nullptr)) {
+		return nullptr;
+	}
+	if (commWeapons.isRead) {
+		return &commWeapons;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	if ((commReadFrame >= 0) && (frame - commReadFrame < FRAMES_PER_SEC)) {
+		return nullptr;
+	}
+	commReadFrame = frame;
+	if (!CCircuitDef::ReadCommWeapons(circuit, unit, commWeapons)) {
+		return nullptr;
+	}
+	// Checked against the game's unit stats in test games
+	circuit->LOG("COMM WEAPONS | %s | id: %i | range: %.0f (def %.0f) | dps: %.1f (def %.1f) | alpha: %.0f at %.0f",
+			circuitDef->GetDef()->GetName(), id, commWeapons.maxRange, circuitDef->GetMaxRange(), commWeapons.dps,
+			circuitDef->GetDps(), commWeapons.alpha, commWeapons.alphaRange);
+	return &commWeapons;
+}
+
+float CCircuitUnit::GetFireRange(CCircuitDef::RangeType type) const
+{
+	const CCircuitDef::SCommWeapons* cw = GetCommWeapons();
+	return (cw != nullptr) ? cw->range[static_cast<CCircuitDef::RangeT>(type)] : circuitDef->GetMaxRange(type);
+}
+
+float CCircuitUnit::GetFireRange() const
+{
+	const CCircuitDef::SCommWeapons* cw = GetCommWeapons();
+	return (cw != nullptr) ? cw->maxRange : circuitDef->GetMaxRange();
+}
+
+float CCircuitUnit::GetFireDps() const
+{
+	const CCircuitDef::SCommWeapons* cw = GetCommWeapons();
+	return (cw != nullptr) ? cw->dps : circuitDef->GetDps();
 }
 
 void CCircuitUnit::CmdRemove(std::vector<float>&& params, short options)

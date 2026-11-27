@@ -38,6 +38,8 @@ class CBRepairTask;
 class CBReclaimTask;
 class CBRestoreTask;
 class CCombatTask;
+class CAttackTask;
+class CEnemyInfo;
 
 struct SBuildChain;
 
@@ -437,6 +439,33 @@ public:
 	// It can move to pos, and pos is outside every seen flee zone (its stop-fleeing line, as a flee goal)
 	bool IsCommFleeSpot(CCircuitUnit* unit, const springai::AIFloat3& pos);
 
+	/*
+	 * Commander attack (commander.json "attack"): within attack.radius of an enemy it clearly beats (a building, a raid
+	 * target standing still or already in reach, an enemy commander it out-duels), our commander leaves its job and
+	 * fights it as an attack group (CMilitaryManager::EnqueueCommAttack: CAttackTask with comm), then goes back to its
+	 * jobs. The commander flee and the protect's meeting point win against anything stronger than it and its cover,
+	 * but for the duel it is winning
+	 */
+	// The one filter the trigger (TryCommAttack) and the task's FindTarget both use, so they never disagree: an enabled
+	// kind, within radius of comm and leash of the anchor, hittable, not banned; a mobile raid target standing still or
+	// in reach; walk + time to kill under the budget; cover over threat x ratio at the firing spot and on the straight
+	// walk there; an enemy commander: their time to kill us at least ratio_comm x ours on them. isKeep: the current
+	// target, kept at 1.0x (cover and the duel's edge), a 1.25x radius and the time left
+	bool IsCommTargetOk(CCircuitUnit* comm, CEnemyInfo* enemy, bool isKeep);
+	// Walk (elmos; a route's length) + our time to kill enemy within the budget: max_sec / 2 (/ 4 in the opening), and
+	// within the attack's time left once it runs
+	bool IsCommWalkInBudget(CCircuitUnit* comm, CEnemyInfo* enemy, float walk, bool isKeep = false);
+	// Once per task update: the attack's end by the commander's limits (leash, time, hide, morph, disarm), else
+	// nullptr. Keeps the duel state the flee's exception reads, and notes a kill (a mex: its clearing turret)
+	const char* GetCommAttackEnd(CCircuitUnit* comm, const CAttackTask* task);
+	// The commander left its attack (CAttackTask::HandCommBack): cooldown, bans, the end line
+	void OnCommAttackEnd(CCircuitUnit* comm, const CAttackTask* task, const char* reason);
+	// A target the task rejected or found no route to: 20 s; one that ended an attack by leash or time (isLong): 60 s
+	void BanCommTarget(CCircuitUnit* comm, ICoreUnit::Id id, bool isLong);
+	// The highest threat of the enemy commanders near comm that pass its duel (IsCommTargetOk; keepId: the current
+	// target, at the keep ratios), 0: none. The attack task adds it to its allowances: the duel test judges that one
+	float GetCommDuelThreat(CCircuitUnit* comm, ICoreUnit::Id keepId);
+
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
 	// How a job ranks for a builder: travel cost x invWeight, lowest wins; beyond travelSec only as a fallback
@@ -457,6 +486,13 @@ private:
 		bool isAir;  // a gunship
 		bool isSeen;  // in radar or LOS now; else gone from both within COMM_DANGER_MEMORY (jobs and morph only)
 		bool isStatic;  // an armed enemy building we know of (jobs only: IsCommJobSafe)
+		ICoreUnit::Id id;  // the enemy (the commander attack's duel exception)
+		bool isComm;  // an enemy commander (the commander attack's gate leaves those to the duel test)
+	};
+	// An enemy a commander attack might take (UpdateCommDangers, within reach of a commander with the attack on)
+	struct SCommTarget {
+		ICoreUnit::Id id;
+		springai::AIFloat3 pos;
 	};
 	// A spot a builder other than a commander fled from: every such builder's jobs keep off it until endFrame
 	struct SFleeScar {
@@ -505,6 +541,21 @@ private:
 		springai::AIFloat3 fleeFrom = -RgtVector;
 		bool isFleeAir = false;
 		int turretAskFrame = -1;
+		// Commander attack (commander.json attack; commanders only)
+		const CSetupManager::SCommInfo::SAttack* attack = nullptr;  // nullptr or not isEnable: off
+		unsigned attackTick = 0;  // UpdateCommFlee passes: TryCommAttack on every COMM_ATTACK_TICKS-th
+		const CAttackTask* attackTask = nullptr;  // the attack it is in (compared only)
+		int attackStart = -1;  // its frame
+		int attackEnd = -1;  // the last attack's end
+		int cooldownUntil = -1;  // no new attack before this frame
+		springai::AIFloat3 anchor = -RgtVector;  // where the chain of attacks began (the leash's centre)
+		ICoreUnit::Id attackTargetId = -1;  // the task's target at its last update
+		springai::AIFloat3 attackTargetPos = -RgtVector;
+		const CCircuitDef* attackTargetDef = nullptr;
+		unsigned attackKind = 0;  // the first target's kind (SAttack::Kind)
+		int attackKills = 0;
+		ICoreUnit::Id duelId = -1;  // the enemy commander it fights while the time-to-kill edge holds 1.0 (the flee lets it be)
+		std::unordered_map<ICoreUnit::Id, int> attackBans;  // target id -> frame the ban ends
 		bool IsComm() const { return hide != nullptr; }
 		// Cover beats threat x mod by flee_ally_threat (< 0 = never covered)
 		bool IsCovered(float threat, float mod) const {
@@ -576,6 +627,39 @@ private:
 	void StartCommFlee(CCircuitUnit* unit, SCommState* state);
 	void ContinueCommFlee(CCircuitUnit* unit, CRetreatTask* retreat, SCommState* state);
 	void LogFlee(CCircuitUnit* unit, const char* event, const SCommState* state) const;
+	/*
+	 * Commander attack
+	 */
+	// Every COMM_ATTACK_TICKS-th flee pass the flee declined: the gates (attack on, health, no hide, not exposed at the
+	// flee's end line, not disarmed or morphing, the opening switch, cooldown, on a job or idle, no home fight, a job
+	// neither NOW nor about to finish, no anchored protect), then the nearest candidate that passes IsCommTargetOk
+	bool TryCommAttack(CCircuitUnit* unit, SCommState* state);
+	// Its kind (SAttack::Kind) among kinds, 0: none (unknown type, not seen: in LOS, a building also in radar)
+	unsigned GetCommTargetKind(const CEnemyInfo* enemy, unsigned kinds) const;
+	// The anchor holds while an attack runs and for cooldown_sec after one; else the attack starts a new chain at pos
+	bool IsCommAnchorKept(const SCommState* state, int frame) const;
+	// Seconds: our commander's fitted dps (and its ready D-gun's alpha) against enemy's health and shield (a radar-only
+	// building: its def's health); an enemy commander's fitted weapons against ours (its D-gun taken as ready)
+	float GetCommTimeToKill(CCircuitUnit* comm, const CEnemyInfo* enemy);
+	float GetEnemyTimeToKill(CEnemyInfo* enemy, CCircuitUnit* comm);
+	// Cover (its own power, and allies within flee_ally_radius) over ratio x the threat of every danger that reaches
+	// (range + its flee's end margin) the firing spot `to` and samples of the straight walk from `from`. duelId: an
+	// enemy commander the duel test judges; alone it is let be, with escorts or turrets it counts with them
+	bool IsCommWalkCovered(CCircuitUnit* comm, SCommState* state, const springai::AIFloat3& from,
+			const springai::AIFloat3& to, float ratio, ICoreUnit::Id duelId);
+	// The attack's target at the last task update died: a kill (a mex: its unstarted clearing turret is dropped)
+	bool NoteCommKill(SCommState* state, const CEnemyInfo* current);
+	// The flee pass's zone: nearZone, without the enemy commander a winning duel fights (SCommState::duelId)
+	SCommZone GetCommFleeZone(CCircuitUnit* unit, const SCommState* state);
+	// The attack unit is in (it is its commander), else nullptr
+	CAttackTask* GetCommAttack(CCircuitUnit* unit) const;
+	// COMM ROUTE (always logged): our commander's task is the military idle task, or an idle task still lists it while
+	// it is in another task; it is put back (the builder idle task)
+	void CheckCommRoute(CCircuitUnit* unit);
+	// The last values IsCommTargetOk worked out, for the start line
+	struct SCommCheck {
+		float cover = 0.f, threat = 0.f, walkSec = 0.f, killSec = 0.f, theirKillSec = 0.f;
+	} commCheck;
 	IBuilderTask* MakeBuilderTask(CCircuitUnit* unit, const CQueryCostMap* query);
 	IBuilderTask* CreateBuilderTask(const springai::AIFloat3& position, CCircuitUnit* unit);
 
@@ -606,6 +690,7 @@ private:
 	std::set<CCircuitUnit*> workers;
 	std::map<CCircuitUnit*, SCommState> comms;  // ground workers with the flee on, commanders and other builders
 	std::vector<SCommDanger> commDangers;
+	std::vector<SCommTarget> commTargets;  // UpdateCommDangers: enemies near a commander with the attack on
 	int commDangerFrame;  // frame commDangers was built at
 	std::vector<SFleeScar> fleeScars;  // StartCommFlee adds them, UpdateCommDangers drops expired ones
 	std::vector<SCommCover> commCovers;

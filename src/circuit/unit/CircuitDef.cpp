@@ -231,6 +231,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 	bool isDynamic = false;
 	if (customParams.find("level") != customParams.end()) {
 		isDynamic = customParams.find("dynamic_comm") != customParams.end();
+		isDynamicComm = isDynamic;
 		AddRole(ROLE_TYPE(COMM));
 		AddAttribute(AttrType::PRIO_REPAIR);  // commanders get priority repair by default
 	}
@@ -489,6 +490,7 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		dps /= mounts.size();
 		dmg /= mounts.size();
 	}
+	this->dps = dps;
 
 	if (minReloadTime < std::numeric_limits<float>::max()) {
 		reloadTime = minReloadTime * FRAMES_PER_SEC;
@@ -708,6 +710,144 @@ void CCircuitDef::GetCommWeaponRange(CCircuitAI* circuit, springai::Unit* unit, 
 	}
 	outRange = maxRange * unit->GetRulesParamFloat("comm_range_mult", 1.f);
 	outAoe = maxAoe;
+}
+
+const CWeaponDef::SStats* CCircuitDef::GetWeaponStats(CCircuitAI* circuit, int weaponDefId)
+{
+	// As the weapon loop in the constructor works a weapon out, for one weapon
+	if (!circuit->IsValidWeaponDefId(weaponDefId)) {
+		return nullptr;
+	}
+	const CWeaponDef* cwd = circuit->GetWeaponDef(weaponDefId);
+	const CWeaponDef::SStats* known = cwd->GetStats();
+	if (known != nullptr) {
+		return known;
+	}
+	CWeaponDef::SStats stats;
+	WeaponDef* wd = cwd->GetDef();
+	const std::map<std::string, std::string>& customParams = wd->GetCustomParams();
+	if (customParams.find("fake_weapon") != customParams.end()) {
+		cwd->SetStats(stats);  // all 0
+		return cwd->GetStats();
+	}
+	float scale = wd->IsParalyzer() ? 0.5f : 1.0f;
+	float extraDmg = .0f;
+	auto it = customParams.find("extra_damage");
+	if (it != customParams.end()) {
+		extraDmg += utils::string_to_float(it->second);
+	}
+	it = customParams.find("disarmdamageonly");
+	if ((it != customParams.end()) && (utils::string_to_int(it->second) == 1)) {
+		scale = 0.5f;
+	}
+	it = customParams.find("timeslow_onlyslow");
+	if ((it != customParams.end()) && (utils::string_to_int(it->second) == 1)) {
+		scale = 0.5f;
+	} else {
+		it = customParams.find("timeslow_damagefactor");
+		if (it != customParams.end()) {
+			scale = utils::string_to_float(it->second);
+		}
+	}
+	it = customParams.find("is_capture");
+	if ((it != customParams.end()) && (utils::string_to_int(it->second) == 1)) {
+		scale = 2.0f;
+	}
+	it = customParams.find("area_damage_dps");
+	if (it != customParams.end()) {
+		extraDmg += utils::string_to_float(it->second);
+		it = customParams.find("area_damage_is_impulse");
+		if ((it != customParams.end()) && (utils::string_to_int(it->second) == 1)) {
+			scale = 0.02f;
+		}
+	}
+	const float reloadTime = std::max(wd->GetReload(), 1.f / FRAMES_PER_SEC);  // seconds
+	const int salvoSize = wd->GetSalvoSize();
+	float ldmg = .0f;
+	it = customParams.find("statsdamage");
+	if (it != customParams.end()) {
+		ldmg = utils::string_to_float(it->second);
+	} else {
+		Damage* damage = wd->GetDamage();
+		const std::vector<float>& damages = damage->GetTypes();
+		delete damage;
+		for (float d : damages) {
+			ldmg += d;
+		}
+		ldmg /= std::max<size_t>(damages.size(), 1);
+	}
+	ldmg *= std::pow(2.0f, (wd->IsDynDamageInverted() ? 1 : -1) * wd->GetDynDamageExp());
+	if (extraDmg > 0.1f) {
+		stats.dps += extraDmg * salvoSize / reloadTime * scale;
+		stats.salvo += extraDmg * salvoSize * scale;
+	}
+	stats.dps += ldmg * salvoSize / reloadTime * scale;
+	stats.salvo += ldmg * salvoSize * scale;
+
+	std::string wt(wd->GetType());
+	const float projectileSpeed = wd->GetProjectileSpeed();
+	it = customParams.find("truerange");
+	stats.range = (it != customParams.end()) ? utils::string_to_float(it->second) : wd->GetRange();
+	bool isAlwaysHit = ((wt == "Cannon") || (wt == "DGun") || (wt == "EmgCannon") || (wt == "Flame") ||
+			(wt == "LaserCannon") || (wt == "AircraftBomb")) && (projectileSpeed * FRAMES_PER_SEC >= .8f * stats.range);
+	isAlwaysHit |= (wt == "BeamLaser") || (wt == "LightningCannon") || (wt == "Rifle") ||
+			(((wt == "MissileLauncher") || (wt == "StarburstLauncher") || ((wt == "TorpedoLauncher") && wd->IsSubMissile())) && wd->IsTracks());
+	const int weaponCat = wd->GetOnlyTargetCategory();
+	stats.isAir = isAlwaysHit && (stats.range > 150.f) && (weaponCat & circuit->GetAirCategory());
+	stats.isLand = ((wt != "TorpedoLauncher") || wd->IsSubMissile()) && (weaponCat & circuit->GetLandCategory());
+	stats.isWater = wd->IsWaterWeapon() && (weaponCat & circuit->GetWaterCategory());
+	stats.isManual = wd->IsManualFire();
+	stats.isShield = wd->IsShield();
+	if (stats.isShield) {
+		stats.dps = stats.salvo = 0.f;
+	}
+	cwd->SetStats(stats);
+	return cwd->GetStats();
+}
+
+bool CCircuitDef::ReadCommWeapons(CCircuitAI* circuit, springai::Unit* unit, SCommWeapons& out)
+{
+	// Zero-K's dynamic commanders (dyncomm_chassis_generator.lua) set, per slot N in 1..2: comm_weapon_id_N (the
+	// weapon def), comm_weapon_manual_N (> 0: manual fire, the D-gun slot); the modules scale every weapon by
+	// comm_range_mult and comm_damage_mult
+	out = SCommWeapons();
+	const float rangeMult = unit->GetRulesParamFloat("comm_range_mult", 1.f);
+	const float damageMult = unit->GetRulesParamFloat("comm_damage_mult", 1.f);
+	for (int num = 1; num < 3; ++num) {
+		std::string str = utils::int_to_string(num, "comm_weapon_id_%i");
+		const int weaponDefId = int(unit->GetRulesParamFloat(str.c_str(), -1));
+		const CWeaponDef::SStats* stats = (weaponDefId < 0) ? nullptr : GetWeaponStats(circuit, weaponDefId);
+		if (stats == nullptr) {
+			continue;
+		}
+		out.isRead = true;
+		if (stats->isShield) {
+			continue;
+		}
+		str = utils::int_to_string(num, "comm_weapon_manual_%i");
+		const bool isManual = stats->isManual || (unit->GetRulesParamFloat(str.c_str(), -1) > 0.f);
+		const float range = stats->range * rangeMult;
+		if (isManual) {
+			out.alpha = std::max(out.alpha, stats->salvo * damageMult);
+			out.alphaRange = std::max(out.alphaRange, range);
+			continue;
+		}
+		out.dps += stats->dps * damageMult;
+		if (stats->isAir) {
+			float& r = out.range[static_cast<RangeT>(RangeType::AIR)];
+			r = std::max(r, range);
+		}
+		if (stats->isLand) {
+			float& r = out.range[static_cast<RangeT>(RangeType::LAND)];
+			r = std::max(r, range);
+		}
+		if (stats->isWater) {
+			float& r = out.range[static_cast<RangeT>(RangeType::WATER)];
+			r = std::max(r, range);
+		}
+		out.maxRange = std::max(out.maxRange, range);
+	}
+	return out.isRead;
 }
 
 bool CCircuitDef::IsYTargetable(float elevation, float posY) {

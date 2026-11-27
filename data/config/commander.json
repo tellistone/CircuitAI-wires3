@@ -115,6 +115,30 @@
 				"flee_ally_radius": 500.0
 			},
 
+			// Attack: within "radius" of an enemy building, a raid target (quota.raid_target_roles or the raid_target attribute)
+			// standing still or already in reach, or an enemy commander, the commander leaves its job and fights it as an attack
+			// group (attack-group pathing, firing spots and target ranking; idle attack groups nearby may merge in), then goes
+			// back to its jobs. Only when safe: health at least "min_health" (and its retreat + 0.15), not hiding, not exposed at
+			// the flee's end line, its job neither NOW nor about to finish, no home fight, no anchored protect. At the firing spot
+			// and on the walk there, it and its cover must beat "ratio" x the threat of every enemy reaching it, buildings
+			// included (kept while 1.0x). An enemy commander only if its time to kill ours is at least "ratio_comm" x ours to kill
+			// it (kept while 1.0x); while that holds, it alone doesn't start the flee. Walk + kill under max_sec / 2 (/ 4 in the
+			// opening). It ends on a kill with nothing else to take, no target, a failed keep, "leash" from where the attacks
+			// began, "max_sec", a flee or a retreat; then no new one for "cooldown_sec", but after a kill.
+			// "targets": static, raid_target, commander; "in_opening": false = off until the opening ends. Missing block = off
+			"attack": {
+				"enable": true,
+				"radius": 660,
+				"targets": ["static", "raid_target", "commander"],
+				"ratio": 1.5,
+				"ratio_comm": 1.1,
+				"min_health": 0.6,
+				"leash": 900,
+				"max_sec": 30,
+				"cooldown_sec": 10,
+				"in_opening": true
+			},
+
 			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
 			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
 			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
@@ -230,6 +254,30 @@
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
 				"flee_ally_radius": 500.0
+			},
+
+			// Attack: within "radius" of an enemy building, a raid target (quota.raid_target_roles or the raid_target attribute)
+			// standing still or already in reach, or an enemy commander, the commander leaves its job and fights it as an attack
+			// group (attack-group pathing, firing spots and target ranking; idle attack groups nearby may merge in), then goes
+			// back to its jobs. Only when safe: health at least "min_health" (and its retreat + 0.15), not hiding, not exposed at
+			// the flee's end line, its job neither NOW nor about to finish, no home fight, no anchored protect. At the firing spot
+			// and on the walk there, it and its cover must beat "ratio" x the threat of every enemy reaching it, buildings
+			// included (kept while 1.0x). An enemy commander only if its time to kill ours is at least "ratio_comm" x ours to kill
+			// it (kept while 1.0x); while that holds, it alone doesn't start the flee. Walk + kill under max_sec / 2 (/ 4 in the
+			// opening). It ends on a kill with nothing else to take, no target, a failed keep, "leash" from where the attacks
+			// began, "max_sec", a flee or a retreat; then no new one for "cooldown_sec", but after a kill.
+			// "targets": static, raid_target, commander; "in_opening": false = off until the opening ends. Missing block = off
+			"attack": {
+				"enable": true,
+				"radius": 660,
+				"targets": ["static", "raid_target", "commander"],
+				"ratio": 1.5,
+				"ratio_comm": 1.1,
+				"min_health": 0.6,
+				"leash": 900,
+				"max_sec": 30,
+				"cooldown_sec": 10,
+				"in_opening": true
 			},
 
 			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
@@ -355,6 +403,30 @@
 				"flee_ally_radius": 500.0
 			},
 
+			// Attack: within "radius" of an enemy building, a raid target (quota.raid_target_roles or the raid_target attribute)
+			// standing still or already in reach, or an enemy commander, the commander leaves its job and fights it as an attack
+			// group (attack-group pathing, firing spots and target ranking; idle attack groups nearby may merge in), then goes
+			// back to its jobs. Only when safe: health at least "min_health" (and its retreat + 0.15), not hiding, not exposed at
+			// the flee's end line, its job neither NOW nor about to finish, no home fight, no anchored protect. At the firing spot
+			// and on the walk there, it and its cover must beat "ratio" x the threat of every enemy reaching it, buildings
+			// included (kept while 1.0x). An enemy commander only if its time to kill ours is at least "ratio_comm" x ours to kill
+			// it (kept while 1.0x); while that holds, it alone doesn't start the flee. Walk + kill under max_sec / 2 (/ 4 in the
+			// opening). It ends on a kill with nothing else to take, no target, a failed keep, "leash" from where the attacks
+			// began, "max_sec", a flee or a retreat; then no new one for "cooldown_sec", but after a kill.
+			// "targets": static, raid_target, commander; "in_opening": false = off until the opening ends. Missing block = off
+			"attack": {
+				"enable": true,
+				"radius": 660,
+				"targets": ["static", "raid_target", "commander"],
+				"ratio": 1.5,
+				"ratio_comm": 1.1,
+				"min_health": 0.6,
+				"leash": 900,
+				"max_sec": 30,
+				"cooldown_sec": 10,
+				"in_opening": true
+			},
+
 			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds
 			// ("skip"), leaving them to constructors; a stall fix (energy while energy stalls, a pylon or mex while metal
 			// stalls) and a geothermal it still takes. Kinds: factory, nano, store, pylon, energy, defence, bunker, big_gun,
@@ -471,6 +543,30 @@
 				"flee_margin": 200.0,  // -1 = no flee
 				"flee_ally_threat": 0.0,  // 0 = it stays while it and its cover are at least as strong (an even duel is fought); -1 = flee regardless of cover
 				"flee_ally_radius": 500.0
+			},
+
+			// Attack: within "radius" of an enemy building, a raid target (quota.raid_target_roles or the raid_target attribute)
+			// standing still or already in reach, or an enemy commander, the commander leaves its job and fights it as an attack
+			// group (attack-group pathing, firing spots and target ranking; idle attack groups nearby may merge in), then goes
+			// back to its jobs. Only when safe: health at least "min_health" (and its retreat + 0.15), not hiding, not exposed at
+			// the flee's end line, its job neither NOW nor about to finish, no home fight, no anchored protect. At the firing spot
+			// and on the walk there, it and its cover must beat "ratio" x the threat of every enemy reaching it, buildings
+			// included (kept while 1.0x). An enemy commander only if its time to kill ours is at least "ratio_comm" x ours to kill
+			// it (kept while 1.0x); while that holds, it alone doesn't start the flee. Walk + kill under max_sec / 2 (/ 4 in the
+			// opening). It ends on a kill with nothing else to take, no target, a failed keep, "leash" from where the attacks
+			// began, "max_sec", a flee or a retreat; then no new one for "cooldown_sec", but after a kill.
+			// "targets": static, raid_target, commander; "in_opening": false = off until the opening ends. Missing block = off
+			"attack": {
+				"enable": true,
+				"radius": 660,
+				"targets": ["static", "raid_target", "commander"],
+				"ratio": 1.5,
+				"ratio_comm": 1.1,
+				"min_health": 0.6,
+				"leash": 900,
+				"max_sec": 30,
+				"cooldown_sec": 10,
+				"in_opening": true
 			},
 
 			// Jobs: once "time" (seconds) has passed, with more than 2 builders, the commander takes no new job of these kinds

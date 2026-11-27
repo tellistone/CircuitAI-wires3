@@ -89,6 +89,14 @@ public:
 	}
 
 	IFighterTask* EnqueueTask(IFighterTask::FightType type);
+	// Commander attack (CBuilderManager::TryCommAttack): an attack group led by our commander, comm, at threat
+	// allowance 1 / ratio. Updated with the other fight tasks but kept off GetTasks(ATTACK), so army picks, escorts,
+	// ally-cover discs, the attack balance, guard pulls, rallies, reinforcing and protect never see it; other attack
+	// groups may still merge into it (ISquadTask::CheckMergeTask, GetCommAttacks). The caller assigns comm to it
+	CAttackTask* EnqueueCommAttack(CCircuitUnit* comm, float ratio);
+	const std::set<IFighterTask*>& GetCommAttacks() const { return commAttacks; }
+	// The commander left a commander attack that still has merged units: they go on as a normal attack group
+	void PromoteCommAttack(CAttackTask* task);
 	// Registers a new fight task under type for updates and GetTasks
 	IFighterTask* AddFightTask(IFighterTask::FightType type, IFighterTask* task);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType promote, float power);
@@ -731,6 +739,7 @@ private:
 
 	std::vector<std::set<IFighterTask*>> fightTasks;
 	std::vector<IUnitTask*> fightUpdates;  // owner
+	std::set<IFighterTask*> commAttacks;  // EnqueueCommAttack: CAttackTasks off fightTasks
 	unsigned int fightIterator;
 	std::set<IUnitTask*> priorityArtyTasks;  // CPriorityArtyTask, in fightTasks[SUPER]
 

@@ -331,6 +331,8 @@ public:  // flee helpers, also used by the commander flee (CBuilderManager::Upda
 	static const springai::AIFloat3* PickFleeSpot(const springai::AIFloat3& pos, const springai::AIFloat3& dangerPos,
 			const F3Vec& spots);
 
+	void MarkStrengthStale() const { strengthFrame = STALE_FRAME; }  // a unit's health changed: GetUnitStrengths reads again
+
 private:
 	static constexpr int STALE_FRAME = std::numeric_limits<int>::min();  // never a frame
 	mutable std::vector<SUnitStrength> unitStrengths;  // GetUnitStrengths cache

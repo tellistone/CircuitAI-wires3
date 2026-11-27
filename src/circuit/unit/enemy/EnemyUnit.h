@@ -200,6 +200,10 @@ public:
 	void AddBlindShot() { ++blindShots; }
 	int GetBlindShots() const { return blindShots; }
 
+	// A dynamic commander's fitted weapons (CCircuitDef::ReadCommWeapons): read in LOS, kept once read (a morph makes a
+	// new unit); nullptr: not a dynamic commander, or not read yet
+	const CCircuitDef::SCommWeapons* GetCommWeapons(CCircuitAI* circuit);
+
 private:
 	void Init();
 
@@ -221,6 +225,7 @@ private:
 	int jumpReadyFrame = 0;
 	bool isJumpReady = true;
 	bool isOffArc = false;
+	CCircuitDef::SCommWeapons commWeapons;  // GetCommWeapons
 
 public:
 	void SetInLOS()     { data.SetInLOS(); }

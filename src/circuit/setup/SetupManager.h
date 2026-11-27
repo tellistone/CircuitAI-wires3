@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_STATIC_SETUPMANAGER_H_
 
 #include "unit/CircuitDef.h"
+#include "util/Defines.h"
 #include "json/json-forwards.h"
 
 #include "AIFloat3.h"
@@ -55,6 +56,21 @@ public:
 			float jumpMinDist = -1.f;
 			bool isJumpKeep = true;
 		} jobs;
+		// Commander attack (commander.json "attack"): within radius of an enemy it clearly beats, the commander leaves
+		// its job and fights it as an attack group (CBuilderManager::TryCommAttack). A missing block: off
+		struct SAttack {
+			enum Kind: unsigned {STATIC = 0x01, RAID = 0x02, COMM = 0x04};
+			bool isEnable = false;
+			float radius = 660.f;  // targets within this of the commander
+			unsigned kinds = 0;  // "targets": static, raid_target, commander
+			float ratio = 1.5f;  // cover over threat at the firing spot and on the walk; kept at 1.0
+			float ratioComm = 1.1f;  // duel: their time to kill us over ours to kill them; kept at 1.0
+			float minHealth = 0.6f;  // and at least its retreat + 0.15
+			float leash = 900.f;  // from where the attacks began (the anchor)
+			int maxFrames = FRAMES_PER_SEC * 30;  // per attack; walk + kill under half of it (a quarter in the opening)
+			int cooldownFrames = FRAMES_PER_SEC * 10;  // after any end but a kill
+			bool isInOpening = true;  // false: off until the opening ends
+		} attack;
 	};
 	using StartFunc = std::function<void (const springai::AIFloat3& pos)>;
 
@@ -99,6 +115,7 @@ public:
 	const std::vector<CCircuitDef::RoleT>* GetOpener(const CCircuitDef* facDef) const;
 	const SCommInfo::SHide* GetHide(const CCircuitDef* cdef) const;
 	const SCommInfo::SJobs* GetCommJobs(const CCircuitDef* cdef) const;  // nullptr: not a configured commander
+	const SCommInfo::SAttack* GetCommAttack(const CCircuitDef* cdef) const;  // nullptr: not a configured commander
 
 	void Welcome() const;
 

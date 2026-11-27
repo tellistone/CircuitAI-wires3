@@ -160,7 +160,7 @@ void IFighterTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	const AIFloat3& pos = unit->GetPos(frame);
 	if ((isHurt && (healthPerc < 0.2f))
 		|| (target == nullptr) || !target->IsInLOS()
-		|| (target->GetPos().SqDistance2D(pos) > SQUARE(cdef->GetMaxRange()))
+		|| (target->GetPos().SqDistance2D(pos) > SQUARE(unit->GetFireRange()))
 		|| (threatMap->GetThreatAt(unit, pos) * 2 > threatMap->GetUnitThreat(unit)))
 	{
 		manager->AssignTask(unit, EnqueueRetreat());
@@ -547,7 +547,8 @@ bool IFighterTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 float IFighterTask::GetFireRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const
 {
 	// a jumper in flight: by where it lands (water or not)
-	return unit->GetCircuitDef()->GetMaxRange(CCircuitDef::GetRangeType(enemy->GetCircuitDef(), enemy->GetFightPos()));
+	// a dynamic commander: by its fitted weapons (CCircuitUnit::GetFireRange)
+	return unit->GetFireRange(CCircuitDef::GetRangeType(enemy->GetCircuitDef(), enemy->GetFightPos()));
 }
 
 float IFighterTask::GetSpotRange(CCircuitUnit* unit, const CEnemyInfo* enemy) const
@@ -1267,7 +1268,7 @@ bool IFighterTask::IsFighting() const
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	const AIFloat3& tPos = target->GetPos();
 	for (CCircuitUnit* unit : units) {
-		if (unit->GetPos(frame).SqDistance2D(tPos) < SQUARE(unit->GetCircuitDef()->GetMaxRange())) {
+		if (unit->GetPos(frame).SqDistance2D(tPos) < SQUARE(unit->GetFireRange())) {
 			return true;
 		}
 	}

@@ -63,7 +63,7 @@ const std::vector<CAllyCover::SDisc>& CAllyCover::GetDiscs()
 		AIFloat3 pos;
 		float range, power;
 		if (task->GetCoverDisc(frame, pos, range, power)) {
-			discs.push_back({task, pos, SQUARE(range), power});
+			discs.push_back({task, pos, SQUARE(range), power, false});
 		}
 	}
 	// Our commander (a builder, in no attack task), while it isn't retreating (its flee and hide use retreat tasks)
@@ -75,7 +75,16 @@ const std::vector<CAllyCover::SDisc>& CAllyCover::GetDiscs()
 		const float power = comm->GetCircuitDef()->GetPower() * sqrtf(std::max(comm->GetHealthPercent(), 0.f));
 		const AIFloat3& pos = comm->GetPos(frame);
 		if ((range > 0.f) && (power > 0.f) && utils::is_valid(pos)) {
-			discs.push_back({nullptr, pos, SQUARE(range), power});
+			// In a commander attack: tagged with it, so its own group leaves it out of its strength (other groups count it)
+			const CAttackTask* commTask = nullptr;
+			IUnitTask* task = comm->GetTask();
+			if ((task->GetType() == IUnitTask::Type::FIGHTER)
+				&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK)
+				&& (static_cast<CAttackTask*>(task)->GetComm() == comm))
+			{
+				commTask = static_cast<CAttackTask*>(task);
+			}
+			discs.push_back({commTask, pos, SQUARE(range), power, true});
 		}
 	}
 	return discs;
@@ -110,7 +119,7 @@ CAllyCover::SParts CAllyCover::GetCoverAt(const AIFloat3& p, const SJudge& judge
 		}
 		const float sqDist = p.SqDistance2D(d.pos);
 		if (sqDist < d.sqRange) {
-			const Source source = (d.task == nullptr) ? Source::COMMANDER : Source::GROUPS;
+			const Source source = d.isComm ? Source::COMMANDER : Source::GROUPS;
 			parts.at[static_cast<int>(source)] += d.power * Falloff(sqDist, d.sqRange);
 		}
 	}
@@ -243,7 +252,7 @@ void CAllyCover::Log()
 	int groups = 0;
 	bool isComm = false;
 	for (const SDisc& d : GetDiscs()) {
-		if (d.task == nullptr) {
+		if (d.isComm) {
 			isComm = true;
 		} else {
 			++groups;

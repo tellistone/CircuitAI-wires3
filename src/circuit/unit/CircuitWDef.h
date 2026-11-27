@@ -32,6 +32,21 @@ public:
 	bool IsStockpile() const { return isStockpile; }
 	bool IsHighTrajectory() const { return isHigh; }
 
+	// One weapon's fight numbers, as CCircuitDef's weapon loop works them out (CCircuitDef::GetWeaponStats fills them
+	// once): for a dynamic commander's fitted weapons (CCircuitDef::SCommWeapons)
+	struct SStats {
+		float dps = 0.f;  // damage a second: salvo / reload, extra and area damage in, paralyser and slow scaled down
+		float salvo = 0.f;  // one salvo's damage (a manual-fire weapon's alpha)
+		float range = 0.f;  // "truerange" when it has one
+		bool isLand = false;
+		bool isWater = false;
+		bool isAir = false;
+		bool isManual = false;
+		bool isShield = false;
+	};
+	const SStats* GetStats() const { return isStats ? &stats : nullptr; }
+	void SetStats(const SStats& value) const { stats = value; isStats = true; }
+
 private:
 	springai::WeaponDef* def;  // owner
 
@@ -41,6 +56,8 @@ private:
 	float fireTime;
 	bool isStockpile : 1;
 	bool isHigh : 1;
+	mutable SStats stats;  // SetStats
+	mutable bool isStats = false;
 };
 
 } // namespace circuit

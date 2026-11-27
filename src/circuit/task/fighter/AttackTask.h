@@ -61,6 +61,24 @@ public:
 	// (CAttackBalance). Also in log-only mode, so the skip counts mean the same in both builds
 	bool IsOutnumbered() const { return isOutnumbered; }
 
+	/*
+	 * Commander attack (CMilitaryManager::EnqueueCommAttack, CBuilderManager::TryCommAttack): our commander, comm,
+	 * leads this group. It joins no other group and walks to none (reinforce, rally, idle_merge), commits to no
+	 * protect, and isn't judged by the attack balance, the threat floor or the own-ground rule; it neither escapes nor
+	 * holds (the commander has its own flee), and with no target the commander goes back to its jobs. FindTarget takes
+	 * only targets that pass the commander's filter (CBuilderManager::IsCommTargetOk). The commander comes from and
+	 * goes back to the builder manager's idle task, and retreats by the builder retreat. When it leaves, merged units
+	 * go on as a normal attack group (CMilitaryManager::PromoteCommAttack)
+	 */
+	void SetComm(CCircuitUnit* unit) { comm = unit; }
+	CCircuitUnit* GetComm() const { return comm; }
+	// The commander leaves at the next update, for reason (logged; the first reason given wins)
+	void EndComm(const char* reason) {
+		if ((comm != nullptr) && (commEnd == nullptr)) {
+			commEnd = reason;
+		}
+	}
+
 protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
 	virtual bool GetFireArcBearing(float& outBearing) const override;
@@ -128,6 +146,23 @@ private:
 	};
 
 	CMilitaryManager* GetMilitaryMgr() const;
+
+	/*
+	 * Commander attack (comm)
+	 */
+	// The attack's end (EndComm, or the commander's limits: CBuilderManager::GetCommAttackEnd): the commander leaves,
+	// true (the task may be aborted then)
+	bool UpdateComm(int frame);
+	// It left (RemoveAssignee, Stop): to the builder manager's idle task, its jump setting back, the end noted
+	void HandCommBack(CCircuitUnit* unit, const char* reason);
+	// Health retreat (or disarmed): the builder retreat, as for its jobs (IBuilderTask::OnUnitDamaged)
+	void OnCommDamaged(CCircuitUnit* unit);
+	// FindTarget's filter for a commander attack; isCurrent: kept at the keep ratios
+	bool IsCommTargetOk(CEnemyInfo* enemy, bool isCurrent);
+	// A target the route rejected or couldn't reach: the commander leaves it alone for a while
+	void NoteCommReject(ICoreUnit::Id id);
+	// The walk on this route and the kill fit the attack's time budget
+	bool IsCommRouteInBudget(CEnemyInfo* enemy, const F3Vec& path);
 
 	/*
 	 * Group strength and the threat it tolerates
@@ -620,6 +655,15 @@ private:
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
 	float hitRadius;
 	int hitFrame;
+
+	// Commander attack
+	CCircuitUnit* comm = nullptr;  // SetComm; nullptr: a normal attack group
+	const char* commEnd = nullptr;  // EndComm
+	bool isCommKeepFail = false;  // the last pick dropped the current target at the keep ratios
+	// An enemy commander that passes the duel test (CBuilderManager::GetCommDuelThreat) is judged by it: its threat is
+	// added to every allowance this task works out (GetBaseAllowedThreatAt) until the next pick, so the attack group's
+	// own allowance (1 / ratio) judges only what else stands there
+	float commDuelThreat = 0.f;
 };
 
 } // namespace circuit

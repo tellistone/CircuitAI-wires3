@@ -19,6 +19,13 @@ public:
 
 	virtual void AssignTo(CCircuitUnit* unit) override;
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
+	// Drops a unit it still lists while the unit is in another task (CBuilderManager's COMM ROUTE check): unlike
+	// RemoveAssignee, leaves the unit's actions alone
+	void Forget(CCircuitUnit* unit) {
+		units.erase(unit);
+		updateUnits.erase(unit);
+	}
+	bool IsListed(CCircuitUnit* unit) const { return units.find(unit) != units.end(); }
 
 	virtual void Start(CCircuitUnit* unit) override;
 	virtual void Update() override;

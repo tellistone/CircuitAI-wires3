@@ -7,9 +7,12 @@
 
 #include "task/fighter/AttackTask.h"
 #include "task/TaskManager.h"
+#include "task/IdleTask.h"
+#include "task/RetreatTask.h"
 #include "map/InfluenceMap.h"
 #include "map/ThreatMap.h"
 #include "module/AllyCover.h"
+#include "module/BuilderManager.h"
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
 #include "module/MilitaryManager.h"
@@ -139,7 +142,7 @@ float WeightedMedianRange(const std::set<CCircuitUnit*>& units, CCircuitDef::Ran
 	for (int pass = 0; (pass < 2) && ranges.empty(); ++pass) {  // 0: shooters of this type; 1 (none): everyone
 		for (CCircuitUnit* unit : units) {
 			CCircuitDef* cdef = unit->GetCircuitDef();
-			const float range = cdef->GetMaxRange(rt);
+			const float range = unit->GetFireRange(rt);  // a dynamic commander: its fitted weapons'
 			if ((pass == 0) && ((isNoSupport && cdef->IsRoleSupport()) || (range <= 0.f))) {
 				continue;
 			}
@@ -251,6 +254,10 @@ bool CAttackTask::IsCompatible(CCircuitUnit* unit) const
 
 void CAttackTask::AssignTo(CCircuitUnit* unit)
 {
+	if (unit == comm) {
+		// Our commander comes from the builder manager: IUnitTask::AssignTo takes it out of our own idle task only
+		manager->GetCircuit()->GetBuilderManager()->GetIdleTask()->RemoveAssignee(unit);
+	}
 	ISquadTask::AssignTo(unit);
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	UpdateHighestRange();
@@ -271,10 +278,23 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 
 void CAttackTask::RemoveAssignee(CCircuitUnit* unit)
 {
+	const bool isComm = (unit == comm);
+	const char* reason = commEnd;
+	if (isComm) {
+		comm = nullptr;
+		commEnd = nullptr;
+	}
 	ISquadTask::RemoveAssignee(unit);
+	if (isComm) {
+		// By whatever took it (a flee, a retreat, its death, our end), or "taken": anything else (e.g. a player order)
+		HandCommBack(unit, (reason != nullptr) ? reason : "taken");
+	}
 	if (leader == nullptr) {
 		manager->AbortTask(this);
 		return;
+	}
+	if (isComm) {
+		GetMilitaryMgr()->PromoteCommAttack(this);  // the units that merged in go on as a normal attack group
 	}
 	UpdateHighestRange();
 	UpdateEscortMode(manager->GetCircuit()->GetLastFrame());
@@ -302,7 +322,7 @@ void CAttackTask::UpdateHighestRange()
 	highestRange = 0.f;
 	for (CCircuitUnit* unit : units) {
 		CCircuitDef* cdef = unit->GetCircuitDef();
-		highestRange = std::max(highestRange, std::max(cdef->GetMaxRange(), cdef->GetLosRadius()));
+		highestRange = std::max(highestRange, std::max(unit->GetFireRange(), cdef->GetLosRadius()));
 	}
 
 	fireRangeLand = WeightedMedianRange(units, CCircuitDef::RangeType::LAND, isEscortMode);
@@ -324,10 +344,18 @@ void CAttackTask::Update()
 {
 	++updCount;
 
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	// A commander attack: the attack's end first; it never joins another group, absorbs one or escapes as a group
+	const bool isComm = (comm != nullptr);
+	if (isComm && UpdateComm(frame)) {
+		return;
+	}
+
 	/*
 	 * Merge into another group if possible
 	 */
-	ISquadTask* task = GetAttackMergeTask();
+	ISquadTask* task = isComm ? nullptr : GetAttackMergeTask();
 	if (task != nullptr) {
 		task->Merge(this);
 		units.clear();
@@ -335,16 +363,16 @@ void CAttackTask::Update()
 		manager->AbortTask(this);
 		return;
 	}
-	AbsorbWeakerTasks();
+	if (!isComm) {
+		AbsorbWeakerTasks();
+	}
 	if (ReleaseUnarmed()) {  // task aborted
 		return;
 	}
 
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
 	UpdateEscortMode(frame);  // its hold runs out between joins and losses too
 	UpdateScoots(frame);  // reload_scoot: step out of reach right after a shot (before the escape: Cornered engages too)
-	if (UpdateEscape(frame)) {
+	if (!isComm && UpdateEscape(frame)) {
 		return;
 	}
 
@@ -413,13 +441,15 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	// quota.attack_merge.rally: every compatible group that can reach the host reinforces it, whatever its size (no
 	// retry cooldown); the host carries on as usual and never waits for them
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	// A commander attack walks to no group (reinforce, rally, idle_merge) and commits to no protect
+	const bool isComm = (comm != nullptr);
 	// quota.protect: committed to the commander's fight, the group neither walks to merge nor joins a rally
-	const bool isProtect = IsProtecting();
-	CAttackTask* rallyHost = isProtect ? nullptr : militaryMgr->GetRallyHost();
+	const bool isProtect = !isComm && IsProtecting();
+	CAttackTask* rallyHost = (isProtect || isComm) ? nullptr : militaryMgr->GetRallyHost();
 	const bool isHost = (rallyHost == this);
-	const bool isJoiner = !isHost && !isProtect && militaryMgr->IsRallyJoiner(this);
-	const bool isFreeArmy = !isHost && !isJoiner && !isProtect && IsArmy();  // an army outside the rally
-	if (isHost || isProtect) {
+	const bool isJoiner = !isComm && !isHost && !isProtect && militaryMgr->IsRallyJoiner(this);
+	const bool isFreeArmy = !isComm && !isHost && !isJoiner && !isProtect && IsArmy();  // an army outside the rally
+	if (isHost || isProtect || isComm) {
 		reinforce = nullptr;
 	} else if (isJoiner) {
 		if (frame < rallyRouteFrame) {
@@ -479,7 +509,9 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		return;
 	}
 	if (target == nullptr) {
-		if (isProtect) {
+		if (isComm) {
+			EndComm(isCommKeepFail ? "keep" : "no target");  // back to its jobs at the next update
+		} else if (isProtect) {
 			WalkToProtect(frame, isReuse);
 		} else {
 			FallbackFrontPos(isReuse);
@@ -487,7 +519,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		return;
 	}
 	// The group we'd merge with is nearer: merge, then hunt together (outnumbered: only one nearer our base)
-	if (!isProtect && SeekMerge(frame, isReuse, targetSqKey, IsFlagged())) {
+	if (!isProtect && !isComm && SeekMerge(frame, isReuse, targetSqKey, IsFlagged())) {
 		return;
 	}
 	if (isReuse && ReuseRoute(target->GetId(), position, frame)) {  // position: GetRangePos (FindTarget)
@@ -585,7 +617,8 @@ float CAttackTask::GetBaseAllowedThreatAt(const AIFloat3& pos, float strength, f
 	CCircuitAI* circuit = manager->GetCircuit();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float bonus = GetMilitaryMgr()->GetBaseThrBonus(basePos.SqDistance2D(pos));
-	return strength * bonus / GetThrDistModAt(pos) / std::max(GetNearBaseScaleAt(pos, refSqDist), 1e-3f);
+	// A commander attack: plus the threat of the enemy commander its duel test passes (0: none)
+	return strength * bonus / GetThrDistModAt(pos) / std::max(GetNearBaseScaleAt(pos, refSqDist), 1e-3f) + commDuelThreat;
 }
 
 float CAttackTask::GetAllowedThreatAt(const AIFloat3& pos, const SStrength& strength, float refSqDist,
@@ -796,7 +829,8 @@ CAttackBalance* CAttackTask::GetBalance() const
 
 bool CAttackTask::IsBalanceOn() const
 {
-	return GetBalance()->IsOn() && (leader != nullptr) && !leader->GetCircuitDef()->IsAbleToFly()
+	// Not for a commander attack: its own filter judges its fights (CBuilderManager::IsCommTargetOk)
+	return GetBalance()->IsOn() && (leader != nullptr) && (comm == nullptr) && !leader->GetCircuitDef()->IsAbleToFly()
 		&& !IsCloakRoute(leader);
 }
 
@@ -1040,6 +1074,17 @@ void CAttackTask::NoteBalanceEngage(int frame)
 
 void CAttackTask::Stop(bool done)
 {
+	if (comm != nullptr) {
+		// Ended with the commander in it: IUnitTask::Stop would hand it to our own idle task
+		CCircuitUnit* unit = comm;
+		const char* reason = (commEnd != nullptr) ? commEnd : "stopped";
+		comm = nullptr;
+		commEnd = nullptr;
+		units.erase(unit);
+		pathQueries.erase(unit);
+		unit->Clear();
+		HandCommBack(unit, reason);
+	}
 	// quota.attack_balance log: wiped out or merged, the blocked time up to now still counts
 	if (blockSince >= 0) {
 		const int frame = manager->GetCircuit()->GetLastFrame();
@@ -1047,6 +1092,82 @@ void CAttackTask::Stop(bool done)
 		blockSince = -1;
 	}
 	ISquadTask::Stop(done);
+}
+
+/*
+ * Commander attack
+ */
+bool CAttackTask::UpdateComm(int frame)
+{
+	// An end set since the last update (no target, no route, a failed keep), else the commander's limits: leash, time,
+	// health, disarm, morph (CBuilderManager::GetCommAttackEnd)
+	const char* reason = (commEnd != nullptr) ? commEnd
+			: manager->GetCircuit()->GetBuilderManager()->GetCommAttackEnd(comm, this);
+	if (reason == nullptr) {
+		return false;
+	}
+	commEnd = reason;
+	RemoveAssignee(comm);  // to the builder idle task; aborts the task if the commander was alone
+	return true;
+}
+
+void CAttackTask::HandCommBack(CCircuitUnit* unit, const char* reason)
+{
+	CBuilderManager* builderMgr = manager->GetCircuit()->GetBuilderManager();
+	manager->GetIdleTask()->RemoveAssignee(unit);  // IUnitTask::RemoveAssignee put it in our idle task
+	builderMgr->GetIdleTask()->AssignTo(unit);
+	// Its jump as its jobs set it (IBuilderTask::AssignTo: commander.json jobs.jump)
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	const CSetupManager::SCommInfo::SJobs* jobs = builderMgr->GetCommJobs(cdef);
+	unit->SetAllowedToJump(cdef->IsAbleToJump()
+			&& (cdef->IsAttrJump() || ((jobs != nullptr) && (jobs->jumpMinDist >= 0.f))));
+	builderMgr->OnCommAttackEnd(unit, this, reason);
+}
+
+void CAttackTask::OnCommDamaged(CCircuitUnit* unit)
+{
+	// As IBuilderTask::OnUnitDamaged: at or below its retreat health, or disarmed, the builder retreat (the commander
+	// isn't one of our army's units, whose retreat is the military one)
+	MarkStrengthStale();  // its health changed: GetUnitStrengths reads again
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	const float healthPerc = unit->GetHealthPercent();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const bool isDisarmed = unit->IsDisarmed(frame);
+	if ((healthPerc > cdef->GetRetreat()) && !isDisarmed) {
+		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
+			builderMgr->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
+		}
+		return;
+	}
+	EndComm(isDisarmed ? "disarm" : "retreat");
+	manager->AssignTask(unit, builderMgr->EnqueueRetreat());  // RemoveAssignee hands it over first
+}
+
+bool CAttackTask::IsCommTargetOk(CEnemyInfo* enemy, bool isCurrent)
+{
+	const bool isOk = manager->GetCircuit()->GetBuilderManager()->IsCommTargetOk(comm, enemy, isCurrent);
+	if (!isOk && isCurrent) {
+		isCommKeepFail = true;  // the end's reason, if nothing else passes
+	}
+	return isOk;
+}
+
+void CAttackTask::NoteCommReject(ICoreUnit::Id id)
+{
+	if (comm != nullptr) {
+		manager->GetCircuit()->GetBuilderManager()->BanCommTarget(comm, id, false);
+	}
+}
+
+bool CAttackTask::IsCommRouteInBudget(CEnemyInfo* enemy, const F3Vec& path)
+{
+	float walk = 0.f;
+	for (size_t i = 1; i < path.size(); ++i) {
+		walk += path[i - 1].distance2D(path[i]);
+	}
+	return manager->GetCircuit()->GetBuilderManager()->IsCommWalkInBudget(comm, enemy, walk);
 }
 
 /*
@@ -1684,7 +1805,7 @@ void CAttackTask::Cornered(int frame)
 
 	// Nowhere quieter: fight from here
 	CEnemyInfo* enemy = ((target != nullptr) && (target->GetPos().SqDistance2D(pos) < SQUARE(highestRange)))
-			? target : FindNearestHittable(frame, std::max(highestRange, leader->GetCircuitDef()->GetMaxRange()) * 1.5f);
+			? target : FindNearestHittable(frame, std::max(highestRange, leader->GetFireRange()) * 1.5f);
 	if (enemy != nullptr) {
 		SetTarget(enemy);
 		position = enemy->GetPos();
@@ -1840,7 +1961,7 @@ bool CAttackTask::FindTarget()
 	const bool notAA = !cdef->HasAntiAir();
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
-	const float weaponRange = cdef->GetMaxRange();
+	const float weaponRange = leader->GetFireRange();
 	const float sqMaxSpeed = SQUARE(highestSpeed * CHASE_SPEED_MOD / FRAMES_PER_SEC);
 	// A runner that outranges us is dropped at a lower speed: we would only catch it inside its range.
 	// Our range: the group's weighted median weapon range (as IsSiegeTarget), not highestRange (that includes LOS)
@@ -1969,13 +2090,15 @@ bool CAttackTask::FindTarget()
 	// (quota.attack_threat_floor), at any time
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	UpdatePastFloor();
-	isOwnGroundOnly = (frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor
-			|| militaryMgr->IsAttackThreatFloor();
+	isOwnGroundOnly = (comm == nullptr)  // a commander attack: its own filter (leash, radius)
+			&& ((frame < militaryMgr->GetAttackOwnGroundFrame()) || !isPastFloor || militaryMgr->IsAttackThreatFloor());
 	// quota.protect: committed to the commander's fight, only the enemies in its zone (and those already fighting us).
 	// They pass the own-ground rule, other groups' claims, the 3-group cap and the force balance; those that hit the
 	// commander lately rank 3x nearer
 	const CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = IsProtecting();
+	isCommKeepFail = false;
+	commDuelThreat = (comm != nullptr) ? circuit->GetBuilderManager()->GetCommDuelThreat(comm, prevTargetId) : 0.f;
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
@@ -1985,6 +2108,10 @@ bool CAttackTask::FindTarget()
 			continue;
 		}
 		const bool isPrev = (enemy->GetId() == prevTargetId);
+		// A commander attack: only what the commander's filter passes (kind, radius and leash, budget, cover, duel)
+		if ((comm != nullptr) && !IsCommTargetOk(enemy, isPrev)) {
+			continue;
+		}
 		float contactSqDist;
 		const bool isContact = IsInContact(enemy, isPrev, frame, &contactSqDist);
 		if (isProtect && !isZone && !isContact) {
@@ -2319,6 +2446,7 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		// is (all that is reachable under the cap), e.g. to a target on a plateau with no way up
 		for (const STargetGoal& g : goals) {
 			rejectedUntil[{g.id, -1}] = {frame + REJECTED_TARGET_FRAMES, -1};
+			NoteCommReject(g.id);
 		}
 		SetTarget(nullptr);
 		ClearScaleAnchor();
@@ -2348,7 +2476,10 @@ void CAttackTask::ApplyTargetPath(const CQueryPathMulti* query, const std::vecto
 		const float ref = isAnchored ? scaleRefSqDist
 				: ((rangePos.SqDistance2D(basePos) < pickSqDist) ? pickSqDist : 0.f);
 		int approachSource = -1;  // the cover log
-		if (!IsApproachSafe(path->posPath, rangePos, GetPickStrength(frame), ref, cell, &approachSource)) {
+		// A commander attack: also within its time budget, by this route's walk
+		if (!IsApproachSafe(path->posPath, rangePos, GetPickStrength(frame), ref, cell, &approachSource)
+			|| ((comm != nullptr) && !IsCommRouteInBudget(reached, path->posPath)))
+		{
 			RejectGoal(hit, frame);
 			// Not our target any more, while the next route runs (nor counted against its group limit)
 			SetTarget(nullptr);
@@ -2438,6 +2569,7 @@ bool CAttackTask::FindReachedGoal(const CQueryPathMulti* query, const std::vecto
 
 void CAttackTask::RejectGoal(const STargetGoal& g, int frame)
 {
+	NoteCommReject(g.id);  // a commander attack: the commander leaves it alone for a while
 	const int until = frame + REJECTED_TARGET_FRAMES;
 	if (g.IsCell()) {
 		rejectedUntil[{g.id, g.sector}] = {until, g.epoch};
@@ -2492,6 +2624,11 @@ bool CAttackTask::IsApproachSafe(const F3Vec& path, const AIFloat3& targetPos, f
 
 void CAttackTask::FallbackFrontPos(bool isReuse)
 {
+	if (comm != nullptr) {
+		// A commander attack never holds or heads for the front: no target it can reach, back to its jobs
+		EndComm("no route");
+		return;
+	}
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	// quota.attack_balance: outnumbered where we stand, so never toward the enemy (the reason logged with the own spot)
@@ -2703,7 +2840,7 @@ bool CAttackTask::IsOutOfReach(CCircuitUnit* unit, int frame) const
 	// A straggler: farther from the leader than the group radius (still walking in after a merge, or left behind),
 	// unless it already has the target within its weapon range
 	const AIFloat3& pos = unit->GetPos(frame);
-	if ((target != nullptr) && (pos.SqDistance2D(target->GetPos()) < SQUARE(unit->GetCircuitDef()->GetMaxRange()))) {
+	if ((target != nullptr) && (pos.SqDistance2D(target->GetPos()) < SQUARE(unit->GetFireRange()))) {
 		return false;
 	}
 	return pos.SqDistance2D(leader->GetPos(frame)) > SQUARE(GetGroupRadius());
@@ -2715,8 +2852,8 @@ bool CAttackTask::IsGuardPullable(const CCircuitUnit* unit, bool isFromGroup) co
 	// it keeps quota.attack power without the unit. Never a fighting group, nor the rally host: every compatible group
 	// is walking to it, nor a group quota.protect committed
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	if (IsFighting() || (militaryMgr->GetRallyHost() == this) || IsProtecting()) {
-		return false;
+	if ((comm != nullptr) || IsFighting() || (militaryMgr->GetRallyHost() == this) || IsProtecting()) {
+		return false;  // nor a commander attack (off the group list)
 	}
 	return (units.size() == 1) || (isFromGroup && (attackPower - unit->GetCircuitDef()->GetPower() >= minPower));
 }
@@ -3195,7 +3332,7 @@ void CAttackTask::OrderEscorts(std::vector<SFireClaim>& claims, std::vector<SOrd
 		escorts.push_back(i);
 		CCircuitDef* cdef = unit->GetCircuitDef();
 		if (IsArmedUnit(cdef)) {
-			maxReach = std::max(maxReach, GetStayRadius(cdef) * cfg.keepMod + cdef->GetMaxRange());
+			maxReach = std::max(maxReach, GetStayRadius(cdef) * cfg.keepMod + unit->GetFireRange());
 			if (unit->GetTarget() != nullptr) {
 				currents.push_back(unit->GetTarget());
 			}
@@ -3287,8 +3424,8 @@ void CAttackTask::OrderEscorts(std::vector<SFireClaim>& claims, std::vector<SOrd
 		const float sqKeepMod = SQUARE(cfg.keepMod);
 		const float sqSpeed = SQUARE(cdef->GetSpeed() * CHASE_SPEED_MOD / FRAMES_PER_SEC);
 		const float sqOutrangeSpeed = SQUARE(cdef->GetSpeed() * OUTRANGE_CHASE_SPEED_MOD / FRAMES_PER_SEC);
-		const float ourRange = std::max(cdef->GetMaxRange(CCircuitDef::RangeType::LAND),
-				cdef->GetMaxRange(CCircuitDef::RangeType::WATER));
+		const float ourRange = std::max(unit->GetFireRange(CCircuitDef::RangeType::LAND),
+				unit->GetFireRange(CCircuitDef::RangeType::WATER));
 		const bool isEmpOnly = (cdef->GetShotDamage() <= 0.f);  // paralyzers only (Venom): a stunned enemy waits
 		// Artillery (high trajectory: Firewalker, Emissary, Tremor) doesn't shell enemies within its splash of a core
 		// unit: its shells scatter. Direct-fire splash (riots) still covers the core
@@ -3396,12 +3533,19 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 
 void CAttackTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
+	if (unit == comm) {
+		EndComm(unit->IsMorphing() ? "morph" : "death");  // a finished morph replaces the unit
+	}
 	NoteCoverLoss(unit, manager->GetCircuit()->GetLastFrame());  // the cover log, while the unit is still ours
 	ISquadTask::OnUnitDestroyed(unit, attacker);
 }
 
 void CAttackTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
+	if (unit == comm) {
+		OnCommDamaged(unit);  // the builder retreat; a commander attack never holds
+		return;
+	}
 	IFighterTask::OnUnitDamaged(unit, attacker);  // may send the unit to retreat
 	if (!isHolding || (leader == nullptr) || (units.find(unit) == units.end())) {
 		return;
