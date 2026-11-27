@@ -171,30 +171,39 @@ bool CTurretPicker::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3& p
 	if ((config.crowdCount <= 0) || !IsLight(def)) {
 		return false;
 	}
+	const int count = CountLight(pos);
+	if (count < config.crowdCount) {
+		return false;
+	}
+	const float credit = circuit->GetMilitaryManager()->CreditTurret(config.crowdCredit);
+	circuit->LOG("TURRET %s: no %s at (%.0f, %.0f), %i+ light turrets within %.0f; +%.0f to the turret account", caller,
+			def->GetDef()->GetName(), pos.x, pos.z, count, config.crowdRadius, credit);
+	return true;
+}
+
+bool CTurretPicker::IsLightCrowded(const AIFloat3& pos) const
+{
+	return (config.crowdCount > 0) && (CountLight(pos) >= config.crowdCount);
+}
+
+int CTurretPicker::CountLight(const AIFloat3& pos) const
+{
 	// The ally team's light turrets, finished or being built, then our jobs not started yet; enough is enough
 	int count = 0;
 	COOAICallback* clb = circuit->GetCallback();
 	for (int id : clb->GetFriendlyUnitIdsIn(pos, config.crowdRadius)) {
 		const CCircuitDef* cdef = (id != -1) ? circuit->GetCircuitDef(clb->Unit_GetDefId(id)) : nullptr;
 		if ((cdef != nullptr) && IsLight(cdef) && (++count >= config.crowdCount)) {
-			break;
+			return count;
 		}
 	}
-	if (count < config.crowdCount) {
-		const float sqRadius = SQUARE(config.crowdRadius);
-		circuit->GetBuilderManager()->ForEachQueuedTower([this, &count, &pos, sqRadius](IBuilderTask* t) {
-			if (IsLight(t->GetBuildDef()) && (t->GetTaskPos().SqDistance2D(pos) < sqRadius)) {
-				++count;
-			}
-		});
-		if (count < config.crowdCount) {
-			return false;
+	const float sqRadius = SQUARE(config.crowdRadius);
+	circuit->GetBuilderManager()->ForEachQueuedTower([this, &count, &pos, sqRadius](IBuilderTask* t) {
+		if (IsLight(t->GetBuildDef()) && (t->GetTaskPos().SqDistance2D(pos) < sqRadius)) {
+			++count;
 		}
-	}
-	const float credit = circuit->GetMilitaryManager()->CreditTurret(config.crowdCredit);
-	circuit->LOG("TURRET %s: no %s at (%.0f, %.0f), %i+ light turrets within %.0f; +%.0f to the turret account", caller,
-			def->GetDef()->GetName(), pos.x, pos.z, count, config.crowdRadius, credit);
-	return true;
+	});
+	return count;
 }
 
 int CTurretPicker::GetTier(const CCircuitDef* def) const

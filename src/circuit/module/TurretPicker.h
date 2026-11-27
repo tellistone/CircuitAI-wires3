@@ -193,6 +193,9 @@ public:
 	// turret.crowd_count: true when def is light and pos has that many other light turrets within turret.crowd_radius:
 	// the caller doesn't place it. Logs the refusal and credits the turret account turret.crowd_credit
 	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
+	// turret.crowd_count: pos has that many light turrets (or queued light towers) within turret.crowd_radius.
+	// The same test as RefuseCrowdedLight, without its log or credit; false with crowd_count off
+	bool IsLightCrowded(const springai::AIFloat3& pos) const;
 
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }
@@ -202,6 +205,10 @@ public:
 	}
 
 private:
+	// Light turrets (finished, being built, or queued and not started) within turret.crowd_radius of pos, counted
+	// up to turret.crowd_count
+	int CountLight(const springai::AIFloat3& pos) const;
+
 	// Gathered once per order
 	struct SGun {  // an armed static for the creep's threat rule
 		springai::AIFloat3 pos;

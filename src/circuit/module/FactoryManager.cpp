@@ -1790,6 +1790,9 @@ IUnitTask* CFactoryManager::CreateAssistTask(CCircuitUnit* unit)
 			continue;  // a nano can't repair itself
 		}
 		CCircuitDef* cdef = candUnit->GetCircuitDef();
+		if (cdef == nullptr) {
+			continue;  // an ally's unit of a def we don't know (CAllyTeam keeps those too)
+		}
 		const float maxHealth = u->GetMaxHealth();
 		const float missing = (maxHealth - u->GetHealth()) / maxHealth;
 		if (u->IsBeingBuilt()) {
