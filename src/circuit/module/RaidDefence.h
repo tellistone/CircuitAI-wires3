@@ -94,6 +94,9 @@ struct STerrainMapArea;
  *   stepping from the goal away from the blob, up to the zone; else none (they head for the goal).
  * - Lending (CanLend): not a held recruit; an escort only to its own constructor, or while that constructor has no
  *   threat and the goal is within escort_leash_sec of it.
+ * Home ground: defence groups judge with quota.thr_mod.distance.raid_defend (the raid curve if unset) and the base
+ * bonus around every post as around the base (GetPostBonus); a fleeing constructor may run to a post that holds
+ * defence groups, or to a gathering post (FillFleeSpots), so the raiders chasing it meet the defenders.
  * Logs: RAIDDEF state every 10 s while there is something to show, RAIDDEF recruit and release, RAIDDEF minute every
  * minute.
  */
@@ -195,6 +198,10 @@ public:
 	float GetSlotSec(int slotId, int mobileId, const springai::AIFloat3& pos, float speed) const;
 	// quota.protect may commit the group to a ward with this goal (goalId: its commander or asset)
 	bool CanLend(const CRaidDefendTask* group, const springai::AIFloat3& goal, ICoreUnit::Id goalId) const;
+	// Home ground: quota.thr_mod.base_bonus around our posts as around the base (the largest; 1 beyond them all)
+	float GetPostBonus(const springai::AIFloat3& pos) const;
+	// The builder flee's extra spots: the posts that hold defence groups, and the incidents' gathering posts
+	void FillFleeSpots(F3Vec& out) const;
 
 private:
 	static constexpr int SEEN_FRAMES = FRAMES_PER_SEC * 20;

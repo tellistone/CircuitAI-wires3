@@ -22,6 +22,9 @@ namespace circuit {
  * - new targets: on our ground within react_sec of its slot (threat-aware travel, CRaidDefence::GetSlotSec), or in
  *   contact; its current target is kept out to TARGET_KEEP x react_sec on any ground; any in its protect ward's zone
  * - preferred targets: the raid's, and enemies that hit our mexes, constructors or factories in the last 5 s
+ * - home ground: its own distance curve (quota.thr_mod.distance.raid_defend, the raid curve if unset), and the base
+ *   bonus around our posts too (CRaidDefence::GetPostBonus), in its fight check and escape alike; routes sample the
+ *   allowance along one ray from the base, so they leave the posts' bonus out
  * - no contested-cluster routes, no roaming: with nothing to hunt it walks to its slot on a threat-aware route (the
  *   raid's roam route, same allowance) and waits there in a small patrol, or guarding the constructor. No path
  *   queries while it waits. Committed to a raid incident in its no-go: the same at the gathering post (quota.protect);
@@ -56,6 +59,7 @@ protected:
 	virtual void OnNoTarget(bool isContestedAllowed) override;
 	virtual springai::AIFloat3 GetFleeHaven() const override;
 	virtual float GetThrDistModAt(const springai::AIFloat3& pos) const override;
+	virtual float GetRadialAllowedThreatAt(const springai::AIFloat3& pos, float strength) const override;
 
 private:
 	static constexpr float PARK_RADIUS = 300.f;  // the leader this near its slot: wait there

@@ -10,6 +10,7 @@
 #include "module/MilitaryManager.h"
 #include "module/Protect.h"
 #include "module/RaidDefence.h"
+#include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathSingle.h"
@@ -126,7 +127,18 @@ bool CRaidDefendTask::IsPreferredTarget(const CEnemyInfo* enemy, const CCircuitD
 
 float CRaidDefendTask::GetThrDistModAt(const AIFloat3& pos) const
 {
-	return GetMilitaryMgr()->GetThrDistMod(FightType::RAID, pos);  // the raid's curve (quota.thr_mod.distance.raid)
+	// Its own curve, eased by what a post's bonus adds over the base's (FindTarget and the escape apply the base's)
+	CMilitaryManager* militaryMgr = GetMilitaryMgr();
+	const float sqBaseDist = manager->GetCircuit()->GetSetupManager()->GetBasePos().SqDistance2D(pos);
+	const float postMod = militaryMgr->GetRaidDefence()->GetPostBonus(pos) / militaryMgr->GetBaseThrBonus(sqBaseDist);
+	return IFighterTask::GetThrDistModAt(pos) / std::max(postMod, 1.f);
+}
+
+float CRaidDefendTask::GetRadialAllowedThreatAt(const AIFloat3& pos, float strength) const
+{
+	// CRaidTask's, without the posts' bonus: routes sample it along one ray from the base
+	const float sqBaseDist = manager->GetCircuit()->GetSetupManager()->GetBasePos().SqDistance2D(pos);
+	return strength * GetMilitaryMgr()->GetBaseThrBonus(sqBaseDist) / IFighterTask::GetThrDistModAt(pos);
 }
 
 void CRaidDefendTask::OnNoTarget(bool isContestedAllowed)

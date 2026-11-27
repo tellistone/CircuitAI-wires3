@@ -8,6 +8,7 @@
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/MilitaryManager.h"
+#include "module/RaidDefence.h"
 #include "module/Protect.h"
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
@@ -2809,8 +2810,9 @@ bool CBuilderManager::FindCommFleeGoal(CCircuitUnit* unit, const AIFloat3& dange
 									   AIFloat3& outGoal)
 {
 	// As ISquadTask::FindFleeGoal (attack/defend groups, else defended clusters; then the base) plus the closest
-	// factory, leaving out spots inside a seen flee zone. Gunships: factory and base only, where anti-air is likely.
-	// Other builders skip the groups: one heads on to the front, and the builder would follow it there.
+	// factory and quota.raid_defence's posts that hold defence groups and its gathering posts (the raiders chasing it
+	// meet the defenders), leaving out spots inside a seen flee zone. Gunships: factory and base only, where anti-air
+	// is likely. Other builders skip the groups: one heads on to the front, and the builder would follow it there.
 	// false: no such spot, or only one at its feet (cornered)
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& pos = unit->GetPos(frame);
@@ -2824,6 +2826,7 @@ bool CBuilderManager::FindCommFleeGoal(CCircuitUnit* unit, const AIFloat3& dange
 		} else {
 			militaryMgr->FillStaticSafePos(unit, commFleeSpots);
 		}
+		militaryMgr->GetRaidDefence()->FillFleeSpots(commFleeSpots);
 	}
 	CCircuitUnit* factory = circuit->GetFactoryManager()->GetClosestFactory(pos);
 	if (factory != nullptr) {

@@ -1439,6 +1439,35 @@ bool CRaidDefence::CanLend(const CRaidDefendTask* group, const AIFloat3& goal, I
 			<= cfg.escortLeashSec;
 }
 
+float CRaidDefence::GetPostBonus(const AIFloat3& pos) const
+{
+	const CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	float bonus = 1.f;
+	for (const SSlot& s : slots) {
+		if (!s.isEscort) {
+			bonus = std::max(bonus, militaryMgr->GetBaseThrBonus(s.pos.SqDistance2D(pos)));
+		}
+	}
+	return bonus;
+}
+
+void CRaidDefence::FillFleeSpots(F3Vec& out) const
+{
+	if (!IsOn()) {
+		return;
+	}
+	for (const SSlot& s : slots) {
+		if (!s.isEscort && (s.have > 0.f)) {
+			out.push_back(s.pos);
+		}
+	}
+	for (const SIncident& inc : incidents) {
+		if (inc.isAnswerable && utils::is_valid(inc.gather)) {
+			out.push_back(inc.gather);
+		}
+	}
+}
+
 /*
  * Response
  */

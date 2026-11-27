@@ -794,6 +794,10 @@ void CMilitaryManager::ReadConfig()
 			cfg.reactSec = num("react_sec", 8.f, 1.f, 60.f);
 			cfg.escortLeashSec = num("escort_leash_sec", 10.f, 0.f, 60.f);
 		}
+		if (cfg.isEnabled && !protect->IsEnabled()) {
+			circuit->LOG("CONFIG %s: quota.raid_defence is on but quota.protect is off: posts and escorts only, raids "
+					"get no incident wards", cfgName.c_str());
+		}
 		raidDefence = std::make_unique<CRaidDefence>(circuit, cfg);
 	}
 	{
@@ -1049,6 +1053,7 @@ void CMilitaryManager::ReadConfig()
 		static const std::map<std::string, IFighterTask::FightType> distTasks = {
 			{"scout",  IFighterTask::FightType::SCOUT},
 			{"raid",   IFighterTask::FightType::RAID},
+			{"raid_defend", IFighterTask::FightType::RAID_DEFEND},
 			{"defend", IFighterTask::FightType::DEFEND},
 			{"attack", IFighterTask::FightType::ATTACK},
 			{"aa",     IFighterTask::FightType::AA},
@@ -1058,7 +1063,7 @@ void CMilitaryManager::ReadConfig()
 		for (const std::string& taskName : qthrDist.getMemberNames()) {
 			auto it = distTasks.find(taskName);
 			if (it == distTasks.end()) {
-				circuit->LOG("CONFIG %s: quota.thr_mod.distance has unknown task '%s' (scout, raid, defend, attack, aa, ah, bomber)", cfgName.c_str(), taskName.c_str());
+				circuit->LOG("CONFIG %s: quota.thr_mod.distance has unknown task '%s' (scout, raid, raid_defend, defend, attack, aa, ah, bomber)", cfgName.c_str(), taskName.c_str());
 				continue;
 			}
 			ThrDistCurve& curve = thrDistCurves[static_cast<IFighterTask::FT>(it->second)];
@@ -1078,6 +1083,11 @@ void CMilitaryManager::ReadConfig()
 		}
 	} else if (!qthrDist.isNull()) {
 		circuit->LOG("CONFIG %s: quota.thr_mod.distance must be an object of task curves, e.g. {\"raid\": [[0.1, 0.5], [0.9, 2.0]]}", cfgName.c_str());
+	}
+	// quota.raid_defence: defence groups judge as raid groups unless they have a curve of their own
+	ThrDistCurve& raidDefendCurve = thrDistCurves[static_cast<IFighterTask::FT>(IFighterTask::FightType::RAID_DEFEND)];
+	if (raidDefendCurve.empty()) {
+		raidDefendCurve = thrDistCurves[static_cast<IFighterTask::FT>(IFighterTask::FightType::RAID)];
 	}
 	raidMod = readThrMod("raid", attackMod);
 	scoutMod = readThrMod("scout", attackMod);
