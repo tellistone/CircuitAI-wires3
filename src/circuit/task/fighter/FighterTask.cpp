@@ -43,6 +43,7 @@ const float DISC_HOLD_IN  = 0.8f;
 const float FIRE_BAND_MIN = 0.6f;   // own/kept spot no closer than this, x range (else step back out)
 const float FIRE_BAND_MAX = 0.95f;  // own/kept spot no farther than this, x range
 const float CROWD_WEIGHT  = 0.5f;   // score per crowding claim (x attack_spot_threat)
+const float SPREAD_COST   = 0.5f;   // score per other group's claim within spreadRadius: half a range of walk
 const int   ARC_STEPS     = 6;      // spots each side of our bearing, PI/24 apart (+-45 degrees)
 const float ARC_SPAN      = 0.25f;  // half the arc, x PI
 const float SUPPORT_RADIUS = 400.f; // own units heading within this of a spot back up a unit there
@@ -200,6 +201,9 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	const AIFloat3& tPos = target->GetFightPos();
 	GatherKited();
+	if (spreadRadius > 0.f) {
+		manager->GetCircuit()->GetMilitaryManager()->GetAhClaims(this, spreadClaims);  // the other anti-heavy groups
+	}
 	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
 	// Longest range picks first; each pick replaces that unit's claim.
@@ -245,6 +249,16 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 		OrderOnTarget(claims, orders, frame, isDirect, GetEscapeSafeThreat(), timeout);
 	}
 	kited.clear();  // pointers: only good for this pass
+}
+
+void IFighterTask::AddSpreadClaims(F3Vec& outClaims) const
+{
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	for (CCircuitUnit* unit : units) {
+		auto it = fireSpots.find(unit);
+		const bool isFresh = (it != fireSpots.end()) && (frame < it->second.frame + 2 * attackRepeat);
+		outClaims.push_back(isFresh ? it->second.pos : unit->GetPos(frame));
+	}
 }
 
 void IFighterTask::GatherKited()
@@ -797,11 +811,12 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		return isWalkDanger;
 	};
 
-	// Candidate spots. Cost: threat (the worse of spot and walk), crowding by other claims, walking distance
+	// Candidate spots. Cost: threat (the worse of spot and walk), crowding by other claims and by other groups (spreadClaims), walking distance
 	struct SCandidate {
 		AIFloat3 pos;
 		float threat;
 		int crowd;  // other claims within crowdR
+		int spread;  // other groups' claims within spreadRadius
 		float dist;  // walking distance / range
 		float walkPeak = -1.f;  // worst threat of a dangerous walk there, 0: safe walk; < 0: not walked yet
 		float cost = 0.f;  // with a safe walk
@@ -810,7 +825,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	// for ranged spots, whose walk is normalised by a much longer range (there it is worth only a few elmos here)
 	const float crowdCost = isClose ? CROWD_CLOSE : wThreat * CROWD_WEIGHT;
 	auto costOf = [&](const SCandidate& c, float worst) {
-		return wThreat * worst / strength + crowdCost * c.crowd + c.dist;
+		return wThreat * worst / strength + crowdCost * c.crowd + SPREAD_COST * c.spread + c.dist;
 	};
 	// With lifts (GetUnitSightLifts), only spots with a line of fire to the target, judged from the ground there:
 	// stricter than the pick's (sectors' highest points), so a unit at its spot never reads the target as out of sight.
@@ -842,7 +857,9 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 				++crowd;
 			}
 		}
-		SCandidate c{p, GetTaskThreatAt(unit, p), crowd, p.distance2D(uPos) / range};
+		const int spread = std::count_if(spreadClaims.begin(), spreadClaims.end(),
+				[&](const AIFloat3& claim) { return claim.SqDistance2D(p) < SQUARE(spreadRadius); });
+		SCandidate c{p, GetTaskThreatAt(unit, p), crowd, spread, p.distance2D(uPos) / range};
 		c.cost = costOf(c, std::max(c.threat, 0.f));
 		cands.push_back(c);
 	};

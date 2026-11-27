@@ -136,6 +136,9 @@ public:
 	// Overkill check: the damage the ready shots of anti-heavy units (squads and IsAhArty) targeting enemy would do,
 	// those of task skip aside
 	float GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* skip) const;
+	// Where every anti-heavy group but skip stands or heads (IFighterTask::AddSpreadClaims): anti-heavy squads and
+	// artillery-mode anti-heavies, so groups keep antiheavy.group_spacing apart and one strike can't take several
+	void GetAhClaims(const IFighterTask* skip, F3Vec& outClaims) const;
 	// A mobile enemy heavy (enemy role, as GetEnemyCost; buildings don't count, they stay targets) in radar or LOS within
 	// the last frames (CEnemyUnit::IsRecentlySeen). The army pull starts on a fresh sighting (AH_HUNT_FRAMES), and the hunt
 	// lasts until none has been seen for antiheavy.keep_sec (IsAhHunting: squads disband, new units go to the army), so a
@@ -352,6 +355,7 @@ public:
 		float fleeAllyRadius;  // escorts counted within this, while the cover map is off
 		int keepFrames;  // keep_sec: the hunt lasts this long after the last mobile heavy sighting (max: while one is known)
 		float spacing;  // the two units of a squad stand at least this far apart
+		float groupSpacing;  // different anti-heavy groups keep this far apart (GetAhClaims); 0 = off
 		int maxGroup;  // units in a squad when its type has no antiheavy_max_group; 0 = no limit
 		bool isArtillery;  // as_artillery: IsAhArty
 		float artyScoot;  // artillery_scoot: elmos an IsAhArty unit steps back after each shot; 0 = off

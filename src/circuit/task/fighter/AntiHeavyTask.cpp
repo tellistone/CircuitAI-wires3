@@ -51,6 +51,7 @@ static constexpr int HELD_MIN_FRAMES = FRAMES_PER_SEC * 10;  // a target the who
 static constexpr int HELD_MAX_FRAMES = FRAMES_PER_SEC * 60;  // long, doubling each time again, up to this
 
 std::vector<CAntiHeavyTask::SParkSpot> CAntiHeavyTask::parkSpots;
+F3Vec CAntiHeavyTask::parkClaims;
 
 CAntiHeavyTask::CAntiHeavyTask(ITaskManager* mgr, float powerMod)
 		: ISquadTask(mgr, FightType::AH, powerMod)
@@ -60,6 +61,7 @@ CAntiHeavyTask::CAntiHeavyTask(ITaskManager* mgr, float powerMod)
 	float z = rand() % circuit->GetTerrainManager()->GetTerrainHeight();
 	position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
 	crowdRadius = GetCfg().spacing;  // firing spots: the two units stand apart
+	spreadRadius = GetCfg().groupSpacing;  // and other anti-heavy groups further
 	isHoldAttack = true;  // the heavy, not whatever chaff comes into range (an attack order fires whatever the fire state)
 }
 
@@ -896,6 +898,7 @@ void CAntiHeavyTask::FillParkSpots(std::vector<SParkSpot>& outSpots)
 	outSpots.clear();
 	CCircuitAI* circuit = manager->GetCircuit();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+	militaryMgr->GetAhClaims(this, parkClaims);  // AddParkSpot: not where another anti-heavy group stands or heads
 	const int frame = circuit->GetLastFrame();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	// dist back from pos towards our base, but not onto our factory (AddParkSpot skips spots there)
@@ -960,7 +963,15 @@ void CAntiHeavyTask::FillParkSpots(std::vector<SParkSpot>& outSpots)
 
 float CAntiHeavyTask::GetClaimRadius() const
 {
-	return std::max(PARK_CELL / 2.f, 2.f * GetCfg().spacing);
+	return std::max({PARK_CELL / 2.f, 2.f * GetCfg().spacing, GetCfg().groupSpacing});
+}
+
+void CAntiHeavyTask::AddSpreadClaims(F3Vec& outClaims) const
+{
+	ISquadTask::AddSpreadClaims(outClaims);
+	if (utils::is_valid(park.pos)) {
+		outClaims.push_back(park.pos);
+	}
 }
 
 void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group, int slot,
@@ -974,11 +985,10 @@ void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group,
 	{
 		return;
 	}
-	const float claimRadius = GetClaimRadius();
-	for (IFighterTask* task : militaryMgr->GetTasks(FightType::AH)) {
-		const AIFloat3& claim = static_cast<CAntiHeavyTask*>(task)->GetParkPos();
-		if ((task != this) && utils::is_valid(claim) && (claim.SqDistance2D(pos) < SQUARE(claimRadius))) {
-			return;  // another squad parks there: spread out
+	const float sqClaimRadius = SQUARE(GetClaimRadius());
+	for (const AIFloat3& claim : parkClaims) {
+		if (claim.SqDistance2D(pos) < sqClaimRadius) {
+			return;  // another anti-heavy group parks, stands or heads there: spread out
 		}
 	}
 	const float cover = GetCoverAt(pos);

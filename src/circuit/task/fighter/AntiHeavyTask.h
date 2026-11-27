@@ -18,7 +18,7 @@ namespace circuit {
 
 /*
  * Anti-heavy squads: at most antiheavy.max_group units of one type (2 by default), never merged, standing
- * antiheavy.spacing apart. They attack mobile heavies (and commanders, heavy buildings) they can shoot from a spot clear of
+ * antiheavy.spacing apart, and antiheavy.group_spacing from other anti-heavy groups (GetAhClaims). They attack mobile heavies (and commanders, heavy buildings) they can shoot from a spot clear of
  * escorts (FindTarget, firing spots: IFighterTask::Attack). Types whose weapon outranges their LOS (Lance, Merlin) walk
  * in only to heavies within GetHuntReach; with none, they park under cover (FallbackPark): behind an attack group
  * (at our towers only when no group offers a spot), near where heavies were seen. The flee and every spot check share one danger model: per danger, the
@@ -46,6 +46,8 @@ public:
 	// Engaged, and a unit of the squad has its target within its weapon range; never mines or aircraft
 	bool IsAttacking() const;
 	const springai::AIFloat3& GetParkPos() const { return park.pos; }  // invalid: none
+	// Its units (IFighterTask's), and the park spot it claims
+	virtual void AddSpreadClaims(F3Vec& outClaims) const override;
 	// Weapon range + 30 s of walking: snipers walk in to heavies this near, and the army pull (UpdateAhPull) takes
 	// units for them
 	static float GetHuntReach(const CCircuitDef* cdef);
@@ -156,13 +158,13 @@ private:
 	bool IsParker() const;  // a sniper, with the cover map on
 	// Candidates: behind our attack groups (follow_dist back, and side slots), else (no group spot) tower groups (our and
 	// allied built armed statics by cell), on our side of them a third of their range back; never within 256 of our
-	// base. Walkable, safe (IsSpotSafe), covered, and not claimed by another squad. Score: cover (at most 3x
+	// base. Walkable, safe (IsSpotSafe), covered, and not claimed by another anti-heavy group (GetAhClaims). Score: cover (at most 3x
 	// flee_ally_threat) x heavy pressure (sightings weighted down over keep_sec, full within our weapon range),
 	// / (1 + minutes of walking), and halved near a recent retreat. Best first
 	void FillParkSpots(std::vector<SParkSpot>& outSpots);
 	void AddParkSpot(const springai::AIFloat3& pos, const IFighterTask* group, int slot, std::vector<SParkSpot>& outSpots);
-	// Another squad's park spot this near blocks a spot; side slots are this far apart; a squad this far from its spot
-	// walks back. max(256, 2x spacing)
+	// Another anti-heavy group's claim this near blocks a park spot; side slots are this far apart; a squad this far from
+	// its spot walks back. max(256, 2x spacing, group_spacing)
 	float GetClaimRadius() const;
 	void SetPark(const SParkSpot& spot);  // claims it (GetParkPos) from now
 	void ClearPark() { park = {-RgtVector, nullptr, 0, 0.f, 0.f}; }
@@ -187,6 +189,7 @@ private:
 	};
 	std::vector<SDanger> dangers;  // CollectDangers
 	static std::vector<SParkSpot> parkSpots;  // FillParkSpots scratch
+	static F3Vec parkClaims;  // FillParkSpots: the other anti-heavy groups (GetAhClaims)
 
 	SParkSpot park = {-RgtVector, nullptr, 0, 0.f, 0.f};  // pos invalid: none; cover: when claimed
 	int parkFrame = 0;  // when it was claimed

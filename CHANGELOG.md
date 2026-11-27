@@ -7,6 +7,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Anti-heavy groups keep apart** (`antiheavy.group_spacing`, new, default 300; 0 = firing spots don't spread).
+  Different groups (squads, and each artillery-mode anti-heavy) used to pick the same spots: firing spots only knew
+  their own group, and squads parking behind an attack group ignored the artillery-mode units following it. Now
+  `CMilitaryManager::GetAhClaims` lists where every other anti-heavy group stands or heads (a unit's firing spot from
+  the last two attack repeats, else where it stands; the end of the route an artillery-mode unit walks; a squad's park
+  spot). Each such claim within `group_spacing` of a firing spot costs it half a range of walking (`FindFireSpot`);
+  artillery-mode walk-to spots skip cells within max(96, `group_spacing`) of one (was 96 from other artillery-mode
+  units only); their side slots behind an attack group are max(144, `group_spacing`) apart (was 144); and squads don't
+  park within max(256, 2x `spacing`, `group_spacing`) of one (was other squads' park spots only).
+
 - **Anti-heavies go to return fire while they attack a heavy, and only then.** Squads (`CAntiHeavyTask::UpdateHolds`)
   used hold fire for that, and only for snipers that park (Lance, Merlin); now every squad goes to return fire while
   it attacks its heavy (not in the LOS grace, nor fleeing). Artillery-mode anti-heavies (`CArtilleryTask::SetAttacking`)

@@ -23,7 +23,8 @@ namespace circuit {
  * the same, with the heavies and commanders anti-heavy units hunt (CCircuitDef::IsQuarry) as targets instead
  * of buildings (FindHeavyTarget), and covered spots with threat are fine too (IsThreatOk), see IsQuarryIgnored;
  * a heavy in range is shot from the attack task's firing spots (IFighterTask::Attack, IsFireSpotAllowed), so the unit
- * keeps to ~90% of its range and backs off from a heavy that closes in; after each shot it steps back (UpdateScoot,
+ * keeps to ~90% of its range and backs off from a heavy that closes in, apart from other anti-heavy groups
+ * (antiheavy.group_spacing, CMilitaryManager::GetAhClaims); after each shot it steps back (UpdateScoot,
  * antiheavy.artillery_scoot). With no heavy to shoot it walks to a covered firing spot by one, else holds at a covered
  * spot in range of an enemy near our army, the front (or walks to one), else follows the army (WalkAntiHeavy)
  */
@@ -42,6 +43,8 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;  // zk artillery: a new task; anti-heavy mode: keeps it
 
 	bool IsAntiHeavy() const { return isAntiHeavy; }
+	// Walking a route of ours (to a firing spot, the front or its army slot): where it ends; else where it stands
+	virtual void AddSpreadClaims(F3Vec& outClaims) const override;
 	CMilitaryManager::AhNote GetAhActivity() const;  // for the ANTIHEAVY log line
 
 private:
@@ -71,10 +74,10 @@ private:
 	// FillCoveredSpots' rules for one spot with this much threat there
 	bool IsFireSpotValid(CCircuitUnit* unit, const springai::AIFloat3& spot, float threat) const;
 	// ally_threat: fills firePositions (covered, safe, reachable, and not where the flee would fire) in range of goals,
-	// returns goal range. Anti-heavy: not within CROWD_RADIUS of another anti-heavy (CollectCrowd)
+	// returns goal range. Anti-heavy: not within GetCrowdRadius of another anti-heavy group (crowd: GetAhClaims)
 	float FillCoveredSpots(CCircuitUnit* unit, float range, const F3Vec& goals);
 	static constexpr float CROWD_RADIUS = 96.f;
-	bool CollectCrowd(CCircuitUnit* unit);  // crowd: the other artillery-mode anti-heavies; false: none
+	float GetCrowdRadius() const;  // antiheavy.group_spacing, at least CROWD_RADIUS
 
 	// Nothing to shoot or walk to
 	void FallbackNoTarget(CCircuitUnit* unit, bool isUpdating);  // no known building
@@ -90,7 +93,6 @@ private:
 	static constexpr float ARMY_WALK_SEC = 60.f;  // a group this many seconds' walk away scores half
 	static constexpr float ARMY_KEEP = 1.5f;  // the group followed now scores this much more
 	static constexpr float ARMY_HOLD_RADIUS = 256.f;  // hold within this of its army slot, walk back beyond it
-	static constexpr float SLOT_GAP = 1.5f * CROWD_RADIUS;  // between side slots behind a group
 	void FallbackSafePos(CCircuitUnit* unit, bool isUpdating);  // move to the nearest safety spot
 	void ApplySafePos(const CQueryPathMulti* query, bool isUpdating);
 	void FallbackBasePos(CCircuitUnit* unit, bool isUpdating);
@@ -187,7 +189,7 @@ private:
 	};
 	static std::vector<SFrontEnemy> frontEnemies;  // FindHeavyTarget: every enemy it can shoot, aircraft aside
 	static F3Vec frontGoals;  // FillFrontGoals
-	static F3Vec crowd;  // CollectCrowd
+	static F3Vec crowd;  // FillCoveredSpots: the other anti-heavy groups (GetAhClaims)
 	static std::vector<CEnemyInfo*> ignoredQuarries;  // FindHeavyTarget: heavies IsQuarryIgnored, for its Attack
 	static std::vector<SEscort> escorts;
 	static std::vector<SDanger> dangers;

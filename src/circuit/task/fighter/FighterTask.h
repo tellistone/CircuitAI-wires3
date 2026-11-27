@@ -77,6 +77,9 @@ public:
 	void ReleaseTarget() { SetTarget(nullptr); }  // unbound too: for a task that ends (CMilitaryManager::DequeueTask)
 
 	const std::set<CCircuitUnit*>& GetShields() const { return shields; }
+	// Where this group's units stand or head, one point each: the firing spot it was sent to in the last two attack
+	// repeats, else where it stands (CMilitaryManager::GetAhClaims; tasks add where they walk or park)
+	virtual void AddSpreadClaims(F3Vec& outClaims) const;
 
 protected:
 	void SetTarget(CEnemyInfo* enemy);
@@ -231,6 +234,10 @@ protected:
 	springai::AIFloat3 lastOrderTargetPos;
 	float fireSpotReach = -1.f;  // > 0: units farther than this x their fire range from the target get no attack order and keep travelling
 	float crowdRadius = 80.f;  // other claims within this of a firing spot crowd it (FindFireSpot)
+	// > 0: each other group's claim (CMilitaryManager::GetAhClaims, read once per Attack) within this of a firing spot
+	// costs it half a range of walk (FindFireSpot): different anti-heavy groups spread out
+	float spreadRadius = 0.f;
+	F3Vec spreadClaims;
 	// May a unit fire from p (FindFireSpot skips the spot if not)? Default: yes. Anti-heavy: outside its pick zones
 	virtual bool IsFireSpotAllowed(const springai::AIFloat3& p) const { return true; }
 	// While isSpotDisc: FindFireSpot only weighs spots within the disc (an escort's stay disc, CAttackTask)

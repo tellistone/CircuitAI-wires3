@@ -67,6 +67,9 @@ CArtilleryTask::CArtilleryTask(ITaskManager* mgr, bool isAntiHeavy)
 	position = manager->GetCircuit()->GetSetupManager()->GetBasePos();
 	// Anti-heavy: no firing spot it allows (IsFireSpotAllowed) = shoot from where it stands, never walk in to one
 	isHoldAttack = isAntiHeavy;
+	if (isAntiHeavy) {
+		spreadRadius = manager->GetCircuit()->GetMilitaryManager()->GetAntiHeavyCfg().groupSpacing;  // other groups
+	}
 }
 
 CArtilleryTask::~CArtilleryTask()
@@ -672,7 +675,11 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range, const F3
 	const bool isFleeOn = (fleeMargin >= 0.f);
 	const bool isThreatCover = isAntiHeavy && (artyCfg.allyThreat >= 0.f);
 	const float maxCellThreat = isThreatCover ? GetMaxPathThreat(unit) : THREAT_MIN;
-	const bool isCrowdCheck = isAntiHeavy && CollectCrowd(unit);
+	if (isAntiHeavy) {
+		circuit->GetMilitaryManager()->GetAhClaims(this, crowd);  // where the other anti-heavy groups stand or head
+	}
+	const bool isCrowdCheck = isAntiHeavy && !crowd.empty();
+	const float groupRadius = GetCrowdRadius();
 	if (isCoverNeeded || isFleeOn || isThreatCover) {
 		CollectEscorts(unit, isFleeOn);
 	} else {
@@ -772,8 +779,8 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range, const F3
 					continue;
 				}
 				cellAdded[index] = 1;  // checked once, whatever the outcome
-				if (isCrowdCheck && IsNearAny(cellPos, crowd, CROWD_RADIUS)) {
-					continue;  // another anti-heavy stands or walks there: one shell would hit both
+				if (isCrowdCheck && IsNearAny(cellPos, crowd, groupRadius)) {
+					continue;  // another anti-heavy group stands or walks there: one strike would hit both
 				}
 				// A spot inside a flee zone without the cover to hold there: walk in, flee, walk back
 				float dangerThreat;
@@ -998,7 +1005,8 @@ bool CArtilleryTask::GetArmySpot(CCircuitUnit* unit, AIFloat3& outPos)
 	const AIFloat3 straight = groupPos + back * std::max(0.f, std::min(GetCfg().followDist, len));
 	STerrainMapArea* area = unit->GetArea();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const AIFloat3 tries[] = {straight + side * (k * SLOT_GAP), straight, groupPos};  // its slot, straight back, the leader
+	const float slotGap = std::max(1.5f * CROWD_RADIUS, GetCrowdRadius());  // between side slots: groups apart
+	const AIFloat3 tries[] = {straight + side * (k * slotGap), straight, groupPos};  // its slot, straight back, the leader
 	for (const AIFloat3& p : tries) {
 		AIFloat3 spot = p;
 		CTerrainManager::CorrectPosition(spot);
@@ -1464,25 +1472,23 @@ bool CArtilleryTask::IsEscort(CCircuitUnit* unit, CAllyUnit* ally, bool isFlee) 
 			&& !manager->GetCircuit()->GetMilitaryManager()->IsAhArty(adef);
 }
 
-bool CArtilleryTask::CollectCrowd(CCircuitUnit* unit)
+float CArtilleryTask::GetCrowdRadius() const
 {
-	// The other artillery-mode anti-heavies: where each stands, and the end of the firing route it walks
-	crowd.clear();
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	for (IFighterTask* task : circuit->GetMilitaryManager()->GetTasks(FightType::ARTY)) {
-		CArtilleryTask* other = static_cast<CArtilleryTask*>(task);
-		if ((other == this) || !other->isAntiHeavy || other->units.empty()) {
-			continue;
-		}
-		CCircuitUnit* ally = *other->units.begin();
-		crowd.push_back(ally->GetPos(frame));
-		ITravelAction* travelAct = ally->GetTravelAct();
-		if ((other->firePath != nullptr) && (travelAct->GetPath() == other->firePath) && travelAct->IsActive()) {
-			crowd.push_back(other->firePath->posPath.back());
+	return std::max(CROWD_RADIUS, manager->GetCircuit()->GetMilitaryManager()->GetAntiHeavyCfg().groupSpacing);
+}
+
+void CArtilleryTask::AddSpreadClaims(F3Vec& outClaims) const
+{
+	if (!units.empty()) {
+		ITravelAction* travelAct = (*units.begin())->GetTravelAct();
+		for (const std::shared_ptr<PathInfo>& path : {firePath, safePath}) {
+			if ((path != nullptr) && !path->posPath.empty() && (travelAct->GetPath() == path) && travelAct->IsActive()) {
+				outClaims.push_back(path->posPath.back());
+				return;
+			}
 		}
 	}
-	return !crowd.empty();
+	IFighterTask::AddSpreadClaims(outClaims);
 }
 
 void CArtilleryTask::CollectEscorts(CCircuitUnit* unit, bool isFlee)
