@@ -536,7 +536,7 @@ bool CRaidTask::FindTarget()
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
-		const bool isZone = isProtect && protect->IsZoneEnemy(enemy);
+		const bool isZone = isProtect && protect->IsZoneEnemy(this, enemy);
 		if (isProtect && !isZone && (pos.SqDistance2D(enemy->GetPos()) > SQUARE(range))) {
 			continue;
 		}
@@ -738,7 +738,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	}
 	if (isProtect) {
 		// The goal moves with the commander: the route is kept while it stays within a few squares of the last one
-		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(), protect->GetGoal());
+		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(), protect->GetGoal(this));
 		position = (utils::is_valid(roamGoal) && (goal.SqDistance2D(roamGoal) < SQUARE(DEFAULT_SLACK * 2))) ? roamGoal : goal;
 	} else if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);

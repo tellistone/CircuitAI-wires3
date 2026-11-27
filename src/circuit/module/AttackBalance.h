@@ -13,6 +13,7 @@
 
 #include "AIFloat3.h"
 
+#include <functional>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -24,6 +25,7 @@ class CCircuitAI;
 class CCircuitDef;
 class CCircuitUnit;
 class CAttackTask;
+class IFighterTask;
 
 /*
  * Force balance (quota.attack_balance): before an attack group starts a fight, the enemy forces that could join it soon
@@ -61,6 +63,8 @@ public:
 	// The force at a spot. own: the judging group's (CAttackTask fills it in, x powerMod)
 	struct SForce {
 		float enemy = 0.f;
+		float air = 0.f;  // the aircraft's part of enemy
+		float statics = 0.f;  // the statics' part of enemy
 		float own = 0.f;
 		float allied = 0.f;  // raw: x ALLY_SHARE in GetOurs
 		float cover = 0.f;  // allied statics, raw
@@ -75,6 +79,7 @@ public:
 
 	bool IsOn() const { return cfg.ratio > 0.f; }
 	bool IsLogOnly() const { return cfg.isLogOnly; }
+	float GetRatioLine() const { return cfg.ratio; }  // E / A at which a spot is outnumbered (0: off)
 	// The line's ratio: ratio, x KEEP_FACTOR for the keep line and the own spot
 	float GetLine(Line line) const;
 	// enemy >= the line x ours (and some enemy at all)
@@ -87,9 +92,12 @@ public:
 	static float GetRangeAt(float rangeLand, float rangeWater, bool isWater, bool isAmph);
 	static float GetRangeAt(const CCircuitDef* cdef, bool isWater, bool isAmph);
 
-	// Enemy force at F, the allied mobiles (the judging group's units left out: self, only compared) and the allied
-	// statics there; isAmph: the judging group is amphibious. outForce.own is left alone
-	void GetForceAt(const springai::AIFloat3& F, const CAttackTask* self, bool isAmph, SForce& outForce);
+	// Enemy force at F, the allied mobiles (the judging group's units left out: self, only compared; and those of the
+	// tasks isLeftOut picks, CProtect's own groups) and the allied statics there; isAmph: the judging group is
+	// amphibious. outForce.own is left alone
+	using LeftOut = std::function<bool (const IFighterTask*)>;
+	void GetForceAt(const springai::AIFloat3& F, const CAttackTask* self, bool isAmph, SForce& outForce,
+			const LeftOut& isLeftOut = nullptr);
 
 	/*
 	 * The BALANCE log, every minute while on: checks and skips by line, flag and zone events, fights by their E/A at
@@ -123,11 +131,11 @@ private:
 		float speed;
 		float sqReach;  // beyond this from F it can't count: range + horizon x speed (aircraft, statics: range)
 		Kind kind;
-		const CAttackTask* task;  // allies: our attack group it is in (only compared, never dereferenced); else nullptr
+		const IFighterTask* task;  // allies: our fight task it is in (only compared, never dereferenced); else nullptr
 	};
 	void Update();  // rebuild the lists if stale
 	void AddEntry(std::vector<SEntry>& entries, const CCircuitDef* cdef, const springai::AIFloat3& pos, float power,
-			const CAttackTask* task);
+			const IFighterTask* task);
 	float GetWeight(const SEntry& e, float sqDist, bool isWater, bool isAmph) const;
 	struct SFight;
 	SFight* GetFightOf(ICoreUnit::Id unitId);  // the open fight a unit counts toward, or nullptr

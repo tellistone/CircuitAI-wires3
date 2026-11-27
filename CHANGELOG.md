@@ -7,6 +7,47 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Anti-heavy groups keep apart** (`antiheavy.group_spacing`, new, default 300; 0 = firing spots don't spread).
+  Different groups (ground squads, and each artillery-mode anti-heavy) used to pick the same spots: firing spots only
+  knew their own group, and squads parking behind an attack group ignored the artillery-mode units following it. Now
+  `CMilitaryManager::GetAhClaims` lists where every other anti-heavy group stands or heads (a unit's firing spot from
+  the last two attack repeats, else where it stands; the end of the route an artillery-mode unit walks; a squad's park
+  spot; none from mine and aircraft squads, which attack directly and aren't taken by a strike on a ground group),
+  each claim tagged with its group's rank (`IFighterTask::GetSpreadRank`: when it took its current target, none last,
+  ties by task age). Each other group with a claim within `group_spacing` of a firing spot costs it half a range of
+  walking (`FindFireSpot`, once per group); the spot a unit holds (kept, or where it stands in its fire band) counts
+  only groups ranked before it, so the newcomer to a fight gives way, the group already on its heavy fires on, and two
+  groups never shuffle each other. Artillery-mode walk-to spots skip cells within 96 of a claim (was 96 from other
+  artillery-mode units only) and use cells within `group_spacing` of one only when no other is left, so spacing never
+  costs them their last firing spot. Their side slots behind an attack group are max(144, `group_spacing`) apart (was
+  144). Squads don't park within max(256, 2x `spacing`, `group_spacing`) of a claim (was other squads' park spots
+  only), but keep the spot they hold (`IsOwnPark`): before, a claim landing on it froze a spot behind a group or
+  dropped a tower spot.
+
+- **Anti-heavies hold their shot for the heavy.** While a long-reload unit (5 s or more: Lance, Merlin, Phantom,
+  Racketeer, Revenant, Widow) attacks a heavy it goes to return fire, ZK's set-target goes on the heavy
+  (`CCircuitUnit::CmdHoldTarget`) and ZK's don't-fire-at-radar goes on (Lance, Phantom, Widow), so the reload isn't
+  spent on chaff that comes into range or on a radar blip as the heavy leaves LOS, yet the unit fires at the heavy
+  whatever its order: on the walk to each firing spot, holding or kiting out of range, a straggler, back from a scoot
+  (the engine fires at a set target whatever the fire state; an Attack order alone only counts at the front of the
+  queue). The set-target also stops the unit shooting back at whoever hits it, which is the point: the reload is for
+  the heavy. Squads (`CAntiHeavyTask::UpdateHolds`) used hold fire for this, and only for snipers that park (Lance,
+  Merlin); now every long-reload squad does it while it attacks its heavy, and keeps return fire through the LOS grace
+  (no chaff shot as the heavy reappears) with the set-target off then (no shot at its radar blip, and once it's off
+  radar and out of LOS, as ZK drops it then). Artillery-mode anti-heavies (`CArtilleryTask::SetAttacking`) do it while
+  their attack order on a heavy is live, and keep return fire, the set-target and their target through a shot's scoot
+  (still a plain move); the scoot's end sends the set-target again, as the heavy may have left radar meanwhile. A
+  flee, losing the target or leaving the task gives back the unit's own fire state (`fire_state`, default fire at
+  will) and fire at radar, and cancels the set-target. Short-reload squads (Ultimatum, Scorpion, Krow, Gnat,
+  Thunderbird) keep their own fire state and get no set-target: a 2 s reload isn't worth saving, and they shoot
+  escorts while walking in or kiting, and with weapons that can't reach the heavy. The set-target is sent only when it
+  changes (`CCircuitUnit::CmdHoldTarget`).
+
+- **Anti-heavies: ZK's overkill prevention always on** (`CCircuitUnit::CmdPreventOverkill`). ZK's default for Lance,
+  Phantom, Racketeer and Revenant (state 2) works only on fire at will, so return fire would have turned it off and
+  several snipers would spend their reload on one heavy. Every unit of the anti_heavy role (role binds included) gets
+  state 4 (always) when finished or given, where the type has the command.
+
 - **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
   radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped
   at the edge, below a hill or behind a ridge and couldn't fire. Now (a) counts within `plant.reach` (new, 0.9) x the
@@ -470,27 +511,62 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     at 0.95 x range and the fire band reaches the full range, so a unit Zero-K's own skirm keeps at the edge of its
     range is no longer pulled back in to 0.9 x range.
 
-- **Commander protect against rushes** (`quota.protect`, new, off by default: `enable`, `zone` 1200, `keep_sec` 12,
-  `respond_sec` 12, `go_ratio` 1.0). When the commander's seen danger within `zone` beats its own power, or it takes
-  damage, one central go or no-go decides once a second for every group that can reach it, so they commit together
-  or not at all instead of each judging the fight alone and trickling in.
-  - Danger: the larger of the force balance's enemy force at the commander (mobiles by how soon they can shoot it,
-    enemy statics by their cover falloff) and the commander's own danger list. Against gunships (over 60% of that
-    list, until under 40%) no group is sent: only anti-air turrets count, and the commander if it hits air.
-  - Commit: attack, raid and gathering groups that reach the commander within `respond_sec` (or its time to death)
-    and aren't fleeing or fighting elsewhere, soonest there first, until groups + commander + turrets reach 1.25x the
-    danger (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or paralysed),
-    no-go under `go_ratio` / `attack_keep_threat` (at once when the danger turns to air), 5 s per state at least. A
-    committed group that flees still counts for keeping a go, not for starting one, and a committed group 1.5x
-    `respond_sec` of travel away is dropped.
+- **Artillery and anti-heavies flee melee mobs** (behaviour.json per unit `flee_thr_mod`, new; Dirtbag 0.5). A mob
+  of ~33 Dirtbags (`thr_mod` 0.1) weighed about 8, so any escort of 18 called the flee off while the boxes walked in,
+  surrounded the unit and killed it; nothing shot them (anti-heavies hunt heavies, attack groups rank Dirtbag last by
+  its `target_dist_mod`). An enemy type's `flee_thr_mod` replaces its `thr_mod` in the artillery task's flee and
+  firing-spot danger zones and in anti-heavy squads' flee and pick zones (`IFighterTask::GetFleeThreatOf`); the
+  threat map, routes, attack groups and the force balance keep `thr_mod`. The mob now weighs about 40, so the unit
+  runs to the army unless about 50 of cover stands by; a lone Dirtbag (1.2) still doesn't move it. A running flee
+  (artillery, anti-heavy and anti-air squads) now needs cover past `attack_keep_threat` x the threat to stop, so a
+  mob right at the line doesn't flip it every update.
+- **Protect against rushes on commanders and protected groups** (`quota.protect`, new, off by default: `enable`,
+  `zone` 1200, `keep_sec` 12, `respond_sec` 12, `go_ratio` 1.0). When a commander's seen danger within `zone` beats
+  its own power, or it takes damage, or seen bombers within `zone` heading for it beat its anti-air bubble, one central
+  go or no-go decides once a second for every group that can reach it, so they commit together or not at all instead
+  of each judging the fight alone and trickling in.
+  - Wards: every commander of ours (each one, not only the last built, and on after one dies), and anti-heavy squads
+    (not flying ones) and artillery tasks holding a unit with the new `protect` attribute (none by default). Those
+    within 600 elmos of each other are one ward until 800 apart, worth their summed metal cost. A group ward is on
+    while the force balance's mobile enemies at it outnumber it at `attack_balance.ratio` (1 if off), or on bombers.
+    Our army nearby counts, so the army isn't held at its artillery, but not the groups the protect sent there,
+    which would end it as they arrive. It has no meeting point and no time to death. Each ward and side has its own
+    go.
+  - The pick: a go keeps its groups; then groups go to the ward with the best value / (travel sec + 3), wards in a go
+    first. A ward in a no-go still under its go line after the pick hands its groups back, the lowest value first,
+    so two wards don't split the same groups and both stay out; those handed back then try alone, the highest value
+    first. A group latched to a go and not yet present moves once to a ward scoring it twice as high that is in a
+    go (or can go now and reaches its go line with it), if the go it leaves stays above its keep line (`PROTECT move`). Merged wards keep the one in a go, else on, else the oldest, so a
+    commander walking past its artillery keeps its protect. Every `PROTECT` line names its ward.
+  - Danger, in two sides answered together. Ground: the commander's danger list without its gunships, or the force
+    balance's enemy force at the commander (mobiles by how soon they can shoot it, enemy statics by their cover
+    falloff) without its aircraft, the larger. Air: the list's gunships and the bombers. Bombers count when seen
+    with a ground weapon, their track passing within 300 elmos of the commander (or they hit it in the last 5 s), held
+    5 s after, at their threat before `thr_mod`. The bubble: the commander's own power if it hits air, and the anti-air
+    turrets covering it. The ground side counts the commander and ground turrets; the air side anti-air turrets, and
+    the commander if it hits air.
+  - Commit, go and no-go by side, each on its own: ground sends attack, raid and gathering groups, air sends anti-air
+    groups (flying ones included), those that reach the commander within `respond_sec` (or its time to death) and
+    aren't fleeing or fighting elsewhere, soonest there first, until groups + commander + turrets reach 1.25x the
+    side's danger (`go_ratio` + 0.25 if more). Go at `go_ratio` with one group at least (0.6x once cornered or
+    paralysed), no-go under `go_ratio` / `attack_keep_threat`, 5 s per state at least. The ground side's ratio also
+    counts the gunships the air side leaves unanswered (its turrets, the commander, and its groups in a go), so ground
+    groups don't walk into gunships no one shoots, and the commit counts them too, up to the ground danger again
+    (they shoot the ground groups as well; gunships alone, or far past the ground part, pull none in). Bombers don't
+    count there (one pass). A committed group that flees still counts for keeping a go, not for starting one, and a
+    committed group 1.5x `respond_sec` of travel away is dropped.
   - On go, committed groups leave rallies and guard pulls, merge only with each other, head for the commander, take
-    only enemies in the zone (the commander's attackers first), and within half the zone of it (kept to 0.625) judge
-    with the strength present there.
+    the commander's attackers first and within half the zone of it (kept to 0.625) judge with the strength present
+    there for their side. Ground groups take only enemies in the zone; anti-air groups count the commander as a leash home point
+    and wait beside it with nothing to shoot.
   - Meeting point: a spot 100 elmos behind our or allied turrets near the commander, away from the danger, where they
-    hold the danger with it, reached in time and safe to flee to; kept while they hold 1 / `attack_keep_threat` of it.
-    The commander flees there and stays; cornered there, it ends its flee and builds its defence.
-  - `PROTECT` log lines on start, go, nogo and end, with the gunships' share of the danger. The end line sums up the
-    protect: its goes and the highest gunship share.
+    hold the danger with it (the ground side with the gunships its anti-air turrets leave; with no ground danger, the
+    air side), reached in time and safe to flee to; kept while they hold 1 / `attack_keep_threat` of it.
+    The commander flees there and stays; cornered there, it ends its flee and builds its defence. Its flee ignores
+    planes, so bombers alone don't move it.
+  - `PROTECT` log lines on start, `go (ground)`, `go (air)`, `nogo (ground)`, `nogo (air)` and end: the start line
+    gives both sides' danger with the gunships and the bombers' count, a go or nogo line its side's ratio, sums and
+    unanswered gunships, the end line the goes per side and the highest aircraft share.
 
 - **`plant` unit attribute: stay put next to targets and anti-heavies** (Crabe has it). A unit with it never moves
   (move, fight, jump, gather and orbit orders are dropped, retreat included) while an enemy in LOS that it can hit is
@@ -754,6 +830,22 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   its `tidalHeight`, -10) anywhere, as before. A plain list of names (the older form) still works, with radius 1500.
   The mex chain on ground too steep for any energy at the mex (and no threat there) now asks the fill for a solar,
   which finds a flatter site beside the mex; before, a steep mex outside the base got no energy.
+  Grid pieces no longer pile up beside one head (winds clustered at a mex after its first piece):
+  - A builder takes its next job in the frame its piece finishes (`builder_jobs.chain`), but the grid model was read
+    at most once a frame and could miss that piece, so the next fill piece was planned from the old head and stood
+    beside the one just built. A finished energy or grid link job now marks the grid to be read again.
+  - The grid linker's pieces (`CEnergyGrid::FindNodeDef`, `FindLinkDef`) took the open cell nearest a fixed spot
+    within 250 elmos, with no rule that it links to the head or gets closer to the other end; when that spot was
+    taken the head didn't move, and the next piece went beside the last. They now use the fill's `FindLinkSite`
+    (links to the head and gets a quarter of its reach closer, or closes the gap), on that exact site, reserved when
+    queued. A grid link job whose site is taken by the time its builder gets there is planned again, not moved.
+    Both now share one helper (`FindPieceDef`), which searches at most 250 elmos around the piece's ideal spot (a
+    failed search costs an engine call per open cell, and an energypylon's reach would otherwise double it).
+  - Each solar or wind job (`economy.energy.fill` defs) and grid linker piece the AI queues writes one infolog line
+    naming the path that placed it: `ENERGY_JOB <m:ss> <def> <path> at (x, z) [from (x, z) to (x, z)]`, path one of
+    `fill-bare-mex`, `fill-gap`, `fill-poor-grid` (with the gap's or mex's ends), `here` (the mex chain at its mex, a
+    builder's last resort where it stands), `nearest-spot` and `linker`. `grep ENERGY_JOB infolog.txt` shows
+    which path built a cluster.
 
 - **One turret account** (`porcupine.budget` in build_chain.json: `share` 0.1, `bank_sec` 60). Each spender of static
   defence had its own rule: cluster porc had none beyond its per-point cap, the turret picker had its own

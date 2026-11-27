@@ -460,6 +460,17 @@ void CFactoryManager::ReadConfig()
 		if (!thrMod.isNull()) {
 			cdef->ModThreat(thrMod.asFloat());
 		}
+		const Json::Value& fleeThrMod = behaviour["flee_thr_mod"];
+		if (!fleeThrMod.isNull()) {
+			if (!fleeThrMod.isNumeric() || (fleeThrMod.asFloat() < 0.f)) {
+				circuit->LOG("CONFIG %s: %s flee_thr_mod must be a number >= 0, ignored", cfgName.c_str(), defName.c_str());
+			} else if (cdef->GetThreat() <= 0.f) {
+				circuit->LOG("CONFIG %s: %s has no threat (unarmed or thr_mod 0): flee_thr_mod ignored", cfgName.c_str(),
+						defName.c_str());
+			} else {
+				cdef->SetFleeThrMod(fleeThrMod.asFloat());
+			}
+		}
 		// Its own raid_thr_mod, else its main role's in quota.raid_thr_role, else 1. On top of thr_mod
 		const Json::Value& raidMod = behaviour["raid_thr_mod"];
 		float raidThrMod = 1.f;
@@ -1779,6 +1790,9 @@ IUnitTask* CFactoryManager::CreateAssistTask(CCircuitUnit* unit)
 			continue;  // a nano can't repair itself
 		}
 		CCircuitDef* cdef = candUnit->GetCircuitDef();
+		if (cdef == nullptr) {
+			continue;  // an ally's unit of a def we don't know (CAllyTeam keeps those too)
+		}
 		const float maxHealth = u->GetMaxHealth();
 		const float missing = (maxHealth - u->GetHealth()) / maxHealth;
 		if (u->IsBeingBuilt()) {

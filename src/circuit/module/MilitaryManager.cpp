@@ -1168,6 +1168,7 @@ void CMilitaryManager::ReadConfig()
 	const float keepSec = ahCfg.get("keep_sec", 30.f).asFloat();
 	antiHeavy.keepFrames = (keepSec < 0.f) ? std::numeric_limits<int>::max() : std::max(1, int(keepSec * FRAMES_PER_SEC));
 	antiHeavy.spacing = std::max(0.f, ahCfg.get("spacing", 150.f).asFloat());
+	antiHeavy.groupSpacing = std::max(0.f, ahCfg.get("group_spacing", 300.f).asFloat());
 	antiHeavy.maxGroup = std::max(0, ahCfg.get("max_group", 2).asInt());
 	antiHeavy.isArtillery = ahCfg.get("as_artillery", false).asBool();
 	antiHeavy.artyScoot = std::max(0.f, ahCfg.get("artillery_scoot", 0.f).asFloat());
@@ -1614,6 +1615,9 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	if (search != destroyedHandler.end()) {
 		search->second(unit, attacker);
 	}
+	// defenceDestroyedHandler (defenderDefs only) has already taken a defender's id out. A picker or cornered tower
+	// of another def is taken out here, so its id, once reused for a point-counted tower, doesn't skip that one's death
+	offPointsTowers.erase(unit->GetId());
 
 	return 0; //signaling: OK
 }
@@ -2657,6 +2661,12 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 	// porcupine.budget: porc-mode towers wait for the turret account (the sweep comes back for the rest); preventive
 	// ones are free
 	TurretScope scope(this, isPorc ? TurretSpend::PORC : TurretSpend::PREVENT);
+	// turret.crowd_count: the metal booked for towers refused for their crowd goes back once that crowd is gone
+	// (light turrets lost), or it would keep the point short of its budget for the rest of the game
+	if ((point->crowdCost > 0.f) && !turretPicker->IsLightCrowded(point->position)) {
+		point->cost = std::max(point->cost - point->crowdCost, 0.f);
+		point->crowdCost = 0.f;
+	}
 	for (int copy = 0; copy < copies; ++copy) {
 		const float copyStart = totalCost;
 		for (CCircuitDef* defDef : towers) {
@@ -2689,11 +2699,12 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 			}
 			// turret.crowd_count: a preventive or porc light tower among enough light turrets isn't placed (the account
 			// gets turret.crowd_credit instead). Asked once a call, though a pooled list is walked up to POOL_COPIES
-			// times. It stays booked on the point: the crowd paid for its slot, so a later visit doesn't fill that
-			// metal with a second copy of the towers after it
+			// times. It stays booked on the point while the crowd stands: the crowd paid for its slot, so a later visit
+			// doesn't fill that metal with a second copy of the towers after it. point->crowdCost gives it back after
 			if (turretPicker->IsLight(defDef) && (isCrowded
 				|| (isCrowded = turretPicker->RefuseCrowdedLight(defDef, buildPos, isPorc ? "porc" : "prevent"))))
 			{
+				point->crowdCost += defCost;
 				continue;
 			}
 			// Porc towers go in a chain, one after another. Preventive ones are queued each on its own, because the
@@ -4887,6 +4898,30 @@ float CMilitaryManager::GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* 
 		}
 	}
 	return damage;
+}
+
+void CMilitaryManager::GetAhClaims(const IFighterTask* skip, F3Vec& outClaims, std::vector<int64_t>* outRanks) const
+{
+	outClaims.clear();
+	if (outRanks != nullptr) {
+		outRanks->clear();
+	}
+	auto addClaims = [&](const IFighterTask* task) {
+		task->AddSpreadClaims(outClaims);
+		if (outRanks != nullptr) {
+			outRanks->resize(outClaims.size(), task->GetSpreadRank());
+		}
+	};
+	for (IFighterTask* task : GetTasks(IFighterTask::FightType::AH)) {
+		if (task != skip) {
+			addClaims(task);
+		}
+	}
+	for (IFighterTask* task : GetTasks(IFighterTask::FightType::ARTY)) {
+		if ((task != skip) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy()) {
+			addClaims(task);
+		}
+	}
 }
 
 IFighterTask* CMilitaryManager::EnqueueAntiHeavy(CCircuitUnit* unit)

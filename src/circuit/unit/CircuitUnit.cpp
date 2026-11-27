@@ -22,6 +22,7 @@
 #include "AISCommands.h"
 #include "Sim/Units/CommandAI/Command.h"
 #include "Weapon.h"
+#include "CommandDescription.h"
 #include "WrappWeaponMount.h"
 
 namespace circuit {
@@ -364,8 +365,23 @@ bool CCircuitUnit::IsPlantHeld(CEnemyInfo* enemy)
 
 void CCircuitUnit::CmdCancelTarget()
 {
-	plant.targetId = -1;  // sent whatever it says: a task's ClearTarget clears it too
+	plant.targetId = heldTargetId = -1;  // sent whatever it says: a task's ClearTarget clears it too
 	unit->ExecuteCustomCommand(CMD_UNIT_CANCEL_TARGET, {});
+}
+
+void CCircuitUnit::CmdHoldTarget(int enemyId)
+{
+	if (enemyId == heldTargetId) {
+		return;
+	}
+	heldTargetId = enemyId;
+	TRY_UNIT(manager->GetCircuit(), this,
+		if (enemyId >= 0) {
+			unit->ExecuteCustomCommand(CMD_UNIT_SET_TARGET, {static_cast<float>(enemyId)});
+		} else {
+			unit->ExecuteCustomCommand(CMD_UNIT_CANCEL_TARGET, {});
+		}
+	)
 }
 
 void CCircuitUnit::CmdCloak(bool state)
@@ -373,6 +389,18 @@ void CCircuitUnit::CmdCloak(bool state)
 	unit->ExecuteCustomCommand(CMD_WANT_CLOAK, {state ? 1.f : 0.f});  // personal
 	unit->ExecuteCustomCommand(CMD_CLOAK_SHIELD, {state ? 1.f : 0.f});  // area
 	unit->Cloak(state);
+}
+
+void CCircuitUnit::CmdPreventOverkill()
+{
+	// Only to a unit that has the command: on another the engine would queue it as an order
+	std::vector<springai::CommandDescription*> cmdDescs = unit->GetSupportedCommands();
+	const bool isHas = std::any_of(cmdDescs.begin(), cmdDescs.end(),
+			[](springai::CommandDescription* desc) { return desc->GetId() == CMD_PREVENT_OVERKILL; });
+	utils::free_clear(cmdDescs);
+	if (isHas) {
+		unit->ExecuteCustomCommand(CMD_PREVENT_OVERKILL, {4.f});  // "Prevent Overkill": whatever the fire state or order
+	}
 }
 
 void CCircuitUnit::CmdFireAtRadar(bool state)
