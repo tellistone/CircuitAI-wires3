@@ -38,8 +38,8 @@ class ISquadTask;
  *    else its costliest member. Its identity is kept while its members change (merged: the ward in a go, else on,
  *    else the oldest).
  * 1. Anchor: a commander's seen danger (CBuilderManager's danger list within the zone) beats its own power, or it
- *    took damage; a group member is outnumbered by the force balance at the goal (enemy force over ours, our and
- *    allied mobiles nearby at 0.75: an army standing by holds it); or seen planes with a ground weapon (bombers)
+ *    took damage; a group member is outnumbered by the force balance at the goal (enemy force over ours at
+ *    attack_balance.ratio, 1 if off; our and allied mobiles nearby at 0.75: an army standing by holds it); or seen planes with a ground weapon (bombers)
  *    within the zone and heading for the goal beat its anti-air bubble (its anti-air members' power and the anti-air
  *    turrets covering it). It ends keep_sec after the last such second. Zone: zone elmos around the goal.
  * 2. Danger, in two sides answered together. Ground: its commanders' list without its gunships (the largest of
@@ -62,7 +62,8 @@ class ISquadTask;
  *    air side leaves unanswered, to its ratio and to its commit up to its danger again. A ward in a no-go still
  *    under its go line after the pick hands its groups back, the lowest value first, and the others pick again; then
  *    those handed back try alone, the highest value first. A group latched to a go and not yet present moves, once,
- *    to a ward that scores it at least twice as high, if that go stays above its keep line. Go at go_ratio
+ *    to a ward that scores it at least twice as high, is in a go or reaches its go line with it, and if the go it
+ *    leaves stays above its keep line. Go at go_ratio
  *    with a group at least (0.6 x it once cornered); no-go below the go line / quota.attack_keep_threat. 5 s per
  *    state at least, each ward and side on its own. On go the groups are latched until the anchor ends or its
  *    no-go, or until one is 1.5 x respond_sec of travel away; they merge only into each other.
@@ -166,9 +167,10 @@ private:
 		springai::AIFloat3 turretPos = -RgtVector;  // the meeting point (GetBehind a turret); invalid: none
 		std::unordered_map<ICoreUnit::Id, int> planes;  // plane id -> frame it last headed for the goal
 		bool isReleased = false;  // the pick: handed its groups back this update
-		bool isSeen = false;  // still has members this update
+		bool IsGo() const { return (sides[GROUND].state == State::GO) || (sides[AIR].state == State::GO); }
 	};
 	struct SMember;
+	struct SSums;
 	struct SCandidate {
 		ISquadTask* task;
 		std::vector<float> travelSec;  // per on ward (Pick's order), < 0: can't answer it
@@ -192,6 +194,11 @@ private:
 	void CollectMembers(int frame, std::vector<SMember>& out);
 	void AssignWards(std::vector<SMember>& members);  // clusters, with the wards' identities kept
 	void UpdateWard(SWard& w, const std::vector<const SMember*>& members, int frame);
+	// Its lead, value and the members' power and threats
+	void SumMembers(SWard& w, const std::vector<const SMember*>& members, SSums& out) const;
+	// Danger and power by side, and the cover (at the turret point of a commander ward)
+	void UpdateSides(SWard& w, const SSums& sums, float forceGround, float forceAir, bool isStart, bool isOutnumbered);
+	void ResetWard(SWard& w);  // its sides and its fight's state
 	void Start(SWard& w, int frame);
 	void End(SWard& w, const char* reason, int frame);
 	void SetState(SWard& w, Side side, State value, int frame);

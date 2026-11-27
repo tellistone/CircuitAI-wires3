@@ -76,6 +76,7 @@ public:
 
 	bool IsOn() const { return cfg.ratio > 0.f; }
 	bool IsLogOnly() const { return cfg.isLogOnly; }
+	float GetRatioLine() const { return cfg.ratio; }  // E / A at which a spot is outnumbered (0: off)
 	// The line's ratio: ratio, x KEEP_FACTOR for the keep line and the own spot
 	float GetLine(Line line) const;
 	// enemy >= the line x ours (and some enemy at all)
