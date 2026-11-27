@@ -207,16 +207,12 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 			}
 			return;
 		}
-		const bool wasAttacking = isAttacking;
 		SetAttacking(unit, bestTarget);
 		attackPos = bestTarget->GetPos();
 		if (isAntiHeavy) {
 			// The attack task's firing spots: the cheapest allowed spot (threat, walk) at ~90% of our range, re-picked
 			// every 3 s and when the heavy moves a tile, so the unit backs off as it closes in; none: from here
 			SetTarget(bestTarget);  // also for the other anti-heavy units' overkill check (GetAhReadyDamage)
-			if (!wasAttacking) {
-				unit->ClearTarget();  // our own Stop or flee came in between: order at once
-			}
 			Attack(frame, true);
 			return;
 		}
@@ -783,7 +779,6 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range, const F3
 				if (isCrowdCheck && IsNearAny(cellPos, crowd, CROWD_RADIUS)) {
 					continue;
 				}
-				const bool isCrowded = isCrowdCheck && (groupRadius > CROWD_RADIUS) && IsNearAny(cellPos, crowd, groupRadius);
 				// A spot inside a flee zone without the cover to hold there: walk in, flee, walk back
 				float dangerThreat;
 				if (isFleeCheck && (FindDanger(cellPos, dangerThreat) != nullptr)
@@ -800,6 +795,7 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range, const F3
 						|| (isThreatCover && (cellThreat <= maxCellThreat)
 							&& (fleeCoverGrid[index] - cellThreat >= artyCfg.allyThreat));
 				if (isThreatOk && terrainMgr->CanMoveToPos(area, cellPos)) {
+					const bool isCrowded = isCrowdCheck && IsNearAny(cellPos, crowd, groupRadius);
 					(isCrowded ? crowdedPositions : firePositions).push_back(cellPos);
 				}
 			}
@@ -887,16 +883,21 @@ void CArtilleryTask::StopAttack(CCircuitUnit* unit)
 
 void CArtilleryTask::SetAttacking(CCircuitUnit* unit, CEnemyInfo* enemy)
 {
-	// Anti-heavy: return fire while the attack order on a heavy is live, so the reload isn't spent on chaff that comes
-	// into range; its own fire state otherwise. And ZK's set-target on the heavy (CmdHoldTarget), which fires whatever
-	// the order: on the walk to each firing spot. Sent after the fire state, as the fire state's change drops it
+	// Anti-heavy (a long reload): while the attack order on a heavy is live, return fire, so the reload isn't spent on
+	// chaff that comes into range, and no shot at a radar blip (ZK's don't-fire-at-radar, where the type has it: the
+	// heavy can leave LOS between two Executes); its own fire state otherwise. And ZK's set-target on the heavy
+	// (CmdHoldTarget), which fires whatever the order: on the walk to each firing spot
 	const bool isOn = (enemy != nullptr);
 	if (isAttacking != isOn) {
 		isAttacking = isOn;
 		if (isAntiHeavy) {
 			TRY_UNIT(manager->GetCircuit(), unit,
 				unit->GetUnit()->SetFireState(isOn ? CCircuitDef::FireType::RETURN : unit->GetCircuitDef()->GetFireState());
+				unit->CmdFireAtRadar(!isOn);
 			)
+			if (isOn) {
+				unit->ClearTarget();  // our own Stop or flee came in between: Attack orders it at once
+			}
 		}
 	}
 	if (isAntiHeavy) {

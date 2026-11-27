@@ -46,7 +46,7 @@ public:
 	// Engaged, and a unit of the squad has its target within its weapon range; never mines or aircraft
 	bool IsAttacking() const;
 	const springai::AIFloat3& GetParkPos() const { return park.pos; }  // invalid: none
-	// Its units (IFighterTask's), and the park spot it claims
+	// Its units (IFighterTask's), and the park spot it claims; none for mines and aircraft (no firing spots)
 	virtual void AddSpreadClaims(F3Vec& outClaims) const override;
 	// Weapon range + 30 s of walking: snipers walk in to heavies this near, and the army pull (UpdateAhPull) takes
 	// units for them
@@ -174,8 +174,8 @@ private:
 	void FallbackPark();
 	void ApplyParkPath(const CQueryPathSingle* query);
 	void SpreadOut(CCircuitUnit* unit, int frame);  // parked: the others stand to alternate sides of the leader
-	// Hold position while parked; return fire only while attacking a heavy (isAttack), the unit's own fire state otherwise;
-	// set-target on aimEnemyId (-1: none)
+	// Hold position while parked; holding the shot for a heavy (isAttack): return fire, no shot at radar blips, the
+	// unit's own fire state otherwise; set-target on aimEnemyId (-1: none)
 	void UpdateHolds(bool isAttack, int aimEnemyId);
 	void ApplyHolds(CCircuitUnit* unit);
 
@@ -201,7 +201,7 @@ private:
 	bool isParking = false;  // nothing to attack or walk to: the squad parks
 	int walkInFrame = 0;  // no new walk-in to a heavy before this (after a flee, or no route to any heavy)
 	bool isParkHold = false;  // units on hold position (UpdateHolds)
-	bool isReturnFire = false;  // units on return fire (attacking a heavy)
+	bool isReturnFire = false;  // units on return fire (a long reload attacking a heavy)
 	int aimId = -1;  // the heavy their set-target is on (UpdateHolds); -1: none
 };
 

@@ -154,7 +154,7 @@ public:
 	// nor the cancel's -1)
 	void ForgetHeldTarget() { heldTargetId = -2; }
 	// ZK's overkill prevention on always (state 4): its default for Lance, Phantom, Racketeer and Revenant works only on
-	// fire at will, so return fire and set-target would turn it off. Must be called inside TRY_UNIT
+	// fire at will, so the anti-heavies' return fire would turn it off. Must be called inside TRY_UNIT
 	void CmdPreventOverkill();
 	void CmdCloak(bool state);
 	void CmdFireAtRadar(bool state);

@@ -128,6 +128,7 @@ void CAntiHeavyTask::RemoveAssignee(CCircuitUnit* unit)
 		TRY_UNIT(manager->GetCircuit(), unit,
 			unit->GetUnit()->SetMoveState(ISquadTask::GetMoveState(unit));
 			unit->GetUnit()->SetFireState(unit->GetCircuitDef()->GetFireState());
+			unit->CmdFireAtRadar(true);
 		)
 		unit->CmdHoldTarget(-1);
 	}
@@ -257,11 +258,13 @@ void CAntiHeavyTask::Update()
 	if (isTargetsFound) {
 		checkFrame = 0;  // back from a fight or a walk-in: the park spot (or the way to the army) is looked at at once
 	}
-	// Return fire while attacking it, LOS grace included (they stand idle then: no chaff shot as it reappears);
-	// set-target on it only while we may shoot it (no LOS grace) and see it on radar or LOS (ZK drops a set-target
-	// gone from both: CmdHoldTarget sends only changes)
-	const bool isAim = (target != nullptr) && !isLosGrace && target->IsInRadarOrLOS();
-	UpdateHolds(target != nullptr, isAim ? target->GetId() : -1);
+	// A long reload is held for the heavy: return fire while attacking it, LOS grace included (they stand idle then: no
+	// chaff shot as it reappears); set-target on it only while we may shoot it (no LOS grace) and see it on radar or
+	// LOS (ZK drops a set-target gone from both: CmdHoldTarget sends only changes). A short reload isn't worth saving:
+	// its own fire state, so it shoots escorts while walking in or kiting, and with weapons that can't reach the heavy
+	const bool isHold = (target != nullptr) && leader->GetCircuitDef()->IsLongReload();
+	const bool isAim = isHold && !isLosGrace && target->IsInRadarOrLOS();
+	UpdateHolds(isHold, isAim ? target->GetId() : -1);
 	if (target != nullptr) {
 		position = target->GetPos();
 		if (isLosGrace) {
@@ -974,6 +977,10 @@ float CAntiHeavyTask::GetClaimRadius() const
 
 void CAntiHeavyTask::AddSpreadClaims(F3Vec& outClaims) const
 {
+	// Mines and aircraft attack directly (no firing spots), and a strike or dive on a ground group doesn't take them
+	if ((leader == nullptr) || leader->GetCircuitDef()->IsRoleMine() || leader->GetCircuitDef()->IsAbleToFly()) {
+		return;
+	}
 	ISquadTask::AddSpreadClaims(outClaims);
 	if (utils::is_valid(park.pos)) {
 		outClaims.push_back(park.pos);
@@ -1145,9 +1152,10 @@ void CAntiHeavyTask::SpreadOut(CCircuitUnit* unit, int frame)
 
 void CAntiHeavyTask::UpdateHolds(bool isAttack, int aimEnemyId)
 {
-	// Parked: hold position (the spot is the cover). Return fire only while they attack a heavy, so the reload isn't
-	// spent on chaff that comes into range; their own fire state otherwise. Set-target on the heavy (CmdHoldTarget)
-	// fires at it whatever the order: on the walk to a firing spot, holding or kiting out of range, a straggler
+	// Parked: hold position (the spot is the cover). Holding the shot for a heavy (isAttack, long reloads only): return
+	// fire, so the reload isn't spent on chaff that comes into range, and no shot at radar blips (ZK's don't-fire-at-
+	// radar, where the type has it); their own fire state otherwise. Set-target on the heavy (CmdHoldTarget) fires at
+	// it whatever the order: on the walk to a firing spot, holding or kiting out of range, a straggler
 	if ((isParking == isParkHold) && (isAttack == isReturnFire) && (aimEnemyId == aimId)) {
 		return;
 	}
@@ -1166,6 +1174,7 @@ void CAntiHeavyTask::ApplyHolds(CCircuitUnit* unit)
 	}
 	TRY_UNIT(manager->GetCircuit(), unit,
 		unit->GetUnit()->SetFireState(isReturnFire ? CCircuitDef::FireType::RETURN : unit->GetCircuitDef()->GetFireState());
+		unit->CmdFireAtRadar(!isReturnFire);
 	)
 	unit->CmdHoldTarget(aimId);
 }

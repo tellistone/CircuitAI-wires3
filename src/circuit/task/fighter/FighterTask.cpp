@@ -206,9 +206,6 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	attackFrame = isRepeatAttack ? frame : attackFrame;
 	const AIFloat3& tPos = target->GetFightPos();
 	GatherKited();
-	if (spreadRadius > 0.f) {
-		manager->GetCircuit()->GetMilitaryManager()->GetAhClaims(this, spreadClaims, &spreadRanks);  // other AH groups
-	}
 	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
 	// Longest range picks first; each pick replaces that unit's claim.
@@ -251,6 +248,9 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	const int timeout = frame + FRAMES_PER_SEC * 60;
 	OrderEscorts(claims, orders, frame, isRepeatAttack, timeout);
 	if (!orders.empty()) {
+		if (spreadRadius > 0.f) {  // other anti-heavy groups, for FindFireSpot
+			manager->GetCircuit()->GetMilitaryManager()->GetAhClaims(this, spreadClaims, &spreadRanks);
+		}
 		OrderOnTarget(claims, orders, frame, isDirect, GetEscapeSafeThreat(), timeout);
 	}
 	kited.clear();  // pointers: only good for this pass

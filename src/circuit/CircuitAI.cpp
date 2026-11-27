@@ -973,7 +973,7 @@ int CCircuitAI::UnitFinished(CCircuitUnit* unit)
 	TRY_UNIT(this, unit,
 		unit->CmdFireAtRadar(true);
 		if (GetBindedRole(unit->GetCircuitDef()->GetMainRole()) == ROLE_TYPE(AH)) {
-			unit->CmdPreventOverkill();  // anti-heavies go to return fire while they attack a heavy
+			unit->CmdPreventOverkill();  // long-reload anti-heavies go to return fire while they attack a heavy
 		}
 //		if (unit->GetCircuitDef()->GetDef()->IsAbleToCloak()) {
 //			unit->CmdCloak(true);

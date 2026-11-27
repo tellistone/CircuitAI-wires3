@@ -237,10 +237,10 @@ protected:
 	springai::AIFloat3 lastOrderTargetPos;
 	float fireSpotReach = -1.f;  // > 0: units farther than this x their fire range from the target get no attack order and keep travelling
 	float crowdRadius = 80.f;  // other claims within this of a firing spot crowd it (FindFireSpot)
-	// > 0: each other group with a claim (CMilitaryManager::GetAhClaims, read once per Attack) within this of a firing
-	// spot costs it half a range of walk (FindFireSpot): different anti-heavy groups spread out. The spot a unit holds
-	// (kept, or where it stands) pays only for groups on their target before it (GetSpreadRank): the newcomer gives
-	// way, the incumbent fires on
+	// > 0: each other group with a claim (CMilitaryManager::GetAhClaims, read by each Attack pass that orders a unit)
+	// within this of a firing spot costs it half a range of walk (FindFireSpot): different anti-heavy groups spread out.
+	// The spot a unit holds (kept, or where it stands) pays only for groups on their target before it (GetSpreadRank):
+	// the newcomer gives way, the incumbent fires on
 	float spreadRadius = 0.f;
 	F3Vec spreadClaims;
 	std::vector<int64_t> spreadRanks;  // each claim's group (GetSpreadRank)

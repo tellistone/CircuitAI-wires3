@@ -136,8 +136,9 @@ public:
 	// Overkill check: the damage the ready shots of anti-heavy units (squads and IsAhArty) targeting enemy would do,
 	// those of task skip aside
 	float GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* skip) const;
-	// Where every anti-heavy group but skip stands or heads (IFighterTask::AddSpreadClaims): anti-heavy squads and
-	// artillery-mode anti-heavies, so groups keep antiheavy.group_spacing apart and one strike can't take several.
+	// Where every anti-heavy group but skip stands or heads (IFighterTask::AddSpreadClaims): anti-heavy squads (not mines
+	// or aircraft) and artillery-mode anti-heavies, so groups keep antiheavy.group_spacing apart and one strike can't
+	// take several.
 	// outRanks (if given): each claim's group (IFighterTask::GetSpreadRank); a group's claims come together
 	void GetAhClaims(const IFighterTask* skip, F3Vec& outClaims, std::vector<int64_t>* outRanks = nullptr) const;
 	// A mobile enemy heavy (enemy role, as GetEnemyCost; buildings don't count, they stay targets) in radar or LOS within
