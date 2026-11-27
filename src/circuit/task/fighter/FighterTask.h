@@ -23,7 +23,9 @@ class CCircuitDef;
 
 class IFighterTask: public IUnitTask {
 public:
-	enum class FightType: char {RALLY = 0, GUARD, DEFEND, SCOUT, RAID, ATTACK, BOMB, MELEE, ARTY, AA, AH, SUPPORT, SUPER, _SIZE_};
+	// RAID_DEFEND: raiders defending our ground (CRaidDefendTask, quota.raid_defence)
+	enum class FightType: char {RALLY = 0, GUARD, DEFEND, SCOUT, RAID, ATTACK, BOMB, MELEE, ARTY, AA, AH, SUPPORT, SUPER,
+		RAID_DEFEND, _SIZE_};
 	using FT = std::underlying_type<FightType>::type;
 
 protected:

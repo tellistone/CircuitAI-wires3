@@ -60,6 +60,9 @@ public:
 	 */
 	// Raw current strength (GetStrengthSum: power x sqrt(health share)): a rally compares it with enemy blobs
 	float GetRallyStrength() const { return GetStrengthSum(); }
+	// Current squad strength (health-scaled power) x powerMod x the group size bonus (GetCountPowerMod). The
+	// thr_mod.distance curve and base bonus are applied per judged spot. Public: quota.raid_defence sums it
+	float GetSafeThreat() const;
 	// May the group led by unit join this one in a rally? Default: never (tasks without rallies)
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const { return false; }
 
@@ -296,9 +299,6 @@ protected:
 	// none of OUTRANGE_CHASED_ROLES? sqSpeed must be at least sqOutrangeSpeed. Unknown type (radar blip): not outranging
 	static bool IsRunningAway(CEnemyInfo* enemy, const springai::AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
 			float ourRange);
-	// Current squad strength (health-scaled power) x powerMod x the group size bonus (GetCountPowerMod). The
-	// thr_mod.distance curve and base bonus are applied per judged spot
-	float GetSafeThreat() const;
 	// Multiplier on GetPathThreatCap's squad allowance; < 0 = no cap at all
 	virtual float GetPathThreatMod() const { return 1.f; }
 	// Pathfinder threat cap for a route from startPos to goals (see .cpp): GetPathThreatAllowance, never below the

@@ -91,6 +91,7 @@ public:
 	~CProtect();
 
 	bool IsEnabled() const { return cfg.isEnabled; }
+	float GetZone() const { return cfg.zone; }
 
 	void Update();  // once a second
 	void OnCommDamaged(CCircuitUnit* comm, CEnemyInfo* attacker);  // any of our commanders

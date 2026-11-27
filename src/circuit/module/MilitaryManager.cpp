@@ -10,6 +10,7 @@
 #include "module/AllyCover.h"
 #include "module/AttackBalance.h"
 #include "module/Protect.h"
+#include "module/RaidDefence.h"
 #include "module/BuilderManager.h"
 #include "module/ChokeDefence.h"
 #include "module/Frontline.h"
@@ -735,6 +736,66 @@ void CMilitaryManager::ReadConfig()
 		protect = std::make_unique<CProtect>(circuit, cfg);
 	}
 	{
+		// quota.raid_defence: {enable, roles, enemy_roles, mex_share, margin, max_share, post_min, react_sec,
+		// escort_leash_sec} (CRaidDefence). Missing (or not an object): off; keys as quota.protect's
+		const Json::Value& q = quotas["raid_defence"];
+		if (!q.isNull() && !q.isObject()) {
+			circuit->LOG("CONFIG %s: quota.raid_defence must be an object, it is off", cfgName.c_str());
+		}
+		CRaidDefence::SConfig cfg;  // off
+		if (q.isObject()) {
+			auto num = [&](const char* key, float def, float lo, float hi) {
+				const Json::Value& v = q[key];
+				if (v.isNull()) {
+					return def;
+				}
+				if (!v.isNumeric()) {
+					circuit->LOG("CONFIG %s: quota.raid_defence.%s must be a number %g..%g, using %g", cfgName.c_str(), key,
+							lo, hi, def);
+					return def;
+				}
+				const float val = v.asFloat();
+				const float clamped = utils::clamp(val, lo, hi);
+				if (clamped != val) {
+					circuit->LOG("CONFIG %s: quota.raid_defence.%s %g clamped to %g", cfgName.c_str(), key, val, clamped);
+				}
+				return clamped;
+			};
+			// Role lists (names as guard.roles); missing: raider; none known: the default
+			auto roles = [&](const char* key, CCircuitDef::RoleM def) {
+				const Json::Value& v = q[key];
+				if (v.isNull()) {
+					return def;
+				}
+				CCircuitDef::RoleM mask = 0;
+				for (const Json::Value& r : v) {
+					auto it = roleNames.find(r.asString());
+					if (it == roleNames.end()) {
+						circuit->LOG("CONFIG %s: quota.raid_defence.%s has unknown role '%s'", cfgName.c_str(), key,
+								r.asString().c_str());
+						continue;
+					}
+					mask |= CCircuitDef::GetMask(it->second.type);
+				}
+				return (mask != 0) ? mask : def;
+			};
+			const Json::Value& qen = q["enable"];
+			if (!qen.isNull() && !qen.isBool()) {
+				circuit->LOG("CONFIG %s: quota.raid_defence.enable must be true or false, it is off", cfgName.c_str());
+			}
+			cfg.isEnabled = qen.isBool() && qen.asBool();
+			cfg.roleMask = roles("roles", CCircuitDef::RoleMask::RAIDER);
+			cfg.enemyRoleMask = roles("enemy_roles", CCircuitDef::RoleMask::RAIDER);
+			cfg.mexShare = num("mex_share", 0.33f, 0.f, 1.f);
+			cfg.margin = num("margin", 1.3f, 0.5f, 5.f);
+			cfg.maxShare = num("max_share", 0.6f, 0.f, 1.f);
+			cfg.postMin = num("post_min", 1.25f, 0.f, 10.f);
+			cfg.reactSec = num("react_sec", 8.f, 1.f, 60.f);
+			cfg.escortLeashSec = num("escort_leash_sec", 10.f, 0.f, 60.f);
+		}
+		raidDefence = std::make_unique<CRaidDefence>(circuit, cfg);
+	}
+	{
 		// Each route kind on or off (default on); a bare true/false sets them all
 		static const char* const kinds[] = {"target", "reinforce", "front", "flee", "cornered"};
 		const Json::Value& qdyn = quotas["attack_path_dynamic_cost"];
@@ -1441,6 +1502,11 @@ void CMilitaryManager::Init()
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhPull, this), FRAMES_PER_SEC * 2, offset + 1);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAhStats, this), FRAMES_PER_SEC, offset + 2);
 		scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::LogAhStats, this), FRAMES_PER_SEC * 60, offset + 3);
+		// quota.raid_defence: before the protect, which takes its incidents (same frame, registered first)
+		if (raidDefence->IsEnabled()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateRaidDefence, this), FRAMES_PER_SEC, offset + 2);
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CRaidDefence::Log, raidDefence.get()), FRAMES_PER_SEC * 60, offset + 3);
+		}
 		// Before the rallies, which leave its committed groups out (same frame as the attack rally, registered first)
 		if (protect->IsEnabled()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateProtect, this), FRAMES_PER_SEC, offset + 2);
@@ -1542,6 +1608,7 @@ int CMilitaryManager::UnitIdle(CCircuitUnit* unit)
 
 int CMilitaryManager::UnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
+	raidDefence->OnUnitDamaged(unit, attacker);  // any of our units: its assets are economy and builder units
 	auto search = damagedHandler.find(unit->GetCircuitDef()->GetId());
 	if (search != damagedHandler.end()) {
 		search->second(unit, attacker);
@@ -1568,6 +1635,7 @@ static bool CanFightBack(const CCircuitDef* tdef, const CCircuitDef* kdef)
 int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	capturedUnits.erase(unit->GetId());  // also called when a unit is taken back from us
+	raidDefence->OnUnitDestroyed(unit, attacker);
 	scoutStints.erase(unit->GetId());  // ids get reused
 	// quota.attack_balance outcome log: counted for the fight the unit was in, also after it left its group to retreat
 	attackBalance->NoteUnitLost(unit->GetId(), unit->GetCircuitDef()->GetCostM());
@@ -1931,6 +1999,12 @@ void CMilitaryManager::UpdateProtect()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
 	protect->Update();
+}
+
+void CMilitaryManager::UpdateRaidDefence()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	raidDefence->Update();
 }
 
 void CMilitaryManager::UpdateAttackRally()
@@ -4671,6 +4745,7 @@ void CMilitaryManager::ReactSuddenThreat(CEnemyInfo* enemy)
 void CMilitaryManager::NoteEnemyKilled(const CEnemyInfo* enemy, int attackerId)
 {
 	attackBalance->NoteKill(attackerId, enemy->GetCost());
+	raidDefence->OnEnemyKilled(enemy, attackerId);
 }
 
 void CMilitaryManager::UnmarkPointOfInterest(CEnemyInfo* enemy)
