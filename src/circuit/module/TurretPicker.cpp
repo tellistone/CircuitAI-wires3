@@ -187,68 +187,64 @@ bool CTurretPicker::IsLightCrowded(const AIFloat3& pos) const
 	return (config.crowdCount > 0) && (CountLight(pos) >= config.crowdCount);
 }
 
-bool CTurretPicker::FindSameTurret(const CCircuitDef* def, const AIFloat3& pos, const IBuilderTask* skip,
-		const char** outWhat, AIFloat3* outPos) const
+void CTurretPicker::ForEachTurretNear(const AIFloat3& pos, float radius, const IBuilderTask* skip,
+		const std::function<void (const STurretNear&)>& fn) const
 {
-	if ((config.sameRadius <= 0.f) || !IsDefence(def)) {
-		return false;
-	}
-	SGather gather;
-	gather.centre = pos;
-	gather.radius = 0.f;
-	GatherSame(gather, skip);
-	const SSame* same = FindSame(gather, def, pos);
-	if (same == nullptr) {
-		return false;
-	}
-	if (outWhat != nullptr) {
-		*outWhat = same->what;
-	}
-	if (outPos != nullptr) {
-		*outPos = same->pos;
-	}
-	return true;
-}
-
-void CTurretPicker::GatherSame(SGather& gather, const IBuilderTask* skip) const
-{
-	// Ours, finished or being built (the team list is current: a nanoframe started this frame is in it), then our
-	// allies' (the ally list as last refreshed, a few frames at most), then our jobs not started yet
-	gather.sames.clear();
-	if (config.sameRadius <= 0.f) {
-		return;
-	}
-	const float sqReach = SQUARE(gather.radius + config.sameRadius);
+	COOAICallback* clb = circuit->GetCallback();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	const int frame = circuit->GetLastFrame();
-	auto add = [&](const CCircuitDef* cdef, const AIFloat3& pos, const char* what) {
-		if (IsDefence(cdef) && utils::is_valid(pos) && (pos.SqDistance2D(gather.centre) <= sqReach)) {
-			gather.sames.push_back({cdef, pos, what});
+	auto units = clb->GetFriendlyUnitsIn(pos, radius, false);  // a copy: the callback's buffer is shared
+	for (Unit* u : units) {
+		if (u == nullptr) {
+			continue;
 		}
-	};
-	for (const auto& kv : circuit->GetTeamUnits()) {
-		add(kv.second->GetCircuitDef(), kv.second->GetPos(frame), "ours");
-	}
-	for (const auto& kv : circuit->GetFriendlyUnits()) {
-		if (circuit->GetTeamUnit(kv.first) == nullptr) {
-			add(kv.second->GetCircuitDef(), kv.second->GetPos(frame), "an ally's");
+		const int id = u->GetUnitId();
+		const CCircuitDef::Id defId = clb->Unit_GetDefId(id);
+		const CCircuitDef* cdef = circuit->IsValidUnitDefId(defId) ? circuit->GetCircuitDef(defId) : nullptr;
+		if (!IsDefence(cdef)) {
+			continue;
+		}
+		CCircuitUnit* own = circuit->GetTeamUnit(id);
+		if (own == nullptr) {
+			fn({cdef, u->GetPos(), "an ally's", nullptr});
+			continue;
+		}
+		IBuilderTask* job = own->GetUnit()->IsBeingBuilt() ? builderMgr->GetFrameJob(own) : nullptr;
+		if ((job == nullptr) ? !own->GetUnit()->IsBeingBuilt() : (job != skip)) {
+			fn({cdef, own->GetPos(frame), "one of ours", job});
 		}
 	}
-	circuit->GetBuilderManager()->ForEachQueuedTower([&add, skip](IBuilderTask* t) {
-		if (t != skip) {
-			add(t->GetBuildDef(), t->GetTaskPos(), "our job");
+	utils::free_clear(units);
+	const float sqRadius = SQUARE(radius);
+	builderMgr->ForEachQueuedTower([&](IBuilderTask* t) {
+		const AIFloat3& tpos = t->GetPosition();
+		if ((t != skip) && IsDefence(t->GetBuildDef()) && (tpos.SqDistance2D(pos) <= sqRadius)) {
+			fn({t->GetBuildDef(), tpos, "a job of ours", t});
 		}
 	});
 }
 
-const CTurretPicker::SSame* CTurretPicker::FindSame(const SGather& gather, const CCircuitDef* def,
-		const AIFloat3& pos) const
+std::optional<CTurretPicker::STurretNear> CTurretPicker::FindSameTurret(const CCircuitDef* def, const AIFloat3& pos,
+		const IBuilderTask* skip) const
 {
-	const SSame* best = nullptr;
+	if ((config.sameRadius <= 0.f) || !IsDefence(def)) {
+		return std::nullopt;
+	}
+	std::vector<STurretNear> turrets;
+	ForEachTurretNear(pos, config.sameRadius, skip, [&turrets](const STurretNear& t) { turrets.push_back(t); });
+	const STurretNear* same = FindSame(turrets, def, pos);
+	return (same != nullptr) ? std::optional<STurretNear>(*same) : std::nullopt;
+}
+
+const CTurretPicker::STurretNear* CTurretPicker::FindSame(const std::vector<STurretNear>& turrets,
+		const CCircuitDef* def, const AIFloat3& pos) const
+{
+	const STurretNear* best = nullptr;
 	float bestSq = SQUARE(config.sameRadius);
-	for (const SSame& s : gather.sames) {
-		const float sq = s.pos.SqDistance2D(pos);
-		if ((s.def == def) && (sq < bestSq)) {
-			best = &s;
+	for (const STurretNear& t : turrets) {
+		const float sq = t.pos.SqDistance2D(pos);
+		if ((t.def == def) && (sq < bestSq)) {
+			best = &t;
 			bestSq = sq;
 		}
 	}
@@ -257,20 +253,9 @@ const CTurretPicker::SSame* CTurretPicker::FindSame(const SGather& gather, const
 
 int CTurretPicker::CountLight(const AIFloat3& pos) const
 {
-	// The ally team's light turrets, finished or being built, then our jobs not started yet; enough is enough
 	int count = 0;
-	COOAICallback* clb = circuit->GetCallback();
-	for (int id : clb->GetFriendlyUnitIdsIn(pos, config.crowdRadius)) {
-		const CCircuitDef* cdef = (id != -1) ? circuit->GetCircuitDef(clb->Unit_GetDefId(id)) : nullptr;
-		if ((cdef != nullptr) && IsLight(cdef) && (++count >= config.crowdCount)) {
-			return count;
-		}
-	}
-	const float sqRadius = SQUARE(config.crowdRadius);
-	circuit->GetBuilderManager()->ForEachQueuedTower([this, &count, &pos, sqRadius](IBuilderTask* t) {
-		if (IsLight(t->GetBuildDef()) && (t->GetTaskPos().SqDistance2D(pos) < sqRadius)) {
-			++count;
-		}
+	ForEachTurretNear(pos, config.crowdRadius, nullptr, [this, &count](const STurretNear& t) {
+		count += IsLight(t.def) ? 1 : 0;
 	});
 	return count;
 }
@@ -337,7 +322,11 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	}
 	SGather gather = Gather(centre, radius, maxRange, -RgtVector);
 	gather.isAlly = order.isAlly;
-	GatherSame(gather, nullptr);
+	if (config.sameRadius > 0.f) {  // turret.same_radius
+		ForEachTurretNear(centre, radius + config.sameRadius, nullptr, [&gather](const STurretNear& t) {
+			gather.sames.push_back(t);
+		});
+	}
 	if (order.IsCreep()) {
 		GatherGuns(gather);
 	}
@@ -441,11 +430,9 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 		return false;
 	}
 	// turret.same_radius: one of its type placed nearby meanwhile (an ally's, say), its own job left out
-	const char* what = nullptr;
-	AIFloat3 samePos;
-	if (FindSameTurret(def, spot, task, &what, &samePos)) {
-		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), %s of its type within %.0f at (%.0f, %.0f)",
-				def->GetDef()->GetName(), spot.x, spot.z, what, config.sameRadius, samePos.x, samePos.z);
+	if (const auto same = FindSameTurret(def, spot, task)) {
+		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), %s within %.0f at (%.0f, %.0f)",
+				def->GetDef()->GetName(), spot.x, spot.z, same->whose, config.sameRadius, same->pos.x, same->pos.z);
 		return false;
 	}
 	// Its own tower (queued at the spot) left out of the halving; A only if the order counted it
@@ -804,7 +791,7 @@ CTurretPicker::Reject CTurretPicker::FinishCandidate(CCircuitDef* def, CCircuitU
 	if (!utils::is_valid(site)) {
 		return Reject::SITE;
 	}
-	if (FindSame(gather, def, site) != nullptr) {  // turret.same_radius
+	if (FindSame(gather.sames, def, site) != nullptr) {  // turret.same_radius
 		return Reject::SAME;
 	}
 	if (!circuit->GetBuilderManager()->IsTurretJobSafe(builder, site)) {

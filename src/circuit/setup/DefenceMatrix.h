@@ -46,6 +46,7 @@ public:
 		// back once no tower of its type stands within same_radius of where it would have gone
 		struct SSameSkip {
 			int defId;  // CCircuitDef::Id: the matrix is the ally team's, shared by every Wires AI in it
+			int teamId;  // the AI that booked it gives it back
 			springai::AIFloat3 pos;
 			float cost;
 		};

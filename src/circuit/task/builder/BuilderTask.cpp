@@ -894,8 +894,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				// a light tower among enough light turrets, are left out of the chain. A turret the account
 				// (porcupine.budget) can't pay for yet waits for it, out of the chain
 				if ((bi.buildType == IBuilderTask::BuildType::DEFENCE)
-					&& (militaryMgr->RefuseSameTurret(buildDef, pos, "hub")
-						|| militaryMgr->RefuseCrowdedLight(buildDef, pos, "hub")
+					&& (militaryMgr->RefuseTurret(buildDef, pos, "hub")
 						|| militaryMgr->HoldHubTower(buildDef, pos, isScored, target)))
 				{
 					continue;

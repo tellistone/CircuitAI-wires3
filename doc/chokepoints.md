@@ -167,7 +167,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.creep_radius` | `250` | The picker's radius about a step's end on the target (half the step, if less, short of it). A finished defence within it of the target claims the lane; within it of the gap, a turret is past it. |
 | `turret.creep_losses` | `2` | Our ground-hitting turrets lost in a lane's outer region, or within a step of its end, since its last rest, that rest the lane; 0 = never. |
 | `turret.creep_budget` | `0.5` | A creep order needs only this x the dearest def it would choose from (the light defs, and each tier the account covers) in the turret account; 0 to 1. The full cost is still charged. |
-| `turret.same_radius` | `300` | **Same-type spacing, every caller.** A defence (an armed static, `turret.not_defence` aside) isn't placed within this of one of its own type of our ally team: ours or an ally's, finished or being built, or a job of ours not started yet. The picker (its callers, the creep, test orders) and `aa_turret` skip such spots and take the next best spot or def; a picker job is dropped on arrival if one went up meanwhile. A cornered builder takes the next def of its list that can hit. Preventive and porc-mode towers, build chain hub towers, base towers, radar guards and mex escorts aren't queued. Nothing is charged, so the turret account keeps the metal; a preventive tower, which the account doesn't pay for, credits it its cost instead (up to its cap; `same-type credit` on the `TURRET BUDGET` line). A refused preventive or porc tower stays booked on its defence point until no tower of its type stands within this of its place. 0 = off. |
+| `turret.same_radius` | `300` | **Same-type spacing.** A defence (an armed static, `turret.not_defence` aside) isn't placed within this of one of its own type of our ally team: ours or an ally's, finished or being built, or a job of ours not started yet. A nanoframe of ours counts only while a job of ours is on it (ZK frames don't decay). The picker (its callers, the creep, test orders) and `aa_turret` skip such spots and take the next best spot or def; a picker job is dropped on arrival if one went up meanwhile. A cornered builder takes the next def of its list that can hit, at most 2× the cost of the first, else helps our unfinished one that stood in the way, else builds none. Preventive and porc-mode towers, build chain hub towers, base towers and radar guards aren't queued. A mex escort isn't held back. Nothing is charged for a tower not placed, so the turret account keeps the metal. A refused preventive or porc tower stays booked on its defence point until no tower of its type stands within this of its place. 0 = off. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
 | `turret.share` | — | Removed: the picker spends from the turret account, `porcupine.budget` in build_chain.json. `choke_overlay set turret.share` sets the account's share. |
@@ -611,9 +611,8 @@ Lines in the AI's infolog, for tuning:
   threatened, out of reach, unbuildable, near one of its type, unsafe or masked. `helps the ...` when it assists a turret
   instead, and `dropped on arrival` when a job's spot stopped paying, came under threat or got a defence of its type
   nearby.
-- `TURRET <caller>: no <def> at (x, z), <ours | an ally's | our job> of its type within 300 at (x, z)`: a tower
-  `turret.same_radius` kept out (`prevent`, `porc`, `hub`, `base`, `radar guard`, `cornered`, `escort`), with
-  `+N to the turret account` for a preventive one.
+- `TURRET <caller>: no <def> at (x, z), <one of ours | an ally's | a job of ours> within 300 at (x, z)`: a tower
+  `turret.same_radius` kept out (`prevent`, `porc`, `hub`, `base`, `radar guard`, `cornered`).
 
 ## Known limits
 

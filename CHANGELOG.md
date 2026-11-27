@@ -8,20 +8,27 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 ### Changed
 
 - **No turret within 300 elmos of one of its own type** (`turret.same_radius`, new, 300; 0 = off). Every way the AI
-  places a turret now leaves out a spot within 300 of a turret of the same type of our ally team: ours or an ally's,
-  finished or being built, or a job of ours not started yet. Before, only light turrets had a crowd rule
-  (`turret.crowd_count`: 3 within 600), and the porc lists, build chain hubs and base timetable stacked the same tower
-  side by side (a Singularity's hub queued 2 Lotuses and 4 Pickets about it; a porc point's list repeats defs).
+  places a turret, but a mex escort, now leaves out a spot within 300 of a turret of the same type of our ally team:
+  ours or an ally's, finished or being built, or a job of ours not started yet. Before, only light turrets had a crowd
+  rule (`turret.crowd_count`: 3 within 600), and the porc lists, build chain hubs and base timetable stacked the same
+  tower side by side (a Singularity's hub queued 2 Lotuses and 4 Pickets about it; a porc point's list repeats defs).
   - The turret picker (near enemy, after flee, chokes, enemy line, artillery, the creep, test orders) and `aa_turret`
     skip such spots and take the next best spot or def. A picker job is also dropped on arrival if one went up nearby
     meanwhile (an ally's, say); it is refunded, as any job not started.
-  - A cornered builder takes the next def of its list that can hit the danger.
-  - Preventive and porc-mode towers, build chain hub towers, base towers, radar guards and mex escorts aren't queued.
-    A refused preventive or porc tower stays booked on its defence point while that turret stands, so the towers
-    after it aren't queued twice, and is given back once none of its type is within 300 of its place.
-  - Nothing is charged for a tower not placed, so the turret account keeps the metal. A preventive tower, which the
-    account never pays for, credits it its cost instead (up to the cap), logged as `same-type credit` on the
-    `TURRET BUDGET` line. Each refusal logs `TURRET <caller>: no <def> at (x, z), <whose> of its type within 300`.
+  - A cornered builder takes the next def of its list that can hit the danger, at most 2x the cost of the first (a
+    Stinger is 5x a Lotus, too long to nanolathe under fire); else it helps our unfinished one that stood in the way,
+    no nearer the danger than it is; else it builds none.
+  - Preventive and porc-mode towers, build chain hub towers, base towers and radar guards aren't queued. A refused
+    preventive or porc tower stays booked on its defence point while that turret stands, so the towers after it
+    aren't queued twice, and is given back (by the AI that booked it) once none of its type is within 300 of its
+    place. A porc tower refused this way no longer waits for the account first.
+  - A mex escort is left out: it only goes up where no turret of ours reaches the enemy mex already.
+  - Nothing is charged for a tower not placed, so the turret account keeps the metal; a preventive tower is free and
+    stays so. Each refusal logs `TURRET <caller>: no <def> at (x, z), <whose> within 300 at (x, z)`.
+  - Turrets near a spot are looked up with the engine's area query (`CTurretPicker::ForEachTurretNear`), shared with
+    `turret.crowd_count`: current to the frame, local, and in each AI's own unit defs, so the second and later Wires
+    AIs of a team see allied turrets too. A nanoframe of ours counts only while a job of ours is on it, since ZK
+    frames don't decay; that holds for the crowd rule too, which also measures in 2D now.
 
 - **Anti-heavy groups keep apart** (`antiheavy.group_spacing`, new, default 300; 0 = firing spots don't spread).
   Different groups (ground squads, and each artillery-mode anti-heavy) used to pick the same spots: firing spots only
