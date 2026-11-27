@@ -226,7 +226,7 @@ protected:
 	 * or sooner if walking back into range would take longer than the reload it has left. Out of the target's reach it
 	 * stays put and reloads (other enemies are the flee's job). No scoot when there isn't time to get out and back
 	 * before the weapon is ready. The rest of the squad fights on. Scoots exist only while the squad is engaged: they
-	 * end when it stops (and drop the queued attack).
+	 * end when it stops. Every scoot end drops the queued attack: the task orders the unit again itself.
 	 * Call UpdateScoots every update; Attack, the pull-back and the regroup check skip scooting units
 	 */
 	static constexpr float DEFAULT_SCOOT_MARGIN = 100.f;  // reload_scoot_margin when unset (tasks may override)
@@ -268,8 +268,9 @@ private:
 protected:
 	void SetScootHold(CCircuitUnit* unit, bool isHold);
 private:
-	// Erases the scoot, gives the unit its move state back, then OnScootEnd
+	// Erases the scoot, ReleaseScoot, then OnScootEnd
 	void EndScoot(Scoots::iterator it, int frame, bool isEngaged);
+	void ReleaseScoot(CCircuitUnit* unit);  // a scoot's end: its move state back, its queued wait and attack dropped
 	Scoots scoots;  // reloading units stepping out of reach (on hold position)
 
 protected:

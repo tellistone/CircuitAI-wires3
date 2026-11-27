@@ -364,8 +364,25 @@ bool CCircuitUnit::IsPlantHeld(CEnemyInfo* enemy)
 
 void CCircuitUnit::CmdCancelTarget()
 {
-	plant.targetId = -1;  // sent whatever it says: a task's ClearTarget clears it too
+	plant.targetId = heldTarget.id = -1;  // sent whatever it says: a task's ClearTarget clears it too
 	unit->ExecuteCustomCommand(CMD_UNIT_CANCEL_TARGET, {});
+}
+
+void CCircuitUnit::CmdHoldTarget(int enemyId)
+{
+	// The same one again: sent anew every few seconds, as ZK drops it after a few seconds out of LOS and radar
+	const int frame = manager->GetCircuit()->GetLastFrame();
+	if ((enemyId == heldTarget.id) && ((enemyId < 0) || (frame < heldTarget.frame + FRAMES_PER_SEC * 3))) {
+		return;
+	}
+	heldTarget = {enemyId, frame};
+	TRY_UNIT(manager->GetCircuit(), this,
+		if (enemyId >= 0) {
+			unit->ExecuteCustomCommand(CMD_UNIT_SET_TARGET, {static_cast<float>(enemyId)});
+		} else {
+			unit->ExecuteCustomCommand(CMD_UNIT_CANCEL_TARGET, {});
+		}
+	)
 }
 
 void CCircuitUnit::CmdCloak(bool state)

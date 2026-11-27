@@ -12,25 +12,32 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   their own group, and squads parking behind an attack group ignored the artillery-mode units following it. Now
   `CMilitaryManager::GetAhClaims` lists where every other anti-heavy group stands or heads (a unit's firing spot from
   the last two attack repeats, else where it stands; the end of the route an artillery-mode unit walks; a squad's park
-  spot). Each such claim within `group_spacing` of a firing spot costs it half a range of walking (`FindFireSpot`);
-  artillery-mode walk-to spots skip cells within max(96, `group_spacing`) of one (was 96 from other artillery-mode
-  units only); their side slots behind an attack group are max(144, `group_spacing`) apart (was 144); and squads don't
-  park within max(256, 2x `spacing`, `group_spacing`) of one (was other squads' park spots only).
+  spot), each claim tagged with its group's age (`IFighterTask::GetSeniority`, creation order). Each other group with
+  a claim within `group_spacing` of a firing spot costs it half a range of walking (`FindFireSpot`, once per group);
+  the spot a unit holds (kept, or where it stands in its fire band) counts only older groups, so the newcomer gives
+  way, the incumbent fires on, and two groups never shuffle each other. Artillery-mode walk-to spots skip cells within
+  96 of a claim (was 96 from other artillery-mode units only) and use cells within `group_spacing` of one only when no
+  other is left, so spacing never costs them their last firing spot. Their side slots behind an attack group are
+  max(144, `group_spacing`) apart (was 144) and skip squads' park spots. Squads don't park within max(256, 2x
+  `spacing`, `group_spacing`) of a claim (was other squads' park spots only), but keep the spot they hold
+  (`IsOwnPark`): before, a claim landing on it froze a spot behind a group or dropped a tower spot.
 
-- **Anti-heavies go to return fire while they attack a heavy, and only then.** Squads (`CAntiHeavyTask::UpdateHolds`)
-  used hold fire for that, and only for snipers that park (Lance, Merlin); now every squad goes to return fire while
-  it attacks its heavy (not in the LOS grace, nor fleeing). Artillery-mode anti-heavies (`CArtilleryTask::SetAttacking`)
-  do the same while their attack order on a heavy is live; a flee or losing the target gives back the unit's own fire
-  state (`fire_state`, default fire at will), and so does leaving the task. The attack order still fires, and return
-  fire also shoots back at whoever hits them, so the reload isn't spent on chaff.
-
-- **Scoots keep the attack order, queued behind the step back** (`CCircuitUnit::ScootAttack`), for artillery-mode
-  anti-heavies and squads alike: move to the scoot spot, wait there, then attack the target again. The wait is the
-  engine's plain wait with a timeout (its timed wait is for players only; an AI's is dropped at once), set to when
-  walking back into place takes as long as the reload left, so a unit can never be left waiting. The AI's own scoot
-  end still re-orders the attack about then (a firing spot), so the queued attack is the fallback. Artillery mode now
-  keeps return fire and its target through the scoot. A scoot that ends with the fight (squad no longer engaged,
-  leaving the task or squad, the task stopping) drops the queued wait and attack.
+- **Anti-heavies hold their shot for the heavy.** While a unit attacks a heavy it goes to return fire, and ZK's
+  set-target goes on the heavy (`CCircuitUnit::CmdHoldTarget`), so the long reload isn't spent on chaff that comes
+  into range, yet the unit fires at the heavy whatever its order: on the walk to each firing spot, holding or kiting
+  out of range, a straggler, back from a scoot (the engine fires at a set target whatever the fire state; an Attack
+  order alone only counts at the front of the queue). Squads (`CAntiHeavyTask::UpdateHolds`) used hold fire for this,
+  and only for snipers that park (Lance, Merlin); now every squad does it while it attacks its heavy, and keeps return
+  fire through the LOS grace (no chaff shot as the heavy reappears) with the set-target off then (no shot at its radar
+  blip). Artillery-mode anti-heavies (`CArtilleryTask::SetAttacking`) do it while their attack order on a heavy is
+  live. A flee, losing the target or leaving the task gives back the unit's own fire state (`fire_state`, default fire
+  at will) and cancels the set-target. Scoots keep the attack order, queued behind the step back
+  (`CCircuitUnit::ScootAttack`): move to the scoot spot, wait there (the engine's plain wait with a timeout, set to
+  when walking back takes as long as the reload left; its timed wait is for players only), then attack again. The
+  queued attack is a placeholder that keeps the order live through the scoot: every scoot end drops it and the task
+  orders the unit again (`ISquadTask::ReleaseScoot`; a queued attack out of LOS would shoot a radar blip). Artillery
+  mode now keeps return fire and its target through the scoot. The squad scoot is shared by every squad type, but today
+  only anti-heavy squads scoot (no unit sets `reload_scoot`).
 
 - **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
   radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped

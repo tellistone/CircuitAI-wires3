@@ -6,6 +6,7 @@
  */
 
 #include "task/fighter/ArtilleryTask.h"
+#include "task/fighter/AntiHeavyTask.h"
 #include "task/fighter/AttackTask.h"
 #include "task/TaskManager.h"
 #include "map/ThreatMap.h"
@@ -53,6 +54,7 @@ std::vector<CEnemyInfo*> CArtilleryTask::candidates;
 std::vector<CArtilleryTask::SFrontEnemy> CArtilleryTask::frontEnemies;
 F3Vec CArtilleryTask::frontGoals;
 F3Vec CArtilleryTask::crowd;
+F3Vec CArtilleryTask::crowdedPositions;
 std::vector<CEnemyInfo*> CArtilleryTask::ignoredQuarries;
 std::vector<CArtilleryTask::SEscort> CArtilleryTask::escorts;
 std::vector<CArtilleryTask::SDanger> CArtilleryTask::dangers;
@@ -216,6 +218,7 @@ void CArtilleryTask::Execute(CCircuitUnit* unit, bool isUpdating)
 			// The attack task's firing spots: the cheapest allowed spot (threat, walk) at ~90% of our range, re-picked
 			// every 3 s and when the heavy moves a tile, so the unit backs off as it closes in; none: from here
 			SetTarget(bestTarget);  // also for the other anti-heavy units' overkill check (GetAhReadyDamage)
+			unit->CmdHoldTarget(bestTarget->GetId());  // on return fire: shoots it on a walk to a spot too (SetAttacking)
 			if (!wasAttacking) {
 				unit->ClearTarget();  // our own Stop or flee came in between: order at once
 			}
@@ -654,6 +657,7 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range, const F3
 	// Returns the goal range for the path query: the pathfinder accepts any square within one square of a cell centre.
 	// The work is bounded to the area around our mobile escorts: no cell elsewhere can be covered
 	firePositions.clear();
+	crowdedPositions.clear();
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const CMilitaryManager::SArtilleryCfg& artyCfg = GetCfg();
@@ -779,9 +783,12 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range, const F3
 					continue;
 				}
 				cellAdded[index] = 1;  // checked once, whatever the outcome
-				if (isCrowdCheck && IsNearAny(cellPos, crowd, groupRadius)) {
-					continue;  // another anti-heavy group stands or walks there: one strike would hit both
+				// Another anti-heavy group stands or walks there: one strike would hit both. Within CROWD_RADIUS never;
+				// within group_spacing only if no other cell is left (crowdedPositions), so spacing never starves us
+				if (isCrowdCheck && IsNearAny(cellPos, crowd, CROWD_RADIUS)) {
+					continue;
 				}
+				const bool isCrowded = isCrowdCheck && (groupRadius > CROWD_RADIUS) && IsNearAny(cellPos, crowd, groupRadius);
 				// A spot inside a flee zone without the cover to hold there: walk in, flee, walk back
 				float dangerThreat;
 				if (isFleeCheck && (FindDanger(cellPos, dangerThreat) != nullptr)
@@ -798,10 +805,13 @@ float CArtilleryTask::FillCoveredSpots(CCircuitUnit* unit, float range, const F3
 						|| (isThreatCover && (cellThreat <= maxCellThreat)
 							&& (fleeCoverGrid[index] - cellThreat >= artyCfg.allyThreat));
 				if (isThreatOk && terrainMgr->CanMoveToPos(area, cellPos)) {
-					firePositions.push_back(cellPos);
+					(isCrowded ? crowdedPositions : firePositions).push_back(cellPos);
 				}
 			}
 		}
+	}
+	if (firePositions.empty()) {
+		firePositions.swap(crowdedPositions);
 	}
 	return goalRange;
 }
@@ -883,7 +893,9 @@ void CArtilleryTask::StopAttack(CCircuitUnit* unit)
 void CArtilleryTask::SetAttacking(CCircuitUnit* unit, bool isOn)
 {
 	// Anti-heavy: return fire while the attack order on a heavy is live (also queued behind a scoot), so the reload
-	// isn't spent on chaff (the attack order still fires, and so do shots back at whoever hits it); its own otherwise
+	// isn't spent on chaff that comes into range; its own fire state otherwise. Execute also sets ZK's set-target on
+	// the heavy (CmdHoldTarget), which fires whatever the order: on the walk to each firing spot and back from a scoot,
+	// where the attack order isn't at the front of the queue. Cancelled here with the attack
 	if (isAttacking == isOn) {
 		return;
 	}
@@ -892,6 +904,9 @@ void CArtilleryTask::SetAttacking(CCircuitUnit* unit, bool isOn)
 		TRY_UNIT(manager->GetCircuit(), unit,
 			unit->GetUnit()->SetFireState(isOn ? CCircuitDef::FireType::RETURN : unit->GetCircuitDef()->GetFireState());
 		)
+		if (!isOn) {
+			unit->CmdHoldTarget(-1);
+		}
 	}
 }
 
@@ -981,8 +996,9 @@ bool CArtilleryTask::GetArmySpot(CCircuitUnit* unit, AIFloat3& outPos)
 		return false;
 	}
 
-	// Its slot: the n-th of the artillery-mode anti-heavies following that group (by unit id) stands on alternate
-	// sides of the point follow_dist back towards our base, (n + 1) / 2 slot gaps out
+	// Its slot: the n-th of the artillery-mode anti-heavies following that group (by unit id) takes the n-th slot, on
+	// alternate sides of the point follow_dist back towards our base, that isn't on a squad's park spot (squads keep
+	// theirs: AntiHeavyTask's AddParkSpot)
 	int n = 0;
 	for (IFighterTask* task : militaryMgr->GetTasks(FightType::ARTY)) {
 		const CArtilleryTask* other = static_cast<const CArtilleryTask*>(task);
@@ -1001,12 +1017,29 @@ bool CArtilleryTask::GetArmySpot(CCircuitUnit* unit, AIFloat3& outPos)
 	}
 	back /= len;
 	const AIFloat3 side(-back.z, 0.f, back.x);
-	const int k = (n % 2 == 1) ? (n + 1) / 2 : -(n / 2);  // 0, 1, -1, 2, -2, ...
 	const AIFloat3 straight = groupPos + back * std::max(0.f, std::min(GetCfg().followDist, len));
+	const float groupRadius = GetCrowdRadius();
+	const float slotGap = std::max(1.5f * CROWD_RADIUS, groupRadius);  // between side slots: groups apart
+	F3Vec parks;
+	for (IFighterTask* task : militaryMgr->GetTasks(FightType::AH)) {
+		const AIFloat3& parkPos = static_cast<CAntiHeavyTask*>(task)->GetParkPos();
+		if (utils::is_valid(parkPos)) {
+			parks.push_back(parkPos);
+		}
+	}
+	// A park spot is near at most 3 slots (they're a group radius apart or more): one of these is clear
+	AIFloat3 slot = straight;
+	for (int i = 0, clear = 0; i <= n + 3 * static_cast<int>(parks.size()); ++i) {
+		const int k = (i % 2 == 1) ? (i + 1) / 2 : -(i / 2);  // 0, 1, -1, 2, -2, ...
+		const AIFloat3 p = straight + side * (k * slotGap);
+		if (!IsNearAny(p, parks, groupRadius) && (clear++ == n)) {
+			slot = p;
+			break;
+		}
+	}
 	STerrainMapArea* area = unit->GetArea();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	const float slotGap = std::max(1.5f * CROWD_RADIUS, GetCrowdRadius());  // between side slots: groups apart
-	const AIFloat3 tries[] = {straight + side * (k * slotGap), straight, groupPos};  // its slot, straight back, the leader
+	const AIFloat3 tries[] = {slot, straight, groupPos};  // its slot, straight back, the leader
 	for (const AIFloat3& p : tries) {
 		AIFloat3 spot = p;
 		CTerrainManager::CorrectPosition(spot);

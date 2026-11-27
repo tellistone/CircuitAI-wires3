@@ -158,22 +158,25 @@ private:
 	bool IsParker() const;  // a sniper, with the cover map on
 	// Candidates: behind our attack groups (follow_dist back, and side slots), else (no group spot) tower groups (our and
 	// allied built armed statics by cell), on our side of them a third of their range back; never within 256 of our
-	// base. Walkable, safe (IsSpotSafe), covered, and not claimed by another anti-heavy group (GetAhClaims). Score: cover (at most 3x
-	// flee_ally_threat) x heavy pressure (sightings weighted down over keep_sec, full within our weapon range),
-	// / (1 + minutes of walking), and halved near a recent retreat. Best first
+	// base. Walkable, safe (IsSpotSafe), covered, and not claimed by another anti-heavy group (GetAhClaims), our own
+	// spot aside (IsOwnPark). Score: cover (at most 3x flee_ally_threat) x heavy pressure (sightings weighted down over
+	// keep_sec, full within our weapon range), / (1 + minutes of walking), and halved near a recent retreat. Best first
 	void FillParkSpots(std::vector<SParkSpot>& outSpots);
 	void AddParkSpot(const springai::AIFloat3& pos, const IFighterTask* group, int slot, std::vector<SParkSpot>& outSpots);
 	// Another anti-heavy group's claim this near blocks a park spot; side slots are this far apart; a squad this far from
 	// its spot walks back. max(256, 2x spacing, group_spacing)
 	float GetClaimRadius() const;
 	void SetPark(const SParkSpot& spot);  // claims it (GetParkPos) from now
+	// Is this our park spot: the same slot behind the same group, or a tower spot in the same cell?
+	bool IsOwnPark(const springai::AIFloat3& pos, const IFighterTask* group, int slot) const;
 	void ClearPark() { park = {-RgtVector, nullptr, 0, 0.f, 0.f}; }
 	void UpdatePark();  // keep the spot, or switch (see .cpp)
 	void FallbackPark();
 	void ApplyParkPath(const CQueryPathSingle* query);
 	void SpreadOut(CCircuitUnit* unit, int frame);  // parked: the others stand to alternate sides of the leader
-	// Hold position while parked; return fire only while attacking a heavy (isAttack), the unit's own fire state otherwise
-	void UpdateHolds(bool isAttack);
+	// Hold position while parked; return fire only while attacking a heavy (isAttack), the unit's own fire state otherwise;
+	// set-target on aimEnemyId (-1: none)
+	void UpdateHolds(bool isAttack, int aimEnemyId);
 	void ApplyHolds(CCircuitUnit* unit);
 
 	bool CheckFlee();  // antiheavy.flee_margin (UpdateFlee); true while fleeing
@@ -199,6 +202,7 @@ private:
 	int walkInFrame = 0;  // no new walk-in to a heavy before this (after a flee, or no route to any heavy)
 	bool isParkHold = false;  // units on hold position (UpdateHolds)
 	bool isReturnFire = false;  // units on return fire (attacking a heavy)
+	int aimId = -1;  // the heavy their set-target is on (in sight); -1: none
 };
 
 } // namespace circuit

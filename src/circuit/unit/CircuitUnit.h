@@ -143,6 +143,11 @@ public:
 	void CmdWantedSpeed(float speed = NO_SPEED_LIMIT);
 	void CmdSetTarget(CEnemyInfo* enemy);
 	void CmdCancelTarget();  // clears the set-target IsPlantHeld sent
+	// ZK's set-target on this enemy id (-1: cancelled), sent when it changes. The engine fires at a set target
+	// whatever the fire state and the order (a move, a fight, a hold), so a unit on return fire still shoots its heavy
+	// once in range. It outlasts orders, Stop included: the task that set it cancels it. Not for "plant" units
+	// (IsPlantHeld owns theirs)
+	void CmdHoldTarget(int enemyId);
 	void CmdCloak(bool state);
 	void CmdFireAtRadar(bool state);
 	void CmdFindPad(int timeout = INT_MAX);
@@ -166,9 +171,11 @@ public:
 	void HoldFire(const springai::AIFloat3& pos, CEnemyInfo* enemy, int tile, int timeout);
 	// A reloading unit's step back that keeps its attack order: move to pos, wait there until walking walkBack elmos
 	// takes as long as the reload it has left, then attack the enemy again (queued; no enemy: the move alone).
-	// The engine drops the wait once its timeout is past (its timed wait is for players: an AI's is dropped at once)
+	// The queued attack is a placeholder: it keeps the order live through the step back, and the timed wait is a safety
+	// net; the task orders the unit again at the scoot's end (CancelScootAttack). The engine drops the wait once its
+	// timeout is past (its timed wait is for players: an AI's is dropped at once)
 	void ScootAttack(const springai::AIFloat3& pos, CEnemyInfo* enemy, float walkBack, int timeout);
-	// Drops a step back's queued wait and attack (the fight is over); a move still under way goes on
+	// Drops a step back's queued wait and attack (the scoot is over); a move still under way goes on
 	void CancelScootAttack();
 	void Guard(CCircuitUnit* target, int timeout);
 	void Gather(const springai::AIFloat3& groupPos, int timeout);
@@ -205,6 +212,7 @@ private:
 	int reloadCheckFrame;  // frame reloadFrame was read
 	int reloadFrame;  // main weapon's, cached for a frame (GetReloadFrame)
 	SPlant plant;
+	struct { int id = -1; int frame = -1; } heldTarget;  // CmdHoldTarget: the enemy last sent, and when
 
 	// ---- Bit fields ---- BEGIN
 	bool isDead : 1;

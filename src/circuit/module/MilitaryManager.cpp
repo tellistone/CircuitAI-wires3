@@ -4883,17 +4883,26 @@ float CMilitaryManager::GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* 
 	return damage;
 }
 
-void CMilitaryManager::GetAhClaims(const IFighterTask* skip, F3Vec& outClaims) const
+void CMilitaryManager::GetAhClaims(const IFighterTask* skip, F3Vec& outClaims, std::vector<int>* outRanks) const
 {
 	outClaims.clear();
+	if (outRanks != nullptr) {
+		outRanks->clear();
+	}
+	auto addClaims = [&](const IFighterTask* task) {
+		task->AddSpreadClaims(outClaims);
+		if (outRanks != nullptr) {
+			outRanks->resize(outClaims.size(), task->GetSeniority());
+		}
+	};
 	for (IFighterTask* task : GetTasks(IFighterTask::FightType::AH)) {
 		if (task != skip) {
-			task->AddSpreadClaims(outClaims);
+			addClaims(task);
 		}
 	}
 	for (IFighterTask* task : GetTasks(IFighterTask::FightType::ARTY)) {
 		if ((task != skip) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy()) {
-			task->AddSpreadClaims(outClaims);
+			addClaims(task);
 		}
 	}
 }

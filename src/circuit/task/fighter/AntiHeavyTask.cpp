@@ -129,6 +129,7 @@ void CAntiHeavyTask::RemoveAssignee(CCircuitUnit* unit)
 			unit->GetUnit()->SetMoveState(ISquadTask::GetMoveState(unit));
 			unit->GetUnit()->SetFireState(unit->GetCircuitDef()->GetFireState());
 		)
+		unit->CmdHoldTarget(-1);
 	}
 	if (leader == nullptr) {
 		manager->AbortTask(this);
@@ -142,6 +143,7 @@ void CAntiHeavyTask::Stop(bool done)
 {
 	if (isParkHold || isReturnFire) {
 		isParkHold = isReturnFire = false;
+		aimId = -1;
 		for (CCircuitUnit* unit : units) {
 			ApplyHolds(unit);  // their own states back (scooting units: ISquadTask::Stop)
 		}
@@ -183,7 +185,7 @@ void CAntiHeavyTask::Update()
 	 * and a merge would pull a unit off its spot
 	 */
 	if (CheckFlee()) {
-		UpdateHolds(false);  // no attack: fire at will
+		UpdateHolds(false, -1);  // no attack: their own fire state
 		return;
 	}
 
@@ -232,7 +234,7 @@ void CAntiHeavyTask::Update()
 	 * Update target
 	 */
 	if ((GetFleeMargin() < 0.f) && IsReloading(frame)) {
-		UpdateHolds(false);
+		UpdateHolds(false, -1);
 		if (IsQueryReady(leader)) {
 			FallbackAttackSafe();  // no flee: old blind pull-back to the attack groups
 		}
@@ -255,7 +257,9 @@ void CAntiHeavyTask::Update()
 	if (isTargetsFound) {
 		checkFrame = 0;  // back from a fight or a walk-in: the park spot (or the way to the army) is looked at at once
 	}
-	UpdateHolds((target != nullptr) && !isLosGrace);  // return fire only while attacking it
+	// Return fire while attacking it, LOS grace included (they stand idle then: no chaff shot as it reappears);
+	// set-target on it only while it's in sight (no shot at its radar blip)
+	UpdateHolds(target != nullptr, ((target != nullptr) && !isLosGrace) ? target->GetId() : -1);
 	if (target != nullptr) {
 		position = target->GetPos();
 		if (isLosGrace) {
@@ -985,10 +989,14 @@ void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group,
 	{
 		return;
 	}
-	const float sqClaimRadius = SQUARE(GetClaimRadius());
-	for (const AIFloat3& claim : parkClaims) {
-		if (claim.SqDistance2D(pos) < sqClaimRadius) {
-			return;  // another anti-heavy group parks, stands or heads there: spread out
+	// Another anti-heavy group parks, stands or heads there: spread out. Not off our own spot: the squad that got there
+	// first keeps it (else it would stop following its group, or leave), and newcomers avoid its claim
+	if (!IsOwnPark(pos, group, slot)) {
+		const float sqClaimRadius = SQUARE(GetClaimRadius());
+		for (const AIFloat3& claim : parkClaims) {
+			if (claim.SqDistance2D(pos) < sqClaimRadius) {
+				return;
+			}
 		}
 	}
 	const float cover = GetCoverAt(pos);
@@ -1015,6 +1023,15 @@ void CAntiHeavyTask::AddParkSpot(const AIFloat3& pos, const IFighterTask* group,
 	outSpots.push_back({pos, group, slot, cover, score});
 }
 
+bool CAntiHeavyTask::IsOwnPark(const AIFloat3& pos, const IFighterTask* group, int slot) const
+{
+	if (!utils::is_valid(park.pos)) {
+		return false;
+	}
+	return (park.group != nullptr) ? ((group == park.group) && (slot == park.slot))
+		: ((group == nullptr) && (pos.SqDistance2D(park.pos) < SQUARE(PARK_CELL / 2.f)));
+}
+
 void CAntiHeavyTask::SetPark(const SParkSpot& spot)
 {
 	park = spot;
@@ -1029,9 +1046,7 @@ void CAntiHeavyTask::UpdatePark()
 	FillParkSpots(parkSpots);
 	const SParkSpot* current = nullptr;
 	for (const SParkSpot& spot : parkSpots) {
-		const bool isSame = (park.group != nullptr) ? ((spot.group == park.group) && (spot.slot == park.slot))
-				: ((spot.group == nullptr) && (spot.pos.SqDistance2D(park.pos) < SQUARE(PARK_CELL / 2.f)));
-		if (isSame) {
+		if (IsOwnPark(spot.pos, spot.group, spot.slot)) {
 			current = &spot;
 			break;
 		}
@@ -1126,16 +1141,17 @@ void CAntiHeavyTask::SpreadOut(CCircuitUnit* unit, int frame)
 	)
 }
 
-void CAntiHeavyTask::UpdateHolds(bool isAttack)
+void CAntiHeavyTask::UpdateHolds(bool isAttack, int aimEnemyId)
 {
 	// Parked: hold position (the spot is the cover). Return fire only while they attack a heavy, so the reload isn't
-	// spent on chaff (the attack on it still fires, and so do shots back at whoever hits them); their own fire state
-	// otherwise
-	if ((isParking == isParkHold) && (isAttack == isReturnFire)) {
+	// spent on chaff that comes into range; their own fire state otherwise. Set-target on the heavy (CmdHoldTarget)
+	// fires at it whatever the order: on the walk to a firing spot, holding or kiting out of range, a straggler
+	if ((isParking == isParkHold) && (isAttack == isReturnFire) && (aimEnemyId == aimId)) {
 		return;
 	}
 	isParkHold = isParking;
 	isReturnFire = isAttack;
+	aimId = aimEnemyId;
 	for (CCircuitUnit* unit : units) {
 		ApplyHolds(unit);
 	}
@@ -1149,6 +1165,7 @@ void CAntiHeavyTask::ApplyHolds(CCircuitUnit* unit)
 	TRY_UNIT(manager->GetCircuit(), unit,
 		unit->GetUnit()->SetFireState(isReturnFire ? CCircuitDef::FireType::RETURN : unit->GetCircuitDef()->GetFireState());
 	)
+	unit->CmdHoldTarget(aimId);
 }
 
 void CAntiHeavyTask::FallbackAttackSafe()

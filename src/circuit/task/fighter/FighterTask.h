@@ -80,6 +80,7 @@ public:
 	// Where this group's units stand or head, one point each: the firing spot it was sent to in the last two attack
 	// repeats, else where it stands (CMilitaryManager::GetAhClaims; tasks add where they walk or park)
 	virtual void AddSpreadClaims(F3Vec& outClaims) const;
+	int GetSeniority() const { return seniority; }  // fighter tasks in creation order: lower is older (GetAhClaims)
 
 protected:
 	void SetTarget(CEnemyInfo* enemy);
@@ -234,10 +235,12 @@ protected:
 	springai::AIFloat3 lastOrderTargetPos;
 	float fireSpotReach = -1.f;  // > 0: units farther than this x their fire range from the target get no attack order and keep travelling
 	float crowdRadius = 80.f;  // other claims within this of a firing spot crowd it (FindFireSpot)
-	// > 0: each other group's claim (CMilitaryManager::GetAhClaims, read once per Attack) within this of a firing spot
-	// costs it half a range of walk (FindFireSpot): different anti-heavy groups spread out
+	// > 0: each other group with a claim (CMilitaryManager::GetAhClaims, read once per Attack) within this of a firing
+	// spot costs it half a range of walk (FindFireSpot): different anti-heavy groups spread out. The spot a unit holds
+	// (kept, or where it stands) pays only for older groups: the newcomer gives way, the incumbent fires on
 	float spreadRadius = 0.f;
 	F3Vec spreadClaims;
+	std::vector<int> spreadRanks;  // each claim's group (GetSeniority)
 	// May a unit fire from p (FindFireSpot skips the spot if not)? Default: yes. Anti-heavy: outside its pick zones
 	virtual bool IsFireSpotAllowed(const springai::AIFloat3& p) const { return true; }
 	// While isSpotDisc: FindFireSpot only weighs spots within the disc (an escort's stay disc, CAttackTask)
@@ -330,6 +333,8 @@ private:
 	mutable std::vector<SUnitStrength> unitStrengths;  // GetUnitStrengths cache
 	mutable float strengthSum = 0.f;
 	mutable int strengthFrame = STALE_FRAME;  // frame it was read at
+	static int nextSeniority;
+	const int seniority = nextSeniority++;  // GetSeniority
 
 #ifdef DEBUG_VIS
 public:

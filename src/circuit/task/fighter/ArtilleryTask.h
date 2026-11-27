@@ -74,7 +74,8 @@ private:
 	// FillCoveredSpots' rules for one spot with this much threat there
 	bool IsFireSpotValid(CCircuitUnit* unit, const springai::AIFloat3& spot, float threat) const;
 	// ally_threat: fills firePositions (covered, safe, reachable, and not where the flee would fire) in range of goals,
-	// returns goal range. Anti-heavy: not within GetCrowdRadius of another anti-heavy group (crowd: GetAhClaims)
+	// returns goal range. Anti-heavy: not within CROWD_RADIUS of another anti-heavy group (crowd: GetAhClaims), nor
+	// within GetCrowdRadius of one while any other cell is left
 	float FillCoveredSpots(CCircuitUnit* unit, float range, const F3Vec& goals);
 	static constexpr float CROWD_RADIUS = 96.f;
 	float GetCrowdRadius() const;  // antiheavy.group_spacing, at least CROWD_RADIUS
@@ -190,6 +191,7 @@ private:
 	static std::vector<SFrontEnemy> frontEnemies;  // FindHeavyTarget: every enemy it can shoot, aircraft aside
 	static F3Vec frontGoals;  // FillFrontGoals
 	static F3Vec crowd;  // FillCoveredSpots: the other anti-heavy groups (GetAhClaims)
+	static F3Vec crowdedPositions;  // FillCoveredSpots: cells within group_spacing of one, used if no other is left
 	static std::vector<CEnemyInfo*> ignoredQuarries;  // FindHeavyTarget: heavies IsQuarryIgnored, for its Attack
 	static std::vector<SEscort> escorts;
 	static std::vector<SDanger> dangers;

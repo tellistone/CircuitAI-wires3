@@ -43,7 +43,7 @@ const float DISC_HOLD_IN  = 0.8f;
 const float FIRE_BAND_MIN = 0.6f;   // own/kept spot no closer than this, x range (else step back out)
 const float FIRE_BAND_MAX = 0.95f;  // own/kept spot no farther than this, x range
 const float CROWD_WEIGHT  = 0.5f;   // score per crowding claim (x attack_spot_threat)
-const float SPREAD_COST   = 0.5f;   // score per other group's claim within spreadRadius: half a range of walk
+const float SPREAD_COST   = 0.5f;   // score per other group with a claim within spreadRadius: half a range of walk
 const int   ARC_STEPS     = 6;      // spots each side of our bearing, PI/24 apart (+-45 degrees)
 const float ARC_SPAN      = 0.25f;  // half the arc, x PI
 const float SUPPORT_RADIUS = 400.f; // own units heading within this of a spot back up a unit there
@@ -67,6 +67,8 @@ const float KITE_WALK_IN  = 0.9f;
 
 F3Vec IFighterTask::urgentPositions;  // NOTE: micro-opt
 F3Vec IFighterTask::enemyPositions;  // NOTE: micro-opt
+
+int IFighterTask::nextSeniority = 0;
 
 IFighterTask::IFighterTask(ITaskManager* mgr, FightType type, float powerMod, int timeout)
 		: IUnitTask(mgr, Priority::NORMAL, Type::FIGHTER, timeout)
@@ -202,7 +204,7 @@ void IFighterTask::Attack(const int frame, const bool isDirect)
 	const AIFloat3& tPos = target->GetFightPos();
 	GatherKited();
 	if (spreadRadius > 0.f) {
-		manager->GetCircuit()->GetMilitaryManager()->GetAhClaims(this, spreadClaims);  // the other anti-heavy groups
+		manager->GetCircuit()->GetMilitaryManager()->GetAhClaims(this, spreadClaims, &spreadRanks);  // other AH groups
 	}
 	const bool isTileMoveOrder = (retargetMove <= 0.f) || (tPos.SqDistance2D(lastOrderTargetPos) > SQUARE(retargetMove));
 	// Every unit claims where it's heading: its last spot if still usable, else where it stands.
@@ -816,7 +818,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		AIFloat3 pos;
 		float threat;
 		int crowd;  // other claims within crowdR
-		int spread;  // other groups' claims within spreadRadius
+		int spread;  // other groups with a claim within spreadRadius (held: older ones only)
 		float dist;  // walking distance / range
 		float walkPeak = -1.f;  // worst threat of a dangerous walk there, 0: safe walk; < 0: not walked yet
 		float cost = 0.f;  // with a safe walk
@@ -840,7 +842,23 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	const float crowdR = isClose ? std::min(crowdRadius, unit->GetCircuitDef()->GetRadius() * 2.f) : crowdRadius;
 	const int arcSteps = isClose ? ARC_STEPS_CLOSE : ARC_STEPS;
 	const float arcSpan = isClose ? ARC_SPAN_CLOSE : ARC_SPAN;
-	auto add = [&](const AIFloat3& p) {
+	// Other groups with a claim within spreadRadius of p, one count each (a group's claims come together); a spot the
+	// unit holds (isHeld) counts only older groups, so the newcomer gives way rather than both shuffling
+	auto countSpread = [&](const AIFloat3& p, bool isHeld) {
+		int count = 0;
+		int counted = -1;  // the group last counted
+		for (size_t i = 0; i < spreadClaims.size(); ++i) {
+			const int rank = spreadRanks[i];
+			if ((rank != counted) && (!isHeld || (rank < seniority))
+				&& (spreadClaims[i].SqDistance2D(p) < SQUARE(spreadRadius)))
+			{
+				++count;
+				counted = rank;
+			}
+		}
+		return count;
+	};
+	auto add = [&](const AIFloat3& p, bool isHeld) {
 		if ((isSpotDisc && (p.SqDistance2D(spotDiscPos) > spotDiscSqRadius))
 			|| (isSight && (!terrainMgr->IsLineClear(p, tPos, aimLift, targetLift, true)
 			|| !terrainMgr->IsWalkClear(unit->GetArea(), uPos, p, WALK_CLIMB))) || !IsFireSpotAllowed(p))
@@ -857,9 +875,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 				++crowd;
 			}
 		}
-		const int spread = std::count_if(spreadClaims.begin(), spreadClaims.end(),
-				[&](const AIFloat3& claim) { return claim.SqDistance2D(p) < SQUARE(spreadRadius); });
-		SCandidate c{p, GetTaskThreatAt(unit, p), crowd, spread, p.distance2D(uPos) / range};
+		SCandidate c{p, GetTaskThreatAt(unit, p), crowd, countSpread(p, isHeld), p.distance2D(uPos) / range};
 		c.cost = costOf(c, std::max(c.threat, 0.f));
 		cands.push_back(c);
 	};
@@ -873,11 +889,11 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	// favours them
 	AIFloat3 keptPos;
 	if (GetKeptFireSpot(unit, isClose, enemy, keptPos) && isOnArc(keptPos)) {
-		add(keptPos);
+		add(keptPos, true);
 	}
 	const size_t keptCount = cands.size();  // its last spot: no margin (see SPOT)
 	if (IsInFireBand(unit, uPos, isClose, enemy) && isOnArc(uPos)) {
-		add(uPos);
+		add(uPos, true);
 	}
 	// Spots on an arc around the target, facing us or the planned side (+-45 degrees: keeps the group together;
 	// melee close spots +-90, see crowdR)
@@ -889,7 +905,7 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		AIFloat3 p(tPos.x + radius * cosf(angle), tPos.y, tPos.z + radius * sinf(angle));
 		CTerrainManager::CorrectPosition(p);
 		if (terrainMgr->CanMoveToPos(unit->GetArea(), p)) {
-			add(p);
+			add(p, false);
 		}
 	}
 

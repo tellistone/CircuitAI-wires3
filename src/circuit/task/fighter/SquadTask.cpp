@@ -84,8 +84,7 @@ void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 	formation.Remove(unit);
 	joinFrames.erase(unit);
 	if (scoots.erase(unit) > 0) {
-		SetScootHold(unit, false);  // leaves the squad mid-scoot (retreat, reassign): its move state back
-		unit->CancelScootAttack();  // and no attack left queued for this squad's fight
+		ReleaseScoot(unit);  // leaves the squad mid-scoot (retreat, reassign)
 	}
 	leader = nullptr;
 	lowestRange = lowestSpeed = std::numeric_limits<float>::max();
@@ -100,8 +99,7 @@ void ISquadTask::RemoveAssignee(CCircuitUnit* unit)
 void ISquadTask::Stop(bool done)
 {
 	for (const auto& kv : scoots) {
-		SetScootHold(kv.first, false);
-		kv.first->CancelScootAttack();
+		ReleaseScoot(kv.first);
 	}
 	scoots.clear();
 	IFighterTask::Stop(done);
@@ -913,11 +911,16 @@ void ISquadTask::EndScoot(Scoots::iterator it, int frame, bool isEngaged)
 {
 	CCircuitUnit* unit = it->first;
 	scoots.erase(it);
-	SetScootHold(unit, false);
-	if (!isEngaged) {
-		unit->CancelScootAttack();  // the fight is over: no attack on its old target once the wait is up
-	}
+	ReleaseScoot(unit);
 	OnScootEnd(unit, frame, isEngaged);
+}
+
+void ISquadTask::ReleaseScoot(CCircuitUnit* unit)
+{
+	// Its move state back, and its queued wait and attack dropped: the task orders it from here on (a queued attack
+	// out of LOS would shoot the target's radar blip)
+	SetScootHold(unit, false);
+	unit->CancelScootAttack();
 }
 
 /*
