@@ -890,10 +890,12 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 					pos = terrainMgr->GetBuildPosition(bdef, pos);
 				}
 
-				// turret.crowd_count: a light tower among enough light turrets is left out of the chain. A turret the
-				// account (porcupine.budget) can't pay for yet waits for it, out of the chain
+				// turret.same_radius: a tower by one of its type (this chain's own queued ones too), and turret.crowd_count:
+				// a light tower among enough light turrets, are left out of the chain. A turret the account
+				// (porcupine.budget) can't pay for yet waits for it, out of the chain
 				if ((bi.buildType == IBuilderTask::BuildType::DEFENCE)
-					&& (militaryMgr->RefuseCrowdedLight(buildDef, pos, "hub")
+					&& (militaryMgr->RefuseSameTurret(buildDef, pos, "hub")
+						|| militaryMgr->RefuseCrowdedLight(buildDef, pos, "hub")
 						|| militaryMgr->HoldHubTower(buildDef, pos, isScored, target)))
 				{
 					continue;

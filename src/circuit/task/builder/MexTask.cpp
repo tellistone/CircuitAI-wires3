@@ -263,18 +263,20 @@ void CBMexTask::OnUnitIdle(CCircuitUnit* unit)
 				break;
 			}
 		}
-		// Else a new one, unless a friendly turret reaches it already or the account (porcupine.budget) is short:
-		// then the spot reopens, and the mex search passes it over until that changes
+		// Else a new one, unless a friendly turret reaches it already, the account (porcupine.budget) is short or one of
+		// its type stands within turret.same_radius of the spot: then the spot reopens, and the mex search passes it over
+		// until that changes
 		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		AIFloat3 newPos = buildPos - (buildPos - pos).Normalize2D() * def->GetMaxRange() * 0.9f;
+		CTerrainManager::CorrectPosition(newPos);
 		if ((task == nullptr)
-			&& (circuit->GetEconomyManager()->IsEnemyMexCovered(buildPos) || !militaryMgr->CanAffordTurret(def->GetCostM())))
+			&& (circuit->GetEconomyManager()->IsEnemyMexCovered(buildPos) || !militaryMgr->CanAffordTurret(def->GetCostM())
+				|| militaryMgr->RefuseSameTurret(def, newPos, "escort")))
 		{
 			manager->AbortTask(this);
 			return;
 		}
 		if (task == nullptr) {
-			AIFloat3 newPos = buildPos - (buildPos - pos).Normalize2D() * def->GetMaxRange() * 0.9f;
-			CTerrainManager::CorrectPosition(newPos);
 			CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::ESCORT);
 			task = builderMgr->EnqueueTask(IBuilderTask::Priority::HIGH, def, newPos, IBuilderTask::BuildType::DEFENCE);
 		}

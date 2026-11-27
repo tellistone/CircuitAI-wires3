@@ -233,9 +233,14 @@ public:
 	// turret.crowd_count: true when a light def at pos would join enough light turrets; logs and credits the account
 	// (CTurretPicker::RefuseCrowdedLight)
 	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
-	// turret.crowd_credit: a light turret not placed for its crowd (CTurretPicker::RefuseCrowdedLight). Never past the
-	// account's cap; returns what it credited
-	float CreditTurret(float metal);
+	// turret.same_radius: true when a defence of def's type, ours or an ally's (or a job of ours), stands within it of
+	// pos (CTurretPicker::FindSameTurret): the caller doesn't place def there. Nothing is charged; a preventive tower
+	// (free, the scope's spender PREVENT) credits the account its cost instead. Logs the refusal
+	bool RefuseSameTurret(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
+	// turret.crowd_credit: a light turret not placed for its crowd (CTurretPicker::RefuseCrowdedLight), or
+	// (isSame) a preventive tower not placed for one of its type nearby. Never past the account's cap; returns what it
+	// credited
+	float CreditTurret(float metal, bool isSame = false);
 	void UpdateTurretBudget();  // accrues; logs the spend once a minute
 	float* GetTurretShare() { return &turretBudget.share; }  // choke_overlay set turret.share
 
@@ -1042,6 +1047,7 @@ private:
 		float spent[static_cast<int>(TurretSpend::_SIZE_)] = {};  // since the last log line
 		float refunded = 0.f;
 		float crowdCredit = 0.f;  // since the last log line: turret.crowd_credit for light turrets not placed
+		float sameCredit = 0.f;  // and preventive towers not placed for turret.same_radius
 	} turretBudget;
 	TurretSpend turretSpend = TurretSpend::OTHER;
 	CCircuitDef* radarDef;

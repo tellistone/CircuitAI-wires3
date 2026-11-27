@@ -109,6 +109,10 @@ public:
 		float crowdRadius = 600.f;
 		int crowdCount = 3;
 		float crowdCredit = 90.f;  // metal
+		// A defence isn't placed within sameRadius of one of its own type of the ally team (finished or being built,
+		// and our jobs not started yet): by every caller (CMilitaryManager::RefuseSameTurret); the picker and the AA
+		// picker skip such spots. 0 = off
+		float sameRadius = 300.f;
 		// Heavier defs, each tier unlocked once our ally team holds mexShare of the map's metal spots; by mexShare up
 		struct STier {
 			float mexShare;
@@ -129,7 +133,7 @@ public:
 		int creepLosses = 2;  // turrets lost near a step within 2 minutes stop it
 		float creepBudget = 0.5f;  // x the balance the turret account must hold (0 to 1); the full cost is charged
 	};
-	enum class Reject: char {NONE, RADIUS, MASK, LANE, INFLUENCE, THREAT, REACH, SITE, UNSAFE, _SIZE_};
+	enum class Reject: char {NONE, RADIUS, MASK, LANE, INFLUENCE, THREAT, REACH, SITE, SAME, UNSAFE, _SIZE_};
 	// The cheap hard rules over the candidate grid of one order: the same for every def
 	struct SGrid {
 		std::vector<CTurretValue::SCandidate> passed;
@@ -196,6 +200,11 @@ public:
 	// turret.crowd_count: pos has that many light turrets (or queued light towers) within turret.crowd_radius.
 	// The same test as RefuseCrowdedLight, without its log or credit; false with crowd_count off
 	bool IsLightCrowded(const springai::AIFloat3& pos) const;
+	// turret.same_radius: a defence (IsDefence) of def's type within it of pos, ours or an ally's (finished or being
+	// built) or a job of ours not started yet, skip left out (a job's own tower). outWhat: "ours", "an ally's" or "our
+	// job", and outPos where. false for a def that isn't a defence, or with same_radius off
+	bool FindSameTurret(const CCircuitDef* def, const springai::AIFloat3& pos, const IBuilderTask* skip = nullptr,
+			const char** outWhat = nullptr, springai::AIFloat3* outPos = nullptr) const;
 
 	SConfig& GetConfig() { return config; }
 	const SConfig& GetConfig() const { return config; }
@@ -210,6 +219,11 @@ private:
 	int CountLight(const springai::AIFloat3& pos) const;
 
 	// Gathered once per order
+	struct SSame {  // turret.same_radius: a defence of the ally team, or a job of ours not started
+		const CCircuitDef* def;
+		springai::AIFloat3 pos;
+		const char* what;  // "ours", "an ally's", "our job"
+	};
 	struct SGun {  // an armed static for the creep's threat rule
 		springai::AIFloat3 pos;
 		float sqReach;
@@ -232,6 +246,7 @@ private:
 		// its own tower and the queued jobs left out)
 		std::vector<springai::AIFloat3> enemyBases;
 		float foremostSq = std::numeric_limits<float>::max();
+		std::vector<SSame> sames;  // turret.same_radius: within radius + it (GatherSame)
 	};
 
 	void ReadConfig();
@@ -240,6 +255,10 @@ private:
 			const springai::AIFloat3& skipTower, bool isTraffic = true) const;
 	std::vector<CTurretValue::STarget> MakeTargets(CCircuitDef* def, const SGather& gather) const;
 	SGrid MakeGrid(CCircuitUnit* builder, const SGather& gather) const;
+	// turret.same_radius: the defences within gather.radius + it of gather.centre into gather.sames, skip left out
+	void GatherSame(SGather& gather, const IBuilderTask* skip) const;
+	// The nearest of gather.sames of def's type within turret.same_radius of pos, or nullptr
+	const SSame* FindSame(const SGather& gather, const CCircuitDef* def, const springai::AIFloat3& pos) const;
 	// The cheap hard rules at (x, z): NONE and out filled, or the first rule it fails
 	Reject MakeCandidate(CCircuitUnit* builder, const SGather& gather, float x, float z,
 			CTurretValue::SCandidate& out) const;

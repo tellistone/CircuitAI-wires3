@@ -7,6 +7,22 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **No turret within 300 elmos of one of its own type** (`turret.same_radius`, new, 300; 0 = off). Every way the AI
+  places a turret now leaves out a spot within 300 of a turret of the same type of our ally team: ours or an ally's,
+  finished or being built, or a job of ours not started yet. Before, only light turrets had a crowd rule
+  (`turret.crowd_count`: 3 within 600), and the porc lists, build chain hubs and base timetable stacked the same tower
+  side by side (a Singularity's hub queued 2 Lotuses and 4 Pickets about it; a porc point's list repeats defs).
+  - The turret picker (near enemy, after flee, chokes, enemy line, artillery, the creep, test orders) and `aa_turret`
+    skip such spots and take the next best spot or def. A picker job is also dropped on arrival if one went up nearby
+    meanwhile (an ally's, say); it is refunded, as any job not started.
+  - A cornered builder takes the next def of its list that can hit the danger.
+  - Preventive and porc-mode towers, build chain hub towers, base towers, radar guards and mex escorts aren't queued.
+    A refused preventive or porc tower stays booked on its defence point while that turret stands, so the towers
+    after it aren't queued twice, and is given back once none of its type is within 300 of its place.
+  - Nothing is charged for a tower not placed, so the turret account keeps the metal. A preventive tower, which the
+    account never pays for, credits it its cost instead (up to the cap), logged as `same-type credit` on the
+    `TURRET BUDGET` line. Each refusal logs `TURRET <caller>: no <def> at (x, z), <whose> of its type within 300`.
+
 - **Anti-heavy groups keep apart** (`antiheavy.group_spacing`, new, default 300; 0 = firing spots don't spread).
   Different groups (ground squads, and each artillery-mode anti-heavy) used to pick the same spots: firing spots only
   knew their own group, and squads parking behind an attack group ignored the artillery-mode units following it. Now

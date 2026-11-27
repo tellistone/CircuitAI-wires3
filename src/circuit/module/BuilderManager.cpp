@@ -2757,19 +2757,6 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 	}
 
 	if (task == nullptr) {
-		// The first one porcupine.land/water lists (its build order) that can hit the danger
-		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-		CCircuitDef* buildDef = nullptr;
-		for (CCircuitDef* ddef : isWater ? militaryMgr->GetWaterDefenders() : militaryMgr->GetLandDefenders()) {
-			if (ddef->IsAvailable(frame) && cdef->CanBuild(ddef) && canHit(ddef)) {
-				buildDef = ddef;
-				break;
-			}
-		}
-		if (buildDef == nullptr) {
-			return nullptr;
-		}
-
 		// Behind the builder, away from the danger, within its build range
 		AIFloat3 buildPos = pos;
 		AIFloat3 away = pos - dangerPos;
@@ -2779,6 +2766,28 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 			buildPos += away / len * (buildDist * 0.5f);
 		}
 		CTerrainManager::CorrectPosition(buildPos);
+
+		// The first one porcupine.land/water lists (its build order) that can hit the danger, and has none of its
+		// type within turret.same_radius of the spot
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		CCircuitDef* buildDef = nullptr;
+		std::vector<const CCircuitDef*> refused;  // the list repeats defs: each is asked (and logged) once
+		for (CCircuitDef* ddef : isWater ? militaryMgr->GetWaterDefenders() : militaryMgr->GetLandDefenders()) {
+			if (!ddef->IsAvailable(frame) || !cdef->CanBuild(ddef) || !canHit(ddef)
+				|| (std::find(refused.begin(), refused.end(), ddef) != refused.end()))
+			{
+				continue;
+			}
+			if (militaryMgr->RefuseSameTurret(ddef, buildPos, "cornered")) {
+				refused.push_back(ddef);
+				continue;
+			}
+			buildDef = ddef;
+			break;
+		}
+		if (buildDef == nullptr) {
+			return nullptr;
+		}
 		// Other builders: an unstarted one is dropped soon after the last builder leaves it, not left as a job
 		const int timeout = isBuilder ? BUILDER_CORNER_TIMEOUT : ASSIGN_TIMEOUT;
 		CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::CORNERED);

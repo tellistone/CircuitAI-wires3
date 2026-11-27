@@ -2542,10 +2542,10 @@ void CMilitaryManager::UpdateTurretBudget()
 		}
 		circuit->LOG("TURRET BUDGET %.0f m (%.2f m/s = %.2f x %.1f income x ms_pull %.2f x map %.2f x mex %.2f (%.0f%%)"
 				" x army %.2f (turrets %.2f x army)), last minute charged %.0f, refunded %.0f, lost %.0f (paid back %.0f),"
-				" crowd credit %.0f: %s", b.balance,
+				" crowd credit %.0f, same-type credit %.0f: %s", b.balance,
 				rate, b.share, em->GetAvgMetalIncome(), pull, b.mapMult, b.mexMult, b.mexX * 100.f, b.armyMult, b.armyX,
-				total, b.refunded, b.lost, b.lossPaid, b.crowdCredit, spent.empty() ? "nothing" : spent.c_str());
-		b.refunded = b.lost = b.lossPaid = b.crowdCredit = 0.f;
+				total, b.refunded, b.lost, b.lossPaid, b.crowdCredit, b.sameCredit, spent.empty() ? "nothing" : spent.c_str());
+		b.refunded = b.lost = b.lossPaid = b.crowdCredit = b.sameCredit = 0.f;
 	}
 }
 
@@ -2609,14 +2609,30 @@ bool CMilitaryManager::RefuseCrowdedLight(const CCircuitDef* def, const AIFloat3
 	return turretPicker->RefuseCrowdedLight(def, pos, caller);
 }
 
-float CMilitaryManager::CreditTurret(float metal)
+bool CMilitaryManager::RefuseSameTurret(const CCircuitDef* def, const AIFloat3& pos, const char* caller)
+{
+	const char* what = nullptr;
+	AIFloat3 samePos;
+	if (!turretPicker->FindSameTurret(def, pos, nullptr, &what, &samePos)) {
+		return false;
+	}
+	// Never charged, so a charged spender's metal stays in the account; a free preventive tower's goes in
+	const float credit = ((turretSpend == TurretSpend::PREVENT) && IsAccountTurret(def))
+			? CreditTurret(def->GetCostM(), true) : 0.f;
+	circuit->LOG("TURRET %s: no %s at (%.0f, %.0f), %s of its type within %.0f at (%.0f, %.0f)%s", caller,
+			def->GetDef()->GetName(), pos.x, pos.z, what, turretPicker->GetConfig().sameRadius, samePos.x, samePos.z,
+			(credit > 0.f) ? utils::float_to_string(credit, "; +%.0f to the turret account").c_str() : "");
+	return true;
+}
+
+float CMilitaryManager::CreditTurret(float metal, bool isSame)
 {
 	UpdateTurretBudget();
 	STurretBudget& b = turretBudget;
 	const float cap = std::max(b.rate * b.bankSec, b.askCost);  // as UpdateTurretBudget fills it
 	const float credit = std::max(std::min(metal, cap - b.balance), 0.f);
 	b.balance += credit;
-	b.crowdCredit += credit;
+	(isSame ? b.sameCredit : b.crowdCredit) += credit;
 	return credit;
 }
 
@@ -2650,6 +2666,16 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 		point->cost = std::max(point->cost - point->crowdCost, 0.f);
 		point->crowdCost = 0.f;
 	}
+	// turret.same_radius: and the metal of a tower refused for one of its type once that one is gone
+	auto& skips = point->sameSkips;
+	skips.erase(std::remove_if(skips.begin(), skips.end(), [this, point](const CDefenceMatrix::SDefPoint::SSameSkip& k) {
+		const CCircuitDef* kdef = circuit->GetCircuitDef(k.defId);
+		if ((kdef != nullptr) && turretPicker->FindSameTurret(kdef, k.pos)) {
+			return false;
+		}
+		point->cost = std::max(point->cost - k.cost, 0.f);
+		return true;
+	}), skips.end());
 	for (int copy = 0; copy < copies; ++copy) {
 		const float copyStart = totalCost;
 		for (CCircuitDef* defDef : towers) {
@@ -2679,6 +2705,12 @@ void CMilitaryManager::QueueTowers(CDefenceMatrix::SDefPoint* point, const std::
 				buildPos = spot;
 				shake = 0.f;  // built where it was scored: a shake slides a ledge's tower down its slope
 				backPos = GetBackPos(spot);  // the support towers after it cover it
+			}
+			// turret.same_radius: nor one by a tower of its type. Booked on the point while that one stands, as a crowd's
+			// is, so a later visit doesn't queue the towers after it again; sameSkips gives it back after
+			if (RefuseSameTurret(defDef, buildPos, isPorc ? "porc" : "prevent")) {
+				skips.push_back({defDef->GetId(), buildPos, defCost});
+				continue;
 			}
 			// turret.crowd_count: a preventive or porc light tower among enough light turrets isn't placed (the account
 			// gets turret.crowd_credit instead). Asked once a call, though a pooled list is walked up to POOL_COPIES
@@ -4563,7 +4595,9 @@ bool CMilitaryManager::TryBaseTower(const AIFloat3& pos, CCircuitDef* buildDef, 
 			buildPos = spot;
 		}
 	}
-	if (!turretPicker->RefuseCrowdedLight(buildDef, buildPos, "base")) {  // turret.crowd_count
+	if (!RefuseSameTurret(buildDef, buildPos, "base")  // turret.same_radius
+		&& !turretPicker->RefuseCrowdedLight(buildDef, buildPos, "base"))  // turret.crowd_count
+	{
 		TurretScope scope(this, TurretSpend::BASE);
 		circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::NORMAL, buildDef, buildPos,
 												  IBuilderTask::BuildType::DEFENCE, 0.f, true, 0);
@@ -4585,8 +4619,8 @@ bool CMilitaryManager::TryHubTower(const SHubTower& t)
 	if (IsWaiting(t.def, t.frame)) {
 		return false;
 	}
-	if (turretPicker->RefuseCrowdedLight(t.def, t.pos, "hub")) {  // turret.crowd_count
-		return true;
+	if (RefuseSameTurret(t.def, t.pos, "hub") || turretPicker->RefuseCrowdedLight(t.def, t.pos, "hub")) {
+		return true;  // turret.same_radius, turret.crowd_count
 	}
 	TurretScope scope(this, TurretSpend::HUB);
 	IBuilderTask* task = circuit->GetBuilderManager()->EnqueueTask(IBuilderTask::Priority::LOW, t.def, t.pos,
