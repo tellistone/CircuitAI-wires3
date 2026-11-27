@@ -432,6 +432,12 @@ public:
 	float GetRaidThrMod() const { return raidThrMod; }
 	// GetCountWeight on the raid view: thr_mod x raid_thr_mod, at most 1
 	float GetRaidCountWeight() const { return std::min(std::max(thrMod * raidThrMod, 0.f), 1.f); }
+	// behaviour.json per unit "flee_thr_mod": as an enemy, the threat multiplier the artillery and anti-heavy flee
+	// checks (CArtilleryTask, CAntiHeavyTask: the flee and its danger zones) use instead of thr_mod, for a cheap
+	// high-health mob the rest of the AI is told to shrug off; < 0: unset (thr_mod)
+	void SetFleeThrMod(float value) { fleeThrMod = value; }
+	// What its threat (thr_mod included) is multiplied by in those checks
+	float GetFleeThreatScale() const { return ((fleeThrMod >= 0.f) && (thrMod > 0.f)) ? fleeThrMod / thrMod : 1.f; }
 	// behaviour.json per unit "formation_row": its rank in a squad's line formation (0 = front row); -1 = unset (its
 	// main role's place in formation.row_order)
 	void SetFormationRow(int value) { formationRow = value; }
@@ -571,6 +577,7 @@ private:
 	float targetDistMod = 1.f;
 	std::shared_ptr<STargetPriority> targetPriority;  // GetTargetPriority
 	float raidThrMod = 1.f;  // GetRaidThrMod
+	float fleeThrMod = -1.f;  // SetFleeThrMod
 	int formationRow = -1;
 
 	float radius;

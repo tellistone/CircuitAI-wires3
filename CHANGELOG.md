@@ -470,6 +470,13 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     at 0.95 x range and the fire band reaches the full range, so a unit Zero-K's own skirm keeps at the edge of its
     range is no longer pulled back in to 0.9 x range.
 
+- **Artillery and anti-heavies flee melee mobs** (behaviour.json per unit `flee_thr_mod`, new; Dirtbag 0.5). A mob
+  of ~33 Dirtbags (`thr_mod` 0.1) weighed about 8, so any escort of 18 called the flee off while the boxes walked in,
+  surrounded the unit and killed it; nothing shot them (anti-heavies hunt heavies, attack groups rank Dirtbag last by
+  its `target_dist_mod`). An enemy type's `flee_thr_mod` replaces its `thr_mod` in the artillery task's flee and
+  firing-spot danger zones and in anti-heavy squads' flee and pick zones (`IFighterTask::GetFleeThreatOf`); the
+  threat map, routes, attack groups and the force balance keep `thr_mod`. The mob now weighs about 40, so the unit
+  runs to the army unless about 50 of cover stands by; a lone Dirtbag (1.2) still doesn't move it.
 - **Protect against rushes on commanders and protected groups** (`quota.protect`, new, off by default: `enable`,
   `zone` 1200, `keep_sec` 12, `respond_sec` 12, `go_ratio` 1.0). When a commander's seen danger within `zone` beats
   its own power, or it takes damage, or seen bombers within `zone` heading for it beat its anti-air bubble, one central

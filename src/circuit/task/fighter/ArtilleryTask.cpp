@@ -1187,7 +1187,7 @@ void CArtilleryTask::CollectDangers(CCircuitUnit* unit, float margin, const AIFl
 		const float dx = std::max(std::max(minPos.x - ePos.x, ePos.x - maxPos.x), 0.f);
 		const float dz = std::max(std::max(minPos.z - ePos.z, ePos.z - maxPos.z), 0.f);
 		if ((SQUARE(dx) + SQUARE(dz) <= sqReach) && !IsQuarryIgnored(unit, enemy)) {
-			dangers.push_back({ePos, sqReach, enemy->GetThreat()});
+			dangers.push_back({ePos, sqReach, GetFleeThreatOf(enemy)});  // flee_thr_mod
 		}
 	}
 }

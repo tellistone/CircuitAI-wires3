@@ -586,6 +586,11 @@
 //		"pwr_mod": 1.0,
 		// Enemy threat multiplier
 //		"thr_mod": 1.0,
+		// As an enemy: the threat multiplier the artillery and anti-heavy flee checks use instead of thr_mod (the flee,
+		// its cover check, and the zones firing, stand-off and park spots keep out of), so a cheap mob with a lot of
+		// health that thr_mod tells the rest of the AI to shrug off (Dirtbag) still makes them run before it closes
+		// in; missing = thr_mod
+//		"flee_thr_mod": 1.0,
 
 		// Ignore enemy
 //		"ignore": false
@@ -918,6 +923,7 @@
 	        "target_dist_mod": 5.00,
 		"pwr_mod": 0.11,
 		"thr_mod": 0.1,
+		"flee_thr_mod": 0.5,  // artillery and anti-heavies flee a Dirtbag mob (a 1000 m mob: about 40 instead of 8 against their cover)
 		"retreat": 0.01
 	},
 	"shieldraid": {
