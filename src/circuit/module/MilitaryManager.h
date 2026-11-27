@@ -634,6 +634,16 @@ public:
 		float siegeBonus;
 	};
 	const SAttackCells& GetAttackCells() const { return attackCells; }
+	// quota.attack_region_home / attack_base_pull: attack target choice by region owner (CChokeMap) and the enemy base.
+	// Home: a group whose leader stands in one of our or contested regions picks targets there first (others only when
+	// none there passes). Base pull: otherwise, targets nearer the enemy base than the group rank up to bonus nearer,
+	// those farther from it up to bonus farther (tanh curve of the difference, curve elmos)
+	struct SAttackRegionPick {
+		bool isHome = false;
+		float bonus = 0.f;  // 0: no base pull
+		float curve = 1000.f;
+	};
+	const SAttackRegionPick& GetAttackRegionPick() const { return attackRegionPick; }
 	// Multiplier on a task's thr_mod by distance from our base (quota.thr_mod.distance.<task> curve); 1 if not configured
 	float GetThrDistMod(IFighterTask::FightType type, const springai::AIFloat3& pos) const;
 	// Highest value of the task's thr_mod.distance curve (1 if it has none)
@@ -963,6 +973,7 @@ private:
 	std::set<int> ahReady;  // anti-heavy units whose weapon was ready at the last UpdateAhStats (shots)
 	std::pair<float, float> attackGroupRadius;  // quota.attack_group_radius
 	SAttackCells attackCells;  // quota.attack_static_cells
+	SAttackRegionPick attackRegionPick;  // quota.attack_region_pick
 	using ThrDistCurve = std::vector<std::pair<float, float>>;  // [fraction of map diagonal, thr_mod multiplier], sorted
 	std::vector<ThrDistCurve> thrDistCurves;  // by IFighterTask::FightType
 	float invMapDiagonal;  // 1 / the map's diagonal (thr_mod.distance curves take a fraction of it)

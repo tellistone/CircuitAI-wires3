@@ -928,6 +928,23 @@ void CMilitaryManager::ReadConfig()
 		c.parkedFrames = static_cast<int>(num("parked_sec", 0.f, 0.f, 600.f) * FRAMES_PER_SEC);
 		c.siegeBonus = num("siege_bonus", 1.f, 1.f, 10.f);
 	}
+	{
+		const Json::Value& qhome = quotas.get("attack_region_home", false);
+		if (!qhome.isBool()) {
+			circuit->LOG("CONFIG %s: quota.attack_region_home must be true or false, using false", cfgName.c_str());
+		}
+		attackRegionPick.isHome = qhome.isBool() && qhome.asBool();
+		const Json::Value& q = quotas["attack_base_pull"];
+		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
+				&& (q[0u].asFloat() >= 0.f) && (q[0u].asFloat() <= 0.9f) && (q[1u].asFloat() >= 1.f));
+		if (!isOk) {
+			circuit->LOG("CONFIG %s: quota.attack_base_pull must be [<bonus 0..0.9>, <curve elmos >= 1>], it is off", cfgName.c_str());
+		}
+		if (isOk && !q.isNull()) {
+			attackRegionPick.bonus = q[0u].asFloat();
+			attackRegionPick.curve = q[1u].asFloat();
+		}
+	}
 	const Json::Value& raidTargets = quotas["raid_target_roles"];
 	if (!raidTargets.isArray()) {  // legacy: constructors and commanders
 		if (!raidTargets.isNull()) {
