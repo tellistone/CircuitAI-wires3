@@ -113,7 +113,7 @@ void CProtect::OnCommDamaged(CCircuitUnit* comm, CEnemyInfo* attacker)
 	}
 }
 
-const CProtect::SWard* CProtect::FindWard(const IFighterTask* task, Side* outSide) const
+const CProtect::SCommit* CProtect::FindCommit(const IFighterTask* task, const SWard*& outWard) const
 {
 	auto it = committed.find(task);
 	if (it == committed.end()) {
@@ -123,23 +123,21 @@ const CProtect::SWard* CProtect::FindWard(const IFighterTask* task, Side* outSid
 	if (wt == wards.end()) {
 		return nullptr;
 	}
-	if (outSide != nullptr) {
-		*outSide = it->second.side;
-	}
-	return &wt->second;
+	outWard = &wt->second;
+	return &it->second;
 }
 
 bool CProtect::IsActing(const IFighterTask* task) const
 {
-	Side side;
-	const SWard* w = FindWard(task, &side);
-	return (w != nullptr) && (w->sides[side].state == State::GO);
+	const SWard* w = nullptr;
+	const SCommit* c = FindCommit(task, w);
+	return (c != nullptr) && (w->sides[c->side].state == State::GO);
 }
 
 bool CProtect::IsZoneEnemy(const IFighterTask* task, const CEnemyInfo* enemy) const
 {
-	const SWard* w = FindWard(task);
-	if ((w == nullptr) || (w->sides[GROUND].state != State::GO)) {
+	const SWard* w = nullptr;
+	if ((FindCommit(task, w) == nullptr) || (w->sides[GROUND].state != State::GO)) {
 		return false;
 	}
 	const CCircuitDef* edef = enemy->GetCircuitDef();
@@ -161,8 +159,8 @@ bool CProtect::IsRecentAttacker(ICoreUnit::Id id, int frame) const
 
 AIFloat3 CProtect::GetGoal(const IFighterTask* task) const
 {
-	const SWard* w = FindWard(task);
-	return (w != nullptr) ? w->goal : AIFloat3(-RgtVector);
+	const SWard* w = nullptr;
+	return (FindCommit(task, w) != nullptr) ? w->goal : AIFloat3(-RgtVector);
 }
 
 AIFloat3 CProtect::GetMeetingPoint(const CCircuitUnit* comm) const
@@ -183,19 +181,14 @@ bool CProtect::IsAtMeetingPoint(const CCircuitUnit* comm, const AIFloat3& pos) c
 
 float CProtect::GetGoBoost(const IFighterTask* task, const AIFloat3& pos) const
 {
-	auto it = committed.find(task);
-	if (it == committed.end()) {
-		return 1.f;
-	}
-	auto wt = wards.find(it->second.ward);
-	if ((wt == wards.end()) || (wt->second.sides[it->second.side].state != State::GO)
-		|| !IsInFight(wt->second, pos, it->second.isPresent))
-	{
+	const SWard* w = nullptr;
+	const SCommit* c = FindCommit(task, w);
+	if ((c == nullptr) || (w->sides[c->side].state != State::GO) || !IsInFight(*w, pos, c->isPresent)) {
 		return 1.f;
 	}
 	// The strength of its ward's side there now (a group still on its way isn't), and itself wherever it is
-	const float self = std::max(it->second.strength, 1e-3f);
-	return std::max((wt->second.sides[it->second.side].presentSum + (it->second.isPresent ? 0.f : self)) / self, 1.f);
+	const float self = std::max(c->strength, 1e-3f);
+	return std::max((w->sides[c->side].presentSum + (c->isPresent ? 0.f : self)) / self, 1.f);
 }
 
 void CProtect::Transfer(const IFighterTask* from, const IFighterTask* to)
@@ -438,6 +431,7 @@ struct CProtect::SSums {
 
 void CProtect::SumMembers(SWard& w, const std::vector<const SMember*>& members, SSums& out) const
 {
+	auto rank = [](const SMember* m) { return std::make_pair(m->comm != nullptr, m->value); };  // commanders first
 	out = SSums();
 	w.value = 0.f;
 	for (const SMember* m : members) {
@@ -446,21 +440,18 @@ void CProtect::SumMembers(SWard& w, const std::vector<const SMember*>& members, 
 		if (m->isAntiAir) {
 			out.airOwn += m->own;
 		}
-		if (m->comm != nullptr) {
-			if ((out.lead == nullptr) || (out.lead->comm == nullptr) || (m->value > out.lead->value)) {
-				out.lead = m;
-			}
-			if ((out.listFrom == nullptr) || (m->view.danger > out.listFrom->view.danger)) {
-				out.listFrom = m;
-			}
-			out.isCommThreat |= (m->view.danger > m->view.own);
-			out.isDamaged |= m->isDamaged;
-		} else {
-			out.hasGroup = true;
-			if ((out.lead == nullptr) || ((out.lead->comm == nullptr) && (m->value > out.lead->value))) {
-				out.lead = m;
-			}
+		if ((out.lead == nullptr) || (rank(m) > rank(out.lead))) {
+			out.lead = m;
 		}
+		if (m->comm == nullptr) {
+			out.hasGroup = true;
+			continue;
+		}
+		if ((out.listFrom == nullptr) || (m->view.danger > out.listFrom->view.danger)) {
+			out.listFrom = m;
+		}
+		out.isCommThreat |= (m->view.danger > m->view.own);
+		out.isDamaged |= m->isDamaged;
 	}
 	w.comm = out.lead->comm;
 	w.goal = out.lead->pos;
@@ -479,9 +470,10 @@ void CProtect::UpdateWard(SWard& w, const std::vector<const SMember*>& members, 
 	}
 
 	// 1. Anchor: a commander's seen danger beats it, or it took damage since the last update; a group member is
-	// outnumbered at the goal by the force balance's own line (attack_balance.ratio; our army standing by holds it);
-	// or planes heading for the goal beat its anti-air bubble (its anti-air members' power, and the anti-air turrets
-	// covering it)
+	// outnumbered at the goal by the force balance's mobile enemies (a turret can't rush, and ground groups take only
+	// mobiles in the zone) at its own line (attack_balance.ratio; our army standing by holds it, but not the groups
+	// the protect sent there, which would end it as they arrive); or planes heading for the goal beat its anti-air
+	// bubble (its anti-air members' power, and the anti-air turrets covering it)
 	CAttackBalance* balance = circuit->GetMilitaryManager()->GetAttackBalance();
 	CAttackBalance::SForce force;
 	bool isForce = false;
@@ -495,7 +487,10 @@ void CProtect::UpdateWard(SWard& w, const std::vector<const SMember*>& members, 
 	if (sums.hasGroup) {
 		getForce();
 		const float line = balance->IsOn() ? balance->GetRatioLine() : 1.f;
-		isOutnumbered = (force.enemy > 0.f) && (force.GetRatio() >= line);
+		const float help = w.sides[GROUND].GetHelpPresent() + w.sides[AIR].GetHelpPresent();  // the last pick's
+		const float mobiles = force.enemy - force.statics;
+		isOutnumbered = (mobiles > 0.f)
+				&& (mobiles >= line * std::max(force.GetOurs() - CAttackBalance::ALLY_SHARE * help, 0.f));
 	}
 	const bool isPlaneThreat = (w.planeDanger > 0.f)
 			&& (w.planeDanger > sums.airOwn + GetStaticCover(w.goal, true, 0.f));  // bombs land at the plane's spot
@@ -1114,8 +1109,8 @@ void CProtect::Release(SWard& w, Side side, std::vector<SCandidate>& pool)
 void CProtect::MoveGroups(Side side, int frame, const std::vector<SWard*>& on)
 {
 	// A group latched to a go and not yet present moves, once, to a ward short of its need that scores it
-	// MOVE_SCORE_MOD x higher (a commander rushed after the groups were latched to a Lance group) and is in a go, or
-	// reaches its go line with it, while the go it leaves stays above its keep line without it
+	// MOVE_SCORE_MOD x higher (a commander rushed after the groups were latched to a Lance group) and is in a go (or
+	// can go now and reaches its go line with it), while the go it leaves stays above its keep line without it
 	const float keepThreat = circuit->GetMilitaryManager()->GetAttackKeepThreat();
 	for (auto& kv : committed) {
 		SCommit& c = kv.second;
@@ -1124,22 +1119,18 @@ void CProtect::MoveGroups(Side side, int frame, const std::vector<SWard*>& on)
 		}
 		SWard& from = wards.at(c.ward);
 		SSide& fs = from.sides[side];
-		const float judged = fs.danger + fs.spill;
-		if ((fs.state != State::GO)
-			|| ((judged > 0.f) && ((fs.GetSum() - c.strength) / judged < from.goLine / keepThreat)))
-		{
+		if ((fs.state != State::GO) || (fs.GetRatioWith(-c.strength) < from.goLine / keepThreat)) {
 			continue;
 		}
 		const ISquadTask* g = static_cast<const ISquadTask*>(kv.first);
 		float bestScore = MOVE_SCORE_MOD * from.value / (GetTravelSec(g, from.goal, frame) + SCORE_SEC);
 		SWard* best = nullptr;
 		for (SWard* w : on) {
-			// Short of its need, and in a go or lifted to its go line by the group: else the group would stop acting,
-			// come back next second and move again
+			// Short of its need, and in a go or able to go now and lifted to its go line by the group: else the group
+			// would stop acting, come back next second and move again
 			const SSide& s = w->sides[side];
-			const float judged = s.danger + s.spill;
 			if ((w == &from) || (s.GetSum() >= s.need) || ((s.state != State::GO)
-				&& ((judged <= 0.f) || ((s.GetSum() + c.strength) / judged < w->goLine))))
+				&& ((frame - s.stateFrame < MIN_STATE_FRAMES) || (s.GetRatioWith(c.strength) < w->goLine))))
 			{
 				continue;
 			}

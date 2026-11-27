@@ -477,14 +477,16 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   of each judging the fight alone and trickling in.
   - Wards: every commander of ours (each one, not only the last built, and on after one dies), and anti-heavy squads
     (not flying ones) and artillery tasks holding a unit with the new `protect` attribute (none by default). Those
-    within 600 elmos of each other are one ward until 800 apart, worth their summed metal cost. A group ward starts
-    when the force balance at it says it is outnumbered at `attack_balance.ratio` (1 if off; our army nearby counts, so the army isn't held at its
-    artillery), or on bombers; it has no meeting point and no time to death. Each ward and side has its own go.
+    within 600 elmos of each other are one ward until 800 apart, worth their summed metal cost. A group ward is on
+    while the force balance's mobile enemies at it outnumber it at `attack_balance.ratio` (1 if off), or on bombers.
+    Our army nearby counts, so the army isn't held at its artillery, but not the groups the protect sent there,
+    which would end it as they arrive. It has no meeting point and no time to death. Each ward and side has its own
+    go.
   - The pick: a go keeps its groups; then groups go to the ward with the best value / (travel sec + 3), wards in a go
     first. A ward in a no-go still under its go line after the pick hands its groups back, the lowest value first,
     so two wards don't split the same groups and both stay out; those handed back then try alone, the highest value
     first. A group latched to a go and not yet present moves once to a ward scoring it twice as high that is in a
-    go or reaches its go line with it, if the go it leaves stays above its keep line (`PROTECT move`). Merged wards keep the one in a go, else on, else the oldest, so a
+    go (or can go now and reaches its go line with it), if the go it leaves stays above its keep line (`PROTECT move`). Merged wards keep the one in a go, else on, else the oldest, so a
     commander walking past its artillery keeps its protect. Every `PROTECT` line names its ward.
   - Danger, in two sides answered together. Ground: the commander's danger list without its gunships, or the force
     balance's enemy force at the commander (mobiles by how soon they can shoot it, enemy statics by their cover

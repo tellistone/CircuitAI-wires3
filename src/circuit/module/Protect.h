@@ -14,6 +14,7 @@
 
 #include "AIFloat3.h"
 
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <string>
@@ -38,10 +39,12 @@ class ISquadTask;
  *    else its costliest member. Its identity is kept while its members change (merged: the ward in a go, else on,
  *    else the oldest).
  * 1. Anchor: a commander's seen danger (CBuilderManager's danger list within the zone) beats its own power, or it
- *    took damage; a group member is outnumbered by the force balance at the goal (enemy force over ours at
- *    attack_balance.ratio, 1 if off; our and allied mobiles nearby at 0.75: an army standing by holds it); or seen planes with a ground weapon (bombers)
- *    within the zone and heading for the goal beat its anti-air bubble (its anti-air members' power and the anti-air
- *    turrets covering it). It ends keep_sec after the last such second. Zone: zone elmos around the goal.
+ *    took damage; a group member is outnumbered at the goal by the force balance's mobile enemies, at
+ *    attack_balance.ratio (1 if off) x ours (our and allied mobiles nearby at 0.75: an army standing by holds it;
+ *    the groups the protect sent there left out, as they would end it on arrival); or seen planes with a ground
+ *    weapon (bombers) within the zone and heading for the goal beat its anti-air bubble (its anti-air members' power
+ *    and the anti-air turrets covering it). It ends keep_sec after the last such second. Zone: zone elmos around
+ *    the goal.
  * 2. Danger, in two sides answered together. Ground: its commanders' list without its gunships (the largest of
  *    them), or the force balance's enemy force at the goal (CAttackBalance::GetForceAt: mobiles by how soon they can
  *    shoot it, statics by their cover falloff) without its aircraft, the larger. Air: the list's gunships (a group
@@ -62,9 +65,9 @@ class ISquadTask;
  *    air side leaves unanswered, to its ratio and to its commit up to its danger again. A ward in a no-go still
  *    under its go line after the pick hands its groups back, the lowest value first, and the others pick again; then
  *    those handed back try alone, the highest value first. A group latched to a go and not yet present moves, once,
- *    to a ward that scores it at least twice as high, is in a go or reaches its go line with it, and if the go it
- *    leaves stays above its keep line. Go at go_ratio
- *    with a group at least (0.6 x it once cornered); no-go below the go line / quota.attack_keep_threat. 5 s per
+ *    to a ward that scores it at least twice as high and is in a go (or can go now and reaches its go line with
+ *    it), if the go it leaves stays above its keep line. Go at go_ratio with a group at least (0.6 x it once
+ *    cornered); no-go below the go line / quota.attack_keep_threat. 5 s per
  *    state at least, each ward and side on its own. On go the groups are latched until the anchor ends or its
  *    no-go, or until one is 1.5 x respond_sec of travel away; they merge only into each other.
  * 5. Go: a side's committed groups head for their ward's goal, recent attackers of our commanders first. Ground
@@ -133,10 +136,12 @@ private:
 		float ratio = 0.f;
 		int count = 0;  // its committed groups
 		float GetSum() const { return committedSum + own + cover; }  // the ratio's numerator
-		float GetRatio() const {  // against its danger and the spill
+		float GetRatioWith(float extra) const {  // with extra strength, against its danger and the spill
 			const float judged = danger + spill;
-			return (judged > 0.f) ? GetSum() / judged : std::numeric_limits<float>::max();
+			return (judged > 0.f) ? (GetSum() + extra) / judged : std::numeric_limits<float>::max();
 		}
+		float GetRatio() const { return GetRatioWith(0.f); }
+		float GetHelpPresent() const { return std::max(presentSum - own - commCover, 0.f); }  // committed groups there
 		void ClearSums() { committedSum = 0.f; presentSum = own + commCover; count = 0; }
 	};
 	struct SWard {
@@ -203,7 +208,7 @@ private:
 	void End(SWard& w, const char* reason, int frame);
 	void SetState(SWard& w, Side side, State value, int frame);
 	std::string GetLabel(const SWard& w) const;  // the logs' [ward N: lead +others, value m]
-	const SWard* FindWard(const IFighterTask* task, Side* outSide = nullptr) const;  // its ward, if committed
+	const SCommit* FindCommit(const IFighterTask* task, const SWard*& outWard) const;  // nullptr: not committed
 	float GetGoBoost(const IFighterTask* task, const springai::AIFloat3& pos) const;
 	// The gunships of the ward's air danger that airAnswer leaves unanswered: the ground side's spill
 	float GetGunshipSpill(const SWard& w, float airAnswer) const;
