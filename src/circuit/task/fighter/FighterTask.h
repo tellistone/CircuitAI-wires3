@@ -319,6 +319,8 @@ public:  // flee helpers, also used by the commander flee (CBuilderManager::Upda
 	static bool IsGroundDanger(CEnemyInfo* enemy, bool isGunship, float& outRange);
 	// IsGroundDanger's unit type test alone (no visibility or state checks)
 	static bool IsGroundDangerDef(CCircuitDef* edef, bool isGunship, float& outRange);
+	// Its threat as the artillery and anti-heavy flee checks weigh it: x its type's flee_thr_mod / thr_mod
+	static float GetFleeThreatOf(const CEnemyInfo* enemy);
 	// Flee: the nearest spot further from the danger than pos is, else the one furthest from it; nullptr if none
 	static const springai::AIFloat3* PickFleeSpot(const springai::AIFloat3& pos, const springai::AIFloat3& dangerPos,
 			const F3Vec& spots);

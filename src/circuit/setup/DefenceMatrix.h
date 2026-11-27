@@ -39,6 +39,9 @@ public:
 		bool isGeo = false;  // a geothermal vent's own point (porcupine.geo): defended only for that vent
 		int chokeId = -1;  // choke.enable: a choke point, at its anchor behind that choke (CChokeDefence)
 		std::vector<SSpot> spots = {};
+		// turret.crowd_count: the part of cost booked for light towers not placed for their crowd. Given back once the
+		// point isn't crowded any more (CMilitaryManager::QueueTowers), so the point can fill its whole budget again
+		float crowdCost = 0.f;
 		// Squared distance from pos to its nearest frozen spot, float max with none
 		float GetSpotSqDist(const springai::AIFloat3& pos) const;
 	};

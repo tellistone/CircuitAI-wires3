@@ -1193,6 +1193,12 @@ bool IFighterTask::IsGroundDanger(CEnemyInfo* enemy, bool isGunship, float& outR
 	return IsGroundDangerDef(edef, isGunship, outRange);
 }
 
+float IFighterTask::GetFleeThreatOf(const CEnemyInfo* enemy)
+{
+	const CCircuitDef* edef = enemy->GetCircuitDef();
+	return enemy->GetThreat() * ((edef != nullptr) ? edef->GetFleeThreatScale() : 1.f);
+}
+
 bool IFighterTask::IsGroundDangerDef(CCircuitDef* edef, bool isGunship, float& outRange)
 {
 	outRange = 0.f;

@@ -118,19 +118,20 @@ public:
 	 *            (behaviour.json "plant"; CMilitaryManager::UpdatePlant)
 	 * KITE:      an enemy of this type is kited: our ranged units with firing spots keep out of quota.kite x their range
 	 *            of it, whatever they target (IFighterTask::FindFireSpot)
+	 * PROTECT:   an anti-heavy squad or artillery task holding a unit of this type is a protect ward (quota.protect)
 	 */
 	enum class AttrType: RoleT {NONE = -1,
 		MELEE = 0, BOOST, NO_JUMP, NO_STRAFE,
 		STOCK, SIEGE, RET_HOLD, RET_FIGHT,
 		JUMP, DG_COST, DG_STILL, ANTI_STAT,
-		REARM, NO_DGUN, PRIO_REPAIR, GUARDED, RAID_TARGET, NO_FORM, CLOAK_ROUTE, PLANT, KITE, _SIZE_};
+		REARM, NO_DGUN, PRIO_REPAIR, GUARDED, RAID_TARGET, NO_FORM, CLOAK_ROUTE, PLANT, KITE, PROTECT, _SIZE_};
 	enum AttrMask: RoleM {
 		MELEE = 0x00000001, BOOST   = 0x00000002, NO_JUMP  = 0x00000004, NO_STRAFE = 0x00000008,
 		STOCK = 0x00000010, SIEGE   = 0x00000020, RET_HOLD = 0x00000040, RET_FIGHT = 0x00000080,
 		JUMP  = 0x00000100, DG_COST = 0x00000200, DG_STILL = 0x00000400, ANTI_STAT = 0x00000800,
 		REARM = 0x00001000, NO_DGUN = 0x00002000, PRIO_REPAIR = 0x00004000, GUARDED = 0x00008000,
 		RAID_TARGET = 0x00010000, NO_FORM = 0x00020000, CLOAK_ROUTE = 0x00040000,
-		PLANT = 0x00080000, KITE = 0x00100000};
+		PLANT = 0x00080000, KITE = 0x00100000, PROTECT = 0x00200000};
 	using AttrT = std::underlying_type<AttrType>::type;
 	using AttrM = std::underlying_type<AttrMask>::type;
 
@@ -217,6 +218,7 @@ public:
 	bool IsAttrCloakRoute() const { return attr & AttrMask::CLOAK_ROUTE; }
 	bool IsAttrPlant()      const { return attr & AttrMask::PLANT; }
 	bool IsAttrKite()       const { return attr & AttrMask::KITE; }
+	bool IsAttrProtect()    const { return attr & AttrMask::PROTECT; }
 	bool IsAttrAny(AttrM value) const { return (attr & value) != 0; }
 
 	bool IsHoldFire()   const { return fireState == FireType::HOLD; }
@@ -430,6 +432,12 @@ public:
 	float GetRaidThrMod() const { return raidThrMod; }
 	// GetCountWeight on the raid view: thr_mod x raid_thr_mod, at most 1
 	float GetRaidCountWeight() const { return std::min(std::max(thrMod * raidThrMod, 0.f), 1.f); }
+	// behaviour.json per unit "flee_thr_mod": as an enemy, the threat multiplier the artillery and anti-heavy flee
+	// checks (CArtilleryTask, CAntiHeavyTask: the flee and its danger zones) use instead of thr_mod, for a cheap
+	// high-health mob the rest of the AI is told to shrug off; < 0: unset (thr_mod)
+	void SetFleeThrMod(float value) { fleeThrMod = value; }
+	// What its threat (thr_mod included) is multiplied by in those checks
+	float GetFleeThreatScale() const { return ((fleeThrMod >= 0.f) && (thrMod > 0.f)) ? fleeThrMod / thrMod : 1.f; }
 	// behaviour.json per unit "formation_row": its rank in a squad's line formation (0 = front row); -1 = unset (its
 	// main role's place in formation.row_order)
 	void SetFormationRow(int value) { formationRow = value; }
@@ -569,6 +577,7 @@ private:
 	float targetDistMod = 1.f;
 	std::shared_ptr<STargetPriority> targetPriority;  // GetTargetPriority
 	float raidThrMod = 1.f;  // GetRaidThrMod
+	float fleeThrMod = -1.f;  // SetFleeThrMod
 	int formationRow = -1;
 
 	float radius;

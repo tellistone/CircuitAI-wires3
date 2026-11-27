@@ -1123,8 +1123,10 @@ bool ISquadTask::UpdateFlee(float margin, float endMargin, bool isGunship, float
 	if (margin >= 0.f) {
 		float dangerThreat;
 		danger = FindFleeDanger(isFleeing ? endMargin : margin, isGunship, dangerThreat);
+		// A running flee needs quota.attack_keep_threat x the threat covered to stop: no flip at the cover line
+		const float keep = isFleeing ? manager->GetCircuit()->GetMilitaryManager()->GetAttackKeepThreat() : 1.f;
 		if ((danger != nullptr) && (allyThreat >= 0.f) && IsFleeCovered(leader->GetPos(manager->GetCircuit()->GetLastFrame()),
-				dangerThreat, allyThreat, allyRadius, ownRole))
+				dangerThreat * keep, allyThreat, allyRadius, ownRole))
 		{
 			danger = nullptr;
 		}

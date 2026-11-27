@@ -525,7 +525,7 @@ float CAntiHeavyTask::GetCoverAt(const AIFloat3& pos) const
 float CAntiHeavyTask::GetFleeThreat(CEnemyInfo* enemy) const
 {
 	const AIFloat3& ePos = enemy->GetPos();
-	return (!IsCoverMapAt(ePos) || (GetCoverAt(ePos) > 0.f)) ? enemy->GetThreat() : std::numeric_limits<float>::max();
+	return (!IsCoverMapAt(ePos) || (GetCoverAt(ePos) > 0.f)) ? GetFleeThreatOf(enemy) : std::numeric_limits<float>::max();
 }
 
 bool CAntiHeavyTask::IsFleeCovered(const AIFloat3& pos, float enemyThreat, float allyThreat, float allyRadius,
