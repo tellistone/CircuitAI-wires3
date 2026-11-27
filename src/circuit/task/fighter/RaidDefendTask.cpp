@@ -130,8 +130,8 @@ float CRaidDefendTask::GetThrDistModAt(const AIFloat3& pos) const
 	// Its own curve, eased by what a post's bonus adds over the base's (FindTarget and the escape apply the base's)
 	CMilitaryManager* militaryMgr = GetMilitaryMgr();
 	const float sqBaseDist = manager->GetCircuit()->GetSetupManager()->GetBasePos().SqDistance2D(pos);
-	const float postMod = militaryMgr->GetRaidDefence()->GetPostBonus(pos) / militaryMgr->GetBaseThrBonus(sqBaseDist);
-	return IFighterTask::GetThrDistModAt(pos) / std::max(postMod, 1.f);
+	const float baseBonus = std::max(militaryMgr->GetBaseThrBonus(sqBaseDist), 1.f);  // a base malus stays
+	return IFighterTask::GetThrDistModAt(pos) / std::max(militaryMgr->GetRaidDefence()->GetPostBonus(pos) / baseBonus, 1.f);
 }
 
 float CRaidDefendTask::GetRadialAllowedThreatAt(const AIFloat3& pos, float strength) const
