@@ -38,6 +38,7 @@ public:
 		float dps = 0.f;  // damage a second: salvo / reload, extra and area damage in, paralyser and slow scaled down
 		float salvo = 0.f;  // one salvo's damage (a manual-fire weapon's alpha)
 		float range = 0.f;  // "truerange" when it has one
+		float aoe = 0.f;
 		bool isLand = false;
 		bool isWater = false;
 		bool isAir = false;

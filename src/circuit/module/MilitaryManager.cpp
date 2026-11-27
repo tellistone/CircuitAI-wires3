@@ -1637,8 +1637,7 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 			break;
 		}
 		case IFighterTask::FightType::ATTACK: {
-			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
-			task = new CAttackTask(this, minAttackers, 0.8f / mod);
+			task = new CAttackTask(this, minAttackers, NewAttackPowerMod());
 			break;
 		}
 		case IFighterTask::FightType::BOMB: {
@@ -1685,6 +1684,7 @@ CAttackTask* CMilitaryManager::EnqueueCommAttack(CCircuitUnit* comm, float ratio
 void CMilitaryManager::PromoteCommAttack(CAttackTask* task)
 {
 	if ((commAttacks.erase(task) > 0) && !task->IsDead()) {
+		task->SetPowerMod(NewAttackPowerMod());
 		fightTasks[static_cast<IFighterTask::FT>(IFighterTask::FightType::ATTACK)].insert(task);
 	}
 }

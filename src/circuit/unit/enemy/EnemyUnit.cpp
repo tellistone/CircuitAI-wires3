@@ -288,7 +288,9 @@ const CCircuitDef::SCommWeapons* CEnemyUnit::GetCommWeapons(CCircuitAI* circuit)
 	if ((edef == nullptr) || !edef->IsDynamicComm() || IsFake()) {
 		return nullptr;
 	}
-	if (!commWeapons.isRead && IsInLOS()) {
+	const int frame = circuit->GetLastFrame();
+	if (!commWeapons.isRead && IsInLOS() && ((commReadFrame < 0) || (frame - commReadFrame >= FRAMES_PER_SEC))) {
+		commReadFrame = frame;  // a failed read (no weapon fitted yet) is tried again a second later
 		CCircuitDef::ReadCommWeapons(circuit, unit, commWeapons);
 	}
 	return commWeapons.isRead ? &commWeapons : nullptr;

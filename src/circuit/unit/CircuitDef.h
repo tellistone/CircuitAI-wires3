@@ -288,11 +288,9 @@ public:
 	float GetMaxRange(RangeType type) const { return maxRange[static_cast<RangeT>(type)]; }
 	float GetMaxRange() const { return maxRange[static_cast<RangeT>(maxRangeType)]; }
 	int GetThreatRange(ThreatType type) const { return threatRange[static_cast<ThreatT>(type)]; }
-	// A dynamic commander's fitted weapons (rules params comm_weapon_id_1 and _2; its def's own weapons aren't the
-	// fitted ones): the longest one's range x comm_range_mult, and its AoE. Both 0 with none fitted
-	static void GetCommWeaponRange(CCircuitAI* circuit, springai::Unit* unit, float& outRange, float& outAoe);
-	// A dynamic commander's fitted weapons (comm_weapon_id_1 and _2, comm_weapon_manual_N), for its fire range and its
-	// time to kill (CCircuitUnit::GetFireRange, CBuilderManager's commander attack)
+	// A dynamic commander's fitted weapons (rules params comm_weapon_id_1 and _2, comm_weapon_manual_N; its def's own
+	// weapons aren't the fitted ones), for its fire range, its time to kill (CCircuitUnit::GetFireRange,
+	// CBuilderManager's commander attack) and its threat and influence reach
 	struct SCommWeapons {
 		// The automatic weapons' range by RangeType, x comm_range_mult; 0: none hits that type
 		std::array<float, static_cast<RangeT>(RangeType::_SIZE_)> range = {0.f, 0.f, 0.f};
@@ -300,6 +298,8 @@ public:
 		float dps = 0.f;  // the automatic weapons', x comm_damage_mult
 		float alpha = 0.f;  // one salvo of its manual-fire weapon, x comm_damage_mult; 0: none fitted
 		float alphaRange = 0.f;  // that weapon's range, x comm_range_mult
+		float reach = 0.f;  // the longest range of all of them, the manual-fire one too (threat and influence maps)
+		float reachAoe = 0.f;  // that weapon's AoE
 		bool isRead = false;  // the rules params were there (some weapon fitted)
 	};
 	// false: no weapon id in its rules params (not a dynamic commander, or out of LOS for an enemy)

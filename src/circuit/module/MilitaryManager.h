@@ -95,7 +95,8 @@ public:
 	// groups may still merge into it (ISquadTask::CheckMergeTask, GetCommAttacks). The caller assigns comm to it
 	CAttackTask* EnqueueCommAttack(CCircuitUnit* comm, float ratio);
 	const std::set<IFighterTask*>& GetCommAttacks() const { return commAttacks; }
-	// The commander left a commander attack that still has merged units: they go on as a normal attack group
+	// The commander left a commander attack that still has merged units: they go on as a normal attack group, with
+	// a normal attack group's threat allowance (NewAttackPowerMod)
 	void PromoteCommAttack(CAttackTask* task);
 	// Registers a new fight task under type for updates and GetTasks
 	IFighterTask* AddFightTask(IFighterTask::FightType type, IFighterTask* task);
@@ -669,6 +670,8 @@ public:
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
+	// A new attack group's random powerMod: 0.8 / thr_mod.attack
+	float NewAttackPowerMod() const { return 0.8f / ((float)rand() / RAND_MAX * attackMod.len + attackMod.min); }
 	IFighterTask* FindGuardTask(CCircuitUnit* unit) const;
 
 	void Watchdog();

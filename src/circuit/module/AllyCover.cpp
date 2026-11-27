@@ -76,15 +76,7 @@ const std::vector<CAllyCover::SDisc>& CAllyCover::GetDiscs()
 		const AIFloat3& pos = comm->GetPos(frame);
 		if ((range > 0.f) && (power > 0.f) && utils::is_valid(pos)) {
 			// In a commander attack: tagged with it, so its own group leaves it out of its strength (other groups count it)
-			const CAttackTask* commTask = nullptr;
-			IUnitTask* task = comm->GetTask();
-			if ((task->GetType() == IUnitTask::Type::FIGHTER)
-				&& (static_cast<IFighterTask*>(task)->GetFightType() == IFighterTask::FightType::ATTACK)
-				&& (static_cast<CAttackTask*>(task)->GetComm() == comm))
-			{
-				commTask = static_cast<CAttackTask*>(task);
-			}
-			discs.push_back({commTask, pos, SQUARE(range), power, true});
+			discs.push_back({CAttackTask::GetCommAttackOf(comm), pos, SQUARE(range), power, true});
 		}
 	}
 	return discs;
@@ -92,16 +84,9 @@ const std::vector<CAllyCover::SDisc>& CAllyCover::GetDiscs()
 
 float CAllyCover::GetCommRange(CCircuitUnit* comm) const
 {
-	CCircuitDef* cdef = comm->GetCircuitDef();
-	if (cdef->IsRoleComm()) {
-		// Dynamic commanders: the def's weapons aren't the ones fitted (as the threat map reads an enemy commander's)
-		float range, aoe;
-		CCircuitDef::GetCommWeaponRange(circuit, comm->GetUnit(), range, aoe);
-		if (range > 0.f) {
-			return range;
-		}
-	}
-	return cdef->GetMaxRange(CCircuitDef::RangeType::LAND);  // its real reach, as the statics' (no threat-range slack)
+	// Dynamic commanders: the fitted automatic weapons (the def's aren't the ones fitted); its real reach, as the
+	// statics' (no threat-range slack)
+	return comm->GetFireRange(CCircuitDef::RangeType::LAND);
 }
 
 CAllyCover::SParts CAllyCover::GetCoverAt(const AIFloat3& p, const SJudge& judge)

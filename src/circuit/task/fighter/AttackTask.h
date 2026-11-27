@@ -22,6 +22,11 @@ class CMilitaryManager;
 enum class AttackRoute: int;  // module/MilitaryManager.h
 class CAllyCover;
 
+// Why a commander attack ended (CAttackTask::EndComm, CBuilderManager::OnCommAttackEnd logs it by name)
+enum class CommEnd: char {NONE = 0, KILL, NO_TARGET, KEEP, NO_ROUTE, LEASH, TIME, FLEE, RETREAT, DISARM, MORPH, HIDE,
+		DEATH, TAKEN, STOPPED, OFF};
+const char* CommEndName(CommEnd reason);
+
 class CAttackTask: public ISquadTask {
 public:
 	CAttackTask(ITaskManager* mgr, float minPower, float powerMod);
@@ -72,9 +77,11 @@ public:
 	 */
 	void SetComm(CCircuitUnit* unit) { comm = unit; }
 	CCircuitUnit* GetComm() const { return comm; }
+	// The commander attack unit is in (it is its commander), else nullptr
+	static CAttackTask* GetCommAttackOf(CCircuitUnit* unit);
 	// The commander leaves at the next update, for reason (logged; the first reason given wins)
-	void EndComm(const char* reason) {
-		if ((comm != nullptr) && (commEnd == nullptr)) {
+	void EndComm(CommEnd reason) {
+		if ((comm != nullptr) && (commEnd == CommEnd::NONE)) {
 			commEnd = reason;
 		}
 	}
@@ -154,15 +161,17 @@ private:
 	// true (the task may be aborted then)
 	bool UpdateComm(int frame);
 	// It left (RemoveAssignee, Stop): to the builder manager's idle task, its jump setting back, the end noted
-	void HandCommBack(CCircuitUnit* unit, const char* reason);
-	// Health retreat (or disarmed): the builder retreat, as for its jobs (IBuilderTask::OnUnitDamaged)
+	void HandCommBack(CCircuitUnit* unit, CommEnd reason);
+	// Health retreat (or disarmed): the builder retreat, as for its jobs (CBuilderManager::IsWorkerRetreat), but not
+	// out of a duel it is winning (CBuilderManager::IsCommDuelHeld)
 	void OnCommDamaged(CCircuitUnit* unit);
 	// FindTarget's filter for a commander attack; isCurrent: kept at the keep ratios
 	bool IsCommTargetOk(CEnemyInfo* enemy, bool isCurrent);
 	// A target the route rejected or couldn't reach: the commander leaves it alone for a while
 	void NoteCommReject(ICoreUnit::Id id);
-	// The walk on this route and the kill fit the attack's time budget
-	bool IsCommRouteInBudget(CEnemyInfo* enemy, const F3Vec& path);
+	// This route to enemy: its walk and the kill fit the time budget, and the commander is covered along it
+	// (CBuilderManager::IsCommRouteOk; kept at 1.0x once a route to it was taken)
+	bool IsCommRouteOk(CEnemyInfo* enemy, const F3Vec& path);
 
 	/*
 	 * Group strength and the threat it tolerates
@@ -657,13 +666,12 @@ private:
 	int hitFrame;
 
 	// Commander attack
-	CCircuitUnit* comm = nullptr;  // SetComm; nullptr: a normal attack group
-	const char* commEnd = nullptr;  // EndComm
+	// SetComm; nullptr: a normal attack group. Not nullptr: no threat cap (GetBaseAllowedThreatAt, GetPathThreatCap),
+	// the commander's cover test judges every target and route instead (CBuilderManager::IsCommTargetOk, IsCommRouteOk)
+	CCircuitUnit* comm = nullptr;
+	CommEnd commEnd = CommEnd::NONE;  // EndComm
 	bool isCommKeepFail = false;  // the last pick dropped the current target at the keep ratios
-	// An enemy commander that passes the duel test (CBuilderManager::GetCommDuelThreat) is judged by it: its threat is
-	// added to every allowance this task works out (GetBaseAllowedThreatAt) until the next pick, so the attack group's
-	// own allowance (1 / ratio) judges only what else stands there
-	float commDuelThreat = 0.f;
+	ICoreUnit::Id commRouteId = -1;  // the target whose route the commander took (its routes are kept at 1.0x)
 };
 
 } // namespace circuit
