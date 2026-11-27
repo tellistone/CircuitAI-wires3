@@ -1146,8 +1146,10 @@ bool CArtilleryTask::CheckFlee(CCircuitUnit* unit)
 	CollectDangers(unit, fleeMargin, pos, pos);
 	float dangerThreat;
 	const SDanger* danger = FindDanger(pos, dangerThreat);
-	// Cover net of those enemies: an escort they outweigh doesn't hold the artillery in place
-	if ((danger == nullptr) || ((GetCfg().allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat, true))) {
+	// Cover net of those enemies: an escort they outweigh doesn't hold the artillery in place. A running flee needs
+	// quota.attack_keep_threat x their threat covered to stop, so a mob near the line doesn't flip it every update
+	const float keep = isFleeing ? manager->GetCircuit()->GetMilitaryManager()->GetAttackKeepThreat() : 1.f;
+	if ((danger == nullptr) || ((GetCfg().allyThreat >= 0.f) && HasCover(unit, pos, dangerThreat * keep, true))) {
 		if (isFleeing && isAntiHeavy) {
 			manager->GetCircuit()->GetMilitaryManager()->NoteAh(unit->GetCircuitDef(), CMilitaryManager::AhNote::FLEE_END);
 			searchFrame[FRONT] = std::max(searchFrame[FRONT], frame + FRAMES_PER_SEC * 5);  // settle before the front

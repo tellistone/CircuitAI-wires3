@@ -89,7 +89,7 @@ float CAttackBalance::GetRangeAt(const CCircuitDef* cdef, bool isWater, bool isA
 }
 
 void CAttackBalance::AddEntry(std::vector<SEntry>& entries, const CCircuitDef* cdef, const AIFloat3& pos, float power,
-		const CAttackTask* task)
+		const IFighterTask* task)
 {
 	float rangeLand, rangeWater;
 	GetRanges(cdef, rangeLand, rangeWater);
@@ -165,7 +165,7 @@ void CAttackBalance::Update()
 	// a task is never dereferenced later (a merge may delete it between this and the checks)
 	for (const auto& kv : circuit->GetInflMap()->GetMobileArmedPos()) {
 		const CCircuitDef* adef = nullptr;
-		const CAttackTask* task = nullptr;
+		const IFighterTask* task = nullptr;
 		CCircuitUnit* unit = circuit->GetTeamUnit(kv.first);
 		if (unit != nullptr) {
 			adef = unit->GetCircuitDef();
@@ -173,14 +173,14 @@ void CAttackBalance::Update()
 			if ((t != nullptr) && (t->GetType() == IUnitTask::Type::RETREAT)) {
 				continue;  // retreating to repair
 			}
-			if ((t != nullptr) && (t->GetType() == IUnitTask::Type::FIGHTER)
-				&& (static_cast<const IFighterTask*>(t)->GetFightType() == IFighterTask::FightType::ATTACK))
-			{
-				const CAttackTask* attack = static_cast<const CAttackTask*>(t);
-				if (attack->IsFleeing(frame) || attack->IsOutnumbered()) {
-					continue;
+			if ((t != nullptr) && (t->GetType() == IUnitTask::Type::FIGHTER)) {
+				task = static_cast<const IFighterTask*>(t);
+				if (task->GetFightType() == IFighterTask::FightType::ATTACK) {
+					const CAttackTask* attack = static_cast<const CAttackTask*>(task);
+					if (attack->IsFleeing(frame) || attack->IsOutnumbered()) {
+						continue;
+					}
 				}
-				task = attack;
 			}
 		} else {
 			CAllyUnit* ally = circuit->GetFriendlyUnit(kv.first);
@@ -218,7 +218,8 @@ float CAttackBalance::GetWeight(const SEntry& e, float sqDist, bool isWater, boo
 	}
 }
 
-void CAttackBalance::GetForceAt(const AIFloat3& F, const CAttackTask* self, bool isAmph, SForce& outForce)
+void CAttackBalance::GetForceAt(const AIFloat3& F, const CAttackTask* self, bool isAmph, SForce& outForce,
+		const LeftOut& isLeftOut)
 {
 	Update();
 	const auto startTime = std::chrono::steady_clock::now();
@@ -239,9 +240,10 @@ void CAttackBalance::GetForceAt(const AIFloat3& F, const CAttackTask* self, bool
 	}
 	float allied = 0.f;
 	for (const SEntry& a : allies) {
-		if ((a.task != self) || (self == nullptr)) {
-			allied += a.power * GetWeight(a, F.SqDistance2D(a.pos), isWater, isAmph);
+		if (((a.task == self) && (self != nullptr)) || ((a.task != nullptr) && isLeftOut && isLeftOut(a.task))) {
+			continue;
 		}
+		allied += a.power * GetWeight(a, F.SqDistance2D(a.pos), isWater, isAmph);
 	}
 	float blip = 0.f;
 	const float sqBlipReach = SQUARE(blipRange + cfg.horizon * blipSpeed);

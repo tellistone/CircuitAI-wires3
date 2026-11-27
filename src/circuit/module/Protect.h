@@ -141,7 +141,6 @@ private:
 			return (judged > 0.f) ? (GetSum() + extra) / judged : std::numeric_limits<float>::max();
 		}
 		float GetRatio() const { return GetRatioWith(0.f); }
-		float GetHelpPresent() const { return std::max(presentSum - own - commCover, 0.f); }  // committed groups there
 		void ClearSums() { committedSum = 0.f; presentSum = own + commCover; count = 0; }
 	};
 	struct SWard {

@@ -479,7 +479,12 @@ void CProtect::UpdateWard(SWard& w, const std::vector<const SMember*>& members, 
 	bool isForce = false;
 	auto getForce = [&]() {
 		if (!isForce) {
-			balance->GetForceAt(w.goal, nullptr, sums.lead->lead->GetCircuitDef()->IsAmphibious(), force);
+			// Without the groups committed to it: they would end it as they arrive
+			balance->GetForceAt(w.goal, nullptr, sums.lead->lead->GetCircuitDef()->IsAmphibious(), force,
+					[this, &w](const IFighterTask* t) {
+						auto it = committed.find(t);
+						return (it != committed.end()) && (it->second.ward == w.id);
+					});
 			isForce = true;
 		}
 	};
@@ -487,10 +492,8 @@ void CProtect::UpdateWard(SWard& w, const std::vector<const SMember*>& members, 
 	if (sums.hasGroup) {
 		getForce();
 		const float line = balance->IsOn() ? balance->GetRatioLine() : 1.f;
-		const float help = w.sides[GROUND].GetHelpPresent() + w.sides[AIR].GetHelpPresent();  // the last pick's
 		const float mobiles = force.enemy - force.statics;
-		isOutnumbered = (mobiles > 0.f)
-				&& (mobiles >= line * std::max(force.GetOurs() - CAttackBalance::ALLY_SHARE * help, 0.f));
+		isOutnumbered = (mobiles > 0.f) && (mobiles >= line * force.GetOurs());
 	}
 	const bool isPlaneThreat = (w.planeDanger > 0.f)
 			&& (w.planeDanger > sums.airOwn + GetStaticCover(w.goal, true, 0.f));  // bombs land at the plane's spot

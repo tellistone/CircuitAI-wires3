@@ -476,7 +476,9 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
   its `target_dist_mod`). An enemy type's `flee_thr_mod` replaces its `thr_mod` in the artillery task's flee and
   firing-spot danger zones and in anti-heavy squads' flee and pick zones (`IFighterTask::GetFleeThreatOf`); the
   threat map, routes, attack groups and the force balance keep `thr_mod`. The mob now weighs about 40, so the unit
-  runs to the army unless about 50 of cover stands by; a lone Dirtbag (1.2) still doesn't move it.
+  runs to the army unless about 50 of cover stands by; a lone Dirtbag (1.2) still doesn't move it. A running flee
+  (artillery, anti-heavy and anti-air squads) now needs cover past `attack_keep_threat` x the threat to stop, so a
+  mob right at the line doesn't flip it every update.
 - **Protect against rushes on commanders and protected groups** (`quota.protect`, new, off by default: `enable`,
   `zone` 1200, `keep_sec` 12, `respond_sec` 12, `go_ratio` 1.0). When a commander's seen danger within `zone` beats
   its own power, or it takes damage, or seen bombers within `zone` heading for it beat its anti-air bubble, one central
