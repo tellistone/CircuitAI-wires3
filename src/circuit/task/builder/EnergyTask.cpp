@@ -39,8 +39,14 @@ void CBEnergyTask::Update()
 		return;
 	}
 
-	// Same rule as when the job was queued (CEconomyManager::GetEnergyPriority). Nothing else changes an energy
-	// job's priority; ChangePriority only sends ZK a command when its build priority changes
+	// A NOW job was raised on purpose (escalation's singus, re-promoted every escalation.interval): GetEnergyPriority
+	// never gives NOW, so re-ranking it would flip it between NOW and HIGH/NORMAL and drop its escalation rules
+	// in between. Escalation off drops its jobs to NORMAL, and the re-rank below takes over again
+	if (priority == Priority::NOW) {
+		return;
+	}
+	// Same rule as when the job was queued (CEconomyManager::GetEnergyPriority); ChangePriority only sends ZK
+	// a command when its build priority changes
 	const Priority wanted = manager->GetCircuit()->GetEconomyManager()->GetEnergyPriority(buildDef);
 	if (wanted != priority) {
 		ChangePriority(wanted);
