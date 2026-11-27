@@ -65,7 +65,7 @@ void CTravelMap::Refresh(CCircuitAI* circuit, CCircuitUnit* unit, const AIFloat3
 	// The raid view and squad threat, as a raid group judges and routes (CRaidTask); threat is a cost, not a wall
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	squareSize = pathfinder->GetSquareSize();
-	pending = pathfinder->CreateCostMapQuery(unit, circuit->GetThreatMap(), frame, start, false, true, true);
+	pending = pathfinder->CreateCostMapQuery(unit, circuit->GetThreatMap(), frame, start, false, true, true, true);
 	pendingFrame = frame;
 	pendingMobileId = mobileId;
 	pendingStart = start;
@@ -80,15 +80,9 @@ float CTravelMap::GetSec(const AIFloat3& pos, float speed) const
 	const CQueryCostMap* map = static_cast<const CQueryCostMap*>(ready.get());
 	AIFloat3 p = pos;
 	CTerrainManager::CorrectPosition(p);
-	float cost = map->GetCostAtSquare(p);
-	if (cost < 0.f) {
-		cost = map->GetCostAt(p, squareSize * 2);  // a building on the square itself: the squares around it
-	}
-	if (cost < 0.f) {
-		return -1.f;
-	}
-	// MexBoard's conversion: a square costs COST_BASE plus its slope and threat terms
-	return cost / (std::max(speed, 1.f) / squareSize * COST_BASE);
+	// The length of the cheapest (threat-avoiding) route, not its cost: threat makes a square dear, not slow
+	const float len = map->GetLength(p, squareSize * 2);
+	return (len < 0.f) ? -1.f : len / std::max(speed, 1.f);
 }
 
 } // namespace circuit

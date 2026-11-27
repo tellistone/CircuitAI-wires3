@@ -78,7 +78,7 @@ public:
 	//             the unit's task does (CThreatMap::IsRaidView)
 	std::shared_ptr<IPathQuery> CreateCostMapQuery(CCircuitUnit* unit, CThreatMap* threatMap, int frame,
 			const springai::AIFloat3& startPos, bool isBottleneck = false, bool isSquadThreat = false,
-			bool isRaidView = false);
+			bool isRaidView = false, bool isLength = false);  // isLength: CQueryCostMap::GetLength too
 	std::shared_ptr<IPathQuery> CreateLineMapQuery(CCircuitUnit* unit, CThreatMap* threatMap, int frame);
 
 	void RunQuery(const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);

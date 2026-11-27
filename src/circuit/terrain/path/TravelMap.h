@@ -21,7 +21,8 @@ class IPathQuery;
 /*
  * Threat-aware travel time from one spot (quota.raid_defence posts, quota.protect wards): a cost map
  * (CPathFinder::CreateCostMapQuery: a raid group's view, squad threat, threat added as cost) made on the path worker
- * for one movement type, its cost read as seconds the way the mex board does. The last ready map is kept while the
+ * for one movement type. The route to a square is the cheapest one, so it bends round threat; its time is that
+ * route's length at the group's speed (threat is a price, not a slowdown). The last ready map is kept while the
  * next one is made
  */
 class CTravelMap {
