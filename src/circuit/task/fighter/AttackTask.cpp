@@ -1275,7 +1275,7 @@ void CAttackTask::WalkToProtect(int frame, bool isReuse)
 		return;
 	}
 	const CProtect* protect = GetMilitaryMgr()->GetProtect();
-	const AIFloat3 hostPos = protect->GetGoal();
+	const AIFloat3 hostPos = protect->GetGoal(this);
 	AIFloat3 goal = hostPos;
 	SStrength edgeStrength = GetSafeThreat();
 	if (!FindFightEdge(frame, hostPos, RALLY_EDGE_FAR_DIST, goal, edgeStrength)) {
@@ -1979,7 +1979,7 @@ bool CAttackTask::FindTarget()
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
-		const bool isZone = isProtect && protect->IsZoneEnemy(enemy);
+		const bool isZone = isProtect && protect->IsZoneEnemy(this, enemy);
 		// Cheap checks first
 		if (enemy->IsHidden() || ((enemy->GetTasks().size() > 2) && !isZone) || !isTargetableType(enemy)) {
 			continue;

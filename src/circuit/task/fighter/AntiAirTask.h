@@ -32,6 +32,8 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 	virtual void OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
+	virtual bool IsFleeing(int frame) const override { return IsFleeRunning(); }  // CheckFlee: from ground enemies
+
 protected:
 	// Firing spots (IFighterTask::Attack): judge spots against the squad's current strength,
 	// with the same allowance as target choice (base bonus and thr_mod.distance at the spot)

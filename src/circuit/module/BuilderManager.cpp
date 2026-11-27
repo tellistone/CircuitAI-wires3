@@ -173,7 +173,7 @@ CBuilderManager::CBuilderManager(CCircuitAI* circuit)
 		unit->GetTask()->OnUnitIdle(unit);
 	};
 	auto workerDamagedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
-		this->circuit->GetMilitaryManager()->GetProtect()->OnCommDamaged(unit, attacker);  // quota.protect: our commander only
+		this->circuit->GetMilitaryManager()->GetProtect()->OnCommDamaged(unit, attacker);  // quota.protect: our commanders only
 		unit->GetTask()->OnUnitDamaged(unit, attacker);
 	};
 	auto workerDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
@@ -2652,15 +2652,8 @@ bool CBuilderManager::GetProtectMeet(CCircuitUnit* unit, AIFloat3& outPos) const
 {
 	// Checked by the protect once a second: picked strong enough with the commander, reached in time, away from the
 	// danger and a safe flee spot; kept while it holds 1 / quota.attack_keep_threat of the danger and is reachable
-	if (unit != circuit->GetSetupManager()->GetCommander()) {
-		return false;
-	}
-	const CProtect* protect = circuit->GetMilitaryManager()->GetProtect();
-	if (!utils::is_valid(protect->GetMeetingPoint())) {  // invalid whenever the protect is off
-		return false;
-	}
-	outPos = protect->GetMeetingPoint();
-	return true;
+	outPos = circuit->GetMilitaryManager()->GetProtect()->GetMeetingPoint(unit);
+	return utils::is_valid(outPos);  // invalid whenever its ward is off, has no turret point, or it is no commander
 }
 
 bool CBuilderManager::IsFinishingDefence(CCircuitUnit* unit, const SCommState* state) const
@@ -2889,7 +2882,7 @@ void CBuilderManager::StartCommFlee(CCircuitUnit* unit, SCommState* state)
 	// already, it stays and fights there with them, and cornered there it still builds its defence, beside them
 	AIFloat3 meetPos;
 	const bool isMeet = GetProtectMeet(unit, meetPos);
-	const bool isAtMeet = isMeet && circuit->GetMilitaryManager()->GetProtect()->IsAtMeetingPoint(unit->GetPos(frame));
+	const bool isAtMeet = isMeet && circuit->GetMilitaryManager()->GetProtect()->IsAtMeetingPoint(unit, unit->GetPos(frame));
 	if ((!isMeet || isAtMeet) && !HasCommEscape(unit, state)) {
 		IBuilderTask* defence = MakeCommDefence(unit, state);
 		if (defence != nullptr) {

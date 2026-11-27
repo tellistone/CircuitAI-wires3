@@ -338,6 +338,7 @@ protected:
 			CCircuitDef::RoleT ownRole);
 	virtual void FleeFrom(const springai::AIFloat3& dangerPos) {}
 	virtual void OnFleeEnd() {}
+	bool IsFleeRunning() const { return isFleeing; }  // UpdateFlee's state
 private:
 	bool isFleeing = false;
 	int fleeReplanFrame = 0;  // UpdateFlee re-plans the flee from this frame
