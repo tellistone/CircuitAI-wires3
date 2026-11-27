@@ -1151,6 +1151,7 @@ void CMilitaryManager::ReadConfig()
 	const float keepSec = ahCfg.get("keep_sec", 30.f).asFloat();
 	antiHeavy.keepFrames = (keepSec < 0.f) ? std::numeric_limits<int>::max() : std::max(1, int(keepSec * FRAMES_PER_SEC));
 	antiHeavy.spacing = std::max(0.f, ahCfg.get("spacing", 150.f).asFloat());
+	antiHeavy.groupSpacing = std::max(0.f, ahCfg.get("group_spacing", 300.f).asFloat());
 	antiHeavy.maxGroup = std::max(0, ahCfg.get("max_group", 2).asInt());
 	antiHeavy.isArtillery = ahCfg.get("as_artillery", false).asBool();
 	antiHeavy.artyScoot = std::max(0.f, ahCfg.get("artillery_scoot", 0.f).asFloat());
@@ -4880,6 +4881,30 @@ float CMilitaryManager::GetAhReadyDamage(CEnemyInfo* enemy, const IFighterTask* 
 		}
 	}
 	return damage;
+}
+
+void CMilitaryManager::GetAhClaims(const IFighterTask* skip, F3Vec& outClaims, std::vector<int64_t>* outRanks) const
+{
+	outClaims.clear();
+	if (outRanks != nullptr) {
+		outRanks->clear();
+	}
+	auto addClaims = [&](const IFighterTask* task) {
+		task->AddSpreadClaims(outClaims);
+		if (outRanks != nullptr) {
+			outRanks->resize(outClaims.size(), task->GetSpreadRank());
+		}
+	};
+	for (IFighterTask* task : GetTasks(IFighterTask::FightType::AH)) {
+		if (task != skip) {
+			addClaims(task);
+		}
+	}
+	for (IFighterTask* task : GetTasks(IFighterTask::FightType::ARTY)) {
+		if ((task != skip) && static_cast<CArtilleryTask*>(task)->IsAntiHeavy()) {
+			addClaims(task);
+		}
+	}
 }
 
 IFighterTask* CMilitaryManager::EnqueueAntiHeavy(CCircuitUnit* unit)

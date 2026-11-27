@@ -40,6 +40,7 @@ namespace circuit {
 #define CMD_UNIT_CANCEL_TARGET		34924
 #define CMD_ONECLICK_WEAPON			35000
 #define CMD_WANT_CLOAK				37382
+#define CMD_PREVENT_OVERKILL		38291
 #define CMD_DONT_FIRE_AT_RADAR		38372
 #define CMD_JUMP					38521
 #define CMD_AIR_MANUALFIRE			38571
@@ -143,6 +144,18 @@ public:
 	void CmdWantedSpeed(float speed = NO_SPEED_LIMIT);
 	void CmdSetTarget(CEnemyInfo* enemy);
 	void CmdCancelTarget();  // clears the set-target IsPlantHeld sent
+	// ZK's set-target on this enemy id (-1: cancelled), sent when it changes. The engine fires at a set target
+	// whatever the fire state and the order (a move, a fight, a hold), so a unit on return fire still shoots its heavy
+	// once in range, but no longer shoots back at whoever hits it. It outlasts orders, Stop included: the task that set
+	// it cancels it, and ZK drops it when the target dies or is out of LOS and radar for 3 s. Not for "plant" units
+	// (IsPlantHeld owns theirs)
+	void CmdHoldTarget(int enemyId);
+	// ZK may have dropped it unseen (a long scoot): the next CmdHoldTarget sends whatever it says (-2: no enemy id,
+	// nor the cancel's -1)
+	void ForgetHeldTarget() { heldTargetId = -2; }
+	// ZK's overkill prevention on always (state 4): its default for Lance, Phantom, Racketeer and Revenant works only on
+	// fire at will, so the anti-heavies' return fire would turn it off. Must be called inside TRY_UNIT
+	void CmdPreventOverkill();
 	void CmdCloak(bool state);
 	void CmdFireAtRadar(bool state);
 	void CmdFindPad(int timeout = INT_MAX);
@@ -199,6 +212,7 @@ private:
 	int reloadCheckFrame;  // frame reloadFrame was read
 	int reloadFrame;  // main weapon's, cached for a frame (GetReloadFrame)
 	SPlant plant;
+	int heldTargetId = -1;  // CmdHoldTarget: the enemy last sent
 
 	// ---- Bit fields ---- BEGIN
 	bool isDead : 1;

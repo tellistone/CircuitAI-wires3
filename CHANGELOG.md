@@ -7,6 +7,47 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Anti-heavy groups keep apart** (`antiheavy.group_spacing`, new, default 300; 0 = firing spots don't spread).
+  Different groups (ground squads, and each artillery-mode anti-heavy) used to pick the same spots: firing spots only
+  knew their own group, and squads parking behind an attack group ignored the artillery-mode units following it. Now
+  `CMilitaryManager::GetAhClaims` lists where every other anti-heavy group stands or heads (a unit's firing spot from
+  the last two attack repeats, else where it stands; the end of the route an artillery-mode unit walks; a squad's park
+  spot; none from mine and aircraft squads, which attack directly and aren't taken by a strike on a ground group),
+  each claim tagged with its group's rank (`IFighterTask::GetSpreadRank`: when it took its current target, none last,
+  ties by task age). Each other group with a claim within `group_spacing` of a firing spot costs it half a range of
+  walking (`FindFireSpot`, once per group); the spot a unit holds (kept, or where it stands in its fire band) counts
+  only groups ranked before it, so the newcomer to a fight gives way, the group already on its heavy fires on, and two
+  groups never shuffle each other. Artillery-mode walk-to spots skip cells within 96 of a claim (was 96 from other
+  artillery-mode units only) and use cells within `group_spacing` of one only when no other is left, so spacing never
+  costs them their last firing spot. Their side slots behind an attack group are max(144, `group_spacing`) apart (was
+  144). Squads don't park within max(256, 2x `spacing`, `group_spacing`) of a claim (was other squads' park spots
+  only), but keep the spot they hold (`IsOwnPark`): before, a claim landing on it froze a spot behind a group or
+  dropped a tower spot.
+
+- **Anti-heavies hold their shot for the heavy.** While a long-reload unit (5 s or more: Lance, Merlin, Phantom,
+  Racketeer, Revenant, Widow) attacks a heavy it goes to return fire, ZK's set-target goes on the heavy
+  (`CCircuitUnit::CmdHoldTarget`) and ZK's don't-fire-at-radar goes on (Lance, Phantom, Widow), so the reload isn't
+  spent on chaff that comes into range or on a radar blip as the heavy leaves LOS, yet the unit fires at the heavy
+  whatever its order: on the walk to each firing spot, holding or kiting out of range, a straggler, back from a scoot
+  (the engine fires at a set target whatever the fire state; an Attack order alone only counts at the front of the
+  queue). The set-target also stops the unit shooting back at whoever hits it, which is the point: the reload is for
+  the heavy. Squads (`CAntiHeavyTask::UpdateHolds`) used hold fire for this, and only for snipers that park (Lance,
+  Merlin); now every long-reload squad does it while it attacks its heavy, and keeps return fire through the LOS grace
+  (no chaff shot as the heavy reappears) with the set-target off then (no shot at its radar blip, and once it's off
+  radar and out of LOS, as ZK drops it then). Artillery-mode anti-heavies (`CArtilleryTask::SetAttacking`) do it while
+  their attack order on a heavy is live, and keep return fire, the set-target and their target through a shot's scoot
+  (still a plain move); the scoot's end sends the set-target again, as the heavy may have left radar meanwhile. A
+  flee, losing the target or leaving the task gives back the unit's own fire state (`fire_state`, default fire at
+  will) and fire at radar, and cancels the set-target. Short-reload squads (Ultimatum, Scorpion, Krow, Gnat,
+  Thunderbird) keep their own fire state and get no set-target: a 2 s reload isn't worth saving, and they shoot
+  escorts while walking in or kiting, and with weapons that can't reach the heavy. The set-target is sent only when it
+  changes (`CCircuitUnit::CmdHoldTarget`).
+
+- **Anti-heavies: ZK's overkill prevention always on** (`CCircuitUnit::CmdPreventOverkill`). ZK's default for Lance,
+  Phantom, Racketeer and Revenant (state 2) works only on fire at will, so return fire would have turned it off and
+  several snipers would spend their reload on one heavy. Every unit of the anti_heavy role (role binds included) gets
+  state 4 (always) when finished or given, where the type has the command.
+
 - **`plant`: plants only where it can hit, and not against blips** (Crabe). (a) used flat range plus the enemy's
   radius, but the engine measures a Cannon's reach to the target's centre and shrinks it uphill, so the Crabe stopped
   at the edge, below a hill or behind a ridge and couldn't fire. Now (a) counts within `plant.reach` (new, 0.9) x the
