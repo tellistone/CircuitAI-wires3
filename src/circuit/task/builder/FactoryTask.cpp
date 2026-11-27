@@ -19,10 +19,14 @@
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
+#include "Command.h"
+#include "Log.h"
 
 namespace circuit {
 
 using namespace springai;
+
+static constexpr int ENGINE_CMD_RECLAIM = 90;  // engine's CMD_RECLAIM
 
 static int opposite[] = {
 	UNIT_FACING_NORTH,
@@ -38,6 +42,7 @@ CBFactoryTask::CBFactoryTask(ITaskManager* mgr, Priority priority,
 		, isPlop(isPlop)
 		, stallFrame(-1)
 		, checkFrame(0)
+		, stallPos(-RgtVector)
 {
 	manager->GetCircuit()->GetFactoryManager()->AddFactory(buildDef);
 }
@@ -62,28 +67,62 @@ void CBFactoryTask::Update()
 		return;
 	}
 
-	// Engine: a builder whose footprint has a mobile unit in it asks that unit to bugger off, but a unit busy with its own
-	// job (an allied commander building, a unit with nowhere to step in a crowd) stays, and the builder gives up after
-	// 30 retries (~15 s); then the plain retries pick the same site again (IsPossibleToBuildAt ignores mobile units).
-	// So: a commander in range of a site that stays occupied gets another site
+	// A plop is instant once the order starts, so a commander that stands still for 3 s with no frame placed is stuck,
+	// whatever the cause: a unit in the footprint that won't step aside, a path that allied commanders block, an order
+	// the engine dropped (the AI may never hear it go idle). The engine itself would retry for ~15 s, then go idle, and
+	// the plain retries pick the same site again. So: drop the site, remember it, pick another
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
-	if ((target != nullptr) || units.empty() || !utils::is_valid(buildPos) || (frame < checkFrame)) {
+	if ((target != nullptr) || units.empty() || (frame < checkFrame)) {
 		return;
 	}
 	checkFrame = frame + FRAMES_PER_SEC / 2;
 	CCircuitUnit* unit = *units.begin();
-	const float range = unit->GetCircuitDef()->GetBuildDistance() + unit->GetCircuitDef()->GetRadius()
-			+ std::max(buildDef->GetDef()->GetXSize(), buildDef->GetDef()->GetZSize()) * SQUARE_SIZE / 2 * 1.42f;
-	if ((unit->GetPos(frame).SqDistance2D(buildPos) > SQUARE(range)) || !IsOccupied(buildPos, facing, unit)) {
-		stallFrame = -1;  // walking there, or the engine's bugger-off has cleared it
-	} else if (stallFrame < 0) {
+	const AIFloat3& pos = unit->GetPos(frame);
+	if (unit->IsMorphing() || (stallFrame < 0) || (pos.SqDistance2D(stallPos) > SQUARE(SQUARE_SIZE * 2))) {
+		stallPos = pos;  // moving (walking there, or stepping out of its own footprint), or a morph's wait
 		stallFrame = frame;
-	} else if (frame - stallFrame >= FRAMES_PER_SEC * 3) {
-		stallFrame = -1;
-		SetBuildPos(-RgtVector);
-		Execute(unit);  // FindBuildSite skips occupied footprints, this one included
+		return;
 	}
+	if (frame - stallFrame < FRAMES_PER_SEC * 3) {
+		return;
+	}
+	auto commands = unit->GetUnit()->GetCurrentCommands();
+	const int cmdId = commands.empty() ? 0 : commands.front()->GetId();
+	utils::free_clear(commands);
+	if (cmdId == ENGINE_CMD_RECLAIM) {  // clearing features in the footprint first
+		stallFrame = frame;
+		return;
+	}
+	circuit->LOG("PLOP %i:%02i stalled %is at (%.0f, %.0f): site (%.0f, %.0f) %.0f away, %s, order %i",
+			frame / FRAMES_PER_SEC / 60, frame / FRAMES_PER_SEC % 60, (frame - stallFrame) / FRAMES_PER_SEC,
+			pos.x, pos.z, buildPos.x, buildPos.z, utils::is_valid(buildPos) ? pos.distance2D(buildPos) : -1.f,
+			(utils::is_valid(buildPos) && IsOccupied(buildPos, facing, unit)) ? "occupied" : "clear", cmdId);
+	ReplaceSite(unit);
+}
+
+void CBFactoryTask::OnUnitIdle(CCircuitUnit* unit)
+{
+	// The order ended with no frame: the site failed (blocked, unreachable). Another site, not the same one twice more
+	// and then no commander, which leaves the plop job unassigned and blocks any other first factory
+	if (isPlop && (target == nullptr) && (++buildFails <= TASK_RETRIES)) {
+		ReplaceSite(unit);
+		return;
+	}
+	IBuilderTask::OnUnitIdle(unit);
+}
+
+void CBFactoryTask::ReplaceSite(CCircuitUnit* unit)
+{
+	stallFrame = -1;
+	if (utils::is_valid(buildPos)) {
+		if (badSites.size() >= 8) {
+			badSites.erase(badSites.begin());
+		}
+		badSites.push_back(buildPos);
+		SetBuildPos(-RgtVector);
+	}
+	Execute(unit);  // FindBuildSite: not a failed site, nobody standing in it
 }
 
 bool CBFactoryTask::IsOccupied(const AIFloat3& pos, int face, CCircuitUnit* builder) const
@@ -134,11 +173,21 @@ void CBFactoryTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, fl
 		facing = (2 * pos.z > terHeight) ? UNIT_FACING_NORTH : UNIT_FACING_SOUTH;
 	}
 
-	// Plop: not over another friendly unit (an allied commander in a crowded start box) that may never step aside
+	// Plop: not over another friendly unit (an allied commander in a crowded start box) that may never step aside, and
+	// not a site that stalled before
 	bool isAvoidUnits = isPlop;
-	CTerrainManager::TerrainPredicate predicate = [this, terrainMgr, builder, &isAvoidUnits](const AIFloat3& p) {
+	const float badSqDist = SQUARE(std::max(buildDef->GetDef()->GetXSize(), buildDef->GetDef()->GetZSize()) * SQUARE_SIZE);
+	auto isBadSite = [this, badSqDist](const AIFloat3& p) {
+		for (const AIFloat3& bad : badSites) {
+			if (bad.SqDistance2D(p) < badSqDist) {
+				return true;
+			}
+		}
+		return false;
+	};
+	CTerrainManager::TerrainPredicate predicate = [this, terrainMgr, builder, &isAvoidUnits, &isBadSite](const AIFloat3& p) {
 		return terrainMgr->CanReachAtSafe(builder, p, builder->GetCircuitDef()->GetBuildDistance())
-				&& !(isAvoidUnits && IsOccupied(p, facing, builder));
+				&& !(isAvoidUnits && (isBadSite(p) || IsOccupied(p, facing, builder)));
 	};
 	CMap* map = circuit->GetMap();
 	auto checkFacing = [this, map, terrainMgr, &predicate, &pos, searchRadius]() {
@@ -191,7 +240,7 @@ void CBFactoryTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, fl
 	};
 
 	if (!checkFacings() && isAvoidUnits) {
-		isAvoidUnits = false;  // all taken: a site to wait on beats Execute's fallback, a random base and no factory
+		isAvoidUnits = false;  // all taken or failed: a site to wait on beats Execute's fallback, a random base and no factory
 		checkFacings();
 	}
 }
