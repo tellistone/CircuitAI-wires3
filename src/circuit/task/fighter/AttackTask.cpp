@@ -443,12 +443,14 @@ void CAttackTask::Decide(int frame, bool isReuse)
 		GetBalance()->NoteBlocked(this, leader->GetId(), frame - blockSince);
 		blockSince = -1;
 	}
-	// Shields low (quota.attack_shield_flee): no new target, recharge where we stand (the quietest spot nearby). Not
-	// inside the base defence radius (as UpdateEscape)
-	if (isShieldLow && !IsInBaseRadius(leader->GetPos(frame))) {
-		SetTarget(nullptr);
-		state = State::ROAM;
-		HoldPosition(true);
+	// Shields low (quota.attack_shield_flee): no new target, recharge where we stand (the quietest spot nearby). Inside
+	// the base defence radius it fights back at what is in range (fights there are held), and goes nowhere else
+	if (isShieldLow) {
+		if (!IsInBaseRadius(leader->GetPos(frame)) || !EngageInRange(frame, true)) {
+			SetTarget(nullptr);
+			state = State::ROAM;
+			HoldPosition(true);
+		}
 		return;
 	}
 
@@ -1703,13 +1705,11 @@ bool CAttackTask::UpdateEscape(int frame)
 {
 	// Checked on every update (not just every decision), also while engaging or reinforcing.
 	// Not while defending: a fight with a target inside the base defence radius is held (no flee, no pull-back)
-	// Shields low (quota.attack_shield_flee): any threat on a unit is danger, so the escape takes the group out of
-	// enemy reach (and no further: it ends once there is none), where it recharges (Decide holds). Not inside the base
-	// defence radius, where fights are held
-	const bool isDanger = (UpdateShieldLow() && !IsInBaseRadius(leader->GetPos(frame))
-			&& std::any_of(units.begin(), units.end(), [&](CCircuitUnit* unit) {
-				return GetTaskThreatAt(unit, unit->GetPos(frame)) > 0.f;
-			})) || IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
+	// Shields low (quota.attack_shield_flee): threat at all is danger, so the escape takes the group out of enemy
+	// reach (and no further: it ends once there is none), where it recharges (Decide holds). IsInDanger first: it
+	// refreshes 'endangered' and isPathAheadUnsafe, which the escape below uses
+	UpdateShieldLow();
+	const bool isDanger = IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare()) || IsShieldDanger(frame);
 	// In danger while walking in line to the target (ApproachInLine), or its end ahead is: the fight starts now, so it
 	// is escaped as a fight is (the flee grace re-spots first; a static target we flee from anyway is passed on), and
 	// its threat-scored firing spots replace an end that a re-plan would only keep
@@ -1766,7 +1766,7 @@ bool CAttackTask::UpdateEscape(int frame)
 	return false;
 }
 
-bool CAttackTask::UpdateShieldLow()
+void CAttackTask::UpdateShieldLow()
 {
 	// Most units shielded (Thug, Felon, Aspis balls): their shields are the group's health. Unweighted average: an
 	// Aspis or Funnelweb starts empty, and by capacity it alone would hold the group back
@@ -1783,7 +1783,23 @@ bool CAttackTask::UpdateShieldLow()
 		}
 	}
 	isShieldLow = (count > 0) && (sum < count * (isShieldLow ? limits.second : limits.first));
-	return isShieldLow;
+}
+
+bool CAttackTask::IsShieldDanger(int frame) const
+{
+	if (!isShieldLow || IsInBaseRadius(leader->GetPos(frame))) {
+		return false;  // in the base radius fights are held
+	}
+	bool isAny = false;
+	float threatPower = 0.f;
+	for (const SUnitStrength& s : GetUnitStrengths()) {
+		// As IsInDanger: cloaked units can't be shot (asked last: an engine call)
+		if ((GetTaskThreatAt(s.unit, s.unit->GetPos(frame)) > 0.f) && !s.unit->GetUnit()->IsCloaked()) {
+			isAny = true;
+			threatPower += s.power;
+		}
+	}
+	return isAny && (threatPower >= GetMilitaryMgr()->GetAttackFleeShare() * GetStrengthSum());
 }
 
 bool CAttackTask::IsFormationFlee(int frame) const
