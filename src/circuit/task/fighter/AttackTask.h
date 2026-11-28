@@ -57,7 +57,9 @@ public:
 	// The cover log first: a unit that stood only by cover's licence (NoteCoverLoss)
 	virtual void OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker) override;
 
-	virtual bool IsFleeing(int frame) const override { return frame < fleeFrame; }  // running along an escape path
+	// Running along an escape path, or recharging low shields (quota.attack_shield_flee): neither covers allies nor
+	// counts as support (protect, attack balance)
+	virtual bool IsFleeing(int frame) const override { return (frame < fleeFrame) || isShieldLow; }
 	// The cover this group lends our other attack groups (quota.attack_ally_cover, CAllyCover): the strength it picks
 	// with (GetPickStrength: lower for a few seconds after an escape) around its leader, out to its fire range past its
 	// units' spread. false: none (fleeing)
@@ -315,6 +317,12 @@ private:
 	// (quota.attack_flee_grace) re-spots instead of fleeing
 	bool IsFightOn(int frame) const;
 	bool Flee(int frame);  // false: nowhere better to go, fight instead
+	// quota.attack_shield_flee [<flee>, <resume>]: most units shielded and their average charge below <flee> of full,
+	// until it is back above <resume>. Sets isShieldLow
+	void UpdateShieldLow();
+	// Shields low, outside the base defence radius: units under any threat hold at least quota.attack_flee_share of
+	// the group's strength (IsInDanger's share, with any threat in place of the allowance)
+	bool IsShieldDanger(int frame) const;
 	// Nearest stronger attack group we can stand beside, else the nearest safe defence point of a cluster we hold,
 	// else the closest haven, else base
 	springai::AIFloat3 FindFleeDest(int frame) const;
@@ -614,6 +622,7 @@ private:
 	int corneredFrame;  // last cornered check
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)
 	bool isCorneredHold;  // cornered while holding ground: keep holding (no flee) until the danger ends
+	bool isShieldLow;  // quota.attack_shield_flee: any threat is danger, no new targets, recharge (UpdateShieldLow)
 
 	// Targets and routes
 	std::vector<STargetGoal> routeGoals;  // FindTarget: goals of the next target route, nearest first (max 16)
