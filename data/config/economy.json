@@ -271,9 +271,10 @@
 	// switch = random(<min_interval>..<max_interval>)
 	"switch": [800, 900],
 	// Minimum factory count: at least floor(<metal income without reclaim> / factory_income) factories (finished and
-	// queued); below it a new factory is due at once, as when the switch timer runs out (one at a time, at a mex
-	// cluster of ours without a factory, the type chosen as for a switch; a due factory, by either rule, is tried at
-	// most every 30 s). 0 = off
+	// queued); below it a new factory is due at once, as when the switch timer runs out (one at a time, the type chosen
+	// as for a switch; a due factory, by either rule, is tried at most every 30 s). Unlike a switch, which goes toward
+	// the front, it goes to the cluster nearest our base without a factory, as a HIGH job. infolog: a FACTORY_INCOME
+	// line per try, the factory queued or why none was. 0 = off
 	"factory_income": 40,
 
 	"terra": "terraunit",
