@@ -11,6 +11,7 @@
 #include "map/ThreatMap.h"
 #include "module/AllyCover.h"
 #include "module/MilitaryManager.h"
+#include "module/SetPiece.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -230,6 +231,23 @@ void CAntiHeavyTask::Update()
 	}
 	lastTouched = frame;
 	CollectDangers();  // for every spot check of this update (firing spots too)
+
+	// quota.set_piece: waiting for its release, it walks to its staging point and stands there (no hunt)
+	const AIFloat3 wait = circuit->GetMilitaryManager()->GetSetPiece()->GetWait(this);
+	if (utils::is_valid(wait)) {
+		SetTarget(nullptr);
+		state = State::ROAM;
+		isParking = false;  // no park spot meanwhile: it holds no position of its own
+		ClearPark();
+		UpdateHolds(false, -1);
+		StopAttacks();
+		if (IsQueryReady(leader) && IsCheckDue() && (leader->GetPos(frame).SqDistance2D(wait) > SQUARE(GetClaimRadius()))) {
+			QueryPath(leader, wait, FALLBACK_PATH_RANGE, true, [this](const CQueryPathSingle* query) {
+				TakePath(query->GetPathInfo());
+			});
+		}
+		return;
+	}
 
 	/*
 	 * Update target
@@ -752,10 +770,19 @@ bool CAntiHeavyTask::FindTarget()
 	CEnemyInfo* bestTarget = nullptr;
 	enemyPositions.clear();
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
+	// quota.set_piece: released, only its target's members: the quarries among them, else (none) its chaff
+	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
+	const bool isSetPiece = setPiece->IsCommitted(this);
+	const bool isChaff = isSetPiece && std::none_of(circuit->GetEnemyInfos().begin(), circuit->GetEnemyInfos().end(),
+			[this, setPiece](const CCircuitAI::EnemyInfos::value_type& kv) {
+				return !kv.second->IsHidden() && setPiece->IsTargetMember(this, kv.second) && IsQuarry(kv.second);
+			});
 	for (auto& kv : circuit->GetEnemyInfos()) {
 		CEnemyInfo* enemy = kv.second;
 		// The cheap role test first: most enemies aren't heavies, and the rest reads maps and the engine
-		if (enemy->IsHidden() || !IsQuarry(enemy) || IsHeld(enemy, frame)) {
+		if (enemy->IsHidden() || (isSetPiece && !setPiece->IsTargetMember(this, enemy)) || (!isChaff && !IsQuarry(enemy))
+			|| IsHeld(enemy, frame))
+		{
 			continue;  // held off from it lately (AttackTarget)
 		}
 		const AIFloat3& ePos = enemy->GetPos();

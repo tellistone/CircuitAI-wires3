@@ -10,6 +10,7 @@
 #include "module/AllyCover.h"
 #include "module/AttackBalance.h"
 #include "module/Protect.h"
+#include "module/SetPiece.h"
 #include "module/RaidDefence.h"
 #include "module/BuilderManager.h"
 #include "module/ChokeDefence.h"
@@ -746,6 +747,56 @@ void CMilitaryManager::ReadConfig()
 			cfg.goRatio = num("go_ratio", 1.f, 0.1f, 10.f);
 		}
 		protect = std::make_unique<CProtect>(circuit, cfg);
+	}
+	{
+		// quota.set_piece: {enable, log_only, label, reach, comm_reach, start_ratio, abandon_ratio, stage_dist,
+		// gather_sec, stall_sec, pass_share, held_sec, cooldown_sec} (CSetPiece). Keys as quota.protect's; a flag that
+		// isn't true or false logs and uses its default
+		const Json::Value& q = quotas["set_piece"];
+		if (!q.isNull() && !q.isObject()) {
+			circuit->LOG("CONFIG %s: quota.set_piece must be an object, it is off", cfgName.c_str());
+		}
+		CSetPiece::SConfig cfg;  // off
+		if (q.isObject()) {
+			auto num = [&](const char* key, float def, float lo, float hi) {
+				const Json::Value& v = q[key];
+				if (v.isNull()) {
+					return def;
+				}
+				if (!v.isNumeric()) {
+					circuit->LOG("CONFIG %s: quota.set_piece.%s must be a number %g..%g, using %g", cfgName.c_str(), key, lo, hi, def);
+					return def;
+				}
+				const float val = v.asFloat();
+				const float clamped = utils::clamp(val, lo, hi);
+				if (clamped != val) {
+					circuit->LOG("CONFIG %s: quota.set_piece.%s %g clamped to %g", cfgName.c_str(), key, val, clamped);
+				}
+				return clamped;
+			};
+			auto flag = [&](const char* key, bool def) {
+				const Json::Value& v = q[key];
+				if (!v.isNull() && !v.isBool()) {
+					circuit->LOG("CONFIG %s: quota.set_piece.%s must be true or false, using %s", cfgName.c_str(), key,
+							def ? "true" : "false");
+				}
+				return v.isBool() ? v.asBool() : def;
+			};
+			cfg.isEnabled = flag("enable", false);
+			cfg.isLogOnly = flag("log_only", false);
+			cfg.isLabel = flag("label", true);
+			cfg.reach = num("reach", 3000.f, 500.f, 10000.f);
+			cfg.commReach = num("comm_reach", 1000.f, 0.f, 5000.f);
+			cfg.startRatio = num("start_ratio", 1.1f, 0.5f, 5.f);
+			cfg.abandonRatio = std::min(num("abandon_ratio", 0.75f, 0.f, 5.f), cfg.startRatio);  // or it ends as it starts
+			cfg.stageDist = num("stage_dist", 1000.f, 0.f, 5000.f);
+			cfg.gatherSec = num("gather_sec", 45.f, 5.f, 300.f);
+			cfg.stallFrames = static_cast<int>(num("stall_sec", 15.f, 1.f, 120.f) * FRAMES_PER_SEC);
+			cfg.passShare = num("pass_share", 0.25f, 0.f, 10.f);
+			cfg.heldFrames = static_cast<int>(num("held_sec", 60.f, 0.f, 600.f) * FRAMES_PER_SEC);
+			cfg.cooldownFrames = static_cast<int>(num("cooldown_sec", 30.f, 0.f, 600.f) * FRAMES_PER_SEC);
+		}
+		setPiece = std::make_unique<CSetPiece>(circuit, cfg);
 	}
 	{
 		// quota.raid_defence: {enable, roles, enemy_roles, mex_share, margin, max_share, post_min, react_sec}
@@ -1532,6 +1583,11 @@ void CMilitaryManager::Init()
 		if (protect->IsEnabled()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateProtect, this), FRAMES_PER_SEC, offset + 2);
 		}
+		// After the protect, whose takes it reverts, and before the rallies, which leave its groups out
+		if (setPiece->IsEnabled()) {
+			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateSetPiece, this), FRAMES_PER_SEC, offset + 2);
+			scheduler->RunOnRelease(std::make_shared<CGameTask>(&CSetPiece::ClearLabel, setPiece.get()));
+		}
 		if (attackRally.cfg.IsOn()) {
 			scheduler->RunTaskEvery(std::make_shared<CGameTask>(&CMilitaryManager::UpdateAttackRally, this), FRAMES_PER_SEC, offset + 2);
 		}
@@ -1848,8 +1904,9 @@ bool CMilitaryManager::IsRankedAbove(float power, const CCircuitUnit* leader, fl
 
 bool CMilitaryManager::CanReinforce(const CAttackTask* squad, CCircuitUnit* unit) const
 {
-	return squad->IsCompatible(unit) && circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(),
-			squad->GetLeader()->GetPos(circuit->GetLastFrame()));
+	// Not a set piece's group (quota.set_piece): nothing merges into it, the walk there would end beside it
+	return squad->IsCompatible(unit) && !squad->IsInSetPiece() && circuit->GetTerrainManager()->CanMoveToPos(
+			unit->GetArea(), squad->GetLeader()->GetPos(circuit->GetLastFrame()));
 }
 
 CAttackTask* CMilitaryManager::FindReinforceSquad(CCircuitUnit* unit, float power, const IFighterTask* self,
@@ -1959,9 +2016,9 @@ void CMilitaryManager::CollectRallyGroups(const SRally& rally, std::vector<ISqua
 	outGroups.clear();
 	for (IFighterTask* t : GetTasks(rally.type)) {
 		ISquadTask* g = static_cast<ISquadTask*>(t);  // attack and raid tasks are squads
-		// Not a group committed to the commander protect (CProtect): it answers that fight, not the blob
+		// Not a group committed to the commander protect (CProtect) or a set piece: it answers that fight, not the blob
 		if (!g->IsDead() && (g->GetLeader() != nullptr) && !g->GetLeader()->GetCircuitDef()->IsAbleToFly()
-			&& !g->IsProtecting())
+			&& !g->IsCommitted())
 		{
 			outGroups.push_back(g);
 		}
@@ -2042,6 +2099,17 @@ void CMilitaryManager::UpdateProtect()
 	protect->Update();
 }
 
+void CMilitaryManager::UpdateSetPiece()
+{
+	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
+	setPiece->Update();
+}
+
+float CMilitaryManager::GetCommitBoost(const IFighterTask* task, const AIFloat3& pos) const
+{
+	return std::max(protect->GetBoost(task, pos), setPiece->GetBoost(task, pos));
+}
+
 void CMilitaryManager::UpdateRaidDefence()
 {
 	SCOPED_TIME(circuit, __PRETTY_FUNCTION__);
@@ -2079,12 +2147,17 @@ void CMilitaryManager::UpdateRally(SRally& rally)
 		return;
 	}
 
-	// Blobs near our groups (range 0: anywhere), hottest first: within range to start, 1.5x range to keep going
+	// Blobs near our groups (range 0: anywhere), hottest first: within range to start, 1.5x range to keep going. None
+	// starts on our ground while quota.set_piece is live: its planned attack answers those
 	const bool isAnywhere = (cfg.range <= 0.f);
 	const float sqRange = SQUARE(isRally ? cfg.range * 1.5f : cfg.range);
+	const bool isPieceGround = !isRally && setPiece->IsLive();
 	static std::vector<const CEnemyManager::SEnemyBlob*> nearBlobs;  // NOTE: micro-opt
 	nearBlobs.clear();
 	for (const CEnemyManager::SEnemyBlob& b : circuit->GetEnemyManager()->GetBlobs(frame, cfg.seenFrames, rally.isRaiders)) {
+		if (isPieceGround && setPiece->IsHeldAt(b.pos)) {
+			continue;
+		}
 		if (isAnywhere || std::any_of(groups.begin(), groups.end(), [&](ISquadTask* g) {
 			return g->GetLeader()->GetPos(frame).SqDistance2D(b.pos) < sqRange;
 		})) {
@@ -2343,6 +2416,7 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 			OnRallyTaskEnd(attackRally, taskF);
 			OnRallyTaskEnd(raidRally, taskF);
 			protect->OnTaskEnd(taskF);  // its address may be reused by a new task before the next update
+			setPiece->OnTaskEnd(taskF);
 			if (taskF->GetFightType() == IFighterTask::FightType::GUARD) {
 				// A guard slot can abort itself (builder gone): drop its builder entry so nothing points at a dead task
 				for (auto it = guardTasks.begin(); it != guardTasks.end();) {

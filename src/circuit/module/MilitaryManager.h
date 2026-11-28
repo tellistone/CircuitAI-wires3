@@ -48,6 +48,7 @@ class CAllyCover;
 class CAttackBalance;
 class CProtect;
 class CRaidDefence;
+class CSetPiece;
 class CFrontline;
 class CTurretPicker;
 class CAATurretPicker;
@@ -566,6 +567,10 @@ public:
 	CProtect* GetProtect() const { return protect.get(); }
 	// quota.raid_defence: a share of our raiders defends our ground early in the game (CRaidDefence)
 	CRaidDefence* GetRaidDefence() const { return raidDefence.get(); }
+	// quota.set_piece: one planned attack by every group in reach on an enemy force on our ground (CSetPiece)
+	CSetPiece* GetSetPiece() const { return setPiece.get(); }
+	// What a committed group's strength is multiplied by at pos: the larger of the protect's and the set piece's boost
+	float GetCommitBoost(const IFighterTask* task, const springai::AIFloat3& pos) const;
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
@@ -702,6 +707,7 @@ private:
 	void LogAhStats();
 	void UpdateProtect();  // quota.protect, once a second
 	void UpdateRaidDefence();  // quota.raid_defence, once a second
+	void UpdateSetPiece();  // quota.set_piece, once a second
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
@@ -940,6 +946,7 @@ private:
 	std::unique_ptr<CAttackBalance> attackBalance;  // quota.attack_balance
 	std::unique_ptr<CProtect> protect;  // quota.protect
 	std::unique_ptr<CRaidDefence> raidDefence;  // quota.raid_defence
+	std::unique_ptr<CSetPiece> setPiece;  // quota.set_piece
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat

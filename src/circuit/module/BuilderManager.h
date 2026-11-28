@@ -463,6 +463,12 @@ public:
 	void OnCommAttackEnd(CCircuitUnit* comm, const CAttackTask* task, CommEnd reason);
 	// 20 s; after leash or time (isLong): 60 s
 	void BanCommTarget(CCircuitUnit* comm, ICoreUnit::Id id, bool isLong);
+	// quota.set_piece (CSetPiece): a commander may join a set piece, through the commander attack's gates
+	// (IsCommAttackFree) without its target test
+	bool IsSetPieceFree(CCircuitUnit* unit);
+	// ... and joins it in a commander attack of its own with no target yet, which the set piece then holds (its filter,
+	// comm_reach and its end instead of IsCommTargetOk, the leash and max_sec); nullptr: a gate failed
+	CAttackTask* StartSetPieceAttack(CCircuitUnit* unit);
 	// Its attack's duel is still won at 1.0x where it stands (isAlpha: their D-gun taken as ready): neither the flee
 	// nor the health retreat (with isAlpha) takes it out; both commanders walk at about the same speed
 	bool IsCommDuelHeld(CCircuitUnit* unit, bool isAlpha);
@@ -643,6 +649,9 @@ private:
 	// flee's end line, not disarmed or morphing, the opening switch, cooldown, on a job or idle, no home fight, a job
 	// neither NOW nor about to finish, no anchored protect), then the nearest enemy that passes IsCommTargetOk
 	bool TryCommAttack(CCircuitUnit* unit, SCommState* state);
+	bool IsCommAttackFree(CCircuitUnit* unit, SCommState* state);  // TryCommAttack's gates
+	// The attack's start: its anchor, the task and its state (target nullptr: none yet, a set piece's)
+	CAttackTask* BeginCommAttack(CCircuitUnit* unit, SCommState* state, CEnemyInfo* target);
 	// Its kind (SAttack::Kind) among kinds, 0: none (unknown type, not seen: in LOS, a building also in radar)
 	unsigned GetCommTargetKind(const CEnemyInfo* enemy, unsigned kinds) const;
 	// The anchor holds while an attack runs and for cooldown_sec after one; else the attack starts a new chain at pos

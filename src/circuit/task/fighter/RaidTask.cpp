@@ -14,6 +14,7 @@
 #include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
 #include "module/Protect.h"
+#include "module/SetPiece.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -353,8 +354,8 @@ void CRaidTask::Update()
 	const bool isTargetsFound = FindTarget();
 	// Raid rally joiner: with no target in range (FindTarget picks only those) and no enemy at our base to defend,
 	// head for the bigger group
-	// quota.protect: not while committed to the commander's fight, or gathering for one
-	if ((target == nullptr) && urgentPositions.empty() && !IsProtecting() && !IsGathering() && IsChaseAllowed()) {
+	// quota.protect, quota.set_piece: not while committed to a central fight, or gathering for one
+	if ((target == nullptr) && urgentPositions.empty() && !IsCommitted() && IsChaseAllowed()) {
 		const CRaidTask* chase = UpdateChase(frame);
 		if (chase != nullptr) {
 			state = State::ROAM;
@@ -417,8 +418,10 @@ void CRaidTask::Update()
 		return;
 	}
 
-	// quota.protect: a gathering group doesn't route to enemies out of range, it waits at the gathering post
-	if (!isTargetsFound || IsGathering()) {  // urgentPositions.empty() && enemyPositions.empty()
+	// quota.protect: a gathering group doesn't route to enemies out of range, it waits at the gathering post; nor does
+	// a set piece's group waiting for its release (quota.set_piece), at its staging point
+	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
+	if (!isTargetsFound || IsGathering() || utils::is_valid(setPiece->GetWait(this))) {  // urgentPositions.empty() && enemyPositions.empty()
 		OnNoTarget(true);
 		return;
 	}
@@ -557,14 +560,18 @@ bool CRaidTask::FindTarget()
 	float sqOtherDist = std::numeric_limits<float>::max();
 	// quota.protect: committed to the commander's fight, only the enemies in its zone (and those within our reach). They
 	// pass other groups' claims and the 3-group cap, and are judged with the strength present near the commander
-	// (GetSafeThreatAt); those that hit it lately are preferred targets
+	// (GetSafeThreatAt); those that hit it lately are preferred targets. quota.set_piece: the same for its target's
+	// members, once released
 	const CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = IsProtecting();
+	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
+	const bool isSetPiece = setPiece->IsCommitted(this);
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
-		const bool isZone = isProtect && protect->IsZoneEnemy(this, enemy);
-		if (isProtect && !isZone && (pos.SqDistance2D(enemy->GetPos()) > SQUARE(range))) {
+		const bool isZone = (isProtect && protect->IsZoneEnemy(this, enemy))
+				|| (isSetPiece && setPiece->IsTargetMember(this, enemy));
+		if ((isProtect || isSetPiece) && !isZone && (pos.SqDistance2D(enemy->GetPos()) > SQUARE(range))) {
 			continue;
 		}
 		// Not one another raid group already targets from clearly nearer, unless within our fire range + 64 elmos
@@ -593,7 +600,7 @@ bool CRaidTask::FindTarget()
 		}
 
 		const float sqEBDist = basePos.SqDistance2D(ePos);
-		const float boost = protect->GetBoost(this, ePos);  // quota.protect
+		const float boost = militaryMgr->GetCommitBoost(this, ePos);  // quota.protect, quota.set_piece
 		const float distMod = GetThrDistModAt(ePos) / boost;  // thr_mod.distance curve at the enemy's spot
 		float checkPower = maxPower / distMod;
 		float sqCheckSpeed = sqMaxSpeed;
@@ -722,9 +729,12 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-	// quota.protect: gathering for a raid incident in its no-go, wait where the protect says (its gathering post)
+	// quota.protect: gathering for a raid incident in its no-go, wait where the protect says (its gathering post);
+	// quota.set_piece: waiting for its release, at its staging point
 	const CProtect* protect = militaryMgr->GetProtect();
-	const AIFloat3 gather = protect->GetGather(this);
+	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
+	const bool isSetPiece = setPiece->IsCommitted(this);
+	const AIFloat3 gather = isSetPiece ? setPiece->GetWait(this) : protect->GetGather(this);
 	if (utils::is_valid(gather)) {
 		WaitAt(frame, gather);
 		return;
@@ -737,8 +747,8 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	const float safeThreat = GetSafeThreat();
 	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
 	// unless we're already there; else the usual mex-spot roaming. quota.protect: committed with nothing to hunt,
-	// head for the protect's goal (the commander, a raid incident's asset)
-	const bool isProtect = IsProtecting();
+	// head for the protect's goal (the commander, a raid incident's asset); quota.set_piece: for its target
+	const bool isProtect = IsProtecting() || isSetPiece;
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	contested.clear();
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
@@ -773,7 +783,8 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	}
 	if (isProtect) {
 		// The goal moves with the commander: the route is kept while it stays within a few squares of the last one
-		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(), protect->GetGoal(this));
+		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(),
+				isSetPiece ? setPiece->GetGoal(this) : protect->GetGoal(this));
 		position = (utils::is_valid(roamGoal) && (goal.SqDistance2D(roamGoal) < SQUARE(DEFAULT_SLACK * 2))) ? roamGoal : goal;
 	} else if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);
@@ -1087,8 +1098,8 @@ void CRaidTask::SendPendingFight(int frame)
 
 float CRaidTask::GetSafeThreatAt(const AIFloat3& pos, float safeThreat) const
 {
-	// quota.protect: a committed group judges the commander's fight with the strength present
-	const float boost = GetMilitaryMgr()->GetProtect()->GetBoost(this, pos);
+	// quota.protect, quota.set_piece: a committed group judges its fight with the strength present
+	const float boost = GetMilitaryMgr()->GetCommitBoost(this, pos);
 	return GetBaseSafeThreatAt(pos, safeThreat * boost);
 }
 

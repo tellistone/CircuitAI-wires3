@@ -52,6 +52,7 @@ public:
 		const CAttackTask* self;
 		const CAttackTask* partner;  // nullptr: not a joint check
 		float base;
+		bool isNoGroups = false;  // no group's disc counts (quota.set_piece: the strength present has them already)
 	};
 
 	CAllyCover(CCircuitAI* circuit, float weight);
@@ -109,9 +110,10 @@ private:
 		bool isComm;  // the commander's disc
 	};
 	const std::vector<SDisc>& GetDiscs();
-	// The group itself and its partner; the commander's disc only for its own commander attack
+	// The group itself and its partner; the commander's disc only for its own commander attack; every group's for
+	// isNoGroups
 	static bool IsLeftOut(const SDisc& d, const SJudge& judge) {
-		return (d.task != nullptr) && ((d.task == judge.self) || (d.task == judge.partner));
+		return (judge.isNoGroups && !d.isComm) || ((d.task != nullptr) && ((d.task == judge.self) || (d.task == judge.partner)));
 	}
 	// The commander's reach: its fitted weapons' longest range (dynamic commanders), else its def's land range
 	float GetCommRange(CCircuitUnit* comm) const;
