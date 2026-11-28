@@ -475,6 +475,64 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Added
 
+- **Raid defence** (`quota.raid_defence`, new, on in behaviour.json: `enable`, `roles` ["raider"], `enemy_roles`
+  ["raider"], `mex_share` 0.33, `margin` 1.3, `max_share` 0.6, `post_min` 1.25, `react_sec` 8; `quota.protect` now
+  on too). Early in the game a share of our raiders defends our mexes, constructors and factories, sized by the
+  enemy raider threat on our ground, and everything else raids as before. Off for good once the ally team's finished
+  mexes reach `mex_share` of the map's spots (every defence group goes back to raiding).
+  - Measure (`CRaidDefence`, once a second). Enemies of `enemy_roles` on our ground (ally territory, or our held
+    ground once the choke map is ready, while seen there; counted until 5 s off it or out of sight), seen in the last
+    20 s and fading after, at their threat x `raid_thr_mod`, an enemy commander too beside them, grouped into blobs
+    with the threat map's count bonus. A blob is an incident, tracked by its members (a pair keeps its identity while
+    it shares half of the smaller one's members, the most shared first: a raid we cut down stays the same incident).
+    It counts when our raiders can reach it and an undefended asset of ours is within `protect.zone` of it: a mex
+    cluster is defended once our and allied ground turrets covering its weakest mex match the biggest raid blob seen
+    (Bmax, a decaying peak never below one enemy raider), undefended again below 0.8x or when one of those turrets
+    dies; factories the same; and every asset in a pocket whose entrances the army holds. T is the counted
+    incidents' threat (one in a no-go for 45 s counts half), the reserve's target D = `margin` x T, at most
+    `max_share` of our raid groups' strength, and for 60 s after a wave at least `post_min` x one enemy raider at the
+    biggest post.
+  - Reserve: raid groups that wait instead of roaming (`CRaidDefendTask`, a new task type built on the raid group
+    through hooks, so target pick, fight check, escape, scoots, regroup and threat-aware routes are the raid group's
+    own). Up to 6 posts, one per pocket (choke map) of undefended mexes or factories, at its busiest entrance's hold
+    spot when it has 1 or 2 and no threat reaches it (kept there while the threat stays under the post's need), else
+    at their centre (open-ground clusters within 15 s of a post join it); posts share min(D, `margin` x the biggest
+    blob) by value, each at least `post_min` x one enemy raider. Every post keeps a threat-aware travel map
+    (`CTravelMap`). Recruit while R < 0.8 D: a new raider at once, unless it takes a free guard slot; calm raid groups
+    on our ground or within `protect.respond_sec` of a short post after 2 s (a whole group up to 1.5x the shortfall,
+    else its nearest units). Release calm groups to raiding once R > D / 0.7 for 5 s, never below D, not to be
+    recruited again for 30 s. Every 5 s a calm group a post can spare moves to a short post. Raider guards
+    (`guard.summon`) stay on, and pick new raiders first.
+  - A defence group takes new targets on our ground within `react_sec` of its post (by its travel map) or in
+    contact, keeps its target out to 1.5x that on any ground, prefers enemies that just hit our assets, never joins
+    a raid rally or chases, waits at its post (a small patrol) with no path queries, merges every few updates while
+    it waits (only with groups of its post or of its protect commit), escapes to the nearest post no more threatened
+    than its haven, and judges with `thr_mod.distance.raid_defend` (new; missing: the raid curve). Raid and defence
+    groups respect each other's target claims.
+  - Response, through `quota.protect`: each counted incident is a ward of its own (never a member, so a base doesn't
+    chain into one ward). Its goal is the first undefended asset within 600 elmos of the blob's track ahead (else the
+    nearest), switched only after 3 s or when gone; its danger the blob (on our groups' measure: no `raid_thr_mod`,
+    no count bonus) or the force balance at the goal, the larger; its time to death the goal's damage rate. It ends
+    3 s after its incident. Defence groups answer within 1.5x `respond_sec`. In a no-go with a gathering post (a post
+    near the goal with no threat, else a spot with none stepped back from the blob; the last one is kept 3 s) its
+    committed groups (defence, raid, attack and gathering groups) stay committed while in reach, and wait: at the
+    post, or where they are once in the fight or no farther from the goal than the post. Attack groups only fight
+    back on the way, gathering groups leave as groups at once. It goes only once the go line has gathered, so they
+    set off together. Concede and ambush: when no committed group reaches a dying goal in time, that asset is given
+    up for the next one, if there is one (not for a constructor, which flees).
+  - Protect picks now go by threat-aware walking time for every ward (commanders too): the length of the cheapest
+    route on cost maps with threat as a cost (`CMicroPather::MakeCostMap` records it), at the group's speed, from the
+    goal (a raid's gathering post in its no-go, reading that post's map when it has one), one per movement type
+    among the groups in reach, made again every 3 s (10 s in a go) or once the goal moved 200 elmos (at most every
+    2 s). A ward's first pick waits for its maps. `PROTECT go` / `nogo` lines log that time against the straight line.
+  - Fleeing constructors may run to posts holding defenders, so the raiders chasing them meet the defenders.
+  - Logs: `RAIDDEF state` every 10 s while there is something to show (T, B, Bmax, D, R, clusters, posts, incidents
+    and their goals), `RAIDDEF recruit`, `move`, `release`, `concede`, and `RAIDDEF minute` (metal lost to raiders,
+    raiders killed by defenders, kills off our ground, the share of raiders defending). Raid incident wards show as
+    `[ward N: raid #id on <goal>, value m]` in `PROTECT` lines.
+  - Known limits: travel maps are made for one movement type per post (the most common among our raiders; others
+    read the straight line), and the posts' spots are chosen for that type too.
+
 - **Fighting jumpers and kiting Jack** (`quota.jump_land`, `quota.jump_threat`, `quota.kite`, new attribute `kite`).
   - Jump tracking (`CEnemyUnit::UpdateJump`). Zero-K keeps `is_jumping`, the jump's goal and (but for Detriment) its
     reload private to the jumper's team, so an enemy jumper in LOS is seen in flight by its height above the ground

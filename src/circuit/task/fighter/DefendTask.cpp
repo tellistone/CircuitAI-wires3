@@ -105,10 +105,10 @@ void CDefendTask::Update()
 	 * Promote task if possible
 	 */
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-	// quota.protect: committed to the commander's fight, the gathering group leaves at once as a new group, which is
-	// committed instead
+	// quota.protect: committed to a fight (acting, or gathering for a raid incident's), the gathering group leaves at
+	// once as a new group, which is committed instead
 	CProtect* protect = militaryMgr->GetProtect();
-	const bool isProtect = IsProtecting();
+	const bool isProtect = IsProtecting() || IsGathering();
 	if (isSolo) {
 		CCircuitUnit* unit = leader;
 		// quota.solo_hunt: the one-off switch is over, the unit joins the army as any attack-bound unit
