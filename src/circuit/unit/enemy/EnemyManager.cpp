@@ -123,8 +123,10 @@ void CEnemyManager::UpdateEnemyDatas(CQuadField& quadField)
 			}
 		}
 		// Long reloads (quota.reload_threat_min): read in LOS, kept out of it; the threat map draws no threat while
-		// every weapon reloads
-		enemy->UpdateReload(circuit->GetLastFrame(), reloadThrMin, reloadThrReady);
+		// every weapon reloads; quota.reload_threat_exempt types always count (0: off for it)
+		const bool isReloadExempt = (enemy->GetCircuitDef() != nullptr)
+				&& (reloadThrExempt.count(enemy->GetCircuitDef()->GetId()) != 0);
+		enemy->UpdateReload(circuit->GetLastFrame(), isReloadExempt ? 0 : reloadThrMin, reloadThrReady);
 		// Jumpers: flight, landing and reload (in LOS; out of it a flight ends when its guess says). A jump that is
 		// ready again, or used, changes the reach of its threat
 		const CCircuitDef* edef = enemy->GetCircuitDef();
@@ -587,6 +589,17 @@ void CEnemyManager::ReadConfig()
 		circuit->LOG("CONFIG %s: quota.reload_threat_min must be a number >= 0 and quota.reload_threat_ready one 0..1;"
 				" the reload rule is off", circuit->GetSetupManager()->GetConfigName().c_str());
 		reloadThrMin = 0;
+	}
+	// Unit names (heavy defences: Lucifer, Cerberus) that keep their threat while they reload
+	reloadThrExempt.clear();
+	for (const Json::Value& name : quotas["reload_threat_exempt"]) {
+		CCircuitDef* cdef = name.isString() ? circuit->GetCircuitDef(name.asCString()) : nullptr;
+		if (cdef != nullptr) {
+			reloadThrExempt.insert(cdef->GetId());
+		} else {
+			circuit->LOG("CONFIG %s: quota.reload_threat_exempt has an unknown unit: %s",
+					circuit->GetSetupManager()->GetConfigName().c_str(), name.isString() ? name.asCString() : "(not a string)");
+		}
 	}
 }
 

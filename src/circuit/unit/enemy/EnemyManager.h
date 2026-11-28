@@ -14,6 +14,7 @@
 #include "util/MaskHandler.h"
 
 #include <string>
+#include <unordered_set>
 
 namespace circuit {
 
@@ -179,6 +180,7 @@ private:
 	// quota.reload_threat_min (seconds, here frames; 0 = off) and reload_threat_ready (0..1): CEnemyUnit::UpdateReload
 	int reloadThrMin = 0;
 	float reloadThrReady = 0.75f;
+	std::unordered_set<CCircuitDef::Id> reloadThrExempt;  // quota.reload_threat_exempt: types that always count
 	struct SEnemyInfo {
 		float cost;
 		float threat;
