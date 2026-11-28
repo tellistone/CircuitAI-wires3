@@ -43,7 +43,7 @@ const float DISC_HOLD_IN  = 0.8f;
 const float FIRE_BAND_MIN = 0.6f;   // own/kept spot no closer than this, x range (else step back out)
 const float FIRE_BAND_MAX = 0.95f;  // own/kept spot no farther than this, x range
 const float CROWD_WEIGHT  = 0.5f;   // score per crowding claim (x attack_spot_threat)
-const float SIDE_WEIGHT   = 1.5f;   // GetFireFrontCentre: a spot's distance from the unit's own side of the arc, x walk
+const float SIDE_WEIGHT   = 1.5f;   // GetFireFrontCentre: a spot's arc length off the unit's own side, x walk
 const float SPREAD_COST   = 0.5f;   // score per other group with a claim within spreadRadius: half a range of walk
 const int   ARC_STEPS     = 6;      // spots each side of our bearing, PI/24 apart (+-45 degrees)
 const float ARC_SPAN      = 0.25f;  // half the arc, x PI
@@ -865,28 +865,23 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 		}
 		return count;
 	};
-	// Its own side of the arc (GetFireFrontCentre): its angle off the centre's bearing from the target, times its
-	// distance from the target over the arc's radius, keeps the width the group walked in with on the arc, where units
-	// walking to their nearest spots would close in on the target's bearing; on the arc the factor is 1, so a unit at
-	// its spot keeps it. Within the arc's span of the centre (a unit round the far side keeps its own nearest spots)
+	// Its own side of the arc (GetFireFrontCentre: attack groups' leader): its angle off the centre's bearing from the
+	// target, widened by its distance over the arc's radius, keeps a unit walking in at its place across the group's
+	// width, where its nearest spots would close in on the target's bearing. At or inside its arc it keeps its own
+	// bearing, so a unit at its spot or in its fire band isn't moved. Not round the far side (beyond the arc's span of
+	// the centre), nor by a centre too near the target for its bearing to mean much (a melee leader), nor for escorts
 	const float radius = range * ((!isClose && IsKited(enemy)) ? KITE_STAND : FIRE_RADIUS);
 	const float span = static_cast<float>(M_PI) * arcSpan;
-	AIFloat3 frontCentre;
-	AIFloat3 sidePos;
+	const AIFloat3 u = uPos - tPos;
+	AIFloat3 centre;
 	bool isSide = false;
 	float sideBearing = 0.f;
-	if (!isClose && GetFireFrontCentre(frontCentre)) {
-		const AIFloat3 c = frontCentre - tPos;
-		const AIFloat3 u = uPos - tPos;
-		const float centreBearing = atan2f(c.z, c.x);
-		const float off = atan2f(sinf(atan2f(u.z, u.x) - centreBearing), cosf(atan2f(u.z, u.x) - centreBearing));
-		if ((c.SqLength2D() >= 1.f) && (u.SqLength2D() >= 1.f) && (fabsf(off) <= span)) {
-			sideBearing = ((arcBearing != nullptr) ? *arcBearing : centreBearing)
-					+ utils::clamp(off * u.Length2D() / radius, -span, span);
-			sidePos = AIFloat3(tPos.x + radius * cosf(sideBearing), tPos.y, tPos.z + radius * sinf(sideBearing));
-			CTerrainManager::CorrectPosition(sidePos);
-			isSide = true;
-		}
+	if (!isClose && !isSpotDisc && GetFireFrontCentre(centre)) {
+		const AIFloat3 c = centre - tPos;
+		const float off = atan2f(c.x * u.z - c.z * u.x, c.x * u.x + c.z * u.z);  // signed, from c to u
+		isSide = (c.SqLength2D() >= SQUARE(radius / 2)) && (fabsf(off) <= span);
+		sideBearing = ((arcBearing != nullptr) ? *arcBearing : atan2f(c.z, c.x))
+				+ utils::clamp(off * std::max(u.Length2D() / radius, 1.f), -span, span);
 	}
 	auto add = [&](const AIFloat3& p, bool isHeld) {
 		if ((isSpotDisc && (p.SqDistance2D(spotDiscPos) > spotDiscSqRadius))
@@ -905,8 +900,10 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 				++crowd;
 			}
 		}
-		const float walk = p.distance2D(uPos) + (isSide ? SIDE_WEIGHT * p.distance2D(sidePos) : 0.f);
-		SCandidate c{p, GetTaskThreatAt(unit, p), crowd, countSpread(p, isHeld), walk / range};
+		// Off its side: the arc's length between the two bearings
+		const float side = !isSide ? 0.f
+				: SIDE_WEIGHT * radius * utils::angle_diff(atan2f(p.z - tPos.z, p.x - tPos.x), sideBearing);
+		SCandidate c{p, GetTaskThreatAt(unit, p), crowd, countSpread(p, isHeld), (p.distance2D(uPos) + side) / range};
 		c.cost = costOf(c, std::max(c.threat, 0.f));
 		cands.push_back(c);
 	};
@@ -928,9 +925,8 @@ IFighterTask::FireSpot IFighterTask::FindFireSpot(const std::vector<SFireClaim>&
 	}
 	// Spots on an arc around the target, facing us or the planned side (+-45 degrees: keeps the group together;
 	// melee close spots +-90, see crowdR), or round the unit's own side
-	AIFloat3 dir = uPos - tPos;
 	const float bearing = (arcBearing != nullptr) ? *arcBearing
-			: isSide ? sideBearing : (dir.Length2D() > 1.f) ? atan2f(dir.z, dir.x) : 0.f;
+			: isSide ? sideBearing : (u.Length2D() > 1.f) ? atan2f(u.z, u.x) : 0.f;
 	for (int i = -arcSteps; i <= arcSteps; ++i) {
 		const float angle = bearing + i * static_cast<float>(M_PI) * arcSpan / arcSteps;
 		AIFloat3 p(tPos.x + radius * cosf(angle), tPos.y, tPos.z + radius * sinf(angle));

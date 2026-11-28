@@ -9,17 +9,23 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 - **Attack groups walk into a fight in line, and fan out to their firing spots.** A target within the leader's
   highest weapon or sight range was engaged at once, and the line dropped there: sight is often twice the weapon
-  range, so the last few hundred elmos were walked as separate orders, every unit to the firing spot nearest it, and
-  those all sit near the straight line to the target. So the group closed in on one bearing and arrived bunched.
-  - **Walk in:** a pick in range but not yet in contact (`attack_keep_threat`), while roaming, gets a straight path
-    to 0.9x the group's fire range short of it, which the line walks (kept while that end moves under 128 elmos).
-    The fight starts once the target is in contact, checked every update. A fight under way never forms the line
-    again, so a kill or a target stepping back doesn't re-form it. No line, already in contact, near enough already,
-    or no straight walk over ground the leader can move on: engaged at once as before.
-  - **Fan out:** each ranged unit of an attack group prefers its own side of the firing-spot arc, its angle off the
-    leader's bearing from the target times its distance over the arc's radius (at most 45 degrees), so the group keeps
-    the width it walked in with. On the arc the factor is 1, so a unit at its spot keeps it; units round the far
-    side keep their nearest spots. A spot's distance from that side counts 1.5x its walk.
+  range, so every unit walked the last few hundred elmos to the firing spot nearest it, near the straight line to the
+  target, and the group arrived bunched.
+  - **Walk in:** a pick in range but not yet in contact (`attack_keep_threat`), while roaming, gets a straight path,
+    on its planned firing side if it has one, that ends where the front row stands 0.9x the group's fire range short
+    of it, or just outside the target's own range if that is farther (turrets and skirmishers that outrange us aren't
+    walked through slowly; artillery beyond our sight is engaged at once). The path is kept while its end moves under
+    128 elmos. The fight starts at contact (checked every update), once the front row stands at the end, or once the
+    group is in danger, so the flee grace, holding ground and the pass on a target we fled from work as in a fight.
+    While walking in, the target needs no line of fire to stay picked (a dip on the way doesn't swap the walk for a
+    route search every decision), and an enemy in contact ranks first, as in a fight. A fight under way never forms
+    the line again. Not inside the base defence radius, and not without a line, a straight walk over ground the leader
+    can move on, or room to walk: engaged at once as before.
+  - **Fan out:** each ranged unit of an attack group (not escorts) prefers its own side of the firing-spot arc: its
+    angle off the leader's bearing from the target, times its distance over the arc's radius while it is farther out
+    (at most 45 degrees), so the group keeps the width it walked in with. At or inside its arc a unit keeps its own
+    bearing, so one at its spot or in its fire band stays. A spot's arc length off that side counts 1.5x its walk. Not
+    with the leader under half the arc's radius from the target (a melee leader beside it).
 - **No turret within 300 elmos of one of its own type** (`turret.same_radius`, new, 300; 0 = off). Every way the AI
   places a turret, but a mex escort, now leaves out a spot within 300 of a turret of the same type of our ally team:
   ours or an ally's, finished or being built, or a job of ours not started yet. Before, only light turrets had a crowd
