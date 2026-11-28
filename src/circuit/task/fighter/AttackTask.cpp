@@ -61,6 +61,10 @@ static constexpr float COVER_LOSS_SHARE = 0.75f;
 // quota.raid_attack_factor (base radius, contact) out to this x the radius, so an enemy stepping back and forth across
 // either line doesn't flip the pick
 static constexpr float TARGET_KEEP = 1.25f;
+// ApproachInLine: the line walks in to this x our fire range short of the pick (as the firing spots' ring), and keeps
+// its path while the target's end moves less than APPROACH_KEEP
+static constexpr float APPROACH_STAND = 0.9f;
+static constexpr float APPROACH_KEEP = 128.f;
 // Contact by an enemy's own range is capped at highestRange + this x our fire range (the firing-spot ring,
 // IFighterTask's arc spots): a unit in contact walks at most about highestRange to its spot, as a group whose leader
 // is within highestRange does. Long-range artillery farther out is routed to (siege, firing cells) as before
@@ -380,7 +384,8 @@ void CAttackTask::Update()
 	 * Regroup if required
 	 */
 	const bool wasRegroup = (State::REGROUP == state);
-	const bool mustRegroup = IsMustRegroup();
+	// Walking in line to a target (ApproachInLine) is a fight's start: exempt, as a fight is (laggards catch up)
+	const bool mustRegroup = !IsApproaching() && IsMustRegroup();
 	if (leader == nullptr) {  // all units released as stuck: task aborted
 		return;
 	}
@@ -412,10 +417,16 @@ void CAttackTask::Update()
 	if (wasRegroup && !isForced && !pPath->posPath.empty()) {
 		ActivePath(lowestSpeed);
 	}
-	// The target died while we fought it (~CEnemyInfo: ClearTarget leaves ENGAGE with no target; every decision that
-	// finds nothing sets ROAM): pick the next one now rather than at the next decision, so the units don't stand idle
-	const bool isTargetLost = (State::ENGAGE == state) && (target == nullptr);
-	if (!isDecision && !isForced && !isTargetLost) {
+	// The target died while we fought it or walked in to it (~CEnemyInfo: ClearTarget leaves the state as it is; every
+	// decision that finds nothing sets ROAM and ends a walk-in): pick the next one now rather than at the next decision,
+	// so the units don't stand idle or walk on to a dead target's spot
+	const bool isApproaching = IsApproaching();
+	const bool isTargetLost = ((State::ENGAGE == state) || isApproaching) && (target == nullptr);
+	// Walking in line to the target (ApproachInLine): the fight starts as soon as the front row stands at the walk's
+	// end, or the target is in contact
+	const bool isWalkInOver = isApproaching && (target != nullptr)
+			&& (IsLineAtEnd() || IsInContact(target, false, frame));
+	if (!isDecision && !isForced && !isTargetLost && !isWalkInOver) {
 		return;
 	}
 	// A normal decision that no unit asked to re-plan may keep a fresh route to the same goal (ReuseRoute)
@@ -554,16 +565,92 @@ bool CAttackTask::EngageInRange(int frame, bool isWalking)
 	if (isWalking && (FindNearestHittable(frame, GetContactBound(frame)) == nullptr)) {
 		SetTarget(nullptr);
 		fleeTargetId = -1;  // as FindTarget: the target we fled from is ours only at the next pick
-		return false;
+	} else if (FindTarget()) {
+		// ApproachInLine true: in sight, not yet in contact: the line walks in, the fight starts at contact (Update)
+		if (!ApproachInLine(frame)) {
+			StartFight(frame);
+		}
+		return true;
 	}
-	if (!FindTarget()) {
-		return false;
-	}
+	// Nothing to engage: a walk-in ends here (IsApproaching), so the route or hold that follows isn't taken for one
+	// while it is still being worked out
+	approachPath = nullptr;
+	return false;
+}
+
+void CAttackTask::StartFight(int frame)
+{
 	state = State::ENGAGE;
+	approachPath = nullptr;  // a walk-in ends (IsApproaching): the fight sets no path, so pPath may still be it
 	NoteCoverEngage(frame);  // the cover log
 	NoteBalanceEngage(frame);  // quota.attack_balance: the outcome log
 	Engage(frame);
+}
+
+bool CAttackTask::ApproachInLine(int frame)
+{
+	// The pick is within range of the leader (highestRange: sight as well as weapons) but not in contact: the line
+	// walks straight at it, rather than every unit walking to its own firing spot from here, bunching on the way. The
+	// fight starts at contact (IsInContact at its plain reach, kept at 1.25x once engaged) or once the front row
+	// stands at the walk's end, both checked every update. Only from roaming, and only with the line formed: with it
+	// off every unit would walk the path to its one end. A fight under way never forms the line again (a kill, a
+	// target stepping back). Not inside the base defence radius: at home speed matters more than shape, and the fight
+	// there holds ground. False: engage at once as before (no line, already in contact or about there, or no straight
+	// walk there)
+	if ((State::ENGAGE == state) || (GetFormation() == nullptr) || (IsApproaching() && IsLineAtEnd())
+		|| IsInBaseRadius(target->GetPos()) || IsInContact(target, false, frame))
+	{
+		return false;
+	}
+	// The front row stands APPROACH_STAND x our fire range short of the target, or just outside its own reach if that
+	// is farther (a turret or a skirmisher that outranges us: not walked through in line; artillery beyond our sight:
+	// engaged at once). The leader stands its row's offset behind it, as at a route's end (RequestTargetPath)
+	const float fireRange = GetGroundFireRange();
+	const float stand = std::max(APPROACH_STAND * fireRange, GetTargetGroundRange() + DEFAULT_SLACK);
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	AIFloat3 dir = leaderPos - position;  // position: the pick's range spot (FindTarget)
+	dir.y = 0.f;
+	const float dist = dir.Length2D();
+	if ((fireRange < SQUARE_SIZE * 4) || (dist < stand + GetLeaderLineOffset() + DEFAULT_SLACK)) {
+		return false;
+	}
+	// On its planned firing side (quota.attack_static_cells), if it has one: the pick checked only that side's ground
+	float side;
+	dir = GetFireArcBearing(side) ? AIFloat3(cosf(side), 0.f, sinf(side)) : (dir / dist);
+	AIFloat3 end = position + dir * stand;
+	CTerrainManager::CorrectPosition(end);
+	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
+	if (!terrainMgr->CanMoveToPos(leader->GetArea(), end)
+		|| !terrainMgr->IsWalkClear(leader->GetArea(), leaderPos, end, -1.f))  // < 0: every square on the way
+	{
+		return false;
+	}
+	// Already walking in to about there: no new path, so the line doesn't lay out again at every decision
+	if (IsApproaching() && (approachPath->posPath.back().SqDistance2D(end) < SQUARE(APPROACH_KEEP))) {
+		return true;
+	}
+	pathQueries.erase(leader);  // a target route still being worked out doesn't replace this walk when it comes back
+	approachPath = std::make_shared<PathInfo>();
+	approachPath->posPath = {leaderPos, end};
+	pPath = approachPath;
+	EndLineFacing();  // the path may end within FACE_KEEP of where the line faces from: it walks all the same
+	ActivePath(lowestSpeed);
 	return true;
+}
+
+bool CAttackTask::GetFireFrontCentre(AIFloat3& outPos) const
+{
+	if (leader == nullptr) {
+		return false;
+	}
+	outPos = leader->GetPos(manager->GetCircuit()->GetLastFrame());
+	return true;
+}
+
+bool CAttackTask::IsApproaching() const
+{
+	// No target test: FindTarget clears the target before it judges the candidates (IsSeenByUnits, ranking)
+	return (State::ROAM == state) && (approachPath != nullptr) && (pPath == approachPath);
 }
 
 /*
@@ -1503,6 +1590,12 @@ float CAttackTask::GetLeaderLineOffset() const
 	return (line != nullptr) ? line->GetLeaderOffset() : 0.f;
 }
 
+bool CAttackTask::IsLineAtEnd() const
+{
+	const CFormation* line = GetFormation();  // nullptr: the line is off
+	return (line != nullptr) && line->IsAtEnd();
+}
+
 void CAttackTask::RunGroupRoute(int frame, const AIFloat3& goal, float range, const SStrength& strength,
 		std::function<void (const CQueryPathSingle*)>&& onComplete)
 {
@@ -1602,6 +1695,12 @@ bool CAttackTask::UpdateEscape(int frame)
 	// Checked on every update (not just every decision), also while engaging or reinforcing.
 	// Not while defending: a fight with a target inside the base defence radius is held (no flee, no pull-back)
 	const bool isDanger = IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
+	// In danger while walking in line to the target (ApproachInLine), or its end ahead is: the fight starts now, so it
+	// is escaped as a fight is (the flee grace re-spots first; a static target we flee from anyway is passed on), and
+	// its threat-scored firing spots replace an end that a re-plan would only keep
+	if ((isDanger || isPathAheadUnsafe) && (target != nullptr) && IsApproaching()) {
+		StartFight(frame);
+	}
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
 	isAtFleeDest = false;
 	// The escape would flee from a fight the pick still accepts (it judges the target's spot, the escape each unit's).
@@ -1946,7 +2045,8 @@ bool CAttackTask::IsSeenByUnits(const CEnemyInfo* enemy, const AIFloat3& pos, fl
 	bool isSeen = false;
 	if (pos.SqDistance2D(leader->GetPos(frame)) <= SQUARE(contactSpread + range)) {  // else beyond every unit we count
 		float aimLift = 0.f, targetLift = 0.f;
-		const bool isSight = GetSightLifts(enemy, aimLift, targetLift) && !(isCurrent && (State::ENGAGE == state));
+		const bool isSight = GetSightLifts(enemy, aimLift, targetLift)
+				&& !(isCurrent && ((State::ENGAGE == state) || IsApproaching()));
 		CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
 		const float sqRange = SQUARE(range);
 		for (const SContactUnit& u : contactUnits) {
@@ -2020,6 +2120,8 @@ bool CAttackTask::FindTarget()
 	// current target is, so a kill doesn't drop the rest of the fight (the next pick has no current target). A fight
 	// is still only started at the usual allowance (roaming)
 	const bool isEngaged = (State::ENGAGE == state);
+	// Walking in line to the current target (ApproachInLine) ranks as a fight: an enemy that hits the line comes first
+	const bool isFight = isEngaged || IsApproaching();
 	auto powerFor = [&](const CEnemyInfo* e, bool isContact) {
 		const AIFloat3& ePos = e->GetPos();
 		const bool isPrev = (e->GetId() == prevTargetId);
@@ -2215,11 +2317,12 @@ bool CAttackTask::FindTarget()
 
 	// Nearest candidates first. Keep the nearest MAX_TARGET_GOALS targets as goals of one route query (Update); the
 	// nearest is the target until the route says which one we can actually reach under the threat cap, with a safe approach.
-	// While engaged, enemies in contact come first: finish the fight we're in before walking off to another target (a
-	// preferred type, a contested cluster), which would also put the line back on mid-fight. Roaming, target_dist_mod
-	// ranks them as any other (a scout poking the front row doesn't pull the group off its walk)
-	std::sort(candidates.begin(), candidates.end(), [isEngaged](const SCandidate& a, const SCandidate& b) {
-		return (isEngaged && (a.isContact != b.isContact)) ? a.isContact : (a.key < b.key);
+	// While engaged (or walking in to the target), enemies in contact come first: finish the fight we're in before
+	// walking off to another target (a preferred type, a contested cluster), which would also put the line back on
+	// mid-fight. Roaming, target_dist_mod ranks them as any other (a scout poking the front row doesn't pull the group
+	// off its walk; one that runs is dropped as a runner, walking in too)
+	std::sort(candidates.begin(), candidates.end(), [isFight](const SCandidate& a, const SCandidate& b) {
+		return (isFight && (a.isContact != b.isContact)) ? a.isContact : (a.key < b.key);
 	});
 	routeGoals.clear();
 	const SCandidate* best = nullptr;
@@ -2337,11 +2440,11 @@ bool CAttackTask::FindTarget()
 	}
 
 	// Stickiness: keep the current target unless another is clearly nearer (STICKY_DIST by distance), so
-	// near-equal targets don't flip back and forth between decisions. While engaged, a current target out of contact
-	// doesn't win over a best in contact (the fight ranks first: a best out of contact means none passed). Roaming, as
-	// any other target
+	// near-equal targets don't flip back and forth between decisions. While engaged or walking in, a current target out
+	// of contact doesn't win over a best in contact (the fight ranks first: a best out of contact means none passed).
+	// Roaming, as any other target
 	const float sqSticky = SQUARE(STICKY_DIST);
-	const bool isSticky = (prev != nullptr) && (!isEngaged || prev->isContact || !best->isContact)
+	const bool isSticky = (prev != nullptr) && (!isFight || prev->isContact || !best->isContact)
 			&& (best->key >= prev->key * sqSticky);
 	// The current target was kept above although really nearer than the best; if stickiness won't keep it
 	// either, leave it out too (all of its goals), or it would take the route
