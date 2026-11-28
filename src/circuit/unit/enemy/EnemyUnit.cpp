@@ -101,12 +101,23 @@ CEnemyUnit::CEnemyUnit(CCircuitDef* cdef, const AIFloat3& pos)
 CEnemyUnit::~CEnemyUnit()
 {
 	delete shield;
+	ClearReloads();
 }
 
 void CEnemyUnit::SetCircuitDef(CCircuitDef* cdef)
 {
 	data.cdef = cdef;
+	ClearReloads();  // another type's weapons
 	Init();
+}
+
+void CEnemyUnit::ClearReloads()
+{
+	for (SReloadState& r : reloads) {
+		delete r.weapon;
+	}
+	reloads.clear();
+	data.isReloading = false;
 }
 
 void CEnemyUnit::Init()
@@ -246,6 +257,51 @@ bool CEnemyUnit::UpdateJump(int frame, CTerrainManager* terrainMgr, bool isLand)
 	const bool isReady = !IsInFlight() && (frame >= jumpReadyFrame);
 	const bool isChanged = (isReady != isJumpReady);
 	isJumpReady = isReady;
+	return isChanged;
+}
+
+bool CEnemyUnit::UpdateReload(int frame, int minReload, float readyShare)
+{
+	const CCircuitDef* cdef = data.cdef;
+	bool isReloading = false;
+	// Dynamic commanders: the def's mounts aren't the fitted weapons. A type with any weapon of a short reload (or none)
+	// stays a threat
+	if ((minReload > 0) && (cdef != nullptr) && !IsFake() && !cdef->IsDynamicComm()
+		&& !cdef->GetFireWeapons().empty() && (cdef->GetMinFireReload() > minReload))
+	{
+		const std::vector<CCircuitDef::SFireWeapon>& weapons = cdef->GetFireWeapons();
+		if (data.IsInLOS()) {
+			if (reloads.empty()) {
+				reloads.reserve(weapons.size());
+				for (const CCircuitDef::SFireWeapon& w : weapons) {
+					reloads.push_back({WrappWeapon::GetInstance(unit->GetSkirmishAIId(), id, w.mountId), -1, 0});
+				}
+			}
+			for (SReloadState& r : reloads) {
+				if (r.weapon == nullptr) {
+					continue;
+				}
+				const int reloadFrame = r.weapon->GetReloadFrame();
+				if (reloadFrame != r.reloadFrame) {  // a new shot: its reload as it is now (slow included)
+					r.reloadFrame = reloadFrame;
+					r.reloadTime = std::max(r.weapon->GetReloadTime(), 0);
+				}
+			}
+		}
+		isReloading = !reloads.empty();
+		for (size_t i = 0; i < reloads.size(); ++i) {
+			const SReloadState& r = reloads[i];
+			// Shot at reloadFrame - reloadTime; its burst still fires after that
+			const int shotEnd = r.reloadFrame - r.reloadTime + weapons[i].burstFrames;
+			const int readyFrame = r.reloadFrame - int((1.f - readyShare) * r.reloadTime);
+			if ((r.weapon == nullptr) || (r.reloadFrame < 0) || (frame < shotEnd) || (frame >= readyFrame)) {
+				isReloading = false;  // this weapon is ready enough (or unread, or mid-burst)
+				break;
+			}
+		}
+	}
+	const bool isChanged = (isReloading != data.isReloading);
+	data.isReloading = isReloading;
 	return isChanged;
 }
 

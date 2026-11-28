@@ -176,6 +176,9 @@ private:
 	} initThrMod;
 	float maxAAThreat;
 	bool isJumpLand = true;  // quota.jump_land: a jumper in flight is fought at its landing spot (CEnemyUnit::UpdateJump)
+	// quota.reload_threat_min (seconds, here frames; 0 = off) and reload_threat_ready (0..1): CEnemyUnit::UpdateReload
+	int reloadThrMin = 0;
+	float reloadThrReady = 0.75f;
 	struct SEnemyInfo {
 		float cost;
 		float threat;

@@ -120,6 +120,9 @@ void CEnemyManager::UpdateEnemyDatas(CQuadField& quadField)
 				enemy->UpdateInLosData();  // heavy on engine calls
 			}
 		}
+		// Long reloads (quota.reload_threat_min): read in LOS, kept out of it; the threat map draws no threat while
+		// every weapon reloads
+		enemy->UpdateReload(circuit->GetLastFrame(), reloadThrMin, reloadThrReady);
 		// Jumpers: flight, landing and reload (in LOS; out of it a flight ends when its guess says). A jump that is
 		// ready again, or used, changes the reach of its threat
 		const CCircuitDef* edef = enemy->GetCircuitDef();
@@ -570,6 +573,19 @@ void CEnemyManager::ReadConfig()
 	initThrMod.inStatic = qthrMod.get("static", 0.f).asFloat();
 	maxAAThreat = quotas.get("aa_threat", 42.f).asFloat();
 	isJumpLand = quotas.get("jump_land", true).asBool();
+	// Long reloads: no threat right after a shot (CEnemyUnit::UpdateReload). Off by default
+	const Json::Value& reloadMin = quotas.get("reload_threat_min", 0.f);
+	const Json::Value& reloadReady = quotas.get("reload_threat_ready", 0.75f);
+	if (reloadMin.isNumeric() && (reloadMin.asFloat() >= 0.f) && reloadReady.isNumeric()
+		&& (reloadReady.asFloat() >= 0.f) && (reloadReady.asFloat() <= 1.f))
+	{
+		reloadThrMin = int(reloadMin.asFloat() * FRAMES_PER_SEC);
+		reloadThrReady = reloadReady.asFloat();
+	} else {
+		circuit->LOG("CONFIG %s: quota.reload_threat_min must be a number >= 0 and quota.reload_threat_ready one 0..1;"
+				" the reload rule is off", circuit->GetSetupManager()->GetConfigName().c_str());
+		reloadThrMin = 0;
+	}
 }
 
 /*

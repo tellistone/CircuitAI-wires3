@@ -320,6 +320,15 @@ public:
 	int GetReloadTime() const { return reloadTime; }
 	bool IsLongReload() const;  // 5 s or more (anti-heavy: fires at what it sees, steps back while reloading)
 	int GetBurstFrames() const { return burstFrames; }  // frames from a burst's first shot to its last, longest weapon
+	// Its weapons but shields and fake ones (Zero-K's fake_weapon): the mount index on the unit, and the frames from a
+	// burst's first shot to its last. The threat map's reload rule (CEnemyUnit::UpdateReload) reads them on enemies
+	struct SFireWeapon {
+		int mountId;
+		int burstFrames;
+	};
+	const std::vector<SFireWeapon>& GetFireWeapons() const { return fireWeapons; }
+	// The shortest reload of those (frames); 0 without any
+	int GetMinFireReload() const { return minFireReload; }
 	// A heavy or commander a unit of this type can shoot: role, target category, anti-static, air
 	bool IsQuarry(const CCircuitDef* edef) const;
 	int GetCategory() const { return category; }
@@ -525,6 +534,8 @@ private:
 	FireType fireState;
 	int reloadTime;  // frames in ticks
 	int burstFrames = 0;  // GetBurstFrames
+	std::vector<SFireWeapon> fireWeapons;  // GetFireWeapons
+	int minFireReload = 0;  // GetMinFireReload
 	int category;
 	int targetCategory;
 	int noChaseCategory;
