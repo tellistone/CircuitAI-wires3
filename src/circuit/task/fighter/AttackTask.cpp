@@ -191,7 +191,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, corneredFrame(-1)
 		, corneredPos(-RgtVector)
 		, isCorneredHold(false)
-		, isShieldFlee(false)
+		, isShieldLow(false)
 		, fireRangeLand(0.f)
 		, fireRangeWater(0.f)
 		, targetRouteTries(0)
@@ -442,6 +442,14 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	if (blockSince >= 0) {
 		GetBalance()->NoteBlocked(this, leader->GetId(), frame - blockSince);
 		blockSince = -1;
+	}
+	// Shields low (quota.attack_shield_flee): no new target, recharge where we stand (the quietest spot nearby). Not
+	// inside the base defence radius (as UpdateEscape)
+	if (isShieldLow && !IsInBaseRadius(leader->GetPos(frame))) {
+		SetTarget(nullptr);
+		state = State::ROAM;
+		HoldPosition(true);
+		return;
 	}
 
 	/*
@@ -1695,7 +1703,13 @@ bool CAttackTask::UpdateEscape(int frame)
 {
 	// Checked on every update (not just every decision), also while engaging or reinforcing.
 	// Not while defending: a fight with a target inside the base defence radius is held (no flee, no pull-back)
-	const bool isDanger = IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
+	// Shields low (quota.attack_shield_flee): any threat on a unit is danger, so the escape takes the group out of
+	// enemy reach (and no further: it ends once there is none), where it recharges (Decide holds). Not inside the base
+	// defence radius, where fights are held
+	const bool isDanger = (UpdateShieldLow() && !IsInBaseRadius(leader->GetPos(frame))
+			&& std::any_of(units.begin(), units.end(), [&](CCircuitUnit* unit) {
+				return GetTaskThreatAt(unit, unit->GetPos(frame)) > 0.f;
+			})) || IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
 	// In danger while walking in line to the target (ApproachInLine), or its end ahead is: the fight starts now, so it
 	// is escaped as a fight is (the flee grace re-spots first; a static target we flee from anyway is passed on), and
 	// its threat-scored firing spots replace an end that a re-plan would only keep
@@ -1704,9 +1718,6 @@ bool CAttackTask::UpdateEscape(int frame)
 	}
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
 	isAtFleeDest = false;
-	if (UpdateShieldFlee(frame, isHoldGround)) {
-		return true;
-	}
 	// The escape would flee from a fight the pick still accepts (it judges the target's spot, the escape each unit's).
 	// For a turret just seen, the flee grace (quota.attack_flee_grace) re-spots first. If the group flees anyway from a
 	// target standing still, it passes on it (6, 12, 24 s), or the next pick sends it straight back (a moving one may
@@ -1755,53 +1766,24 @@ bool CAttackTask::UpdateEscape(int frame)
 	return false;
 }
 
-bool CAttackTask::UpdateShieldFlee(int frame, bool isHoldGround)
+bool CAttackTask::UpdateShieldLow()
 {
-	// Most units shielded (Felon, Aspis, Convict groups): their shields are the group's health. Below <flee> on average
-	// it runs where the escape would (FindFleeDest) and recharges there; only above <resume> does it attack again.
-	// Units whose own shield is at their retreat_shield have left already (IFighterTask::OnUnitDamaged); this is the
-	// group's rule, for shields drained together. Not while holding ground at base: that fight is held, as the escape's
+	// Most units shielded (Thug, Felon, Aspis balls): their shields are the group's health. Unweighted average: an
+	// Aspis or Funnelweb starts empty, and by capacity it alone would hold the group back
 	const std::pair<float, float>& limits = GetMilitaryMgr()->GetAttackShieldFlee();
-	if ((limits.first <= 0.f) || units.empty() || (shields.size() * 2 <= units.size())) {
-		isShieldFlee = false;
-		return false;
-	}
 	float sum = 0.f;
 	int count = 0;
-	for (CCircuitUnit* unit : shields) {
-		const float maxShield = unit->GetCircuitDef()->GetMaxShield();
-		if (maxShield > 0.f) {
-			sum += std::min(unit->GetShieldPower() / maxShield, 1.f);
-			++count;
+	if ((limits.first > 0.f) && (shields.size() * 2 > units.size())) {
+		for (CCircuitUnit* unit : shields) {
+			const float maxShield = unit->GetCircuitDef()->GetMaxShield();
+			if (maxShield > 0.f) {
+				sum += unit->GetShieldPower() / maxShield;
+				++count;
+			}
 		}
 	}
-	if (count == 0) {
-		isShieldFlee = false;
-		return false;
-	}
-	const float avg = sum / count;
-	if (isShieldFlee) {
-		isShieldFlee = (avg <= limits.second);
-	} else {
-		isShieldFlee = (avg < limits.first);
-	}
-	if (!isShieldFlee || isHoldGround) {
-		return false;
-	}
-	if (Flee(frame)) {
-		return true;  // running to recharge
-	}
-	// At the flee destination (Flee set isAtFleeDest): recharge here. Fight back at what is in range, but never set
-	// off for a target; hold on decisions only (~2 s), as Decide would
-	isAtFleeDest = false;
-	corneredPos = -RgtVector;
-	isCorneredHold = false;
-	if ((updCount % 2 == 0) && !EngageInRange(frame, true)) {
-		SetTarget(nullptr);
-		state = State::ROAM;
-		HoldPosition(true);
-	}
-	return true;
+	isShieldLow = (count > 0) && (sum < count * (isShieldLow ? limits.second : limits.first));
+	return isShieldLow;
 }
 
 bool CAttackTask::IsFormationFlee(int frame) const
@@ -1889,7 +1871,8 @@ AIFloat3 CAttackTask::FindFleeDest(int frame) const
 
 	// The nearest stronger attack group (fight beside it, then merge), if the two groups together can stand there:
 	// it may be in this same fight, or past the enemy. Not the rally host by preference: it may be far away
-	CAttackTask* squad = militaryMgr->FindReinforceSquad(leader, attackPower, this, false);
+	// Not with shields low (quota.attack_shield_flee): that group is often on its way to a fight
+	CAttackTask* squad = isShieldLow ? nullptr : militaryMgr->FindReinforceSquad(leader, attackPower, this, false);
 	if (squad != nullptr) {
 		const AIFloat3& squadPos = squad->GetLeaderPos(frame);
 		if (!IsDangerAt(leader, squadPos, GetJointStrength(squad), scaleRefSqDist)) {

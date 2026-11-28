@@ -592,12 +592,12 @@ void CMilitaryManager::ReadConfig()
 	attackFleeGrace = static_cast<int>(readAttackNum("attack_flee_grace", 2.f, 0.f, 10.f) * FRAMES_PER_SEC);
 	raidFleeGrace = static_cast<int>(readAttackNum("raid_flee_grace", 2.f, 0.f, 10.f) * FRAMES_PER_SEC);
 	{
-		// [<flee>, <resume>]: shares of full shield charge, resume >= flee; [0, x] = off
+		// [<flee>, <resume>]: shares of full shield charge, flee <= resume < 1 (at 1 it would never resume); [0, x] = off
 		const Json::Value& q = quotas["attack_shield_flee"];
 		const bool isOk = q.isNull() || (q.isArray() && (q.size() == 2) && q[0u].isNumeric() && q[1u].isNumeric()
-				&& (q[0u].asFloat() >= 0.f) && (q[0u].asFloat() <= q[1u].asFloat()) && (q[1u].asFloat() <= 1.f));
+				&& (q[0u].asFloat() >= 0.f) && (q[0u].asFloat() <= q[1u].asFloat()) && (q[1u].asFloat() < 1.f));
 		if (!isOk) {
-			circuit->LOG("CONFIG %s: quota.attack_shield_flee must be [<flee 0..1>, <resume flee..1>], using [0.25, 0.5]", cfgName.c_str());
+			circuit->LOG("CONFIG %s: quota.attack_shield_flee must be [<flee 0..1>, <resume flee..below 1>], using [0.25, 0.5]", cfgName.c_str());
 		}
 		attackShieldFlee = (isOk && !q.isNull()) ? std::make_pair(q[0u].asFloat(), q[1u].asFloat())
 				: std::make_pair(0.25f, 0.5f);

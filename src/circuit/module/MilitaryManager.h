@@ -502,7 +502,7 @@ public:
 	int GetRaidFleeGrace() const { return raidFleeGrace; }
 	int GetAttackFleeGrace() const { return attackFleeGrace; }
 	// quota.attack_shield_flee [<flee>, <resume>] (shares of full charge; flee 0 = off): a mostly shielded attack group
-	// runs below <flee> average charge and attacks again above <resume> (CAttackTask::UpdateShieldFlee)
+	// below <flee> average charge escapes any threat and recharges until above <resume> (CAttackTask::UpdateShieldLow)
 	const std::pair<float, float>& GetAttackShieldFlee() const { return attackShieldFlee; }
 	// quota.danger_margin [<share>, <cost x>] (share 1 = off): attack and raid routes cost more from share x the escape's
 	// allowance on, up to mod x at the allowance (cost 1 = routes off), and firing spots prefer spots under share x it
