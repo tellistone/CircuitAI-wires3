@@ -1934,20 +1934,22 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 		buildPos = circuit->GetSetupManager()->GetBasePos();
 	} else {
 		// A switch goes toward the front: from our finished cluster nearest the middle of the map. The floor is there
-		// for build power, so it stays at the free cluster nearest our base: safer, and a short walk for builders
+		// for build power: the free cluster nearest our base, else the base itself (as support factories)
 		AIFloat3 pos(circuit->GetSetupManager()->GetBasePos());
 		CMetalManager* metalMgr = circuit->GetMetalManager();
-		AIFloat3 center = (pos + enemyPos) * 0.5f;
-		float minSqDist = std::numeric_limits<float>::max();
 		const CMetalData::Clusters& clusters = metalMgr->GetClusters();
-		for (unsigned i = 0; !isBelowMin && (i < clusters.size()); ++i) {
-			if (!metalMgr->IsClusterFinished(i)) {
-				continue;
-			}
-			const float sqDist = center.SqDistance2D(clusters[i].position);
-			if (minSqDist > sqDist) {
-				minSqDist = sqDist;
-				pos = clusters[i].position;
+		if (!isBelowMin) {
+			AIFloat3 center = (pos + enemyPos) * 0.5f;
+			float minSqDist = std::numeric_limits<float>::max();
+			for (unsigned i = 0; i < clusters.size(); ++i) {
+				if (!metalMgr->IsClusterFinished(i)) {
+					continue;
+				}
+				const float sqDist = center.SqDistance2D(clusters[i].position);
+				if (minSqDist > sqDist) {
+					minSqDist = sqDist;
+					pos = clusters[i].position;
+				}
 			}
 		}
 
@@ -1955,11 +1957,13 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 			return (clusterInfos[index].factory == nullptr) && !terrainMgr->IsZoneAlly(clusters[index].position);
 		};
 		int index = metalMgr->FindNearestCluster(pos, predicate);
-		if (index < 0) {
-			floorLog("none: no free cluster");
+		if (index >= 0) {
+			buildPos = clusters[index].position;
+		} else if (isBelowMin) {
+			buildPos = pos;  // the base
+		} else {
 			return nullptr;
 		}
-		buildPos = clusters[index].position;
 	}
 
 	CCircuitDef* facDef = factoryMgr->GetFactoryToBuild(buildPos, isStart);
