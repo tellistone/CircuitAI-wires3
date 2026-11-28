@@ -67,16 +67,17 @@ void CBFactoryTask::Update()
 		return;
 	}
 
-	// A plop is instant once the order starts, so a commander that stands still for 3 s with no frame placed is stuck,
+	// A plop is instant once the order starts, so a commander that stands still for 1.5 s with no frame placed is stuck,
 	// whatever the cause: a unit in the footprint that won't step aside, a path that allied commanders block, an order
 	// the engine dropped (the AI may never hear it go idle). The engine itself would retry for ~15 s, then go idle, and
-	// the plain retries pick the same site again. So: drop the site, remember it, pick another
+	// the plain retries pick the same site again. So: drop the site, remember it, pick another further afield.
+	// The plop is the most urgent job of the game: every second without the first factory is lost production
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	if ((target != nullptr) || units.empty() || (frame < checkFrame)) {
 		return;
 	}
-	checkFrame = frame + FRAMES_PER_SEC / 2;
+	checkFrame = frame + FRAMES_PER_SEC / 4;
 	CCircuitUnit* unit = *units.begin();
 	const AIFloat3& pos = unit->GetPos(frame);
 	if (unit->IsMorphing() || (stallFrame < 0) || (pos.SqDistance2D(stallPos) > SQUARE(SQUARE_SIZE * 2))) {
@@ -84,7 +85,7 @@ void CBFactoryTask::Update()
 		stallFrame = frame;
 		return;
 	}
-	if (frame - stallFrame < FRAMES_PER_SEC * 3) {
+	if (frame - stallFrame < FRAMES_PER_SEC * 3 / 2) {
 		return;
 	}
 	auto commands = unit->GetUnit()->GetCurrentCommands();
@@ -174,9 +175,11 @@ void CBFactoryTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, fl
 	}
 
 	// Plop: not over another friendly unit (an allied commander in a crowded start box) that may never step aside, and
-	// not a site that stalled before
+	// not near a site that stalled before: each failure widens the gap by a footprint, so the next site is out of the
+	// crowd rather than the one beside the last
 	bool isAvoidUnits = isPlop;
-	const float badSqDist = SQUARE(std::max(buildDef->GetDef()->GetXSize(), buildDef->GetDef()->GetZSize()) * SQUARE_SIZE);
+	const float badSqDist = SQUARE(std::max(buildDef->GetDef()->GetXSize(), buildDef->GetDef()->GetZSize()) * SQUARE_SIZE
+			* badSites.size());
 	auto isBadSite = [this, badSqDist](const AIFloat3& p) {
 		for (const AIFloat3& bad : badSites) {
 			if (bad.SqDistance2D(p) < badSqDist) {
