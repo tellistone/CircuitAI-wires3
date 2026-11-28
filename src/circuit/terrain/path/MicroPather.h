@@ -247,7 +247,9 @@ namespace NSMicroPather {
 					IndexVec* path, float* cost);
 			// isBottleneck: each cell gets the lowest possible "highest threat crossed" on a route from startNode
 			//               (widest-path flood) instead of the summed path cost
-			void MakeCostMap(void* startNode, std::vector<float>& costMap, bool isBottleneck = false);
+			// lenMap (optional, sized as costMap): each square's route length in squares along its cheapest path
+			void MakeCostMap(void* startNode, std::vector<float>& costMap, bool isBottleneck = false,
+					std::vector<float>* lenMap = nullptr);
 
 			size_t RefinePath(IndexVec& path);
 			void FillPathInfo(PathInfo& iPath);

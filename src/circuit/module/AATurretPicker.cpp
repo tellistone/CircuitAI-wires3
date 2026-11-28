@@ -587,8 +587,8 @@ CAATurretPicker::SResult CAATurretPicker::Search(SCheck& check, const std::vecto
 	}
 	if (!result.best.isFound) {
 		result.why = reasons + utils::string_format("; rejected: %i masked, %i on a lane, %i threatened, "
-				"%i not buildable, %i out of reach", rejects[Reject::MASK], rejects[Reject::LANE],
-				rejects[Reject::THREAT], rejects[Reject::SITE], rejects[Reject::REACH]);
+				"%i not buildable, %i near one of its type, %i out of reach", rejects[Reject::MASK], rejects[Reject::LANE],
+				rejects[Reject::THREAT], rejects[Reject::SITE], rejects[Reject::SAME], rejects[Reject::REACH]);
 	}
 	return result;
 }
@@ -633,6 +633,7 @@ CAATurretPicker::SPick CAATurretPicker::SearchDef(SCheck& check, CCircuitDef* de
 	// base where neighbours fail for the same reason. The cheap ones on up to MAX_TRIED cells, the site and reach
 	// tests on MAX_COSTLY of them
 	CSpotScorer* spotScorer = circuit->GetMilitaryManager()->GetSpotScorer();
+	const CTurretPicker* turretPicker = circuit->GetMilitaryManager()->GetTurretPicker();
 	const CChokeMap* chokeMap = circuit->GetChokeMap();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	std::vector<AIFloat3> tried;
@@ -669,6 +670,10 @@ CAATurretPicker::SPick CAATurretPicker::SearchDef(SCheck& check, CCircuitDef* de
 		}
 		if (spotScorer->IsMasked(site) || IsInThreat(check.threats, site)) {  // the site search moved it onto one
 			++pick.rejects[spotScorer->IsMasked(site) ? Reject::MASK : Reject::THREAT];
+			continue;
+		}
+		if (turretPicker->FindSameTurret(def, site)) {  // turret.same_radius: one of its type, ours or an ally's, nearby
+			++pick.rejects[Reject::SAME];
 			continue;
 		}
 		const SWorker* builder = NearestWorker(check, site, def);

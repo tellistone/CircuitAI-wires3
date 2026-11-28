@@ -107,6 +107,7 @@ void CTurretPicker::ReadConfig()
 	c.crowdRadius = turret.get("crowd_radius", c.crowdRadius).asFloat();
 	c.crowdCount = turret.get("crowd_count", c.crowdCount).asInt();
 	c.crowdCredit = turret.get("crowd_credit", c.crowdCredit).asFloat();
+	c.sameRadius = turret.get("same_radius", c.sameRadius).asFloat();
 	// A list of def names (the defaults when the key is missing); a name that isn't a unit, or a turret, is logged
 	auto readDefs = [&](const std::string& key, const Json::Value& list, std::vector<std::string> names, bool isTurret) {
 		if (list.isArray()) {
@@ -186,22 +187,75 @@ bool CTurretPicker::IsLightCrowded(const AIFloat3& pos) const
 	return (config.crowdCount > 0) && (CountLight(pos) >= config.crowdCount);
 }
 
-int CTurretPicker::CountLight(const AIFloat3& pos) const
+void CTurretPicker::ForEachTurretNear(const AIFloat3& pos, float radius, const IBuilderTask* skip,
+		const std::function<void (const STurretNear&)>& fn) const
 {
-	// The ally team's light turrets, finished or being built, then our jobs not started yet; enough is enough
-	int count = 0;
 	COOAICallback* clb = circuit->GetCallback();
-	for (int id : clb->GetFriendlyUnitIdsIn(pos, config.crowdRadius)) {
-		const CCircuitDef* cdef = (id != -1) ? circuit->GetCircuitDef(clb->Unit_GetDefId(id)) : nullptr;
-		if ((cdef != nullptr) && IsLight(cdef) && (++count >= config.crowdCount)) {
-			return count;
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	const int frame = circuit->GetLastFrame();
+	auto units = clb->GetFriendlyUnitsIn(pos, radius, false);  // a copy: the callback's buffer is shared
+	for (Unit* u : units) {
+		if (u == nullptr) {
+			continue;
+		}
+		const int id = u->GetUnitId();
+		const CCircuitDef::Id defId = clb->Unit_GetDefId(id);
+		const CCircuitDef* cdef = circuit->IsValidUnitDefId(defId) ? circuit->GetCircuitDef(defId) : nullptr;
+		if (!IsDefence(cdef)) {
+			continue;
+		}
+		CCircuitUnit* own = circuit->GetTeamUnit(id);
+		if (own == nullptr) {
+			fn({cdef, u->GetPos(), "an ally's", nullptr});
+			continue;
+		}
+		IBuilderTask* job = own->GetUnit()->IsBeingBuilt() ? builderMgr->GetFrameJob(own) : nullptr;
+		if ((job == nullptr) ? !own->GetUnit()->IsBeingBuilt() : (job != skip)) {
+			fn({cdef, own->GetPos(frame), "one of ours", job});
 		}
 	}
-	const float sqRadius = SQUARE(config.crowdRadius);
-	circuit->GetBuilderManager()->ForEachQueuedTower([this, &count, &pos, sqRadius](IBuilderTask* t) {
-		if (IsLight(t->GetBuildDef()) && (t->GetTaskPos().SqDistance2D(pos) < sqRadius)) {
-			++count;
+	utils::free_clear(units);
+	const float sqRadius = SQUARE(radius);
+	builderMgr->ForEachQueuedTower([&](IBuilderTask* t) {
+		const AIFloat3& tpos = t->GetPosition();
+		if ((t != skip) && IsDefence(t->GetBuildDef()) && (tpos.SqDistance2D(pos) <= sqRadius)) {
+			fn({t->GetBuildDef(), tpos, "a job of ours", t});
 		}
+	});
+}
+
+std::optional<CTurretPicker::STurretNear> CTurretPicker::FindSameTurret(const CCircuitDef* def, const AIFloat3& pos,
+		const IBuilderTask* skip) const
+{
+	if ((config.sameRadius <= 0.f) || !IsDefence(def)) {
+		return std::nullopt;
+	}
+	std::vector<STurretNear> turrets;
+	ForEachTurretNear(pos, config.sameRadius, skip, [&turrets](const STurretNear& t) { turrets.push_back(t); });
+	const STurretNear* same = FindSame(turrets, def, pos);
+	return (same != nullptr) ? std::optional<STurretNear>(*same) : std::nullopt;
+}
+
+const CTurretPicker::STurretNear* CTurretPicker::FindSame(const std::vector<STurretNear>& turrets,
+		const CCircuitDef* def, const AIFloat3& pos) const
+{
+	const STurretNear* best = nullptr;
+	float bestSq = SQUARE(config.sameRadius);
+	for (const STurretNear& t : turrets) {
+		const float sq = t.pos.SqDistance2D(pos);
+		if ((t.def == def) && (sq < bestSq)) {
+			best = &t;
+			bestSq = sq;
+		}
+	}
+	return best;
+}
+
+int CTurretPicker::CountLight(const AIFloat3& pos) const
+{
+	int count = 0;
+	ForEachTurretNear(pos, config.crowdRadius, nullptr, [this, &count](const STurretNear& t) {
+		count += IsLight(t.def) ? 1 : 0;
 	});
 	return count;
 }
@@ -268,6 +322,11 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 	}
 	SGather gather = Gather(centre, radius, maxRange, -RgtVector);
 	gather.isAlly = order.isAlly;
+	if (config.sameRadius > 0.f) {  // turret.same_radius
+		ForEachTurretNear(centre, radius + config.sameRadius, nullptr, [&gather](const STurretNear& t) {
+			gather.sames.push_back(t);
+		});
+	}
 	if (order.IsCreep()) {
 		GatherGuns(gather);
 	}
@@ -313,6 +372,7 @@ IBuilderTask* CTurretPicker::Order(const STurretOrder& order)
 				+ utils::int_to_string(count(Reject::INFLUENCE), ", %i outside our influence")
 				+ utils::int_to_string(count(Reject::THREAT), ", %i threatened")
 				+ utils::int_to_string(count(Reject::SITE), ", %i not buildable")
+				+ utils::int_to_string(count(Reject::SAME), ", %i near one of its type")
 				+ utils::int_to_string(count(Reject::REACH), ", %i out of reach")
 				+ utils::int_to_string(count(Reject::UNSAFE), ", %i unsafe")
 				+ utils::int_to_string(count(Reject::LANE), ", %i on a lane")
@@ -367,6 +427,12 @@ bool CTurretPicker::IsStillWorth(const CBDefenceTask* task, CCircuitUnit* builde
 	if (task->IsCreep() ? IsCreepThreatened(builder, spot) : IsThreatened(plain, builder, spot)) {
 		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), threat reached it", def->GetDef()->GetName(),
 				spot.x, spot.z);
+		return false;
+	}
+	// turret.same_radius: one of its type placed nearby meanwhile (an ally's, say), its own job left out
+	if (const auto same = FindSameTurret(def, spot, task)) {
+		circuit->LOG("TURRET dropped on arrival: %s at (%.0f, %.0f), %s within %.0f at (%.0f, %.0f)",
+				def->GetDef()->GetName(), spot.x, spot.z, same->whose, config.sameRadius, same->pos.x, same->pos.z);
 		return false;
 	}
 	// Its own tower (queued at the spot) left out of the halving; A only if the order counted it
@@ -724,6 +790,9 @@ CTurretPicker::Reject CTurretPicker::FinishCandidate(CCircuitDef* def, CCircuitU
 			UNIT_FACING_SOUTH);
 	if (!utils::is_valid(site)) {
 		return Reject::SITE;
+	}
+	if (FindSame(gather.sames, def, site) != nullptr) {  // turret.same_radius
+		return Reject::SAME;
 	}
 	if (!circuit->GetBuilderManager()->IsTurretJobSafe(builder, site)) {
 		return Reject::UNSAFE;

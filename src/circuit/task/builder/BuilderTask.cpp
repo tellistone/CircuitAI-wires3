@@ -127,9 +127,7 @@ void IBuilderTask::AssignTo(CCircuitUnit* unit)
 	}
 	unit->PushTravelAct(travelAction);
 	travelAction->StateWait();
-	// The "jump" attribute, or a commander with commander.json jobs.jump (CanJumpTo)
-	const CSetupManager::SCommInfo::SJobs* jobs = circuit->GetBuilderManager()->GetCommJobs(cdef);
-	unit->SetAllowedToJump(cdef->IsAbleToJump() && (cdef->IsAttrJump() || ((jobs != nullptr) && (jobs->jumpMinDist >= 0.f))));
+	circuit->GetBuilderManager()->SetWorkerJump(unit);  // the "jump" attribute, or commander.json jobs.jump
 }
 
 void IBuilderTask::RemoveAssignee(CCircuitUnit* unit)
@@ -336,13 +334,7 @@ void IBuilderTask::OnUnitIdle(CCircuitUnit* unit)
 void IBuilderTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	const float healthPerc = unit->GetHealthPercent();
-	if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
-		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
-			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
-		}
+	if (!circuit->GetBuilderManager()->IsWorkerRetreat(unit)) {
 		return;
 	}
 
@@ -890,10 +882,11 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 					pos = terrainMgr->GetBuildPosition(bdef, pos);
 				}
 
-				// turret.crowd_count: a light tower among enough light turrets is left out of the chain. A turret the
-				// account (porcupine.budget) can't pay for yet waits for it, out of the chain
+				// turret.same_radius: a tower by one of its type (this chain's own queued ones too), and turret.crowd_count:
+				// a light tower among enough light turrets, are left out of the chain. A turret the account
+				// (porcupine.budget) can't pay for yet waits for it, out of the chain
 				if ((bi.buildType == IBuilderTask::BuildType::DEFENCE)
-					&& (militaryMgr->RefuseCrowdedLight(buildDef, pos, "hub")
+					&& (militaryMgr->RefuseTurret(buildDef, pos, "hub")
 						|| militaryMgr->HoldHubTower(buildDef, pos, isScored, target)))
 				{
 					continue;

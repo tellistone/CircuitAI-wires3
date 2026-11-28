@@ -23,7 +23,9 @@ class CCircuitDef;
 
 class IFighterTask: public IUnitTask {
 public:
-	enum class FightType: char {RALLY = 0, GUARD, DEFEND, SCOUT, RAID, ATTACK, BOMB, MELEE, ARTY, AA, AH, SUPPORT, SUPER, _SIZE_};
+	// RAID_DEFEND: raiders defending our ground (CRaidDefendTask, quota.raid_defence)
+	enum class FightType: char {RALLY = 0, GUARD, DEFEND, SCOUT, RAID, ATTACK, BOMB, MELEE, ARTY, AA, AH, SUPPORT, SUPER,
+		RAID_DEFEND, _SIZE_};
 	using FT = std::underlying_type<FightType>::type;
 
 protected:
@@ -48,6 +50,7 @@ public:
 	const springai::AIFloat3& GetPosition() const { return position; }
 
 	float GetAttackPower() const { return attackPower; }
+	float GetPowerMod() const { return powerMod; }  // its own power's multiplier where it judges threat
 	float GetAreaPower() const { return areaPower; }  // of the units that are area damage (CMilitaryManager::IsAreaDamage)
 	// Group size bonus to the group's own power where it is compared against enemy threat (Lanchester's square
 	// law): 1 + quota.group_count_power x count, so 10 units at 0.025 count as 1.25x. The no-argument form uses
@@ -330,6 +333,8 @@ public:  // flee helpers, also used by the commander flee (CBuilderManager::Upda
 	// Flee: the nearest spot further from the danger than pos is, else the one furthest from it; nullptr if none
 	static const springai::AIFloat3* PickFleeSpot(const springai::AIFloat3& pos, const springai::AIFloat3& dangerPos,
 			const F3Vec& spots);
+
+	void MarkStrengthStale() const { strengthFrame = STALE_FRAME; }  // a unit's health changed: GetUnitStrengths reads again
 
 private:
 	static constexpr int STALE_FRAME = std::numeric_limits<int>::min();  // never a frame

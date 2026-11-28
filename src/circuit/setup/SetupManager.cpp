@@ -428,6 +428,41 @@ void CSetupManager::ReadConfig()
 			jobs.jumpMinDist = std::max(jump.get("min_dist", 500.f).asFloat(), 0.f);
 			jobs.isJumpKeep = jump.get("keep_for_flee", true).asBool();
 		}
+
+		const Json::Value& atck = comm["attack"];
+		SCommInfo::SAttack& attack = commInfo.attack;
+		if (atck.isObject()) {
+			attack.isEnable = atck.get("enable", true).asBool();
+			attack.radius = std::max(atck.get("radius", attack.radius).asFloat(), 0.f);
+			static const std::map<std::string, unsigned> kindNames = {{"static", SCommInfo::SAttack::STATIC},
+					{"raid_target", SCommInfo::SAttack::RAID}, {"commander", SCommInfo::SAttack::COMM}};
+			const Json::Value& kinds = atck["targets"];
+			if (kinds.isArray()) {
+				for (const Json::Value& kind : kinds) {
+					auto it = kindNames.find(kind.asString());
+					if (it != kindNames.end()) {
+						attack.kinds |= it->second;
+					} else {
+						circuit->LOG("CONFIG %s: commander '%s' attack.targets has unknown kind '%s'", cfgName.c_str(),
+								commName.c_str(), kind.asString().c_str());
+					}
+				}
+			} else {
+				attack.kinds = SCommInfo::SAttack::STATIC | SCommInfo::SAttack::RAID | SCommInfo::SAttack::COMM;
+			}
+			attack.ratio = std::max(atck.get("ratio", attack.ratio).asFloat(), 1.f);
+			attack.ratioComm = std::max(atck.get("ratio_comm", attack.ratioComm).asFloat(), 1.f);
+			attack.minHealth = utils::clamp(atck.get("min_health", attack.minHealth).asFloat(), 0.f, 1.f);
+			attack.leash = std::max(atck.get("leash", attack.leash).asFloat(), attack.radius);
+			attack.maxFrames = std::max(atck.get("max_sec", attack.maxFrames / FRAMES_PER_SEC).asFloat(), 1.f)
+					* FRAMES_PER_SEC;
+			attack.cooldownFrames = std::max(atck.get("cooldown_sec", attack.cooldownFrames / FRAMES_PER_SEC).asFloat(),
+					0.f) * FRAMES_PER_SEC;
+			attack.isInOpening = atck.get("in_opening", true).asBool();
+			if (attack.kinds == 0) {
+				attack.isEnable = false;
+			}
+		}
 	}
 
 	if (!commChoices.empty()) {
@@ -520,6 +555,12 @@ const CSetupManager::SCommInfo::SJobs* CSetupManager::GetCommJobs(const CCircuit
 {
 	const SCommInfo* info = FindCommInfo(cdef);
 	return (info != nullptr) ? &info->jobs : nullptr;
+}
+
+const CSetupManager::SCommInfo::SAttack* CSetupManager::GetCommAttack(const CCircuitDef* cdef) const
+{
+	const SCommInfo* info = FindCommInfo(cdef);
+	return (info != nullptr) ? &info->attack : nullptr;
 }
 
 const CSetupManager::SCommInfo::SHide* CSetupManager::GetHide(const CCircuitDef* cdef) const

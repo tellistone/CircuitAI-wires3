@@ -8,6 +8,7 @@
 #include "unit/enemy/EnemyUnit.h"
 #include "task/fighter/FighterTask.h"
 #include "terrain/TerrainManager.h"
+#include "CircuitAI.h"
 #include "util/Utils.h"
 
 #include "WeaponMount.h"
@@ -279,6 +280,20 @@ CEnemyFake::CEnemyFake(CCircuitDef* cdef, const AIFloat3& pos, int timeout)
 
 CEnemyFake::~CEnemyFake()
 {
+}
+
+const CCircuitDef::SCommWeapons* CEnemyUnit::GetCommWeapons(CCircuitAI* circuit)
+{
+	const CCircuitDef* edef = data.cdef;
+	if ((edef == nullptr) || !edef->IsDynamicComm() || IsFake()) {
+		return nullptr;
+	}
+	const int frame = circuit->GetLastFrame();
+	if (!commWeapons.isRead && IsInLOS() && ((commReadFrame < 0) || (frame - commReadFrame >= FRAMES_PER_SEC))) {
+		commReadFrame = frame;  // a failed read (no weapon fitted yet) is tried again a second later
+		CCircuitDef::ReadCommWeapons(circuit, unit, commWeapons);
+	}
+	return commWeapons.isRead ? &commWeapons : nullptr;
 }
 
 } // namespace circuit

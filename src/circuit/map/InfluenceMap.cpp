@@ -293,9 +293,9 @@ int CInfluenceMap::GetUnitRange(CAllyUnit* u) const
 
 	// FIXME: DEBUG  comm's threat value is not based on proper weapons
 	if (cdef->IsRoleComm()) {
-		float maxRange, maxAoe;  // the fitted weapons' (x comm_range_mult)
-		CCircuitDef::GetCommWeaponRange(manager->GetCircuit(), u->GetUnit(), maxRange, maxAoe);
-		return int(maxRange + maxAoe / 2) / squareSize * 4 + 1;
+		CCircuitDef::SCommWeapons cw;  // the fitted weapons' (x comm_range_mult)
+		CCircuitDef::ReadCommWeapons(manager->GetCircuit(), u->GetUnit(), cw);
+		return int(cw.reach + cw.reachAoe / 2) / squareSize * 4 + 1;
 	} else {
 	// FIXME: DEBUG
 

@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_MODULE_MILITARYMANAGER_H_
 
 #include "module/SpotScorer.h"
+#include "module/TurretPicker.h"
 #include "module/UnitModule.h"
 #include "setup/DefenceMatrix.h"
 #include "task/fighter/FighterTask.h"
@@ -21,6 +22,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -45,6 +47,7 @@ class CCreepPlanner;
 class CAllyCover;
 class CAttackBalance;
 class CProtect;
+class CRaidDefence;
 class CFrontline;
 class CTurretPicker;
 class CAATurretPicker;
@@ -89,6 +92,14 @@ public:
 	}
 
 	IFighterTask* EnqueueTask(IFighterTask::FightType type);
+	// Commander attack (CBuilderManager::TryCommAttack): an attack group led by our commander, comm. Updated with the
+	// other fight tasks but kept off GetTasks(ATTACK), so army picks, escorts, ally-cover discs, the attack balance,
+	// guard pulls, rallies, reinforcing and protect never see it; other attack groups may still merge into it
+	// (ISquadTask::CheckMergeTask, GetCommAttacks). The caller assigns comm to it
+	CAttackTask* EnqueueCommAttack(CCircuitUnit* comm);
+	const std::set<IFighterTask*>& GetCommAttacks() const { return commAttacks; }
+	// The commander left a commander attack that still has merged units: they go on as a normal attack group
+	void PromoteCommAttack(CAttackTask* task);
 	// Registers a new fight task under type for updates and GetTasks
 	IFighterTask* AddFightTask(IFighterTask::FightType type, IFighterTask* task);
 	IFighterTask* EnqueueDefend(IFighterTask::FightType promote, float power);
@@ -124,6 +135,9 @@ public:
 	// there; kept while the choke is on our line and was short within SOLO_PARK_KEEP.
 	// -RgtVector: none (no choke map yet, none short or reachable)
 	springai::AIFloat3 GetSoloPark(const IFighterTask* task, CCircuitUnit* leader);
+	// The spot the hunter's task holds now (GetSoloPark's last pick), -RgtVector: none. quota.raid_defence counts a
+	// parked hunter at the post nearest it
+	springai::AIFloat3 GetSoloParkSpot(const IFighterTask* task) const;
 	// A solo hunter left for a quota.protect commit: it goes back to hunting alone once its group stops protecting
 	void NoteSoloProtect(CCircuitUnit* unit);
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
@@ -230,9 +244,14 @@ public:
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
 	static const char* GetSpendName(int spend);  // a TurretSpend, as the TURRET BUDGET line names it
-	// turret.crowd_count: true when a light def at pos would join enough light turrets; logs and credits the account
-	// (CTurretPicker::RefuseCrowdedLight)
-	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
+	// turret.same_radius: the defence of def's type, ours or an ally's (or a job of ours), within it of pos
+	// (CTurretPicker::FindSameTurret), if any: the caller doesn't place def there, and nothing is charged. Logs the
+	// refusal
+	std::optional<CTurretPicker::STurretNear> RefuseSameTurret(const CCircuitDef* def, const springai::AIFloat3& pos,
+			const char* caller);
+	// RefuseSameTurret, then turret.crowd_count (CTurretPicker::RefuseCrowdedLight): a tower of a fixed spot (base,
+	// hub, radar guard) that isn't placed
+	bool RefuseTurret(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
 	// turret.crowd_credit: a light turret not placed for its crowd (CTurretPicker::RefuseCrowdedLight). Never past the
 	// account's cap; returns what it credited
 	float CreditTurret(float metal);
@@ -542,6 +561,8 @@ public:
 	CAttackBalance* GetAttackBalance() const { return attackBalance.get(); }
 	// quota.protect: one go or no-go for the groups that can reach our commander under a rush (CProtect)
 	CProtect* GetProtect() const { return protect.get(); }
+	// quota.raid_defence: a share of our raiders defends our ground early in the game (CRaidDefence)
+	CRaidDefence* GetRaidDefence() const { return raidDefence.get(); }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
@@ -661,6 +682,8 @@ public:
 
 private:
 	IUnitTask* DefaultMakeTask(CCircuitUnit* unit);
+	// A new attack group's random powerMod: 0.8 / thr_mod.attack
+	float NewAttackPowerMod() const { return 0.8f / ((float)rand() / RAND_MAX * attackMod.len + attackMod.min); }
 	IFighterTask* FindGuardTask(CCircuitUnit* unit) const;
 
 	void Watchdog();
@@ -675,6 +698,7 @@ private:
 	void UpdateAhStats();  // every second (NoteAh)
 	void LogAhStats();
 	void UpdateProtect();  // quota.protect, once a second
+	void UpdateRaidDefence();  // quota.raid_defence, once a second
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
@@ -731,6 +755,7 @@ private:
 
 	std::vector<std::set<IFighterTask*>> fightTasks;
 	std::vector<IUnitTask*> fightUpdates;  // owner
+	std::set<IFighterTask*> commAttacks;  // EnqueueCommAttack: CAttackTasks off fightTasks
 	unsigned int fightIterator;
 	std::set<IUnitTask*> priorityArtyTasks;  // CPriorityArtyTask, in fightTasks[SUPER]
 
@@ -910,6 +935,7 @@ private:
 	std::unique_ptr<CAllyCover> allyCover;  // quota.attack_ally_cover
 	std::unique_ptr<CAttackBalance> attackBalance;  // quota.attack_balance
 	std::unique_ptr<CProtect> protect;  // quota.protect
+	std::unique_ptr<CRaidDefence> raidDefence;  // quota.raid_defence
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat

@@ -307,13 +307,13 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathMultiQuery(
  */
 std::shared_ptr<IPathQuery> CPathFinder::CreateCostMapQuery(
 		CCircuitUnit* unit, CThreatMap* threatMap, int frame,  // SetMapData
-		const AIFloat3& startPos, bool isBottleneck, bool isSquadThreat, bool isRaidView)
+		const AIFloat3& startPos, bool isBottleneck, bool isSquadThreat, bool isRaidView, bool isLength)
 {
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryCostMap>(*this, MakeQueryId());
 	CQueryCostMap* query = static_cast<CQueryCostMap*>(pQuery.get());
 
 	FillMapData(query, unit, threatMap, frame, isSquadThreat, isRaidView, !isBottleneck);
-	query->InitQuery(startPos, isBottleneck);
+	query->InitQuery(startPos, isBottleneck, isLength);
 
 	return pQuery;
 }
@@ -751,7 +751,7 @@ void CPathFinder::MakeCostMap(IPathQuery* query, NSMicroPather::CMicroPather* mi
 	std::vector<float>& costMap = q->GetCostMapRef();
 
 	micropather->SetMapData(canMoveArray, threatArray, moveFun, threatFun, heightMap);
-	micropather->MakeCostMap(Pos2MoveNode(startPos), costMap, q->IsBottleneck());
+	micropather->MakeCostMap(Pos2MoveNode(startPos), costMap, q->IsBottleneck(), q->GetLenMapPtr());
 }
 
 #ifdef DEBUG_VIS
