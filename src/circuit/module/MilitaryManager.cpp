@@ -4827,14 +4827,14 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 		// orders. Neither takes guard slots
 		task = IFighterTask::IsArmedUnit(cdef) ? EnqueueAttackBound(unit) : EnqueueTask(IFighterTask::FightType::SUPPORT);
 	} else {
-		// quota.raid_defence (tier 1): while the reserve is short, a new raider defends; else any configured role may
-		// take a free guard slot
-		task = raidDefence->MakeTask(unit);
+		// Any configured role may take a free guard slot (a constructor under threat now); else, quota.raid_defence
+		// (tier 1): while the reserve is short, a new raider defends
+		task = FindGuardTask(unit);
 		if (task == nullptr) {
-			task = FindGuardTask(unit);
+			task = raidDefence->MakeTask(unit);
 		}
 		if (task != nullptr) {
-			// defence group or guard picked above
+			// guard or defence group picked above
 		} else if (IsSoloHuntRole(cdef) && IFighterTask::IsArmedUnit(cdef)) {
 			// quota.solo_hunt: alone on our ground until the one-off mex switch, then attack-bound
 			task = EnqueueSoloHunt();

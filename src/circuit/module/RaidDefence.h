@@ -71,8 +71,8 @@ struct STerrainMapArea;
  * - Split, every SPLIT_FRAMES and when a wave starts or ends: H = min(D, margin x B) for the posts by value, each
  *   share at least post_min x oneRaider (the smallest folds into the nearest other while it is under that); each
  *   second the posts share D by those weights.
- * - Recruit while R < RECRUIT_SHORT x D. Tier 1 (MakeTask, at once): a new raider starts a group at the post short
- *   the most (in a raid's no-go, quota.protect's gathering post keeps it out of the raid). Tier 2 (after
+ * - Recruit while R < RECRUIT_SHORT x D. Tier 1 (MakeTask, at once): a new raider that takes no free guard slot
+ *   starts a group at the post short the most (in a raid's no-go, quota.protect's gathering post keeps it out of the raid). Tier 2 (after
  *   TIER2_FRAMES): calm raid groups on our ground or within respond_sec of a post short of strength, nearest first;
  *   a whole group while it is at most WHOLE_GROUP_MOD x the shortfall, else its units nearest the post. Never a group
  *   released within RELEASE_IMMUNE_FRAMES, in a raid rally, or with scouts.
@@ -81,7 +81,8 @@ struct STerrainMapArea;
  * - Release while R > D / RELEASE_RATIO for RELEASE_FRAMES: calm groups back to raiding (a new raid group each), those
  *   without a post first, then those at posts that need nothing, then by the post's value, the warm floor's post
  *   last, never below D. Calm: no target, not fleeing, not committed by quota.protect (acting or gathering).
- * - The window closing releases every group for good. Raider guards (guard.summon) stay on throughout.
+ * - The window closing releases every group for good. Raider guards (guard.summon) stay on throughout, and pick
+ *   new raiders first.
  * Response (quota.protect, which must be on): each answerable incident is a protect ward (CProtect::SetIncidents).
  * - Goal: the first undefended asset within GOAL_TRACK_DIST of the blob's track ahead, else the nearest, within
  *   protect's zone. It changes when it is gone or defended, or once another asset has been the better pick for
@@ -183,7 +184,7 @@ public:
 	const std::vector<SAsset>& GetAssets() const { return assets; }
 	const std::vector<SIncident>& GetIncidents() const { return incidents; }
 
-	// Tier 1 (CMilitaryManager::DefaultMakeTask, before guard slots): while the reserve is short, a new raider of the
+	// Tier 1 (CMilitaryManager::DefaultMakeTask, after guard slots): while the reserve is short, a new raider of the
 	// roles starts a defence group at the post short the most that it can reach. nullptr: not wanted
 	IFighterTask* MakeTask(CCircuitUnit* unit);
 	const std::vector<SSlot>& GetSlots() const { return slots; }

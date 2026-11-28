@@ -498,10 +498,11 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     spot when it has 1 or 2 and no threat reaches it (kept there while the threat stays under the post's need), else
     at their centre (open-ground clusters within 15 s of a post join it); posts share min(D, `margin` x the biggest
     blob) by value, each at least `post_min` x one enemy raider. Every post keeps a threat-aware travel map
-    (`CTravelMap`). Recruit while R < 0.8 D: a new raider at once; calm raid groups on our ground or within
-    `protect.respond_sec` of a short post after 2 s (a whole group up to 1.5x the shortfall, else its nearest
-    units). Release calm groups to raiding once R > D / 0.7 for 5 s, never below D, not to be recruited again for
-    30 s. Every 5 s a calm group a post can spare moves to a short post. Raider guards (`guard.summon`) stay on.
+    (`CTravelMap`). Recruit while R < 0.8 D: a new raider at once, unless it takes a free guard slot; calm raid groups
+    on our ground or within `protect.respond_sec` of a short post after 2 s (a whole group up to 1.5x the shortfall,
+    else its nearest units). Release calm groups to raiding once R > D / 0.7 for 5 s, never below D, not to be
+    recruited again for 30 s. Every 5 s a calm group a post can spare moves to a short post. Raider guards
+    (`guard.summon`) stay on, and pick new raiders first.
   - A defence group takes new targets on our ground within `react_sec` of its post (by its travel map) or in
     contact, keeps its target out to 1.5x that on any ground, prefers enemies that just hit our assets, never joins
     a raid rally or chases, waits at its post (a small patrol) with no path queries, merges every few updates while
