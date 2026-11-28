@@ -1056,8 +1056,9 @@ void CRaidDefence::Rebalance(int frame)
 
 void CRaidDefence::Recruit(int frame)
 {
-	// Tier 2: calm raid groups on our ground, or within respond_sec of a slot short of strength by its travel map,
-	// nearest first. A whole group while it is at most WHOLE_GROUP_MOD x the shortfall, else its units nearest the slot
+	// Tier 2: raid groups within respond_sec of a slot short of strength by its travel map, fighting or not (the raid
+	// on our ground is the nearer job), and calm ones anywhere on our ground; nearest first. A whole group while it is
+	// at most WHOLE_GROUP_MOD x the shortfall, else its units nearest the slot
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	const float respondSec = militaryMgr->GetProtect()->GetRespondSec();
 	auto isShort = [](const SSlot& s) { return s.have < s.need; };
@@ -1070,8 +1071,8 @@ void CRaidDefence::Recruit(int frame)
 	for (IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::RAID)) {
 		CRaidTask* group = static_cast<CRaidTask*>(t);
 		CCircuitUnit* leader = group->GetLeader();
-		if (group->IsDead() || (leader == nullptr) || !IsCalm(group, frame)
-			|| (militaryMgr->GetRaidRallyHost() == group) || militaryMgr->IsRaidRallyJoiner(group))
+		if (group->IsDead() || (leader == nullptr) || group->IsFleeing(frame) || group->IsProtecting()
+			|| group->IsGathering() || (militaryMgr->GetRaidRallyHost() == group) || militaryMgr->IsRaidRallyJoiner(group))
 		{
 			continue;
 		}
@@ -1085,7 +1086,7 @@ void CRaidDefence::Recruit(int frame)
 		float sec;
 		SSlot* slot = FindNearestSlot(leader->GetArea(), leader->GetCircuitDef()->GetMobileId(), pos,
 				group->GetLowestSpeed(), isShort, &sec);
-		if ((slot != nullptr) && ((sec <= respondSec) || IsOurGround(pos))) {
+		if ((slot != nullptr) && ((sec <= respondSec) || ((group->GetTarget() == nullptr) && IsOurGround(pos)))) {
 			cands.push_back({group, slot, sec});
 		}
 	}
