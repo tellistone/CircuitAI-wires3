@@ -270,12 +270,15 @@ float CThreatMap::GetThreatAt(CCircuitUnit* unit, const AIFloat3& position) cons
 float CThreatMap::GetEnemyThreatAt(CCircuitUnit* unit, CEnemyInfo* enemy, const AIFloat3& position) const
 {
 	// As AddEnemyUnit: ranges in squares + speed slack; air flat, ground with AddEnemyAmphGradient's fall-off
-	// (AddEnemyAmphConst for always-hit weapons). Unknown types (radar blips) aren't worth it: 0
+	// (AddEnemyAmphConst for always-hit weapons). Unknown types (radar blips) aren't worth it: 0; nor one reloading
 	CCircuitDef* edef = enemy->GetCircuitDef();
 	if (edef == nullptr) {
 		return 0.f;
 	}
 	const CEnemyUnit* e = enemy->GetData();
+	if (e->IsReloading()) {
+		return 0.f;  // AddEnemyUnit draws none for it (quota.reload_threat_min)
+	}
 	const int vsl = std::min(int(e->GetGroundSpeed() * slackMod.speedMod), slackMod.speedModMax);
 	int ex, ez, x, z;
 	PosToXZ(e->GetFightPos(), ex, ez);  // where AddEnemyUnit draws it: a jumper's landing spot
@@ -366,6 +369,13 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 	CCircuitDef* cdef = e.cdef;
 	if (cdef == nullptr) {
 		AddEnemyUnitAll(e);
+		return;
+	}
+
+	if (e.isReloading) {
+		// Every weapon reloads a long reload, none ready enough (quota.reload_threat_min, CEnemyUnit::UpdateReload): no
+		// threat and no unit count until it is. It still decloaks
+		AddDecloaker(e);
 		return;
 	}
 

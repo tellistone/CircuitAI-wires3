@@ -62,6 +62,9 @@ struct SEnemyData {
 	springai::AIFloat3 landPos;
 	bool isJumping = false;
 	const springai::AIFloat3& GetFightPos() const { return isJumping ? landPos : pos; }
+	// Every weapon of it has a long reload and none is ready enough (CEnemyUnit::UpdateReload, quota.reload_threat_min):
+	// the threat map draws no threat and no unit count for it
+	bool isReloading = false;
 	// Its speed over the ground (elmos per frame), but in flight its walking speed: it is drawn and fought at its
 	// landing spot, and walks on from there (the threat map's slack, ISquadTask::IsRunningAway)
 	float GetGroundSpeed() const {
@@ -195,6 +198,15 @@ public:
 	bool IsJumpReady() const { return isJumpReady; }
 	bool IsInFlight() const { return landFrame >= 0; }
 
+	// Reload rule (quota.reload_threat_min, reload_threat_ready), from the staggered enemy update. A type whose every
+	// weapon (shields and fake weapons aside) reloads for more than minReload frames counts as no threat from just
+	// after a shot (the burst done) until it is readyShare reloaded, on every weapon at once. The reload is read only
+	// in LOS (the engine hands it out for any unit id: reading it out of view would be a cheat); out of LOS the last
+	// read stands, which holds: a weapon seen reloading can't fire again before it is reloaded. A unit never seen
+	// firing reads as ready. true: IsReloading changed
+	bool UpdateReload(int frame, int minReload, float readyShare);
+	bool IsReloading() const { return data.isReloading; }
+
 	// Shots priority artillery (CPriorityArtyTask) fired at it while it was out of LOS and radar, by all of the
 	// ally team's guns; back to 0 once it's seen again (UpdateInRadarData)
 	void AddBlindShot() { ++blindShots; }
@@ -225,6 +237,15 @@ private:
 	int jumpReadyFrame = 0;
 	bool isJumpReady = true;
 	bool isOffArc = false;
+	// UpdateReload: the type's fire weapons (CCircuitDef::GetFireWeapons), made on the first read in LOS; the reload
+	// frame last read for each (when it is ready again), and its reload then (frames, the engine's: slow included)
+	struct SReloadState {
+		springai::Weapon* weapon;
+		int reloadFrame;
+		int reloadTime;
+	};
+	std::vector<SReloadState> reloads;
+	void ClearReloads();
 	CCircuitDef::SCommWeapons commWeapons;  // GetCommWeapons
 	int commReadFrame = -1;  // GetCommWeapons: last read attempt
 
