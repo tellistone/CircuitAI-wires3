@@ -11,6 +11,7 @@
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
 #include "module/Protect.h"
+#include "module/SetPiece.h"
 #include "task/builder/BuilderTask.h"
 #include "task/fighter/AttackTask.h"
 #include "terrain/TerrainManager.h"
@@ -367,7 +368,8 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 				|| (isSummon && (ft == FightType::RAID) && (fightTask->GetAssignees().size() > 1)
 					&& !(cfg.isFromGroups && !fightTask->IsFighting()
 						&& (fightTask->GetAttackPower() - unit->GetCircuitDef()->GetPower() >= militaryMgr->GetRaidMinPower())))
-				|| militaryMgr->GetProtect()->IsActing(fightTask))  // quota.protect
+				|| militaryMgr->GetProtect()->IsActing(fightTask)  // quota.protect
+				|| militaryMgr->GetSetPiece()->Has(fightTask))  // quota.set_piece
 			{
 				continue;
 			}

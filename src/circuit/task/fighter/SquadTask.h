@@ -75,6 +75,20 @@ public:
 	bool IsGathering() const;
 	// Running along an escape path: a committed group counts 0 meanwhile. Default: never
 	virtual bool IsFleeing(int frame) const { return false; }
+	/*
+	 * Set piece attack (quota.set_piece, CSetPiece)
+	 */
+	bool IsInSetPiece() const;  // latched by the running set piece (CSetPiece::Has)
+	// Where it waits, committed: its set piece staging point until its release, else the protect's gathering post;
+	// invalid: none
+	springai::AIFloat3 GetWaitPos() const;
+	// Where its committed fight is: its set piece's target, else the protect's goal; invalid: none
+	springai::AIFloat3 GetCommitGoal() const;
+	// Committed to a central fight: protecting, gathering or in a set piece. Rallies, merges, guard pulls and the raid
+	// defence leave it alone
+	bool IsCommitted() const { return IsProtecting() || IsGathering() || IsInSetPiece(); }
+	// Would its own pick reject an enemy at pos with this strength (its allowance there, ally cover included)?
+	bool IsRejectedAt(const springai::AIFloat3& pos, float strength) const;
 
 	/*
 	 * Support units' speed: support units always attach to a group, whatever the speeds (a group walks at its slowest

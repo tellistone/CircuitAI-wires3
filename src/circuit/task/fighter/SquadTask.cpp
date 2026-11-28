@@ -12,6 +12,7 @@
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
 #include "module/Protect.h"
+#include "module/SetPiece.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
@@ -148,6 +149,31 @@ bool ISquadTask::IsProtecting() const
 bool ISquadTask::IsGathering() const
 {
 	return utils::is_valid(static_cast<CMilitaryManager*>(manager)->GetProtect()->GetGather(this));
+}
+
+bool ISquadTask::IsInSetPiece() const
+{
+	return static_cast<CMilitaryManager*>(manager)->GetSetPiece()->Has(this);
+}
+
+AIFloat3 ISquadTask::GetWaitPos() const
+{
+	const CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
+	return setPiece->Has(this) ? setPiece->GetWait(this) : militaryMgr->GetProtect()->GetGather(this);
+}
+
+AIFloat3 ISquadTask::GetCommitGoal() const
+{
+	const CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
+	return setPiece->Has(this) ? setPiece->GetGoal(this) : militaryMgr->GetProtect()->GetGoal(this);
+}
+
+bool ISquadTask::IsRejectedAt(const AIFloat3& pos, float strength) const
+{
+	manager->GetCircuit()->GetThreatMap()->SetThreatType(leader);  // shared threat-map state: set on every judge
+	return IsDangerAt(leader, pos, strength);
 }
 
 const AIFloat3& ISquadTask::GetLeaderPos(int frame) const
@@ -315,6 +341,11 @@ ISquadTask* ISquadTask::CheckMergeTask()
 	float metric = std::numeric_limits<float>::max();
 
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	// quota.set_piece: no merges into or out of its groups (each is committed and timed on its own)
+	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
+	if (setPiece->Has(this)) {
+		return nullptr;
+	}
 	// quota.protect: a group committed to the commander's fight joins only another committed one, or Merge would hand
 	// the commit to a group that is busy elsewhere
 	const CProtect* protect = militaryMgr->GetProtect();
@@ -331,7 +362,7 @@ ISquadTask* ISquadTask::CheckMergeTask()
 		if ((candidate == this) || candidate->IsDead() ||
 			(candidate->GetAttackPower() < attackPower) ||
 			!candidate->CanAssignTo(leader) ||
-			(isProtect && !protect->IsActing(candidate)))
+			(isProtect && !protect->IsActing(candidate)) || setPiece->Has(candidate))
 		{
 			continue;
 		}

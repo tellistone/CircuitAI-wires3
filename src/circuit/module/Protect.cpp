@@ -10,6 +10,8 @@
 #include "module/BuilderManager.h"
 #include "module/MilitaryManager.h"
 #include "module/RaidDefence.h"
+#include "module/SetPiece.h"
+#include "task/fighter/AttackTask.h"
 #include "task/fighter/DefendTask.h"
 #include "task/fighter/SquadTask.h"
 #include "terrain/TerrainManager.h"
@@ -111,6 +113,13 @@ CProtect::~CProtect()
 void CProtect::OnCommDamaged(CCircuitUnit* comm, CEnemyInfo* attacker)
 {
 	if (!cfg.isEnabled || !comm->GetCircuitDef()->IsRoleComm()) {
+		return;
+	}
+	// quota.set_piece: a hit from the target of the set piece our commander is in doesn't anchor its ward
+	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
+	if ((attacker != nullptr) && setPiece->IsMember(attacker->GetId())
+		&& setPiece->Has(CAttackTask::GetCommAttackOf(comm)))
+	{
 		return;
 	}
 	const int frame = circuit->GetLastFrame();

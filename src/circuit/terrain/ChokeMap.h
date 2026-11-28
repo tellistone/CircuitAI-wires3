@@ -258,6 +258,8 @@ public:
 	bool IsOurGround(int region) const { return isOurGround[region]; }
 	bool IsEnemyGround(int region) const { return isEnemyGround[region]; }
 	Side GetSettledOwner(int region) const { return settledOwner[region]; }  // the owner once settled, before joining
+	// Settled ours, or contested with our buildings in it (quota.set_piece's ground); false before the first update
+	bool IsOursOrContested(int region) const;
 	std::vector<int> GetOurRegions() const;  // our held ground, or our side before we hold any
 	// Nearer our start box than any enemy source (true until both are known): the half of the map we defend
 	bool IsOurHalf(const springai::AIFloat3& pos) const;
@@ -429,6 +431,7 @@ private:
 	};
 	std::map<int, SHeld> held;  // region id
 	std::vector<Side> settledOwner;
+	std::vector<bool> hasOurBuildings;  // per region, at the last UpdateHeld
 	std::vector<bool> isOurGround, isEnemyGround;
 
 	// Pockets and lines

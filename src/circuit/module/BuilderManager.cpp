@@ -10,6 +10,7 @@
 #include "module/MilitaryManager.h"
 #include "module/RaidDefence.h"
 #include "module/Protect.h"
+#include "module/SetPiece.h"
 #include "module/SensorPlanner.h"
 #include "module/FactoryManager.h"
 #include "module/Frontline.h"
@@ -2650,6 +2651,11 @@ CBuilderManager::SCommState* CBuilderManager::GetCommState(CCircuitUnit* unit)
 		// The builder itself included. Enough once it passes the highest bar any check sets
 		const float enough = state.allZone.threat * COMM_END_COVER_MOD + state.cfg.allyThreat;
 		state.cover = GetCommCover(pos, state.cfg.allyRadius, -1, enough);
+		// quota.set_piece: in a set piece's fight, its groups present cover it too (itself included)
+		const CAttackTask* attack = CAttackTask::GetCommAttackOf(unit);
+		if (attack != nullptr) {
+			state.cover = std::max(state.cover, circuit->GetMilitaryManager()->GetSetPiece()->GetPresentStrength(attack));
+		}
 	}
 	return &state;
 }
@@ -2680,10 +2686,13 @@ bool CBuilderManager::GetCommView(CCircuitUnit* unit, float radius, SCommView& o
 	const AIFloat3& pos = unit->GetPos(circuit->GetLastFrame());
 	const float sqRadius = SQUARE(radius);
 	float minSqDist = std::numeric_limits<float>::max();
+	// quota.set_piece: the target of the set piece it is in is no danger for its protect ward (the set piece answers it)
+	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
+	const bool isSetPiece = setPiece->Has(CAttackTask::GetCommAttackOf(unit));
 	UpdateCommDangers();
 	for (const SCommDanger& danger : commDangers) {
 		const float sqDist = pos.SqDistance2D(danger.pos);
-		if (!danger.isSeen || (sqDist > sqRadius)) {
+		if (!danger.isSeen || (sqDist > sqRadius) || (isSetPiece && setPiece->IsMember(danger.id))) {
 			continue;
 		}
 		out.danger += danger.threat;
@@ -3862,6 +3871,80 @@ bool CBuilderManager::IsCommRouteOk(CCircuitUnit* comm, CEnemyInfo* enemy, const
 bool CBuilderManager::TryCommAttack(CCircuitUnit* unit, SCommState* state)
 {
 	using SAttack = CSetupManager::SCommInfo::SAttack;
+	if (!IsCommAttackFree(unit, state)) {
+		return false;
+	}
+	const SAttack* cfg = state->attack;
+	const int frame = circuit->GetLastFrame();
+	// The nearest enemy that passes the filter
+	const AIFloat3& pos = unit->GetPos(frame);
+	CEnemyInfo* best = nullptr;
+	float bestSqDist = SQUARE(cfg->radius);
+	for (auto& kv : circuit->GetEnemyInfos()) {
+		const float sqDist = pos.SqDistance2D(kv.second->GetPos());
+		if ((sqDist <= bestSqDist) && IsCommTargetOk(unit, kv.second, false)) {
+			best = kv.second;
+			bestSqDist = sqDist;
+		}
+	}
+	if (best == nullptr) {
+		return false;
+	}
+	if (isFleeLog) {
+		IsCommTargetOk(unit, best, false);  // its numbers for the start line
+		const unsigned kind = GetCommTargetKind(best, cfg->kinds);
+		const char* kindName = (kind == SAttack::COMM) ? "commander"
+				: ((kind == SAttack::RAID) ? "raid_target" : "static");
+		circuit->LOG("COMM ATTACK start | %s | id: %i | frame: %i | target: %s #%i (%s) at %.0f | cover %.1f vs threat"
+				" %.1f | walk %.1f s, kill %.1f s | their kill %.1f s", unit->GetCircuitDef()->GetDef()->GetName(),
+				unit->GetId(), frame, best->GetCircuitDef()->GetDef()->GetName(), best->GetId(), kindName,
+				sqrtf(bestSqDist), commCheck.cover, commCheck.threat, commCheck.walkSec, commCheck.killSec,
+				commCheck.theirKillSec);
+	}
+	BeginCommAttack(unit, state, best);
+	return true;
+}
+
+bool CBuilderManager::IsSetPieceFree(CCircuitUnit* unit)
+{
+	SCommState* state = GetCommState(unit);
+	return (state != nullptr) && state->IsComm() && IsCommAttackFree(unit, state);
+}
+
+CAttackTask* CBuilderManager::StartSetPieceAttack(CCircuitUnit* unit)
+{
+	SCommState* state = GetCommState(unit);
+	if ((state == nullptr) || !state->IsComm() || !IsCommAttackFree(unit, state)) {
+		return nullptr;
+	}
+	if (isFleeLog) {
+		circuit->LOG("COMM ATTACK start | %s | id: %i | frame: %i | set piece", unit->GetCircuitDef()->GetDef()->GetName(),
+				unit->GetId(), circuit->GetLastFrame());
+	}
+	return BeginCommAttack(unit, state, nullptr);
+}
+
+CAttackTask* CBuilderManager::BeginCommAttack(CCircuitUnit* unit, SCommState* state, CEnemyInfo* target)
+{
+	const int frame = circuit->GetLastFrame();
+	if (!IsCommAnchorKept(state, frame)) {
+		state->anchor = unit->GetPos(frame);  // a new chain of attacks: the leash's centre
+	}
+	CAttackTask* attack = circuit->GetMilitaryManager()->EnqueueCommAttack(unit);
+	state->attackTask = attack;
+	state->attackStart = frame;
+	state->attackTargetId = (target != nullptr) ? target->GetId() : -1;
+	state->attackTargetDef = (target != nullptr) ? target->GetCircuitDef() : nullptr;
+	state->attackKills = 0;
+	state->duelId = -1;
+	AssignTask(unit, attack);  // CAttackTask::AssignTo takes it out of our idle task
+	unit->ForceUpdate(frame);  // its first decision at the task's next update, not one later
+	return attack;
+}
+
+bool CBuilderManager::IsCommAttackFree(CCircuitUnit* unit, SCommState* state)
+{
+	using SAttack = CSetupManager::SCommInfo::SAttack;
 	const SAttack* cfg = state->attack;
 	if ((cfg == nullptr) || !cfg->isEnable) {
 		return false;
@@ -3909,48 +3992,7 @@ bool CBuilderManager::TryCommAttack(CCircuitUnit* unit, SCommState* state)
 		}
 	}
 	// Inside the base defence range the home fight takes it (CCombatTask)
-	if (IsHomeFight(unit)) {
-		return false;
-	}
-	// The nearest enemy that passes the filter
-	const AIFloat3& pos = unit->GetPos(frame);
-	CEnemyInfo* best = nullptr;
-	float bestSqDist = SQUARE(cfg->radius);
-	for (auto& kv : circuit->GetEnemyInfos()) {
-		const float sqDist = pos.SqDistance2D(kv.second->GetPos());
-		if ((sqDist <= bestSqDist) && IsCommTargetOk(unit, kv.second, false)) {
-			best = kv.second;
-			bestSqDist = sqDist;
-		}
-	}
-	if (best == nullptr) {
-		return false;
-	}
-	if (isFleeLog) {
-		IsCommTargetOk(unit, best, false);  // its numbers for the start line
-	}
-	if (!IsCommAnchorKept(state, frame)) {
-		state->anchor = pos;  // a new chain of attacks: the leash's centre
-	}
-	CAttackTask* attack = circuit->GetMilitaryManager()->EnqueueCommAttack(unit);
-	state->attackTask = attack;
-	state->attackStart = frame;
-	state->attackTargetId = best->GetId();
-	state->attackTargetDef = best->GetCircuitDef();
-	state->attackKills = 0;
-	state->duelId = -1;
-	if (isFleeLog) {
-		const unsigned kind = GetCommTargetKind(best, cfg->kinds);
-		const char* kindName = (kind == SAttack::COMM) ? "commander"
-				: ((kind == SAttack::RAID) ? "raid_target" : "static");
-		circuit->LOG("COMM ATTACK start | %s | id: %i | frame: %i | target: %s #%i (%s) at %.0f | cover %.1f vs threat"
-				" %.1f | walk %.1f s, kill %.1f s | their kill %.1f s", cdef->GetDef()->GetName(), unit->GetId(), frame,
-				best->GetCircuitDef()->GetDef()->GetName(), best->GetId(), kindName, sqrtf(bestSqDist), commCheck.cover,
-				commCheck.threat, commCheck.walkSec, commCheck.killSec, commCheck.theirKillSec);
-	}
-	AssignTask(unit, attack);  // CAttackTask::AssignTo takes it out of our idle task
-	unit->ForceUpdate(frame);  // its first decision at the task's next update, not one later
-	return true;
+	return !IsHomeFight(unit);
 }
 
 bool CBuilderManager::NoteCommKill(SCommState* state, const CEnemyInfo* current)
@@ -3995,10 +4037,15 @@ CommEnd CBuilderManager::GetCommAttackEnd(CCircuitUnit* comm, const CAttackTask*
 	if (comm->IsDisarmed(frame)) {
 		return CommEnd::DISARM;
 	}
-	if (frame - state.attackStart >= cfg->maxFrames) {
+	// quota.set_piece: no time limit while its set piece runs (it ends it), and comm_reach off the target is the leash
+	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
+	if (setPiece->Has(task)) {
+		if (setPiece->IsBeyondCommReach(comm->GetPos(frame))) {
+			return CommEnd::LEASH;
+		}
+	} else if (frame - state.attackStart >= cfg->maxFrames) {
 		return CommEnd::TIME;
-	}
-	if (comm->GetPos(frame).SqDistance2D(state.anchor) > SQUARE(cfg->leash)) {
+	} else if (comm->GetPos(frame).SqDistance2D(state.anchor) > SQUARE(cfg->leash)) {
 		return CommEnd::LEASH;
 	}
 	if (GetCommHide(comm, &state) != nullptr) {
@@ -4027,14 +4074,16 @@ void CBuilderManager::OnCommAttackEnd(CCircuitUnit* comm, const CAttackTask* tas
 	// Any other end: a cooldown, doubled for each such end in a row (within a minute of the last, up to 4x), and its
 	// last target is left alone a while (60 s after time or leash: a target that draws it out), so neither a target the
 	// task drops nor a run of marginal ones pulls it off its jobs again and again
-	const bool isFresh = (reason == CommEnd::KILL) || (state.attackEnd < 0)
+	// The end of its set piece (quota.set_piece) is no failure of its own: the plain cooldown, no ban
+	const bool isSetPiece = (reason == CommEnd::SET_PIECE);
+	const bool isFresh = (reason == CommEnd::KILL) || isSetPiece || (state.attackEnd < 0)
 			|| (frame - state.attackEnd >= COMM_BAN_LONG_FRAMES);
 	state.attackFails = isFresh ? 0 : std::min(state.attackFails + 1, 2);
 	if (reason != CommEnd::KILL) {
 		if (state.attack != nullptr) {
 			state.cooldownUntil = frame + (state.attack->cooldownFrames << state.attackFails);
 		}
-		if (state.attackTargetId >= 0) {
+		if ((state.attackTargetId >= 0) && !isSetPiece) {
 			BanCommTarget(comm, state.attackTargetId, (reason == CommEnd::TIME) || (reason == CommEnd::LEASH));
 		}
 	}

@@ -23,8 +23,9 @@ enum class AttackRoute: int;  // module/MilitaryManager.h
 class CAllyCover;
 
 // Why a commander attack ended (CAttackTask::EndComm, CBuilderManager::OnCommAttackEnd logs it by name)
+// SET_PIECE: its set piece released it (quota.set_piece)
 enum class CommEnd: char {NONE = 0, KILL, NO_TARGET, KEEP, NO_ROUTE, LEASH, TIME, FLEE, RETREAT, DISARM, MORPH, HIDE,
-		DEATH, TAKEN, STOPPED, OFF};
+		DEATH, TAKEN, STOPPED, SET_PIECE, OFF};
 const char* CommEndName(CommEnd reason);
 
 class CAttackTask: public ISquadTask {
@@ -232,7 +233,9 @@ private:
 	CAllyCover* GetAllyCover() const;
 	// The multiplier at p (CAllyCover::GetMod, against our safe threat, or with a partner the joint one); 1 when off or
 	// flying. outSource: its biggest source (CAllyCover::Source)
-	float GetCoverMod(const springai::AIFloat3& p, const CAttackTask* partner, int* outSource = nullptr) const;
+	// isNoGroups: without the groups' discs (quota.set_piece: its boost has them)
+	float GetCoverMod(const springai::AIFloat3& p, const CAttackTask* partner, int* outSource = nullptr,
+			bool isNoGroups = false) const;
 	// The route's threat layer with cover (CAllyCover::MakeRouteLayer), weighed against our own strength as the
 	// route's allowance, floor and path-ahead check are; partner (a joint route) still left out. Not on the cloak
 	// route (its layer is a different scale)

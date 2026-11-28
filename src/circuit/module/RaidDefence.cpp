@@ -1071,8 +1071,8 @@ void CRaidDefence::Recruit(int frame)
 	for (IFighterTask* t : militaryMgr->GetTasks(IFighterTask::FightType::RAID)) {
 		CRaidTask* group = static_cast<CRaidTask*>(t);
 		CCircuitUnit* leader = group->GetLeader();
-		if (group->IsDead() || (leader == nullptr) || group->IsFleeing(frame) || group->IsProtecting()
-			|| group->IsGathering() || (militaryMgr->GetRaidRallyHost() == group) || militaryMgr->IsRaidRallyJoiner(group))
+		if (group->IsDead() || (leader == nullptr) || group->IsFleeing(frame) || group->IsCommitted()
+			|| (militaryMgr->GetRaidRallyHost() == group) || militaryMgr->IsRaidRallyJoiner(group))
 		{
 			continue;
 		}
@@ -1294,7 +1294,7 @@ bool CRaidDefence::IsReleased(const CCircuitUnit* unit, int frame) const
 
 bool CRaidDefence::IsCalm(const CRaidTask* group, int frame)
 {
-	return (group->GetTarget() == nullptr) && !group->IsFleeing(frame) && !group->IsProtecting() && !group->IsGathering();
+	return (group->GetTarget() == nullptr) && !group->IsFleeing(frame) && !group->IsCommitted();
 }
 
 void CRaidDefence::FillFleeSpots(F3Vec& out) const

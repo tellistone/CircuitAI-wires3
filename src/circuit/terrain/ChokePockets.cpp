@@ -266,6 +266,7 @@ void CChokeMap::UpdateHeld()
 	}
 	std::map<int, SHeld> next;
 	settledOwner.assign(regions.size(), Side::NONE);
+	hasOurBuildings.assign(regions.size(), false);
 	std::vector<bool> isOurs(regions.size(), false), isTheirs(regions.size(), false);
 	auto isSide = [](const std::vector<bool>& side, size_t r) { return (r < side.size()) && side[r]; };
 	for (size_t r = 0; r < regions.size(); ++r) {
@@ -280,6 +281,7 @@ void CChokeMap::UpdateHeld()
 		}
 		next[regions[r].id] = h;
 		settledOwner[r] = h.side;
+		hasOurBuildings[r] = (ours[r].structures > 0);
 		isOurs[r] = (h.side == Side::OURS);
 		isTheirs[r] = (h.side == Side::ENEMY) || (isSide(isEnemySide, r) && (h.side == Side::NONE));
 	}
@@ -310,6 +312,15 @@ void CChokeMap::UpdateHeld()
 	};
 	isOurGround = joined(isOurs, isTheirs, isOurSide);
 	isEnemyGround = joined(isTheirs, isOurs, isEnemySide);
+}
+
+bool CChokeMap::IsOursOrContested(int region) const
+{
+	if ((region < 0) || (region >= static_cast<int>(settledOwner.size()))) {
+		return false;
+	}
+	const Side owner = settledOwner[region];
+	return (owner == Side::OURS) || ((owner == Side::CONTESTED) && hasOurBuildings[region]);
 }
 
 void CChokeMap::Analyze()
