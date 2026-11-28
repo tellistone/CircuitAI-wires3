@@ -27,39 +27,44 @@ class ISquadTask;
 /*
  * Set piece attack (quota.set_piece): one planned attack, by every group in reach at once, on an enemy force on our
  * ground that no group would take alone. Updated once a second, after the protect. It never orders units: it latches
- * groups, and their tasks ask it what to do (IsCommitted, GetWait, GetGoal, IsTargetMember, GetBoost). One at a time.
+ * groups, and their tasks ask it what to do (Has, GetWait, GetGoal, IsTargetMember, GetBoost). One at a time.
  * 1. Scan, while none runs: armed mobile ground enemies seen in the last 10 s and finished turrets, in choke-map
  *    regions we held in the last held_sec (settled ours, or contested with our buildings in it). Blobs
  *    (CEnemyManager::MakeBlobs, at most 8) within 1600 elmos of each other are one target. Skipped: one sharing half
  *    its threat with a target on cooldown, or half its members with an answerable raid incident (quota.raid_defence),
  *    or one some group's own pick would take (its allowance, ally cover included). T: its threat with the count
- *    bonus, plus the enemy turrets outside it whose reach covers its centre.
+ *    bonus, plus the enemy turrets outside it whose reach covers its centre and the armed mobiles outside it within
+ *    1600 elmos (an army parked just off our ground). T under min_threat: no set piece.
  * 2. Groups: attack and raid groups that can reach it (gunships if they hit ground), anti-heavy squads, and our
  *    commanders (the commander attack's gates, CBuilderManager::IsSetPieceFree). Each needs its leader within reach
- *    elmos of the target's edge (commanders comm_reach), to be calm (no fight, or one with the target), not
- *    protecting or gathering, to hit half of T, and to get to its staging or hold point within gather_sec (straight
- *    line at its pace). P: their strength with one count bonus for all their units (anti-heavy squads add none).
+ *    elmos of the target's edge (commanders comm_reach, their staging point too), to be calm (no fight, or one with
+ *    the target), not protecting, gathering or a rally's host, to hit half of T, and to get to its staging or hold
+ *    point within gather_sec (straight line at its pace). P: their strength with one count bonus for all their units
+ *    (anti-heavy squads add none).
  *    Start: P > start_ratio x T, and the strongest group's allowance at P / start_ratio passes the centre.
- * 3. Staged, for a parked target (its members' mean velocity under 200 elmos in 5 s; turrets are parked) whose reach
+ * 3. Staged, for a parked target (its members' mean velocity under 200 elmos in 5 s; turrets are parked) whose range
  *    + 200 is within stage_dist, outside the base defence radius: each group walks at its own strength to its staging
- *    point (a safe spot just outside the target's reach + 200 on its side; where it stands if nearer) and waits there.
- *    Go once the staged groups (within 200 elmos of their points) pass the start test alone; abandoned if not
- *    gather_sec after the start. At the go each staged group is released at arrive - its walk (to contact, at its
- *    pace), arrive = now + the longest walk + 1 s, gunships 3 s later; the rest are reinforcements and go at once.
- *    Contact with any group, or a parked target moving 300 elmos for 2 s, releases everyone. Any other target: all go
- *    in at once from the start.
+ *    point and waits there: on its side, 200 elmos outside both the target's reach and its own range of the target's
+ *    edge (it opens no fight from there), out of every other enemy turret's range + 200, safe for its own strength.
+ *    Go once the staged groups (within 200 elmos of their points) pass the start test alone; abandoned if not by
+ *    1.5x the slowest walk + 10 s after the start. At the go each staged group is released at arrive - its walk (to
+ *    contact, at its pace), arrive = now + the longest walk + 1 s, gunships 3 s later; the rest are reinforcements and
+ *    go at once. Contact (a member's weapons reach a group, or a group fights one), or a parked target on the move for
+ *    2 s, releases everyone. Any other target: all go in at once from the start.
  * 4. Fight: released groups take only members (past the 3-group cap, claims, the own-ground rule and the force
  *    balance) and what they are in contact with. Within R of the target's edge (R + 250 once present; R = max(1000,
- *    its range + 250)) they judge with the strength present (GetBoost: the released calm groups there and itself,
- *    one count bonus; gunships count gunships only); with nothing to take they walk to the fight's safe edge.
+ *    its range + 250)) they judge with the wave's strength (GetBoost: the released calm groups there, the timed ones
+ *    on their way, and itself, one count bonus; gunships count gunships only); with nothing to take they walk to the
+ *    fight's safe edge.
  *    Anti-heavy squads take its quarries first, else its chaff, and get no boost.
  * 5. Revert: before its first contact, a group whose pick is an armed enemy outside the target leaves (unless the
  *    outside enemies in its reach are under pass_share of its strength: it fights them in passing), and so does one
  *    the protect takes. It may rejoin once, before the go.
- * 6. End: P / T under abandon_ratio; no member seen for 10 s; no group left; nothing fought or approached for
- *    stall_sec (after the go, or from the start straight in); the target 1500 elmos from its start and off our
- *    ground. Its groups go back to their own decisions, its commanders to their jobs (CommEnd::SET_PIECE), and its
- *    members get a cooldown: cooldown_sec, doubled after each abandon in a row (up to 4x), reset by a kill.
+ * 6. End: P / T under abandon_ratio (a group stepping back still counts in P); no member seen for 10 s; no group
+ *    left; nothing fought or approached for stall_sec (after the go, or from the start straight in); the target 1500
+ *    elmos from its start and off our ground. Its groups go back to their own decisions, its commanders to their jobs
+ *    (CommEnd::SET_PIECE), and its members get a cooldown: cooldown_sec, doubled after each abandon, no go or stall in
+ *    a row (up to 4x), reset by a kill.
  * Members are kept by id: an armed enemy within 800 elmos of the centre joins, one unseen for 10 s drops out.
  * log_only: scan, start line and label, no commit. SETPIECE log lines, and a minute summary.
  */
@@ -69,12 +74,13 @@ public:
 		bool isEnabled = false;
 		bool isLogOnly = false;
 		bool isLabel = true;  // the map label at its target
+		float minThreat = 30.f;  // T under this: no set piece
 		float reach = 3000.f;  // a group's leader within this of the target's edge
 		float commReach = 1000.f;  // ... a commander's
 		float startRatio = 1.1f;
 		float abandonRatio = 0.75f;
 		float stageDist = 1000.f;  // staged only when the target's range + 200 is within this
-		float gatherSec = 45.f;  // a group gets to its point within this; a staged set piece goes within this
+		float gatherSec = 45.f;  // a group gets to its point within this (straight line)
 		int stallFrames = FRAMES_PER_SEC * 15;
 		float passShare = 0.25f;
 		int heldFrames = FRAMES_PER_SEC * 60;  // our ground: regions held within this
@@ -90,7 +96,7 @@ public:
 	void ClearLabel();  // also on the AI's release
 
 	// In the running set piece. The usual path (every pick and threat check): one compare
-	bool IsCommitted(const IFighterTask* task) const {
+	bool Has(const IFighterTask* task) const {
 		return !commits.empty() && (commits.find(task) != commits.end());
 	}
 	// Where a committed group waits for its release: its staging point; invalid once it may go, or not committed
@@ -103,13 +109,13 @@ public:
 	// What a released group's own strength is multiplied by where it judges the fight: within R of the target's edge
 	// (R + 250 once present), the strength present with itself / its own; elsewhere, or any other task, 1
 	float GetBoost(const IFighterTask* task, const springai::AIFloat3& pos) const {
-		return isGo ? GetGoBoost(task, pos) : 1.f;
+		return commits.empty() ? 1.f : GetGoBoost(task, pos);
 	}
 	// A committed commander attack's cover (CBuilderManager's flee): the released groups present and itself, as raw
 	// strength; 0 otherwise
 	float GetPresentStrength(const IFighterTask* task) const;
-	// pos stands in a region we held within held_sec (choke map ready)
-	bool IsHeldAt(const springai::AIFloat3& pos) const;
+	// Near the running set piece's target (within 1600 elmos of its centre; not log_only): no rally starts there
+	bool IsNearTarget(const springai::AIFloat3& pos) const;
 	// Farther than comm_reach from the target's edge: a committed commander's leash
 	bool IsBeyondCommReach(const springai::AIFloat3& pos) const;
 	void OnTaskEnd(const IFighterTask* task);  // CMilitaryManager::DequeueTask: no pointer outlives its task
@@ -131,10 +137,13 @@ private:
 		float reach = 0.f;  // from the centre: its farthest member's distance + range
 		float threat = 0.f;  // its members' summed
 		float count = 0.f;  // their count weight
-		float danger = 0.f;  // T: threat x count bonus + the turrets outside it that reach its centre
+		float danger = 0.f;  // T: threat x count bonus + the outside turrets that reach its centre and mobiles near it
 		bool isParked = true;
+		std::vector<std::pair<springai::AIFloat3, float>> turrets;  // outside it, near its reach: pos, range
 		float GetRadius() const;  // R, from the edge
 		float GetEdgeDist(const springai::AIFloat3& pos) const;
+		// Seconds to contact from pos (its range off the edge) at speed (elmos a second)
+		float GetWalkSec(const springai::AIFloat3& pos, float range, float speed) const;
 	};
 	struct SCommit {
 		ISquadTask* task;
@@ -168,10 +177,12 @@ private:
 	};
 
 	void UpdateHeld(int frame);
+	bool IsHeldAt(const springai::AIFloat3& pos) const;  // in a region we held within held_sec (choke map ready)
 	// An armed enemy we may count (seen within 10 s, or a finished turret): its threat and range. false: not one
 	bool GetMemberInfo(const CEnemyInfo* enemy, int frame, SMember& out) const;
-	SShape MakeShape(const Members& list) const;
+	SShape MakeShape(const Members& list, int frame) const;
 	void Scan(int frame);
+	float GetMaxPower() const;  // every group and commander together: P never passes it
 	bool IsSkipped(const Members& list, float threat) const;  // on cooldown, or a raid incident's
 	// The groups that can join a target, and P. false: none, or one would take it alone
 	bool CollectCandidates(const Members& list, const SShape& s, bool isStagedPick, int frame,
@@ -179,8 +190,9 @@ private:
 	// task nullptr: lead is a commander
 	bool MakeCandidate(ISquadTask* task, CCircuitUnit* lead, const Members& list, const SShape& s, bool isStagedPick,
 			int frame, SCandidate& out) const;
-	// A safe spot for it just outside the target's reach, on its side (where it stands if nearer); invalid: none
-	springai::AIFloat3 FindStage(const ISquadTask* task, CCircuitUnit* lead, const SShape& s, int frame) const;
+	// A safe spot for it outside the target's reach and its own range of it, on its side; invalid: none
+	springai::AIFloat3 FindStage(const ISquadTask* task, CCircuitUnit* lead, float range, const SShape& s,
+			int frame) const;
 	float GetHitShare(const CCircuitUnit* lead, const Members& list) const;  // of the members' threat it can hit
 	// P over start_ratio x T, and the strongest group's allowance at P / start_ratio passes the centre
 	bool IsStrongEnough(float power, const SShape& s, const ISquadTask* strongest) const;
@@ -189,29 +201,32 @@ private:
 	void Commit(const SCandidate& c, int frame);
 	void UpdateTarget(int frame);  // members, shape; ends when all are gone
 	void UpdateGroups(int frame);
+	// P (all committed groups), and each released group's boost: the wave there, with one count bonus
+	float UpdateBoosts(int frame);
+	void Release(SCommit& c, int frame);  // it may go: off at once, not at its next decision
 	void Go(const char* reason, bool isAll, int frame);
 	void Revert(const IFighterTask* task, const char* reason, int frame);
 	void End(const char* reason, EndKind kind, int frame);
-	// A member reaches its leader, or it reaches a member (with the target engaged)
+	// It fights a member, or a member's weapons reach its leader
 	bool IsInContact(const ISquadTask* task, int frame) const;
 	// Its pick is an armed enemy outside the target and those around it are pass_share of its strength or more
 	bool IsPulledAway(const ISquadTask* task, int frame) const;
 	float GetGoBoost(const IFighterTask* task, const springai::AIFloat3& pos) const;
-	void SetLabel(const char* text);
+	void SetLabel(float power, float etaSec);
 	void LogMinute();
 
 	CCircuitAI* circuit;
 	SConfig cfg;
 
 	Phase phase = Phase::OFF;
-	bool isGo = false;  // in a go and live: GetBoost's quick path
 	bool isStaged = false;
 	bool isNotReadyLogged = false;
 	int startFrame = -1;
 	int goFrame = -1;
 	int arriveFrame = -1;  // planned (at the start, then at the go)
+	int stageEndFrame = -1;  // a staged set piece that hasn't gone by then is abandoned
 	int stallFrame = -1;  // last fight or approach
-	int movedFrame = -1;  // a parked target away from its start since then
+	int movedFrame = -1;  // a parked target on the move since then
 	int firstArrive = -1;  // the timed groups' first contacts: the arrival spread
 	int lastArrive = -1;
 	int timedArrivals = 0;

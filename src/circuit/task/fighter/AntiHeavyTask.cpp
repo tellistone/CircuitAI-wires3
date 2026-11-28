@@ -772,7 +772,7 @@ bool CAntiHeavyTask::FindTarget()
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
 	// quota.set_piece: released, only its target's members: the quarries among them, else (none) its chaff
 	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
-	const bool isSetPiece = setPiece->IsCommitted(this);
+	const bool isSetPiece = setPiece->Has(this);
 	const bool isChaff = isSetPiece && std::none_of(circuit->GetEnemyInfos().begin(), circuit->GetEnemyInfos().end(),
 			[this, setPiece](const CCircuitAI::EnemyInfos::value_type& kv) {
 				return !kv.second->IsHidden() && setPiece->IsTargetMember(this, kv.second) && IsQuarry(kv.second);

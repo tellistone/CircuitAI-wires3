@@ -118,7 +118,7 @@ void CProtect::OnCommDamaged(CCircuitUnit* comm, CEnemyInfo* attacker)
 	// quota.set_piece: a hit from the target of the set piece our commander is in doesn't anchor its ward
 	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
 	if ((attacker != nullptr) && setPiece->IsMember(attacker->GetId())
-		&& setPiece->IsCommitted(CAttackTask::GetCommAttackOf(comm)))
+		&& setPiece->Has(CAttackTask::GetCommAttackOf(comm)))
 	{
 		return;
 	}

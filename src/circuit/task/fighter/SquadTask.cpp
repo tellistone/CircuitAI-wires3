@@ -153,7 +153,21 @@ bool ISquadTask::IsGathering() const
 
 bool ISquadTask::IsInSetPiece() const
 {
-	return static_cast<CMilitaryManager*>(manager)->GetSetPiece()->IsCommitted(this);
+	return static_cast<CMilitaryManager*>(manager)->GetSetPiece()->Has(this);
+}
+
+AIFloat3 ISquadTask::GetWaitPos() const
+{
+	const CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
+	return setPiece->Has(this) ? setPiece->GetWait(this) : militaryMgr->GetProtect()->GetGather(this);
+}
+
+AIFloat3 ISquadTask::GetCommitGoal() const
+{
+	const CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
+	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
+	return setPiece->Has(this) ? setPiece->GetGoal(this) : militaryMgr->GetProtect()->GetGoal(this);
 }
 
 bool ISquadTask::IsRejectedAt(const AIFloat3& pos, float strength) const
@@ -329,7 +343,7 @@ ISquadTask* ISquadTask::CheckMergeTask()
 	CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
 	// quota.set_piece: no merges into or out of its groups (each is committed and timed on its own)
 	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
-	if (setPiece->IsCommitted(this)) {
+	if (setPiece->Has(this)) {
 		return nullptr;
 	}
 	// quota.protect: a group committed to the commander's fight joins only another committed one, or Merge would hand
@@ -348,7 +362,7 @@ ISquadTask* ISquadTask::CheckMergeTask()
 		if ((candidate == this) || candidate->IsDead() ||
 			(candidate->GetAttackPower() < attackPower) ||
 			!candidate->CanAssignTo(leader) ||
-			(isProtect && !protect->IsActing(candidate)) || setPiece->IsCommitted(candidate))
+			(isProtect && !protect->IsActing(candidate)) || setPiece->Has(candidate))
 		{
 			continue;
 		}

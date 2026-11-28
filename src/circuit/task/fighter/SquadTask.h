@@ -78,7 +78,12 @@ public:
 	/*
 	 * Set piece attack (quota.set_piece, CSetPiece)
 	 */
-	bool IsInSetPiece() const;  // latched by the running set piece (CSetPiece::IsCommitted)
+	bool IsInSetPiece() const;  // latched by the running set piece (CSetPiece::Has)
+	// Where it waits, committed: its set piece staging point until its release, else the protect's gathering post;
+	// invalid: none
+	springai::AIFloat3 GetWaitPos() const;
+	// Where its committed fight is: its set piece's target, else the protect's goal; invalid: none
+	springai::AIFloat3 GetCommitGoal() const;
 	// Committed to a central fight: protecting, gathering or in a set piece. Rallies, merges, guard pulls and the raid
 	// defence leave it alone
 	bool IsCommitted() const { return IsProtecting() || IsGathering() || IsInSetPiece(); }

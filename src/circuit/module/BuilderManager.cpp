@@ -2688,7 +2688,7 @@ bool CBuilderManager::GetCommView(CCircuitUnit* unit, float radius, SCommView& o
 	float minSqDist = std::numeric_limits<float>::max();
 	// quota.set_piece: the target of the set piece it is in is no danger for its protect ward (the set piece answers it)
 	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
-	const bool isSetPiece = setPiece->IsCommitted(CAttackTask::GetCommAttackOf(unit));
+	const bool isSetPiece = setPiece->Has(CAttackTask::GetCommAttackOf(unit));
 	UpdateCommDangers();
 	for (const SCommDanger& danger : commDangers) {
 		const float sqDist = pos.SqDistance2D(danger.pos);
@@ -4039,7 +4039,7 @@ CommEnd CBuilderManager::GetCommAttackEnd(CCircuitUnit* comm, const CAttackTask*
 	}
 	// quota.set_piece: no time limit while its set piece runs (it ends it), and comm_reach off the target is the leash
 	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
-	if (setPiece->IsCommitted(task)) {
+	if (setPiece->Has(task)) {
 		if (setPiece->IsBeyondCommReach(comm->GetPos(frame))) {
 			return CommEnd::LEASH;
 		}

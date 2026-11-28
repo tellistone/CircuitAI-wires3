@@ -13,6 +13,7 @@
 #include "map/ThreatMap.h"
 #include "setup/SetupManager.h"
 #include "task/fighter/AttackTask.h"
+#include "task/fighter/RaidTask.h"
 #include "task/fighter/SquadTask.h"
 #include "terrain/ChokeMap.h"
 #include "terrain/TerrainManager.h"
@@ -40,11 +41,13 @@ static constexpr float MERGE_DIST = 1600.f;  // blobs with seeds this close are 
 static constexpr float JOIN_DIST = 800.f;  // an armed enemy this near the centre joins the target
 static constexpr float SHARE = 0.5f;  // the same target as a cooldown (or a raid incident) from this share on; half of T
 static constexpr float STAGE_MARGIN = 200.f;  // staging points stand this far outside the target's reach
+static constexpr float STAGE_REACH = 2000.f;  // staging points stand within this past the target's reach
+static constexpr float STAGE_WALK_MOD = 1.5f;  // a staged set piece not gone by this x the slowest walk ...
+static constexpr int STAGE_SLACK = FRAMES_PER_SEC * 10;  // ... + this is abandoned (paths run past the straight line)
 static constexpr float STAGED_DIST = 200.f;  // a group this near its staging point has staged
 static constexpr float PARKED_DIST = 200.f;  // a target that moves less than this ...
 static constexpr int PARKED_FRAMES = FRAMES_PER_SEC * 5;  // ... in this long is parked
-static constexpr float MOVED_DIST = 300.f;  // a parked target this far from its start ...
-static constexpr int MOVED_FRAMES = FRAMES_PER_SEC * 2;  // ... this long releases everyone
+static constexpr int MOVED_FRAMES = FRAMES_PER_SEC * 2;  // a parked target on the move this long releases everyone
 static constexpr float LEFT_DIST = 1500.f;  // it ends once this far from its start and off our ground
 static constexpr float MIN_RADIUS = 1000.f;  // R from the target's edge: at least this ...
 static constexpr float RADIUS_MARGIN = 250.f;  // ... and its range + this; a present group keeps R + this
@@ -71,6 +74,20 @@ static float GetBase(const ISquadTask* task)
 	return task->GetSafeThreat() / task->GetCountPowerMod();
 }
 
+// A rally's host (quota.attack_merge.rally, quota.raid_rally): every compatible group walks to it
+static bool IsRallyHost(const CMilitaryManager* militaryMgr, const ISquadTask* task)
+{
+	return (task == militaryMgr->GetRallyHost()) || (task == militaryMgr->GetRaidRallyHost());
+}
+
+// Its next decision now, not at its next update
+static void ForceUpdate(ISquadTask* task, int frame)
+{
+	for (CCircuitUnit* unit : task->GetAssignees()) {
+		unit->ForceUpdate(frame);
+	}
+}
+
 float CSetPiece::SShape::GetRadius() const
 {
 	return std::max(MIN_RADIUS, range + RADIUS_MARGIN);
@@ -79,6 +96,11 @@ float CSetPiece::SShape::GetRadius() const
 float CSetPiece::SShape::GetEdgeDist(const AIFloat3& pos) const
 {
 	return std::max(pos.distance2D(centre) - spread, 0.f);
+}
+
+float CSetPiece::SShape::GetWalkSec(const AIFloat3& pos, float range, float speed) const
+{
+	return std::max(GetEdgeDist(pos) - range, 0.f) / std::max(speed, 1.f);
 }
 
 CSetPiece::CSetPiece(CCircuitAI* circuit, const SConfig& cfg)
@@ -122,19 +144,19 @@ AIFloat3 CSetPiece::GetWait(const IFighterTask* task) const
 
 AIFloat3 CSetPiece::GetGoal(const IFighterTask* task) const
 {
-	return IsCommitted(task) ? shape.centre : AIFloat3(-RgtVector);
+	return Has(task) ? shape.centre : AIFloat3(-RgtVector);
 }
 
 bool CSetPiece::IsTargetMember(const IFighterTask* task, const CEnemyInfo* enemy) const
 {
-	return IsMember(enemy->GetId()) && IsCommitted(task) && !utils::is_valid(GetWait(task));
+	return IsMember(enemy->GetId()) && Has(task) && !utils::is_valid(GetWait(task));
 }
 
 float CSetPiece::GetPresentStrength(const IFighterTask* task) const
 {
 	// Raw strength (GetRallyStrength), as the commander's flee weighs its cover
 	auto it = commits.find(task);
-	if (!isGo || (it == commits.end())) {
+	if ((phase != Phase::GO) || (it == commits.end())) {
 		return 0.f;
 	}
 	float sum = it->second.isPresent ? 0.f : it->second.task->GetRallyStrength();
@@ -155,6 +177,11 @@ bool CSetPiece::IsHeldAt(const AIFloat3& pos) const
 	const int region = chokeMap->GetRegionAt(pos);
 	return (region >= 0) && (region < static_cast<int>(heldFrames.size()))
 			&& (circuit->GetLastFrame() - heldFrames[region] <= cfg.heldFrames);
+}
+
+bool CSetPiece::IsNearTarget(const AIFloat3& pos) const
+{
+	return !commits.empty() && (pos.SqDistance2D(shape.centre) < SQUARE(MERGE_DIST));
 }
 
 bool CSetPiece::IsBeyondCommReach(const AIFloat3& pos) const
@@ -214,7 +241,7 @@ bool CSetPiece::GetMemberInfo(const CEnemyInfo* enemy, int frame, SMember& out) 
 	return true;
 }
 
-CSetPiece::SShape CSetPiece::MakeShape(const Members& list) const
+CSetPiece::SShape CSetPiece::MakeShape(const Members& list, int frame) const
 {
 	SShape s;
 	AIFloat3 sum = ZeroVector;
@@ -247,17 +274,22 @@ CSetPiece::SShape CSetPiece::MakeShape(const Members& list) const
 	}
 	// Parked: at its members' mean velocity (elmos a frame) the centre moves under PARKED_DIST in PARKED_FRAMES
 	s.isParked = ((vel / weight).Length2D() * PARKED_FRAMES < PARKED_DIST);
-	// T: sized as the rallies size a blob, and the enemy turrets outside it that reach its centre
+	// T: sized as the rallies size a blob, and the armed enemies outside it that join its fight: turrets that reach
+	// its centre, mobiles within MERGE_DIST (an army parked just off our ground). The outside turrets near its reach
+	// are kept for the staging points
 	s.danger = s.threat * circuit->GetThreatMap()->GetCountMod(s.count);
-	const CTurretPicker* picker = circuit->GetMilitaryManager()->GetTurretPicker();
 	for (const auto& kv : circuit->GetEnemyInfos()) {
-		const CEnemyInfo* e = kv.second;
-		const CCircuitDef* edef = e->GetCircuitDef();
-		if ((edef != nullptr) && !edef->IsMobile() && !e->IsBeingBuilt() && (list.find(kv.first) == list.end())
-			&& picker->IsDefence(edef)
-			&& (e->GetPos().SqDistance2D(s.centre) < SQUARE(edef->GetMaxRange(CCircuitDef::RangeType::LAND))))
-		{
-			s.danger += e->GetThreat();
+		SMember m;
+		if ((list.find(kv.first) != list.end()) || !GetMemberInfo(kv.second, frame, m)) {
+			continue;
+		}
+		const AIFloat3& ePos = kv.second->GetPos();
+		const float dist = ePos.distance2D(s.centre);
+		if (dist < (m.isTurret ? m.range : MERGE_DIST)) {
+			s.danger += m.threat;
+		}
+		if (m.isTurret && (dist < s.reach + m.range + STAGE_REACH)) {
+			s.turrets.emplace_back(ePos, m.range);
 		}
 	}
 	return s;
@@ -321,17 +353,21 @@ void CSetPiece::Scan(int frame)
 	std::vector<std::pair<const Members*, SShape>> picks;
 	for (const Members& list : targets) {
 		if (!list.empty()) {
-			picks.emplace_back(&list, MakeShape(list));
+			picks.emplace_back(&list, MakeShape(list, frame));
 		}
 	}
 	std::sort(picks.begin(), picks.end(), [](const auto& a, const auto& b) { return a.second.danger > b.second.danger; });
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const float baseRange = circuit->GetMilitaryManager()->GetBaseDefRange();
+	const float maxPower = GetMaxPower();
 	std::vector<SCandidate> groups;
 	for (const auto& p : picks) {
 		const Members& list = *p.first;
 		const SShape& s = p.second;
-		if (!utils::is_valid(s.centre) || IsSkipped(list, s.threat)) {
+		// Too small to bother, or more than all of us together could start on (before the candidate pass)
+		if (!utils::is_valid(s.centre) || (s.danger < cfg.minThreat) || (cfg.startRatio * s.danger >= maxPower)
+			|| IsSkipped(list, s.threat))
+		{
 			continue;
 		}
 		const bool isStagedPick = s.isParked && (s.range + STAGE_MARGIN <= cfg.stageDist)
@@ -351,6 +387,27 @@ void CSetPiece::Scan(int frame)
 			return;
 		}
 	}
+}
+
+float CSetPiece::GetMaxPower() const
+{
+	// Every group of ours (anti-heavy squads add none) and commander, with one count bonus: P never passes it
+	float base = 0.f;
+	size_t count = 0;
+	for (IFighterTask::FightType type : {IFighterTask::FightType::ATTACK, IFighterTask::FightType::RAID}) {
+		for (IFighterTask* t : circuit->GetMilitaryManager()->GetTasks(type)) {
+			const ISquadTask* task = static_cast<ISquadTask*>(t);
+			base += GetBase(task);
+			count += task->GetAssignees().size();
+		}
+	}
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		if (kv.second->GetCircuitDef()->IsRoleComm()) {
+			base += IFighterTask::GetCoverPower(kv.second);
+			++count;
+		}
+	}
+	return base * circuit->GetThreatMap()->GetCountMod(count);
 }
 
 bool CSetPiece::IsSkipped(const Members& list, float threat) const
@@ -452,10 +509,11 @@ bool CSetPiece::MakeCandidate(ISquadTask* task, CCircuitUnit* lead, const Member
 	{
 		return false;
 	}
-	// Calm: not fleeing, nor fighting anything but the target; not the protect's
+	// Calm: not fleeing, nor fighting anything but the target; not the protect's, nor a rally's host
 	if (!isComm) {
 		const CEnemyInfo* target = task->GetTarget();
 		if (task->IsFleeing(frame) || task->IsProtecting() || task->IsGathering()
+			|| IsRallyHost(circuit->GetMilitaryManager(), task)
 			|| (task->IsFighting() && (list.find(target->GetId()) == list.end())))
 		{
 			return false;
@@ -466,19 +524,20 @@ bool CSetPiece::MakeCandidate(ISquadTask* task, CCircuitUnit* lead, const Member
 	if (isAntiHeavy ? (hitShare <= 0.f) : (hitShare < SHARE)) {
 		return false;
 	}
-	// Its point within gather_sec at its pace: its staging point, else contact (its range off the target's edge)
+	// Its point within gather_sec at its pace: its staging point (a commander's within comm_reach too: its leash), else
+	// contact (its range off the target's edge)
 	const float speed = std::max(isComm ? cdef->GetSpeed() : task->GetLowestSpeed(), 1.f);
 	const float range = cdef->GetMaxRange();
 	out.stage = -RgtVector;
 	if (isStagedPick) {
-		out.stage = FindStage(task, lead, s, frame);
-		if (!utils::is_valid(out.stage)) {
+		out.stage = FindStage(task, lead, isComm ? range : task->GetHighestRange(), s, frame);
+		if (!utils::is_valid(out.stage) || (isComm && (s.GetEdgeDist(out.stage) > cfg.commReach))) {
 			return false;
 		}
 		out.walkSec = pos.distance2D(out.stage) / speed;
-		out.goSec = std::max(s.GetEdgeDist(out.stage) - range, 0.f) / speed;
+		out.goSec = s.GetWalkSec(out.stage, range, speed);
 	} else {
-		out.walkSec = out.goSec = std::max(s.GetEdgeDist(pos) - range, 0.f) / speed;
+		out.walkSec = out.goSec = s.GetWalkSec(pos, range, speed);
 	}
 	if (out.walkSec > cfg.gatherSec) {
 		return false;
@@ -492,16 +551,15 @@ bool CSetPiece::MakeCandidate(ISquadTask* task, CCircuitUnit* lead, const Member
 	return true;
 }
 
-AIFloat3 CSetPiece::FindStage(const ISquadTask* task, CCircuitUnit* lead, const SShape& s, int frame) const
+AIFloat3 CSetPiece::FindStage(const ISquadTask* task, CCircuitUnit* lead, float range, const SShape& s,
+		int frame) const
 {
-	// Just outside the target's reach + STAGE_MARGIN on its side, else up to ~60 degrees round either way: a spot it
-	// can stand on that is safe for its own strength (a commander: one it can stand on). Already nearer: where it is
+	// On its side, STAGE_MARGIN outside both the target's reach and its own range of the target's edge (it opens no
+	// fight from there), else up to ~60 degrees round either way: a spot it can stand on, out of every outside enemy
+	// turret's range + STAGE_MARGIN, and safe for its own strength (a commander: no allowance of its own)
 	const AIFloat3& pos = lead->GetPos(frame);
-	const float dist = pos.distance2D(s.centre);
-	const float stageDist = s.reach + STAGE_MARGIN;
-	if (dist <= stageDist) {
-		return pos;
-	}
+	const float dist = std::max(pos.distance2D(s.centre), 1.f);
+	const float stageDist = std::max(s.reach, s.spread + range) + STAGE_MARGIN;
 	const float dx = (pos.x - s.centre.x) / dist;
 	const float dz = (pos.z - s.centre.z) / dist;
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -510,7 +568,10 @@ AIFloat3 CSetPiece::FindStage(const ISquadTask* task, CCircuitUnit* lead, const 
 		const float sn = sinf(angle);
 		AIFloat3 p(s.centre.x + (dx * c - dz * sn) * stageDist, s.centre.y, s.centre.z + (dx * sn + dz * c) * stageDist);
 		CTerrainManager::CorrectPosition(p);
-		if (terrainMgr->CanMoveToPos(lead->GetArea(), p)
+		const bool isCovered = std::any_of(s.turrets.begin(), s.turrets.end(), [&p](const auto& t) {
+			return p.SqDistance2D(t.first) < SQUARE(t.second + STAGE_MARGIN);
+		});
+		if (!isCovered && terrainMgr->CanMoveToPos(lead->GetArea(), p)
 			&& ((task == nullptr) || !task->IsRejectedAt(p, task->GetSafeThreat())))
 		{
 			return p;
@@ -575,6 +636,7 @@ void CSetPiece::Start(const Members& list, const SShape& s, bool isStagedPick, s
 	}
 	const float etaSec = (isStaged ? walkSec + goSec : walkSec) + float(ARRIVE_SLACK) / FRAMES_PER_SEC;
 	arriveFrame = frame + static_cast<int>(etaSec * FRAMES_PER_SEC);
+	stageEndFrame = frame + static_cast<int>(STAGE_WALK_MOD * walkSec * FRAMES_PER_SEC) + STAGE_SLACK;
 	++stats.starts;
 	if (isStaged) {
 		++stats.staged;
@@ -588,11 +650,7 @@ void CSetPiece::Start(const Members& list, const SShape& s, bool isStagedPick, s
 			Commit(c, frame);
 		}
 	}
-	isGo = IsLive() && (phase == Phase::GO);
-	char text[128];
-	snprintf(text, sizeof(text), "Set piece attack. Power: %.0f. Threat: %.0f. Estimated arrival: %.0f s", power,
-			s.danger, etaSec);
-	SetLabel(text);
+	SetLabel(power, etaSec);
 }
 
 void CSetPiece::Commit(const SCandidate& c, int frame)
@@ -608,12 +666,14 @@ void CSetPiece::Commit(const SCandidate& c, int frame)
 	commit = SCommit();
 	commit.task = task;
 	commit.stage = isStaged ? c.stage : AIFloat3(-RgtVector);
-	commit.releaseFrame = isStaged ? -1 : frame;
 	commit.lastDist = c.lead->GetPos(frame).distance2D(shape.centre);
 	commit.isGunship = c.isGunship;
 	commit.isAntiHeavy = c.isAntiHeavy;
-	for (CCircuitUnit* unit : task->GetAssignees()) {
-		unit->ForceUpdate(frame);  // its next decision is the set piece's
+	if (isStaged) {
+		ForceUpdate(task, frame);  // its next decision is the set piece's: to its staging point
+	} else {
+		commit.releaseFrame = frame;
+		Release(commit, frame);
 	}
 }
 
@@ -651,14 +711,13 @@ void CSetPiece::UpdateTarget(int frame)
 	for (const auto& kv : members) {
 		seenThreats[kv.first] = kv.second.threat;
 	}
-	shape = MakeShape(members);
+	shape = MakeShape(members, frame);
 }
 
 void CSetPiece::UpdateGroups(int frame)
 {
-	const int gatherFrames = static_cast<int>(cfg.gatherSec * FRAMES_PER_SEC);
 	if (cfg.isLogOnly) {  // nothing committed: the label stays gather_sec
-		if (frame - startFrame >= gatherFrames) {
+		if (frame - startFrame >= static_cast<int>(cfg.gatherSec * FRAMES_PER_SEC)) {
 			End("log only", EndKind::OTHER, frame);
 		}
 		return;
@@ -688,10 +747,7 @@ void CSetPiece::UpdateGroups(int frame)
 		}
 		const bool isWaiting = (phase == Phase::STAGE) || (frame < c.releaseFrame);
 		if (!isWaiting && !c.isReleased) {
-			c.isReleased = true;
-			for (CCircuitUnit* unit : task->GetAssignees()) {
-				unit->ForceUpdate(frame);  // off it goes now, not at its next decision
-			}
+			Release(c, frame);  // a timed one, at its time
 		}
 		if (isTouch && !isWaiting && (c.arriveFrame < 0)) {
 			c.arriveFrame = frame;
@@ -722,52 +778,14 @@ void CSetPiece::UpdateGroups(int frame)
 		End("no groups", EndKind::OTHER, frame);
 		return;
 	}
-
-	// P: all calm committed groups. The boosts: the released ones present, with one count bonus (gunships: gunships)
-	CThreatMap* threatMap = circuit->GetThreatMap();
-	float base = 0.f, presentBase = 0.f, airBase = 0.f;
-	size_t count = 0, presentCount = 0, airCount = 0;
-	for (const auto& kv : commits) {
-		const SCommit& c = kv.second;
-		if (c.isAntiHeavy || c.task->IsFleeing(frame)) {
-			continue;
-		}
-		const float b = GetBase(c.task);
-		const size_t n = c.task->GetAssignees().size();
-		base += b;
-		count += n;
-		if (c.isPresent) {
-			presentBase += b;
-			presentCount += n;
-			if (c.isGunship) {
-				airBase += b;
-				airCount += n;
-			}
-		}
-	}
-	for (auto& kv : commits) {
-		SCommit& c = kv.second;
-		c.boost = 1.f;
-		if (c.isAntiHeavy || !c.isReleased) {
-			continue;
-		}
-		float sum = c.isGunship ? airBase : presentBase;
-		size_t n = c.isGunship ? airCount : presentCount;
-		if (!c.isPresent) {  // always with itself
-			sum += GetBase(c.task);
-			n += c.task->GetAssignees().size();
-		}
-		c.boost = std::max(sum * threatMap->GetCountMod(n) / std::max(c.task->GetSafeThreat(), 1e-3f), 1.f);
-	}
-	const float power = base * threatMap->GetCountMod(count);
-	if (power < cfg.abandonRatio * shape.danger) {
+	if (UpdateBoosts(frame) < cfg.abandonRatio * shape.danger) {
 		End("abandon", EndKind::ABANDON, frame);
 		return;
 	}
 
-	// Contact releases everyone still waiting, and so does a parked target off its start for MOVED_FRAMES
+	// Contact releases everyone still waiting, and so does a parked target on the move for MOVED_FRAMES
 	const char* releaseReason = isContact ? "contact" : nullptr;
-	if (isStaged && (shape.centre.SqDistance2D(startCentre) > SQUARE(MOVED_DIST))) {
+	if (isStaged && !shape.isParked) {
 		if (movedFrame < 0) {
 			movedFrame = frame;
 		} else if ((frame - movedFrame >= MOVED_FRAMES) && (releaseReason == nullptr)) {
@@ -797,6 +815,7 @@ void CSetPiece::UpdateGroups(int frame)
 			return;
 		}
 		// The go: the staged groups alone pass the start test
+		CThreatMap* threatMap = circuit->GetThreatMap();
 		float stagedBase = 0.f;
 		size_t stagedCount = 0;
 		const ISquadTask* strongest = nullptr;
@@ -813,7 +832,7 @@ void CSetPiece::UpdateGroups(int frame)
 		}
 		if (IsStrongEnough(stagedBase * threatMap->GetCountMod(stagedCount), shape, strongest)) {
 			Go("ready", false, frame);
-		} else if (frame - startFrame >= gatherFrames) {
+		} else if (frame >= stageEndFrame) {
 			End("no go", EndKind::ABANDON, frame);
 		}
 		return;
@@ -821,19 +840,76 @@ void CSetPiece::UpdateGroups(int frame)
 
 	if (releaseReason != nullptr) {
 		for (auto& kv : commits) {
-			kv.second.releaseFrame = std::min(kv.second.releaseFrame, frame);
+			SCommit& c = kv.second;
+			if (!c.isReleased) {
+				c.releaseFrame = frame;
+				Release(c, frame);
+			}
 		}
+		UpdateBoosts(frame);
 	}
-	// The fight: some group in contact or walking in, else a stall
+	// The fight: some group in contact or walking in, else a stall (a failed plan, as an abandon)
 	if (isContact || isApproach) {
 		stallFrame = frame;
 	} else if (frame - stallFrame >= cfg.stallFrames) {
-		End("stall", EndKind::OTHER, frame);
+		End("stall", EndKind::ABANDON, frame);
 		return;
 	}
 	if ((shape.centre.SqDistance2D(startCentre) > SQUARE(LEFT_DIST)) && !IsHeldAt(shape.centre)) {
 		End("left", EndKind::OTHER, frame);
 	}
+}
+
+float CSetPiece::UpdateBoosts(int frame)
+{
+	// P: every committed group (anti-heavy squads add none), one stepping back too: its escape is brief, and an abandon
+	// on that dip would rout the rest. The wave: the released groups present and, from the go, the timed ones on their
+	// way, so the first one released (the farthest) doesn't judge the target alone; gunships count gunships only
+	auto isWave = [frame](const SCommit& c) {
+		return c.isPresent || (c.isTimed && !c.task->IsFleeing(frame));
+	};
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	float base = 0.f, waveBase = 0.f, airBase = 0.f;
+	size_t count = 0, waveCount = 0, airCount = 0;
+	for (const auto& kv : commits) {
+		const SCommit& c = kv.second;
+		if (c.isAntiHeavy) {
+			continue;
+		}
+		const float b = GetBase(c.task);
+		const size_t n = c.task->GetAssignees().size();
+		base += b;
+		count += n;
+		if (isWave(c)) {
+			waveBase += b;
+			waveCount += n;
+			if (c.isGunship) {
+				airBase += b;
+				airCount += n;
+			}
+		}
+	}
+	for (auto& kv : commits) {
+		SCommit& c = kv.second;
+		c.boost = 1.f;
+		if (c.isAntiHeavy || !c.isReleased) {
+			continue;
+		}
+		float sum = c.isGunship ? airBase : waveBase;
+		size_t n = c.isGunship ? airCount : waveCount;
+		if (!isWave(c)) {  // always with itself
+			sum += GetBase(c.task);
+			n += c.task->GetAssignees().size();
+		}
+		c.boost = std::max(sum * threatMap->GetCountMod(n) / std::max(c.task->GetSafeThreat(), 1e-3f), 1.f);
+	}
+	return base * threatMap->GetCountMod(count);
+}
+
+void CSetPiece::Release(SCommit& c, int frame)
+{
+	c.isReleased = true;
+	ForceUpdate(c.task, frame);
 }
 
 void CSetPiece::Go(const char* reason, bool isAll, int frame)
@@ -842,8 +918,8 @@ void CSetPiece::Go(const char* reason, bool isAll, int frame)
 	// after the ground wave. The rest (all of them on isAll) go at once
 	auto walkFrames = [this, frame](const SCommit& c) {
 		CCircuitUnit* lead = c.task->GetLeader();
-		const float walk = std::max(shape.GetEdgeDist(lead->GetPos(frame)) - lead->GetCircuitDef()->GetMaxRange(), 0.f);
-		return static_cast<int>(walk / std::max(c.task->GetLowestSpeed(), 1.f) * FRAMES_PER_SEC);
+		const float range = lead->GetCircuitDef()->GetMaxRange();
+		return static_cast<int>(shape.GetWalkSec(lead->GetPos(frame), range, c.task->GetLowestSpeed()) * FRAMES_PER_SEC);
 	};
 	int longest = -1;
 	int longestAir = -1;
@@ -862,18 +938,18 @@ void CSetPiece::Go(const char* reason, bool isAll, int frame)
 		SCommit& c = kv.second;
 		c.isTimed = !isAll && c.isStaged && (c.task->GetLeader() != nullptr);
 		c.releaseFrame = c.isTimed ? std::max((c.isGunship ? airArrive : arriveFrame) - walkFrames(c), frame) : frame;
+		if (c.releaseFrame <= frame) {
+			Release(c, frame);
+		}
 	}
+	UpdateBoosts(frame);  // the wave counts from now
 	phase = Phase::GO;
-	isGo = true;
 	goFrame = stallFrame = frame;
 	++stats.goes;
 	const float etaSec = float(arriveFrame - frame) / FRAMES_PER_SEC;
 	circuit->LOG("SETPIECE go (%s) after %.1f s: %i staged of %i groups, T %.1f, arrival in %.1f s", reason,
 			float(frame - startFrame) / FRAMES_PER_SEC, staged, static_cast<int>(commits.size()), shape.danger, etaSec);
-	char text[128];
-	snprintf(text, sizeof(text), "Set piece attack. Power: %.0f. Threat: %.0f. Estimated arrival: %.0f s", startPower,
-			shape.danger, etaSec);
-	SetLabel(text);
+	SetLabel(startPower, etaSec);
 }
 
 void CSetPiece::Revert(const IFighterTask* task, const char* reason, int frame)
@@ -892,14 +968,13 @@ void CSetPiece::Revert(const IFighterTask* task, const char* reason, int frame)
 		rejoins[task] = group;
 	}
 	commits.erase(it);
-	for (CCircuitUnit* unit : group->GetAssignees()) {
-		unit->ForceUpdate(frame);
-	}
+	ForceUpdate(group, frame);
 }
 
 void CSetPiece::End(const char* reason, EndKind kind, int frame)
 {
-	// Its members on cooldown: cooldown_sec, doubled after each abandon in a row (up to 4x), reset by a kill
+	// Its members on cooldown: cooldown_sec, doubled after each abandon (no go, stall) in a row (up to 4x), reset by a
+	// kill
 	if (kind == EndKind::KILL) {
 		abandons = 0;
 	}
@@ -930,31 +1005,27 @@ void CSetPiece::End(const char* reason, EndKind kind, int frame)
 		if (attack != nullptr) {
 			attack->EndComm(CommEnd::SET_PIECE);
 		}
-		for (CCircuitUnit* unit : kv.second.task->GetAssignees()) {
-			unit->ForceUpdate(frame);
-		}
+		ForceUpdate(kv.second.task, frame);
 	}
 	commits.clear();
 	rejoins.clear();
 	members.clear();
 	phase = Phase::OFF;
-	isGo = false;
 	ClearLabel();
 }
 
 bool CSetPiece::IsInContact(const ISquadTask* task, int frame) const
 {
-	// Fighting a member, or a member within the longer of its range and the leader's (+ slack) of the leader
+	// Fighting a member, or a member's weapons reach the leader (+ slack). Not our reach of it: a waiting group that
+	// outranges the target stages beyond its own range (FindStage), and opens no fight
 	const CEnemyInfo* target = task->GetTarget();
 	if ((target != nullptr) && IsMember(target->GetId()) && task->IsFighting()) {
 		return true;
 	}
-	CCircuitUnit* lead = task->GetLeader();
-	const AIFloat3& pos = lead->GetPos(frame);
-	const float range = lead->GetCircuitDef()->GetMaxRange();
+	const AIFloat3& pos = task->GetLeader()->GetPos(frame);
 	for (const auto& kv : members) {
 		const CEnemyInfo* e = circuit->GetEnemyInfo(kv.first);
-		if ((e != nullptr) && (pos.SqDistance2D(e->GetPos()) < SQUARE(std::max(range, kv.second.range) + CONTACT_SLACK))) {
+		if ((e != nullptr) && (pos.SqDistance2D(e->GetPos()) < SQUARE(kv.second.range + CONTACT_SLACK))) {
 			return true;
 		}
 	}
@@ -992,10 +1063,13 @@ float CSetPiece::GetGoBoost(const IFighterTask* task, const AIFloat3& pos) const
 	return (shape.GetEdgeDist(pos) <= radius) ? it->second.boost : 1.f;
 }
 
-void CSetPiece::SetLabel(const char* text)
+void CSetPiece::SetLabel(float power, float etaSec)
 {
 	ClearLabel();
 	if (cfg.isLabel) {
+		char text[128];
+		snprintf(text, sizeof(text), "Set piece attack. Power: %.0f. Threat: %.0f. Estimated arrival: %.0f s", power,
+				shape.danger, etaSec);
 		labelPos = shape.centre;
 		circuit->GetDrawer()->AddPoint(labelPos, text);
 	}

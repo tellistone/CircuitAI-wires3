@@ -369,7 +369,7 @@ void CFGuardTask::Pull(CCircuitUnit* vip)
 					&& !(cfg.isFromGroups && !fightTask->IsFighting()
 						&& (fightTask->GetAttackPower() - unit->GetCircuitDef()->GetPower() >= militaryMgr->GetRaidMinPower())))
 				|| militaryMgr->GetProtect()->IsActing(fightTask)  // quota.protect
-				|| militaryMgr->GetSetPiece()->IsCommitted(fightTask))  // quota.set_piece
+				|| militaryMgr->GetSetPiece()->Has(fightTask))  // quota.set_piece
 			{
 				continue;
 			}

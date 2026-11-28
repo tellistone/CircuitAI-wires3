@@ -469,9 +469,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 	// quota.protect: committed to the commander's fight, or gathering for a raid incident's, the group neither walks to
 	// merge nor joins a rally; nor in a set piece (quota.set_piece; a commander attack too), which may hold it at its
 	// staging point until its release
-	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
-	const bool isSetPiece = setPiece->IsCommitted(this);
-	const bool isSetPieceWait = isSetPiece && utils::is_valid(setPiece->GetWait(this));
+	const bool isSetPiece = IsInSetPiece();
 	const bool isGathering = !isComm && IsGathering();
 	const bool isProtect = (!isComm && (IsProtecting() || isGathering)) || isSetPiece;
 	CAttackTask* rallyHost = (isProtect || isComm) ? nullptr : militaryMgr->GetRallyHost();
@@ -522,7 +520,7 @@ void CAttackTask::Decide(int frame, bool isReuse)
 
 	// quota.protect, gathering for a raid incident, or quota.set_piece, waiting for its release: fight back on the way,
 	// else walk to where it waits (no hunt: the group counts towards the go only once it is there)
-	if (isGathering || isSetPieceWait) {
+	if (utils::is_valid(GetWaitPos())) {
 		if (!EngageInRange(frame, true)) {
 			WalkToProtect(frame, isReuse);
 		}
@@ -1384,7 +1382,7 @@ void CAttackTask::AbsorbWeakerTasks()
 	// quota.protect: a group committed to the commander's fight is absorbed only by another committed one (Merge hands
 	// the commit over); a committed group absorbs any. quota.set_piece: no merges into or out of its groups
 	const CSetPiece* setPiece = GetMilitaryMgr()->GetSetPiece();
-	if (setPiece->IsCommitted(this)) {
+	if (setPiece->Has(this)) {
 		return;
 	}
 	const bool isProtect = IsProtecting();
@@ -1396,7 +1394,7 @@ void CAttackTask::AbsorbWeakerTasks()
 		// Cheap checks first; the small group walks to us, so the line is judged from its side
 		if ((candy == this) || candy->IsDead() || (candyLeader == nullptr)
 			|| (!isHost && (candy->reinforce != this) && (!isArmy || candy->IsArmy()))
-			|| (!isProtect && candy->IsProtecting()) || setPiece->IsCommitted(candy)
+			|| (!isProtect && candy->IsProtecting()) || setPiece->Has(candy)
 			|| !CanAssignTo(candyLeader)
 			|| candy->IsFighting()  // let it finish its fight (it doesn't join either)
 			|| !terrainMgr->CanMoveToPos(candyLeader->GetArea(), pos)
@@ -1534,18 +1532,15 @@ void CAttackTask::WalkToProtect(int frame, bool isReuse)
 	if (!IsQueryReady(leader)) {
 		return;
 	}
-	CMilitaryManager* militaryMgr = GetMilitaryMgr();
-	const CProtect* protect = militaryMgr->GetProtect();
-	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
-	const bool isSetPiece = setPiece->IsCommitted(this);
-	const AIFloat3 gather = isSetPiece ? setPiece->GetWait(this) : protect->GetGather(this);
-	const AIFloat3 hostPos = utils::is_valid(gather) ? gather : (isSetPiece ? setPiece->GetGoal(this) : protect->GetGoal(this));
+	const AIFloat3 wait = GetWaitPos();
+	const AIFloat3 hostPos = utils::is_valid(wait) ? wait : GetCommitGoal();
 	AIFloat3 goal = hostPos;
 	SStrength edgeStrength = GetSafeThreat();
-	if ((isSetPiece && utils::is_valid(gather)) || !FindFightEdge(frame, hostPos, RALLY_EDGE_FAR_DIST, goal, edgeStrength)) {
+	const bool isStage = IsInSetPiece() && utils::is_valid(wait);  // picked safe for us: straight there
+	if (isStage || !FindFightEdge(frame, hostPos, RALLY_EDGE_FAR_DIST, goal, edgeStrength)) {
 		goal = hostPos;
 	}
-	const SStrength routeStrength(GetSafeThreat() * militaryMgr->GetCommitBoost(this, goal));
+	const SStrength routeStrength(GetSafeThreat() * GetMilitaryMgr()->GetCommitBoost(this, goal));
 	position = goal;
 	if (isReuse && ReuseRoute(PROTECT_ROUTE_ID, goal, frame)) {
 		return;
@@ -2298,7 +2293,7 @@ bool CAttackTask::FindTarget()
 	const CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = IsProtecting();
 	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
-	const bool isSetPiece = setPiece->IsCommitted(this);
+	const bool isSetPiece = setPiece->Has(this);
 	isCommKeepFail = false;
 	candidates.clear();
 	for (auto& kv : circuit->GetEnemyInfos()) {

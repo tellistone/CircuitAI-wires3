@@ -749,9 +749,9 @@ void CMilitaryManager::ReadConfig()
 		protect = std::make_unique<CProtect>(circuit, cfg);
 	}
 	{
-		// quota.set_piece: {enable, log_only, label, reach, comm_reach, start_ratio, abandon_ratio, stage_dist,
-		// gather_sec, stall_sec, pass_share, held_sec, cooldown_sec} (CSetPiece). Keys as quota.protect's; a flag that
-		// isn't true or false logs and uses its default
+		// quota.set_piece: {enable, log_only, label, min_threat, reach, comm_reach, start_ratio, abandon_ratio,
+		// stage_dist, gather_sec, stall_sec, pass_share, held_sec, cooldown_sec} (CSetPiece). Keys as quota.protect's;
+		// a flag that isn't true or false logs and uses its default
 		const Json::Value& q = quotas["set_piece"];
 		if (!q.isNull() && !q.isObject()) {
 			circuit->LOG("CONFIG %s: quota.set_piece must be an object, it is off", cfgName.c_str());
@@ -785,6 +785,7 @@ void CMilitaryManager::ReadConfig()
 			cfg.isEnabled = flag("enable", false);
 			cfg.isLogOnly = flag("log_only", false);
 			cfg.isLabel = flag("label", true);
+			cfg.minThreat = num("min_threat", 30.f, 0.f, 10000.f);
 			cfg.reach = num("reach", 3000.f, 500.f, 10000.f);
 			cfg.commReach = num("comm_reach", 1000.f, 0.f, 5000.f);
 			cfg.startRatio = num("start_ratio", 1.1f, 0.5f, 5.f);
@@ -2148,14 +2149,13 @@ void CMilitaryManager::UpdateRally(SRally& rally)
 	}
 
 	// Blobs near our groups (range 0: anywhere), hottest first: within range to start, 1.5x range to keep going. None
-	// starts on our ground while quota.set_piece is live: its planned attack answers those
+	// starts near a running set piece's target (quota.set_piece): its planned attack answers it
 	const bool isAnywhere = (cfg.range <= 0.f);
 	const float sqRange = SQUARE(isRally ? cfg.range * 1.5f : cfg.range);
-	const bool isPieceGround = !isRally && setPiece->IsLive();
 	static std::vector<const CEnemyManager::SEnemyBlob*> nearBlobs;  // NOTE: micro-opt
 	nearBlobs.clear();
 	for (const CEnemyManager::SEnemyBlob& b : circuit->GetEnemyManager()->GetBlobs(frame, cfg.seenFrames, rally.isRaiders)) {
-		if (isPieceGround && setPiece->IsHeldAt(b.pos)) {
+		if (!isRally && setPiece->IsNearTarget(b.pos)) {
 			continue;
 		}
 		if (isAnywhere || std::any_of(groups.begin(), groups.end(), [&](ISquadTask* g) {

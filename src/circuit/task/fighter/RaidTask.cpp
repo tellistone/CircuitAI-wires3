@@ -420,8 +420,7 @@ void CRaidTask::Update()
 
 	// quota.protect: a gathering group doesn't route to enemies out of range, it waits at the gathering post; nor does
 	// a set piece's group waiting for its release (quota.set_piece), at its staging point
-	const CSetPiece* setPiece = circuit->GetMilitaryManager()->GetSetPiece();
-	if (!isTargetsFound || IsGathering() || utils::is_valid(setPiece->GetWait(this))) {  // urgentPositions.empty() && enemyPositions.empty()
+	if (!isTargetsFound || utils::is_valid(GetWaitPos())) {  // urgentPositions.empty() && enemyPositions.empty()
 		OnNoTarget(true);
 		return;
 	}
@@ -565,7 +564,7 @@ bool CRaidTask::FindTarget()
 	const CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = IsProtecting();
 	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
-	const bool isSetPiece = setPiece->IsCommitted(this);
+	const bool isSetPiece = setPiece->Has(this);
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
 	for (auto& kv : enemies) {
 		CEnemyInfo* enemy = kv.second;
@@ -731,10 +730,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 	// quota.protect: gathering for a raid incident in its no-go, wait where the protect says (its gathering post);
 	// quota.set_piece: waiting for its release, at its staging point
-	const CProtect* protect = militaryMgr->GetProtect();
-	const CSetPiece* setPiece = militaryMgr->GetSetPiece();
-	const bool isSetPiece = setPiece->IsCommitted(this);
-	const AIFloat3 gather = isSetPiece ? setPiece->GetWait(this) : protect->GetGather(this);
+	const AIFloat3 gather = GetWaitPos();
 	if (utils::is_valid(gather)) {
 		WaitAt(frame, gather);
 		return;
@@ -748,7 +744,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	// Nothing to hunt: go to the nearest contested cluster we can take (its threat blocks our mex expansion),
 	// unless we're already there; else the usual mex-spot roaming. quota.protect: committed with nothing to hunt,
 	// head for the protect's goal (the commander, a raid incident's asset); quota.set_piece: for its target
-	const bool isProtect = IsProtecting() || isSetPiece;
+	const bool isProtect = IsProtecting() || IsInSetPiece();
 	static std::vector<CMilitaryManager::SContestedSpot> contested;  // NOTE: micro-opt
 	contested.clear();
 	threatMap->SetThreatType(leader);  // shared threat-map state: set on every pick
@@ -783,8 +779,7 @@ void CRaidTask::FallbackRaid(bool isContestedAllowed)
 	}
 	if (isProtect) {
 		// The goal moves with the commander: the route is kept while it stays within a few squares of the last one
-		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(),
-				isSetPiece ? setPiece->GetGoal(this) : protect->GetGoal(this));
+		const AIFloat3 goal = terrainMgr->GetMovePosition(leader->GetArea(), GetCommitGoal());
 		position = (utils::is_valid(roamGoal) && (goal.SqDistance2D(roamGoal) < SQUARE(DEFAULT_SLACK * 2))) ? roamGoal : goal;
 	} else if (bestContested != nullptr) {
 		position = terrainMgr->GetMovePosition(leader->GetArea(), bestContested->pos);
