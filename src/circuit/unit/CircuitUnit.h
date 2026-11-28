@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_UNIT_CIRCUITUNIT_H_
 
 #include "unit/ally/AllyUnit.h"
+#include "unit/CircuitDef.h"
 #include "util/ActionList.h"
 #include "util/Defines.h"
 
@@ -132,6 +133,15 @@ public:
 	float GetBuildSpeed();
 	float GetDGunRange();
 	float GetHealthPercent();
+	// A dynamic commander's fitted weapons (CCircuitDef::ReadCommWeapons), read on first use and again every second
+	// until they are there (logged once); nullptr: not a dynamic commander, or none read yet
+	const CCircuitDef::SCommWeapons* GetCommWeapons() const;
+	// Its weapons' range against type: a dynamic commander's fitted automatic weapons once read (its def lists
+	// every weapon its chassis could carry), else its def's
+	float GetFireRange(CCircuitDef::RangeType type) const;
+	float GetFireRange() const;  // the longest of them
+	// Damage a second: a dynamic commander's fitted automatic weapons, else its def's
+	float GetFireDps() const;
 
 	void CmdRemove(std::vector<float>&& params, short options = 0);
 	void CmdMoveTo(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
@@ -230,6 +240,9 @@ private:
 
 	CEnemyInfo* target;
 	int targetTile;
+
+	mutable CCircuitDef::SCommWeapons commWeapons;  // GetCommWeapons
+	mutable int commReadFrame = -1;  // last read attempt
 
 #ifdef DEBUG_VIS
 public:

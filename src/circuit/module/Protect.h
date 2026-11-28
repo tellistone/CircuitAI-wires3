@@ -162,6 +162,8 @@ public:
 	// Where the commander flees: its ward's turret point; invalid: none (always while off). Asked only while it flees
 	// (not on a health retreat)
 	springai::AIFloat3 GetMeetingPoint(const CCircuitUnit* comm) const;
+	// Our commander's ward is anchored (on): the commander attack starts none then (CBuilderManager::TryCommAttack)
+	bool IsWardOn(const CCircuitUnit* comm) const;
 	// pos stands at the commander's meeting point
 	bool IsAtMeetingPoint(const CCircuitUnit* comm, const springai::AIFloat3& pos) const;
 

@@ -221,6 +221,16 @@ AIFloat3 CProtect::GetMeetingPoint(const CCircuitUnit* comm) const
 	return ((wt != wards.end()) && wt->second.isOn) ? wt->second.turretPos : AIFloat3(-RgtVector);
 }
 
+bool CProtect::IsWardOn(const CCircuitUnit* comm) const
+{
+	auto it = memberWard.find(comm);
+	if (it == memberWard.end()) {
+		return false;
+	}
+	auto wt = wards.find(it->second);
+	return (wt != wards.end()) && wt->second.isOn;
+}
+
 bool CProtect::IsAtMeetingPoint(const CCircuitUnit* comm, const AIFloat3& pos) const
 {
 	const AIFloat3 meet = GetMeetingPoint(comm);

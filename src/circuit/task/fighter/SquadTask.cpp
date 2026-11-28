@@ -320,8 +320,15 @@ ISquadTask* ISquadTask::CheckMergeTask()
 	const CProtect* protect = militaryMgr->GetProtect();
 	const bool isProtect = IsProtecting();
 	const std::set<IFighterTask*>& tasks = militaryMgr->GetTasks(fightType);
-	for (const IFighterTask* candidate : tasks) {
-		if ((candidate == this) ||
+	// Attack groups may also join a commander attack (CMilitaryManager::EnqueueCommAttack), off the group list
+	static std::vector<const IFighterTask*> candidates;  // NOTE: micro-opt
+	candidates.assign(tasks.begin(), tasks.end());
+	if (fightType == FightType::ATTACK) {
+		const std::set<IFighterTask*>& commAttacks = militaryMgr->GetCommAttacks();
+		candidates.insert(candidates.end(), commAttacks.begin(), commAttacks.end());
+	}
+	for (const IFighterTask* candidate : candidates) {
+		if ((candidate == this) || candidate->IsDead() ||
 			(candidate->GetAttackPower() < attackPower) ||
 			!candidate->CanAssignTo(leader) ||
 			(isProtect && !protect->IsActing(candidate)))

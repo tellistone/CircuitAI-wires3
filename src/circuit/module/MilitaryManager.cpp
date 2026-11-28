@@ -1720,8 +1720,7 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 			break;
 		}
 		case IFighterTask::FightType::ATTACK: {
-			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
-			task = new CAttackTask(this, minAttackers, 0.8f / mod);
+			task = new CAttackTask(this, minAttackers, NewAttackPowerMod());
 			break;
 		}
 		case IFighterTask::FightType::BOMB: {
@@ -1754,6 +1753,22 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 	}
 
 	return AddFightTask(type, task);
+}
+
+CAttackTask* CMilitaryManager::EnqueueCommAttack(CCircuitUnit* comm)
+{
+	CAttackTask* task = new CAttackTask(this, minAttackers, NewAttackPowerMod());
+	task->SetComm(comm);
+	commAttacks.insert(task);
+	fightUpdates.push_back(task);
+	return task;
+}
+
+void CMilitaryManager::PromoteCommAttack(CAttackTask* task)
+{
+	if ((commAttacks.erase(task) > 0) && !task->IsDead()) {
+		fightTasks[static_cast<IFighterTask::FT>(IFighterTask::FightType::ATTACK)].insert(task);
+	}
 }
 
 IFighterTask* CMilitaryManager::EnqueueAhArty()
@@ -2310,6 +2325,7 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 		case IUnitTask::Type::FIGHTER: {
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
+			commAttacks.erase(taskF);
 			priorityArtyTasks.erase(taskF);
 			frontline->ReleaseHold(taskF, 0);
 			soloParks.erase(taskF);

@@ -127,9 +127,7 @@ void IBuilderTask::AssignTo(CCircuitUnit* unit)
 	}
 	unit->PushTravelAct(travelAction);
 	travelAction->StateWait();
-	// The "jump" attribute, or a commander with commander.json jobs.jump (CanJumpTo)
-	const CSetupManager::SCommInfo::SJobs* jobs = circuit->GetBuilderManager()->GetCommJobs(cdef);
-	unit->SetAllowedToJump(cdef->IsAbleToJump() && (cdef->IsAttrJump() || ((jobs != nullptr) && (jobs->jumpMinDist >= 0.f))));
+	circuit->GetBuilderManager()->SetWorkerJump(unit);  // the "jump" attribute, or commander.json jobs.jump
 }
 
 void IBuilderTask::RemoveAssignee(CCircuitUnit* unit)
@@ -336,13 +334,7 @@ void IBuilderTask::OnUnitIdle(CCircuitUnit* unit)
 void IBuilderTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	CCircuitDef* cdef = unit->GetCircuitDef();
-	const float healthPerc = unit->GetHealthPercent();
-	if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
-		if ((cdef->IsRoleHeavy() || cdef->IsAttrPrioRepair()) && (healthPerc < 0.9f)) {
-			circuit->GetBuilderManager()->EnqueueRepair(IBuilderTask::Priority::NOW, unit);
-		}
+	if (!circuit->GetBuilderManager()->IsWorkerRetreat(unit)) {
 		return;
 	}
 

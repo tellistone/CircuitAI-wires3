@@ -100,13 +100,17 @@ public:
 private:
 	// Mobile cover, once a frame on first use (no lookup walks another group's units)
 	struct SDisc {
-		const CAttackTask* task;  // only compared, never dereferenced; nullptr: the commander
+		// Only compared, never dereferenced. The commander's: its commander attack while it is in one
+		// (CMilitaryManager::EnqueueCommAttack), so that group doesn't count it twice; else nullptr
+		const CAttackTask* task;
 		springai::AIFloat3 pos;  // the group's leader, the commander
 		float sqRange;
 		float power;
+		bool isComm;  // the commander's disc
 	};
 	const std::vector<SDisc>& GetDiscs();
-	static bool IsLeftOut(const SDisc& d, const SJudge& judge) {  // the commander's disc (task nullptr) never is
+	// The group itself and its partner; the commander's disc only for its own commander attack
+	static bool IsLeftOut(const SDisc& d, const SJudge& judge) {
 		return (d.task != nullptr) && ((d.task == judge.self) || (d.task == judge.partner));
 	}
 	// The commander's reach: its fitted weapons' longest range (dynamic commanders), else its def's land range

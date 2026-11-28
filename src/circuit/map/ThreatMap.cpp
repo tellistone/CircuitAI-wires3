@@ -197,8 +197,10 @@ void CThreatMap::SetEnemyUnitRange(CEnemyUnit* e) const
 
 	// FIXME: DEBUG  comm's threat value is not based on proper weapons
 	if (edef->IsRoleComm() && !e->IsFake()) {
-		float maxRange, maxAoe;  // the fitted weapons' (x comm_range_mult)
-		CCircuitDef::GetCommWeaponRange(manager->GetCircuit(), e->GetUnit(), maxRange, maxAoe);
+		// The fitted weapons' (x comm_range_mult), read once (CEnemyUnit::GetCommWeapons); 0 while unread
+		const CCircuitDef::SCommWeapons* cw = e->GetCommWeapons(manager->GetCircuit());
+		float maxRange = (cw != nullptr) ? cw->reach : 0.f;
+		const float maxAoe = (cw != nullptr) ? cw->reachAoe : 0.f;
 		if ((maxRange > 0.f) && e->IsJumpReady()) {
 			maxRange += edef->GetJumpReach();  // as below (0 for non-jumpers)
 		}

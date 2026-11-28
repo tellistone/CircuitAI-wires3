@@ -22,6 +22,11 @@ class CMilitaryManager;
 enum class AttackRoute: int;  // module/MilitaryManager.h
 class CAllyCover;
 
+// Why a commander attack ended (CAttackTask::EndComm, CBuilderManager::OnCommAttackEnd logs it by name)
+enum class CommEnd: char {NONE = 0, KILL, NO_TARGET, KEEP, NO_ROUTE, LEASH, TIME, FLEE, RETREAT, DISARM, MORPH, HIDE,
+		DEATH, TAKEN, STOPPED, OFF};
+const char* CommEndName(CommEnd reason);
+
 class CAttackTask: public ISquadTask {
 public:
 	CAttackTask(ITaskManager* mgr, float minPower, float powerMod);
@@ -60,6 +65,26 @@ public:
 	// quota.attack_balance: outnumbered where it stands (UpdateOutnumbered), so left out of other groups' ally sums
 	// (CAttackBalance). Also in log-only mode, so the skip counts mean the same in both builds
 	bool IsOutnumbered() const { return isOutnumbered; }
+
+	/*
+	 * Commander attack (CMilitaryManager::EnqueueCommAttack, CBuilderManager::TryCommAttack): our commander, comm,
+	 * leads this group. It joins no other group and walks to none (reinforce, rally, idle_merge), commits to no
+	 * protect, and isn't judged by the attack balance, the threat floor or the own-ground rule; it neither escapes nor
+	 * holds (the commander has its own flee), and with no target the commander goes back to its jobs. FindTarget takes
+	 * only targets that pass the commander's filter (CBuilderManager::IsCommTargetOk). The commander comes from and
+	 * goes back to the builder manager's idle task, and retreats by the builder retreat. When it leaves, merged units
+	 * go on as a normal attack group (CMilitaryManager::PromoteCommAttack)
+	 */
+	void SetComm(CCircuitUnit* unit) { comm = unit; }
+	CCircuitUnit* GetComm() const { return comm; }
+	// The commander attack unit is in (it is its commander), else nullptr
+	static CAttackTask* GetCommAttackOf(CCircuitUnit* unit);
+	// The commander leaves at the next update, for reason (logged; the first reason given wins)
+	void EndComm(CommEnd reason) {
+		if ((comm != nullptr) && (commEnd == CommEnd::NONE)) {
+			commEnd = reason;
+		}
+	}
 
 protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
@@ -128,6 +153,25 @@ private:
 	};
 
 	CMilitaryManager* GetMilitaryMgr() const;
+
+	/*
+	 * Commander attack (comm)
+	 */
+	// The attack's end (EndComm, or the commander's limits: CBuilderManager::GetCommAttackEnd): the commander leaves,
+	// true (the task may be aborted then)
+	bool UpdateComm(int frame);
+	// It left (RemoveAssignee, Stop): to the builder manager's idle task, its jump setting back, the end noted
+	void HandCommBack(CCircuitUnit* unit, CommEnd reason);
+	// Health retreat (or disarmed): the builder retreat, as for its jobs (CBuilderManager::IsWorkerRetreat), but not
+	// out of a duel it is winning with their D-gun ready (CBuilderManager::IsCommDuelHeld)
+	void OnCommDamaged(CCircuitUnit* unit);
+	// FindTarget's filter for a commander attack; isCurrent: kept at the keep ratios
+	bool IsCommTargetOk(CEnemyInfo* enemy, bool isCurrent);
+	// A target the route rejected or couldn't reach: the commander leaves it alone for a while
+	void NoteCommReject(ICoreUnit::Id id);
+	// This route to enemy: its walk and the kill fit the time budget, and the commander is covered along it
+	// (CBuilderManager::IsCommRouteOk; kept at 1.0x once a route to it was taken)
+	bool IsCommRouteOk(CEnemyInfo* enemy, const F3Vec& path);
 
 	/*
 	 * Group strength and the threat it tolerates
@@ -620,6 +664,14 @@ private:
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
 	float hitRadius;
 	int hitFrame;
+
+	// Commander attack
+	// SetComm; nullptr: a normal attack group. Not nullptr: no threat cap (GetBaseAllowedThreatAt, GetPathThreatCap),
+	// the commander's cover test judges every target and route instead (CBuilderManager::IsCommTargetOk, IsCommRouteOk)
+	CCircuitUnit* comm = nullptr;
+	CommEnd commEnd = CommEnd::NONE;  // EndComm
+	bool isCommKeepFail = false;  // the last pick dropped the current target at the keep ratios
+	ICoreUnit::Id commRouteId = -1;  // the target whose route the commander took (its routes are kept at 1.0x)
 };
 
 } // namespace circuit

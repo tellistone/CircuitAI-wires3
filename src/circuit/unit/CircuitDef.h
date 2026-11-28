@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_UNIT_CIRCUITDEF_H_
 
 #include "terrain/TerrainData.h"
+#include "unit/CircuitWDef.h"
 #include "util/MaskHandler.h"
 
 #include "UnitDef.h"
@@ -287,9 +288,28 @@ public:
 	float GetMaxRange(RangeType type) const { return maxRange[static_cast<RangeT>(type)]; }
 	float GetMaxRange() const { return maxRange[static_cast<RangeT>(maxRangeType)]; }
 	int GetThreatRange(ThreatType type) const { return threatRange[static_cast<ThreatT>(type)]; }
-	// A dynamic commander's fitted weapons (rules params comm_weapon_id_1 and _2; its def's own weapons aren't the
-	// fitted ones): the longest one's range x comm_range_mult, and its AoE. Both 0 with none fitted
-	static void GetCommWeaponRange(CCircuitAI* circuit, springai::Unit* unit, float& outRange, float& outAoe);
+	// A dynamic commander's fitted weapons (rules params comm_weapon_id_1 and _2, comm_weapon_manual_N; its def's own
+	// weapons aren't the fitted ones), for its fire range, its time to kill (CCircuitUnit::GetFireRange,
+	// CBuilderManager's commander attack) and its threat and influence reach
+	struct SCommWeapons {
+		// The automatic weapons' range by RangeType, x comm_range_mult; 0: none hits that type
+		std::array<float, static_cast<RangeT>(RangeType::_SIZE_)> range = {0.f, 0.f, 0.f};
+		float maxRange = 0.f;
+		float dps = 0.f;  // the automatic weapons', x comm_damage_mult
+		float alpha = 0.f;  // one salvo of its manual-fire weapon, x comm_damage_mult; 0: none fitted
+		float alphaRange = 0.f;  // that weapon's range, x comm_range_mult
+		float reach = 0.f;  // the longest range of all of them, the manual-fire one too (threat and influence maps)
+		float reachAoe = 0.f;  // that weapon's AoE
+		bool isRead = false;  // the rules params were there (some weapon fitted)
+	};
+	// false: no weapon id in its rules params (not a dynamic commander, or out of LOS for an enemy)
+	static bool ReadCommWeapons(CCircuitAI* circuit, springai::Unit* unit, SCommWeapons& out);
+	// One weapon's numbers, worked out once per weapon def and kept on it; nullptr: no such def
+	static const CWeaponDef::SStats* GetWeaponStats(CCircuitAI* circuit, int weaponDefId);
+	// Damage a second of all its weapons (dynamic commanders: averaged over the chassis's weapon list, so of little use;
+	// SCommWeapons has the fitted ones)
+	float GetDps() const { return dps; }
+	bool IsDynamicComm() const { return isDynamicComm; }
 	float GetShieldRadius() const { return shieldRadius; }
 	float GetMaxShield() const { return maxShield; }
 	float GetShieldRegen() const { return shieldRegen; }  // charge per second
@@ -489,6 +509,8 @@ private:
 	float deathDmg;  // GetDeathDamage
 	bool isDeathBomb;  // IsDeathBomb
 	float power;  // ally max threat
+	float dps = 0.f;  // GetDps
+	bool isDynamicComm = false;  // IsDynamicComm: customParams dynamic_comm
 	float threat;  // enemy max threat
 	float rawThreat;  // threat before thr_mod
 	float minRange;
