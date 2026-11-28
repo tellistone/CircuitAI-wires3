@@ -384,7 +384,8 @@ void CAttackTask::Update()
 	 * Regroup if required
 	 */
 	const bool wasRegroup = (State::REGROUP == state);
-	const bool mustRegroup = IsMustRegroup();
+	// Walking in line to a target (ApproachInLine) is a fight's start: exempt, as a fight is (laggards catch up)
+	const bool mustRegroup = !IsApproaching() && IsMustRegroup();
 	if (leader == nullptr) {  // all units released as stuck: task aborted
 		return;
 	}
@@ -419,12 +420,13 @@ void CAttackTask::Update()
 	// The target died while we fought it or walked in to it (~CEnemyInfo: ClearTarget leaves the state as it is; every
 	// decision that finds nothing sets ROAM and ends a walk-in): pick the next one now rather than at the next decision,
 	// so the units don't stand idle or walk on to a dead target's spot
-	const bool isTargetLost = ((State::ENGAGE == state) || IsApproaching()) && (target == nullptr);
+	const bool isApproaching = IsApproaching();
+	const bool isTargetLost = ((State::ENGAGE == state) || isApproaching) && (target == nullptr);
 	// Walking in line to the target (ApproachInLine): the fight starts as soon as the front row stands at the walk's
 	// end, or the target is in contact
-	const bool isContact = (target != nullptr) && IsApproaching()
+	const bool isWalkInOver = isApproaching && (target != nullptr)
 			&& (IsLineAtEnd() || IsInContact(target, false, frame));
-	if (!isDecision && !isForced && !isTargetLost && !isContact) {
+	if (!isDecision && !isForced && !isTargetLost && !isWalkInOver) {
 		return;
 	}
 	// A normal decision that no unit asked to re-plan may keep a fresh route to the same goal (ReuseRoute)
@@ -627,7 +629,6 @@ bool CAttackTask::ApproachInLine(int frame)
 	if (IsApproaching() && (approachPath->posPath.back().SqDistance2D(end) < SQUARE(APPROACH_KEEP))) {
 		return true;
 	}
-	state = State::ROAM;
 	pathQueries.erase(leader);  // a target route still being worked out doesn't replace this walk when it comes back
 	approachPath = std::make_shared<PathInfo>();
 	approachPath->posPath = {leaderPos, end};

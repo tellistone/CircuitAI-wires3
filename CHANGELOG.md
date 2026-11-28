@@ -18,7 +18,8 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     128 elmos. The fight starts at contact or once the front row stands at the end (both checked every update), or
     once the group is in danger or the end ahead is, so the flee grace, holding ground and the pass on a target we
     fled from work as in a fight. A target that dies on the way is replaced at once, and the walk-in ends with the
-    fight or the first decision that finds nothing to engage, so a group roaming again is never taken for one.
+    fight or the first decision that finds nothing to engage, so a group roaming again is never taken for one. No
+    regroup while walking in, as in a fight: a far laggard catches up on its own.
     While walking in, the target needs no line of fire to stay picked (a dip on the way doesn't swap the walk for a
     route search every decision), and an enemy in contact ranks first, as in a fight. A fight under way never forms
     the line again. Not inside the base defence radius, and not while the line isn't formed (every unit would walk

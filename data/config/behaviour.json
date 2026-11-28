@@ -496,7 +496,7 @@
 // formed (every unit would walk to one point): engaged at once. A fight under way never forms the line again. The
 // units then fan out across the firing-spot arc, each on its own side of the leader (see attack_spot_threat). Where
 // no line of 2 fits (terrain, buildings) the units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; when one
-// falls far behind, the usual regroup stops the line where it stands (just after a fight: at the leader, facing the
+// falls far behind, the usual regroup (not while walking in to a target, as in a fight) stops the line where it stands (just after a fight: at the leader, facing the
 // nearest strong enemy group) and the units take their slots in it, until the line is whole (as a gather where no
 // line fits). Newcomers (units that joined attack and raid groups by a merge or a new assignment, until they come within
 // 200 elmos of the leader, 20 s at most) are waited for by neither: they catch up at full speed. At the end of its walk the group stands in line. Missing block or
