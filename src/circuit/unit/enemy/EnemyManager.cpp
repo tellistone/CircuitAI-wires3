@@ -162,16 +162,8 @@ const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame,
 	cache.seenFrames = seenFrames;
 	blobs.clear();
 
-	constexpr float BLOB_RADIUS = 800.f;
 	constexpr size_t MAX_BLOBS = 8;
-	struct SMember {
-		AIFloat3 pos;
-		float threat;
-		float count;
-		float sum;
-		bool isTaken;
-	};
-	static std::vector<SMember> members;  // NOTE: micro-opt
+	static std::vector<SBlobMember> members;  // NOTE: micro-opt
 	members.clear();
 	for (const auto& kv : circuit->GetMapManager()->GetHostileUnits()) {
 		const CEnemyUnit* e = kv.second;
@@ -191,12 +183,24 @@ const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame,
 		if (!e->IsInRadarOrLOS() && ((lastSeen == -1) || (frame - lastSeen > seenFrames))) {
 			continue;
 		}
-		members.push_back({e->GetPos(), e->GetThreat(), e->GetCountWeight(), 0.f, false});
+		SBlobMember m;
+		m.pos = e->GetPos();
+		m.threat = e->GetThreat();
+		m.count = e->GetCountWeight();
+		members.push_back(m);
 	}
-	if (members.empty()) {
-		return blobs;
-	}
+	MakeBlobs(members, MAX_BLOBS, blobs);
+	// Remaining sums can be lower than a later seed's: keep hottest first
+	std::sort(blobs.begin(), blobs.end(), [](const SEnemyBlob& a, const SEnemyBlob& b) { return a.threat > b.threat; });
+	return blobs;
+}
 
+void CEnemyManager::MakeBlobs(std::vector<SBlobMember>& members, size_t maxBlobs, std::vector<SEnemyBlob>& outBlobs)
+{
+	outBlobs.clear();
+	if (members.empty()) {
+		return;
+	}
 	// O(n^2) once a second: a few hundred enemies at most
 	const float sqRadius = SQUARE(BLOB_RADIUS);
 	for (size_t i = 0; i < members.size(); ++i) {
@@ -209,28 +213,26 @@ const std::vector<CEnemyManager::SEnemyBlob>& CEnemyManager::GetBlobs(int frame,
 		}
 	}
 	// Greedy: the hottest untaken seed takes the untaken enemies around it
-	std::sort(members.begin(), members.end(), [](const SMember& a, const SMember& b) { return a.sum > b.sum; });
-	for (SMember& seed : members) {
-		if (seed.isTaken) {
+	std::sort(members.begin(), members.end(), [](const SBlobMember& a, const SBlobMember& b) { return a.sum > b.sum; });
+	for (SBlobMember& seed : members) {
+		if (seed.blob >= 0) {
 			continue;
 		}
+		const int index = outBlobs.size();
 		float threat = 0.f;
 		float count = 0.f;
-		for (SMember& m : members) {
-			if (!m.isTaken && (m.pos.SqDistance2D(seed.pos) < sqRadius)) {
-				m.isTaken = true;
+		for (SBlobMember& m : members) {
+			if ((m.blob < 0) && (m.pos.SqDistance2D(seed.pos) < sqRadius)) {
+				m.blob = index;
 				threat += m.threat;
 				count += m.count;
 			}
 		}
-		blobs.push_back({seed.pos, threat, count});
-		if (blobs.size() >= MAX_BLOBS) {
+		outBlobs.push_back({seed.pos, threat, count});
+		if (outBlobs.size() >= maxBlobs) {
 			break;
 		}
 	}
-	// Remaining sums can be lower than a later seed's: keep hottest first
-	std::sort(blobs.begin(), blobs.end(), [](const SEnemyBlob& a, const SEnemyBlob& b) { return a.threat > b.threat; });
-	return blobs;
 }
 
 void CEnemyManager::PrepareUpdate()

@@ -20,6 +20,9 @@ class CMilitaryManager;
 class CRaidTask: public ISquadTask {
 public:
 	CRaidTask(ITaskManager* mgr, float maxPower, float powerMod);
+protected:
+	CRaidTask(ITaskManager* mgr, FightType type, float maxPower, float powerMod);  // tasks built on the raid group
+public:
 	virtual ~CRaidTask();
 
 	virtual bool CanAssignTo(CCircuitUnit* unit) const override;
@@ -37,15 +40,32 @@ public:
 	bool IsSpeedSpreadOk(CCircuitUnit* unit) const;
 	virtual bool IsFleeing(int frame) const override { return frame < fleeFrame; }  // running from an escape
 
-private:
-	CMilitaryManager* GetMilitaryMgr() const;
+protected:
+	/*
+	 * Hooks for tasks built on the raid group (CRaidDefendTask). The defaults are the raid group's own behaviour
+	 */
 	// May take more units: up to maxPower, and during a raid rally until its strength (with the group size bonus)
 	// reaches the rally's goal. Units of other types may join only during a raid rally, and only compatible ones
-	bool HasRoom() const;
+	virtual bool HasRoom() const;
+	// GetMergeTask, but in a rally every 2 updates, and judged by the straight line (IsSafeMergeLine), not influence
+	virtual ISquadTask* GetRaidMergeTask();
+	// May it chase a bigger raid group to join it (quota.raid_rally)? Default: yes
+	virtual bool IsChaseAllowed() const { return true; }
+	// May FindTarget pick this enemy, or route to it? isZone: in our protect ward's zone (CProtect::IsZoneEnemy);
+	// isCurrent: our target until this pick. Default: any (the pick's own checks still apply)
+	virtual bool IsTargetAllowed(const CEnemyInfo* enemy, bool isZone, bool isCurrent) const { return true; }
+	// A preferred target: the nearest one wins over the most threatening. Default: CMilitaryManager::IsRaidPreferred
+	virtual bool IsPreferredTarget(const CEnemyInfo* enemy, const CCircuitDef* edef) const;
+	// May it route to enemies in contested clusters (quota.contested)? Default: yes
+	virtual bool IsContestedAllowed() const { return true; }
+	// Nothing to hunt (no target, no route to one). Default: FallbackRaid (roam the raid spots)
+	virtual void OnNoTarget(bool isContestedAllowed) { FallbackRaid(isContestedAllowed); }
+	// Where the escape runs to. Default: the closest haven (FactoryManager), else our base
+	virtual springai::AIFloat3 GetFleeHaven() const;
+
+	CMilitaryManager* GetMilitaryMgr() const;
 	bool IsInRally() const;  // a raid rally is on and we are its host or a joiner
 	bool IsCautious(int frame) const { return frame < fleeFrame + FRAMES_PER_SEC * 4; }  // just escaped
-	// GetMergeTask, but in a rally every 2 updates, and judged by the straight line (IsSafeMergeLine), not influence
-	ISquadTask* GetRaidMergeTask();
 	// In a rally: the straight line to the other leader under our allowance, as our escape judges it. Else the default
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const override;
 	// The chase route's cap (the only capped QueryPath of a raid group): x0.75 for 4 s after an escape, as FindTarget
@@ -80,7 +100,23 @@ private:
 	// quota.raider_spot: keep or pick the scored spot to roam to. true = 'position' is that spot; false = roam the
 	// old way, which must pick a new destination now if isSpotDone (the spot we were heading to is done, no next one)
 	bool UpdateRaidSpot(float safeThreat, bool mustRepick, bool isDanger, bool& isSpotDone);
+	// The roam route to 'position': threat as a cost, the group's strength as the allowance. isKeep: the route the
+	// leader walks is kept instead while it goes to the same spot, was planned under ROAM_KEEP_FRAMES ago, and has no
+	// danger on the stretch ahead or to any unit
+	void PlanRoamRoute(int frame, bool isKeep);
 	void ApplyRaidPath(const CQueryPathSingle* query);
+	// Wait at a spot (CRaidDefendTask's post, quota.protect's gathering post): within PARK_RADIUS a small patrol there
+	// (Park), else the roam route there, kept while the spot stays within REPATH_DIST of its goal. No path queries
+	// while it waits
+	void WaitAt(int frame, const springai::AIFloat3& spot);
+	// Wait orders, sent again only when something changed: the spot, a fight or an escape since, a merge, a regroup,
+	// a route walked, or every PARK_ORDER_FRAMES
+	void Park(int frame, const springai::AIFloat3& dest);
+	void ParkUnit(CCircuitUnit* unit, int frame);
+	bool isParked;
+	springai::AIFloat3 parkPos;
+	int parkFrame;  // the last wait orders
+	size_t parkCount;  // units then: after a merge the newcomers get them too
 
 	// Escape: current group strength vs threat where the units are and just ahead on the path
 	float GetSafeThreatAt(const springai::AIFloat3& pos, float safeThreat) const;
@@ -126,6 +162,7 @@ private:
 	bool UpdateScoutStints(int frame, bool isInDanger);
 	void AttackDirect(int frame);  // direct Attack, no firing spots (moving targets)
 	void SendPendingFight(int frame);  // short roam path: the Fight order sent from Update() (not from the path callback)
+	int engageFrame;  // the last decision that took a target
 };
 
 } // namespace circuit

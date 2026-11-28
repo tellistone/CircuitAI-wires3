@@ -60,6 +60,9 @@ public:
 	 */
 	// Raw current strength (GetStrengthSum: power x sqrt(health share)): a rally compares it with enemy blobs
 	float GetRallyStrength() const { return GetStrengthSum(); }
+	// Current squad strength (health-scaled power) x powerMod x the group size bonus (GetCountPowerMod). The
+	// thr_mod.distance curve and base bonus are applied per judged spot. Public: quota.raid_defence sums it
+	float GetSafeThreat() const;
 	// May the group led by unit join this one in a rally? Default: never (tasks without rallies)
 	virtual bool IsRallyCompatible(CCircuitUnit* unit) const { return false; }
 
@@ -68,6 +71,8 @@ public:
 	 */
 	// Committed to the commander's fight while the protect says go (CProtect::IsActing)
 	bool IsProtecting() const;
+	// Committed to a raid incident in its no-go: it waits at the gathering post (CProtect::GetGather)
+	bool IsGathering() const;
 	// Running along an escape path: a committed group counts 0 meanwhile. Default: never
 	virtual bool IsFleeing(int frame) const { return false; }
 
@@ -142,7 +147,9 @@ protected:
 	// Is the straight line from our leader to the host's leader safe to walk for merging?
 	// Default: walkable and no threat at all (CQueryLineMap::IsSafeLine)
 	virtual bool IsSafeMergeLine(const ISquadTask* host) const;
-	ISquadTask* GetMergeTask();
+	// Every period updates (on updCount % period == 1, so any period that divides 32 also checks on the default's
+	// updates), if the group stands where merging is safe (IsMergeSafe)
+	ISquadTask* GetMergeTask(unsigned int period = 32);
 	// Also releases stuck units (far from the regroup spot after 60 s, or a leader that didn't move between
 	// regroups) to the idle pool; leader == nullptr afterwards if none are left
 	bool IsMustRegroup();
@@ -296,9 +303,6 @@ protected:
 	// none of OUTRANGE_CHASED_ROLES? sqSpeed must be at least sqOutrangeSpeed. Unknown type (radar blip): not outranging
 	static bool IsRunningAway(CEnemyInfo* enemy, const springai::AIFloat3& pos, float sqSpeed, float sqOutrangeSpeed,
 			float ourRange);
-	// Current squad strength (health-scaled power) x powerMod x the group size bonus (GetCountPowerMod). The
-	// thr_mod.distance curve and base bonus are applied per judged spot
-	float GetSafeThreat() const;
 	// Multiplier on GetPathThreatCap's squad allowance; < 0 = no cap at all
 	virtual float GetPathThreatMod() const { return 1.f; }
 	// Pathfinder threat cap for a route from startPos to goals (see .cpp): GetPathThreatAllowance, never below the

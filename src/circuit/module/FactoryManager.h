@@ -60,6 +60,7 @@ public:
 	virtual void FallbackTask(CCircuitUnit* unit) override;
 
 	int GetFactoryCount() const { return factories.size(); }
+	std::vector<CCircuitUnit*> GetFactoryUnits() const;  // our factories
 	// A finished factory of ours can make constructors now
 	bool HasBuilderFactory(int frame) const;
 	float GetFactoryPower() const { return factoryPower; }
