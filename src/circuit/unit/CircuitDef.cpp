@@ -427,9 +427,8 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		const int wpBurstFrames = int((wd->GetSalvoSize() - 1) * wd->GetSalvoDelay() * FRAMES_PER_SEC);
 		burstFrames = std::max(burstFrames, wpBurstFrames);
 		if (!wd->IsShield()) {
-			fireWeapons.push_back({mount->GetWeaponMountId(), wpBurstFrames});
-			minFireReload = (fireWeapons.size() == 1) ? int(reloadTime * FRAMES_PER_SEC)
-					: std::min(minFireReload, int(reloadTime * FRAMES_PER_SEC));
+			soleFire = {mount->GetWeaponMountId(), int(reloadTime * FRAMES_PER_SEC), wpBurstFrames};
+			++fireCount;
 		}
 		auto it = customParams.find("shield_drain");  // charge per shot, taken from the unit's own shield
 		if ((it != customParams.end()) && (reloadTime > 0.f) && (maxShield > 0.f)) {

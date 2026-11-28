@@ -185,6 +185,7 @@ void CThreatMap::EnqueueUpdate()
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	areaData = circuit->GetTerrainManager()->GetAreaData();
+	drawFrame = circuit->GetLastFrame();
 
 	circuit->GetScheduler()->RunParallelTask(std::make_shared<CGameTask>(&CThreatMap::Update, this),
 											 std::make_shared<CGameTask>(&CThreatMap::Apply, this));
@@ -270,15 +271,12 @@ float CThreatMap::GetThreatAt(CCircuitUnit* unit, const AIFloat3& position) cons
 float CThreatMap::GetEnemyThreatAt(CCircuitUnit* unit, CEnemyInfo* enemy, const AIFloat3& position) const
 {
 	// As AddEnemyUnit: ranges in squares + speed slack; air flat, ground with AddEnemyAmphGradient's fall-off
-	// (AddEnemyAmphConst for always-hit weapons). Unknown types (radar blips) aren't worth it: 0; nor one reloading
+	// (AddEnemyAmphConst for always-hit weapons). Unknown types (radar blips) aren't worth it: 0
 	CCircuitDef* edef = enemy->GetCircuitDef();
 	if (edef == nullptr) {
 		return 0.f;
 	}
 	const CEnemyUnit* e = enemy->GetData();
-	if (e->IsReloading()) {
-		return 0.f;  // AddEnemyUnit draws none for it (quota.reload_threat_min)
-	}
 	const int vsl = std::min(int(e->GetGroundSpeed() * slackMod.speedMod), slackMod.speedModMax);
 	int ex, ez, x, z;
 	PosToXZ(e->GetFightPos(), ex, ez);  // where AddEnemyUnit draws it: a jumper's landing spot
@@ -372,13 +370,6 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 		return;
 	}
 
-	if (e.isReloading) {
-		// Every weapon reloads a long reload, none ready enough (quota.reload_threat_min, CEnemyUnit::UpdateReload): no
-		// threat and no unit count until it is. It still decloaks
-		AddDecloaker(e);
-		return;
-	}
-
 	const int vsl = std::min(int(e.GetGroundSpeed() * slackMod.speedMod), slackMod.speedModMax);
 	const float count = isCounting ? e.GetCountWeight() : 0.f;
 	if (cdef->HasAntiAir()) {
@@ -388,10 +379,14 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 		auto addAmph = cdef->IsAlwaysHit() ? &CThreatMap::AddEnemyAmphConst : &CThreatMap::AddEnemyAmphGradient;
 		(this->*addAmph)(e, vsl, e.threat, count, drawPlain);
 		// Raid view: only a type with a raid multiplier is drawn again, as the difference it makes
-		// (threat x (raid_thr_mod - 1), count weight raid - plain); FinishLayers adds the plain layers to it
-		const float raidMod = cdef->GetRaidThrMod();
+		// (threat x (raid_thr_mod - 1), count weight raid - plain); FinishLayers adds the plain layers to it.
+		// Its sole long-reload weapon reloading (quota.reload_threat_min, CEnemyUnit::UpdateReload) and not ready
+		// before this map is next drawn: neither threat nor count there (fast units can use the gap; builders and
+		// slow groups, on the plain view, can't get in and out before the next shot)
+		const bool isReloadFree = e.IsReloadFree(drawFrame) && e.IsReloadFree(drawFrame + THREAT_UPDATE_RATE);
+		const float raidMod = isReloadFree ? 0.f : cdef->GetRaidThrMod();
 		if ((raidMod != 1.f) && (e.threat > 0.f)) {
-			const float raidCount = isCounting ? e.GetRaidCountWeight() - count : 0.f;
+			const float raidCount = isCounting ? (isReloadFree ? 0.f : e.GetRaidCountWeight()) - count : 0.f;
 			(this->*addAmph)(e, vsl, e.threat * (raidMod - 1.f), raidCount, drawRaid);
 			++raidModCount;
 		}

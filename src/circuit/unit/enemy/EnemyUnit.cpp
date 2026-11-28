@@ -59,6 +59,7 @@ CEnemyUnit::CEnemyUnit(Id unitId, Unit* unit, CCircuitDef* cdef)
 		, knownFrame(-1)
 		, lastSeen(-1)
 		, lastLos(-1)
+		, shield(nullptr)
 		, data(SEnemyData(cdef,
 			0.f,         // shieldPower
 			0.f,         // health
@@ -101,27 +102,27 @@ CEnemyUnit::CEnemyUnit(CCircuitDef* cdef, const AIFloat3& pos)
 CEnemyUnit::~CEnemyUnit()
 {
 	delete shield;
-	ClearReloads();
+	delete reloadWeapon;
 }
 
 void CEnemyUnit::SetCircuitDef(CCircuitDef* cdef)
 {
 	data.cdef = cdef;
-	ClearReloads();  // another type's weapons
+	ClearReload();  // another type's weapon
 	Init();
 }
 
-void CEnemyUnit::ClearReloads()
+void CEnemyUnit::ClearReload()
 {
-	for (SReloadState& r : reloads) {
-		delete r.weapon;
-	}
-	reloads.clear();
-	data.isReloading = false;
+	delete reloadWeapon;
+	reloadWeapon = nullptr;
+	reloadFrame = -1;
+	data.reloadFreeFrom = data.reloadFreeTo = 0;
 }
 
 void CEnemyUnit::Init()
 {
+	delete shield;  // a new type (SetCircuitDef)
 	if (data.cdef == nullptr) {
 		data.cost = 0.f;
 		shield = nullptr;
@@ -260,49 +261,25 @@ bool CEnemyUnit::UpdateJump(int frame, CTerrainManager* terrainMgr, bool isLand)
 	return isChanged;
 }
 
-bool CEnemyUnit::UpdateReload(int frame, int minReload, float readyShare)
+void CEnemyUnit::UpdateReload(float readyShare)
 {
 	const CCircuitDef* cdef = data.cdef;
-	bool isReloading = false;
-	// Dynamic commanders: the def's mounts aren't the fitted weapons. A type with any weapon of a short reload (or none)
-	// stays a threat
-	if ((minReload > 0) && (cdef != nullptr) && !IsFake() && !cdef->IsDynamicComm()
-		&& !cdef->GetFireWeapons().empty() && (cdef->GetMinFireReload() > minReload))
-	{
-		const std::vector<CCircuitDef::SFireWeapon>& weapons = cdef->GetFireWeapons();
-		if (data.IsInLOS()) {
-			if (reloads.empty()) {
-				reloads.reserve(weapons.size());
-				for (const CCircuitDef::SFireWeapon& w : weapons) {
-					reloads.push_back({WrappWeapon::GetInstance(unit->GetSkirmishAIId(), id, w.mountId), -1, 0});
-				}
-			}
-			for (SReloadState& r : reloads) {
-				if (r.weapon == nullptr) {
-					continue;
-				}
-				const int reloadFrame = r.weapon->GetReloadFrame();
-				if (reloadFrame != r.reloadFrame) {  // a new shot: its reload as it is now (slow included)
-					r.reloadFrame = reloadFrame;
-					r.reloadTime = std::max(r.weapon->GetReloadTime(), 0);
-				}
-			}
-		}
-		isReloading = !reloads.empty();
-		for (size_t i = 0; i < reloads.size(); ++i) {
-			const SReloadState& r = reloads[i];
-			// Shot at reloadFrame - reloadTime; its burst still fires after that
-			const int shotEnd = r.reloadFrame - r.reloadTime + weapons[i].burstFrames;
-			const int readyFrame = r.reloadFrame - int((1.f - readyShare) * r.reloadTime);
-			if ((r.weapon == nullptr) || (r.reloadFrame < 0) || (frame < shotEnd) || (frame >= readyFrame)) {
-				isReloading = false;  // this weapon is ready enough (or unread, or mid-burst)
-				break;
-			}
-		}
+	if ((cdef == nullptr) || !cdef->IsReloadThreat() || IsFake() || !data.IsInLOS()) {
+		return;
 	}
-	const bool isChanged = (isReloading != data.isReloading);
-	data.isReloading = isReloading;
-	return isChanged;
+	const CCircuitDef::SFireWeapon* fire = cdef->GetSoleFireWeapon();
+	if (reloadWeapon == nullptr) {
+		reloadWeapon = WrappWeapon::GetInstance(unit->GetSkirmishAIId(), id, fire->mountId);
+	}
+	const int frame = reloadWeapon->GetReloadFrame();
+	if (frame == reloadFrame) {
+		return;
+	}
+	// A shot, or Zero-K's unit attributes rescaling the reload (slow; a paused one: reloadTime 100000). -1: not read
+	reloadFrame = frame;
+	const int reloadTime = std::max(reloadWeapon->GetReloadTime(), 0);
+	data.reloadFreeFrom = frame - reloadTime + fire->burst;
+	data.reloadFreeTo = frame - int((1.f - readyShare) * reloadTime);
 }
 
 void CEnemyUnit::UpdateInLosData()
