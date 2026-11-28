@@ -15,6 +15,8 @@
 #include "terrain/TerrainManager.h"
 #include "CircuitAI.h"
 #include "util/Scheduler.h"
+
+#include "Log.h"
 #include "json/json.h"
 #include "util/Utils.h"
 
