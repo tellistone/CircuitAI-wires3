@@ -106,15 +106,19 @@ void CBFactoryTask::OnUnitIdle(CCircuitUnit* unit)
 {
 	// The order ended with no frame: the site failed (blocked, unreachable). Another site, not the same one twice more
 	// and then no commander, which leaves the plop job unassigned and blocks any other first factory
-	if (isPlop && (target == nullptr) && (++buildFails <= TASK_RETRIES)) {
+	if (isPlop && (target == nullptr)) {
 		ReplaceSite(unit);
-		return;
+	} else {
+		IBuilderTask::OnUnitIdle(unit);
 	}
-	IBuilderTask::OnUnitIdle(unit);
 }
 
 void CBFactoryTask::ReplaceSite(CCircuitUnit* unit)
 {
+	if (++buildFails > TASK_RETRIES) {  // boxed in: an ordinary first factory job takes over (it still plops)
+		manager->AbortTask(this);
+		return;
+	}
 	stallFrame = -1;
 	if (utils::is_valid(buildPos)) {
 		if (badSites.size() >= 8) {
@@ -175,11 +179,11 @@ void CBFactoryTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, fl
 	}
 
 	// Plop: not over another friendly unit (an allied commander in a crowded start box) that may never step aside, and
-	// not near a site that stalled before: each failure widens the gap by a footprint, so the next site is out of the
-	// crowd rather than the one beside the last
+	// not near a site that failed before: 2 footprints from each after the first failure, up to 4, so the next site is
+	// out of the crowd rather than the one beside the last, and a run of failures can't push it far from the start
 	bool isAvoidUnits = isPlop;
 	const float badSqDist = SQUARE(std::max(buildDef->GetDef()->GetXSize(), buildDef->GetDef()->GetZSize()) * SQUARE_SIZE
-			* badSites.size());
+			* std::min<float>(badSites.size() + 1, 4));
 	auto isBadSite = [this, badSqDist](const AIFloat3& p) {
 		for (const AIFloat3& bad : badSites) {
 			if (bad.SqDistance2D(p) < badSqDist) {
