@@ -315,6 +315,10 @@ private:
 	// (quota.attack_flee_grace) re-spots instead of fleeing
 	bool IsFightOn(int frame) const;
 	bool Flee(int frame);  // false: nowhere better to go, fight instead
+	// quota.attack_shield_flee [<flee>, <resume>]: with most of its units shielded, the group runs (Flee) once their
+	// average charge is below <flee> of full, and only takes up attacking again above <resume> (the gap keeps it from
+	// flip-flopping). True: running or recharging, this update is done
+	bool UpdateShieldFlee(int frame, bool isHoldGround);
 	// Nearest stronger attack group we can stand beside, else the nearest safe defence point of a cluster we hold,
 	// else the closest haven, else base
 	springai::AIFloat3 FindFleeDest(int frame) const;
@@ -614,6 +618,7 @@ private:
 	int corneredFrame;  // last cornered check
 	springai::AIFloat3 corneredPos;  // spot we're moving to while cornered (-RgtVector: none)
 	bool isCorneredHold;  // cornered while holding ground: keep holding (no flee) until the danger ends
+	bool isShieldFlee;  // quota.attack_shield_flee: shields low, running to recharge (UpdateShieldFlee)
 
 	// Targets and routes
 	std::vector<STargetGoal> routeGoals;  // FindTarget: goals of the next target route, nearest first (max 16)

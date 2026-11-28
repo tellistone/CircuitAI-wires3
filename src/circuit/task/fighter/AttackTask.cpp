@@ -191,6 +191,7 @@ CAttackTask::CAttackTask(ITaskManager* mgr, float minPower, float powerMod)
 		, corneredFrame(-1)
 		, corneredPos(-RgtVector)
 		, isCorneredHold(false)
+		, isShieldFlee(false)
 		, fireRangeLand(0.f)
 		, fireRangeWater(0.f)
 		, targetRouteTries(0)
@@ -1703,6 +1704,9 @@ bool CAttackTask::UpdateEscape(int frame)
 	}
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
 	isAtFleeDest = false;
+	if (UpdateShieldFlee(frame, isHoldGround)) {
+		return true;
+	}
 	// The escape would flee from a fight the pick still accepts (it judges the target's spot, the escape each unit's).
 	// For a turret just seen, the flee grace (quota.attack_flee_grace) re-spots first. If the group flees anyway from a
 	// target standing still, it passes on it (6, 12, 24 s), or the next pick sends it straight back (a moving one may
@@ -1749,6 +1753,55 @@ bool CAttackTask::UpdateEscape(int frame)
 		}
 	}
 	return false;
+}
+
+bool CAttackTask::UpdateShieldFlee(int frame, bool isHoldGround)
+{
+	// Most units shielded (Felon, Aspis, Convict groups): their shields are the group's health. Below <flee> on average
+	// it runs where the escape would (FindFleeDest) and recharges there; only above <resume> does it attack again.
+	// Units whose own shield is at their retreat_shield have left already (IFighterTask::OnUnitDamaged); this is the
+	// group's rule, for shields drained together. Not while holding ground at base: that fight is held, as the escape's
+	const std::pair<float, float>& limits = GetMilitaryMgr()->GetAttackShieldFlee();
+	if ((limits.first <= 0.f) || units.empty() || (shields.size() * 2 <= units.size())) {
+		isShieldFlee = false;
+		return false;
+	}
+	float sum = 0.f;
+	int count = 0;
+	for (CCircuitUnit* unit : shields) {
+		const float maxShield = unit->GetCircuitDef()->GetMaxShield();
+		if (maxShield > 0.f) {
+			sum += std::min(unit->GetShieldPower() / maxShield, 1.f);
+			++count;
+		}
+	}
+	if (count == 0) {
+		isShieldFlee = false;
+		return false;
+	}
+	const float avg = sum / count;
+	if (isShieldFlee) {
+		isShieldFlee = (avg <= limits.second);
+	} else {
+		isShieldFlee = (avg < limits.first);
+	}
+	if (!isShieldFlee || isHoldGround) {
+		return false;
+	}
+	if (Flee(frame)) {
+		return true;  // running to recharge
+	}
+	// At the flee destination (Flee set isAtFleeDest): recharge here. Fight back at what is in range, but never set
+	// off for a target; hold on decisions only (~2 s), as Decide would
+	isAtFleeDest = false;
+	corneredPos = -RgtVector;
+	isCorneredHold = false;
+	if ((updCount % 2 == 0) && !EngageInRange(frame, true)) {
+		SetTarget(nullptr);
+		state = State::ROAM;
+		HoldPosition(true);
+	}
+	return true;
 }
 
 bool CAttackTask::IsFormationFlee(int frame) const

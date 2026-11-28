@@ -501,6 +501,9 @@ public:
 	// own check re-places its firing spots and pulls back endangered units this long before it flees (ISquadTask::IsInFleeGrace)
 	int GetRaidFleeGrace() const { return raidFleeGrace; }
 	int GetAttackFleeGrace() const { return attackFleeGrace; }
+	// quota.attack_shield_flee [<flee>, <resume>] (shares of full charge; flee 0 = off): a mostly shielded attack group
+	// runs below <flee> average charge and attacks again above <resume> (CAttackTask::UpdateShieldFlee)
+	const std::pair<float, float>& GetAttackShieldFlee() const { return attackShieldFlee; }
 	// quota.danger_margin [<share>, <cost x>] (share 1 = off): attack and raid routes cost more from share x the escape's
 	// allowance on, up to mod x at the allowance (cost 1 = routes off), and firing spots prefer spots under share x it
 	// (IFighterTask::FindFireSpot)
@@ -914,6 +917,7 @@ private:
 	float attackFleeShare;  // quota.attack_flee_share
 	int raidFleeGrace;  // quota.raid_flee_grace (frames)
 	int attackFleeGrace;  // quota.attack_flee_grace (frames)
+	std::pair<float, float> attackShieldFlee;  // quota.attack_shield_flee [<flee>, <resume>]
 	float dangerMargin = 1.f;  // quota.danger_margin[0]
 	float dangerMarginMod = 1.f;  // quota.danger_margin[1]
 	float attackKeepThreat;  // quota.attack_keep_threat
