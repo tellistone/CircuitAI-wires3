@@ -15,12 +15,15 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
     on its planned firing side if it has one, that ends where the front row stands 0.9x the group's fire range short
     of it, or just outside the target's own range if that is farther (turrets and skirmishers that outrange us aren't
     walked through slowly; artillery beyond our sight is engaged at once). The path is kept while its end moves under
-    128 elmos. The fight starts at contact (checked every update), once the front row stands at the end, or once the
-    group is in danger, so the flee grace, holding ground and the pass on a target we fled from work as in a fight.
+    128 elmos. The fight starts at contact or once the front row stands at the end (both checked every update), or
+    once the group is in danger or the end ahead is, so the flee grace, holding ground and the pass on a target we
+    fled from work as in a fight. A target that dies on the way is replaced at once, and the walk-in ends with the
+    fight or the first decision that finds nothing to engage, so a group roaming again is never taken for one.
     While walking in, the target needs no line of fire to stay picked (a dip on the way doesn't swap the walk for a
     route search every decision), and an enemy in contact ranks first, as in a fight. A fight under way never forms
-    the line again. Not inside the base defence radius, and not without a line, a straight walk over ground the leader
-    can move on, or room to walk: engaged at once as before.
+    the line again. Not inside the base defence radius, and not while the line isn't formed (every unit would walk
+    to the path's one end), without a straight walk over ground the leader can move on, or without room to walk:
+    engaged at once as before.
   - **Fan out:** each ranged unit of an attack group (not escorts) prefers its own side of the firing-spot arc: its
     angle off the leader's bearing from the target, times its distance over the arc's radius while it is farther out
     (at most 45 degrees), so the group keeps the width it walked in with. At or inside its arc a unit keeps its own

@@ -490,11 +490,12 @@
 // reverse order (assaults at the back, towards the pursuers) and waiting for no one, so they don't run bunched. A
 // target picked within the leader's range (weapons or sight) but not yet in contact is walked to in line too,
 // straight at it (or at its planned firing side) until the front row stands 0.9x the group's fire range short of
-// it, or just outside the target's own range if that is farther; the fight starts once it is in contact (checked
-// every second), once the front row stands there, or once the group is in danger. Not inside the base defence
-// radius, where it is engaged at once. A fight under way never forms the line again. The units then fan out across
-// the firing-spot arc, each on its own side of the leader (see attack_spot_threat). Where no line of 2 fits (terrain,
-// buildings) the units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; when one
+// it, or just outside the target's own range if that is farther; the fight starts once it is in contact or the
+// front row stands there (both checked every second), or once the group is in danger or the walk's end ahead is; a
+// target that dies on the way is replaced at once. Not inside the base defence radius, nor while the line isn't
+// formed (every unit would walk to one point): engaged at once. A fight under way never forms the line again. The
+// units then fan out across the firing-spot arc, each on its own side of the leader (see attack_spot_threat). Where
+// no line of 2 fits (terrain, buildings) the units follow the path as before until 2 fit again for 3 s. The line waits for units that fall behind; when one
 // falls far behind, the usual regroup stops the line where it stands (just after a fight: at the leader, facing the
 // nearest strong enemy group) and the units take their slots in it, until the line is whole (as a gather where no
 // line fits). Newcomers (units that joined attack and raid groups by a merge or a new assignment, until they come within

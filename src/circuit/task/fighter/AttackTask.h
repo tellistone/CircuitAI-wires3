@@ -294,6 +294,7 @@ private:
 	// How far behind its line's front row our leader stands (its row's offset; 0 in the front row, or with no line).
 	// A target route's end is where the front row stands, but the engage check is at the leader (EngageInRange)
 	float GetLeaderLineOffset() const;
+	bool IsLineAtEnd() const;  // the line is on and its front row stands at the path's end
 	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES.
 	// A joint strength's partner is left out of the route's cover (SetRouteCover)
 	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range, const SStrength& strength,
@@ -394,8 +395,8 @@ private:
 	// A pick in range but not in contact, while roaming: the line walks straight in to it (APPROACH_STAND x our fire
 	// range short, or outside its own reach), and the fight starts at contact. False: engage at once as before
 	bool ApproachInLine(int frame);
-	// Walking the path ApproachInLine sent. Its target may have died since (until the next decision): callers that
-	// need it test it
+	// Walking the path ApproachInLine sent, until the fight starts (StartFight) or a decision finds nothing to engage
+	// (EngageInRange). Its target may have died since (until the next update): callers that need it test it
 	bool IsApproaching() const;
 	// Its range spot (GetRangePos) within highestRange of the leader, and seen from there (IsSeenByUnits). Not only
 	// from the leader: in line it stands its row's offset behind the front row, which stands where the route ended.

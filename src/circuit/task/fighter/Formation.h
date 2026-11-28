@@ -79,6 +79,7 @@ public:
 	void Update(int frame, bool isActive, std::vector<CCircuitUnit*>& outStuck);
 	void Remove(CCircuitUnit* unit);  // it left the squad
 	bool IsOn() const { return isOn; }  // the line is formed: its units walk to GetOrder
+	bool IsAtEnd() const { return isLineToEnd && (anchorArc >= arcs.back()); }  // the front row stands at the path's end
 	// Front to back row while IsOn (else 0): the leader stands up to this far from the front row
 	float GetDepth() const { return isOn ? depth : 0.f; }
 	// While IsOn (else 0): how far the leader's row stands behind the front row (0 in the front row)
@@ -148,7 +149,6 @@ private:
 	void ShiftRows(float pace, float gap);
 	void PlaceSlots(int frame, float pace, float leadSec, std::vector<CCircuitUnit*>& outStuck);
 	void UpdateFacing(int frame, const springai::AIFloat3& pathEnd, float radius);  // start facing at the path's end, or turn
-	bool IsAtEnd() const { return isLineToEnd && (anchorArc >= arcs.back()); }  // the front row stands at the path's end
 	void Reset();
 
 	// The centre line: the track of the leader's spot on its path, the spot, then the path ahead; arc 0 at the spot.

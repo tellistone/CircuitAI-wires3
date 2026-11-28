@@ -416,11 +416,14 @@ void CAttackTask::Update()
 	if (wasRegroup && !isForced && !pPath->posPath.empty()) {
 		ActivePath(lowestSpeed);
 	}
-	// The target died while we fought it (~CEnemyInfo: ClearTarget leaves ENGAGE with no target; every decision that
-	// finds nothing sets ROAM): pick the next one now rather than at the next decision, so the units don't stand idle
-	const bool isTargetLost = (State::ENGAGE == state) && (target == nullptr);
-	// Walking in line to the target (ApproachInLine): the fight starts as soon as it is in contact
-	const bool isContact = (target != nullptr) && IsApproaching() && IsInContact(target, false, frame);
+	// The target died while we fought it or walked in to it (~CEnemyInfo: ClearTarget leaves the state as it is; every
+	// decision that finds nothing sets ROAM and ends a walk-in): pick the next one now rather than at the next decision,
+	// so the units don't stand idle or walk on to a dead target's spot
+	const bool isTargetLost = ((State::ENGAGE == state) || IsApproaching()) && (target == nullptr);
+	// Walking in line to the target (ApproachInLine): the fight starts as soon as the front row stands at the walk's
+	// end, or the target is in contact
+	const bool isContact = (target != nullptr) && IsApproaching()
+			&& (IsLineAtEnd() || IsInContact(target, false, frame));
 	if (!isDecision && !isForced && !isTargetLost && !isContact) {
 		return;
 	}
@@ -560,21 +563,23 @@ bool CAttackTask::EngageInRange(int frame, bool isWalking)
 	if (isWalking && (FindNearestHittable(frame, GetContactBound(frame)) == nullptr)) {
 		SetTarget(nullptr);
 		fleeTargetId = -1;  // as FindTarget: the target we fled from is ours only at the next pick
-		return false;
+	} else if (FindTarget()) {
+		// ApproachInLine true: in sight, not yet in contact: the line walks in, the fight starts at contact (Update)
+		if (!ApproachInLine(frame)) {
+			StartFight(frame);
+		}
+		return true;
 	}
-	if (!FindTarget()) {
-		return false;
-	}
-	if (ApproachInLine(frame)) {
-		return true;  // in sight, not yet in contact: the line walks in, the fight starts at contact (Update)
-	}
-	StartFight(frame);
-	return true;
+	// Nothing to engage: a walk-in ends here (IsApproaching), so the route or hold that follows isn't taken for one
+	// while it is still being worked out
+	approachPath = nullptr;
+	return false;
 }
 
 void CAttackTask::StartFight(int frame)
 {
 	state = State::ENGAGE;
+	approachPath = nullptr;  // a walk-in ends (IsApproaching): the fight sets no path, so pPath may still be it
 	NoteCoverEngage(frame);  // the cover log
 	NoteBalanceEngage(frame);  // quota.attack_balance: the outcome log
 	Engage(frame);
@@ -584,13 +589,14 @@ bool CAttackTask::ApproachInLine(int frame)
 {
 	// The pick is within range of the leader (highestRange: sight as well as weapons) but not in contact: the line
 	// walks straight at it, rather than every unit walking to its own firing spot from here, bunching on the way. The
-	// fight starts at contact (IsInContact at its plain reach, kept at 1.25x once engaged), checked every update, or
-	// once the front row stands at the walk's end. Only from roaming: a fight under way never forms the line again
-	// (a kill, a target stepping back). Not inside the base defence radius: at home speed matters more than shape,
-	// and the fight there holds ground. False: engage at once as before (no line, already in contact or about there,
-	// or no straight walk there)
-	if ((State::ENGAGE == state) || !IsStandAllowed(frame) || IsInBaseRadius(target->GetPos())
-		|| IsInContact(target, false, frame))
+	// fight starts at contact (IsInContact at its plain reach, kept at 1.25x once engaged) or once the front row
+	// stands at the walk's end, both checked every update. Only from roaming, and only with the line formed: with it
+	// off every unit would walk the path to its one end. A fight under way never forms the line again (a kill, a
+	// target stepping back). Not inside the base defence radius: at home speed matters more than shape, and the fight
+	// there holds ground. False: engage at once as before (no line, already in contact or about there, or no straight
+	// walk there)
+	if ((State::ENGAGE == state) || (GetFormation() == nullptr) || (IsApproaching() && IsLineAtEnd())
+		|| IsInBaseRadius(target->GetPos()) || IsInContact(target, false, frame))
 	{
 		return false;
 	}
@@ -1583,6 +1589,12 @@ float CAttackTask::GetLeaderLineOffset() const
 	return (line != nullptr) ? line->GetLeaderOffset() : 0.f;
 }
 
+bool CAttackTask::IsLineAtEnd() const
+{
+	const CFormation* line = GetFormation();  // nullptr: the line is off
+	return (line != nullptr) && line->IsAtEnd();
+}
+
 void CAttackTask::RunGroupRoute(int frame, const AIFloat3& goal, float range, const SStrength& strength,
 		std::function<void (const CQueryPathSingle*)>&& onComplete)
 {
@@ -1682,9 +1694,10 @@ bool CAttackTask::UpdateEscape(int frame)
 	// Checked on every update (not just every decision), also while engaging or reinforcing.
 	// Not while defending: a fight with a target inside the base defence radius is held (no flee, no pull-back)
 	const bool isDanger = IsInDanger(frame, GetMilitaryMgr()->GetAttackFleeShare());
-	// In danger while walking in line to the target (ApproachInLine): the fight starts now, so it is escaped as a fight
-	// is (the flee grace re-spots first; a static target we flee from anyway is passed on)
-	if (isDanger && (target != nullptr) && IsApproaching()) {
+	// In danger while walking in line to the target (ApproachInLine), or its end ahead is: the fight starts now, so it
+	// is escaped as a fight is (the flee grace re-spots first; a static target we flee from anyway is passed on), and
+	// its threat-scored firing spots replace an end that a re-plan would only keep
+	if ((isDanger || isPathAheadUnsafe) && (target != nullptr) && IsApproaching()) {
 		StartFight(frame);
 	}
 	const bool isHoldGround = IsHoldingGround(frame) || (isDanger && isCorneredHold);
