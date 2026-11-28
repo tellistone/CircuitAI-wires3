@@ -67,8 +67,8 @@ public:
 			float ratioComm = 1.1f;  // duel: their time to kill us over ours to kill them; kept at 1.0
 			float minHealth = 0.6f;  // and at least its retreat + 0.15
 			float leash = 900.f;  // from where the attacks began (the anchor)
-			int maxFrames = FRAMES_PER_SEC * 30;  // per attack; walk + kill under half of it (a quarter in the opening)
-			int cooldownFrames = FRAMES_PER_SEC * 10;  // after any end but a kill
+			int maxFrames = FRAMES_PER_SEC * 30;  // per attack; walk + kill under half of it (a third in the opening)
+			int cooldownFrames = FRAMES_PER_SEC * 10;  // after any end but a kill; doubles on such ends in a row, to 4x
 			bool isInOpening = true;  // false: off until the opening ends
 		} attack;
 	};

@@ -21,6 +21,7 @@
 #include "terrain/TerrainManager.h"
 #include "terrain/path/PathFinder.h"
 #include "task/PlayerTask.h"
+#include "task/fighter/AttackTask.h"
 #include "unit/CircuitUnit.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "util/GameAttribute.h"
@@ -1174,6 +1175,14 @@ int CCircuitAI::EnemyDestroyed(CEnemyInfo* enemy)
 	return 0;  // signaling: OK
 }
 
+// The manager a unit's player orders go to: a commander in its attack goes back to its own (the builder manager),
+// as its attack's end would put it, so no idle task keeps listing it
+static ITaskManager* GetPlayerTaskMgr(CCircuitAI* circuit, CCircuitUnit* unit)
+{
+	return (CAttackTask::GetCommAttackOf(unit) != nullptr)
+			? static_cast<ITaskManager*>(circuit->GetBuilderManager()) : unit->GetTask()->GetManager();
+}
+
 int CCircuitAI::PlayerCommand(const std::vector<CCircuitUnit*>& units)
 {
 	for (CCircuitUnit* unit : units) {
@@ -1181,7 +1190,7 @@ int CCircuitAI::PlayerCommand(const std::vector<CCircuitUnit*>& units)
 			(unit->GetTask()->GetType() != IUnitTask::Type::NIL) &&  // ignore orders to nanoframes
 			(unit->GetTask()->GetType() != IUnitTask::Type::PLAYER))
 		{
-			unit->GetTask()->GetManager()->AssignPlayerTask(unit);
+			GetPlayerTaskMgr(this, unit)->AssignPlayerTask(unit);
 		}
 	}
 
@@ -1459,7 +1468,7 @@ CEnemyInfo* CCircuitAI::GetEnemyInfo(ICoreUnit::Id unitId) const
 void CCircuitAI::DisableControl(CCircuitUnit* unit)
 {
 	if (unit->GetTask() != nullptr) {
-		ITaskManager* mgr = unit->GetTask()->GetManager();
+		ITaskManager* mgr = GetPlayerTaskMgr(this, unit);
 		mgr->AssignTask(unit, new CPlayerTask(mgr));
 	}
 }

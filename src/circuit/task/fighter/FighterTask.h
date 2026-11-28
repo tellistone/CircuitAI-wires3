@@ -47,7 +47,6 @@ public:
 	FightType GetFightType() const { return fightType; }
 	const springai::AIFloat3& GetPosition() const { return position; }
 
-	void SetPowerMod(float mod) { powerMod = mod; }
 	float GetAttackPower() const { return attackPower; }
 	float GetAreaPower() const { return areaPower; }  // of the units that are area damage (CMilitaryManager::IsAreaDamage)
 	// Group size bonus to the group's own power where it is compared against enemy threat (Lanchester's square

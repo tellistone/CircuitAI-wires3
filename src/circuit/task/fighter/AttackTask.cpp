@@ -1144,8 +1144,8 @@ void CAttackTask::HandCommBack(CCircuitUnit* unit, CommEnd reason)
 
 void CAttackTask::OnCommDamaged(CCircuitUnit* unit)
 {
-	// The builder retreat, as for its jobs (the commander isn't one of our army's units, whose retreat is the military
-	// one); not out of a duel it is winning: both walk at about the same speed, a turn away is shot in the back
+	// The builder retreat, as for its jobs (not the military one); not out of a duel it is winning, their D-gun taken
+	// as ready: both walk at about the same speed, a turn away is shot in the back
 	MarkStrengthStale();  // its health changed: GetUnitStrengths reads again
 	CCircuitAI* circuit = manager->GetCircuit();
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
@@ -1153,7 +1153,7 @@ void CAttackTask::OnCommDamaged(CCircuitUnit* unit)
 		return;
 	}
 	const bool isDisarmed = unit->IsDisarmed(circuit->GetLastFrame());
-	if (!isDisarmed && builderMgr->IsCommDuelHeld(unit)) {
+	if (!isDisarmed && builderMgr->IsCommDuelHeld(unit, true)) {
 		return;
 	}
 	EndComm(isDisarmed ? CommEnd::DISARM : CommEnd::RETREAT);

@@ -163,7 +163,7 @@ private:
 	// It left (RemoveAssignee, Stop): to the builder manager's idle task, its jump setting back, the end noted
 	void HandCommBack(CCircuitUnit* unit, CommEnd reason);
 	// Health retreat (or disarmed): the builder retreat, as for its jobs (CBuilderManager::IsWorkerRetreat), but not
-	// out of a duel it is winning (CBuilderManager::IsCommDuelHeld)
+	// out of a duel it is winning with their D-gun ready (CBuilderManager::IsCommDuelHeld)
 	void OnCommDamaged(CCircuitUnit* unit);
 	// FindTarget's filter for a commander attack; isCurrent: kept at the keep ratios
 	bool IsCommTargetOk(CEnemyInfo* enemy, bool isCurrent);

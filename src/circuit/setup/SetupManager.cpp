@@ -434,19 +434,17 @@ void CSetupManager::ReadConfig()
 		if (atck.isObject()) {
 			attack.isEnable = atck.get("enable", true).asBool();
 			attack.radius = std::max(atck.get("radius", attack.radius).asFloat(), 0.f);
+			static const std::map<std::string, unsigned> kindNames = {{"static", SCommInfo::SAttack::STATIC},
+					{"raid_target", SCommInfo::SAttack::RAID}, {"commander", SCommInfo::SAttack::COMM}};
 			const Json::Value& kinds = atck["targets"];
 			if (kinds.isArray()) {
 				for (const Json::Value& kind : kinds) {
-					const std::string name = kind.asString();
-					if (name == "static") {
-						attack.kinds |= SCommInfo::SAttack::STATIC;
-					} else if (name == "raid_target") {
-						attack.kinds |= SCommInfo::SAttack::RAID;
-					} else if (name == "commander") {
-						attack.kinds |= SCommInfo::SAttack::COMM;
+					auto it = kindNames.find(kind.asString());
+					if (it != kindNames.end()) {
+						attack.kinds |= it->second;
 					} else {
 						circuit->LOG("CONFIG %s: commander '%s' attack.targets has unknown kind '%s'", cfgName.c_str(),
-								commName.c_str(), name.c_str());
+								commName.c_str(), kind.asString().c_str());
 					}
 				}
 			} else {
@@ -456,8 +454,10 @@ void CSetupManager::ReadConfig()
 			attack.ratioComm = std::max(atck.get("ratio_comm", attack.ratioComm).asFloat(), 1.f);
 			attack.minHealth = utils::clamp(atck.get("min_health", attack.minHealth).asFloat(), 0.f, 1.f);
 			attack.leash = std::max(atck.get("leash", attack.leash).asFloat(), attack.radius);
-			attack.maxFrames = std::max(atck.get("max_sec", 30.f).asFloat(), 1.f) * FRAMES_PER_SEC;
-			attack.cooldownFrames = std::max(atck.get("cooldown_sec", 10.f).asFloat(), 0.f) * FRAMES_PER_SEC;
+			attack.maxFrames = std::max(atck.get("max_sec", attack.maxFrames / FRAMES_PER_SEC).asFloat(), 1.f)
+					* FRAMES_PER_SEC;
+			attack.cooldownFrames = std::max(atck.get("cooldown_sec", attack.cooldownFrames / FRAMES_PER_SEC).asFloat(),
+					0.f) * FRAMES_PER_SEC;
 			attack.isInOpening = atck.get("in_opening", true).asBool();
 			if (attack.kinds == 0) {
 				attack.isEnable = false;

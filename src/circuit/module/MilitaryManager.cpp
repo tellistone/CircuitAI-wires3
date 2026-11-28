@@ -1672,9 +1672,9 @@ IFighterTask* CMilitaryManager::EnqueueTask(IFighterTask::FightType type)
 	return AddFightTask(type, task);
 }
 
-CAttackTask* CMilitaryManager::EnqueueCommAttack(CCircuitUnit* comm, float ratio)
+CAttackTask* CMilitaryManager::EnqueueCommAttack(CCircuitUnit* comm)
 {
-	CAttackTask* task = new CAttackTask(this, minAttackers, 1.f / std::max(ratio, 1.f));
+	CAttackTask* task = new CAttackTask(this, minAttackers, NewAttackPowerMod());
 	task->SetComm(comm);
 	commAttacks.insert(task);
 	fightUpdates.push_back(task);
@@ -1684,7 +1684,6 @@ CAttackTask* CMilitaryManager::EnqueueCommAttack(CCircuitUnit* comm, float ratio
 void CMilitaryManager::PromoteCommAttack(CAttackTask* task)
 {
 	if ((commAttacks.erase(task) > 0) && !task->IsDead()) {
-		task->SetPowerMod(NewAttackPowerMod());
 		fightTasks[static_cast<IFighterTask::FT>(IFighterTask::FightType::ATTACK)].insert(task);
 	}
 }
