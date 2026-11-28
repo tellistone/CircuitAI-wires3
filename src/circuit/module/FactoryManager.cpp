@@ -1042,6 +1042,15 @@ CCircuitUnit* CFactoryManager::NeedUpgrade()
 	return nullptr;
 }
 
+std::vector<CCircuitUnit*> CFactoryManager::GetFactoryUnits() const
+{
+	std::vector<CCircuitUnit*> units;
+	for (const SFactory& fac : factories) {
+		units.push_back(fac.unit);
+	}
+	return units;
+}
+
 CCircuitUnit* CFactoryManager::GetClosestFactory(AIFloat3 position)
 {
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();

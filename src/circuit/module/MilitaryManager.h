@@ -45,6 +45,7 @@ class CCreepPlanner;
 class CAllyCover;
 class CAttackBalance;
 class CProtect;
+class CRaidDefence;
 class CFrontline;
 class CTurretPicker;
 class CAATurretPicker;
@@ -132,6 +133,9 @@ public:
 	// there; kept while the choke is on our line and was short within SOLO_PARK_KEEP.
 	// -RgtVector: none (no choke map yet, none short or reachable)
 	springai::AIFloat3 GetSoloPark(const IFighterTask* task, CCircuitUnit* leader);
+	// The spot the hunter's task holds now (GetSoloPark's last pick), -RgtVector: none. quota.raid_defence counts a
+	// parked hunter at the post nearest it
+	springai::AIFloat3 GetSoloParkSpot(const IFighterTask* task) const;
 	// A solo hunter left for a quota.protect commit: it goes back to hunting alone once its group stops protecting
 	void NoteSoloProtect(CCircuitUnit* unit);
 	// An anti-heavy unit's squad: one of its type nearby with room (CAntiHeavyTask::CanAssignTo), else a new one.
@@ -550,6 +554,8 @@ public:
 	CAttackBalance* GetAttackBalance() const { return attackBalance.get(); }
 	// quota.protect: one go or no-go for the groups that can reach our commander under a rush (CProtect)
 	CProtect* GetProtect() const { return protect.get(); }
+	// quota.raid_defence: a share of our raiders defends our ground early in the game (CRaidDefence)
+	CRaidDefence* GetRaidDefence() const { return raidDefence.get(); }
 	// quota.attack_path_dynamic_cost: per route kind, threat cost = threat x (1 + threat / the allowance there)
 	bool IsAttackRouteDynamic(AttackRoute route) const { return attackPathDynamic[static_cast<int>(route)]; }
 	float GetAttackFleePathMaxWeight() const { return attackFleePathMaxWeight; }
@@ -685,6 +691,7 @@ private:
 	void UpdateAhStats();  // every second (NoteAh)
 	void LogAhStats();
 	void UpdateProtect();  // quota.protect, once a second
+	void UpdateRaidDefence();  // quota.raid_defence, once a second
 	void UpdateAttackRally();  // quota.attack_merge.rally, once a second
 	void UpdateRaidRally();  // quota.raid_rally, once a second
 	void UpdateAttackThreatFloor();  // quota.attack_threat_floor, once a second
@@ -921,6 +928,7 @@ private:
 	std::unique_ptr<CAllyCover> allyCover;  // quota.attack_ally_cover
 	std::unique_ptr<CAttackBalance> attackBalance;  // quota.attack_balance
 	std::unique_ptr<CProtect> protect;  // quota.protect
+	std::unique_ptr<CRaidDefence> raidDefence;  // quota.raid_defence
 	bool attackPathDynamic[static_cast<int>(AttackRoute::_SIZE_)];  // quota.attack_path_dynamic_cost
 	float attackFleePathMaxWeight;  // quota.attack_flee_path_max_weight
 	float attackSpotThreat;  // quota.attack_spot_threat

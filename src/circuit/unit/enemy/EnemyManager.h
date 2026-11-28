@@ -111,6 +111,19 @@ public:
 		float count;  // its enemy unit count, as squad threat counts them (CEnemyUnit::GetCountWeight)
 	};
 	const std::vector<SEnemyBlob>& GetBlobs(int frame, int seenFrames, bool isRaiders = false);
+	// GetBlobs' grouping, for any set of enemies (CRaidDefence: raiders on our ground): the hottest seed (most threat
+	// within BLOB_RADIUS) takes the untaken enemies within BLOB_RADIUS of it, then the next, up to maxBlobs. Reorders
+	// members; each one's blob is its index in outBlobs (-1: none, past maxBlobs). outBlobs in seed order
+	static constexpr float BLOB_RADIUS = 800.f;
+	struct SBlobMember {
+		springai::AIFloat3 pos;
+		float threat;
+		float count;
+		int id = -1;  // the caller's
+		float sum = 0.f;  // threat within BLOB_RADIUS, itself included
+		int blob = -1;
+	};
+	static void MakeBlobs(std::vector<SBlobMember>& members, size_t maxBlobs, std::vector<SEnemyBlob>& outBlobs);
 
 	void UpdateAreaUsers(CCircuitAI* ai);
 	void SetAreaUpdated(bool value) { isAreaUpdated = value; }

@@ -910,7 +910,7 @@ int CMicroPather::FindBestPathToPointOnRadius(void* startNode, void* endNode,
 	return NO_SOLUTION;
 }
 
-void CMicroPather::MakeCostMap(void* startNode, std::vector<float>& costMap, bool isBottleneck)
+void CMicroPather::MakeCostMap(void* startNode, std::vector<float>& costMap, bool isBottleneck, std::vector<float>* lenMap)
 {
 	assert(!isRunning);
 	isRunning = true;
@@ -958,6 +958,11 @@ void CMicroPather::MakeCostMap(void* startNode, std::vector<float>& costMap, boo
 
 		float nodeCostFromStart = node->costFromStart;
 		costMap[node->index2] = nodeCostFromStart;
+		if (lenMap != nullptr) {  // its parent is final (popped before it): one step on from there
+			const PathNode* parent = node->parent;
+			(*lenMap)[node->index2] = (parent == nullptr) ? 0.f : (*lenMap)[parent->index2]
+					+ (((node->x2 != parent->x2) && (node->y2 != parent->y2)) ? SQRT_2 : 1.f);
+		}
 
 		for (int i = 0; i < 8; ++i) {
 			const int indexEnd = offsets[i] + indexStart;
