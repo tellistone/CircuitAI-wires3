@@ -76,6 +76,7 @@ static constexpr int COMM_STATE_FRAMES = 4;  // the danger list, cover list and 
 static constexpr int COMM_DANGER_MEMORY = FRAMES_PER_SEC * 5;  // jobs and morph starts keep a danger this long after it left radar and LOS
 static constexpr int BUILDER_SCAR_FRAMES = FRAMES_PER_SEC * 5;  // other builders all keep jobs off a spot one of them fled from this long
 static constexpr int BUILDER_CORNER_TIMEOUT = FRAMES_PER_SEC * 30;  // an unstarted cornered defence nobody builds is dropped after this
+static constexpr float CORNER_COST_MAX = 2.f;  // turret.same_radius: a cornered builder's next defence costs at most this x the first that can hit
 static constexpr int BUILDER_IDLE_WAIT = FRAMES_PER_SEC * 3;  // other builders idle in a flee zone with no safe job look again after this
 static constexpr int TURRET_ASK_FRAMES = FRAMES_PER_SEC * 10;  // an after-flee turret request lasts this long
 // Commander attack (commander.json attack, TryCommAttack)
@@ -746,6 +747,16 @@ void CBuilderManager::ForEachQueuedTower(const std::function<void (IBuilderTask*
 			}
 		}
 	}
+}
+
+IBuilderTask* CBuilderManager::GetFrameJob(CCircuitUnit* unit) const
+{
+	auto it = unfinishedUnits.find(unit);
+	if (it != unfinishedUnits.end()) {
+		return it->second;
+	}
+	auto itr = repairedUnits.find(unit->GetId());
+	return (itr != repairedUnits.end()) ? itr->second : nullptr;
 }
 
 void CBuilderManager::ActivateTask(IBuilderTask* task)
@@ -2805,19 +2816,6 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 	}
 
 	if (task == nullptr) {
-		// The first one porcupine.land/water lists (its build order) that can hit the danger
-		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
-		CCircuitDef* buildDef = nullptr;
-		for (CCircuitDef* ddef : isWater ? militaryMgr->GetWaterDefenders() : militaryMgr->GetLandDefenders()) {
-			if (ddef->IsAvailable(frame) && cdef->CanBuild(ddef) && canHit(ddef)) {
-				buildDef = ddef;
-				break;
-			}
-		}
-		if (buildDef == nullptr) {
-			return nullptr;
-		}
-
 		// Behind the builder, away from the danger, within its build range
 		AIFloat3 buildPos = pos;
 		AIFloat3 away = pos - dangerPos;
@@ -2827,12 +2825,52 @@ IBuilderTask* CBuilderManager::MakeCommDefence(CCircuitUnit* unit, SCommState* s
 			buildPos += away / len * (buildDist * 0.5f);
 		}
 		CTerrainManager::CorrectPosition(buildPos);
-		// Other builders: an unstarted one is dropped soon after the last builder leaves it, not left as a job
-		const int timeout = isBuilder ? BUILDER_CORNER_TIMEOUT : ASSIGN_TIMEOUT;
-		CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::CORNERED);
-		task = EnqueueTask(IBuilderTask::Priority::HIGH, buildDef, buildPos, IBuilderTask::BuildType::DEFENCE,
-						   buildDef->GetCostM(), SQUARE_SIZE * 8.f, true, timeout);
-		static_cast<CBDefenceTask*>(task)->SetOffPoints();  // no defence point counts it
+
+		// The first one porcupine.land/water lists (its build order) that can hit the danger. turret.same_radius: with
+		// one of its type within it of the spot, the next that costs at most CORNER_COST_MAX x the first, so it isn't
+		// stuck nanolathing a dear one under fire; with none such, it helps an unfinished one of ours that stood in the
+		// way, no nearer the danger than it is; else none
+		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
+		CCircuitDef* buildDef = nullptr;
+		IBuilderTask* blockJob = nullptr;
+		float maxCost = -1.f;
+		std::vector<const CCircuitDef*> refused;  // the list repeats defs: each is asked (and logged) once
+		for (CCircuitDef* ddef : isWater ? militaryMgr->GetWaterDefenders() : militaryMgr->GetLandDefenders()) {
+			if (!ddef->IsAvailable(frame) || !cdef->CanBuild(ddef) || !canHit(ddef)
+				|| (std::find(refused.begin(), refused.end(), ddef) != refused.end()))
+			{
+				continue;
+			}
+			if (maxCost < 0.f) {
+				maxCost = ddef->GetCostM() * CORNER_COST_MAX;
+			} else if (ddef->GetCostM() > maxCost) {
+				continue;
+			}
+			const auto same = militaryMgr->RefuseSameTurret(ddef, buildPos, "cornered");
+			if (!same) {
+				buildDef = ddef;
+				break;
+			}
+			refused.push_back(ddef);
+			if ((blockJob == nullptr) && (same->job != nullptr) && same->job->CanAssignTo(unit)
+				&& (same->pos.SqDistance2D(dangerPos) >= sqDangerDist)
+				&& circuit->GetTerrainManager()->CanReachAt(unit, same->pos, buildDist))
+			{
+				blockJob = same->job;
+			}
+		}
+		if (buildDef != nullptr) {
+			// Other builders: an unstarted one is dropped soon after the last builder leaves it, not left as a job
+			const int timeout = isBuilder ? BUILDER_CORNER_TIMEOUT : ASSIGN_TIMEOUT;
+			CMilitaryManager::TurretScope scope(militaryMgr, CMilitaryManager::TurretSpend::CORNERED);
+			task = EnqueueTask(IBuilderTask::Priority::HIGH, buildDef, buildPos, IBuilderTask::BuildType::DEFENCE,
+							   buildDef->GetCostM(), SQUARE_SIZE * 8.f, true, timeout);
+			static_cast<CBDefenceTask*>(task)->SetOffPoints();  // no defence point counts it
+		} else if (blockJob != nullptr) {
+			task = blockJob;
+		} else {
+			return nullptr;
+		}
 	}
 	if (isBuilder) {
 		state->cornerTask = task;

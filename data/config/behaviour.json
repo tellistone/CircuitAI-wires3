@@ -294,6 +294,8 @@
 	"crowd_radius": 600,
 	"crowd_count": 3,
 	"crowd_credit": 90,
+	// A defence (an armed static, turret.not_defence aside) that would stand within same_radius of one of its own type of the ally team (ours or an ally's, finished or being built, or a job of ours not started yet; a nanoframe of ours only while a job of ours is on it, since ZK frames don't decay) isn't placed. The picker (its callers, the creep, test orders) and aa_turret skip such spots and take the next best spot or def, and a picker job is dropped on arrival if one went up meanwhile. A cornered builder takes the next def of its list that can hit, at most 2x the cost of the first, else helps our unfinished one that stood in the way, else builds none. Preventive and porc-mode towers, build chain hub towers, base towers and radar guards aren't queued; a mex escort isn't held back (it is there to kill an enemy mex no turret of ours reaches). Nothing is charged for a tower not placed, so the turret account keeps the metal (a preventive tower is free and stays so). A refused preventive or porc tower stays booked on its defence point until no tower of its type stands within same_radius of its place, so the towers after it aren't queued twice. 0 = off
+	"same_radius": 300,
 	// Heavier defs, each tier unlocked once our ally team's finished mexes hold "mex" of the map's metal spots (the
 	// creep's steps: also once the turret account's spare covers creep_budget x its dearest def). An order tries the
 	// heaviest unlocked tier first and builds from it if it has a spot worth its cost, else a lighter tier, down to

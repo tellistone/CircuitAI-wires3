@@ -111,6 +111,8 @@ public:
 	// Every tower job not started yet (a static attacker): each queue's jobs and the chains waiting behind them, whatever
 	// heads them (a porc chain's towers wait behind a tower, a big gun hub's behind its radar)
 	void ForEachQueuedTower(const std::function<void (IBuilderTask*)>& fn) const;
+	// The job of ours on our nanoframe unit: its build job, or a repair job of the frame; nullptr if none (abandoned)
+	IBuilderTask* GetFrameJob(CCircuitUnit* unit) const;
 	void ActivateTask(IBuilderTask* task);
 
 	IBuilderTask* EnqueueTask(IBuilderTask::Priority priority,

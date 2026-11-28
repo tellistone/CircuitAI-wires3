@@ -42,6 +42,15 @@ public:
 		// turret.crowd_count: the part of cost booked for light towers not placed for their crowd. Given back once the
 		// point isn't crowded any more (CMilitaryManager::QueueTowers), so the point can fill its whole budget again
 		float crowdCost = 0.f;
+		// turret.same_radius: towers not placed for one of their type nearby, booked in cost the same way. Each is given
+		// back once no tower of its type stands within same_radius of where it would have gone
+		struct SSameSkip {
+			int defId;  // CCircuitDef::Id: the matrix is the ally team's, shared by every Wires AI in it
+			int teamId;  // the AI that booked it gives it back
+			springai::AIFloat3 pos;
+			float cost;
+		};
+		std::vector<SSameSkip> sameSkips = {};
 		// Squared distance from pos to its nearest frozen spot, float max with none
 		float GetSpotSqDist(const springai::AIFloat3& pos) const;
 	};

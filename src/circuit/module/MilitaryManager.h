@@ -9,6 +9,7 @@
 #define SRC_CIRCUIT_MODULE_MILITARYMANAGER_H_
 
 #include "module/SpotScorer.h"
+#include "module/TurretPicker.h"
 #include "module/UnitModule.h"
 #include "setup/DefenceMatrix.h"
 #include "task/fighter/FighterTask.h"
@@ -21,6 +22,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -242,9 +244,14 @@ public:
 	void ChargeTurret(CBDefenceTask* task);
 	void RefundTurret(CBDefenceTask* task);
 	static const char* GetSpendName(int spend);  // a TurretSpend, as the TURRET BUDGET line names it
-	// turret.crowd_count: true when a light def at pos would join enough light turrets; logs and credits the account
-	// (CTurretPicker::RefuseCrowdedLight)
-	bool RefuseCrowdedLight(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
+	// turret.same_radius: the defence of def's type, ours or an ally's (or a job of ours), within it of pos
+	// (CTurretPicker::FindSameTurret), if any: the caller doesn't place def there, and nothing is charged. Logs the
+	// refusal
+	std::optional<CTurretPicker::STurretNear> RefuseSameTurret(const CCircuitDef* def, const springai::AIFloat3& pos,
+			const char* caller);
+	// RefuseSameTurret, then turret.crowd_count (CTurretPicker::RefuseCrowdedLight): a tower of a fixed spot (base,
+	// hub, radar guard) that isn't placed
+	bool RefuseTurret(const CCircuitDef* def, const springai::AIFloat3& pos, const char* caller);
 	// turret.crowd_credit: a light turret not placed for its crowd (CTurretPicker::RefuseCrowdedLight). Never past the
 	// account's cap; returns what it credited
 	float CreditTurret(float metal);

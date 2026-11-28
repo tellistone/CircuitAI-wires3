@@ -264,7 +264,8 @@ void CBMexTask::OnUnitIdle(CCircuitUnit* unit)
 			}
 		}
 		// Else a new one, unless a friendly turret reaches it already or the account (porcupine.budget) is short:
-		// then the spot reopens, and the mex search passes it over until that changes
+		// then the spot reopens, and the mex search passes it over until that changes. Not turret.same_radius: a turret
+		// of its type near the spot that doesn't reach the enemy mex is no reason to leave it there
 		CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
 		if ((task == nullptr)
 			&& (circuit->GetEconomyManager()->IsEnemyMexCovered(buildPos) || !militaryMgr->CanAffordTurret(def->GetCostM())))

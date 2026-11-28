@@ -167,6 +167,7 @@ The turret picker has its own top-level `"turret"` block, so the two pickers are
 | `turret.creep_radius` | `250` | The picker's radius about a step's end on the target (half the step, if less, short of it). A finished defence within it of the target claims the lane; within it of the gap, a turret is past it. |
 | `turret.creep_losses` | `2` | Our ground-hitting turrets lost in a lane's outer region, or within a step of its end, since its last rest, that rest the lane; 0 = never. |
 | `turret.creep_budget` | `0.5` | A creep order needs only this x the dearest def it would choose from (the light defs, and each tier the account covers) in the turret account; 0 to 1. The full cost is still charged. |
+| `turret.same_radius` | `300` | **Same-type spacing.** A defence (an armed static, `turret.not_defence` aside) isn't placed within this of one of its own type of our ally team: ours or an ally's, finished or being built, or a job of ours not started yet. A nanoframe of ours counts only while a job of ours is on it (ZK frames don't decay). The picker (its callers, the creep, test orders) and `aa_turret` skip such spots and take the next best spot or def; a picker job is dropped on arrival if one went up meanwhile. A cornered builder takes the next def of its list that can hit, at most 2× the cost of the first, else helps our unfinished one that stood in the way, else builds none. Preventive and porc-mode towers, build chain hub towers, base towers and radar guards aren't queued. A mex escort isn't held back. Nothing is charged for a tower not placed, so the turret account keeps the metal. A refused preventive or porc tower stays booked on its defence point until no tower of its type stands within this of its place. 0 = off. |
 | `turret.ally_radius` | `500` | Distance within which any armed ally counts as allied power, as the flee counts cover. |
 | `turret.cooldown` | `30` | Seconds between one constructor's orders, whatever the result. |
 | `turret.share` | — | Removed: the picker spends from the turret account, `porcupine.budget` in build_chain.json. `choke_overlay set turret.share` sets the account's share. |
@@ -427,15 +428,17 @@ wins, so the type follows the enemy buildings in range and the choke through E a
 A spot is skipped when it is outside the radius; more than `defence.infl_rad` (2048 elmos) from every building of
 ours or an ally's (constructors left out, so the ordering constructor can't make its own ground pass, and Claw
 mines and missiles, so a minefield doesn't stretch our ground); not buildable facing south or closed on the
-blocking map (lanes and queued jobs, picker jobs included, are on it); on a lane; in the constructor's threat; out of its
-reach; not safe for a builder whose flee is on (`IsCommJobSafe`); or masked in the last 5 minutes, by a build the
+blocking map (lanes and queued jobs, picker jobs included, are on it); within `turret.same_radius` of a defence of
+the def's own type (ours or an ally's, finished or being built, or a job of ours not started yet); on a lane; in the
+constructor's threat; out of its reach; not safe for a builder whose flee is on (`IsCommJobSafe`); or masked in the last 5 minutes, by a build the
 engine refused there or a picker job dropped there. Candidates are the 64-elmo cell centres within the radius, the
 same for every def, snapped to the build grid, tried best upper bound first; the best 5 are tried again 16 elmos to
 each corner.
 
 The job is a DEFENCE job at the spot with no shake, its footprint on the blocking map from the start. It is dropped
-30 s after its last builder leaves, and on arrival if threat (the builder's) has reached the spot or its base has
-fallen below 0.75 × `turret.min_value` × cost (the enemy building it was for died, say). The margin keeps a spot
+30 s after its last builder leaves, and on arrival if threat (the builder's) has reached the spot, a defence of its
+type (an ally's, say) now stands within `turret.same_radius` of it, or its base has fallen below 0.75 ×
+`turret.min_value` × cost (the enemy building it was for died, say). The margin keeps a spot
 that only just paid from flipping on one new tower. A dropped job masks its spot, as a build the engine refuses
 does, so the next order looks elsewhere. Picker and cornered towers
 (`MakeCommDefence`) stay out of the defence points' counts, so a forward picker turret dying doesn't make the porc
@@ -605,8 +608,11 @@ Lines in the AI's infolog, for tuning:
   four terms, height, F, the nearest building of ours, the walk, base and value per cost, candidates tested and the
   time; or why nothing (no def, no spot, nothing in range worth its cost, no buildable spot among the best, or the
   best at less than its cost) with the hard-rule counts, which say how many spots were outside our influence,
-  threatened, out of reach, unbuildable, unsafe or masked. `helps the ...` when it assists a turret instead, and `dropped on arrival` when a job's
-  spot stopped paying or came under threat.
+  threatened, out of reach, unbuildable, near one of its type, unsafe or masked. `helps the ...` when it assists a turret
+  instead, and `dropped on arrival` when a job's spot stopped paying, came under threat or got a defence of its type
+  nearby.
+- `TURRET <caller>: no <def> at (x, z), <one of ours | an ally's | a job of ours> within 300 at (x, z)`: a tower
+  `turret.same_radius` kept out (`prevent`, `porc`, `hub`, `base`, `radar guard`, `cornered`).
 
 ## Known limits
 

@@ -103,7 +103,7 @@ private:
 		CCircuitUnit* unit;
 		springai::AIFloat3 pos;
 	};
-	enum Reject: int {MASK = 0, LANE, THREAT, SITE, REACH, _SIZE_};
+	enum Reject: int {MASK = 0, LANE, THREAT, SITE, SAME, REACH, _SIZE_};
 	struct SCand {  // a cell worth a def's cost
 		int cell;
 		float rank;
