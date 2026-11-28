@@ -61,6 +61,10 @@ static constexpr float COVER_LOSS_SHARE = 0.75f;
 // quota.raid_attack_factor (base radius, contact) out to this x the radius, so an enemy stepping back and forth across
 // either line doesn't flip the pick
 static constexpr float TARGET_KEEP = 1.25f;
+// ApproachInLine: the line walks in to this x our fire range short of the pick (as the firing spots' ring), and keeps
+// its path while the target's end moves less than APPROACH_KEEP
+static constexpr float APPROACH_STAND = 0.9f;
+static constexpr float APPROACH_KEEP = 128.f;
 // Contact by an enemy's own range is capped at highestRange + this x our fire range (the firing-spot ring,
 // IFighterTask's arc spots): a unit in contact walks at most about highestRange to its spot, as a group whose leader
 // is within highestRange does. Long-range artillery farther out is routed to (siege, firing cells) as before
@@ -415,11 +419,13 @@ void CAttackTask::Update()
 	// The target died while we fought it (~CEnemyInfo: ClearTarget leaves ENGAGE with no target; every decision that
 	// finds nothing sets ROAM): pick the next one now rather than at the next decision, so the units don't stand idle
 	const bool isTargetLost = (State::ENGAGE == state) && (target == nullptr);
-	if (!isDecision && !isForced && !isTargetLost) {
+	// Walking in line to the target (ApproachInLine): the fight starts as soon as it is in contact
+	const bool isContact = IsApproaching() && IsInContact(target, false, frame);
+	if (!isDecision && !isForced && !isTargetLost && !isContact) {
 		return;
 	}
 	// A normal decision that no unit asked to re-plan may keep a fresh route to the same goal (ReuseRoute)
-	Decide(frame, isDecision && !isForced);
+	Decide(frame, isDecision && !isForced && !isContact);
 }
 
 void CAttackTask::Decide(int frame, bool isReuse)
@@ -559,11 +565,70 @@ bool CAttackTask::EngageInRange(int frame, bool isWalking)
 	if (!FindTarget()) {
 		return false;
 	}
+	if (ApproachInLine(frame)) {
+		return true;  // in sight, not yet in contact: the line walks in, the fight starts at contact (Update)
+	}
 	state = State::ENGAGE;
 	NoteCoverEngage(frame);  // the cover log
 	NoteBalanceEngage(frame);  // quota.attack_balance: the outcome log
 	Engage(frame);
 	return true;
+}
+
+bool CAttackTask::ApproachInLine(int frame)
+{
+	// The pick is within range of the leader (highestRange: sight as well as weapons) but not in contact: the line
+	// walks straight at it, to APPROACH_STAND x our fire range short of it, rather than every unit walking to its own
+	// firing spot from here, bunching on the way. The fight starts at contact (IsInContact at its plain reach, kept
+	// at 1.25x once engaged), checked every update. Only from roaming: a fight under way never forms the line again
+	// (a kill, a target stepping back). False: engage at once as before (no line, already in contact or about there,
+	// or no straight walk there)
+	if ((State::ENGAGE == state) || (target == nullptr) || !IsStandAllowed(frame)
+		|| IsInContact(target, false, frame))
+	{
+		return false;
+	}
+	const float stand = APPROACH_STAND * GetGroundFireRange();
+	const AIFloat3& leaderPos = leader->GetPos(frame);
+	AIFloat3 dir = leaderPos - position;  // position: the pick's range spot (FindTarget)
+	dir.y = 0.f;
+	const float dist = dir.Length2D();
+	if ((stand < SQUARE_SIZE * 4) || (dist < stand + DEFAULT_SLACK)) {
+		return false;
+	}
+	AIFloat3 end = position + dir * (stand / dist);
+	CTerrainManager::CorrectPosition(end);
+	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
+	if (!terrainMgr->CanMoveToPos(leader->GetArea(), end)
+		|| !terrainMgr->IsWalkClear(leader->GetArea(), leaderPos, end, -1.f))  // < 0: every square on the way
+	{
+		return false;
+	}
+	// Already walking in to about there: no new path, so the line doesn't lay out again at every decision
+	if (IsApproaching() && (approachPath->posPath.back().SqDistance2D(end) < SQUARE(APPROACH_KEEP))) {
+		return true;
+	}
+	state = State::ROAM;
+	approachPath = std::make_shared<PathInfo>();
+	approachPath->posPath = {leaderPos, end};
+	pPath = approachPath;
+	EndLineFacing();  // the path may end within FACE_KEEP of where the line faces from: it walks all the same
+	ActivePath(lowestSpeed);
+	return true;
+}
+
+bool CAttackTask::GetFireFrontCentre(AIFloat3& outPos) const
+{
+	if (leader == nullptr) {
+		return false;
+	}
+	outPos = leader->GetPos(manager->GetCircuit()->GetLastFrame());
+	return true;
+}
+
+bool CAttackTask::IsApproaching() const
+{
+	return (State::ROAM == state) && (target != nullptr) && (approachPath != nullptr) && (pPath == approachPath);
 }
 
 /*

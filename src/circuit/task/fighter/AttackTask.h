@@ -89,6 +89,8 @@ public:
 protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
 	virtual bool GetFireArcBearing(float& outBearing) const override;
+	// The leader: units keep their side of it on the firing-spot arc
+	virtual bool GetFireFrontCentre(springai::AIFloat3& outPos) const override;
 
 	/*
 	 * Escorts (quota.escort). Support units (role or "support" attribute) are members like any other: they walk the
@@ -388,6 +390,10 @@ private:
 	// FindTarget, then engage the target if it is already within range; true: engaged.
 	// isWalking: only the in-range result matters, so no FindTarget when no enemy is near
 	bool EngageInRange(int frame, bool isWalking);
+	// A pick in range but not in contact, while roaming: the line walks straight in to it (APPROACH_STAND x our fire
+	// range short), and the fight starts at contact. False: engage at once as before
+	bool ApproachInLine(int frame);
+	bool IsApproaching() const;  // walking the path ApproachInLine sent, to the current target
 	// Its range spot (GetRangePos) within highestRange of the leader, and seen from there (IsSeenByUnits). Not only
 	// from the leader: in line it stands its row's offset behind the front row, which stands where the route ended.
 	// isCurrent: our current target, which needs no line of fire while engaged (IsSeenByUnits)
@@ -659,6 +665,7 @@ private:
 	springai::AIFloat3 holdPos;  // the spot holdPath walks the group to, or stands at (-RgtVector: none)
 	std::shared_ptr<PathInfo> holdPath;  // the path a hold or a wait walks or stands on (set with holdPos)
 	std::shared_ptr<PathInfo> regroupPath;  // the short path a regroup in line stands on (Regroup)
+	std::shared_ptr<PathInfo> approachPath;  // the straight walk in line to a target in range (ApproachInLine)
 	int regroupFrame = -1;  // groupFrame of the regroup that made it
 	int stepFrame;  // last step back after being hit while holding
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)

@@ -7,6 +7,19 @@ Changes in this fork (`tellistone/CircuitAI-wires3`, branch `zk`) on top of upst
 
 ### Changed
 
+- **Attack groups walk into a fight in line, and fan out to their firing spots.** A target within the leader's
+  highest weapon or sight range was engaged at once, and the line dropped there: sight is often twice the weapon
+  range, so the last few hundred elmos were walked as separate orders, every unit to the firing spot nearest it, and
+  those all sit near the straight line to the target. So the group closed in on one bearing and arrived bunched.
+  - **Walk in:** a pick in range but not yet in contact (`attack_keep_threat`), while roaming, gets a straight path
+    to 0.9x the group's fire range short of it, which the line walks (kept while that end moves under 128 elmos).
+    The fight starts once the target is in contact, checked every update. A fight under way never forms the line
+    again, so a kill or a target stepping back doesn't re-form it. No line, already in contact, near enough already,
+    or no straight walk over ground the leader can move on: engaged at once as before.
+  - **Fan out:** each ranged unit of an attack group prefers its own side of the firing-spot arc, its angle off the
+    leader's bearing from the target times its distance over the arc's radius (at most 45 degrees), so the group keeps
+    the width it walked in with. On the arc the factor is 1, so a unit at its spot keeps it; units round the far
+    side keep their nearest spots. A spot's distance from that side counts 1.5x its walk.
 - **No turret within 300 elmos of one of its own type** (`turret.same_radius`, new, 300; 0 = off). Every way the AI
   places a turret, but a mex escort, now leaves out a spot within 300 of a turret of the same type of our ally team:
   ours or an ally's, finished or being built, or a job of ours not started yet. Before, only light turrets had a crowd
