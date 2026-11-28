@@ -14,7 +14,6 @@
 #include "util/MaskHandler.h"
 
 #include <string>
-#include <unordered_set>
 
 namespace circuit {
 
@@ -177,10 +176,7 @@ private:
 	} initThrMod;
 	float maxAAThreat;
 	bool isJumpLand = true;  // quota.jump_land: a jumper in flight is fought at its landing spot (CEnemyUnit::UpdateJump)
-	// quota.reload_threat_min (seconds, here frames; 0 = off) and reload_threat_ready (0..1): CEnemyUnit::UpdateReload
-	int reloadThrMin = 0;
-	float reloadThrReady = 0.75f;
-	std::unordered_set<CCircuitDef::Id> reloadThrExempt;  // quota.reload_threat_exempt: types that always count
+	float reloadThrReady = 0.75f;  // quota.reload_threat_ready (0..1): CEnemyUnit::UpdateReload
 	struct SEnemyInfo {
 		float cost;
 		float threat;

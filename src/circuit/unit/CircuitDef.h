@@ -320,15 +320,18 @@ public:
 	int GetReloadTime() const { return reloadTime; }
 	bool IsLongReload() const;  // 5 s or more (anti-heavy: fires at what it sees, steps back while reloading)
 	int GetBurstFrames() const { return burstFrames; }  // frames from a burst's first shot to its last, longest weapon
-	// Its weapons but shields and fake ones (Zero-K's fake_weapon): the mount index on the unit, and the frames from a
-	// burst's first shot to its last. The threat map's reload rule (CEnemyUnit::UpdateReload) reads them on enemies
+	// Its one weapon, shields and fake ones (Zero-K's fake_weapon) aside: the mount index on the unit, its reload and
+	// the frames from a burst's first shot to its last. nullptr: none, or more than one
 	struct SFireWeapon {
-		int mountId;
-		int burstFrames;
+		int mountId = -1;
+		int reload = 0;  // frames
+		int burst = 0;  // frames
 	};
-	const std::vector<SFireWeapon>& GetFireWeapons() const { return fireWeapons; }
-	// The shortest reload of those (frames); 0 without any
-	int GetMinFireReload() const { return minFireReload; }
+	const SFireWeapon* GetSoleFireWeapon() const { return (fireCount == 1) ? &soleFire : nullptr; }
+	// The reload rule (quota.reload_threat_min, CEnemyManager::ReadConfig): as an enemy, while its sole weapon reloads
+	// it is no threat on the raid view (CEnemyUnit::UpdateReload)
+	void SetReloadThreat(bool value) { isReloadThreat = value; }
+	bool IsReloadThreat() const { return isReloadThreat; }
 	// A heavy or commander a unit of this type can shoot: role, target category, anti-static, air
 	bool IsQuarry(const CCircuitDef* edef) const;
 	int GetCategory() const { return category; }
@@ -534,8 +537,9 @@ private:
 	FireType fireState;
 	int reloadTime;  // frames in ticks
 	int burstFrames = 0;  // GetBurstFrames
-	std::vector<SFireWeapon> fireWeapons;  // GetFireWeapons
-	int minFireReload = 0;  // GetMinFireReload
+	SFireWeapon soleFire;  // GetSoleFireWeapon: the last one read
+	int fireCount = 0;
+	bool isReloadThreat = false;  // IsReloadThreat
 	int category;
 	int targetCategory;
 	int noChaseCategory;

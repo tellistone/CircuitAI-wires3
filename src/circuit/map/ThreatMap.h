@@ -228,6 +228,7 @@ private:
 	// multiplier) at the last update; Update's run time since the last log
 	int hostileCount = 0;
 	int raidModCount = 0;
+	int drawFrame = 0;  // the frame the map being drawn was asked for (EnqueueUpdate)
 	float updateMsSum = 0.f;
 	float updateMsMax = 0.f;
 	int updateNum = 0;
