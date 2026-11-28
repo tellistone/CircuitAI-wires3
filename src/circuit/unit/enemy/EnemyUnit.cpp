@@ -59,6 +59,7 @@ CEnemyUnit::CEnemyUnit(Id unitId, Unit* unit, CCircuitDef* cdef)
 		, knownFrame(-1)
 		, lastSeen(-1)
 		, lastLos(-1)
+		, shield(nullptr)
 		, data(SEnemyData(cdef,
 			0.f,         // shieldPower
 			0.f,         // health
@@ -101,16 +102,27 @@ CEnemyUnit::CEnemyUnit(CCircuitDef* cdef, const AIFloat3& pos)
 CEnemyUnit::~CEnemyUnit()
 {
 	delete shield;
+	delete reloadWeapon;
 }
 
 void CEnemyUnit::SetCircuitDef(CCircuitDef* cdef)
 {
 	data.cdef = cdef;
+	ClearReload();  // another type's weapon
 	Init();
+}
+
+void CEnemyUnit::ClearReload()
+{
+	delete reloadWeapon;
+	reloadWeapon = nullptr;
+	reloadFrame = -1;
+	data.reloadFreeFrom = data.reloadFreeTo = 0;
 }
 
 void CEnemyUnit::Init()
 {
+	delete shield;  // a new type (SetCircuitDef)
 	if (data.cdef == nullptr) {
 		data.cost = 0.f;
 		shield = nullptr;
@@ -247,6 +259,27 @@ bool CEnemyUnit::UpdateJump(int frame, CTerrainManager* terrainMgr, bool isLand)
 	const bool isChanged = (isReady != isJumpReady);
 	isJumpReady = isReady;
 	return isChanged;
+}
+
+void CEnemyUnit::UpdateReload(float readyShare)
+{
+	const CCircuitDef* cdef = data.cdef;
+	if ((cdef == nullptr) || !cdef->IsReloadThreat() || IsFake() || !data.IsInLOS()) {
+		return;
+	}
+	const CCircuitDef::SFireWeapon* fire = cdef->GetSoleFireWeapon();
+	if (reloadWeapon == nullptr) {
+		reloadWeapon = WrappWeapon::GetInstance(unit->GetSkirmishAIId(), id, fire->mountId);
+	}
+	const int frame = reloadWeapon->GetReloadFrame();
+	if (frame == reloadFrame) {
+		return;
+	}
+	// A shot, or Zero-K's unit attributes rescaling the reload (slow; a paused one: reloadTime 100000). -1: not read
+	reloadFrame = frame;
+	const int reloadTime = std::max(reloadWeapon->GetReloadTime(), 0);
+	data.reloadFreeFrom = frame - reloadTime + fire->burst;
+	data.reloadFreeTo = frame - int((1.f - readyShare) * reloadTime);
 }
 
 void CEnemyUnit::UpdateInLosData()

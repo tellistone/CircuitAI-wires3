@@ -185,6 +185,7 @@ void CThreatMap::EnqueueUpdate()
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	areaData = circuit->GetTerrainManager()->GetAreaData();
+	drawFrame = circuit->GetLastFrame();
 
 	circuit->GetScheduler()->RunParallelTask(std::make_shared<CGameTask>(&CThreatMap::Update, this),
 											 std::make_shared<CGameTask>(&CThreatMap::Apply, this));
@@ -378,10 +379,14 @@ void CThreatMap::AddEnemyUnit(const SEnemyData& e)
 		auto addAmph = cdef->IsAlwaysHit() ? &CThreatMap::AddEnemyAmphConst : &CThreatMap::AddEnemyAmphGradient;
 		(this->*addAmph)(e, vsl, e.threat, count, drawPlain);
 		// Raid view: only a type with a raid multiplier is drawn again, as the difference it makes
-		// (threat x (raid_thr_mod - 1), count weight raid - plain); FinishLayers adds the plain layers to it
-		const float raidMod = cdef->GetRaidThrMod();
+		// (threat x (raid_thr_mod - 1), count weight raid - plain); FinishLayers adds the plain layers to it.
+		// Its sole long-reload weapon reloading (quota.reload_threat_min, CEnemyUnit::UpdateReload) and not ready
+		// before this map is next drawn: neither threat nor count there (fast units can use the gap; builders and
+		// slow groups, on the plain view, can't get in and out before the next shot)
+		const bool isReloadFree = e.IsReloadFree(drawFrame) && e.IsReloadFree(drawFrame + THREAT_UPDATE_RATE);
+		const float raidMod = isReloadFree ? 0.f : cdef->GetRaidThrMod();
 		if ((raidMod != 1.f) && (e.threat > 0.f)) {
-			const float raidCount = isCounting ? e.GetRaidCountWeight() - count : 0.f;
+			const float raidCount = isCounting ? (isReloadFree ? 0.f : e.GetRaidCountWeight()) - count : 0.f;
 			(this->*addAmph)(e, vsl, e.threat * (raidMod - 1.f), raidCount, drawRaid);
 			++raidModCount;
 		}

@@ -424,7 +424,12 @@ CCircuitDef::CCircuitDef(CCircuitAI* circuit, UnitDef* def, std::unordered_set<I
 		}
 
 		float reloadTime = wd->GetReload();  // seconds
-		burstFrames = std::max(burstFrames, int((wd->GetSalvoSize() - 1) * wd->GetSalvoDelay() * FRAMES_PER_SEC));
+		const int wpBurstFrames = int((wd->GetSalvoSize() - 1) * wd->GetSalvoDelay() * FRAMES_PER_SEC);
+		burstFrames = std::max(burstFrames, wpBurstFrames);
+		if (!wd->IsShield()) {
+			soleFire = {mount->GetWeaponMountId(), int(reloadTime * FRAMES_PER_SEC), wpBurstFrames};
+			++fireCount;
+		}
 		auto it = customParams.find("shield_drain");  // charge per shot, taken from the unit's own shield
 		if ((it != customParams.end()) && (reloadTime > 0.f) && (maxShield > 0.f)) {
 			shieldDrain += std::max(utils::string_to_float(it->second), 0.f) * wd->GetSalvoSize() / reloadTime;

@@ -62,6 +62,11 @@ struct SEnemyData {
 	springai::AIFloat3 landPos;
 	bool isJumping = false;
 	const springai::AIFloat3& GetFightPos() const { return isJumping ? landPos : pos; }
+	// Its sole weapon's long reload (CEnemyUnit::UpdateReload, quota.reload_threat_min): from just after a shot until
+	// it is ready enough (frames). The raid view leaves it out in between (CThreatMap::AddEnemyUnit)
+	int reloadFreeFrom = 0;
+	int reloadFreeTo = 0;
+	bool IsReloadFree(int frame) const { return (frame >= reloadFreeFrom) && (frame < reloadFreeTo); }
 	// Its speed over the ground (elmos per frame), but in flight its walking speed: it is drawn and fought at its
 	// landing spot, and walks on from there (the threat map's slack, ISquadTask::IsRunningAway)
 	float GetGroundSpeed() const {
@@ -195,6 +200,13 @@ public:
 	bool IsJumpReady() const { return isJumpReady; }
 	bool IsInFlight() const { return landFrame >= 0; }
 
+	// Reload rule (quota.reload_threat_min, reload_threat_ready; CCircuitDef::IsReloadThreat), from the staggered enemy
+	// update: the frames its sole weapon is free of threat on the raid view, from just after a shot (the burst done)
+	// until it is readyShare reloaded. Read in LOS only (the engine hands it out for any unit id: out of view that
+	// would be a cheat); out of LOS the last read stands, which holds: a weapon seen reloading can't fire before it is
+	// reloaded. A unit never seen firing reads as ready
+	void UpdateReload(float readyShare);
+
 	// Shots priority artillery (CPriorityArtyTask) fired at it while it was out of LOS and radar, by all of the
 	// ally team's guns; back to 0 once it's seen again (UpdateInRadarData)
 	void AddBlindShot() { ++blindShots; }
@@ -225,6 +237,10 @@ private:
 	int jumpReadyFrame = 0;
 	bool isJumpReady = true;
 	bool isOffArc = false;
+	// UpdateReload: its sole weapon, made on the first read in LOS, and the reload frame last read
+	springai::Weapon* reloadWeapon = nullptr;
+	int reloadFrame = -1;
+	void ClearReload();
 	CCircuitDef::SCommWeapons commWeapons;  // GetCommWeapons
 	int commReadFrame = -1;  // GetCommWeapons: last read attempt
 
