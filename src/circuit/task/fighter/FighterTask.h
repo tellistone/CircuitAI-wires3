@@ -209,6 +209,10 @@ protected:
 	// Centre of the firing-spot arc around the target for the whole group (radians, atan2(z, x)); false (default):
 	// each unit's own bearing from the target
 	virtual bool GetFireArcBearing(float& outBearing) const { return false; }
+	// Where the group's front is centred (attack groups: the leader); false (default): none. With it, each ranged unit
+	// prefers its own side of the firing-spot arc, as it stood beside the centre (FindFireSpot), so a group fans out
+	// across the arc rather than closing in on the target's bearing
+	virtual bool GetFireFrontCentre(springai::AIFloat3& outPos) const { return false; }
 	// For the unit of claims[self]; the other claims crowd spots and back them up. arcBearing: GetFireArcBearing
 	// (nullptr: none), then the unit's own and kept spots count only if on that arc. isClose: melee's close spots
 	// (GetSpotRange), else within weapon range (Attack tries this for melee too when no close spot is safe)

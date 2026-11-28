@@ -263,8 +263,6 @@ private:
 	using Scoots = std::map<CCircuitUnit*, SScoot>;
 	// Starts (scoot == nullptr) or renews a scoot
 	void Scoot(CCircuitUnit* unit, SScoot* scoot, int frame, float margin);
-	// The target's ground range (0 for a radar blip: the margin alone)
-	float GetTargetGroundRange() const;
 	// Away from the target towards the scoot anchor, just outside its ground range + margin
 	springai::AIFloat3 GetScootSpot(CCircuitUnit* unit, const springai::AIFloat3& uPos, float margin) const;
 	// Does walking dist take as long as the unit's weapon has left to reload?
@@ -273,6 +271,8 @@ private:
 	// maneuver) would otherwise walk it straight back in after its scoot move ends or it stops. Off: GetMoveState
 protected:
 	void SetScootHold(CCircuitUnit* unit, bool isHold);
+	// The target's ground range (0 for a radar blip: the margin alone)
+	float GetTargetGroundRange() const;
 private:
 	// Erases the scoot, gives the unit its move state back, then OnScootEnd
 	void EndScoot(Scoots::iterator it, int frame, bool isEngaged);

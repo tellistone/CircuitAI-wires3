@@ -89,6 +89,8 @@ public:
 protected:
 	// The planned firing cell's side of the current target (quota.attack_static_cells), while it is still valid
 	virtual bool GetFireArcBearing(float& outBearing) const override;
+	// The leader: units keep their side of it on the firing-spot arc
+	virtual bool GetFireFrontCentre(springai::AIFloat3& outPos) const override;
 
 	/*
 	 * Escorts (quota.escort). Support units (role or "support" attribute) are members like any other: they walk the
@@ -292,6 +294,7 @@ private:
 	// How far behind its line's front row our leader stands (its row's offset; 0 in the front row, or with no line).
 	// A target route's end is where the front row stands, but the engage check is at the leader (EngageInRange)
 	float GetLeaderLineOffset() const;
+	bool IsLineAtEnd() const;  // the line is on and its front row stands at the path's end
 	// Routes to a group or a fight edge: capped, reinforce costs, kept with KeepRoute for GROUP_ROUTE_REUSE_FRAMES.
 	// A joint strength's partner is left out of the route's cover (SetRouteCover)
 	void RunGroupRoute(int frame, const springai::AIFloat3& goal, float range, const SStrength& strength,
@@ -385,12 +388,19 @@ private:
 	// Picks the target and fills routeGoals (and screenedGoals). true: the pick is within range (IsInLeaderRange) or
 	// in contact, so EngageInRange engages it
 	bool FindTarget();
-	// FindTarget, then engage the target if it is already within range; true: engaged.
-	// isWalking: only the in-range result matters, so no FindTarget when no enemy is near
+	// FindTarget, then engage the target if it is already within range (or walk in to it in line); true: engaged or
+	// walking in. isWalking: only the in-range result matters, so no FindTarget when no enemy is near
 	bool EngageInRange(int frame, bool isWalking);
+	void StartFight(int frame);  // ENGAGE the current target now: its logs and orders
+	// A pick in range but not in contact, while roaming: the line walks straight in to it (APPROACH_STAND x our fire
+	// range short, or outside its own reach), and the fight starts at contact. False: engage at once as before
+	bool ApproachInLine(int frame);
+	// Walking the path ApproachInLine sent, until the fight starts (StartFight) or a decision finds nothing to engage
+	// (EngageInRange). Its target may have died since (until the next update): callers that need it test it
+	bool IsApproaching() const;
 	// Its range spot (GetRangePos) within highestRange of the leader, and seen from there (IsSeenByUnits). Not only
 	// from the leader: in line it stands its row's offset behind the front row, which stands where the route ended.
-	// isCurrent: our current target, which needs no line of fire while engaged (IsSeenByUnits)
+	// isCurrent: our current target, which needs no line of fire while engaged or walking in (IsSeenByUnits)
 	bool IsInLeaderRange(const CEnemyInfo* enemy, const springai::AIFloat3& rangePos, bool isCurrent, int frame);
 	// Lines of fire (pick, firing spots): aimed from cell_aim_height or half the leader's height above our units at
 	// half the enemy's height (8-32 elmos) above it. None for flying or underwater enemies, or a flying group
@@ -408,15 +418,15 @@ private:
 	 *   always:        engaged at once (no route); a rejected route doesn't matter; exempt from the raid factor and the
 	 *                  own-ground rule
 	 *   while engaged: the fight we accepted: judged at the keep allowance, not dropped as a runner, ranked ahead of
-	 *                  every enemy not in contact
+	 *                  every enemy not in contact (ranked so while walking in too: ApproachInLine)
 	 */
 	// Our fire range, or the enemy's own range if longer (a mobile that can hit the ground: IsGroundDangerDef), capped
 	// at GetContactCap; + 64 elmos. Buildings and unknown types: our fire range + 64
 	float GetContactReach(const CEnemyInfo* enemy) const;
 	// highestRange + our firing-spot distance: never below our fire range (highestRange includes the median's own)
 	float GetContactCap() const;
-	// isCurrent: our current target, kept in contact out to TARGET_KEEP x its reach, and while engaged with no line
-	// of fire (IsSeenByUnits). outSqDist: squared distance from our nearest unit
+	// isCurrent: our current target, kept in contact out to TARGET_KEEP x its reach, and while engaged or walking in
+	// with no line of fire (IsSeenByUnits). outSqDist: squared distance from our nearest unit
 	bool IsInContact(const CEnemyInfo* enemy, bool isCurrent, int frame, float* outSqDist = nullptr);
 	// Farthest an enemy in contact can be from the leader (the units' spread + the longest reach, kept)
 	float GetContactBound(int frame);
@@ -426,6 +436,8 @@ private:
 	// whose weapon arcs over terrain (IsHighTrajectory) always does. isCurrent: our current target needs none while
 	// engaged: a line of fire starts a fight, the firing spots keep it (a target behind a crest: new spots around it;
 	// none in sight: every unit holds and IsAllHolding passes on it), so the line isn't formed again at every crest.
+	// Nor while walking in to it (ApproachInLine): a dip on the way doesn't drop it for a route; the walk ends at
+	// contact (which needs a line of fire) or where the front row stands, and the firing spots take over there
 	// outSqDist: our nearest unit's squared distance
 	bool IsSeenByUnits(const CEnemyInfo* enemy, const springai::AIFloat3& pos, float range, bool isCurrent, int frame,
 			float* outSqDist = nullptr);
@@ -659,6 +671,7 @@ private:
 	springai::AIFloat3 holdPos;  // the spot holdPath walks the group to, or stands at (-RgtVector: none)
 	std::shared_ptr<PathInfo> holdPath;  // the path a hold or a wait walks or stands on (set with holdPos)
 	std::shared_ptr<PathInfo> regroupPath;  // the short path a regroup in line stands on (Regroup)
+	std::shared_ptr<PathInfo> approachPath;  // the straight walk in line to a target in range (ApproachInLine)
 	int regroupFrame = -1;  // groupFrame of the regroup that made it
 	int stepFrame;  // last step back after being hit while holding
 	springai::AIFloat3 hitPos;  // where we were hit while holding (avoided by HoldPosition for 30 s)
