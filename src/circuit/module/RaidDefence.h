@@ -72,10 +72,10 @@ struct STerrainMapArea;
  *   share at least post_min x oneRaider (the smallest folds into the nearest other while it is under that); each
  *   second the posts share D by those weights.
  * - Recruit while R < RECRUIT_SHORT x D. Tier 1 (MakeTask, at once): a new raider that takes no free guard slot
- *   starts a group at the post short the most (in a raid's no-go, quota.protect's gathering post keeps it out of the raid). Tier 2 (after
- *   TIER2_FRAMES): calm raid groups on our ground or within respond_sec of a post short of strength, nearest first;
- *   a whole group while it is at most WHOLE_GROUP_MOD x the shortfall, else its units nearest the post. Never a group
- *   released within RELEASE_IMMUNE_FRAMES, in a raid rally, or with scouts.
+ *   starts a group at the post short the most. Tier 2 (after TIER2_FRAMES): raid groups within respond_sec of a post
+ *   short of strength, fighting or not, and calm ones anywhere on our ground, nearest first; a whole group while it
+ *   is at most WHOLE_GROUP_MOD x the shortfall, else its units nearest the post. Never a group fleeing, committed by
+ *   quota.protect, released within RELEASE_IMMUNE_FRAMES, in a raid rally, or with scouts.
  * - Every SPLIT_FRAMES a calm group whose post keeps its need without it moves to the nearest post short of
  *   strength. A group without a post takes the nearest one short of strength, else the nearest post.
  * - Release while R > D / RELEASE_RATIO for RELEASE_FRAMES: calm groups back to raiding (a new raid group each), those

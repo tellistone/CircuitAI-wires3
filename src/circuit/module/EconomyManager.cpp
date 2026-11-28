@@ -1918,6 +1918,14 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 		return nullptr;
 	}
 
+	// factory_income: one line per floor try, the factory queued or why none was
+	auto floorLog = [this, factoryMgr, isBelowMin](const char* result) {
+		if (isBelowMin) {
+			circuit->LOG("FACTORY_INCOME %s: %i factories at %.1f m (one per %.0f)", result,
+					factoryMgr->GetFactoryCount(), GetEcoMetalIncome(), factoryIncome);
+		}
+	};
+
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const AIFloat3& enemyPos = circuit->GetEnemyManager()->GetEnemyPos();
 	const bool isStart = (factoryMgr->GetFactoryCount() == 0);
@@ -1925,19 +1933,23 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 	if (isStart) {
 		buildPos = circuit->GetSetupManager()->GetBasePos();
 	} else {
+		// A switch goes toward the front: from our finished cluster nearest the middle of the map. The floor is there
+		// for build power: the free cluster nearest our base, else the base itself (as support factories)
 		AIFloat3 pos(circuit->GetSetupManager()->GetBasePos());
 		CMetalManager* metalMgr = circuit->GetMetalManager();
-		AIFloat3 center = (pos + enemyPos) * 0.5f;
-		float minSqDist = std::numeric_limits<float>::max();
 		const CMetalData::Clusters& clusters = metalMgr->GetClusters();
-		for (unsigned i = 0; i < clusters.size(); ++i) {
-			if (!metalMgr->IsClusterFinished(i)) {
-				continue;
-			}
-			const float sqDist = center.SqDistance2D(clusters[i].position);
-			if (minSqDist > sqDist) {
-				minSqDist = sqDist;
-				pos = clusters[i].position;
+		if (!isBelowMin) {
+			AIFloat3 center = (pos + enemyPos) * 0.5f;
+			float minSqDist = std::numeric_limits<float>::max();
+			for (unsigned i = 0; i < clusters.size(); ++i) {
+				if (!metalMgr->IsClusterFinished(i)) {
+					continue;
+				}
+				const float sqDist = center.SqDistance2D(clusters[i].position);
+				if (minSqDist > sqDist) {
+					minSqDist = sqDist;
+					pos = clusters[i].position;
+				}
 			}
 		}
 
@@ -1945,14 +1957,18 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 			return (clusterInfos[index].factory == nullptr) && !terrainMgr->IsZoneAlly(clusters[index].position);
 		};
 		int index = metalMgr->FindNearestCluster(pos, predicate);
-		if (index < 0) {
+		if (index >= 0) {
+			buildPos = clusters[index].position;
+		} else if (isBelowMin) {
+			buildPos = pos;  // the base
+		} else {
 			return nullptr;
 		}
-		buildPos = clusters[index].position;
 	}
 
 	CCircuitDef* facDef = factoryMgr->GetFactoryToBuild(buildPos, isStart);
 	if (facDef == nullptr) {
+		floorLog("none: no factory type fits");
 		return nullptr;
 	}
 	if (facDef->IsRoleSupport()) {
@@ -1980,6 +1996,7 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 		bdef = factoryMgr->GetWaterDef(facDef);
 	}
 	if (bdef == nullptr) {
+		floorLog("none: no area for its units");
 		return nullptr;
 	}
 
@@ -1990,17 +2007,16 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
 		lastFacFrame = frame;
-		if (isBelowMin) {
-			circuit->LOG("FACTORY_INCOME %s: %i factories at %.1f m (one per %.0f)", facDef->GetDef()->GetName(),
-					factoryMgr->GetFactoryCount(), GetEcoMetalIncome(), factoryIncome);
-		}
-		// NOW while few constructors, or while no factory of ours can make constructors (the replacement job was lost)
+		floorLog(facDef->GetDef()->GetName());
+		// NOW while few constructors, or while no factory of ours can make constructors (the replacement job was lost);
+		// HIGH for the floor, so builders take it over nearby NORMAL work (economy.builder_jobs weight and travel)
 		IBuilderTask::Priority priority = ((builderMgr->GetWorkerCount() <= 2) || !factoryMgr->HasBuilderFactory(frame))
 				? IBuilderTask::Priority::NOW
-				: IBuilderTask::Priority::NORMAL;
+				: isBelowMin ? IBuilderTask::Priority::HIGH : IBuilderTask::Priority::NORMAL;
 		return builderMgr->EnqueueFactory(priority, facDef, buildPos);
 	}
 
+	floorLog("none: site unsafe or blocked");
 	return nullptr;
 }
 
